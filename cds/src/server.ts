@@ -70,6 +70,9 @@ import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/desi
 import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
 import { createDesignFrameworkBrowser, createDesignReferenceBrowser } from './services/design-framework-browser.js';
 import { createDesignAcceptanceBrowser } from './services/design-acceptance-browser.js';
+import { createDesignPreviewBuild } from './services/design-preview-build.js';
+import { computePublishedBranchWebEntries, publicPreviewHost } from './services/branch-web-entrypoints.js';
+import { servingRuntime } from './services/service-runtime.js';
 import { designShareHandoffConfig } from './services/design-share-handoff.js';
 import { readDesignSourceZip } from './services/design-package.js';
 import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
@@ -5765,7 +5768,18 @@ export function createServer(deps: ServerDeps): express.Express {
     frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
     referenceCapture: createDesignReferenceBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
     captureAcceptance: createDesignAcceptanceBrowser(path.join(deps.config.repoRoot, 'cds', 'web', 'dist'),
-      process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+      process.env.CDS_DESIGN_BROWSER_EXECUTABLE,
+      createDesignPreviewBuild(async ({ projectId, commit, preview }) => {
+        if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+        const current = await planning.pullRequestPreview(projectId, preview.pullRequest);
+        if (current?.status !== 'ready' || current.commit !== commit || current.url !== preview.url || !current.branchId) return undefined;
+        const branch = deps.stateService.getBranch(current.branchId);
+        const host = publicPreviewHost(deps.config);
+        if (!branch || branch.projectId !== projectId || branch.executorId || !host) return undefined;
+        const primary = computePublishedBranchWebEntries(deps.stateService, branch, host)[0];
+        if (!primary?.serviceId) return undefined;
+        return servingRuntime(branch.services[primary.serviceId])?.containerId;
+      }, deps.shell)),
     reviewer: async (projectId, id) => {
       const user = await authService?.findUserById(id);
       return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;

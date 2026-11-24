@@ -20,6 +20,7 @@ const runId = 'RUN-program-proof';
 const commit = 'c'.repeat(40);
 const frozenAt = '2026-11-25T02:00:00.000Z';
 const previewUrl = 'https://fixture-proof.test/';
+const privatePreview = { pullRequest: 184, url: 'https://private-preview.test/' };
 const implementation = '/design?screen=main';
 const slot = 'desktop-light';
 const comparison = { screenId: 'main', slot };
@@ -109,7 +110,7 @@ function published(version: number): DesignVersion {
 }
 
 async function setup(version = 22, captureAcceptance?: () => Promise<ReturnType<typeof observed> | undefined>,
-  options: { bothThemes?: boolean; unbound?: boolean } = {}) {
+  options: { bothThemes?: boolean; unbound?: boolean; privatePreview?: boolean } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cds-design-evidence-'));
   directories.push(directory);
   const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
@@ -133,18 +134,29 @@ async function setup(version = 22, captureAcceptance?: () => Promise<ReturnType<
     projectId, revision: 1,
     request: { key: 'published', fingerprint: 'published', result: { type: 'fixture' } },
     assets: [{ id: draft.prototypeId, mime: 'text/html', base64: prototype.toString('base64') }],
-    design: { id: designId, version: draft, frozen: version, run },
+    design: { id: designId, version: draft, frozen: version, run,
+      ...(options.privatePreview ? { pullRequest: privatePreview.pullRequest } : {}) },
   });
   let installedCommit = commit;
+  let previewBuild = { commit, url: privatePreview.url };
   const service = new DesignWorkspaceService(store, {
     ...(captureAcceptance && { captureAcceptance }),
-    resolveInstalled: async id => id === projectId ? { commit: installedCommit, url: previewUrl } : undefined,
+    resolveInstalled: async id => id === projectId && !options.privatePreview ? { commit: installedCommit, url: previewUrl } : undefined,
+    resolvePreview: async (id, number, expectedCommit) => options.privatePreview && id === projectId
+      && number === privatePreview.pullRequest && (!expectedCommit || expectedCommit === previewBuild.commit) ? previewBuild : undefined,
   });
   let sequence = 0;
   return {
     store,
     service,
     deploy(nextCommit: string) { installedCommit = nextCommit; },
+    publishPreview(next: { commit: string; url: string }) { previewBuild = next; },
+    async startPreview() {
+      const started = await service.command(projectId, implementer, {
+        type: 'acceptance.start', designId, requestId: `proof-${++sequence}`, version, pullRequest: privatePreview.pullRequest, commit,
+      });
+      return { ...comparison, runId: started.result.runId };
+    },
     command(type: string, actor = implementer, fields: Record<string, unknown> = {}) {
       return service.command(projectId, actor, { designId, runId, type, requestId: `proof-${++sequence}`, ...fields });
     },
@@ -154,7 +166,7 @@ async function setup(version = 22, captureAcceptance?: () => Promise<ReturnType<
   };
 }
 
-async function recheckOverHttp(service: DesignWorkspaceService) {
+async function recheckOverHttp(service: DesignWorkspaceService, selectedRunId = runId) {
   const app = express();
   app.use('/api', createDesignWorkspaceRouter({
     service,
@@ -167,13 +179,13 @@ async function recheckOverHttp(service: DesignWorkspaceService) {
     const request = () => fetch(origin + '/acceptance/recheck', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-draft-member': 'fixture-publisher' },
-      body: JSON.stringify({ type: 'acceptance.recheck', requestId: 'recheck-over-http', designId, runId, ...comparison }),
+      body: JSON.stringify({ type: 'acceptance.recheck', requestId: 'recheck-over-http', designId, runId: selectedRunId, ...comparison }),
     });
     const recorded = await request();
     expect(recorded.status).toBe(201);
     expect(recorded.headers.get('cache-control')).toBe('private, no-store');
     const result = await recorded.json();
-    expect(result).toMatchObject({ reused: false, result: { type: 'acceptance.recheck', designId, runId, ...comparison } });
+    expect(result).toMatchObject({ reused: false, result: { type: 'acceptance.recheck', designId, runId: selectedRunId, ...comparison } });
     const replay = await request();
     expect(replay.status).toBe(200);
     expect(await replay.json()).toEqual({ ...result, reused: true });
@@ -184,6 +196,55 @@ async function recheckOverHttp(service: DesignWorkspaceService) {
 }
 
 describe('程序验收的签收门槛', () => {
+  it('上线前在同一私有 PR 构建取证及独立复验后，可以签收该预览运行', async () => {
+    const capture = vi.fn(async (_input?: unknown) => observed());
+    const fixture = await setup(23, capture, { privatePreview: true });
+    const input = await fixture.startPreview();
+    expect(input.runId).toEqual(expect.any(String));
+    const sign = () => fixture.command('acceptance.sign', implementer, { runId: input.runId });
+    await expect(sign()).rejects.toMatchObject({ status: 409 });
+    await expect(fixture.command('acceptance.capture', designCredential, input)).rejects.toMatchObject({ status: 403 });
+    await fixture.command('acceptance.capture', implementer, input);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({
+      projectId, commit, preview: privatePreview, screen: expect.objectContaining({ impl: implementation }),
+    }));
+    await expect(sign()).rejects.toMatchObject({ status: 409 });
+    await expect(fixture.command('acceptance.recheck', member, input)).rejects.toMatchObject({ status: 403 });
+    await recheckOverHttp(fixture.service, input.runId);
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture.mock.calls[1]).toEqual(capture.mock.calls[0]);
+    expect(await sign()).toMatchObject({ result: { runId: input.runId, implementedVersion: 23 } });
+    expect((await fixture.entry()).runs.at(-1)).toMatchObject({
+      pullRequest: privatePreview.pullRequest, previewUrl: privatePreview.url, commit, signed: { by: implementer.id, verdict: 'passed' },
+    });
+  });
+
+  it('私有预览的 URL 或提交变化时，拒绝写入程序证据', async () => {
+    const capture = vi.fn(async () => observed());
+    const fixture = await setup(23, capture, { privatePreview: true });
+    const input = await fixture.startPreview();
+    const before = await fixture.store.read(projectId, 1);
+    fixture.publishPreview({ commit: 'e'.repeat(40), url: privatePreview.url });
+    await expect(fixture.command('acceptance.capture', implementer, input)).rejects.toMatchObject({
+      status: 409, message: expect.stringContaining('预览已经变化'),
+    });
+    fixture.publishPreview({ commit, url: privatePreview.url });
+    await expect(fixture.command('acceptance.capture', implementer, { ...input, preview: privatePreview })).rejects.toMatchObject({ status: 400 });
+    await expect(fixture.command('acceptance.capture', implementer, { ...input, screenId: 'other-screen' })).rejects.toMatchObject({ status: 404 });
+    expect(capture).not.toHaveBeenCalled();
+    capture.mockImplementationOnce(async () => {
+      fixture.publishPreview({ commit, url: privatePreview.url + 'new-deploy/' });
+      return observed();
+    });
+    await expect(fixture.command('acceptance.capture', implementer, input)).rejects.toMatchObject({
+      status: 409, message: expect.stringContaining('预览已经变化'),
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(await fixture.store.read(projectId, 1)).toEqual(before);
+    expect((await fixture.entry()).runs.at(-1)?.programEvidence).toBeUndefined();
+  });
+
   it('要求 CDS 采集证据，即使每个验收格都有旧式手工截图和通过结论', async () => {
     const fixture = await setup();
     expect((await fixture.entry()).runs[0].cells.every(cell => cell.status === 'passed' && cell.imageId)).toBe(true);

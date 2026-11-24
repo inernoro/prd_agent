@@ -1389,15 +1389,16 @@ export class DesignWorkspaceService {
         if (!capture) return rejectPlanning(503, 'design_capture_unavailable', '本实例的程序取证浏览器暂不可用。请在提供取证的 CDS 构建中运行。');
         const path = screen.impl ?? designDemoImplementationPath(screen);
         if (!path) return conflict('请补绑定该画面再取证');
-        if (run.target !== 'installed') conflict('程序取证需要在提供本地构建的主用 CDS 中运行');
+        const preview = run.target !== 'installed' && run.pullRequest !== undefined
+          ? { pullRequest: run.pullRequest, url: run.previewUrl } : undefined;
         const rules = version.acceptance.filter(rule => rule.slots.includes(slot)
           && (rule.screenId === screenId || !rule.screenId && designAcceptanceTarget(version, rule, slot)?.id === screenId));
-        const captureBinding = stableJson([screen, path, rules]);
+        const captureBinding = stableJson([screen, path, rules, ...(preview ? [preview] : [])]);
         if (!result) {
           binding = captureBinding;
           const prototype = await this.artifact(projectId, actor, version.prototypeId);
           result = capture({ prototype: prototype.bytes, screen: { ...screen, impl: path }, theme: visualSlotTheme(slot), rules, commit: run.commit,
-            version, projectId });
+            version, projectId, ...(preview ? { preview } : {}) });
         }
         if (binding !== captureBinding) conflict('画面绑定或规则已经变化，请重新取证');
         const value = await result;

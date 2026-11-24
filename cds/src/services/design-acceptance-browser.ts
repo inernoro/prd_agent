@@ -9,9 +9,13 @@ import { decorateDesignPrototype, designPrototypeCsp } from './design-prototype.
 import { compareDesignObservations, measureDesignPage, observeDesignRules } from './design-acceptance-observations.js';
 import { rejectPlanning } from './engineering-planning-input.js';
 
+type PreviewBuildInput = { projectId: string; commit: string; preview: { pullRequest: number; url: string } };
+type DesignBuild = { read: (file: string) => Promise<Buffer | undefined>; current: () => Promise<boolean> };
+export type OpenDesignPreviewBuild = (input: PreviewBuildInput) => Promise<DesignBuild | undefined>;
+
 type ProgramCaptureInput = {
   prototype: Buffer; screen: DesignScreen; theme: DesignTheme; rules: DesignRule[];
-  commit: string; version: DesignVersion; projectId: string;
+  commit: string; version: DesignVersion; projectId: string; preview?: PreviewBuildInput['preview'];
 };
 type ProgramCapture = {
   fixtureDigest: string; reference: Buffer; implementation: Buffer;
@@ -104,12 +108,23 @@ function fixtureAsset(value: unknown): { body: string; contentType: string } | u
     : { body, contentType: 'image/svg+xml' };
 }
 
-async function serveImplementation(route: Route, target: URL, dist: string, project: string, fixtures: FixtureSnapshot) {
+async function openInstalledBuild(webDist: string, commit: string): Promise<DesignBuild | undefined> {
+  const dist = await realpath(webDist).catch(() => undefined);
+  if (!dist) return undefined;
+  const read: DesignBuild['read'] = async file => {
+    const path = await realpath(resolve(dist, file)).catch(() => undefined);
+    return path?.startsWith(dist + sep) ? readFile(path).catch(() => undefined) : undefined;
+  };
+  return { read, current: async () => (await read('.build-sha'))?.toString('utf8').trim() === commit };
+}
+
+async function serveImplementation(route: Route, target: URL, build: DesignBuild, project: string, fixtures: FixtureSnapshot) {
   const request = route.request();
   const url = new URL(request.url());
   if (url.origin !== renderOrigin || request.method() !== 'GET') return route.abort();
   if (request.isNavigationRequest() && url.href === target.href.split('#')[0]) {
-    return route.fulfill({ body: await readFile(resolve(dist, 'index.html')), contentType: 'text/html; charset=utf-8' });
+    const body = await build.read('index.html');
+    return body ? route.fulfill({ body, contentType: 'text/html; charset=utf-8' }) : route.abort();
   }
   const name = url.pathname.replace(/^\/_cds(?=\/api\/)/, '');
   const base = '/api/projects/' + project + '/design';
@@ -130,12 +145,11 @@ async function serveImplementation(route: Route, target: URL, dist: string, proj
   }
   const type = mimeTypes[extname(name)];
   if (!type || !/^\/(?:assets\/)?[a-z0-9_.-]+$/i.test(name)) return route.abort();
-  const path = await realpath(resolve(dist, '.' + name)).catch(() => undefined);
-  if (!path?.startsWith(dist + sep)) return route.abort();
-  return route.fulfill({ body: await readFile(path), contentType: type });
+  const body = await build.read(name.slice(1));
+  return body ? route.fulfill({ body, contentType: type }) : route.abort();
 }
 
-async function readImplementation(browser: Browser, dist: string, target: URL, project: string,
+async function readImplementation(browser: Browser, build: DesignBuild, target: URL, project: string,
   runtime: ProgramCaptureInput, fixtures: FixtureSnapshot, reference: Buffer, date: Date) {
   const { screen, theme } = runtime;
   const context = await browser.newContext({
@@ -144,7 +158,7 @@ async function readImplementation(browser: Browser, dist: string, target: URL, p
     offline: true, serviceWorkers: 'block', deviceScaleFactor: 1,
   });
   try {
-    await context.route('**/*', route => serveImplementation(route, target, dist, project, fixtures).catch(() => route.abort()));
+    await context.route('**/*', route => serveImplementation(route, target, build, project, fixtures).catch(() => route.abort()));
     await context.addInitScript(value => {
       try { localStorage.setItem('cds_theme', value); } catch { /* sandboxed documents have no storage */ }
     }, theme);
@@ -213,11 +227,12 @@ async function readImplementation(browser: Browser, dist: string, target: URL, p
   }
 }
 
-export function createDesignAcceptanceBrowser(webDist: string, executablePath?: string): DesignAcceptanceCapture | undefined {
+export function createDesignAcceptanceBrowser(webDist: string, executablePath?: string,
+  openPreviewBuild?: OpenDesignPreviewBuild): DesignAcceptanceCapture | undefined {
   const executable = designBrowserPath(executablePath);
   if (!executable) return undefined;
   return async input => {
-    const { prototype, screen, theme, version, projectId, commit, rules } = input;
+    const { prototype, screen, theme, version, projectId, commit, rules, preview } = input;
     const accepted = new Set(version.delivery?.files.map(file => file.path));
     if (!accepted.has('src/fixtures.ts') || !accepted.has('src/data-design.ts')) {
       return rejectPlanning(422, 'design_capture_missing_fixture', '设计方需补齐稿件的两份虚构演示数据源。');
@@ -245,10 +260,12 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
       return rejectPlanning(422, 'design_capture_binding_mismatch', '实现方需核对绑定的页签或面板，与稿件演示场景对齐后再运行。');
     }
     const date = new Date(version.createdAt);
-    const dist = await realpath(webDist).catch(() => undefined);
-    if (!dist || !Number.isFinite(date.valueOf())) return undefined;
-    const checkBuild = async () => (await readFile(resolve(dist, '.build-sha'), 'utf8').catch(() => '')).trim() === commit;
-    if (!await checkBuild()) return undefined;
+    if (!Number.isFinite(date.valueOf())) return undefined;
+    const build = preview ? await openPreviewBuild?.({ projectId, commit, preview }) : await openInstalledBuild(webDist, commit);
+    if (!build || !await build.current()) {
+      if (preview) return rejectPlanning(409, 'design_capture_preview_build_unavailable', '当前 PR 预览的 CDS 构建无法核对。请从同一提交部署受管的 CDS 预览后重试。');
+      return undefined;
+    }
     const browser = await launchDesignBrowser(executable, evidenceRenderArgs);
     const expires = setTimeout(() => { void browser.close().catch(() => {}); }, 24_000);
     try {
@@ -259,9 +276,9 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
           return { fixtures, observed: await measureDesignPage(page), image };
         }, date);
       if (!prior) return rejectPlanning(422, 'design_capture_reference_unavailable', '原型未到达声明画面。请设计方核对进入动作、就绪标记和缩略图。');
-      const actual = await readImplementation(browser, dist, target, project, input, prior.fixtures, prior.image, date);
+      const actual = await readImplementation(browser, build, target, project, input, prior.fixtures, prior.image, date);
+      if (!await build.current()) return rejectPlanning(409, 'design_capture_commit_changed', '实现提交在截图时变化，请创建新的验收运行。');
       if (!actual) return rejectPlanning(422, 'design_capture_implementation_unavailable', '实现未到达同数据画面。请实现方核对路由或进入动作。');
-      if (!await checkBuild()) return rejectPlanning(409, 'design_capture_commit_changed', '实现提交在截图时变化，请创建新的验收运行。');
       return { fixtureDigest: designDigest(JSON.stringify(prior.fixtures)), reference: prior.image, implementation: actual.image,
         checks: compareDesignObservations(prior.observed, actual.observed, actual.pixelDifference, theme === 'light' && screen.themes.includes('dark')),
         rules: observeDesignRules(rules, actual.observed) };
