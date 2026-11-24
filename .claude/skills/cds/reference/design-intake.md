@@ -112,7 +112,8 @@ node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> -
 
 - 驳回时退出码为 1，逐条列出规则编号。按编号修改，修完重跑，不跳过、不手改结果。
 - 首发后第一次登记要带 `--design`。已经发布过、但还没有 `versions.json` 的稿件，先用 `--version <已发布的最新版>` 补登记，再出下一版。
-- 自检没通过（包括未验证）的项，登记在稿件目录的 `gate-allow.json` 里，写负责人和理由。新增例外要人确认。
+- 自检没通过（包括未验证）的项，登记在稿件目录的 `tools/gate-allow.json` 里，写负责人和理由。新增例外要人确认。
+- CDS 发布接口按同样的 G-01 到 G-09 复核。本地门禁先驳回，省一次往返；两边规则对不上时，以 CDS 的驳回为准，并把差异补进 `gate.mjs`。
 - 不能出现在包里的真实站点，用环境变量 `CDS_DESIGN_FORBIDDEN_HOSTS` 传入，不写进稿件包。
 - 单独算两个版本的差异：`version-diff.mjs --dir <目录> --from v<旧> --to v<新>`。交换两个参数就是回退方向。
 

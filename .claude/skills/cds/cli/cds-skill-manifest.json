@@ -22,7 +22,7 @@
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "003ae9a82cd1a9536cbd27c1842166513e4f629d046ff0a513bdef5b238ac46a",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
-    "cds/reference/design-intake.md": "a15f2234f079fcf23dd6a21f6cb45ee2676959770385bd6718d8b85a786c1495",
+    "cds/reference/design-intake.md": "efdb2a76ee701e6d37eb1eb9be38aee86d4ef631bc31454dab4eb1775a233de2",
     "cds/reference/design-loop.md": "b8669738ab6cbdee86cc99c7d8052cdafdaf14860f8fb8a645c5d724c08123f5",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
@@ -31,9 +31,9 @@
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/reference/test-loop.md": "087319472ed3cbb59c471628a5974e52832b8e3eff82e47025d94ce147a5b700",
-    "cds/scripts/design/changes-index.mjs": "bcbd5e370b7bc4fb88a71382fecf6fb67dbaf8e907885497df86b058ad3bd4f4",
-    "cds/scripts/design/gate.mjs": "d8271e85bc733036468cbcfe8250247fe501f5f47ef17fa13acc81c0c7492514",
-    "cds/scripts/design/release.mjs": "a0c1fa0506a4f07221ea9786ee1b00be8e0be506f4f36f0cec902bcb247f9e48",
+    "cds/scripts/design/changes-index.mjs": "a368f01702398ac860cc718e63268ffa4024caa4fe73fb20bf74e6ccb1de9afd",
+    "cds/scripts/design/gate.mjs": "12fbb2ab7bc7ad1a99c04ce0e4e7cf3b6591151f1db3408b29ceec07370d9517",
+    "cds/scripts/design/release.mjs": "2af3afdad92285786c2f3d0cb9c87b1cb926d09d87ee1f353072dd28aa6968c4",
     "cds/scripts/design/version-diff.mjs": "a5c63fe352a30cbc62cd3d5902186ed6be8d09e526986b18be4ce4f5c4b0160b",
     "cds/scripts/refresh_manifest.py": "1224db81f1e88ab49de9fd4cedfa303a0823a57db1f6cd43d9ffc701ab85d801",
     "cds/SKILL.md": "8b60b1f1faf3839ff13b316934552c8fb75e8d576b098a484698d164f142f986",
@@ -83,5 +83,5 @@
     "cds-design/SKILL.md": "6b64a4448121719416a6a03a172a238aa1c49bff532a95679dfebe5d71738f0f",
     "cds-test/SKILL.md": "5f5349bc2e02f7fe568aeb842209edb6acfe103b545e0ae552483c10230f7026"
   },
-  "generatedAt": "2026-11-24T08:32:39.782682+00:00"
+  "generatedAt": "2026-11-24T09:13:35.787348+00:00"
 }

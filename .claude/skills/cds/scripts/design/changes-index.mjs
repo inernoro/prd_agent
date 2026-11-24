@@ -21,7 +21,8 @@ const rows = registry.versions.map(v => {
   const files = [`${out}/summary.json`, `${out}/changes.md`, ...(full.has(v.version) ? [`${out}/source.diff`] : [])];
   return { version: v.version, commit: v.commit, files, acceptance: result.acceptance, screens: result.screens, sourceFiles: result.source.files };
 });
-const index = { to, note: '从每个旧版本升级到这次版本的净变化（回退用反方向同一程序）。程序生成，不要手改。', from: rows };
+/* 和 cdscli design scaffold 一样只写 to、from（CDS 发布接口按 G-07 核对）；说明写在 README.md */
+const index = { to, from: rows };
 writeFileSync(path.join(here, 'changes', 'index.json'), JSON.stringify(index, null, 1) + '\n');
 const md = [`# 版本差异索引（到 V${to}）`, '', '> 程序生成（changes-index.mjs）。实现停在哪一版，就看从那一版到 V' + to + ' 的那一行。中间版本加了又删的不会出现。', '',
   '| 从 | 验收项 新增/删除/改写 | 画面 新增/删除/改动 | 源码文件 | 文件 |', '|---|---|---|---|---|',

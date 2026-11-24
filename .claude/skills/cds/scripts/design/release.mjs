@@ -2,8 +2,9 @@
 // 设计稿件发布的固定流程（程序串起来，智能体不用记步骤、不用算版本号）。
 //
 //   node release.mjs check    [--dir <稿件目录>] [--full 1,11]
-//     版本号 = versions.json 最后一版 + 1（没有登记过就是 V1）。
-//     有旧版本时先生成 changes/（每个旧版本到这一版的净变化；--full 列出的起点附完整源码差异），再跑门禁 G-01 到 G-09。
+//     版本号 = versions.json 最后一版 + 1（没有登记过就是 V1；新稿件先写一份空的 versions.json）。
+//     先生成 changes/（每个旧版本到这一版的净变化，V1 时为空索引；--full 列出的起点附完整源码差异），再跑门禁 G-01 到 G-09。
+//     CDS 发布接口按同样的规则复核：版本登记和差异索引必须覆盖 CDS 里的全部历史，并指向这一版。
 //     通过后打印这次该用的发布命令；驳回就按规则编号修，修完重跑。
 //
 //   node release.mjs register --commit <来源提交> [--design <稿件编号>] [--dir <稿件目录>]
@@ -12,7 +13,7 @@
 //
 // 退出码：0 成功；1 门禁驳回或核对不一致；2 参数错误。
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,10 +30,12 @@ const run = (script, args) => spawnSync(process.execPath, [path.join(tools, scri
 
 if (command === 'check') {
   const version = last + 1;
-  if (last) {
-    const full = opt('full') ?? String(registry.versions[0].version);
-    if (run('changes-index.mjs', ['--dir', dir, '--to', String(version), '--full', full])) fail('生成版本差异失败', 1);
+  if (!existsSync(registryPath)) {
+    /* 和 cdscli design scaffold 写的一样；稿件编号和路径到 register 时再写（CDS 不接受空的稿件编号） */
+    writeFileSync(registryPath, JSON.stringify({ versions: [] }, null, 1) + '\n');
   }
+  const full = opt('full') ?? (last ? String(registry.versions[0].version) : '');
+  if (run('changes-index.mjs', ['--dir', dir, '--to', String(version), ...(full ? ['--full', full] : [])])) fail('生成版本差异失败', 1);
   if (run('gate.mjs', ['--dir', dir, '--expect', String(version)])) process.exit(1);
   const rel = path.relative(process.cwd(), dir).split(path.sep).join('/') || '.';
   console.log(last

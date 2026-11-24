@@ -3,7 +3,8 @@
 // 用法：node gate.mjs --expect <这次要发布的版本号> [--dir <稿件目录>]（默认当前目录）
 // 退出码：0 通过；1 驳回（逐条列出违反的规则）；2 参数错误。
 // 规则编号固定（G-01 到 G-09），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
-// 稿件自己的例外登记在 <稿件目录>/gate-allow.json（旧稿件也可放在 tools/gate-allow.json）。
+// 规则和 CDS 发布接口的 G-01 到 G-09 一致（技能 reference/design-intake.md「发布门禁」），本地先驳回，省一次往返。
+// 稿件自己的例外登记在 <稿件目录>/tools/gate-allow.json（CDS 只认这个位置）。
 // 不能出现在稿件包里的真实站点，用环境变量 CDS_DESIGN_FORBIDDEN_HOSTS（逗号分隔）传入，不必写进稿件包。
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -26,39 +27,44 @@ const walk = (rel = '') => readdirSync(path.join(root, rel), { withFileTypes: tr
   return entry.isDirectory() ? (['node_modules', '.git'].includes(entry.name) ? [] : walk(sub)) : [sub];
 });
 const files = walk();
-const allowFile = ['gate-allow.json', 'tools/gate-allow.json'].find(rel => files.includes(rel));
+const allowFile = files.includes('tools/gate-allow.json') ? 'tools/gate-allow.json' : undefined;
+if (files.includes('gate-allow.json')) reject('G-05', '例外登记要放在 tools/gate-allow.json，CDS 不认根目录的 gate-allow.json');
 const allow = (allowFile && readJson(allowFile)) ?? { checks: [] };
 
 /* G-01 稿件清单能解析，必填字段齐全、类型正确（CDS 必需：project、title、framework、screens；思路和原型有默认路径） */
 const d = readJson('design.json');
 if (!d) reject('G-01', 'design.json 无法解析');
-const required = { project: 'string', title: 'string', framework: 'string', screens: 'array', acceptance: 'array' };
-const optional = { id: 'string', frameworkVersion: 'number', prototypeVersion: 'number', date: 'string', rationale: 'string', prototype: 'string',
+const required = { project: 'string', title: 'string', framework: 'string', prototypeVersion: 'number', date: 'string', screens: 'array', acceptance: 'array' };
+const optional = { id: 'string', frameworkVersion: 'number', rationale: 'string', prototype: 'string',
   checks: 'string', docs: 'array', notes: 'string', source: 'string' };
 const typeOf = v => Array.isArray(v) ? 'array' : v === null ? 'null' : typeof v;
 if (d) {
   for (const [key, type] of Object.entries(required)) if (typeOf(d[key]) !== type) reject('G-01', `design.json 缺少或类型不对：${key}（应为 ${type}）`);
   for (const [key, type] of Object.entries(optional)) if (d[key] !== undefined && typeOf(d[key]) !== type) reject('G-01', `design.json 类型不对：${key}（应为 ${type}）`);
+  if (typeof d.date === 'string' && !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) reject('G-01', 'date 要用 YYYY-MM-DD');
+  if (typeof d.prototypeVersion === 'number' && !(Number.isInteger(d.prototypeVersion) && d.prototypeVersion > 0)) reject('G-01', 'prototypeVersion 要是正整数');
 }
 const rationale = d?.rationale ?? '思路.md';
 const prototype = d?.prototype ?? 'dist/index.html';
 const checksFile = d?.checks ?? (files.includes('checks/result.json') ? 'checks/result.json' : undefined);
 
-/* G-02 画面：编号唯一、地址以 # 开头、视口和主题合法、交互入口是选择器列表 */
+/* G-02 画面：编号唯一、地址以 #/ 开头、视口和主题合法、交互入口是选择器列表。规则和 CDS 服务端（design-package.ts）一致 */
 const screens = Array.isArray(d?.screens) ? d.screens : [];
 const screenIds = new Set();
 if (d && !screens.length) reject('G-02', '至少要有一个画面');
 for (const s of screens) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(s.id ?? '')) reject('G-02', `画面编号不合法：${s.id}`);
+  if (typeof s.name !== 'string' || !s.name.trim() || s.name.length > 120) reject('G-02', `${s.id} 的名称要有，且不超过 120 字`);
   if (screenIds.has(s.id)) reject('G-02', `画面编号重复：${s.id}`); screenIds.add(s.id);
-  if (typeof s.route !== 'string' || !s.route.startsWith('#')) reject('G-02', `${s.id} 的地址要以 # 开头`);
+  if (typeof s.route !== 'string' || !s.route.startsWith('#/')) reject('G-02', `${s.id} 的地址要以 #/ 开头`);
   if (!['desktop', 'phone'].includes(s.viewport)) reject('G-02', `${s.id} 的视口只能是 desktop 或 phone`);
   if (!Array.isArray(s.themes) || !s.themes.length || s.themes.some(t => !['light', 'dark'].includes(t))) reject('G-02', `${s.id} 的主题只能是 light、dark`);
-  if (s.entryActions !== undefined && (!Array.isArray(s.entryActions) || s.entryActions.some(a => typeof a !== 'string' || !a.trim()))) reject('G-02', `${s.id} 的 entryActions 必须是选择器列表`);
+  if (s.entryActions !== undefined && (!Array.isArray(s.entryActions) || s.entryActions.length > 6 || s.entryActions.some(a => typeof a !== 'string' || !a.trim() || a.length > 300))) reject('G-02', `${s.id} 的 entryActions 必须是不超过 6 个、每个不超过 300 字的选择器`);
   if (s.entryActions?.length && (typeof s.entryReadySelector !== 'string' || !s.entryReadySelector)) reject('G-02', `${s.id} 有交互入口，要写 entryReadySelector`);
 }
 
-/* G-03 验收项：不超过 60 条（CDS 上限）、编号唯一、指向存在的画面、写了规则；测量项写清楚测什么 */
+/* G-03 验收项：不超过 60 条（CDS 上限）、编号唯一、指向存在的画面、写了规则；测量项写清楚测什么。级别、适用视口、文字长度和 CDS 服务端一致 */
+const slotIds = ['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark'];
 const acceptance = Array.isArray(d?.acceptance) ? d.acceptance : [];
 if (acceptance.length > 60) reject('G-03', `验收项 ${acceptance.length} 条，超过 CDS 上限 60`);
 const ruleIds = new Set();
@@ -68,6 +74,10 @@ for (const a of acceptance) {
   if (a.screenId !== undefined && !screenIds.has(a.screenId)) reject('G-03', `${a.id} 指向不存在的画面：${a.screenId}`);
   if (!['measure', 'human', 'screenshot'].includes(a.how)) reject('G-03', `${a.id} 的检查方式只能是 measure、human、screenshot`);
   if (!(a.rule ?? '').trim()) reject('G-03', `${a.id} 要写规则`);
+  if ((a.rule ?? '').length > 600 || (a.expected ?? '').length > 800) reject('G-03', `${a.id} 的规则不超过 600 字、预期不超过 800 字`);
+  if (a.priority !== undefined && !['normal', 'high'].includes(a.priority)) reject('G-03', `${a.id} 的级别只能是 normal 或 high，现在是 ${a.priority}`);
+  if (a.slots !== undefined && (!Array.isArray(a.slots) || !a.slots.length || a.slots.some(x => !slotIds.includes(x)))) reject('G-03', `${a.id} 的适用视口和主题只能是 ${slotIds.join('、')}`);
+  if (a.probe !== undefined && (a.how !== 'measure' || a.probe?.type !== 'horizontal-overflow')) reject('G-03', `${a.id} 的 probe 只能用于测量项，类型是 horizontal-overflow`);
   if (a.how === 'measure' && !a.probe && !/检查：/.test(a.expected ?? '')) reject('G-03', `${a.id} 是测量项，要有 probe，或在预期里写「检查：」说明测什么`);
 }
 
@@ -105,11 +115,12 @@ if (files.includes('交付说明.md') && /__[A-Z]+__|TODO|待填/.test(read('交
 /* G-07 版本连续、差异齐全：版本号接着 versions.json；有旧版本时，changes/index.json 写到这一版，覆盖每个旧版本，文件都在 */
 const registry = readJson('versions.json');
 const registered = registry?.versions ?? [];
-if (!registry && expect !== 1) reject('G-07', `缺少 versions.json。已发布过的稿件先登记最新已发布版本：node release.mjs register --dir <稿件目录> --design <稿件编号> --version ${expect - 1} --commit <来源提交>`);
+/* 和 CDS 发布接口一致：新稿件（V1）也要带 versions.json 和 changes/index.json，索引指向这一版、覆盖登记的全部历史（V1 时为空） */
+if (!registry) reject('G-07', expect === 1 ? '缺少 versions.json：先运行 release.mjs check 生成' : `缺少 versions.json。已发布过的稿件先登记最新已发布版本：node release.mjs register --dir <稿件目录> --design <稿件编号> --version ${expect - 1} --commit <来源提交>`);
 else {
   const last = registered.at(-1)?.version ?? 0;
   if (expect !== last + 1) reject('G-07', `要发布的版本必须是 V${last + 1}（versions.json 登记到 V${last}）`);
-  if (registered.length) {
+  {
     const index = readJson('changes/index.json');
     if (!index) reject('G-07', '缺少 changes/index.json（用 changes-index.mjs 生成）');
     else {
