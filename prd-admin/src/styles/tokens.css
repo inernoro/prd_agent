@@ -1548,6 +1548,7 @@ html, body {
  * 因为 AppShell <main> 是 transparent，这层背景能穿透到页面内容与玻璃卡背后。
  */
 .app-aurora {
+  --app-paper-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='grain' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='1' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23grain)' opacity='.09'/%3E%3C/svg%3E");
   background:
     radial-gradient(62% 56% at 14% 12%, rgba(255, 255, 255, 0.18) 0%, transparent 60%),
     radial-gradient(58% 52% at 86% 16%, rgba(248, 250, 252, 0.12) 0%, transparent 60%),
@@ -1559,10 +1560,19 @@ html, body {
   background-position: 0% 0%;
   animation: app-aurora-drift 34s ease-in-out infinite alternate;
 }
+/* 暗色环境光和纸纹独立绘制，漂移时底纹固定，素色与玻璃材质共用。 */
+html:not([data-theme="light"]):not([data-entry-arriving]) .app-aurora::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--app-paper-grain) 0 0 / 100px 100px repeat;
+  opacity: 0.6;
+}
 [data-theme="light"] .app-aurora {
   /* 纸纹只铺在工作区底层。单色噪点以 100px 平铺，滚动内容时纹理留在原位。 */
   background-color: color-mix(in srgb, var(--bg-base) 25%, var(--bg-card));
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='grain' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='1' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23grain)' opacity='.09'/%3E%3C/svg%3E");
+  background-image: var(--app-paper-grain);
   background-size: 100px 100px;
   background-repeat: repeat;
   animation: none;
