@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowRight, Check, MessageSquare, PanelRightClose, RotateCcw } from 'lucide-react';
 import type { DesignComment, DesignEntry, DesignRequirement, DesignTheme, DesignVersion, DesignWorkspace } from '../../../../src/shared/design-workspace';
 import { designVisualKey } from '../../../../src/shared/design-visual';
-import { designArtifact, designFeedbackAwaitsViewer } from './design-ui';
+import { designArtifact, designFeedbackAwaitsViewer, isDesignPhoneViewport } from './design-ui';
 import { rationaleOrder } from './DesignRationale';
 import { needTrace } from './DesignNeed';
 export type DesignFullView = 'need' | 'notes' | 'delivery';
@@ -64,7 +64,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
     return screen ? [{ screen, title: row.title || screen.name, tip: row.tip }] : [];
   }) ?? [];
   const listed = declared.length && !all && (!screenId || declared.some(step => step.screen.id === screenId)) ? declared : every;
-  const phone = typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches;
+  const phone = isDesignPhoneViewport();
   const phones = phone ? listed.filter(step => step.screen.viewport === 'phone') : [];
   const desktop = phone ? listed.filter(step => step.screen.viewport !== 'phone') : listed;
   const steps = [...phones, ...desktop];

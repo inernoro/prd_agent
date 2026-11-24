@@ -55,7 +55,7 @@ export const scenes: Record<string, Scene> = {
           <rect x={220 + 200 * .26 - 4} y={60 + 150 * .38 - 4} width={200 * .4 + 18} height={150 * .22 + 8} rx={4} className="mx-diff" opacity={k * (.6 + .4 * pulse(p))} />
           <rect x={220 - 3} y={57} width={206} height={150 * .12 + 6} rx={4} className="mx-diff" opacity={seg(p, .35, .55) * (.6 + .4 * pulse(p))} />
           <g opacity={seg(p, .55, .8)}><Pill x={455} y={95} w={130} text="本屏 2 处不同" tone="bad" />
-            <text x={455} y={140} className="mx-small">① 主按钮右移 10px</text><text x={455} y={160} className="mx-small">② 页头底色不同</text></g></g>;
+            <text x={455} y={140} className="mx-small">① 主按钮右移 10 像素</text><text x={455} y={160} className="mx-small">② 页头底色不同</text></g></g>;
       }
       const cols = ['桌面浅', '桌面深', '手机浅', '手机深']; const rows = ['设计库', '打开稿件', '验收总览', '对照图', '记录'];
       const missing = new Set([7, 13]);
@@ -88,7 +88,7 @@ export const scenes: Record<string, Scene> = {
           <circle cx={lerp(220, 220, k)} cy={130} r={lerp(0, 64, k)} className="mx-lens" />
           <g opacity={seg(p, .4, .6)}><line x1={150} y1={40 + 210 * .38} x2={290} y2={40 + 210 * .38} className="mx-guide" />
             <line x1={150} y1={40 + 210 * .19 + 27} x2={290} y2={40 + 210 * .19 + 27} className="mx-guide" /></g>
-          <g opacity={seg(p, .6, .85)}><Pill x={400} y={100} w={190} text="V-01 对齐：右移 6px" tone="bad" />
+          <g opacity={seg(p, .6, .85)}><Pill x={400} y={100} w={190} text="V-01 对齐：右移 6 像素" tone="bad" />
             <text x={400} y={146} className="mx-small">证据：主按钮左边 x=148，</text><text x={400} y={166} className="mx-small">标题左边 x=142</text></g></g>;
       }
       const blocks = ['页头', '导航', '内容', '表格', '弹窗'];
@@ -152,7 +152,7 @@ export const scenes: Record<string, Scene> = {
         return <g><line x1={xs[0]} y1={110} x2={xs[3]} y2={110} className="mx-track" />
           {steps.map((s, i) => <g key={s}><circle cx={xs[i]} cy={110} r={16} className="mx-soft" /><text x={xs[i]} y={115} textAnchor="middle" className="mx-small">{i + 1}</text>
             <text x={xs[i]} y={150} textAnchor="middle" className="mx-label">{s}</text>
-            {beat === 1 && <g opacity={seg(p, i * .2, i * .2 + .2)}><text x={xs[i]} y={186} textAnchor="middle" className="mx-small">预期 ✓</text>
+            {beat === 1 && <g opacity={seg(p, i * .2, i * .2 + .2)}><text x={xs[i]} y={186} textAnchor="middle" className="mx-small">预期通过</text>
               <text x={xs[i]} y={206} textAnchor="middle" className="mx-small">实际</text><Tick x={xs[i]} y={230} ok={i !== 2} /></g>}</g>)}
           {beat === 0 && <g transform={`translate(${pos} 70)`}><circle r={14} className="mx-accent" /><text y={5} textAnchor="middle" className="mx-on">人</text></g>}
           {beat === 1 && <g opacity={seg(p, .8, 1)}><text x={320} y={275} textAnchor="middle" className="mx-label">第 3 步对不上 → 流程不通过</text></g>}</g>;

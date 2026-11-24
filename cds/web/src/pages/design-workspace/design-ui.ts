@@ -11,6 +11,9 @@ export function designDetailPath(projectId: string, designId: string, version?: 
 }
 export const designArtifact = (projectId: string, artifactId: string) => apiUrl(`${designPath(projectId)}/artifacts/${encodeURIComponent(artifactId)}`);
 export const latestDesign = (entry: DesignEntry): DesignVersion => entry.versions[entry.versions.length - 1];
+export const isDesignPhoneViewport = () => typeof window !== 'undefined'
+  && window.matchMedia?.('(max-width: 40rem)').matches === true;
+
 export function defaultDesignScreen(version: DesignVersion, requested?: string) {
   const selected = version.screens.find(screen => screen.id === requested);
   if (selected) return selected;
@@ -18,7 +21,7 @@ export function defaultDesignScreen(version: DesignVersion, requested?: string) 
     const screen = version.screens.find(candidate => candidate.id === step.screen);
     return screen ? [screen] : [];
   }) ?? [];
-  if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches) {
+  if (isDesignPhoneViewport()) {
     const mobile = demo.find(screen => screen.viewport === 'phone') ?? version.screens.find(screen => screen.viewport === 'phone');
     if (mobile) return mobile;
   }
