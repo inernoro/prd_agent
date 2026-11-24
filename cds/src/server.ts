@@ -1903,7 +1903,7 @@ function projectKeyAllowsRequest(
   req: express.Request,
   key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>,
   state: StateService,
-  member?: PairingMember,
+  clusterProjects?: Readonly<Record<string, string>>,
 ): boolean {
   if (isLegacyProjectAgentKey(key)) return true;
   if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
@@ -1914,7 +1914,9 @@ function projectKeyAllowsRequest(
   if (!projectPath) return hasProjectAccess;
   try {
     const target = decodeURIComponent(projectPath[1]);
-    if (member ? member.projects[key.projectId] !== target : state.getProject(target)?.id !== key.projectId) return false;
+    const authorizedProject = clusterProjects ? clusterProjects[key.projectId] : key.projectId;
+    const requestedProject = clusterProjects ? target : state.getProject(target)?.id;
+    if (!authorizedProject || requestedProject !== authorizedProject) return false;
   } catch { return false; }
   const suffix = projectPath[2]?.toLowerCase() ?? '';
   const method = req.method;
@@ -1943,7 +1945,11 @@ function projectKeyAllowsRequest(
 }
 
 /** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+function resolveAiSession(
+  req: express.Request,
+  stateService?: StateService,
+  clusterProjects?: Readonly<Record<string, string>>,
+): ApprovedAiSession | null {
   const cluster = trustedClusterIdentity(req);
   if (cluster) return cluster.aiSession ?? null;
   const headerKey = presentedAiAccessKey(req);
@@ -2013,7 +2019,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && headerKey.startsWith('cdsp_')) {
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
-        if (!projectKeyAllowsRequest(req, match, stateService, member)) return null;
+        if (!projectKeyAllowsRequest(req, match, stateService, clusterProjects)) return null;
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -3233,7 +3239,7 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
       const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
-      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService) || (legacyMachine
+      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService, member.projects) || (legacyMachine
         ? { id: 'legacy-machine', agentName: 'AI (legacy machine credential)', token: '', approvedAt: '', expiresAt: '' } : null);
       if (!user && !aiSession) { res.status(401).json({ error: 'cluster_credential_rejected' }); return; }
       const stamps = virtual as express.Request & {
