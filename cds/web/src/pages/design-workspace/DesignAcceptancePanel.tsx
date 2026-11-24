@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designAcceptanceTarget, designDemoImplementationPath, designProgramEvidenceRequired, designSlots, type DesignCell, type DesignEntry, type DesignRequirement, type DesignRun, type DesignVersion } from '../../../../src/shared/design-workspace';
-import { designProgramStatus, designVisualRequired, designVisualSummary } from '../../../../src/shared/design-visual';
+import { designProgramStatus, designVisualKey, designVisualRequired, designVisualSlots, designVisualSummary } from '../../../../src/shared/design-visual';
 import { designMethodPlanEnabled, designMethodsState, designRuleApplicable, type DesignMethodStatus } from '../../../../src/shared/design-methods';
 import { AcceptanceMethodDetails, AcceptanceMethodIntro, AcceptanceMethodOverview, AcceptanceMethodTabs,
   type AcceptanceCheck } from './DesignAcceptanceMethods';
@@ -18,17 +18,16 @@ import { cellNames, designArtifact, designCheckRows, designDate, designPath, rul
 import { planningPath, usePlanningRead } from '../engineering-planning/planning-ui';
 import './design-v17-acceptance.css';
 
-function BindImplementation({ version, onlyUnbound, preferred, busy, close, bind }: {
-  version: DesignVersion; onlyUnbound: boolean; preferred: string | null; busy: boolean; close: () => void;
+function BindImplementation({ choices, preferred, busy, close, bind }: {
+  choices: DesignVersion['screens']; preferred: string | null; busy: boolean; close: () => void;
   bind: (fields: Record<string, unknown>) => Promise<boolean>;
 }) {
-  const choices = onlyUnbound ? version.screens.filter(screen => !screen.impl) : version.screens;
   const initial = choices.find(screen => screen.id === preferred) ?? choices.find(screen => !screen.impl) ?? choices[0];
   const [screenId, selectScreen] = useState(initial.id);
   const [path, setPath] = useState(initial.impl ?? '');
   const [ready, setReady] = useState(initial.readySelector ?? '');
   const select = (id: string) => {
-    const screen = version.screens.find(row => row.id === id);
+    const screen = choices.find(row => row.id === id);
     selectScreen(id);
     setPath(screen?.impl ?? '');
     setReady(screen?.readySelector ?? '');
@@ -177,7 +176,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const demoReady = programRequired ? version.screens.filter(screen => !screen.impl && designDemoImplementationPath(screen)).length : 0;
   const located = bound + demoReady;
   const bindingSummary = `${bound}/${version.screens.length} 个真实入口已绑定${demoReady ? `，${demoReady} 个可用演示数据进入` : ''}`;
-  const canBindMissing = (requiresVisual || methodData) && runs.length > 0 && !runs.some(row => row.signed) && version.screens.some(screen => !screen.impl);
+  const latestEvidence = runs.at(-1)?.programEvidence;
+  const bindingChoices = runs.length ? version.screens.filter(screen => !screen.impl
+    && !designVisualSlots(screen).some(slot => latestEvidence?.[designVisualKey(screen.id, slot)])) : version.screens;
+  const canBindMissing = (requiresVisual || methodData) && runs.length > 0 && !runs.some(row => row.signed) && bindingChoices.length > 0;
   const visualWritable = evidenceWritable && isBaseline && run?.id === entry.runs.at(-1)?.id;
   const verdictWord = linkedChanged ? '针对旧 PR' : locationChanged ? '针对旧预览' : stale ? '针对旧提交' : run?.signed ? '已签收' : run ? verdictNames[state] : '还没开始';
   const lead = linkedChanged ? '关联的 PR 已经换了，这次结果只针对旧 PR。请对当前 PR 重新运行。'
@@ -451,7 +453,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
           <ul className="dw-dl-plain">{shared.map(items => <li key={items[0].id}>{items.map(screen => screen.name).join('、')} <code>{items[0].route}</code> · 在画布内切换状态</li>)}</ul></details>}</li>}
     </ol>
     </div>
-    {binding && <BindImplementation version={version} onlyUnbound={runs.length > 0} preferred={params.get('screen')} busy={busy}
+    {binding && bindingChoices.length > 0 && <BindImplementation choices={bindingChoices} preferred={params.get('screen')} busy={busy}
       close={() => setBinding(false)} bind={fields => send('implementation.bind', { version: version.version, ...fields })} />}
     {methodToDisable && <Dialog open onOpenChange={open => { if (!open && !busy) setDisablePanel(false); }}>
       <DialogContent className="dw-modal dw-surface dw-disable-dialog">

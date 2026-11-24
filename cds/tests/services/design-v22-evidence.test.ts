@@ -108,12 +108,14 @@ function published(version: number): DesignVersion {
   };
 }
 
-async function setup(version = 22, captureAcceptance?: () => Promise<ReturnType<typeof observed> | undefined>, bothThemes = false) {
+async function setup(version = 22, captureAcceptance?: () => Promise<ReturnType<typeof observed> | undefined>,
+  options: { bothThemes?: boolean; unbound?: boolean } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cds-design-evidence-'));
   directories.push(directory);
   const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
   const draft = published(version);
-  if (bothThemes) {
+  if (options.unbound) draft.screens[0] = { ...draft.screens[0], route: '#/design?project=fixture-virtual', impl: null };
+  if (options.bothThemes) {
     draft.screens[0].themes.push('dark');
     draft.acceptance[0].slots = ['desktop-light', 'desktop-dark'];
   }
@@ -281,7 +283,7 @@ describe('程序验收的签收门槛', () => {
       .mockResolvedValueOnce(result).mockResolvedValueOnce(result);
     const otherData = { ...result, fixtureDigest: 'e'.repeat(64) };
     capture.mockResolvedValueOnce(otherData);
-    const fixture = await setup(22, capture, true);
+    const fixture = await setup(22, capture, { bothThemes: true });
     await fixture.command('acceptance.capture', implementer, comparison);
     await fixture.command('acceptance.recheck', designer, comparison);
     const dark = { ...comparison, slot: 'desktop-dark' };
@@ -306,6 +308,17 @@ describe('程序验收的签收门槛', () => {
     await fixture.command('acceptance.recheck', designer, comparison);
     expect((await fixture.entry()).runs[0].verdict).toBe('needs_evidence');
     await expect(fixture.command('acceptance.sign')).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('未显式绑定的画面取证后，本次运行仍保留原进入地址', async () => {
+    const fixture = await setup(23, async () => observed(), { unbound: true });
+    await fixture.command('acceptance.capture', implementer, comparison);
+    await fixture.command('acceptance.recheck', designer, comparison);
+    await expect(fixture.service.command(projectId, designer, {
+      type: 'implementation.bind', requestId: 'change-captured-path', designId, version: 23,
+      screens: [{ screenId: 'main', path: `/design?project=${projectId}`, readySelector: 'main' }],
+    })).rejects.toMatchObject({ status: 409, message: expect.stringContaining('已经取证') });
+    expect((await fixture.entry()).runs[0].visual?.['main/desktop-light'].measured?.path).toBe('/design?project=fixture-virtual');
   });
 
   it('取证过程中部署提交改变时，丢弃本次浏览结果', async () => {

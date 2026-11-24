@@ -1154,7 +1154,8 @@ export class DesignWorkspaceService {
     designRecord(input, '实现画面定位', ['type', 'requestId', 'designId', 'version', 'screens']);
     const version = implementationVersion(entry, versionOf(entry, input.version));
     const runs = entry.runs.filter(run => run.version === version.version);
-    if (runs.length && (!(designVisualRequired(version, runs.at(-1)) || designMethodPlanEnabled(version)) || runs.some(run => run.signed))) {
+    const latest = runs.at(-1);
+    if (latest && (!(designVisualRequired(version, latest) || designMethodPlanEnabled(version)) || runs.some(run => run.signed))) {
       conflict('已有验收记录，请在新版本更新画面定位');
     }
     if (!Array.isArray(input.screens) || !input.screens.length || input.screens.length > version.screens.length) {
@@ -1167,6 +1168,9 @@ export class DesignWorkspaceService {
       if (seen.has(screenId)) invalidDesign('同一次操作不能重复指定画面');
       const screen = version.screens.find(screen => screen.id === screenId) ?? missing('该版本没有此画面');
       if (runs.length && screen.impl) conflict('已有验收记录，只能补充尚未绑定的画面');
+      if (designVisualSlots(screen).some(slot => latest?.programEvidence?.[designVisualKey(screenId, slot)])) {
+        conflict('此画面已经取证，请创建新的验收运行后再补绑定');
+      }
       seen.add(screenId);
       return { screenId, path: localDesignPath(row.path), readySelector: planningText(row.readySelector, '画面就绪选择器', 300), by: actor.label, at: now };
     });
