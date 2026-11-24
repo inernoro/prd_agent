@@ -355,7 +355,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
     /// <summary>
     /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条
-    /// 带最后预览的结构化失败 Run；它只可展示，不能伪装成可续跑任务。浏览器存储只作加速，
+    /// 可重试的网页生成失败 Run，或带最后预览的结构化失败 Run。浏览器存储只作加速，
     /// 换标签页、设备或禁用 sessionStorage 也能找回同一条 Run。
     /// </summary>
     [HttpGet("runs/active")]
@@ -388,7 +388,8 @@ public sealed class DesignArtifactsController : ControllerBase
         var run = candidates.FirstOrDefault(item => item.Status is RunStatuses.Queued or RunStatuses.Running or RunStatuses.Committing);
         if (run == null && candidates.FirstOrDefault() is { } latest && IsRestartableInterrupted(latest))
             run = latest;
-        if (run == null && includeLatestFailed && candidates.FirstOrDefault() is { } latestFailed && IsViewableFailedRun(latestFailed))
+        if (run == null && includeLatestFailed && candidates.FirstOrDefault() is { } latestFailed
+            && (IsRestartableWebGenerationFailure(latestFailed) || IsViewableFailedRun(latestFailed)))
             run = latestFailed;
         return Ok(ApiResponse<object?>.Ok(run == null ? null : ToDto(run)));
     }
@@ -405,7 +406,7 @@ public sealed class DesignArtifactsController : ControllerBase
         && run.LatestPreviewRevision.HasValue;
 
     /// <summary>
-    /// 服务重启中断后以原 Run 的冻结输入创建新 Run。幂等键决定新 runId，
+    /// 以失败 Run 的冻结输入创建新 Run。幂等键决定新 runId，
     /// 重复点击只返回同一条新任务；原 Run 的中断原因保持不变。
     /// </summary>
     [HttpPost("runs/{runId}/restart")]
@@ -424,10 +425,14 @@ public sealed class DesignArtifactsController : ControllerBase
                 "请回到原工作流，重新运行对应节点；原输入和报告仍然保留"));
         var isInterruptedRestart = IsRestartableInterrupted(source);
         var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
-        if (!isInterruptedRestart && !isPresentationQualityRepair)
+        var isWebGeneration = source.ArtifactType == DesignArtifactTypes.WebPage
+            && source.Operation == DesignArtifactOperations.Generate;
+        var canRestart = isInterruptedRestart || isPresentationQualityRepair
+            || IsRestartableWebGenerationFailure(source);
+        if (!canRestart)
             return Conflict(ApiResponse<object>.Fail(
                 "DESIGN_ARTIFACT_NOT_RESTARTABLE",
-                "只有被服务重启中断的任务或保留了受限候选的演示稿质量失败任务才能用冻结输入重开"));
+                "这条任务无法用原资料重试，请回到工作台重新发起"));
         var key = request.IdempotencyKey?.Trim() ?? string.Empty;
         if (key.Length is < 8 or > 128 || key.Any(char.IsControl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "重开请求缺少有效的幂等键"));
@@ -451,6 +456,26 @@ public sealed class DesignArtifactsController : ControllerBase
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
                 capability?.Reason ?? "设计服务尚未恢复，冻结输入已保留，请稍后再重开"));
+
+        if (isWebGeneration)
+        {
+            if (source.DestinationTeamId is { } teamId
+                && !await _sites.CanPublishIntoTeamAsync(userId, teamId, CancellationToken.None))
+                return StatusCode(403, ApiResponse<object>.Fail(
+                    ErrorCodes.PERMISSION_DENIED, "你已无法在原团队空间保存网页，请选择其他有权限的空间重新生成"));
+            try
+            {
+                // 校验当前访问权限和资料版本，实际重试仍使用原任务已冻结的内容。
+                if (source.KnowledgeReferences.Count > 0)
+                    await _knowledgeSnapshots.ResolveForRunAsync(userId, source.KnowledgeReferences.Select(reference =>
+                        new DesignKnowledgeReferenceIdentity(reference.EntryId, reference.StoreId ?? string.Empty, reference.ContentHash))
+                        .ToList(), CancellationToken.None);
+            }
+            catch (DesignKnowledgeSnapshotException ex)
+            {
+                return KnowledgeReferenceFailure(ex);
+            }
+        }
 
         MdToPptRun? sourceCompatibility = null;
         if (source.ArtifactType == DesignArtifactTypes.HtmlPpt)
@@ -594,6 +619,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = restarted.TaskPermitId,
             RunId = restarted.Id,
             Kind = RunKinds.DesignArtifact,
             Status = RunStatuses.Queued,
@@ -1207,6 +1233,8 @@ public sealed class DesignArtifactsController : ControllerBase
         run.LinkedRunId,
         run.RestartedFromRunId,
         run.Error,
+        failureCode = run.LifecycleFailureCode,
+        retryInstruction = IsRestartableWebGenerationFailure(run) ? run.Instruction : null,
         runtimeFailure = ToRuntimeFailureDto(run.RuntimeFailure),
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
@@ -1234,6 +1262,21 @@ public sealed class DesignArtifactsController : ControllerBase
         && (run.PhaseCode == DesignArtifactPhaseCodes.Interrupted
             || run.LifecycleFailureCode == WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode
             || string.Equals(run.Error, HostedSiteEditRunWorker.RestartInterruptedMessage, StringComparison.Ordinal));
+
+    internal static bool IsRestartableWebGenerationFailure(DesignArtifactRun run) =>
+        run.DeploymentSlug == DeploymentScope.Current
+        && run.Runtime == DesignArtifactRuntimes.OpenDesign
+        && run.ArtifactType == DesignArtifactTypes.WebPage
+        && run.Operation == DesignArtifactOperations.Generate
+        && run.SourceSurface is DesignArtifactSourceSurfaces.WebHosting or DesignArtifactSourceSurfaces.KnowledgeBase
+        && run.Status == RunStatuses.Error
+        && !string.IsNullOrWhiteSpace(run.Instruction)
+        && (run.KnowledgeReferences.Count > 0 || run.UploadedSources is { Count: > 0 })
+        && string.IsNullOrWhiteSpace(run.TargetSiteId)
+        && string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+        && string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)
+        && string.IsNullOrWhiteSpace(run.ArtifactSiteId)
+        && string.IsNullOrWhiteSpace(run.ArtifactRevisionId);
 
     private static bool IsRestartablePresentationQualityFailure(DesignArtifactRun run) =>
         run.Runtime == DesignArtifactRuntimes.OpenDesign
@@ -1264,6 +1307,7 @@ public sealed class DesignArtifactsController : ControllerBase
         string keyHash,
         DateTime now) => new()
     {
+        TaskPermitId = TaskExecutionContext.Current?.PermitId,
         Id = runId,
         DeploymentSlug = DeploymentScope.Current,
         UserId = source.UserId,

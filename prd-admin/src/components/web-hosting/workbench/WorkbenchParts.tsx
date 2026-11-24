@@ -263,6 +263,7 @@ export function WorkbenchComposer({
   placeholder,
   disabled,
   plusItems,
+  showAddLabel,
   chips,
   options,
   sendLabel,
@@ -278,6 +279,7 @@ export function WorkbenchComposer({
   placeholder: string;
   disabled?: boolean;
   plusItems: PlusMenuItem[];
+  showAddLabel?: boolean;
   chips: ComposerChip[];
   options?: ReactNode;
   sendLabel: string;
@@ -336,10 +338,11 @@ export function WorkbenchComposer({
         aria-expanded={plusOpen}
         disabled={disabled}
         onClick={() => setPlusOpen((current) => !current)}
-        className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2"
-        style={{ color: 'var(--text-primary)', background: plusOpen ? 'var(--bg-tertiary)' : undefined }}
+        className={`flex h-8 items-center justify-center rounded-full transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 ${showAddLabel ? 'gap-1 px-2.5 text-[12px] font-medium' : 'w-8'}`}
+        style={{ color: 'var(--text-primary)', background: plusOpen || showAddLabel ? 'var(--bg-tertiary)' : undefined }}
       >
-        <Plus size={18} />
+        <Plus size={showAddLabel ? 15 : 18} />
+        {showAddLabel && <span>添加资料</span>}
       </button>
       {plusOpen && (
         <div
@@ -558,7 +561,7 @@ export function WorkbenchPreview({ title, note, actions, children, nextHint, too
       <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-[14px]" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card)' }}>
         {children}
       </div>
-      <p className="text-[12px] leading-relaxed text-token-secondary">{nextHint}</p>
+      {nextHint && <p className="text-[12px] leading-relaxed text-token-secondary">{nextHint}</p>}
     </div>
   );
 }

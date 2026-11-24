@@ -43,7 +43,7 @@ import {
   type WorkbenchOutputForm,
 } from './outputForm';
 import { HtmlPptHandoffPanel } from './HtmlPptHandoffPanel';
-import { StyleGallery, presetSelection, selectionStyleId, type StyleGallerySelection } from './StyleGallery';
+import { DESIGN_SYSTEM_KEY_PREFIX, StyleGallery, presetSelection, selectionStyleId, type StyleGallerySelection } from './StyleGallery';
 import { StyleThumbnail } from './StyleThumbnail';
 import {
   AssistantBubble,
@@ -136,6 +136,7 @@ export default function NewSiteStage({
   const run = useSiteGenerationRun({
     destinationTeamId,
     hasInitialSource: Boolean(source),
+    initialEntryId: source?.entryId,
     onCreated: () => { /* 完成后由下面的 effect 交给修改阶段 */ },
   });
   const { reset: resetRun } = run;
@@ -187,6 +188,9 @@ export default function NewSiteStage({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { onBusyChange?.(run.generating); }, [onBusyChange, run.generating]);
+  useEffect(() => {
+    if (run.notice?.tone === 'error') onPaneChange('chat');
+  }, [onPaneChange, run.notice]);
 
   // 真实耗时只影响「预计多久」这句话，单独取、不挡资料与执行器的加载。
   useEffect(() => {
@@ -223,6 +227,12 @@ export default function NewSiteStage({
     || titleFromFileName(uploads.items.find((item) => item.status !== 'failed')?.fileName ?? '')
     || undefined;
   const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
+  const failedRun = run.failedRun;
+  const savedRequest = failedRun?.retryInstruction;
+  const failedMaterials = [
+    ...(failedRun?.knowledgeReferences ?? []).map((entry) => `知识库 · ${entry.title}`),
+    ...(failedRun?.uploadedSources ?? []).map((file) => `文件 · ${file.fileName}`),
+  ];
   const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const requestTiming = pickGenerationTiming(timingStats, REQUIRED_WEB_PAGE_RUNTIME);
   const eta = generationEtaShort(REQUIRED_WEB_PAGE_RUNTIME, requestTiming);
@@ -332,8 +342,29 @@ export default function NewSiteStage({
     : uploads.busy
       ? '文件还在上传，传完就能生成'
       : !hasSources
-        ? '先点左下角的 + 放入资料：知识库、文件或会议纪要都行'
+        ? '添加至少一份资料后即可生成'
         : '';
+
+  const restoreInputs = () => {
+    if (!failedRun || !savedRequest) return;
+    setInstruction(savedRequest);
+    setSelectedKnowledge(failedRun.knowledgeReferences.flatMap((entry): KnowledgeEntrySelection[] =>
+      entry.storeId ? [{ ...entry, storeId: entry.storeId, storeName: entry.storeName || '知识库' }] : []));
+    uploads.reset();
+    uploads.restoreReady(failedRun.uploadedSources ?? []);
+    const { styleId, designSystemId, styleName: savedStyleName } = failedRun;
+    if (designSystemId) {
+      const name = savedStyleName || '默认风格';
+      if (!styleId || styleId.startsWith(DESIGN_SYSTEM_KEY_PREFIX)) {
+        setStyleSelection({ kind: 'design-system', key: `${DESIGN_SYSTEM_KEY_PREFIX}${designSystemId}`, designSystemId, name });
+      } else if (styleId.startsWith('personal:')) {
+        setStyleSelection({ kind: 'personal', key: styleId, styleId, designSystemId, name, swatches: [] });
+      } else {
+        setStyleSelection({ kind: 'preset', key: styleId, styleId, designSystemId, name });
+      }
+    }
+    document.getElementById('workbench-new-instruction')?.focus();
+  };
 
   const send = () => {
     const route = sendRoute({
@@ -385,17 +416,31 @@ export default function NewSiteStage({
     conversationEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [run.generating, steps.length, run.notice, sent]);
   const styleName = styleSelection?.name ?? '默认风格';
+  const canLoadOriginalInputs = !instruction && uploads.items.length === 0
+    && selectedKnowledge.length === (source ? 1 : 0)
+    && (!source || selectedKnowledge[0]?.entryId === source.entryId);
+  const retry = () => {
+    setGalleryOpen(false);
+    setSheet(null);
+    handedOffRef.current = false;
+    if (savedRequest) setSent({
+      text: savedRequest,
+      chips: failedMaterials,
+      runtimeLabel: visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器',
+      styleName: failedRun?.styleName,
+    });
+    void run.restart();
+  };
 
   const conversation = (
     <>
-      <AssistantBubble>
-        <p className="font-semibold">{isPpt ? '把资料做成网页 PPT，发给客户看' : '把资料做成网页，发给客户看'}</p>
-        <p className="text-[12px] text-token-secondary">
-          {isPpt
-            ? '从 + 里放一篇知识库稿子，再用一句话说给谁看、想讲清什么。点下去会带着稿子和这句话去 HTML PPT 智能体：先出大纲给你确认，再逐页生成；发布后进网页托管，按幻灯片播放，同样能「发布给客户」。'
-            : '点输入框左边的 + 放资料（知识库、文件、会议纪要可以一起放），再用一句话说给谁看、想达到什么效果。预览里是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。'}
-        </p>
-      </AssistantBubble>
+      {composing && (
+        <AssistantBubble>
+          <p className="text-[12px] text-token-secondary">
+            {isPpt ? '选一篇知识库稿子，带到 PPT 智能体确认大纲后生成。' : '添加资料即可生成，也可以补充给谁看、要讲清什么。完成后自动保存到网页托管。'}
+          </p>
+        </AssistantBubble>
+      )}
       {composing && !isPpt && (
         <div className="flex flex-wrap gap-1.5" aria-label="常用要求">
           {PRESET_REQUESTS.map((preset) => (
@@ -415,6 +460,7 @@ export default function NewSiteStage({
         <UserBubble text={run.recoveredTitle ? `接着看：${run.recoveredTitle}` : '接着看上次没跑完的生成'} />
       )}
       {sent && <UserBubble text={sent.text} chips={sent.chips} />}
+      {!sent && savedRequest && <UserBubble text={savedRequest} chips={failedMaterials} />}
       {run.generating && (
         <RunProgressCard
           title="正在生成网页"
@@ -433,20 +479,38 @@ export default function NewSiteStage({
       )}
       {run.notice && (
         <AssistantBubble tone="warning">
-          <p className="font-semibold">{run.notice.tone === 'error' ? '这次没有做成' : '说明'}</p>
+          <p className="font-semibold" role="status">{run.notice.tone === 'error' ? '网页生成未完成' : '说明'}</p>
           <p className="text-[12px] text-token-secondary">{run.notice.text}</p>
-          {run.restartableRunId ? (
+          {!isPpt && run.restartableRunId && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={retry}
+                disabled={!requestRuntime}
+                className="inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2"
+                style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+              >
+                用原资料和要求重试
+              </button>
+              {canLoadOriginalInputs && (
+                <button type="button" onClick={restoreInputs} className="min-h-9 rounded-lg px-2 text-[12px] font-medium text-token-primary hover-bg-soft">
+                  载入原资料和要求编辑
+                </button>
+              )}
+              {!requestRuntime && <p className="w-full text-[12px] text-token-secondary">{missingRuntimeBlocker(runtimesLoaded)}</p>}
+            </div>
+          )}
+          {!isPpt && !run.restartableRunId && run.notice.tone === 'error' && !sendBlocker && (
             <button
               type="button"
-              onClick={() => void run.restart()}
-              className="mt-1 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-medium text-token-primary focus-visible:outline-none focus-visible:ring-2"
-              style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)' }}
+              onClick={send}
+              className="inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold"
+              style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
             >
-              按原资料和要求重新开始
+              重新生成
             </button>
-          ) : (
-            <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
           )}
+          {failedRun && <p className="text-[11px] text-token-muted">任务编号 {failedRun.runId}</p>}
         </AssistantBubble>
       )}
       <div ref={conversationEndRef} />
@@ -498,6 +562,7 @@ export default function NewSiteStage({
         placeholder="说说要做成什么样：给谁看、想达到什么效果（可以不写，只放资料也行）"
         disabled={run.generating}
         plusItems={plusItems}
+        showAddLabel
         chips={materialChips}
         options={options}
         sendLabel={run.generating
@@ -557,34 +622,42 @@ export default function NewSiteStage({
 
   const pickingKnowledge = sheet === 'knowledge' && !run.generating;
   const showPptHandoff = isPpt && !run.generating && !pickingKnowledge;
-  const previewTitle = run.generating ? '正在生成网页' : pickingKnowledge ? '引用知识库' : showPptHandoff ? '网页 PPT 怎么做' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
-  const previewNote = run.generating
-    ? (run.phase || '正在准备')
-    : pickingKnowledge
-      ? `勾选要放进来的稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后输入框上方会列出来`
-      : showPptHandoff
-      ? '在 HTML PPT 智能体里生成，这里说清会带过去什么'
-      : galleryOpen
-      ? '每张缩略图都是这个风格真实的样子，标题已换成你的资料'
-      : sampleTitle ? '标题已换成你的资料，正文是示例；点生成后换成你的页面' : '示例内容；放进资料后标题先换成你的';
-  const nextHint = run.generating
-    ? '灰色块是还没写到的部分，写好一段换一段；做好后自动存进网页托管，这里直接显示成品。'
-    : pickingKnowledge
-      ? '选好点右上角「放入」，这里换回样张，样张标题会换成第一篇稿子的标题。'
-      : showPptHandoff
-      ? '点「去 PPT 智能体生成」后离开这个窗口；PPT 发布后回到网页托管就能看到它，按幻灯片播放。'
-      : galleryOpen
-      ? '点一张就选定它，预览立刻换成这个风格的样张；选好后回到对话点生成。'
-      : hasSources
-        ? '资料已放好。不喜欢这个样子就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
-        : '先放资料、说要求；这里是所选风格真实的样子。';
+  const showFailure = Boolean(run.failedRun || (run.notice?.tone === 'error' && !run.generating));
+  const failedPreview = showFailure && Boolean(run.previewHtml);
+  const showGallery = galleryOpen && !run.generating && !pickingKnowledge && !showPptHandoff;
+  let previewTitle = `风格样张 · ${styleName}`;
+  let previewNote = sampleTitle ? '标题来自你的资料，正文为示例内容' : '示例内容';
+  let nextHint = '';
+  if (pickingKnowledge) {
+    previewTitle = '引用知识库';
+    previewNote = `选好资料后点「放入」，最多 ${MAX_KNOWLEDGE} 篇`;
+  } else if (showPptHandoff) {
+    previewTitle = '网页 PPT 怎么做';
+    previewNote = '在 HTML PPT 智能体里生成';
+    nextHint = 'PPT 发布后可在网页托管里按幻灯片播放。';
+  } else if (showGallery) {
+    previewTitle = '选一个风格';
+    previewNote = '点选缩略图更换风格';
+  } else if (failedPreview) {
+    previewTitle = '上次生成的预览';
+    previewNote = '来自未完成的任务，仅供查看';
+  } else if (run.generating) {
+    previewTitle = '正在生成网页';
+    previewNote = run.phase || '正在准备';
+  } else if (run.completedSite) {
+    previewTitle = '已保存的网页';
+    previewNote = '已存入网页托管';
+  } else if (showFailure) {
+    previewTitle = '网页预览';
+    previewNote = '这次没有可查看的预览';
+  }
 
   const preview = (
     <WorkbenchPreview
       title={previewTitle}
       note={previewNote}
       nextHint={nextHint}
-      actions={(galleryOpen || pickingKnowledge) && !run.generating ? (
+      actions={showGallery || pickingKnowledge ? (
         <button
           type="button"
           onClick={() => { setGalleryOpen(false); setSheet(null); }}
@@ -607,7 +680,7 @@ export default function NewSiteStage({
         </PreviewPanel>
       ) : showPptHandoff ? (
         <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate(freshPptSessionPath(pptDestinationTeamId))} />
-      ) : galleryOpen && !run.generating ? (
+      ) : showGallery ? (
         <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <StyleGallery
             selectedId={styleSelection?.key ?? null}
@@ -622,15 +695,19 @@ export default function NewSiteStage({
           srcDoc={run.previewHtml}
           sandbox={run.previewSandbox}
           referrerPolicy="no-referrer"
-          title="生成中的网页预览"
+          title={failedPreview ? '上次生成的预览' : run.completedSite ? '已保存的网页' : '生成中的网页预览'}
           className="h-full w-full bg-white"
         />
-      ) : run.generating || !styleSelection || styleSelection.kind === 'personal' ? (
+      ) : showFailure && !run.generating ? (
+        <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-token-muted">
+          重试后，生成的页面会显示在这里。
+        </div>
+      ) : run.generating || run.completedSite || !styleSelection || styleSelection.kind === 'personal' ? (
         // 我的风格没有现成样张（样张来自设计系统，而它覆盖了配色与字体），只画它自己的色块，不拿骨架样张冒充。
         <PageSkeleton
           caption={run.generating
             ? '正在规划页面结构，首段内容写好就出现在这里'
-            : styleSelection?.kind === 'personal'
+            : run.completedSite ? '正在打开已保存的网页' : styleSelection?.kind === 'personal'
               ? `「${styleSelection.name}」没有现成样张，生成时按它的配色、字体与版式出页面`
               : '风格还没读出来，生成时用设置里的默认风格'}
           swatches={selectedStyle?.swatches ?? (styleSelection?.kind === 'personal' ? styleSelection.swatches : undefined)}

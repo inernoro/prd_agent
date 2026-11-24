@@ -213,6 +213,18 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
     setItems(next);
   }, []);
 
+  const restoreReady = useCallback((sources: ReadonlyArray<{ attachmentId: string; fileName: string }>) => {
+    const current = itemsRef.current;
+    const known = new Set(current.map((item) => item.attachmentId));
+    const restored = sources.filter((source) => !known.has(source.attachmentId))
+      .slice(0, Math.max(0, max - current.length))
+      .map((source): DesignAttachmentItem => ({
+        ...source, key: nextKey(), size: 0, status: 'ready', progress: 100,
+      }));
+    itemsRef.current = [...current, ...restored];
+    setItems(itemsRef.current);
+  }, [max]);
+
   const reset = useCallback(() => {
     controllersRef.current.forEach((controller) => controller.abort());
     controllersRef.current.clear();
@@ -232,5 +244,5 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
   }, []);
 
   const busy = items.some((item) => item.status === 'uploading' || item.status === 'reading');
-  return { items, addFiles, remove, reset, busy, readyIds: readyAttachmentIds(items) };
+  return { items, addFiles, remove, reset, restoreReady, busy, readyIds: readyAttachmentIds(items) };
 }

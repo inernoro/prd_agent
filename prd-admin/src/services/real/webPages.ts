@@ -245,6 +245,10 @@ export interface DesignArtifactRunSummary {
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
+  failureCode?: string | null;
+  /** Present only when the server can retry this failed generation with its original inputs. */
+  retryInstruction?: string | null;
+  uploadedSources?: Array<{ attachmentId: string; fileName: string; contentHash: string }> | null;
   runtimeFailure?: DesignArtifactRuntimeFailure | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string | null;

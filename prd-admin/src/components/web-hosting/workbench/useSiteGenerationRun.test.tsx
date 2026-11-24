@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getSiteContent: vi.fn(),
   createDesignArtifactRun: vi.fn(),
   streamDesignArtifactRun: vi.fn(),
+  restartDesignArtifactRun: vi.fn(),
 }));
 vi.mock('@/services/real/webPages', () => api);
 vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn() } }));
@@ -40,6 +41,55 @@ beforeEach(async () => {
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => { root.render(<Harness />); });
+});
+
+describe('生成失败后的恢复', () => {
+  const failedRun = {
+    runId: 'failed-generation', status: 'Error', runtime: 'open-design', progress: 90,
+    phaseCode: 'collecting-artifact', runtimeFailure: { code: 'open_design_execution_failed', issueCodes: [] },
+    retryInstruction: '面向工程团队',
+    uploadedSources: [{ attachmentId: 'file-1', fileName: '架构记录.md' }],
+    knowledgeReferences: [],
+    previewHtml: '<!doctype html><html><body>上次生成的内容</body></html>', previewRevision: 2,
+  };
+
+  it('重开后找回失败资料和预览，用任务快照重试并打开已保存网页', async () => {
+    sessionStorage.clear();
+    api.getActiveDesignArtifactRun.mockResolvedValue({ success: true, data: failedRun });
+    api.getDesignArtifactRun.mockResolvedValue({ success: true, data: failedRun });
+    await act(async () => { current.reset(); });
+    expect(current.notice?.text).toContain('整理页面产物时出错');
+    expect(current.previewHtml).toContain('上次生成的内容');
+    expect(current.failedRun?.uploadedSources?.[0]?.fileName).toBe('架构记录.md');
+
+    api.restartDesignArtifactRun.mockResolvedValue({ success: true, data: { ...savedRun, status: 'Queued' } });
+    api.getDesignArtifactRun.mockResolvedValue({ success: true, data: savedRun });
+    api.streamDesignArtifactRun.mockImplementation(async ({ onEvent }) => {
+      onEvent({ event: 'done', data: JSON.stringify({ siteId: 'saved-site' }) });
+    });
+    await act(async () => { await Promise.all([current.restart(), current.restart()]); });
+    expect(api.restartDesignArtifactRun).toHaveBeenCalledOnce();
+    expect(api.restartDesignArtifactRun).toHaveBeenCalledWith(failedRun.runId, `web-generation-retry:${failedRun.runId}`);
+    expect(api.createDesignArtifactRun).not.toHaveBeenCalled();
+    expect(current.completedSite?.id).toBe('saved-site');
+    expect(current.previewHtml).not.toContain('上次生成的内容');
+  });
+
+  it('流报错与重开恢复使用一样的持久化失败结果，缺预览时不补样张', async () => {
+    sessionStorage.clear();
+    api.createDesignArtifactRun.mockResolvedValue({ success: true, data: failedRun });
+    api.getDesignArtifactRun.mockResolvedValue({ success: true, data: { ...failedRun, previewHtml: null } });
+    api.streamDesignArtifactRun.mockImplementation(async ({ onEvent }) => {
+      onEvent({ event: 'error', data: JSON.stringify({ message: 'raw service diagnostic' }) });
+    });
+    await act(async () => {
+      await current.start({ instruction: '面向工程团队', sourceSurface: 'web-hosting', knowledge: [], styleId: null, attachmentIds: ['file-1'] });
+    });
+    expect(current.notice?.text).toContain('整理页面产物时出错');
+    expect(current.notice?.text).not.toContain('raw service diagnostic');
+    expect(current.previewHtml).toBe('');
+    expect(current.restartableRunId).toBe(failedRun.runId);
+  });
 });
 afterEach(async () => {
   await act(async () => root.unmount());

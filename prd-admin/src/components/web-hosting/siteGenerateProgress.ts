@@ -54,7 +54,7 @@ export function resolvePersistedRunPreview(
  * 不显示 DOM 摘要、阈值、模型或供应商信息。
  */
 export function runtimeFailureRecoveryMessage(
-  run: Pick<DesignArtifactRunSummary, 'runtimeFailure' | 'error'>,
+  run: Pick<DesignArtifactRunSummary, 'runtimeFailure' | 'error' | 'failureCode' | 'phaseCode'>,
   operation: 'generate' | 'edit',
 ): string {
   const failure = run.runtimeFailure;
@@ -63,18 +63,44 @@ export function runtimeFailureRecoveryMessage(
     if (failure.issueCodes.includes('mobile_navigation_unusable')) problems.push('移动端导航还不能可靠操作');
     if (failure.issueCodes.includes('key_text_contrast_low')) problems.push('关键文字对比度仍不足');
     const reason = problems.length > 0 ? problems.join('，') : '桌面或移动端仍有可用性问题';
-    const action = operation === 'edit' ? '请保留当前要求并重新发起修改' : '请按原资料和要求重新生成';
-    return `页面没有通过最终浏览器检查：${reason}。已保留最后一版预览，线上页面没有变化；${action}。`;
+    if (operation === 'generate') return `页面没有通过最终检查，${reason}。可以重试，或调整设计要求后再生成。`;
+    return `页面没有通过最终浏览器检查：${reason}。已保留最后一版预览，线上页面没有变化；请保留当前要求并重新发起修改。`;
   }
+  if (operation === 'generate') return generationFailureMessage(failure?.code ?? run.failureCode, run.phaseCode);
   if (failure?.code === 'design_output_quality_rejected') {
-    const action = operation === 'edit' ? '请缩小修改范围后重新发起' : '请缩小设计要求或减少引用资料后重新生成';
-    return `页面没有通过发布前的内容校验。已保留最后一版预览，线上页面没有变化；${action}。`;
+    return '页面没有通过发布前的内容校验。已保留最后一版预览，线上页面没有变化；请缩小修改范围后重新发起。';
   }
   if (failure) {
-    const action = operation === 'edit' ? '请稍后按原要求重新发起修改' : '请稍后按原资料和要求重新生成';
-    return `页面处理没有完成。已保留可用的最后一版预览，线上页面没有变化；${action}。管理员可以在诊断记录中查看技术原因。`;
+    return '页面处理没有完成。已保留可用的最后一版预览，线上页面没有变化；请稍后按原要求重新发起修改。管理员可以在诊断记录中查看技术原因。';
   }
-  return run.error?.trim() || (operation === 'edit' ? '页面修改未完成，请重新发起' : '网页生成未完成，请重新发起');
+  return run.error?.trim() || '页面修改未完成，请重新发起';
+}
+
+const GENERATION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  design_artifact_interrupted: '设计服务重启中断了生成。可以用原资料和要求重试。',
+  open_design_run_timeout: '设计服务在规定时间内没有交出网页。可以减少资料或缩小要求后再生成。',
+  open_design_run_cancelled: '设计服务在交出网页前停止了。可以稍后重试。',
+  open_design_run_failed: '设计服务中途退出，没有交出网页。请稍后重试。',
+  browser_quality_unavailable: '页面已生成到预览阶段，最终检查服务暂时不可用。请稍后重试。',
+  design_output_quality_rejected: '生成的页面未通过内容检查。可以调整要求或减少资料后再生成。',
+  design_output_invalid: '设计服务交出的网页文件不完整。可以稍后重试。',
+  design_output_missing: '设计服务没有交出可打开的网页。可以稍后重试。',
+  design_output_too_large: '生成的网页文件超出大小限制。可以减少资料或缩小要求后再生成。',
+  workspace_commit_invalid_response: '设计结果未能保存到网页托管。请稍后重试。',
+  RUNTIME_NOT_READY: '设计服务暂时不可用，请稍后重试。',
+  PERMISSION_DENIED: '当前账号没有权限使用这份资料或目标空间，请检查权限后再试。',
+  KNOWLEDGE_SOURCE_CHANGED: '知识库资料在上次生成后有了更新。请载入资料和要求后重新生成。',
+  DESIGN_ARTIFACT_NOT_RESTARTABLE: '这条任务无法用原资料重试。请检查资料和要求后重新生成。',
+  NOT_FOUND: '任务或原资料已不可用，请重新选择资料后再试。',
+  INVALID_FORMAT: '资料或要求未通过校验，请检查资料和要求后再试。',
+};
+
+export function generationFailureMessage(code?: string | null, phaseCode?: string | null): string {
+  if (phaseCode === 'interrupted') return GENERATION_FAILURE_MESSAGES.design_artifact_interrupted;
+  if (code === 'open_design_execution_failed' && phaseCode === 'collecting-artifact')
+    return '设计服务在整理页面产物时出错，未能交付完整网页。可以稍后重试。';
+  return (code && Object.hasOwn(GENERATION_FAILURE_MESSAGES, code) ? GENERATION_FAILURE_MESSAGES[code] : null)
+    || '网页生成未完成。请稍后重试，若持续失败请联系管理员。';
 }
 
 /** 后端只给了模型名、没给平台名时的兜底称谓。三个消费点共用这一份，别各写各的。 */

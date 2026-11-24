@@ -2296,19 +2296,25 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(candidateHash, repair.GetProperty("contentHash").GetString());
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     [Trait("Category", TestCategories.Integration)]
-    public async Task RestartRun_ShouldBeIdempotent_AndKeepInterruptedSourceUnchanged()
+    public async Task RestartWebGeneration_ShouldBeIdempotent_AndKeepFailedSourceUnchanged(bool interrupted)
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
         var source = new DesignArtifactRun
         {
             Id = "interrupted-source", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
-            Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.Interrupted,
+            Status = RunStatuses.Error, PhaseCode = interrupted ? DesignArtifactPhaseCodes.Interrupted : DesignArtifactPhaseCodes.CollectingArtifact,
             Phase = HostedSiteEditRunWorker.RestartInterruptedMessage,
-            Error = HostedSiteEditRunWorker.RestartInterruptedMessage,
+            Error = interrupted ? HostedSiteEditRunWorker.RestartInterruptedMessage : "设计服务在整理页面产物时出错",
             Instruction = "生成产品发布页", Title = "产品发布页",
             DeploymentSlug = DeploymentScope.Current,
+            UploadedSources =
+            [
+                new DesignUploadedSource { AttachmentId = "old-upload", FileName = "产品发布.md", Content = "冻结的资料正文" },
+            ],
             DesignBrief = new DesignArtifactDesignBrief
             {
                 Goal = "生成产品发布页",
@@ -2378,6 +2384,12 @@ public sealed class DesignArtifactLifecycleServiceTests
         };
 
         var request = new RestartDesignArtifactRunRequest { IdempotencyKey = "same-restart-key" };
+        var discovered = Assert.IsType<OkObjectResult>(await controller.GetActiveRun(
+            DesignArtifactOperations.Generate, includeLatestFailed: true));
+        Assert.Equal(source.Instruction, Data(discovered).GetProperty("retryInstruction").GetString());
+        var upload = Data(discovered).GetProperty("uploadedSources")[0];
+        Assert.Equal("产品发布.md", upload.GetProperty("fileName").GetString());
+        Assert.False(upload.TryGetProperty("content", out _));
         var first = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
         var second = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
         var firstId = Data(first).GetProperty("runId").GetString();
@@ -2385,10 +2397,13 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(2, await fixture.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
         var persistedSource = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == source.Id).SingleAsync();
         Assert.Equal(RunStatuses.Error, persistedSource.Status);
-        Assert.Equal(DesignArtifactPhaseCodes.Interrupted, persistedSource.PhaseCode);
+        Assert.Equal(source.PhaseCode, persistedSource.PhaseCode);
+        Assert.Equal(source.Error, persistedSource.Error);
         var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
         Assert.Equal(source.Id, restarted.RestartedFromRunId);
         Assert.Equal(source.Instruction, restarted.Instruction);
+        Assert.Equal("冻结的资料正文", Assert.Single(restarted.UploadedSources!).Content);
+        Assert.Null(restarted.LatestPreviewHtml);
         Assert.Equal(source.DesignBrief.Fingerprint, restarted.DesignBrief?.Fingerprint);
         Assert.Equal(source.BrandPackage.Fingerprint, restarted.BrandPackage?.Fingerprint);
         Assert.Equal(source.PresentationInput.ManualEditHtml, restarted.PresentationInput?.ManualEditHtml);
