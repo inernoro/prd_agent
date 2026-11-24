@@ -2,17 +2,26 @@
 name: cds
 metadata:
   version: 0.26.10
-description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
+description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake, private design intake (CDS 设计接入), the design loop (/cds-design, /cds 设计: 维护、更新、修复某模块的设计) and the CDS test loop (/cds-test, /cds 测试: 领取并执行 CDS 上的验收任务), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.10 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.10 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"、`/cds-design`、`/cds 设计`、`/cds-test`、`/cds 测试`
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
 > - 部署 / 调试 / 看日志 / 冒烟 → **`cds-deploy-pipeline`**（热路径）
 > - 认证、env、Key、CDS 服务自更新、SSOT 公式 → **本技能**
+
+## 设计和测试入口（交接只走 CDS）
+
+| 用户说 | 读 | 做什么 |
+|---|---|---|
+| `/cds-design <模块> …`、`/cds 设计 …`、「维护 / 更新 / 修复某模块的设计」 | [设计闭环](reference/design-loop.md) | 找到稿件，从 CDS 读评论、反馈和验收结果，出稿，过程序门禁，发布并回写 |
+| `/cds-test …`、`/cds 测试 …`、「领一个验收任务」「跑某稿件的验收」 | [测试闭环](reference/test-loop.md) | 列出 CDS 上待测的任务，领取，执行，把结果和问题写回 CDS |
+
+两个入口共用同一套授权、命令和门禁程序（`scripts/design/`）。需求、评论、反馈、验收结果都在 CDS 里流转，不让用户在对话之间转述。
 
 ## 分诊器（用户只说"cds"或意图模糊时）
 
@@ -24,6 +33,8 @@ CDS 这边您想做什么？
   (2) 部署 / 看日志 / deploy 失败排查      → 我去走「热路径」（cds-deploy-pipeline）
   (3) 配认证 / 改 env / 项目 Key 管理       → 留在这里处理
   (4) 更新 CDS 服务本体（改了 cds/ 代码）   → 留在这里处理
+  (5) 维护 / 修复某模块的设计               → 设计闭环（reference/design-loop.md）
+  (6) 领取或执行 CDS 上的测试               → 测试闭环（reference/test-loop.md）
 ```
 
 明确触发词（含"扫描" / "部署" / "认证"）就直接派发，**不要再问**。
@@ -397,6 +408,8 @@ $CLI debt stats
 ## 设计稿件与框架
 
 收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
+
+发布只走两条程序命令：先 `node scripts/design/release.mjs check --dir design/<目录>`，生成版本差异并跑门禁 G-01 到 G-09，被驳回就按规则编号修改；发布成功后运行 `release.mjs register --commit <来源提交>` 登记版本。详见[程序做门禁](reference/design-intake.md#程序做门禁智能体只做输入)。
 
 发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
 - 逐画面和实施基线对比，每处差异写明有意改动还是回退；

@@ -101,6 +101,21 @@
 - **版本登记由程序写**：每次发布后，由程序登记版本号和来源提交，并打本地 tag（`design/<稿件编号>/v<N>`）。不手工维护版本对照。
 - **没有 git 也能算**：从 CDS 下载两个版本的归档后直接比较，结果和用 git 算的一样。
 
+程序在本技能的 `scripts/design/` 里，对任何稿件目录都适用，不用复制进稿件包。发布只走两条固定命令，版本号由程序推算：
+
+```bash
+# 发布前：生成 changes/（有旧版本时），跑门禁 G-01 到 G-09；通过后打印该用的发布命令
+node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> [--full <实现所在版本>]
+# 发布成功后：核对来源提交和工作区一致，写 versions.json，打本地 tag
+node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> --commit <来源提交> [--design <稿件编号>]
+```
+
+- 驳回时退出码为 1，逐条列出规则编号。按编号修改，修完重跑，不跳过、不手改结果。
+- 首发后第一次登记要带 `--design`。已经发布过、但还没有 `versions.json` 的稿件，先用 `--version <已发布的最新版>` 补登记，再出下一版。
+- 自检没通过（包括未验证）的项，登记在稿件目录的 `gate-allow.json` 里，写负责人和理由。新增例外要人确认。
+- 不能出现在包里的真实站点，用环境变量 `CDS_DESIGN_FORBIDDEN_HOSTS` 传入，不写进稿件包。
+- 单独算两个版本的差异：`version-diff.mjs --dir <目录> --from v<旧> --to v<新>`。交换两个参数就是回退方向。
+
 ### 稳定、因果、有用
 
 页面完成以后，按下面三条再审一遍。
