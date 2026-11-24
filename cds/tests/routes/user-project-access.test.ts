@@ -1623,6 +1623,53 @@ describe('human project grants through the production server', () => {
       .toMatchObject({ issuer: 'agent', status: 'revoked' });
   });
 
+  it('keeps manual keys permanent by default and enforces fixed project and all-project deadlines', async () => {
+    const project = '/api/projects/project-a';
+    const projectKeys = project + '/agent-keys';
+    const globalKeys = '/api/global-agent-keys';
+    expect((await call('POST', projectKeys, owner, { expiresInDays: '7' })).status).toBe(400);
+    expect((await call('POST', globalKeys, owner, { expiresInDays: 0 })).status).toBe(400);
+
+    const permanent = await call('POST', projectKeys, owner, { projectAccess: 'rw' });
+    const fixed = await call('POST', projectKeys, owner, { projectAccess: 'rw', expiresInDays: 7 });
+    const global = await call('POST', globalKeys, owner, { access: { projects: 'all' }, expiresInDays: 1 });
+    expect([permanent.status, fixed.status, global.status]).toEqual([201, 201, 201]);
+    expect(permanent.body.expiresAt).toBeUndefined();
+    const stored = state.getAgentKeys('project-a').find(key => key.id === fixed.body.keyId)!;
+    expect(Date.parse(fixed.body.expiresAt) - Date.parse(stored.createdAt)).toBeCloseTo(7 * 86_400_000, -3);
+    expect(stored.expiryMode).toBe('fixed');
+
+    expect((await credentialCall('GET', project, fixed.body.plaintext)).status).toBe(200);
+    expect(stored.expiresAt).toBe(fixed.body.expiresAt);
+    expect((await credentialCall('GET', '/api/projects/project-b', fixed.body.plaintext)).status).toBe(403);
+    for (const id of ['project-a', 'project-b']) {
+      expect((await credentialCall('GET', '/api/projects/' + id, global.body.plaintext)).status).toBe(200);
+    }
+    expect((await credentialCall('POST', '/api/projects', global.body.plaintext, { name: 'forbidden' })).status).toBe(403);
+    const child = await credentialCall('POST', projectKeys, global.body.plaintext, { expiresInDays: 90 });
+    expect(child.status).toBe(201);
+    expect(child.body.expiresAt).toBe(global.body.expiresAt);
+    const derived = await credentialCall('POST', projectKeys, child.body.plaintext, {});
+    expect(derived.status).toBe(201);
+    expect(derived.body.expiresAt).toBe(global.body.expiresAt);
+    expect((await call('GET', globalKeys)).body.keys[0]).toMatchObject({
+      id: global.body.keyId, issuer: 'user', expiresAt: global.body.expiresAt,
+    });
+
+    await state.flush();
+    const restored = new StateService(path.join(dir, 'state.json'), dir);
+    restored.load();
+    expect(restored.getAgentKeys('project-a').find(key => key.id === fixed.body.keyId))
+      .toMatchObject({ expiresAt: fixed.body.expiresAt, expiryMode: 'fixed' });
+    expect(restored.getGlobalAgentKeys()[0].expiresAt).toBe(global.body.expiresAt);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(fixed.body.expiresAt));
+    for (const expired of [fixed, global, child, derived]) {
+      expect((await credentialCall('GET', project, expired.body.plaintext)).status).toBe(401);
+    }
+    expect(restored.findGlobalAgentKeyForAuth(global.body.plaintext)).toBeNull();
+    expect((await credentialCall('GET', project, permanent.body.plaintext)).status).toBe(200);
+  });
+
   it('allows only the signed-in system owner to issue project administrator grants', async () => {
     const project = '/api/projects/project-a';
     const keys = project + '/agent-keys';

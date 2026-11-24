@@ -280,7 +280,7 @@ describe('项目页从骨架到正文保持相同布局', () => {
     const html = renderToStaticMarkup(createElement(ProjectListSkeleton, { canManageProjects: true }));
     for (const label of ['管理项目、分支环境与部署。', '全部项目', '运行中', '已暂停', '已就绪']) expect(html).toContain(label);
     for (const group of ['cds-project-status-filters', 'cds-project-inventory-tools', 'cds-project-inventory-search', 'cds-project-view-switch']) expect(html).toContain(group);
-    expect((html.match(/<button[^>]*disabled/g) || []).length).toBe(8);
+    expect((html.match(/<button[^>]*disabled/g) || []).length).toBe(9);
     expect((html.match(/<select[^>]*disabled/g) || []).length).toBe(2);
     expect(html).toContain('aria-pressed="true">全部项目');
     for (const slot of ['cds-project-monogram', 'cds-project-state', 'cds-project-online', 'cds-project-branch', 'cds-project-inventory-footer']) {
@@ -307,6 +307,7 @@ describe('项目加载骨架遵从已知管理能力', () => {
       const html = renderToStaticMarkup(node);
       expect(html).not.toContain('导入仓库');
       expect(html).not.toContain('新建项目');
+      expect(html).not.toContain('Agent Key');
       expect(html).not.toContain('cds-project-actions');
       expect(html).toContain('cds-project-status-filters');
     }
@@ -314,6 +315,7 @@ describe('项目加载骨架遵从已知管理能力', () => {
       const html = renderToStaticMarkup(node);
       expect(html).toContain('导入仓库');
       expect(html).toContain('新建项目');
+      expect(html).toContain('Agent Key');
       expect((html.match(/class="cds-project-actions"/g) || []).length).toBe(6);
     }
   });

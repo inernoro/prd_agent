@@ -56,7 +56,7 @@ import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
-import { ProjectAgentKeyPanel } from '@/components/project/ProjectAgentKeyPanel';
+import { AgentKeyPanel } from '@/components/project/AgentKeyPanel';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -72,7 +72,6 @@ import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
-import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
@@ -312,28 +311,6 @@ function defaultOnboardingServices(): AppServiceDraft[] {
     makeOnboardingService('frontend', 'frontend', '前端服务', 'static'),
     makeOnboardingService('backend', 'backend', '后端服务', 'auto'),
   ];
-}
-
-interface AgentKeySummary {
-  id: string;
-  label?: string;
-  access?: AgentKeyScope;
-  createdAt?: string;
-  createdBy?: string;
-  lastUsedAt?: string;
-  revokedAt?: string;
-  status?: 'active' | 'revoked';
-}
-
-interface AgentKeysResponse {
-  keys: AgentKeySummary[];
-}
-
-interface AgentKeySignResponse {
-  keyId: string;
-  plaintext: string;
-  preview?: string;
-  access?: AgentKeyScope;
 }
 
 interface LegacyCleanupStatus {
@@ -895,6 +872,7 @@ export function ProjectListPage(): JSX.Element {
           targets={environmentTargets} environmentStatus={environmentStatus} canManageProjects={canManageProjects}
           importOpen={repositoryImportOpen} onImport={() => setRepositoryImportOpen(open => !open)}
           onCreate={() => { setCreateAutoPickRepo(false); setCreateOpen(true); }}
+          onManageAgentKeys={() => setGlobalAgentKeyOpen(true)}
         /> : null}
         {canManageProjects && repositoryImportOpen ? (
             <form
@@ -1071,15 +1049,11 @@ export function ProjectListPage(): JSX.Element {
             navigate(`/branches/${encodeURIComponent(projectId)}`);
           }}
         />
-        {agentKeyProject && (
-          <ProjectAgentKeyPanel key={agentKeyProject.id} projectId={agentKeyProject.id}
-            projectName={displayName(agentKeyProject)} onClose={() => setAgentKeyProject(null)} onToast={setToast} />
+        {(agentKeyProject || globalAgentKeyOpen) && (
+          <AgentKeyPanel key={agentKeyProject?.id ?? 'global'} initialProjectId={agentKeyProject?.id}
+            projects={projects.map(project => ({ id: project.id, name: displayName(project) }))}
+            onClose={() => { setAgentKeyProject(null); setGlobalAgentKeyOpen(false); }} onToast={setToast} />
         )}
-        <GlobalAgentKeyManagerDialog
-          open={globalAgentKeyOpen}
-          onOpenChange={setGlobalAgentKeyOpen}
-          onToast={setToast}
-        />
         <MonitoringDialog
           open={monitoringOpen}
           onOpenChange={setMonitoringOpen}
@@ -2271,309 +2245,6 @@ function CloneProgressDialog({
           ) : null}
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             {status === 'cloning' ? '隐藏' : '关闭'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function GlobalAgentKeyManagerDialog({
-  open,
-  onOpenChange,
-  onToast,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [state, setState] = useState<
-    | { status: 'idle' }
-    | { status: 'loading' }
-    | { status: 'error'; message: string }
-    | { status: 'ok'; keys: AgentKeySummary[] }
-  >({ status: 'idle' });
-  const [signOpen, setSignOpen] = useState(false);
-  const [revokeTarget, setRevokeTarget] = useState<AgentKeySummary | null>(null);
-
-  const loadKeys = useCallback(async () => {
-    setState({ status: 'loading' });
-    try {
-      const data = await apiRequest<AgentKeysResponse>('/api/global-agent-keys');
-      setState({ status: 'ok', keys: data.keys || [] });
-    } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (open) void loadKeys();
-    else setState({ status: 'idle' });
-  }, [loadKeys, open]);
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Agent 全局通行证</DialogTitle>
-            <DialogDescription>
-              全局通行证可跨项目操作并创建新项目；优先给自动化引导 Agent 使用，单项目操作仍建议用项目级 Key。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => setSignOpen(true)}>
-              <KeyRound />
-              签发全局 Key
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void loadKeys()}>
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-
-          {state.status === 'loading' ? <LoadingBlock label="加载全局 Agent Keys" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
-          {state.status === 'ok' && state.keys.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              还没有全局 Agent Key。
-            </div>
-          ) : null}
-          {state.status === 'ok' && state.keys.length > 0 ? (
-            <div className="space-y-2">
-              {state.keys.map((key) => (
-                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{key.label || key.id}</span>
-                        <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        <CodePill>{describeAgentKeyScope(key.access)}</CodePill>
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span>签发：{formatDate(key.createdAt)}</span>
-                        <span>最近使用：{formatDate(key.lastUsedAt)}</span>
-                        {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
-                      </div>
-                    </div>
-                    {!key.revokedAt ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => setRevokeTarget(key)}>
-                        <Trash2 />
-                        吊销
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <GlobalAgentKeySignDialog
-        open={signOpen}
-        onOpenChange={setSignOpen}
-        onSigned={async () => {
-          await loadKeys();
-        }}
-        onToast={onToast}
-      />
-      <GlobalAgentKeyRevokeDialog
-        target={revokeTarget}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) setRevokeTarget(null);
-        }}
-        onRevoked={async () => {
-          setRevokeTarget(null);
-          await loadKeys();
-        }}
-        onToast={onToast}
-      />
-    </>
-  );
-}
-
-function GlobalAgentKeySignDialog({
-  open,
-  onOpenChange,
-  onSigned,
-  onToast,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSigned: () => Promise<void>;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [label, setLabel] = useState('');
-  const [signing, setSigning] = useState(false);
-  const [error, setError] = useState('');
-  const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
-  // 默认作用域 = 只能创建新项目(用户诉求:签发全局 Key 默认只给建项目,怕别人搞坏现有项目)。
-  const [scope, setScope] = useState<AgentKeyScope>({ canCreateProjects: true, projects: [] });
-
-  useEffect(() => {
-    if (!open) {
-      setLabel('');
-      setError('');
-      setSigned(null);
-      setSigning(false);
-      setScope({ canCreateProjects: true, projects: [] });
-    }
-  }, [open]);
-
-  // 空授权(既不能建项目、也没选任何现有项目)不允许签发,给按钮兜底禁用。
-  const emptyScope =
-    !scope.canCreateProjects && scope.projects !== 'all' && scope.projects.length === 0;
-
-  async function sign(): Promise<void> {
-    setSigning(true);
-    setError('');
-    try {
-      const data = await apiRequest<AgentKeySignResponse>('/api/global-agent-keys', {
-        method: 'POST',
-        body: { label: label.trim() || undefined, access: scope },
-      });
-      setSigned(data);
-      await onSigned();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setSigning(false);
-    }
-  }
-
-  const codeText = signed
-    ? [`CDS_HOST=${window.location.origin}`, `AI_ACCESS_KEY=${signed.plaintext}`].join('\n')
-    : '';
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{signed ? '全局 Key 已签发' : '签发 Agent 全局 Key'}</DialogTitle>
-          <DialogDescription>
-            {signed
-              ? '明文只显示一次。关闭后 CDS 只保留 sha256 摘要，无法再次查看。'
-              : '按需勾选授权范围。默认「只能创建新项目」——能建项目，但碰不到你现有的项目。'}
-          </DialogDescription>
-        </DialogHeader>
-
-        {signed ? (
-          <div className="space-y-4">
-            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2 text-xs text-muted-foreground">
-              授权范围：<span className="font-medium text-foreground">{describeAgentKeyScope(signed.access)}</span>
-            </div>
-            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
-              {codeText}
-            </pre>
-            <Button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(codeText).then(() => onToast('全局 Agent Key 已复制'));
-              }}
-            >
-              <Copy />
-              复制全部
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">标签</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={label}
-                onChange={(event) => setLabel(event.target.value)}
-                maxLength={100}
-                placeholder="例如 Codex 自动接入"
-              />
-            </label>
-
-            <AgentKeyScopePanel value={scope} onChange={setScope} disabled={signing} />
-
-            {scope.projects === 'all' ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm leading-6 text-destructive">
-                你勾选了「操作所有现有项目」——这把 Key 等同管理员权限，泄露后果严重。只交给需要跨项目自动化的 Agent，用完立刻吊销。
-              </div>
-            ) : (
-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2 text-sm leading-6 text-muted-foreground">
-                当前范围：{describeAgentKeyScope(scope)}。
-              </div>
-            )}
-            {error ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
-          </div>
-        )}
-
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            {signed ? '关闭' : '取消'}
-          </Button>
-          {!signed ? (
-            <Button type="button" onClick={() => void sign()} disabled={signing || emptyScope}>
-              {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
-              确认签发
-            </Button>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function GlobalAgentKeyRevokeDialog({
-  target,
-  onOpenChange,
-  onRevoked,
-  onToast,
-}: {
-  target: AgentKeySummary | null;
-  onOpenChange: (open: boolean) => void;
-  onRevoked: () => Promise<void>;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [revoking, setRevoking] = useState(false);
-
-  async function revoke(): Promise<void> {
-    if (!target) return;
-    setRevoking(true);
-    try {
-      await apiRequest(`/api/global-agent-keys/${encodeURIComponent(target.id)}`, { method: 'DELETE' });
-      onToast('全局 Agent Key 已吊销');
-      await onRevoked();
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setRevoking(false);
-    }
-  }
-
-  return (
-    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>吊销全局 Agent Key</DialogTitle>
-          <DialogDescription>
-            吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button type="button" variant="destructive" onClick={() => void revoke()} disabled={revoking}>
-            {revoking ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            确认吊销
           </Button>
         </DialogFooter>
       </DialogContent>

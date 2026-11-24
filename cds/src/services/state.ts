@@ -3970,7 +3970,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
     // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
     // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
-    if (entry.expiresAt) {
+    if (entry.expiresAt && entry.expiryMode !== 'fixed') {
       const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
       if (next) entry.expiresAt = next;
     }

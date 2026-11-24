@@ -4644,6 +4644,8 @@ export interface AgentKey extends KeyNotificationMetadata, ProjectAgentKeyPermis
    * 有了自愈补发，丢了不麻烦了，所以没理由再让它长生。
    */
   expiresAt?: string;
+  /** Manual expirations do not slide on use. */
+  expiryMode?: 'fixed';
 }
 
 /**
@@ -4890,10 +4892,12 @@ export interface GlobalAgentKey extends KeyNotificationMetadata {
   oneTime?: boolean;
   /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
   creationTarget?: { name: string; repository: string };
-  /** 一次性创建凭据的硬截止时间；存量非一次性 key 不受影响。 */
+  /** Fixed expiry of a timed key. Omitted for permanent keys. */
   expiresAt?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
+  /** Verified source at issuance. Older rows may lack this metadata. */
+  issuer?: ProjectAgentKeyIssuer;
   /** GitHub login of the signer if github auth mode, else undefined. */
   createdBy?: string;
   /** ISO timestamp updated (best-effort) each time the key authenticates. */
