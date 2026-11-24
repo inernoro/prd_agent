@@ -1434,18 +1434,42 @@ describe('human project grants through the production server', () => {
       '-c', 'user.email=cds-test@example.test', ...args], { encoding: 'utf8' }).trim();
     git('init', '-q');
     state.updateProject(projectId, { repoPath: repo });
+    const designHistory: Array<{ version: number; commit: string }> = [];
 
     async function designRevision(revision: number) {
       const title = `Fixture design V${revision}`;
-      fs.writeFileSync(path.join(source, 'design.json'), JSON.stringify({ project: projectId, title,
-        screens: [{ id: 'main', name: 'Main', route: '#main', viewport: 'desktop', impl: '/fixture/' }],
-        acceptance: [{ id: 'A-1', rule: 'Main loads', how: 'human', slots: ['desktop-light'] }],
-      }));
-      fs.writeFileSync(path.join(source, '思路.md'), '# Goal\nKeep the original design journey.');
-      fs.writeFileSync(path.join(source, 'dist', 'index.html'), `<!doctype html><html><body><h1>${title}</h1></body></html>`);
+      const write = (relative: string, data: string) => {
+        const file = path.join(source, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, data);
+      };
+      const writeJson = (relative: string, data: unknown) => write(relative, JSON.stringify(data));
+      writeJson('design.json', { project: projectId, title, prototypeVersion: revision, date: '2026-01-01', notes: '',
+        rationale: '思路.md', prototype: 'dist/index.html', checks: 'checks/result.json', docs: [],
+        screens: [{ id: 'main', name: 'Main', route: '#/main', viewport: 'desktop', themes: ['light'],
+          entryReadySelector: 'h1', impl: '/fixture/' }],
+        acceptance: [{ id: 'A-01', rule: 'Main loads', how: 'human', slots: ['desktop-light'], screenId: 'main', expected: 'The fixture title is visible.' }],
+      });
+      write('思路.md', `# Goal（V${revision}）\nKeep the original design journey.`);
+      write('交付说明.md', `# Delivery（V${revision}）\nThe same screen and rule identify the draft across credential renewals.`);
+      write('dist/index.html', `<!doctype html><html><body><h1>${title}</h1></body></html>`);
+      writeJson('checks/result.json', { total: 0, passed: 0, items: [] });
+      writeJson('versions.json', { versions: designHistory });
+      const history = designHistory.map(previous => {
+        const prefix = `changes/v${previous.version}-v${revision}/`;
+        const files = [prefix + 'summary.json', prefix + 'changes.md'];
+        const none = { added: [], removed: [], changed: [] };
+        const counts = { added: 0, removed: 0, changed: 0 };
+        writeJson(files[0], { from: previous, to: { version: revision }, direction: 'upgrade',
+          screens: none, acceptance: none, source: { files: 0, bytes: 0 } });
+        write(files[1], `# V${previous.version} → V${revision}\nThe screen and rule are unchanged.`);
+        return { ...previous, screens: counts, acceptance: counts, files, sourceFiles: 0 };
+      });
+      writeJson('changes/index.json', { to: revision, from: history });
       git('add', sourcePath);
       git('commit', '-qm', title);
       const sourceCommit = git('rev-parse', 'HEAD');
+      designHistory.push({ version: revision, commit: sourceCommit });
       const archive = await readDesignSourceZip(repo, sourceCommit, sourcePath);
       if (!archive) throw new Error('The local design fixture was not archived');
       return { sourceCommit, archive };

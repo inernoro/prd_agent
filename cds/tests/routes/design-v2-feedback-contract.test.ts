@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
-import { buildZip, crc32 } from '../../src/utils/zip.js';
+import { crc32 } from '../../src/utils/zip.js';
+import { versionedDesignFixture } from '../helpers/versioned-design-fixture.js';
 
 const projectId = 'fixture-v2-feedback';
 const otherProject = 'fixture-v2-feedback-other';
@@ -94,16 +95,16 @@ describe('CDS V2 feedback contract', () => {
 
   async function publish(filePath: string, options: { prior?: string; sibling?: boolean } = {}) {
     const screen = options.prior
-      ? { id: 'revised-phone', name: 'Fixture phone', route: '#revised', viewport: 'phone', themes: ['dark'], impl: '/revised/' }
-      : { id: 'initial-desktop', name: 'Fixture desktop', route: '#initial', viewport: 'desktop', themes: ['light'], impl: '/initial/' };
-    const manifest = { project: projectId, title: 'Fixture feedback draft', screens: [screen], acceptance: [], docs: [filePath],
+      ? { id: 'revised-phone', name: 'Fixture phone', route: '#/revised', viewport: 'phone', themes: ['dark'], impl: '/revised/' }
+      : { id: 'initial-desktop', name: 'Fixture desktop', route: '#/initial', viewport: 'desktop', themes: ['light'], impl: '/initial/' };
+    const manifest = { project: projectId, title: 'Fixture feedback draft',
+      screens: [{ ...screen, entryReadySelector: 'h1' }], acceptance: [], docs: [filePath],
       ...(options.prior ? { id: options.prior } : {}) };
-    const archive = buildZip([
-      { name: 'bundle/design.json', data: JSON.stringify(manifest) },
-      { name: 'bundle/思路.md', data: '# Fixture purpose\nCompare revision evidence.' },
-      { name: 'bundle/dist/index.html', data: '<!doctype html><html><body><h1>Fixture feedback</h1></body></html>' },
-      { name: `bundle/${filePath}`, data: '# Fixture delivery file\nOnly this exact revision contains the file.' },
-    ]);
+    const previous = options.prior ? { commit: 'a'.repeat(40), addedScreens: ['revised-phone'], removedScreens: ['initial-desktop'] } : undefined;
+    const archive = versionedDesignFixture(manifest, 'Compare revision evidence.', [
+      { name: 'dist/index.html', data: '<!doctype html><html><body><h1>Fixture feedback</h1></body></html>' },
+      { name: filePath, data: '# Fixture delivery file\nOnly this exact revision contains the file.' },
+    ], previous);
     const query = new URLSearchParams({ requestId: randomUUID(), sourceCommit: (options.prior ? 'b' : 'a').repeat(40),
       sourceMode: 'private', sourcePath: options.sibling ? 'design/fixture-sibling' : 'design/fixture-feedback',
       ...(options.prior ? { intent: 'revise', designId: options.prior, expectedVersion: '1' }

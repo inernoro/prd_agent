@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
-import { buildZip } from '../../src/utils/zip.js';
+import { versionedDesignFixture } from '../helpers/versioned-design-fixture.js';
 
 const projectId = 'fixture-v2-framework';
 const otherProject = 'fixture-v2-framework-other';
@@ -86,15 +86,14 @@ describe('CDS V2 framework contract', () => {
 
   async function publish(project: string, material: typeof establishedMaterial, priorId?: string) {
     const manifest = { project, title: 'Fixture implementation sample', acceptance: [], frameworkDraft: 'spec/',
-      screens: [{ id: 'sample', name: 'Fixture sample', route: '#sample', viewport: 'desktop', impl: '/sample/' }],
+      screens: [{ id: 'sample', name: 'Fixture sample', route: '#/sample', viewport: 'desktop', themes: ['light', 'dark'],
+        impl: '/sample/', entryReadySelector: 'h1' }],
       ...(priorId ? { id: priorId } : {}) };
-    const archive = buildZip([
-      { name: 'bundle/design.json', data: JSON.stringify(manifest) },
-      { name: 'bundle/思路.md', data: '# Fixture goal\nVerify the stored implementation baseline.' },
-      { name: 'bundle/dist/index.html', data: '<!doctype html><html lang="en"><body><h1>Fixture</h1></body></html>' },
-      { name: 'bundle/spec/rules.md', data: material.rules },
-      { name: 'bundle/spec/components.md', data: material.components },
-    ]);
+    const archive = versionedDesignFixture(manifest, 'Verify the stored implementation baseline.', [
+      { name: 'dist/index.html', data: '<!doctype html><html lang="en"><body><h1>Fixture</h1></body></html>' },
+      { name: 'spec/rules.md', data: material.rules },
+      { name: 'spec/components.md', data: material.components },
+    ], priorId ? { commit: 'a'.repeat(40) } : undefined);
     const query = new URLSearchParams({ requestId: randomUUID(), sourceCommit: (priorId ? 'b' : 'a').repeat(40),
       sourceMode: 'private', sourcePath: 'design/v2-fixture',
       ...(priorId ? { intent: 'revise', designId: priorId, expectedVersion: '1' }
