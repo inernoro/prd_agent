@@ -77,8 +77,81 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       return label.clientWidth > 0 && label.scrollWidth > label.clientWidth + 1
         && ['clip', 'hidden'].includes(style.overflowX) && style.textOverflow !== 'ellipsis';
     }).length;
-    const causeCards = Array.from(document.querySelectorAll('.dw-ac-cards > li')).filter(dom.visible);
-    const causeNames = causeCards.map(element => element.querySelector('strong')?.textContent ?? '');
+    const causeCards = Array.from(document.querySelectorAll<HTMLElement>('.dw-ac-cards > li')).filter(dom.visible);
+    const causes = causeCards.map(element => {
+      const title = element.querySelector('strong')?.cloneNode(true) as Element | undefined;
+      title?.querySelectorAll('[aria-hidden=true]').forEach(node => node.remove());
+      return { length: [...(title?.textContent?.trim() ?? '')].length,
+        measurement: /\d+(?:[.,]\d+)?\s*(?:px|ms|rem)\b/i.test(element.innerText) };
+    });
+    const hero = dom.find('.dw-ac-hero');
+    const methods = Array.from(document.querySelectorAll('.dw-ac-mcards > li')).filter(dom.visible);
+    const overview = dom.find('.dw-ac-items:has(> [data-item="verdict"])');
+    const overviewIssues: string[] = overview ? [] : ['缺少验收总览'];
+    if (overview) {
+      const order = ['verdict', 'goals', 'causes', 'trace', 'by-screen', 'methods', 'videos', 'steps'];
+      const sections = Array.from(overview.children).filter(dom.visible).map(element => element.getAttribute('data-item') ?? '')
+        .filter(item => order.includes(item));
+      if (new Set(sections).size !== sections.length || sections.some((item, index) => index > 0
+        && order.indexOf(item) < order.indexOf(sections[index - 1]))) overviewIssues.push('总览区块的顺序或数量不符');
+      if (['verdict', 'trace', 'by-screen', 'methods', 'videos', 'steps'].some(item => !sections.includes(item))) {
+        overviewIssues.push('总览缺少结论、追溯、画面、手段、演示或下一步');
+      }
+      const heroItems = Array.from(hero?.children ?? []).filter(dom.visible);
+      const heroLabels = heroItems.map(element => element.textContent?.trim() ?? '');
+      const totals = ['验收项', '通过', '不通过', '缺证据'].map(label =>
+        heroLabels.flatMap(value => {
+          const number = value.match(new RegExp('^' + label + '\\s+(\\d+)$'))?.[1];
+          return number === undefined ? [] : [Number(number)];
+        }));
+      if (heroLabels.filter(label => ['已签收', '可以签收', '暂不能签收'].includes(label)).length !== 1
+        || totals.some(matches => matches.length !== 1) || totals.slice(1).reduce((sum, [count]) => sum + count, 0) > totals[0][0]) {
+        overviewIssues.push('结论或四项计数不完整，或计数超过验收项总数');
+      }
+      const heroBoxes = heroItems.map(element => element.getBoundingClientRect());
+      if (heroBoxes.length > 1 && Math.max(...heroBoxes.map(box => box.top)) >= Math.min(...heroBoxes.map(box => box.bottom))) {
+        overviewIssues.push('结论计数未显示在同一行');
+      }
+      const goals = Array.from(overview.querySelectorAll('.dw-ac-goals > li')).filter(dom.visible);
+      const goalsPassed = goals.filter(goal => goal.getAttribute('data-state') === 'passed').length;
+      const goalKpis = heroLabels.filter(text => text.startsWith('目标达成'));
+      if (goalKpis.length !== Number(goals.length > 0) || goals.length > 0 && goalKpis[0] !== `目标达成 ${goalsPassed}/${goals.length}`) {
+        overviewIssues.push('目标计数与目标清单不一致');
+      }
+      const invalidGoal = goals.some(goal => {
+        const ruleStates = Array.from(goal.querySelectorAll('.dw-ac-goal-rule')).filter(dom.visible)
+          .map(element => element.getAttribute('data-state'));
+        const expected = !ruleStates.length ? 'elsewhere' : ruleStates.includes('failed') ? 'failed'
+          : ruleStates.every(state => state === 'passed') ? 'passed' : 'missing';
+        return !goal.querySelector('strong')?.textContent?.trim() || !goal.querySelector('small')?.textContent?.trim()
+          || goal.getAttribute('data-state') !== expected || goal.querySelector(':scope > .dw-status')?.getAttribute('data-state') !== expected;
+      });
+      if (invalidGoal) overviewIssues.push('目标缺少完成条件，或目标结论与相应验收项不一致');
+      const types = causeCards.map(element => element.getAttribute('data-cause'));
+      if (types.some(type => !type) || new Set(types).size !== types.length || types.indexOf('preview') > 0) {
+        overviewIssues.push('同类原因未归并，或预览根因未排首位');
+      }
+      const missingCauseDetails = causeCards.some(element => {
+        const owner = element.querySelector('.dw-ac-effect > small');
+        const details = element.querySelector<HTMLDetailsElement>('.dw-ac-effect > details');
+        const actions = Array.from(element.querySelectorAll('.dw-ac-cause-act :is(button, a[href])')).filter(dom.visible);
+        return !owner || !dom.visible(owner) || !owner.textContent?.trim() || actions.length !== 1 || !actions[0].textContent?.trim()
+          || !details || details.open || details.querySelector('summary')?.textContent?.trim() !== '看清单';
+      });
+      if (missingCauseDetails) overviewIssues.push('有原因缺少负责人、唯一处理入口或收起的「看清单」');
+      const trace = Array.from(overview.querySelectorAll('.dw-ac-trace [data-stage]')).filter(dom.visible);
+      if (trace.map(element => element.getAttribute('data-stage')).join(',') !== 'need,items,clauses') overviewIssues.push('需求追溯缺少条款、验收项或条款结论');
+      const screenRows = Array.from(overview.querySelectorAll('.dw-ac-byscreen > li')).filter(dom.visible);
+      const problems = screenRows.map(element => element.querySelectorAll('.dw-ac-dots :is([data-status=failed], [data-status=missing])').length);
+      if (screenRows.length > 12 || problems.some((count, index) => index > 0 && count > problems[index - 1])) {
+        overviewIssues.push('画面超过十二个，或未按问题数量排序');
+      }
+      const statuses = methods.map(element => element.getAttribute('data-status'));
+      const inactive = statuses.findIndex(status => status === 'disabled' || status === 'not_applicable');
+      if (inactive >= 0 && statuses.slice(inactive).some(status => status !== 'disabled' && status !== 'not_applicable')) {
+        overviewIssues.push('已启用的验收手段未排在前面');
+      }
+    }
     const compare = ['对比左侧版本', '对比右侧版本'].map(label =>
       (dom.find('select[aria-label="' + label + '"]') as HTMLSelectElement | undefined)?.value);
     const feedback = Array.from(document.querySelectorAll('.dw-dl-items > li[data-item]')).filter(dom.visible)
@@ -95,8 +168,7 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       frame: dom.read(dom.find('.dw-frame')), title: dom.read(dom.find('.dw-crumb-draft strong,.dw-crumb-title strong')),
       currentStep: Boolean(currentScreen && selectedStep === currentScreen),
       stepNumber,
-      causes: causeNames.map(name => ({ length: [...name].length, measurement: /\d+(\.\d+)?\s*(px|ms)\b/.test(name) })),
-      hero: Boolean(dom.find('.dw-ac-hero')), methods: document.querySelectorAll('.dw-ac-mcards > li').length,
+      causes, hero: Boolean(hero), methods: methods.length, overviewIssues,
       compare, feedback,
       columns: dom.columns(dom.find('.dw-card-grid:has(.dw-design-card)')), frameworkColumns: dom.columns(dom.find('.dw-fw-strip > div')),
       clippedCards: cards.filter(element => element.scrollWidth > element.clientWidth + 1).length,
@@ -185,10 +257,13 @@ export function observeDesignRules(rules: DesignRule[], value: Observation) {
       put(id, width < height && height >= 360 && value.currentStep && startsAtFirst,
         `默认画布 ${width} × ${height} px，演示显示第 ${value.stepNumber} 步，当前画面${value.currentStep ? '已' : '未'}高亮。`);
     } else if (screenId === 'dsn-accept' && id === 'A-64') {
-      const valid = value.causes.length <= 6 && value.causes.every(cause => cause.length <= 30 && !cause.measurement);
+      const valid = value.causes.length <= 6 && value.causes.every(cause => cause.length > 0 && cause.length <= 30 && !cause.measurement);
       const text = `原因卡 ${value.causes.length} 张，验收手段 ${value.methods} 个，${value.hero ? '有' : '缺'}总览结论。`;
-      if (!valid || !value.hero || value.methods !== 8) put(id, false, text);
-      else results[id] = { status: 'unverified', actual: text + '六区顺序和操作行为仍待复核。' };
+      const issues = [...value.overviewIssues];
+      if (!valid) issues.push('原因卡超出数量或标题长度，或显示了测量原文');
+      if (!value.hero || value.methods !== 8) issues.push('缺少结论或八种验收手段');
+      if (issues.length) put(id, false, text + issues.join('。') + '。');
+      else results[id] = { status: 'unverified', actual: text + '已检查区块和明细的组织。实际操作、目标数据来源及签收行为仍待复验。' };
     } else if (rule.probe?.type === 'horizontal-overflow') {
       const fits = value.content <= value.width + (rule.probe.tolerance ?? 0);
       const text = `文档宽 ${value.width} px，内容宽 ${value.content} px。`;
