@@ -199,3 +199,39 @@ test('MAP 单点进入受阻时先显示试听，点击真实激活后才声称�
     finish?.(); await server.close(); dom.window.close(); Object.assign(globalThis, previous);
   }
 });
+
+test('设备稍晚恢复时，入场音效按实际起播时间释放', async (t) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL('../', import.meta.url)),
+    server: { middlewareMode: true },
+    appType: 'custom',
+    logLevel: 'silent',
+  });
+  const previousWindow = globalThis.window;
+  let stop;
+  try {
+    const arrival = await server.ssrLoadModule('/src/components/entry/quickstartArrival.ts');
+    stop = arrival.stopQuickstartArrivalSound;
+    globalThis.window = { matchMedia: () => ({ matches: false }) };
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let notifyStarted;
+    const playPending = new Promise(resolve => { notifyStarted = resolve; });
+    const dispose = t.mock.fn();
+    const audio = { play: () => playPending, running: true, dispose };
+
+    assert.equal(arrival.markQuickstartArrival(audio), true);
+    t.mock.timers.tick(1800);
+    notifyStarted(true);
+    assert.equal(await arrival.waitForQuickstartArrivalSound(), true);
+    t.mock.timers.tick(401);
+    assert.equal(dispose.mock.callCount(), 0, 'The startup deadline cannot interrupt a playing cue');
+    t.mock.timers.tick(1800);
+    assert.equal(dispose.mock.callCount(), 1);
+  } finally {
+    stop?.();
+    t.mock.timers.reset();
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    await server.close();
+  }
+});

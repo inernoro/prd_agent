@@ -6,6 +6,7 @@ let arrivalUntil = 0;
 let arrivalAudio: EntryAudio | null = null;
 let arrivalPlayback: Promise<boolean> | null = null;
 let soundDeadline: ReturnType<typeof setTimeout> | undefined;
+const AUDIO_DEADLINE_MS = 2200;
 
 export function gatewayLoginDestination(candidate?: string | null, tenant?: TenantSession | null) {
   if (!candidate || candidate === '/' || !candidate.startsWith('/') || candidate.startsWith('//') || candidate.startsWith('/login') || /[\u0000-\u001f\u007f]/.test(candidate)) return canAccessPage(tenant, 'quickstart') ? '/quickstart' : '/';
@@ -25,8 +26,14 @@ export function markQuickstartArrival(audio?: EntryAudio | null) {
   arrivalUntil = Date.now() + 10000;
   if (audio) {
     arrivalAudio = audio;
-    arrivalPlayback = audio.play('reveal').then(started => started && arrivalAudio === audio && audio.running);
-    soundDeadline = setTimeout(stopQuickstartArrivalSound, 2200);
+    soundDeadline = setTimeout(stopQuickstartArrivalSound, AUDIO_DEADLINE_MS);
+    arrivalPlayback = audio.play('reveal').then(started => {
+      if (!started || arrivalAudio !== audio || !audio.running) return false;
+      // A slow device can spend most of the first deadline just becoming available.
+      clearTimeout(soundDeadline);
+      soundDeadline = setTimeout(stopQuickstartArrivalSound, AUDIO_DEADLINE_MS);
+      return true;
+    });
   }
   return audio !== null;
 }
