@@ -911,6 +911,6 @@ jobs:
           set -e
           cat /tmp/entry-audio-old.log
           test "$old_status" -eq 1
-          rg 'The startup deadline cannot interrupt a playing cue' /tmp/entry-audio-old.log
+          grep -F 'The startup deadline cannot interrupt a playing cue' /tmp/entry-audio-old.log
           git restore -- "$scene_path"
           pnpm -C llmgw/web exec node --experimental-strip-types --test --test-concurrency=1 tests/entry-login.test.mjs
