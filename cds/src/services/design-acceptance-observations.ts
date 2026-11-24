@@ -1,9 +1,10 @@
 import type { Page } from 'playwright';
-import type { DesignRule } from '../shared/design-workspace.js';
+import type { DesignRule, DesignTheme } from '../shared/design-workspace.js';
 import type { DesignVisualCheck, DesignVisualChecks } from '../shared/design-visual.js';
+import { measureDesignTextContrast } from './design-text-contrast.js';
 
-export async function measureDesignPage(page: Page) {
-  return page.evaluate(() => {
+export async function measureDesignPage(page: Page, theme?: DesignTheme) {
+  const layout = await page.evaluate(() => {
     const dom = {
       visible(element: Element) {
         return element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible'
@@ -76,12 +77,26 @@ export async function measureDesignPage(page: Page) {
       clippedCards: cards.filter(element => element.scrollWidth > element.clientWidth + 1).length,
     };
   });
+  const darkText = theme === 'dark' ? await measureDesignTextContrast(page)
+    .catch(() => ({ measured: 0, low: 0, unknown: 1, media: 0, lowest: null })) : undefined;
+  return { ...layout, ...(darkText ? { darkText } : {}) };
 }
 
 type Observation = Awaited<ReturnType<typeof measureDesignPage>>;
 const verdict = (passed: boolean, evidence: string): DesignVisualCheck => ({ status: passed ? 'passed' : 'failed', evidence });
 
-export function compareDesignObservations(expected: Observation, actual: Observation, pixelDifference: number): DesignVisualChecks {
+function darkContrastCheck(contrast: Observation['darkText'], useDarkCapture: boolean): DesignVisualCheck {
+  if (!contrast) return useDarkCapture
+    ? { status: 'missing', evidence: '待核对同一画面和视口的深色实拍。', useDarkCapture: true }
+    : { status: 'missing', evidence: '此图位尚无深色正文测量。' };
+  const measured = `深色正文实测 ${contrast.measured} 处，${contrast.low} 处低于 4.5。最低 ${contrast.lowest?.toFixed(2) ?? '未测得'}。`;
+  const pending = `另有 ${contrast.unknown} 处正文和 ${contrast.media} 处图片或嵌入画面待核对。`;
+  if (contrast.low) return { status: 'failed', evidence: measured + pending };
+  if (!contrast.measured || contrast.unknown || contrast.media) return { status: 'missing', evidence: measured + pending };
+  return { status: 'passed', evidence: measured + '当前可视区域的正文背景均已核对。' };
+}
+
+export function compareDesignObservations(expected: Observation, actual: Observation, pixelDifference: number, useDarkCapture = false): DesignVisualChecks {
   const regions = ['页头', '标签', '主体', '浮层', '底部'];
   const deltas = actual.layers.map((actualBox, index) => {
     const reference = expected.layers[index];
@@ -105,7 +120,7 @@ export function compareDesignObservations(expected: Observation, actual: Observa
     'V-05': actual.raw ? verdict(false, `主体扫描发现 ${actual.raw} 行疑似原样 Markdown、JSON 或凭据。`) :
       { status: 'missing', evidence: '文本扫描未发现 Markdown、JSON 或凭据前缀。内部编号和转义内容待核对。' },
     'V-06': { status: 'missing', evidence: '同数据图已生成，名称与徽标数量的逐处一致性待核对。' },
-    'V-07': { status: 'missing', evidence: '已按声明主题取图，正文对比度和图片用色待测量。' },
+    'V-07': darkContrastCheck(actual.darkText, useDarkCapture),
     'V-08': { status: 'missing', evidence: `已取 ${actual.width} × ${actual.height} 的图。Windows 两档缩放与手机状态待关联。` },
     'V-09': { status: 'missing', evidence: '已进入当前声明的状态。空、加载、异常和权限场景的覆盖待核对。' },
     'V-10': actual.scrollHeight > actual.height * 10 ? verdict(false, `内容高 ${actual.scrollHeight} px，超过当前视口的十屏。`) :

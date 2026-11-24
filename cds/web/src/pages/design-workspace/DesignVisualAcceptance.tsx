@@ -5,7 +5,7 @@ import { useTheme } from '@/lib/theme';
 import { designDemoImplementationPath, designSlots, designViewports, type DesignCell, type DesignEntry, type DesignRun,
   type DesignScreen, type DesignSlot, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus, designObjectivePlanEnabled } from '../../../../src/shared/design-methods';
-import { concreteVisualEvidence, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRuleShot, designVisualSlots,
+import { concreteVisualEvidence, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualRuleShot, designVisualSlots,
   designVisualStandard, designVisualStatus, visualSlotTheme, type DesignVisualChecks, type DesignVisualRow, type DesignVisualStatus } from '../../../../src/shared/design-visual';
 import { cellNames, designArtifact, designDate, designPublisherLabel, ruleModes, slotNames, type DesignCommand } from './design-ui';
 
@@ -16,7 +16,7 @@ const checkNames = { passed: '通过', failed: '有问题', missing: '缺证据'
 const columns = ['画面', '验收方式', '对照图', '实现图', '结论'];
 
 function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, visualOnly: boolean, run?: DesignRun) {
-  const record = run?.visual?.[designVisualKey(screen.id, slot)];
+  const record = designVisualRowForSlot(screen, slot, run);
   const rules = version.acceptance.filter(rule => rule.screenId === screen.id && rule.slots.includes(slot)).map(rule => ({
     rule, cell: run?.cells.find(cell => cell.itemId === rule.id && cell.slot === slot),
   }));

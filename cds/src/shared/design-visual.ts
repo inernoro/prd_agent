@@ -13,7 +13,7 @@ export const designVisualStandard = [
   ['V-10', '数据规模', '对图', '用长标题、几十条和真实规模的数据检查裁切、溢出和页面长度。'],
 ] as const;
 export type DesignVisualCheckId = typeof designVisualStandard[number][0];
-export type DesignVisualCheck = { status: 'passed' | 'failed' | 'missing'; evidence: string };
+export type DesignVisualCheck = { status: 'passed' | 'failed' | 'missing'; evidence: string; useDarkCapture?: true };
 export type DesignVisualChecks = Partial<Record<DesignVisualCheckId, DesignVisualCheck>>;
 export type DesignVisualRow = DesignCaptureProvenance & {
   imageId?: string; referenceImageId?: string; measured?: DesignCell['measured'];
@@ -82,9 +82,25 @@ export function designVisualCheckStatus(id: DesignVisualCheckId, check?: DesignV
   return check.status;
 }
 
+export function designVisualRowForSlot(screen: DesignScreen, slot: DesignSlot, run?: DesignRun) {
+  const key = designVisualKey(screen.id, slot);
+  const row = run?.visual?.[key];
+  if (!row?.checks['V-07']?.useDarkCapture || visualSlotTheme(slot) !== 'light' || !screen.themes.includes('dark')) return row;
+  const darkKey = designVisualKey(screen.id, `${screen.viewport}-dark`);
+  const darkRow = run?.visual?.[darkKey];
+  const darkCheck = darkRow?.checks['V-07'];
+  const lightProof = run?.programEvidence?.[key];
+  const darkProof = run?.programEvidence?.[darkKey];
+  if (!darkRow?.imageId || !darkRow.referenceImageId || !row.imageId || !row.referenceImageId || !darkCheck
+    || !lightProof || !darkProof || lightProof.fixtureDigest !== darkProof.fixtureDigest || lightProof.dataset !== darkProof.dataset
+    || [row, darkRow, lightProof, darkProof].some(proof => proof.capturedBy !== 'cds' || proof.commit !== run?.commit
+      || proof.dataset !== lightProof.dataset) || !row.measured?.path || row.measured.path !== darkRow.measured?.path) return row;
+  return { ...row, checks: { ...row.checks, 'V-07': { ...darkCheck, evidence: `同画面深色实拍。${darkCheck.evidence}` } } };
+}
+
 export function designVisualStatus(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, run?: DesignRun): DesignVisualStatus {
   if (!run) return 'unverified';
-  const row = run.visual?.[designVisualKey(screen.id, slot)];
+  const row = designVisualRowForSlot(screen, slot, run);
   const statuses = designVisualStandard.map(([id]) => designVisualCheckStatus(id, row?.checks[id]));
   if (statuses.includes('failed')) return 'failed';
   if (!row?.imageId) return 'no_image';

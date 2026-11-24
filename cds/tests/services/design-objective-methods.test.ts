@@ -25,6 +25,34 @@ describe('objective design methods', () => {
     expect(old.required).toHaveLength(6);
   });
 
+  it('recognizes the objective plan in a pre-mode-marker snapshot', () => {
+    const snapshot = {
+      ...version,
+      acceptanceMode: undefined,
+      acceptancePlan: { flow: { enabled: true }, human: { enabled: true } },
+    } as unknown as DesignVersion;
+
+    const state = designMethodsState(snapshot);
+    expect(state.objective).toBe(true);
+    expect(state.required.map(method => method.id)).toEqual(['mece', 'compare', 'visual', 'regress', 'flow', 'human']);
+    expect(state.methods.find(method => method.id === 'smoke')?.status).toBe('disabled');
+  });
+
+  it.each([
+    { applicable: true },
+    { applicable: true, enabled: false },
+  ])('preserves the legacy mode for an applicability declaration %o', flow => {
+    const state = designMethodsState({
+      ...version,
+      acceptanceMode: undefined,
+      acceptancePlan: { flow, smoke: { applicable: false, reason: '没有冒烟入口' } },
+    });
+
+    expect(state.objective).toBe(false);
+    expect(state.required.map(method => method.id)).toEqual(['mece', 'compare', 'visual', 'flow', 'human']);
+    expect(state.methods.find(method => method.id === 'smoke')?.status).toBe('not_applicable');
+  });
+
   it('derives each flow step and keeps a requested method blocked until there is evidence', () => {
     const enabled = { ...entry, enabledMethods: { 17: ['flow' as const] } };
     expect(designMethodsState(version, run, enabled).blockers.map(method => method.id)).toContain('flow');

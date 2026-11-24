@@ -1,6 +1,6 @@
 import { designProgramEvidenceRequired, type DesignEntry, type DesignRule, type DesignRun, type DesignScreen, type DesignSlot, type DesignVersion } from './design-workspace.js';
 import {
-  designVisualCheckStatus, designVisualKey, designVisualReference, designVisualSlots,
+  designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualSlots,
   designVisualStandard, type DesignVisualCheckId, type DesignVisualStatus,
 } from './design-visual.js';
 
@@ -29,7 +29,7 @@ export const designObjectiveMethods = [
   ...designMethods.slice(3),
 ] as const;
 export type DesignMethodId = typeof designObjectiveMethods[number][0];
-export type DesignAcceptancePlan = Partial<Record<DesignMethodId, { applicable: boolean; enabled?: boolean; reason?: string }>>;
+export type DesignAcceptancePlan = Partial<Record<DesignMethodId, { applicable?: boolean; enabled?: boolean; reason?: string }>>;
 export type DesignMethodSetting = { enabled: boolean; by: { id: string; label: string }; at: string; reason?: string };
 export type DesignMethodSettings = Partial<Record<DesignMethodId, DesignMethodSetting>>;
 export type DesignEvidenceStatus = 'passed' | 'failed' | 'missing';
@@ -59,7 +59,9 @@ export function designMethodPlanEnabled(version: DesignVersion) {
 
 export function designObjectivePlanEnabled(version: DesignVersion) {
   return version.acceptanceMode === 'objective'
-    || version.screens.some(screen => screen.id === 'dsn-accept-regress');
+    || version.screens.some(screen => screen.id === 'dsn-accept-regress')
+    // Early method plans stored an explicit enabled state before the acceptance mode was added.
+    || Object.values(version.acceptancePlan ?? {}).some(method => typeof method?.enabled === 'boolean' && method.applicable === undefined);
 }
 
 const defaults = new Set<DesignMethodId>(['mece', 'compare', 'visual', 'regress']);
@@ -152,7 +154,7 @@ export function designComparisonStatus(version: DesignVersion, screen: DesignScr
 
 export function designMethodVisualStatus(screen: DesignScreen, slot: DesignSlot, run?: DesignRun): DesignVisualStatus {
   if (!run) return 'unverified';
-  const row = run.visual?.[designVisualKey(screen.id, slot)];
+  const row = designVisualRowForSlot(screen, slot, run);
   const result = designEvidenceStatus(designVisualStandard.map(([id]) => designVisualCheckStatus(id, row?.checks[id])));
   return result === 'failed' || row?.imageId ? result : 'no_image';
 }
@@ -228,7 +230,7 @@ export function designMethodsState(version: DesignVersion, run?: DesignRun, entr
 
 export function designVisualBreakdown(version: DesignVersion, run?: DesignRun) {
   const rows = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => ({
-    screen, slot, entry: run?.visual?.[designVisualKey(screen.id, slot)],
+    screen, slot, entry: designVisualRowForSlot(screen, slot, run),
   })));
   return designVisualStandard.map(([id, name, how, criterion]) => {
     const counts: Record<DesignEvidenceStatus, number> = { passed: 0, failed: 0, missing: 0 };

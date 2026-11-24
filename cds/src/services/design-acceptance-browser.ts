@@ -198,7 +198,7 @@ async function readImplementation(browser: Browser, dist: string, target: URL, p
     const difference = await page.evaluate(designPixelDifference, {
       before: `data:image/png;base64,${reference.toString('base64')}`, after: `data:image/png;base64,${image.toString('base64')}`,
     });
-    const observed = await measureDesignPage(page);
+    const observed = await measureDesignPage(page, theme);
     return samePage() ? { observed, image, pixelDifference: difference.area } : undefined;
   } catch {
     return undefined;
@@ -257,7 +257,7 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
       if (!actual) return rejectPlanning(422, 'design_capture_implementation_unavailable', '实现未到达同数据画面。请实现方核对路由或进入动作。');
       if (!await checkBuild()) return rejectPlanning(409, 'design_capture_commit_changed', '实现提交在截图时变化，请创建新的验收运行。');
       return { fixtureDigest: designDigest(JSON.stringify(prior.fixtures)), reference: prior.image, implementation: actual.image,
-        checks: compareDesignObservations(prior.observed, actual.observed, actual.pixelDifference),
+        checks: compareDesignObservations(prior.observed, actual.observed, actual.pixelDifference, theme === 'light' && screen.themes.includes('dark')),
         rules: observeDesignRules(rules, actual.observed) };
     } finally {
       clearTimeout(expires);
