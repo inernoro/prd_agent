@@ -25,6 +25,7 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import type { CenterRow, ReleaseExecutionMode } from './types';
+import { deployScriptLines } from './ConfigTab';
 
 export interface EnvConfigSectionProps {
   row: CenterRow;
@@ -44,6 +45,8 @@ interface StrategyDraft {
 }
 
 const MODE_LABELS: Record<ReleaseExecutionMode, string> = {
+  'project-script': '项目发布脚本（默认）',
+  'managed-script': 'CDS 独立脚本（备选）',
   'existing-script': '项目现有脚本',
   'generated-compose': '生成的 Compose',
   'generated-static': '生成的静态站点',
@@ -155,12 +158,14 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
     }
   };
 
-  /* 生效序列预览：把保存后真正会跑的那串命令摊开。缺哪一段就说缺哪一段，不留空行。 */
+  const scriptDriven = mode === 'project-script' || mode === 'managed-script';
+  const scriptPreview = scriptDriven ? deployScriptLines(row).join('\n') : draft.deployCommand;
+  /* 生效序列预览：项目脚本模式不能显示成“缺少部署命令”。 */
   const sequence = [
     draft.appPath ? `cd ${draft.appPath}` : '# （未配置站点目录）',
-    draft.deployCommand || '# （未配置部署命令，保存前无法发布）',
+    scriptPreview || '# （未配置部署命令，保存前无法发布）',
     draft.healthcheckUrl
-      ? `curl -sf ${draft.healthcheckUrl} || ${draft.rollbackCommand || '# （未配置回滚命令，健康检查失败后不会自动退回）'}`
+      ? `curl -sf ${draft.healthcheckUrl} || ${scriptDriven ? '# 按历史成功记录重新发布' : draft.rollbackCommand || '# （未配置回滚命令，健康检查失败后不会自动退回）'}`
       : '# （未配置健康检查地址，发布后不会自动验证）',
   ].join('\n');
 
@@ -207,10 +212,11 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
         </Field>
         <Field label="部署命令" span>
           <textarea
-            value={draft.deployCommand}
+            value={scriptPreview}
+            readOnly={scriptDriven}
             placeholder="未配置"
             spellCheck={false}
-            rows={draft.deployCommand.includes('\n') ? 8 : 2}
+            rows={scriptPreview.includes('\n') ? 8 : 2}
             onChange={(event) => setDraft((current) => ({ ...current, deployCommand: event.target.value }))}
             className={CODE_AREA}
           />
@@ -225,7 +231,8 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
         </Field>
         <Field label="回滚命令">
           <textarea
-            value={draft.rollbackCommand}
+            value={scriptDriven ? '重新执行历史成功记录中的发布脚本' : draft.rollbackCommand}
+            readOnly={scriptDriven}
             placeholder="该环境不支持回滚"
             spellCheck={false}
             rows={draft.rollbackCommand.includes('\n') ? 8 : 2}

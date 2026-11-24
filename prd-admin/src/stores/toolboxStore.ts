@@ -356,7 +356,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     kind: 'agent',
     agentKey: 'product-agent',
     routePath: '/product-agent',
-    permission: 'product-agent.use',
+    permission: ['product-agent.use', 'product-agent.version-apply'],
     tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
@@ -583,7 +583,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
   // 真正会渲染「施工中」的是 navRegistry 那份 `nav.wip`（经 launcherCatalog →
   // unifiedNavCatalog → AgentSwitcher）。而 /web-pages 在 navRegistry 里是主干上早已存在
   // 的正式导航项，本 PR 没有创建它——要不要给一条已上线的入口打施工中标，是产品决定，
-  // 不该由这条分支顺手做。相关欠账见 doc/debt.platform.open-design.md 第三十轮一节。
+  // 不该由这条分支顺手做。相关欠账见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md 第三十轮一节。
   {
     id: 'builtin-web-pages',
     name: '网页托管',

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Heart } from 'lucide-react';
-import { likeReport, listReportLikes, unlikeReport } from '@/services';
+import { getReportInteractionApi, type ReportKind } from '../reportInteractionApi';
 import type { ReportLikeSummary, ReportLikeUser } from '@/services/contracts/reportAgent';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -10,6 +10,8 @@ import { toast } from '@/lib/toast';
 interface Props {
   reportId: string;
   compact?: boolean;
+  /** 周报（默认）或月报，决定打哪套接口 */
+  kind?: ReportKind;
 }
 
 const EMPTY_SUMMARY: ReportLikeSummary = {
@@ -18,7 +20,8 @@ const EMPTY_SUMMARY: ReportLikeSummary = {
   users: [],
 };
 
-export function ReportLikeBar({ reportId, compact = false }: Props) {
+export function ReportLikeBar({ reportId, compact = false, kind = 'weekly' }: Props) {
+  const interactionApi = getReportInteractionApi(kind);
   const [summary, setSummary] = useState<ReportLikeSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -27,14 +30,14 @@ export function ReportLikeBar({ reportId, compact = false }: Props) {
   const loadLikes = useCallback(async () => {
     if (!reportId) return;
     setLoading(true);
-    const res = await listReportLikes({ reportId });
+    const res = await interactionApi.listLikes({ reportId });
     if (res.success && res.data) {
       setSummary(res.data);
     } else {
       toast.error(res.error?.message || '加载点赞失败');
     }
     setLoading(false);
-  }, [reportId]);
+  }, [reportId, interactionApi]);
 
   useEffect(() => {
     void loadLikes();
@@ -69,8 +72,8 @@ export function ReportLikeBar({ reportId, compact = false }: Props) {
     }
 
     const res = prev.likedByMe
-      ? await unlikeReport({ reportId })
-      : await likeReport({ reportId });
+      ? await interactionApi.unlike({ reportId })
+      : await interactionApi.like({ reportId });
 
     if (res.success && res.data) {
       setSummary(res.data);

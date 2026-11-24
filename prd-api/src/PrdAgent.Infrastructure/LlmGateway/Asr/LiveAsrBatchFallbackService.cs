@@ -9,6 +9,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.LlmGateway.Asr;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 
@@ -45,7 +46,10 @@ public sealed class LiveAsrBatchFallbackService
         ChannelReader<LiveAsrAudioFrame> frames,
         Func<LiveAsrEvent, Task> emit,
         Action? onUpstreamRequest,
-        GatewayRequestContext requestContext)
+        GatewayRequestContext requestContext,
+        CancellationToken platformCancellationToken = default,
+        Func<CancellationToken, Task>? beforeFallbackSend = null,
+        string appCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio)
     {
         string? provider = null;
         string? model = null;
@@ -69,7 +73,7 @@ public sealed class LiveAsrBatchFallbackService
         var completeAudioCoverage = true;
         var receivedFinalFrame = false;
 
-        await foreach (var frame in frames.ReadAllAsync(CancellationToken.None))
+        await foreach (var frame in frames.ReadAllAsync(platformCancellationToken))
         {
             if (frame.IsFinal)
             {
@@ -94,7 +98,9 @@ public sealed class LiveAsrBatchFallbackService
                     windowIndex,
                     emit,
                     onUpstreamRequest,
-                    requestContext);
+                    requestContext,
+                    platformCancellationToken,
+                    beforeFallbackSend, appCallerCode);
                 if (!window.Succeeded)
                 {
                     return new LiveAsrSessionResult
@@ -139,7 +145,9 @@ public sealed class LiveAsrBatchFallbackService
                 windowIndex,
                 emit,
                 onUpstreamRequest,
-                requestContext);
+                requestContext,
+                platformCancellationToken,
+                beforeFallbackSend, appCallerCode);
             if (!window.Succeeded)
             {
                 return new LiveAsrSessionResult
@@ -212,7 +220,10 @@ public sealed class LiveAsrBatchFallbackService
         int windowIndex,
         Func<LiveAsrEvent, Task> emit,
         Action? onUpstreamRequest,
-        GatewayRequestContext requestContext)
+        GatewayRequestContext requestContext,
+        CancellationToken platformCancellationToken,
+        Func<CancellationToken, Task>? beforeFallbackSend,
+        string appCallerCode)
     {
         // 纯静音窗口不发给多模态模型。否则部分模型会把静音补全成
         // “请播放音频”等解释性文本，既污染原文又产生无效调用成本。
@@ -223,6 +234,7 @@ public sealed class LiveAsrBatchFallbackService
         var orderedCandidates = candidates.ToArray();
         for (var index = 0; index < orderedCandidates.Length; index++)
         {
+            platformCancellationToken.ThrowIfCancellationRequested();
             var candidate = orderedCandidates[index];
             if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
                     candidate.ActualModel,
@@ -245,6 +257,7 @@ public sealed class LiveAsrBatchFallbackService
                  providerAttempt <= ProviderValidationAttempts;
                  providerAttempt++)
             {
+                platformCancellationToken.ThrowIfCancellationRequested();
                 await emit(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Status,
@@ -259,12 +272,16 @@ public sealed class LiveAsrBatchFallbackService
 
                 try
                 {
-                    var request = BuildRequest(candidate, wave, providerAttempt, requestContext);
+                    var request = BuildRequest(candidate, wave, providerAttempt, requestContext, appCallerCode);
+                    if (beforeFallbackSend is null)
+                        throw new TaskExecutionAdmissionException("TASK_ADMISSION_UNAVAILABLE", "任务授权服务暂时不可用，已停止转写；请保留录音后稍后重试。", 503);
+                    await beforeFallbackSend(platformCancellationToken);
                     onUpstreamRequest?.Invoke();
                     var response = await _gateway.SendRawWithResolutionAsync(
                         request,
                         candidate.ToGatewayResolution(),
-                        CancellationToken.None);
+                        platformCancellationToken);
+                    platformCancellationToken.ThrowIfCancellationRequested();
                     var text = response.Success && !string.IsNullOrWhiteSpace(response.Content)
                         ? ExtractText(response.Content)
                         : null;
@@ -301,6 +318,14 @@ public sealed class LiveAsrBatchFallbackService
                     // 浪费在已不可用的候选上。只有成功响应但文本无效才继续校验。
                     if (!response.Success)
                         break;
+                }
+                catch (OperationCanceledException) when (platformCancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (TaskExecutionAdmissionException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -443,7 +468,8 @@ public sealed class LiveAsrBatchFallbackService
         ModelResolutionResult candidate,
         byte[] wave,
         int providerAttempt,
-        GatewayRequestContext requestContext)
+        GatewayRequestContext requestContext,
+        string appCallerCode)
     {
         if (candidate.IsExchange
             && string.Equals(candidate.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
@@ -451,7 +477,7 @@ public sealed class LiveAsrBatchFallbackService
             return BaseRequest(
                 candidate,
                 requestContext,
-                requestBody: new JsonObject { ["audio_data"] = Convert.ToBase64String(wave) });
+                requestBody: new JsonObject { ["audio_data"] = Convert.ToBase64String(wave) }, appCallerCode: appCallerCode);
         }
 
         if (ShouldUseChatAudio(candidate))
@@ -492,7 +518,7 @@ public sealed class LiveAsrBatchFallbackService
                             },
                         },
                     },
-                });
+                }, appCallerCode: appCallerCode);
         }
 
         return BaseRequest(
@@ -503,7 +529,7 @@ public sealed class LiveAsrBatchFallbackService
             multipartFiles: new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("live-window.wav", wave, "audio/wav"),
-            });
+            }, appCallerCode: appCallerCode);
     }
 
     private static GatewayRawRequest BaseRequest(
@@ -512,12 +538,13 @@ public sealed class LiveAsrBatchFallbackService
         string? endpointPath = null,
         JsonObject? requestBody = null,
         Dictionary<string, object>? multipartFields = null,
-        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null)
+        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null,
+        string appCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio)
     {
         return new GatewayRawRequest
         {
             RequiredOfferingId = candidate.OfferingId,
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             ExpectedModel = candidate.ActualModel,
             PinnedPlatformId = candidate.ActualPlatformId,

@@ -1,3 +1,8 @@
+import type { BranchLifecycleService } from './services/branch-lifecycle.js';
+import { createBranchLifecycleRouter } from './routes/branch-lifecycle.js';
+import { lifecycleStopGate } from './services/branch-lifecycle.js';
+import { CodeReviewUserKeys } from './services/code-review-user-keys.js';
+import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
@@ -10,6 +15,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { SelfMaintenanceRuntime } from './services/self-maintenance-runtime.js';
+import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
@@ -26,10 +33,21 @@ import { createProjectsRouter, assertProjectAccess, isBranchGroupsSaveRequest } 
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
+import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
+import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from './services/human-auth.js';
+import { humanPrincipalId, isHumanProjectGrantUpdatePending, supportsHumanProjectGrant } from './services/human-project-access.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
+import {
+  authorityMapConnectionPath, CDS_MAP_CONNECTION_PATH, CLUSTER_MAP_CONNECTION_PATH, CLUSTER_MAP_CONNECTION_PROTOCOL,
+  ClusterIdentityService, clusterProjectRepository,
+} from './services/cluster-identity.js';
+import { trustedClusterIdentity, type ClusterIdentityContext, type ClusterMapConnection } from './services/cluster-identity-context.js';
+import { canHumanAccessProject as clusterHumanProjectAccess } from './services/human-project-access.js';
+import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
@@ -40,27 +58,75 @@ import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { createEngineeringPlanningRouter, normalizedPlanningPath } from './routes/engineering-planning.js';
+import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
+import { environmentAuditFacts } from './services/environment-audit.js';
+import { createPlanningPreviewAccessRouter, createPreviewTokenRouter, normalizedPreviewAccessPath, previewAccessPerson } from './routes/planning-preview-access.js';
+import { PlanningPreviewAccess, previewPolicyReturnUrl, previewReturnPath, resolvePreviewClientSettings, type PreviewAccessCommit, type PreviewAccessClient } from './services/planning-preview-access.js';
+import { planningDecisionHref, planningPreviewDecisionSubject } from './shared/engineering-planning-links.js';
+import type { PlanningPullRequestPreview } from './shared/engineering-planning.js';
+import { hasActiveGrant } from './services/identity.js';
+
+import { rejectPlanning } from './services/engineering-planning-input.js';
+import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
+import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
+import { createDesignFrameworkBrowser } from './services/design-framework-browser.js';
+import { designShareHandoffConfig } from './services/design-share-handoff.js';
+import { readDesignSourceZip } from './services/design-package.js';
+import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
+import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
+import type { EngineeringPlanningStore } from './services/engineering-planning-store.js';
+import { startPlanningSweep } from './services/engineering-planning-sweep.js';
+import { createPlanningGithubObserver, createPlanningPreviewResolver } from './services/engineering-planning-pull-requests.js';
+import { createPlanningFileAnchorProbe } from './services/engineering-planning-file-anchors.js';
+import { dtsManagedFreeBytes } from './services/dts-capacity.js';
+import { createDtsRouter } from './routes/dts.js';
+import { DtsService } from './services/dts.js';
+import { dtsCredentialAllowed } from './services/dts-access.js';
+import { DtsStore } from './services/dts-store.js';
+import { dtsHash, dtsReject } from './services/dts-policy.js';
+import type { DtsActor, DtsRun } from './shared/dts.js';
+import { CodeReviewService } from './services/code-review.js';
+import { codeReviewGithubToken, codeReviewRepositoryRoot } from './services/code-review-source.js';
+import { createCodeReviewInputs } from './services/code-review-inputs.js';
+import { createCodeReviewMail } from './services/code-review-mail.js';
+import { createAcceptanceTasksRouter } from './routes/acceptance-tasks.js';
+import { AcceptanceTaskService, startAcceptanceLeaseReaper } from './services/acceptance-tasks.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
-import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
-import { resolveNoticeOutboundConfig } from './services/notice-outbound-map.js';
+import { NoticeLedgerService, startNoticeLedger, resolveCurrentNoticeOutbound } from './services/notice-ledger.js';
+import { mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { HostCapacitySamplingService } from './services/host-capacity-sampling.js';
+import { createHostCapacitySamplingRouter } from './routes/host-capacity-sampling.js';
+import { HostCapacityObservationService } from './services/host-capacity-observation.js';
+import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
+import { createReleaseGovernanceRouter } from './routes/release-governance.js';
+import { ReleaseGovernanceService } from './services/release-governance.js';
+import { ReleaseGovernanceGit, governanceGitRunner, resolveReleaseProjectRepository } from './services/release-governance-git.js';
+import { releaseMergeBackReader } from './services/release-merge-back.js';
+import { ReleaseTargetHistoryStore } from './services/release-target-history.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
-import { sha256Hex } from './services/connection/pairing-service.js';
+import { CLUSTER_MAP_SCOPES, clusterMapOrigin, sha256Hex, type PairingMember } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostics.js';
 import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
-import { defaultEnvFilePath } from './services/env-file.js';
+import { defaultEnvFilePath, EnvFileBusyError, readSystemPasswordActivity, rotateBasicPasswordInEnv } from './services/env-file.js';
+import { createSystemPasswordApproval } from './services/system-password-approval.js';
+import { MIN_PASSWORD_LENGTH } from './services/password.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
+import { createBackupRetentionRouter } from './routes/backup-retention.js';
+import { createOwnedResourceRetentionRouter } from './routes/owned-resource-retention.js';
 import { createInfraDataRouter } from './routes/infra-data.js';
 import { createInfraCredentialRotationRouter } from './routes/infra-credential-rotation.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
@@ -69,13 +135,13 @@ import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter, getWebhookNoiseStats } from './routes/github-webhook.js';
 import { buildGateStatus } from './services/build-gate.js';
-import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { getEventLoopLag } from './services/event-loop-lag.js';
 import { getWorkloadCgroupStatus } from './services/workload-cgroup.js';
 import { collectControlPlanePressure } from './services/control-plane-pressure.js';
 import type { UptimeCycleHealth } from './services/uptime-monitor.js';
 import type { OffHostAuditBreakerState } from './services/offhost-audit-log.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { verifyProjectReleaseCI } from './services/project-release-ci.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
@@ -88,6 +154,11 @@ import {
   GH_SESSION_COOKIE,
 } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
+import { authCookie, createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './routes/passkeys.js';
+import { createHostedSsoRouter } from './routes/hosted-sso.js';
+import { HostedSso } from './services/hosted-sso.js';
+import { protectControlBrowser } from './middleware/browser-origin.js';
+import { LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from './services/browser-session-cookies.js';
 import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
   TICKET_SSO_COOKIE,
@@ -177,11 +248,7 @@ function getRemoteAddr(req: express.Request): string | undefined {
     || req.socket?.remoteAddress;
 }
 
-function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
-}
+
 
 /**
  * 单项目作用域的 cdsg_ 全局 Key —— 同时 stamp req.cdsProjectKey（2026-07-09 Codex P1）。
@@ -244,7 +311,7 @@ function shouldAuditApiMutation(req: express.Request): boolean {
 function normalizeHttpLogPath(pathValue: string): string {
   const rawPath = (pathValue || '').split('?')[0] || '/';
   const segments = rawPath.split('/');
-  const staticBranchRoutes = new Set(['stream', 'state-audit', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
+  const staticBranchRoutes = new Set(['stream', 'state-audit', 'lifecycle-cleanup', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
   const staticExecutorRoutes = new Set(['register', 'capacity', 'dispatch']);
   return segments
     .map((segment, index) => {
@@ -528,6 +595,11 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  hostCapacityObservation?: HostCapacityObservationService;
+  backupRetentionService?: import('./services/backup-retention.js').BackupRetentionService;
+  ownedResourceLifecycle?: import('./services/owned-resource-task.js').OwnedResourceLifecycle;
+  imageCacheGovernance?: import('./services/image-cache-governance.js').ImageCacheGovernance;
+  branchLifecycleService?: BranchLifecycleService;
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
@@ -554,6 +626,7 @@ export interface ServerDeps {
   storageModeContext?: StorageModeContext;
   /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
   stateFile?: string;
+  engineeringPlanningStore?: EngineeringPlanningStore;
   /**
    * FU-02: Optional pre-initialised AuthStore backend. When provided (by
    * index.ts after calling initAuthStore()), it is used instead of the
@@ -567,6 +640,8 @@ export interface ServerDeps {
   gracefulShutdown?: GracefulShutdownController;
   /** Resources must settle before the shared execution pools close. */
   registerResourceShutdown?: (close: () => Promise<void>) => void;
+  /** 同一服务器的维护owner、执行能力与纯状态/健康投影。 */
+  selfMaintenanceRuntime?: SelfMaintenanceRuntime;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -622,6 +697,10 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
     && crypto.timingSafeEqual(actualBytes, expectedBytes);
 }
 
+function isPasswordChangeRequest(req: express.Request): boolean {
+  return req.method === 'POST' && /^\/(?:_cds\/)?api\/auth\/change-password(?:\/approval)?\/?$/i.test(req.path);
+}
+
 function normalizedSealedStoragePath(value: unknown): string | null {
   let pathname = String(value || '').split('?')[0].toLowerCase();
   if (pathname.startsWith('/_cds/api/')) pathname = pathname.slice('/_cds'.length);
@@ -636,17 +715,56 @@ function isSealedStorageRequest(req: express.Request): boolean {
   return [req.url, req.originalUrl].some((value) => normalizedSealedStoragePath(value) !== null);
 }
 
+function normalizedDatabasePassCredentialPath(value: unknown): string | null {
+  const pathname=String(value||'').split('?')[0].replace(/^\/_cds\/api\//i,'/api/').replace(/\/$/,'');
+  return /^\/api\/branches\/[^/]+\/resources\/[^/]+\/database-passes\/[a-f0-9]{20}\/credentials$/i.test(pathname)?pathname:null;
+}
+function isDatabasePassCredentialRequest(req: express.Request): boolean {
+  return [req.url,req.originalUrl].some(value=>normalizedDatabasePassCredentialPath(value)!==null);
+}
+
+function normalizedPrivateWorkspacePath(value: unknown) {
+  const path = String(value ?? '').split('?')[0].replace(/^\/_cds\/api\//i, '/api/');
+  const environment = /^\/api\/env(?:\/(?:[^/]+))?\/?$/i.test(path) ? '/api/env' : undefined;
+  const profile = /^\/api\/build-profiles(?:\/[^/]+)?\/?$/i.test(path) ? '/api/build-profiles'
+    : /^\/api\/branches\/[^/]+\/profile-overrides(?:\/[^/]+)?\/?$/i.test(path) ? '/api/branches/:branchId/profile-overrides' : undefined;
+  return normalizedPlanningPath(value) ?? normalizedDesignPath(value) ?? normalizedPreviewAccessPath(value) ?? environment ?? profile;
+}
+
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
+  const planning = normalizedPrivateWorkspacePath(raw);
+  if (planning) return planning;
+  if (/^\/api\/cluster\/identity\//i.test(raw)) return raw.split('?')[0];
+  if (isHostedIdentityTraffic(raw)) return raw.split('?')[0];
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
+    ?? normalizedDatabasePassCredentialPath(req.url)
+    ?? normalizedDatabasePassCredentialPath(raw)
     ?? '/api/cds-system/sealed-storage';
+}
+
+function isHostedIdentityTraffic(path: string): boolean {
+  return /^\/(?:_cds\/)?api\/(?:hosted-sso|oidc|auth\/passkeys)(?:\/|\?|$)/i.test(path)
+    || /^\/login\?.*\bchoose_account=1(?:&|$)/i.test(path);
+}
+
+function requiresSensitivePasskey(method: string, rawPath: string): boolean {
+  const path = rawPath.replace(/\/+$/, '').toLowerCase();
+  if (method === 'GET' || method === 'HEAD') {
+    return /^\/api\/branches\/[^/]+\/(effective-env\/reveal|resources\/[^/]+\/(connection-string|database-passes\/[^/]+\/credentials))$/.test(path);
+  }
+  if (method === 'PUT') return /^\/api\/auth\/users\/[^/]+\/projects$/.test(path);
+  if (method === 'PATCH') return /^\/api\/auth\/users\/[^/]+$/.test(path);
+  return method === 'POST' && /^\/api\/releases\/(branches\/[^/]+\/runs|runs\/[^/]+\/(retry|rollback)|batches\/[^/]+\/(start|targets\/[^/]+\/(retry|rollback)))$/.test(path);
 }
 
 function requestHeadersForLogs(req: express.Request, res: express.Response): Record<string, string> {
   if ((res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return {};
-  return redactHeaders(req.headers) ?? {};
+  const headers = redactHeaders(req.headers) ?? {};
+  if (headers.referer && /\/api\/(?:hosted-sso|oidc)|choose_account=1/i.test(headers.referer)) headers.referer = headers.referer.split('?')[0];
+  return headers;
 }
 
 function legacyAuthUser(username: string, authMode: 'disabled' | 'basic'): CdsUser {
@@ -857,21 +975,71 @@ export interface ActivityEvent {
 /** Map API path patterns to Chinese labels */
 export function resolveApiLabel(method: string, path: string): string {
   // Normalize: remove /api prefix, trim trailing slash
-  const p = path.replace(/^\/api/, '').replace(/\/$/, '');
+  const p = path.replace(/^\/api/, '').replace(/\/$/, '')
+    .replace(/^\/cluster\/identity\/map-connections(?=\/|$)/, '/cds-system/connections');
+  if (method === 'PATCH' && /^\/dts\/policies\/[^/]+$/.test(p)) return '调整账号同步规则';
+  if (/^\/dts\/runs\/[^/]+(?:\/(?:pause|resume|cancel))?$/.test(p)) return method === 'GET' ? '查看同步进度' : '管理同步任务';
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /dts/capabilities': '查看同步能力',
+    'GET /dts/connections': '列出数据连接',
+    'POST /dts/connections': '登记数据连接',
+    'PUT /dts/engine': '连接传输服务',
+    'POST /dts/plans': '比较同步差异',
+    'POST /dts/runs': '开始数据同步',
+    'GET /dts/runs': '列出同步任务',
+    'GET /dts/policies': '查看账号同步',
+    'POST /dts/policies': '启用账号同步',
+    'POST /cluster/identity/resolve': '校验集群身份',
+    'POST /cluster/identity/exchange': '交接集群登录',
+    'GET /cluster/identity/status': '读取身份同步',
+    'PUT /cluster/identity/config': '配置集群身份',
+    'GET /cluster/identity/login': '登录集群成员',
+    'GET /host-capacity/observation': '查看容量观测',
+    'GET /host-capacity/sampling': '查看容量采样',
+    'PUT /host-capacity/sampling': '配置容量采样',
+    'POST /host-capacity/sampling/run': '执行容量采样',
+    'GET /acceptance/health': '检查验收服务',
+    'GET /acceptance/templates': '列出测试清单',
+    'POST /acceptance/templates': '发布测试清单',
+    'GET /acceptance/tasks': '列出验收任务',
+    'POST /acceptance/tasks': '创建验收任务',
+    'GET /acceptance/matrix': '查看历史矩阵',
+    'GET /janitor/backups': '预览备份回收',
+    'GET /janitor/backups/state': '查询备份回收',
+    'GET /janitor/backups/owners': '查询备份归属',
+    'POST /janitor/backups/adopt': '登记备份归属',
+    'POST /janitor/backups/reconcile': '执行备份回收',
+    'POST /janitor/backups/cancel': '停止备份回收',
+    'GET /janitor/tasks': '预览验收退役',
+    'GET /janitor/tasks/state': '查询验收退役',
+    'POST /janitor/tasks/reconcile': '执行验收退役',
+    'POST /janitor/tasks/cancel': '停止验收退役',
+    'GET /janitor/tasks/data-cases': '查询历史数据',
+    'POST /janitor/tasks/data-cases/:id/confirm': '登记数据处置',
+    'GET /janitor/tasks/images': '预览镜像回收',
+    'GET /janitor/tasks/images/state': '查询镜像回收',
+    'GET /janitor/tasks/images/owners': '查询镜像归属',
+    'POST /janitor/tasks/images/adopt': '登记镜像归属',
+    'POST /janitor/tasks/images/reconcile': '执行镜像回收',
+    'POST /janitor/tasks/images/cancel': '停止镜像回收',
+    'GET /code-reviews/branches': '列出审查分支',
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
     'POST /cds-system/remote-hosts': '登记远程主机',
     // CDS 配对连接（系统级，2026-05-06）
     'POST /cds-system/connections/issue': '生成配对密钥',
     'POST /cds-system/connections/accept': '接受配对请求',
+    'GET /cds-system/connections/authorize': '查看 MAP 授权',
+    'POST /cds-system/connections/authorize': '批准 MAP 配对',
+    'POST /cds-system/connections/token': '兑换 MAP 授权',
     // 项目级资源占用排行（系统级运维视图，2026-06-23）
     'GET /cds-system/resource-usage': '查看资源占用',
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    'GET /uptime/incidents/:id': '查看故障通知上下文',
     // 监控中心自定义监控（2026-09-08）
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
@@ -889,6 +1057,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PATCH /scheduled-jobs/:id': '更新定时任务',
     'DELETE /scheduled-jobs/:id': '删除定时任务',
     'POST /scheduled-jobs/:id/run': '立即执行任务',
+    'POST /scheduled-jobs/:id/recover': '核实任务产物',
     // 服务端站内信账本（2026-07-29）
     'GET /notices': '列出站内信',
     'POST /notices': '记录站内信',
@@ -900,6 +1069,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/integrations/bug-report/authorize': '接收 MAP 缺陷转发授权',
     'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /instance-catalog': '查看主备 CDS 实例目录',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/offsite-backup': '查询离机备份配置',
     'PUT /cds-system/offsite-backup': '保存离机备份配置',
@@ -930,7 +1100,28 @@ export function resolveApiLabel(method: string, path: string): string {
     // 取消在途发布（阶段一 · 止血）：路由与 label 同期落地，避免又漏一条。
     'POST /releases/runs/:id/cancel': '取消进行中发布',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
+    'GET /releases/batches': '列出发布批次',
+    'GET /releases/batches/accepted-versions': '列出验收版本',
+    'POST /releases/batches': '创建发布批次',
+    'GET /releases/batches/:id': '查看发布批次',
+    'POST /releases/batches/:id/preflight': '批次发布预检',
+    'POST /releases/batches/:id/start': '执行发布批次',
+    'POST /releases/batches/:id/cancel': '取消发布批次',
+    'POST /releases/batches/:id/refresh': '核对批次版本',
+    'POST /releases/batches/:id/targets/:targetId/retry': '重试失败目标',
+    'POST /releases/batches/:id/targets/:targetId/rollback': '恢复目标原版',
     'GET /releases/center': '查看发布中心',
+    'GET /releases/governance': '查看发布审批',
+    'GET /releases/approval-inbox': '查看环境审批列表',
+    'GET /releases/authorizations/:id': '查看单笔发布审批',
+    'POST /releases/targets/:id/governance/enable': '启用发布审批',
+    'POST /releases/targets/:id/conflict-check': '核验真实冲突',
+    'POST /releases/targets/:id/authorizations': '申请发布批准',
+    'POST /releases/authorizations/:id/approve': '批准发布申请',
+    'POST /releases/authorizations/:id/reject': '拒绝发布申请',
+    'POST /releases/authorizations/:id/revoke': '撤销发布批准',
+    'POST /releases/targets/:id/merge-back': '关联回并PR',
+    'POST /releases/merge-backs/:id/refresh': '刷新回并状态',
     'GET /deployment-runs': '列出部署运行',
     'GET /deployment-versions': '列出部署版本',
     'GET /projects/:id/delivery': '查看项目交付模式',
@@ -1018,6 +1209,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
     'GET /bootstrap/presets': '列出初始化预设',
+    'GET /agent/setup.md': '读取智能体接入与任务说明',
+    'GET /agent/setup.json': '读取智能体接入版本与技能选择',
     'GET /skills/bundles': '列出角色套装',
     'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
@@ -1066,11 +1259,21 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /auth/sso/logout': '退出 SSO 登录',
     'GET /auth/sso/config': '读取 SSO 配置',
     'PUT /auth/sso/config': '保存 SSO 配置',
+    'GET /auth/passkeys/status': '查询通行密钥',
+    'POST /auth/passkeys/register/options': '发起密钥绑定',
+    'POST /auth/passkeys/register/verify': '验证密钥绑定',
+    'POST /auth/passkeys/login/options': '发起免密登录',
+    'POST /auth/passkeys/login/verify': '验证免密登录',
+    'POST /auth/passkeys/logout-everywhere': '退出所有站点',
+    'GET /hosted-sso/panel/status': '查询项目 CDS 登录',
+    'GET /hosted-sso/panel/start': '跳转项目登录入口',
+    'GET /hosted-sso/sites': '列出站点授权',
     'GET /instance-mode': '获取实例模式',
     'POST /auth/login': '本地账号登录',
     'GET /auth/bootstrap-status': '查询首启引导状态',
     'POST /auth/bootstrap': '创建首个本地账号',
     'POST /auth/change-password': '修改密码',
+    'POST /auth/change-password/approval': '发起改密审批',
     'GET /auth/users': '列出用户',
     'POST /auth/users': '创建本地账号',
     'GET /auth/activity': '查看用户操作痕迹',
@@ -1180,10 +1383,53 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/projects\/[^/]+\/design$/, '查看设计工作区'],
+    [/^GET \/projects\/[^/]+\/design\/reviewers$/, '查看可选评审人'],
+    [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
+    [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
+    [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
+    [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
+    [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
+    [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
+    [/^GET \/auth\/preview\/access$/, '查看分支预览访问状态'],
+    [/^GET \/auth\/preview\/requests$/, '查看分支预览访问申请'],
+    [/^GET \/auth\/preview\/notices$/, '查看预览访问通知'],
+    [/^GET \/auth\/design\/notices$/, '查看设计评审通知'],
+    [/^GET \/auth\/preview\/approvers\/[^/]+$/, '读取预览审批人'],
+    [/^PUT \/auth\/preview\/approvers\/[^/]+$/, '设置预览审批人'],
+    [/^POST \/auth\/preview\/access$/, '申请分支预览访问'],
+    [/^POST \/auth\/preview\/token$/, '兑换分支预览票据'],
+    [/^POST \/auth\/users\/[^/]+\/projects\/[^/]+$/, '批准项目访问'],
+    [/^GET \/acceptance\/templates\/[^/]+$/, '读取清单版本'],
+    [/^GET \/acceptance\/tasks\/[^/]+$/, '查看验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/claim$/, '领取验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/heartbeat$/, '续期任务领取'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/release$/, '释放验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/results\/[^/]+$/, '保存用例结果'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/complete$/, '结束验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/cancel$/, '取消验收任务'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/report$/, '生成验收报告'],
+    [/^POST \/acceptance\/tasks\/[^/]+\/bind-report$/, '关联验收报告'],
+    [/^POST \/janitor\/tasks\/data-cases\/[^/]+\/confirm$/, '登记数据处置'],
+    [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
+    [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
+    [/^GET \/projects\/[^/]+\/planning$/, '查看工程规划'],
+    [/^GET \/projects\/[^/]+\/planning\/capabilities$/, '查看规划权限'],
+    [/^GET \/projects\/[^/]+\/planning\/decisions$/, '检索决策'],
+    [/^GET \/projects\/[^/]+\/planning\/debts$/, '查询债务'],
+    [/^GET \/projects\/[^/]+\/planning\/debts\/[^/]+$/, '查看债务详情'],
+    [/^GET \/projects\/[^/]+\/planning\/duplicates$/, '查询疑似重复债务'],
+    [/^POST \/projects\/[^/]+\/planning\/import-preview$/, '预览债务台账导入'],
+    [/^GET \/projects\/[^/]+\/planning\/stats$/, '查看债务演进'],
+    [/^GET \/projects\/[^/]+\/planning\/checkup$/, '查看巡检通知'],
+    [/^POST \/projects\/[^/]+\/planning\/checkup\/read$/, '标记巡检已读'],
+    [/^POST \/projects\/[^/]+\/planning\/commands$/, '提交规划变更'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
+    [/^PUT \/uptime\/targets\/[^/]+\/subscription$/, '调整监控总览订阅'],
     [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
     [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
     [/^POST \/cds-system\/alarm-channels\/[^/]+\/drill$/, '演练通知通道'],
@@ -1195,6 +1441,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 定时任务：staticMap 的 `:id` 条目只够 auditApiLabels 比对 express 路由原样，
     // 真实调用带的是具体 id，必须靠 pattern 才有 label。segment-safe `[^/]+`。
     [/^POST \/scheduled-jobs\/[^/]+\/run$/, '立即执行任务'],
+    [/^POST \/scheduled-jobs\/[^/]+\/recover$/, '核实任务产物'],
     [/^PATCH \/scheduled-jobs\/[^/]+$/, '更新定时任务'],
     [/^DELETE \/scheduled-jobs\/[^/]+$/, '删除定时任务'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
@@ -1207,11 +1454,19 @@ export function resolveApiLabel(method: string, path: string): string {
     // 原样比对）；真实调用带的是具体 id，必须靠这里的 pattern 才有 label，否则
     // Activity Monitor 上整条发布链路都是裸 URL。一律用 segment-safe `[^/]+`
     // （PR #522 的教训：贪婪 `(.+)` 会跨 `/` 把子路径截胡），子路径排在裸 id 之前。
+    [/^GET \/releases\/batches\/[^/]+$/, '查看发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/preflight$/, '批次发布预检'],
+    [/^POST \/releases\/batches\/[^/]+\/start$/, '执行发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/cancel$/, '取消发布批次'],
+    [/^POST \/releases\/batches\/[^/]+\/refresh$/, '核对批次版本'],
+    [/^POST \/releases\/batches\/[^/]+\/targets\/[^/]+\/retry$/, '重试失败目标'],
+    [/^POST \/releases\/batches\/[^/]+\/targets\/[^/]+\/rollback$/, '恢复目标原版'],
     [/^POST \/releases\/runs\/[^/]+\/rollback$/, '回滚发布记录'],
     [/^POST \/releases\/runs\/[^/]+\/retry$/, '重试发布记录'],
     [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],
     [/^GET \/releases\/runs\/[^/]+\/stream$/, '订阅发布日志流'],
     [/^GET \/releases\/runs\/[^/]+$/, '查看发布记录'],
+    [/^GET \/releases\/authorizations\/[^/]+$/, '查看单笔发布审批'],
     [/^POST \/releases\/targets\/[^/]+\/archive$/, '归档发布目标并保留审计证据'],
     [/^GET \/releases\/targets\/[^/]+\/changes$/, '查看发布目标变更历史'],
     [/^GET \/releases\/targets\/[^/]+\/remote-state$/, '查看远端发布现场'],
@@ -1294,6 +1549,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
     [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
     [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
+    [/^GET \/projects\/([^/]+)\/migration\/fingerprint$/, '核对项目指纹'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby$/, '读取分支同步策略'],
+    [/^PUT \/projects\/([^/]+)\/migration\/standby$/, '保存分支同步策略'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/audit$/, '核对备用项目'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/reconcile$/, '同步项目分支'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby-health$/, '读取备用项目状态'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -1306,6 +1567,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/prebuilt-image\/claim$/, '认领预构建镜像'],
     [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/projects\/[^/]+\/branches\/lifecycle-cleanup$/, '归档清理分支'],
+    [/^POST \/projects\/[^/]+\/branches\/[^/]+\/restore-archive$/, '恢复归档分支'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
     [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
@@ -1316,6 +1579,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/container-exec$/, '容器内执行命令'],
     [/^GET \/branches\/(.+)\/extra-services$/, '查看分支额外服务'],
     [/^PUT \/branches\/(.+)\/extra-services$/, '设置分支额外服务'],
+    [/^GET \/branches\/(.+)\/service-isolation$/, '查看分支隔离'],
+    [/^PUT \/branches\/(.+)\/service-isolation$/, '设置分支隔离'],
     [/^GET \/branches\/(.+)\/git-log$/, '查看 Git 提交历史'],
     [/^PUT \/env\/(.+)$/, '设置环境变量'],
     [/^DELETE \/env\/(.+)$/, '删除环境变量'],
@@ -1341,6 +1606,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '执行共享凭据轮换'],
     [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^PUT \/hosted-sso\/sites\/[^/]+$/, '保存站点授权'],
+    [/^(GET|POST) \/hosted-sso\/interaction\/[^/]+$/, '验证应用登录'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
@@ -1367,6 +1634,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
     // 项目级 Agent 会话
     [/^GET \/projects\/[^/]+\/agent-requests$/, '列出 Agent 请求'],
+    [/^GET \/projects\/[^/]+\/agent-runtime-providers$/, '查询工作区能力'],
+    [/^POST \/projects\/[^/]+\/agent-runtime-version$/, '切换工作区版本'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/stream$/, '订阅 Agent 会话事件流'],
     [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/logs$/, '查看 Agent 会话日志'],
     [/^POST \/projects\/[^/]+\/agent-sessions\/[^/]+\/stop$/, '停止 Agent 会话'],
@@ -1405,6 +1674,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    [/^GET \/projects\/[^/]+\/access-status$/, '核对原项目访问恢复状态'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
     [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
@@ -1552,10 +1822,16 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isMonitorOnboardingAgentRoute(method, path)) return true;
+  if (method === 'POST' && path === '/api/identity-connections') return true;
+  if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;
+  if (isPublicAgentSetupRoute(method, path)) return true;
+  if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-status$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
-  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  if ((method === 'GET' || method === 'DELETE') && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
@@ -1580,8 +1856,7 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   return false;
 }
 
-/** Check if a request is from an approved AI session */
-function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
+function presentedAiAccessKey(req: express.Request): string | undefined {
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
   // 字段名维持 AI_ACCESS_KEY 不动（用户可见，改名会破坏现有表单存档）。
@@ -1589,13 +1864,43 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   // CDS-CLI-005 兼容：除了规范 header `x-ai-access-key`，还接受用户常误用的
   // `ai-access-key`（无 x- 前缀）和 `Authorization: Bearer <key>`。Express
   // 会把 header 名规范化为小写，所以这里只需要小写比较。
-  const headerKey = (req.headers['x-ai-access-key'] as string | undefined)
+  return (req.headers['x-ai-access-key'] as string | undefined)
     || (req.headers['ai-access-key'] as string | undefined)
     || (() => {
         const auth = req.headers['authorization'] as string | undefined;
         if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
         return undefined;
       })();
+}
+
+function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnType<StateService['findAgentKeyForAuth']>>): boolean {
+  if (!key.planningAccess && !key.designAccess) return true;
+  if (key.planningAccess && key.designAccess) return false;
+  if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
+  if (isPublicAgentSetupRoute(req.method, req.path)) return true;
+  const segment = req.path.replace(/^\/_cds\/api\//i, '/api/').split('/')[3];
+  try { if (decodeURIComponent(segment) !== key.projectId) return false; }
+  catch { return false; }
+  const read = req.method === 'GET' || req.method === 'HEAD';
+  if (key.designAccess) {
+    if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return true;
+    const route = '/api/projects/:projectId/design';
+    const path = normalizedDesignPath(req.path);
+    return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
+      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST' && path === `${route}/feedback`)
+      || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
+  }
+  const path = normalizedPlanningPath(req.path);
+  if (!path) return false;
+  return read
+    || (key.planningAccess === 'propose' && req.method === 'POST' && path === '/api/projects/:projectId/planning/commands');
+}
+
+/** Check if a request is from an approved AI session */
+function resolveAiSession(req: express.Request, stateService?: StateService, member?: PairingMember): ApprovedAiSession | null {
+  const cluster = trustedClusterIdentity(req);
+  if (cluster) return cluster.aiSession ?? null;
+  const headerKey = presentedAiAccessKey(req);
   if (headerKey) {
     const processKey = process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY;
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
@@ -1614,7 +1919,18 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && connectionScope) {
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
       const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
-      if (connection && connection.scopes.includes(connectionScope)) {
+      const id = connection?.projectId;
+      const local = id && member && Object.hasOwn(member.projects, id) ? member.projects[id] : undefined;
+      const projectPath = /^\/api\/projects\/([^/]+)\/(?:agent-runtime-providers|agent-sessions(?:\/[^/]+)*?)$/.exec(req.path);
+      const partnerBaseUrl = member && connection?.partnerKind === 'map' ? clusterMapOrigin(connection.partnerBaseUrl) : undefined;
+      const mapConnection = connection && id && local && partnerBaseUrl && projectPath?.[1] === encodeURIComponent(local)
+        && stateService.getProject(id)
+        ? { id: connection.id, projectId: id, scopes: connection.scopes, partnerBaseUrl }
+        : undefined;
+      const expires = connection?.longTokenExpiresAt;
+      if (connection && connection.clusterMemberId === member?.nodeId && (!member || mapConnection)
+        && (!expires || Date.parse(expires) > Date.now()) && connection.scopes.includes(connectionScope)) {
+        if (mapConnection) Object.assign(req, { clusterMapConnection: mapConnection });
         // 「最近用过」节流写：每次更新都会把整份状态存一遍，而报告只读放开之后
         // 一轮自动刷新会打出几百个请求。判据见 connection-token-routes.ts。
         const nowIso = new Date().toISOString();
@@ -1662,6 +1978,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if (stateService && headerKey.startsWith('cdsp_')) {
       const match = stateService.findAgentKeyForAuth(headerKey);
       if (match) {
+        if (!projectKeyAllowsRequest(req, match)) return null;
         stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -1821,7 +2138,26 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const clusterIdentity = new ClusterIdentityService(deps.config.repoRoot, deps.stateService, deps.serverEventLogStore);
+  const acceptanceTaskService = new AcceptanceTaskService(deps.stateService);
+  const acceptanceLeaseReaper = startAcceptanceLeaseReaper(acceptanceTaskService);
+  // 服务启动即收敛，支持测试/宿主关闭时清理定时器；不另造分布式任务队列。
+  app.locals.acceptanceTaskService = acceptanceTaskService;
+  app.locals.stopAcceptanceLeaseReaper = acceptanceLeaseReaper.stop;
+  app.once('close', acceptanceLeaseReaper.stop);
+  deps.registerResourceShutdown?.(async () => acceptanceLeaseReaper.stop());
+  const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
+    deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
+      action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
+      details: { selfMaintenance: view } });
+    console.warn('[self-maintenance] CDS 维护写者正在停止或等待清理确认，请检查维护状态。');
+  });
+  deps.registerResourceShutdown?.(() => selfMaintenance.close());
   app.disable('x-powered-by');
+  const configuredPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL?.trim();
+  const passkeyOrigin = trustedAuthOrigin(configuredPublicBaseUrl);
+  // Keep existing HTTPS sessions when the operator has not enabled passkeys.
+  const hostSessionCookies = Boolean(passkeyOrigin && deps.authStore?.passkeys && process.env.CDS_PASSKEYS_ENABLED === '1');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -1831,8 +2167,10 @@ export function createServer(deps: ServerDeps): express.Express {
       undefined,
       {
         recreate: async (service) => {
-          await deps.containerService.stopInfraService(service.containerName);
-          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          // Credential replacement requires recreation authority before stopping the old DB.
+          const accepted = await deps.containerService.preflightInfraStorage(service);
+          await deps.containerService.stopInfraService(accepted.containerName);
+          await deps.containerService.startInfraService(accepted, deps.stateService.getCustomEnv(service.projectId));
           deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
           deps.stateService.save();
           await deps.stateService.flush();
@@ -1898,7 +2236,17 @@ export function createServer(deps: ServerDeps): express.Express {
   }
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
-  const releaseService = new ReleaseService(deps.stateService);
+  const releaseHistory = new ReleaseTargetHistoryStore({ storePath: path.join(deps.config.repoRoot, '.cds', 'release-target-history.json') });
+  const resolveReleaseRepository = (projectId: string) => resolveReleaseProjectRepository(deps.stateService, projectId, deps.config.repoRoot);
+  const releaseGovernance = new ReleaseGovernanceService(deps.stateService,
+    new ReleaseGovernanceGit(resolveReleaseRepository, projectId => deps.stateService.getProject(projectId)?.gitDefaultBranch || 'main',
+      governanceGitRunner(deps.shell, repoRoot => resolveGitAuthEnv({repoRoot, config:deps.config, stateService:deps.stateService, githubApp:githubAppClient}),deps.serverEventLogStore)),
+    (projectId, number) => releaseMergeBackReader(deps.stateService, githubAppClient, fetch, deps.serverEventLogStore)(projectId, number), undefined, releaseHistory);
+  const releaseService = new ReleaseService(deps.stateService, {
+    verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+    governance: releaseGovernance,
+    resolveProjectRepository: resolveReleaseRepository,
+  });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
   // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器
@@ -1920,17 +2268,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // 这段就是那根线：订阅总线 → 记进 .cds/notice-ledger.json → 可选外发到 MAP。
   // 专用通知 env 优先；没有时复用 CDS 系统设置里已经加密保存的 MAP 服务端接入，
   // 避免同一个 MAP 重复配两套 Token。两条都没有才如实记「未外发」。
-  let storedMapForwarding: { baseUrl: string; token: string } | undefined;
-  try {
-    storedMapForwarding = deps.stateService.getBugReportForwardingConfig();
-  } catch (err) {
-    console.warn(`[notice] CDS 系统设置中的 MAP Token 无法读取: ${(err as Error).message}`);
-    storedMapForwarding = undefined;
-  }
-  const noticeOutbound = resolveNoticeOutboundConfig(
-    process.env,
-    storedMapForwarding ?? resolveForwardConfig(process.env),
-  );
+  const getNoticeOutbound = () => resolveCurrentNoticeOutbound(process.env, () => (
+    deps.stateService.getBugReportForwardingConfig() ?? resolveForwardConfig(process.env)
+  ), () => {
+    const stored = deps.stateService.getAlarmNotify();
+    return stored ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username,
+      privateKeyPem: stored.privateKey, targetUsername: stored.targetUsername } : mapNotifierConfigFromEnv(process.env);
+  });
   const noticeLedger = new NoticeLedgerService({
     storePath: path.join(deps.config.repoRoot, '.cds', 'notice-ledger.json'),
     logger: { warn: (m) => console.warn(m) },
@@ -1939,10 +2283,30 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   startNoticeLedger({
     ledger: noticeLedger,
-    outbound: noticeOutbound,
+    outbound: null,
+    getOutbound: getNoticeOutbound,
     publish: (type, data) => { cdsEventsBus.publish(type, data); },
     logger: { warn: (m) => console.warn(m) },
   });
+  const hostCapacityObservation = deps.hostCapacityObservation ?? new HostCapacityObservationService({
+    reportPath: process.env.CDS_HOST_CAPACITY_REPORT_PATH,
+    expectedHost: process.env.CDS_HOST_CAPACITY_EXPECTED_HOST,
+    publish: (type, data) => { cdsEventsBus.publish(type, data); },
+  });
+  hostCapacityObservation.start();
+  const hostCapacitySampling = new HostCapacitySamplingService({
+    enabled: deps.stateService.getHostCapacitySamplingEnabled(),
+    external: Boolean(process.env.CDS_HOST_CAPACITY_REPORT_PATH || process.env.CDS_HOST_CAPACITY_EXPECTED_HOST),
+    stateDir: path.join(deps.config.repoRoot, '.cds', 'host-capacity'),
+    roots: { 'cds-worktrees': deps.config.worktreeBase,
+      ...(deps.config.reposBase ? { 'cds-repositories': deps.config.reposBase } : {}),
+      'cds-build-cache': deps.stateService.getCacheBase(),
+      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache') },
+    observation: hostCapacityObservation,
+    persist: enabled => deps.stateService.updateHostCapacitySamplingEnabled(enabled),
+  });
+  hostCapacitySampling.start();
+  deps.registerResourceShutdown?.(async () => { hostCapacitySampling.stop(); hostCapacityObservation.stop(); });
   // 读写路由挂在下面全局认证网关之后（搜 createNoticesRouter），这里只做事件接线。
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
@@ -1978,6 +2342,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  if (passkeyOrigin && hostSessionCookies) app.use(protectControlBrowser(passkeyOrigin));
   // SSE 长连接计数（2026-10-08 卡顿复盘，药方第 1 步）：挂在所有路由之前，一处覆盖
   // 全部 text/event-stream 端点；非 SSE 响应只多两个闭包。数据见
   // GET /api/cds-system/diagnostics/main-thread 的 mainThread.sseOpen / sse。
@@ -1986,10 +2351,22 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req)) {
+    if (/^\/(?:login|preview-access|auth\/sso)\/?$/i.test(req.path)) res.setHeader('Referrer-Policy', 'no-referrer');
+    if (isPasswordChangeRequest(req) || isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
+    }
+    next();
+  });
+  app.use((req, res, next) => {
+    const key = presentedAiAccessKey(req);
+    const match = key?.startsWith('cdsp_') ? deps.stateService.findAgentKeyForAuth(key) : null;
+    if (match && !projectKeyAllowsRequest(req, match)) {
+      res.status(403).set('Cache-Control', 'private, no-store').json(match.designAccess
+        ? { error: 'design_key_scope', message: '此凭据仅限授权项目的设计操作' }
+        : { error: 'planning_key_scope', message: '此凭据仅限授权项目的工程规划操作' });
+      return;
     }
     next();
   });
@@ -2017,7 +2394,9 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
+    if (normalizedPlanningPath(req.path) || normalizedDesignPath(req.path)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (req.path === '/api/code-reviews' || req.path.startsWith('/api/code-reviews/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
     //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
@@ -2027,7 +2406,17 @@ export function createServer(deps: ServerDeps): express.Express {
     //     调用时撞上 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），
     //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
-    return globalJsonParser(req, res, next);
+    if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
+    if (!res.locals.cdsSuppressRequestDetails) return globalJsonParser(req, res, next);
+    return globalJsonParser(req, res, (error?: { status?: number }) => {
+      if (!error) return next();
+      const status = error.status === 413 || error.status === 415 ? error.status : 400;
+      if (!res.headersSent && !res.destroyed) {
+        res.status(status).set('Cache-Control', 'private, no-store').json({
+          error: 'invalid_request_body', message: status === 413 ? '请求超过体积限制' : '请提交有效的 JSON 请求',
+        });
+      }
+    });
   });
 
   const pendingReplayGate = internalPendingReplayAuth.middleware({
@@ -2036,6 +2425,8 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
   app.use(pendingReplayGate.gate);
+  const lifecycleGate = lifecycleStopGate(deps.stateService);
+  app.use(lifecycleGate.gate);
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -2075,6 +2466,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
+    // 纯判据不执行命令/取消/释放；公开check只给布尔，不暴露维护身份或assignment。
+    checks.selfMaintenance = { ok: selfMaintenance.isHealthy() };
+    if (!checks.selfMaintenance.ok) overallOk = false;
 
     // Check 1: state readable — plus 暴露 backing store kind 到 detail
     // 供"Mongo 模式是否真正生效"这类无认证诊断。不泄漏 URI/credentials。
@@ -2089,6 +2483,13 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.state = { ok: false, detail: (err as Error).message };
       overallOk = false;
     }
+
+    const acceptanceHealth = acceptanceTaskService.health();
+    checks.acceptanceLeases = {
+      ok: acceptanceHealth.ok,
+      detail: acceptanceHealth.ok ? '单权威进程租约收敛正常' : '验收持久层或租约收敛未完成，请检查 /api/acceptance/health',
+    };
+    // 验收收敛是非核心后台状态；专属端点告警，不将整个控制面摘除。
 
     // Check 2: docker reachable (use a lightweight `docker version --format` call)
     try {
@@ -2205,7 +2606,7 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
-      degraded: pressure?.degraded ?? false,
+      degraded: Boolean(pressure?.degraded || !acceptanceHealth.ok),
       checks,
       pressure,
       timestamp: new Date().toISOString(),
@@ -2360,7 +2761,10 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
+    const suppressPreviewBody = hostedIdentityTraffic || isPasswordChangeRequest(req) || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
+      || /^\/api\/cluster\/identity\//i.test(req.path)
+      || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
     // request flowing before async authentication finishes, draining uploads
@@ -2406,6 +2810,9 @@ export function createServer(deps: ServerDeps): express.Express {
         suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      if (responseHeaders && normalizedPreviewAccessPath(req.originalUrl || req.path)) delete responseHeaders.location;
+      if (responseHeaders?.location?.includes('/api/cluster/identity/callback?')) responseHeaders.location = responseHeaders.location.split('?')[0];
+      if (hostedIdentityTraffic && responseHeaders?.location) responseHeaders.location = responseHeaders.location.split('?')[0];
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
@@ -2491,7 +2898,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // so existing deployments keep working without an explicit toggle.
   // See doc/design.cds.multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
-  const cdsPass = process.env.CDS_PASSWORD;
+  let cdsPass = process.env.CDS_PASSWORD;
   const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
   const authMode: 'disabled' | 'basic' | 'github' =
     rawAuthMode === 'github' ? 'github' :
@@ -2499,11 +2906,12 @@ export function createServer(deps: ServerDeps): express.Express {
     rawAuthMode === 'disabled' ? 'disabled' :
     (cdsUser && cdsPass) ? 'basic' : 'disabled';
   const authEnabled = authMode === 'basic';
-  const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
-  const configuredPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL?.trim();
+  let validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
+  const basicEnvFilePath = authEnabled ? defaultEnvFilePath() : null;
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
-  const cookieSecure = publicBaseUrl.startsWith('https://');
+  const cookieSecure = publicBaseUrl.startsWith('https://') || hostSessionCookies;
+  const browserCookieOptions = { cookieSecure, hostSessionCookies };
   // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
   // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
   const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
@@ -2538,9 +2946,125 @@ export function createServer(deps: ServerDeps): express.Express {
       })
     : null;
   if (authService) app.locals.cdsAuthService = authService;
+  const planningMongoUri = process.env.CDS_STORAGE_MODE === 'json' ? undefined : process.env.CDS_MONGO_URI;
+  const workspaceStateDirectory = path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json'));
+  const previewAccessStore: ProjectRevisionStore<PreviewAccessCommit> = planningMongoUri
+    ? new MongoProjectRevisionStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_preview_access_requests')
+    : new FileProjectRevisionStore(path.join(workspaceStateDirectory, 'preview-access'));
+  let lookupPlanningPreview: (projectId: string, number: number) => Promise<PlanningPullRequestPreview | undefined>
+    = async () => undefined;
+  let lookupPreviewDecision: (client: PreviewAccessClient) => Promise<string | undefined> = async () => undefined;
+  const activeProjectMember = (user: CdsUser, projectId: string): boolean => {
+    const state = deps.stateService;
+    const principal = humanPrincipalId(user.id);
+    return user.status === 'active' && !user.isSystemOwner && !isHumanProjectGrantUpdatePending(state, principal)
+      && state.getPrincipal(principal)?.status === 'active' && hasActiveGrant(state.getProjectGrants(), principal, projectId);
+  };
+  const projectMemberDirectory = async (projectId: string) => {
+    const members = await authService?.listUsers() ?? [];
+    return members.filter(user => activeProjectMember(user, projectId));
+  };
+  const previewAccess = new PlanningPreviewAccess({
+    store: previewAccessStore,
+    approver: async (projectId, userId) => {
+      const user = await authService?.findUserById(userId);
+      if (!user || !activeProjectMember(user, projectId)) return undefined;
+      const username = user.username || user.githubLogin;
+      return { id: user.id, username, name: user.name || username, owner: false };
+    },
+    resolve: async (clientId) => {
+      if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+      const state = deps.stateService;
+      const candidates = state.getAllBranches().filter(branch => !branch.deleting && !branch.archive && !branch.mirror
+        && branch.githubPrNumber && state.getCustomEnvScope(branch.id).CDS_PREVIEW_SSO_CLIENT_ID === clientId);
+      if (candidates.length !== 1) return undefined;
+      const branch = candidates[0], project = state.getProject(branch.projectId || 'default');
+      if (!project || project.mirror || branch.branch === state.getDefaultBranchFor(project.id)) return undefined;
+      const pullRequest = branch.githubPrNumber!;
+      const preview = await lookupPlanningPreview(project.id, pullRequest);
+      if (!preview?.url || !preview.path || !preview.commit || preview.status !== 'ready' || preview.branchId !== branch.id) return undefined;
+      const url = new URL(preview.url);
+      // A host-wide preview session must not spill into another service on a shared host.
+      if (url.pathname !== '/' || url.search || url.hash || (url.protocol !== 'https:'
+        && !['localhost','127.0.0.1'].includes(url.hostname))) return undefined;
+      const settings = resolvePreviewClientSettings(state.getCustomEnvScope(branch.id), url, publicBaseUrl);
+      if (!settings) return undefined;
+      return { ...settings, projectId: project.id, branchId: branch.id, commit: preview.commit,
+        projectName: project.aliasName || project.name, branchName: branch.branch, pullRequest, origin: url.origin, path: preview.path };
+    },
+    allowed: async (person, projectId) => {
+      const state = deps.stateService;
+      const project = state.getProject(projectId);
+      if (!project || project.id !== projectId || project.mirror) return false;
+      if (person.owner && authMode === 'basic' && cdsUser && person.id === `basic:${cdsUser}`) return true;
+      const user = await authService?.findUserById(person.id);
+      if (!user || user.status !== 'active') return false;
+      if (user.isSystemOwner) return true;
+      const principal = humanPrincipalId(user.id);
+      return !isHumanProjectGrantUpdatePending(state, principal) && state.getPrincipal(principal)?.status === 'active'
+        && hasActiveGrant(state.getProjectGrants(), principal, projectId);
+    },
+  });
+  if (!isPreviewInstance()) app.use(createPreviewTokenRouter(previewAccess));
   const ticketSsoStateStore = new TicketSsoStateStore();
   const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
+
+  // Central identity management runs before every local authentication provider.
+  // A member cannot issue or accept a separate set of credentials.
+  app.use((req, res, next) => {
+    const pathname = req.path.replace(/\/+$/, '').toLowerCase();
+    if (pathname === CDS_MAP_CONNECTION_PATH || pathname.startsWith(CDS_MAP_CONNECTION_PATH + '/')) {
+      res.locals.cdsSuppressRequestBodyLog = true;
+      res.locals.cdsSuppressRequestDetails = true;
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+    }
+    if (pathname !== CLUSTER_MAP_CONNECTION_PATH && !pathname.startsWith(CLUSTER_MAP_CONNECTION_PATH + '/')) {
+      next(); return;
+    }
+    res.locals.cdsSuppressRequestBodyLog = true;
+    res.locals.cdsSuppressRequestDetails = true;
+    res.setHeader('Cache-Control', 'no-store');
+    if (!clusterIdentity.memberOf(req)) {
+      res.status(401).json({ error: 'cluster_member_rejected' }); return;
+    }
+    const path = authorityMapConnectionPath(req.method, pathname);
+    if (!path) { res.status(404).json({ error: 'cluster_map_connection_route_not_found' }); return; }
+    res.setHeader(CLUSTER_MAP_CONNECTION_PROTOCOL, '1');
+    req.url = path;
+    next();
+  });
+  app.use((req, res, next) => { void clusterIdentity.middleware(req, res, next).catch(next); });
+
+  const acceptingPasskeys = () => hostSessionCookies && Boolean(authService) && clusterIdentity.getConfig()?.role !== 'member';
+  const passkeysEnabled = (req: express.Request) => acceptingPasskeys() && req.get('host')?.toLowerCase() === passkeyOrigin?.host;
+  if (hostSessionCookies && passkeyOrigin && authService && authStore?.passkeys) {
+    app.use('/api', createPasskeyRouter({
+      origin: passkeyOrigin, auth: authService, store: authStore.passkeys,
+      enabled: acceptingPasskeys,
+    }));
+    const sso = new HostedSso(passkeyOrigin, deps.stateService, authService,
+      () => deps.getPublishedRoutes?.() ?? [], authStore.oidcArtifacts);
+    app.use('/api', createHostedSsoRouter({
+      sso, auth: authService, state: deps.stateService, accepting: acceptingPasskeys, oidcStore: authStore.oidcArtifacts,
+    }));
+    app.use((req, res, next) => {
+      if (!acceptingPasskeys() || !requiresSensitivePasskey(req.method, req.path)) { next(); return; }
+      const token = readAuthCookie(req.get('cookie'), sessionCookieName(GH_SESSION_COOKIE, true));
+      void authService.validateSession(token, { renew: false }).then(verified => {
+        if (verified && !isRecentAuthentication(verified.session, true)) {
+          res.status(403).json({ error: '该操作需要重新验证。请在 CDS 用户菜单用通行密钥重新验证后再重试。', code: 'passkey_verification_required' });
+          return;
+        }
+        next();
+      }).catch(next);
+    });
+  } else {
+    app.get('/api/hosted-sso/panel/status', (_req, res) => {
+      res.set('Cache-Control', 'no-store').json({ enabled: false });
+    });
+  }
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
   // legacy-basic or GitHub gates so an anonymous browser can start/exchange
@@ -2551,7 +3075,7 @@ export function createServer(deps: ServerDeps): express.Express {
     createTicketSsoPublicRouter({
       resolveConfig: resolveSsoConfig,
       publicBaseUrl,
-      cookieSecure,
+      ...browserCookieOptions,
       stateStore: ticketSsoStateStore,
       sessionStore: ticketSsoSessionStore,
       logoutGithubSession: async (token) => {
@@ -2561,18 +3085,19 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
   app.use((req, res, next) => {
-    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
+    if (clusterIdentity.getConfig()?.role === 'member') { next(); return; }
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore, hostSessionCookies);
     const identity = ssoSession?.identity ?? null;
     if (identity && ssoSession) {
       const now = new Date().toISOString();
       const expiresAt = ssoSession.expiresAt.toISOString();
       // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
       if (ssoSession.renewed) {
-        const ssoToken = parseCookie(req.headers.cookie || '', TICKET_SSO_COOKIE);
+        const ssoToken = readBrowserCookie(req.headers.cookie, sessionCookieName(TICKET_SSO_COOKIE, hostSessionCookies));
         if (ssoToken) {
           res.setHeader(
             'Set-Cookie',
-            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure, hostSessionCookies),
           );
         }
       }
@@ -2621,9 +3146,101 @@ export function createServer(deps: ServerDeps): express.Express {
     next();
   });
 
-  app.get('/api/auth/public-status', (_req, res) => {
-    const sso = publicTicketSsoConfig(resolveSsoConfig());
+  app.post('/api/cluster/identity/resolve', async (req, res, next) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    res.setHeader('Cache-Control', 'no-store');
+    const member = clusterIdentity.memberOf(req);
+    const config = clusterIdentity.getConfig();
+    if (!member || config?.role !== 'authority' || authMode === 'disabled') {
+      res.status(401).json({ error: 'cluster_member_rejected' }); return;
+    }
+    const method = req.body?.method, target = req.body?.path;
+    if (typeof method !== 'string' || !/^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(method)
+      || typeof target !== 'string' || target.length > 4096 || !target.startsWith('/') || target.startsWith('//')) {
+      res.status(400).json({ error: 'cluster_request_invalid' }); return;
+    }
+    try {
+      const virtual = Object.create(req) as express.Request;
+      virtual.method = method; virtual.url = target; virtual.originalUrl = target;
+      virtual.query = Object.fromEntries(new URL(target, 'http://cluster.local').searchParams);
+      let user = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
+      let session: ClusterIdentityContext['session'];
+      let basicHuman = false;
+      if (!user && authService) {
+        const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
+        const current = await authService.validateSession(token ?? null);
+        if (current) {
+          user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure, hostSessionCookies));
+        }
+      }
+      if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)), cdsUser!, cdsPass!, sessionTtlMs)) {
+        user = legacyAuthUser(cdsUser!, 'basic'); basicHuman = true;
+        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure, hostSessionCookies));
+      }
+      if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
+      const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
+      const aiSession = user ? null : resolveAiSession(virtual, deps.stateService, member) || (legacyMachine
+        ? { id: 'legacy-machine', agentName: 'AI (legacy machine credential)', token: '', approvedAt: '', expiresAt: '' } : null);
+      if (!user && !aiSession) { res.status(401).json({ error: 'cluster_credential_rejected' }); return; }
+      const stamps = virtual as express.Request & {
+        cdsProjectKey?: ClusterIdentityContext['projectKey']; cdsAccess?: ClusterIdentityContext['access']; cdsPrincipal?: ClusterIdentityContext['principal'];
+        clusterMapConnection?: ClusterMapConnection;
+      };
+      const humanReq = { cdsUser: user, cdsSession: session, _cdsBasicHumanAuth: basicHuman };
+      const versionRoute = method === 'GET'
+        ? /^\/api\/projects\/([^/]+)\/(?:agent-requests|agent-runtime-providers)$/.exec(virtual.path)
+        : method === 'POST' ? /^\/api\/projects\/([^/]+)\/agent-runtime-version$/.exec(virtual.path) : null;
+      const canonicalProject = versionRoute && isHumanSystemOwner(humanReq)
+        ? Object.entries(member.projects).find(([, local]) => encodeURIComponent(local) === versionRoute[1])?.[0]
+        : undefined;
+      const origins = canonicalProject ? new Set(deps.stateService.getActiveCdsConnections()
+        .filter(connection => connection.clusterMemberId === member.nodeId && connection.projectId === canonicalProject
+          && connection.partnerKind === 'map' && CLUSTER_MAP_SCOPES.every(scope => connection.scopes.includes(scope))
+          && (!connection.longTokenExpiresAt || Date.parse(connection.longTokenExpiresAt) > Date.now()))
+        .map(connection => clusterMapOrigin(connection.partnerBaseUrl))
+        .filter((origin): origin is string => !!origin)) : undefined;
+      const uniqueOrigin = origins?.size === 1 ? origins.values().next().value : undefined;
+      const context: ClusterIdentityContext = {
+        clusterId: config.clusterId, authorityNodeId: config.nodeId, nodeId: member.nodeId,
+        ...(canonicalProject && uniqueOrigin ? { mapConnectionOrigin: { projectId: canonicalProject, origin: uniqueOrigin } } : {}),
+        ...(user ? { user: toPublicUser(user) as CdsUser, session, basicHuman,
+          humanProjects: deps.stateService.getProjects().filter(p => clusterHumanProjectAccess(humanReq, deps.stateService, p.id)).map(p => p.id) } : {}),
+        ...(aiSession ? { aiSession: { ...aiSession, token: '' }, projectKey: stamps.cdsProjectKey, access: stamps.cdsAccess,
+          principal: stamps.cdsPrincipal, mapConnection: stamps.clusterMapConnection } : {}),
+        ...(stamps.cdsPrincipal ? { principalProjects: deps.stateService.getProjectGrants()
+          .filter(g => g.principalId === stamps.cdsPrincipal!.principalId && !g.revokedAt)
+          .map(g => g.projectId)
+          .filter(id => { const ids = deps.stateService.getUserCredentials().find(c => c.id === stamps.cdsPrincipal!.credentialId)?.projectIds;
+            return !ids || ids.includes(id); }) } : {}),
+      };
+      res.json({ ...context, projects: member.projects, projectRepositories: Object.fromEntries(Object.keys(member.projects)
+        .map(id => [id, clusterProjectRepository(deps.stateService.getProject(id))])) });
+    } catch (error) { next(error); }
+  });
+  app.post('/api/cluster/identity/exchange', (req, res) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    clusterIdentity.exchange(req, res);
+  });
+  app.use((req, res, next) => {
+    if (clusterIdentity.getConfig()?.role !== 'member'
+      || isPublicAccessRequestRoute(req.method, req.path)
+      || req.path === '/' || req.path === '/healthz' || req.path === '/api/instance-mode'
+      || /\.(?:css|js|ico|png|svg|woff2?|map)$/i.test(req.path)
+      || req.path.startsWith('/api/peer-sync/') && !req.path.startsWith('/api/peer-sync/admin/')) { next(); return; }
+    void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
+  });
+
+  app.get('/api/auth/public-status', (req, res) => {
+    const ssoConfig = resolveSsoConfig();
+    const sso = publicTicketSsoConfig(ssoConfig);
     const publicMode = authMode === 'disabled' && sso.enabled ? 'sso' : authMode;
+    const preview = isPreviewInstance() || sso.providerId === 'cds-preview' ? {
+      project: shortText(process.env.CDS_PREVIEW_PUBLIC_PROJECT, 120),
+      branch: shortText(process.env.CDS_PREVIEW_PUBLIC_BRANCH, 120),
+      pullRequest: /^[1-9]\d{0,9}$/.test(process.env.CDS_PREVIEW_PUBLIC_PR ?? '') ? Number(process.env.CDS_PREVIEW_PUBLIC_PR) : undefined,
+      policyUrl: sso.enabled ? previewPolicyReturnUrl(ssoConfig) : undefined,
+    } : undefined;
     res.json({
       mode: publicMode,
       enabled: authMode !== 'disabled' || sso.enabled,
@@ -2631,6 +3248,7 @@ export function createServer(deps: ServerDeps): express.Express {
         github: authMode === 'github',
         local: authMode === 'basic' || authMode === 'github',
         sso: sso.enabled,
+        ...(passkeysEnabled(req) ? { passkey: true } : {}),
       },
       capabilities: {
         userManagement: localUserManagementEnabled,
@@ -2638,6 +3256,7 @@ export function createServer(deps: ServerDeps): express.Express {
         durableUsers: Boolean(authStore && !(authStore instanceof MemoryAuthStore)),
       },
       sso,
+      preview,
     });
   });
 
@@ -2721,7 +3340,7 @@ export function createServer(deps: ServerDeps): express.Express {
       createAuthRouter({
         authService,
         publicBaseUrl,
-        cookieSecure,
+        ...browserCookieOptions,
       }),
     );
 
@@ -2738,9 +3357,10 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
-      isPendingReplay: pendingReplayGate.isTrusted,
+      isPendingReplay: req => !!trustedClusterIdentity(req) || pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
+      isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
-      cookieSecure,
+      ...browserCookieOptions,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
@@ -2751,7 +3371,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, cookieSecure, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -2764,9 +3384,9 @@ export function createServer(deps: ServerDeps): express.Express {
       if (username === cdsUser && password === cdsPass) {
         const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
         res.setHeader('Set-Cookie', [
-          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure),
-          buildLogoutCookie(cookieSecure),
-          buildSsoLogoutCookie(cookieSecure),
+          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure, hostSessionCookies),
+          buildLogoutCookie(cookieSecure, hostSessionCookies),
+          buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
         ]);
         res.json({ success: true });
       } else {
@@ -2776,9 +3396,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     app.post('/api/logout', (_req, res) => {
       res.setHeader('Set-Cookie', [
-        buildLegacyLogoutCookie(cookieSecure),
-        buildLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ success: true });
     });
@@ -2789,7 +3409,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
-      if (pendingReplayGate.isTrusted(req)) return next();
+      if (trustedClusterIdentity(req)) return next();
+      if (pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
@@ -3296,7 +3917,7 @@ export function createServer(deps: ServerDeps): express.Express {
       // Persisted local-account session. In basic mode this is checked before
       // the legacy environment credential so both account systems can coexist
       // without weakening machine-key separation.
-      const persistedToken = parseCookie(req.headers.cookie || '', GH_SESSION_COOKIE);
+      const persistedToken = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
       let persistedSession = null;
       try {
         persistedSession = authService
@@ -3310,7 +3931,7 @@ export function createServer(deps: ServerDeps): express.Express {
         if (persistedSession.renewed && persistedToken) {
           res.setHeader(
             'Set-Cookie',
-            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure),
+            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure, hostSessionCookies),
           );
         }
         (req as any).cdsUser = persistedSession.user;
@@ -3319,7 +3940,7 @@ export function createServer(deps: ServerDeps): express.Express {
       }
 
       // Check original environment-account auth.
-      const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
+      const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const humanCookieValid = authEnabled
         && verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs);
@@ -3331,7 +3952,7 @@ export function createServer(deps: ServerDeps): express.Express {
         // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
         if (humanCookieValid) {
           const renewedToken = issueHumanSessionToken(cdsUser!, cdsPass!);
-          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure));
+          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies));
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
           (req as any).cdsUser = legacyAuthUser(cdsUser!, 'basic');
@@ -3390,6 +4011,109 @@ export function createServer(deps: ServerDeps): express.Express {
     }
   }
 
+  if (basicEnvFilePath) {
+    const approvalCookie = '__Host-cds-system-password-approval';
+    const approval = passkeyOrigin && hostSessionCookies && authService && authStore?.passkeys
+      ? createSystemPasswordApproval(passkeyOrigin, authService, authStore.passkeys, process.env.CDS_SYSTEM_PASSWORD_APPROVER_IDS)
+      : null;
+    const isBasicHuman = (req: express.Request) =>
+      (req as express.Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth === true;
+    const canApprove = (req: express.Request, res: express.Response) => {
+      res.setHeader('Cache-Control', 'private, no-store');
+      if (!isBasicHuman(req) || req.get('x-cds-token') || req.get('x-ai-access-key') || req.get('ai-access-key') || req.get('authorization')) {
+        res.status(403).json({ code: 'system_password_human_required', error: '请使用系统管理员账号在 CDS 设置中发起改密。' });
+        return false;
+      }
+      if (!approval || !passkeyOrigin || !acceptingPasskeys()) {
+        res.status(409).json({ code: 'system_password_approval_unavailable', error: '此站点尚未配置改密审批通行密钥，请联系系统运维。' });
+        return false;
+      }
+      if (req.get('host')?.toLowerCase() !== passkeyOrigin.host || req.get('origin') !== passkeyOrigin.origin) {
+        res.status(403).json({ code: 'system_password_origin_invalid', error: '请在本站的 HTTPS 设置页面批准改密。' });
+        return false;
+      }
+      return true;
+    };
+    const validatePassword = (req: express.Request, res: express.Response): string | undefined => {
+      const { oldPassword, newPassword } = req.body || {};
+      if (typeof oldPassword !== 'string' || !tokenMatches(oldPassword, cdsPass ?? '')) {
+        res.status(400).json({ code: 'invalid_credentials', error: '原密码不正确' });
+        return;
+      }
+      if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+        res.status(400).json({ code: 'password_too_short', error: `新密码长度至少 ${MIN_PASSWORD_LENGTH} 位` });
+        return;
+      }
+      if (/[\x00\r\n]/.test(newPassword) || tokenMatches(newPassword, oldPassword)) {
+        res.status(400).json({ code: 'invalid_new_password', error: '请设置不同且不含换行的密码' });
+        return;
+      }
+      return newPassword;
+    };
+
+    app.post('/api/auth/change-password/approval', (req, res, next) => {
+      if (!canApprove(req, res) || !approval) return;
+      const newPassword = validatePassword(req, res);
+      if (!newPassword) return;
+      void approval.issue(newPassword).then(issued => {
+        if (!issued) {
+          res.status(429).json({ error: '待验证请求过多，请稍后重试。' });
+          return;
+        }
+        res.append('Set-Cookie', authCookie(approvalCookie, issued.ticket, issued.expiresInSeconds));
+        res.json(issued.options);
+      }).catch(next);
+    });
+
+    app.post('/api/auth/change-password', (req, res, next) => {
+      if (!isBasicHuman(req) || !cdsUser || !cdsPass) { next(); return; }
+      if (!canApprove(req, res) || !approval) return;
+      const newPassword = validatePassword(req, res);
+      if (!newPassword) return;
+      const oldPassword = cdsPass;
+      const systemUsername = cdsUser;
+      const ticket = readAuthCookie(req.get('cookie'), approvalCookie);
+      res.append('Set-Cookie', authCookie(approvalCookie, '', 0));
+      void approval.verify(ticket, newPassword, req.body?.approval).then(approver => {
+        if (!approver) {
+          res.status(403).json({ code: 'system_password_approval_required', error: '请用已指定的管理员通行密钥批准本次改密。' });
+          return;
+        }
+        if (cdsPass !== oldPassword) {
+          res.status(409).json({ code: 'system_password_stale', error: '系统密码已变更，请重新登录后再发起。' });
+          return;
+        }
+        try {
+          if (!rotateBasicPasswordInEnv(basicEnvFilePath, oldPassword, newPassword, {
+            id: crypto.randomUUID(),
+            userId: approver.id,
+            userLogin: approver.username || approver.githubLogin,
+            action: 'system-password.rotate',
+            targetType: 'user',
+            targetId: legacyAuthUser(systemUsername, 'basic').id,
+            summary: `批准并修改系统账号 ${systemUsername} 的登录密码`,
+            at: new Date().toISOString(),
+          })) {
+            res.status(409).json({ code: 'system_password_source_mismatch', error: '系统配置中的密码与当前登录配置不一致' });
+            return;
+          }
+        } catch (error) {
+          if (error instanceof EnvFileBusyError) {
+            res.status(409).json({ code: 'system_password_source_busy', error: '系统配置正在更新，请稍后重试' });
+            return;
+          }
+          res.status(503).json({ code: 'system_password_update_failed', error: '系统登录密码保存失败' });
+          return;
+        }
+        cdsPass = newPassword;
+        process.env.CDS_PASSWORD = newPassword;
+        validToken = makeToken(systemUsername, newPassword);
+        res.setHeader('Set-Cookie', [buildLegacyLogoutCookie(cookieSecure, hostSessionCookies), authCookie(approvalCookie, '', 0)]);
+        res.json({ ok: true });
+      }).catch(next);
+    });
+  }
+
   // Basic mode now exposes the same persisted local-user routes as GitHub
   // mode. Public bootstrap stays closed because the original environment
   // account already exists and acts as the system owner.
@@ -3397,9 +4121,10 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use('/api', createAuthLocalRouter({
       authService,
       stateService: deps.stateService,
-      cookieSecure,
+      ...browserCookieOptions,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
+      systemPasswordActivity: basicEnvFilePath ? () => readSystemPasswordActivity(basicEnvFilePath) : undefined,
       legacyLogin: ({ username, password }) => {
         if (username !== cdsUser || password !== cdsPass) return null;
         return {
@@ -3408,6 +4133,7 @@ export function createServer(deps: ServerDeps): express.Express {
             issueHumanSessionToken(cdsUser!, cdsPass!),
             sessionTtlMs,
             cookieSecure,
+            hostSessionCookies,
           ),
         };
       },
@@ -3443,7 +4169,7 @@ export function createServer(deps: ServerDeps): express.Express {
           return true;
         }
         if (authMode === 'basic') {
-          const cookieToken = readCookie(req.headers.cookie, 'cds_token');
+          const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
           const headerToken = typeof req.headers['x-cds-token'] === 'string'
             ? req.headers['x-cds-token']
             : '';
@@ -3455,8 +4181,64 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
 
+  // esbuild将发布入口扁平到dist，目录回退应与实际SPA产物同址。
+  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
+    path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
+
+  app.get('/api/cluster/identity/status', (req, res) => {
+    const status = clusterIdentity.status();
+    const projectId = (req as express.Request & { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId;
+    if (projectId && 'members' in status && status.members) {
+      status.members = status.members.map(m => ({ ...m, projects: Object.fromEntries(Object.entries(m.projects).filter(([id]) => id === projectId)) }));
+    }
+    if (projectId && 'projects' in status && status.projects) status.projects = Object.fromEntries(Object.entries(status.projects).filter(([, local]) => local === projectId));
+    const access = (req as express.Request & { cdsAccess?: { access: AgentKeyAccess } }).cdsAccess?.access;
+    if (access && access.projects !== 'all' && !projectId && 'members' in status && status.members) {
+      status.members = status.members.map(m => ({ ...m, projects: Object.fromEntries(Object.entries(m.projects).filter(([id]) => access.projects.includes(id))) }));
+    }
+    res.setHeader('Cache-Control', 'no-store'); res.json(status);
+  });
+  app.put('/api/cluster/identity/config', async (req, res) => {
+    res.locals.cdsSuppressRequestBodyLog = true;
+    if (!isHumanSystemOwner(req) && resolveAiSession(req, deps.stateService)?.id !== 'static') {
+      res.status(403).json({ error: 'cluster_owner_required', message: '只有系统所有者可以配置集群身份，请联系系统所有者。' }); return;
+    }
+    try {
+      if (req.body?.role === 'member' && clusterIdentity.getConfig()?.role !== 'member' && app.locals.dtsService) {
+        const dts = app.locals.dtsService as DtsService;
+        if (dts.store.configured()) for (const p of deps.stateService.getProjects()) {
+          if ((await dts.store.activeRuns<DtsRun>(p.id)).length) {
+            res.status(409).json({ error: 'dts_writer_active', message: '本节点仍有未确认结束的数据同步任务，请先核对并停止，再加入统一集群。' }); return;
+          }
+        }
+      }
+      clusterIdentity.configure(req.body); res.json(clusterIdentity.status());
+    }
+    catch (error) {
+      if ((error as { code?: string }).code === 'cluster_identity_pinned') {
+        res.status(409).json({ error: 'cluster_identity_pinned', message: '该节点已加入现有集群，不能切换为独立身份；请保留原集群、节点和角色后重试。' }); return;
+      }
+      res.status(400).json({ error: 'cluster_config_invalid', message: '集群身份配置不完整，请核对节点与项目绑定后重试。' });
+    }
+  });
+  app.get('/api/cluster/identity/login', (req, res) => clusterIdentity.login(req, res));
+
+  if (!isPreviewInstance()) app.use(createPlanningPreviewAccessRouter(previewAccess,
+    () => deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id), client => lookupPreviewDecision(client),
+    authService && clusterIdentity.getConfig()?.role !== 'member' ? {
+      projects: () => deps.stateService.getProjects().filter(project => !project.mirror && supportsHumanProjectGrant(project))
+        .map(project => ({ id: project.id, name: project.aliasName || project.name })),
+      members: async projectId => (await projectMemberDirectory(projectId))
+        .map(user => ({ id: user.id, name: user.name || user.username || user.githubLogin })),
+    } : undefined));
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
-  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
+  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService,
+    canApprovePreviewRequest: async (req, requestId, projectId, subject) => {
+      if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return false;
+      const person = previewAccessPerson(req);
+      return !!person && previewAccess.canApprove(projectId, requestId, subject, person);
+    },
+  }));
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
@@ -3548,6 +4330,12 @@ export function createServer(deps: ServerDeps): express.Express {
         ? { username: cdsUser, authProvider: 'legacy', isSystemOwner: true }
         : null;
     res.json({
+      approvalCapabilities: {
+        operator: isHumanSystemOwner(req),
+        accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
+      },
+      previewAccessNotices: !isPreviewInstance() && Boolean(previewAccessPerson(req)),
+      designReviewNotices: !isPreviewInstance() && Boolean(authService && previewAccessPerson(req)),
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -3561,6 +4349,8 @@ export function createServer(deps: ServerDeps): express.Express {
               ? '/api/auth/logout'
             : null,
       postLogoutRedirect: ssoIdentity ? '/login' : null,
+      ...(passkeysEnabled(req) && sessionUser?.id && !ssoIdentity && sessionUser.authProvider !== 'legacy'
+        ? { canUsePasskeys: true, ...(sessionUser.isSystemOwner && authStore?.oidcArtifacts && Number(process.versions.node.split('.')[0]) >= 22 ? { hostedSiteSso: true } : {}) } : {}),
       user,
     });
   });
@@ -3573,17 +4363,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // disabled. Cheap no-op when the header is absent or the key is
   // malformed.
   app.use((req, _res, next) => {
-    // CDS-CLI-005：同时支持 `X-AI-Access-Key` / `ai-access-key` / Bearer。
-    const h = (req.headers['x-ai-access-key'] as string | undefined)
-      || (req.headers['ai-access-key'] as string | undefined)
-      || (() => {
-          const auth = req.headers['authorization'] as string | undefined;
-          if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
-          return undefined;
-        })();
+    const h = trustedClusterIdentity(req) ? undefined : presentedAiAccessKey(req);
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
-      if (match) {
+      if (match && projectKeyAllowsRequest(req, match)) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
@@ -3777,6 +4560,7 @@ export function createServer(deps: ServerDeps): express.Express {
         pidStartedAt,
         restartStatus,
         restartWait,
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,
@@ -3801,6 +4585,7 @@ export function createServer(deps: ServerDeps): express.Express {
         runningPid: process.pid,
         pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
         restartStatus: 'not_required',
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: null,
         selfUpdateHistory: [],
         webBuildSha: '',
@@ -4009,6 +4794,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
+    res.flushHeaders();
     activityClients.add(res);
     // Send buffered history
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
@@ -4350,16 +5136,17 @@ export function createServer(deps: ServerDeps): express.Express {
     (req as any).cdsRequestId = requestId;
     (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const privatePlanningPath = normalizedPrivateWorkspacePath(req.originalUrl || `/api${req.path}`);
+    const suppressPreviewDetails = Boolean(privatePlanningPath) || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const { branchId, projectId, profileId } = suppressPreviewDetails ? {} : extractApiMutationContext(req, deps);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
-    const actor = suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
+    const actor = privatePlanningPath ? undefined : suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
     res.on('finish', () => {
       const status = res.statusCode || 200;
       const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
+      const fullPath = privatePlanningPath ?? redactHostedSitePreviewLog(`/api${req.path}`);
       deps.serverEventLogStore?.record({
         category: 'system',
         severity,
@@ -4414,7 +5201,8 @@ export function createServer(deps: ServerDeps): express.Express {
     res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
-    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const suppressPreviewDetails = Boolean(normalizedPrivateWorkspacePath(req.originalUrl || `/api${req.path}`))
+      || isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
@@ -4560,9 +5348,11 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
   app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
+  if (authService) app.use('/api', createIdentityConnectionsRouter({ stateService: deps.stateService, authService }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
+    publicBaseUrl: deps.config.publicBaseUrl,
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || '',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
@@ -4584,13 +5374,18 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
-  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
+  app.use('/api', createAccessRequestsRouter({
+    stateService: deps.stateService,
+    authMode,
+    isSsoEnabled: () => publicTicketSsoConfig(resolveSsoConfig()).enabled,
+  }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
-    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    config: deps.config,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
@@ -4604,6 +5399,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
     authMode,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({
@@ -4645,6 +5441,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    refreshMapConnectionOrigin: (req, projectId) => clusterIdentity.refreshMapConnectionOrigin(req, projectId),
     registerResourceShutdown: deps.registerResourceShutdown,
     serverEventLogStore: deps.serverEventLogStore,
   }));
@@ -4656,13 +5453,17 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
   app.use('/api', (req, res, next) => {
     if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    // Let already accepted, authenticated queued work drain to completion.
+    if (pendingReplayGate.isTrusted(req)) { next(); return; }
     const draining = selfUpdateDrainBlockReason(Date.now());
     if (!draining) { next(); return; }
     res.setHeader('Retry-After', '60');
     res.status(503).json({ error: 'self_update_draining', message: draining });
   });
 
+  app.use('/api', createReleaseGovernanceRouter(deps.stateService, releaseGovernance));
   app.use('/api', createReleasesRouter({
+    history: releaseHistory,
     shell: deps.shell,
     stateService: deps.stateService,
     config: deps.config,
@@ -4674,6 +5475,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCdsSystemConnectionsRouter({
     stateService: deps.stateService,
     config: deps.config,
+    clusterIdentity,
   }));
   // CDS 网络拓扑（系统级，B'.6），见 routes/cds-system-topology.ts + services/topology-aggregator.ts。
   // 所有 IO（nginx-conf 文件 / forwarder 探测 / admin daemon 探测 / docker discover）
@@ -4782,7 +5584,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
   app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
-  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
+  app.use('/api', createBackupRetentionRouter(deps.backupRetentionService));
+  app.use('/api', createOwnedResourceRetentionRouter(deps.ownedResourceLifecycle, deps.stateService, deps.imageCacheGovernance, deps.config.worktreeBase));
+  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot, retention: deps.backupRetentionService }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
   app.use('/api', createInfraCredentialRotationRouter({
     stateService: deps.stateService,
@@ -4868,6 +5672,218 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
+  const reviews = new CodeReviewService({
+    state: deps.stateService, inputs: createCodeReviewInputs(),
+    userKeys: new CodeReviewUserKeys(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
+    mail: createCodeReviewMail(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
+    publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
+    ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID
+      ? `${process.env.CDS_PROJECT_ID}::${process.env.VITE_GIT_BRANCH || 'default'}` : 'cds-master'),
+    githubToken: (projectId, githubUrl) => codeReviewGithubToken(deps.stateService.getProject(projectId), githubUrl, {
+      getInstallationToken: githubAppClient ? id => githubAppClient.getInstallationToken(id) : undefined,
+      getDeviceToken: userId => deps.stateService.getGithubDeviceAuth(userId)?.token,
+    }),
+    cdsSnapshot: async input => {
+      const project = deps.stateService.getProject(input.projectId);
+      const branch = deps.stateService.getBranch(input.branchId);
+      if (!project || !branch || branch.projectId !== project.id || branch.branch !== input.branchName || branch.deleting || branch.mirror || project.mirror) throw new Error('所选 CDS 项目或分支已变化，请重新选择');
+      const sourceRoot = (p: typeof project, b: typeof branch) => codeReviewRepositoryRoot(p, b, deps.config.repoRoot,
+        deps.stateService.resolveProjectForAutoBuild(deps.config.repoRoot)?.id);
+      const repoRoot = sourceRoot(project, branch), repository = project.githubRepoFullName;
+      const assertCurrent = () => {
+        const currentProject = deps.stateService.getProject(project.id), currentBranch = deps.stateService.getBranch(branch.id);
+        if (!currentProject || !currentBranch || currentProject.mirror || currentBranch.mirror || currentBranch.projectId !== project.id
+          || currentBranch.deleting || currentBranch.branch !== input.branchName || currentProject.githubRepoFullName !== repository
+          || sourceRoot(currentProject, currentBranch) !== repoRoot) throw new Error('所选项目或分支已变化，已停止获取源码');
+      };
+      const snapshot = await deps.worktreeService.exportCodeReviewSnapshot(repoRoot, branch.branch, input.excludePatterns, { signal: input.signal, assertCurrent });
+      assertCurrent();
+      return { ...snapshot, sourceName: `${project.name} · ${branch.branch}` };
+    },
+  });
+  app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
+
+  const planningStore: EngineeringPlanningStore = deps.engineeringPlanningStore ?? (planningMongoUri
+    ? new MongoEngineeringPlanningStore(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db')
+    : new FileEngineeringPlanningStore(path.join(path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'engineering-planning')));
+  let designWorkspace: DesignWorkspaceService;
+  const planning = new EngineeringPlanningService(planningStore, undefined, {
+    repositoryFor: (projectId) => deps.stateService.getProject(projectId)?.githubRepoFullName,
+    previewFor: createPlanningPreviewResolver(deps.stateService, deps.config),
+    defaultBranchFor: (projectId) => deps.stateService.getDefaultBranchFor(projectId),
+    fileAnchorProbe: createPlanningFileAnchorProbe(projectId => {
+      const project = deps.stateService.getProject(projectId);
+      return project && !project.mirror ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
+    }),
+  }, projectId => designWorkspace.planningLinks(projectId));
+  lookupPlanningPreview = (projectId, number) => planning.pullRequestPreview(projectId, number);
+  const previewPolicyDecision = async (projectId: string) => {
+    const { items } = await planning.decisions(projectId, planningPreviewDecisionSubject);
+    return items.find(item => item.status === 'accepted');
+  };
+  lookupPreviewDecision = async client => {
+    const decision = await previewPolicyDecision(client.projectId);
+    return decision ? planningDecisionHref(client.projectId, decision.id) : undefined;
+  };
+  app.use('/api', createEngineeringPlanningRouter({
+    service: planning,
+    resolveAccess: (req, projectId) => resolveEngineeringPlanningAccess(req, deps.stateService, projectId),
+    resolvePreviewEntry: async (projectId, number, requestedPath, actor) => {
+      const preview = await planning.pullRequestPreview(projectId, number);
+      if (!preview || preview.status !== 'ready' || !preview.url || !preview.branchId) return { projectId, state: preview?.status ?? 'unavailable' };
+      const root = new URL(preview.url);
+      const path = previewReturnPath(requestedPath ?? preview.path ?? root.pathname, root.pathname);
+      if (!path) rejectPlanning(400, 'invalid', '预览入口不在该分支地址范围内');
+      const env = deps.stateService.getCustomEnvScope(preview.branchId);
+      const client = await previewAccess.client(env.CDS_PREVIEW_SSO_CLIENT_ID);
+      if (client && client.projectId === projectId && client.pullRequest === number && actor.kind === 'human') {
+        const start = new URL('/api/auth/sso/start', client.origin);
+        start.searchParams.set('redirect', path);
+        return { projectId, branchId: preview.branchId, state: 'ready', url: start.href, commit: preview.commit };
+      }
+      return { projectId, branchId: preview.branchId, state: 'native-login', url: new URL(path, root).href, commit: preview.commit };
+    },
+    resolveChanges: async (projectId, branchId, includeArchive) => {
+      if (branchId) {
+        const branch = deps.stateService.getBranch(branchId);
+        if (!branch || branch.mirror || (branch.projectId || 'default') !== projectId) {
+          rejectPlanning(404, 'not_found', '没有可访问的分支变更记录');
+        }
+      }
+      const runs = deps.stateService.getDeploymentRuns({ projectId, branchId, status: 'running' });
+      for (const run of runs.slice().sort((a, b) => (a.finishedAt ?? '').localeCompare(b.finishedAt ?? ''))) {
+        deps.stateService.recordEnvironmentAuditEffect(run);
+      }
+      const policyKeys = branchId ? (await previewPolicyDecision(projectId))?.appliesTo
+        ?.filter(item => item.kind === 'config').map(item => item.ref) : undefined;
+      const facts = environmentAuditFacts(deps.stateService, projectId, branchId, includeArchive, policyKeys ? new Set(policyKeys) : undefined);
+      return { projectId, branchId, facts };
+    },
+  }));
+  const designStore: ProjectRevisionStore<DesignWorkspaceCommit> = planningMongoUri
+    ? new MongoProjectRevisionStore<DesignWorkspaceCommit>(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_design_workspace_commits')
+    : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
+      path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
+  designWorkspace = new DesignWorkspaceService(designStore, {
+    frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+    reviewer: async (projectId, id) => {
+      const user = await authService?.findUserById(id);
+      return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;
+    },
+    sourcePackage: (projectId, commit, sourcePath) => {
+      const project = deps.stateService.getProject(projectId);
+      return project && !project.mirror ? readDesignSourceZip(deps.stateService.getProjectRepoRoot(project.id, deps.config.repoRoot), commit, sourcePath)
+        : Promise.resolve(undefined);
+    },
+    resolvePreview: async (projectId, pullRequest, commit) => {
+      const preview = await planning.pullRequestPreview(projectId, pullRequest);
+      return preview?.status === 'ready' && preview.url && preview.commit && (!commit || preview.commit === commit)
+        ? { commit: preview.commit, url: preview.url } : undefined;
+    },
+    findDebt: async (projectId, debtId, sourceRef) => await planning.designAcceptanceDebt(projectId, debtId, sourceRef) === debtId,
+    resolveDebtProposal: (projectId, proposalId, sourceRef) => planning.designAcceptanceDebt(projectId, proposalId, sourceRef),
+    createDebt: async ({ projectId, actor, sourceRef, title, actual, version, pullRequest, commit, expected, high }) => {
+      const [designId, runId] = sourceRef.split('/');
+      const url = new URL('/design', publicBaseUrl);
+      url.search = new URLSearchParams({ project: projectId, design: designId, version: String(version), tab: 'accept', run: runId }).toString();
+      const source = { type: 'test', ref: sourceRef, url: url.href };
+      const draft = { title, summary: `稿件 V${version} · PR #${pullRequest} · 提交 ${commit}\n${actual}`,
+        priority: high ? 'high' : 'mid', criteria: [expected.slice(0, 400)] };
+      const requestId = 'design-debt-' + crypto.createHash('sha256').update(sourceRef).digest('hex');
+      const command = actor.kind === 'human' ? { type: 'debt.create', requestId, source, ...draft }
+        : { type: 'proposal.submit', kind: 'debt', requestId, source, draft };
+      const receipt = await planning.command(projectId, actor, command, { designSourceRef: sourceRef });
+      const result = receipt.result as { id: string };
+      return { id: result.id, pending: (await planning.designAcceptanceDebt(projectId, result.id, sourceRef)) !== result.id };
+    },
+  });
+  const designShareHandoff = isPreviewInstance() ? undefined : designShareHandoffConfig(publicBaseUrl, process.env);
+  app.use('/api', createDesignWorkspaceRouter({
+    service: designWorkspace,
+    mapShareHandoff: () => designShareHandoff,
+    reviewCandidates: async projectId => (await projectMemberDirectory(projectId))
+      .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
+    resolveAccess: (req, projectId) => {
+      const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId, 'design');
+      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
+    },
+  }));
+  app.get('/api/auth/design/notices', async (req, res) => {
+    res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' });
+    res.locals.cdsSkipHttpLog = true;
+    if (isPreviewInstance() || !previewAccessPerson(req)) return res.status(403).json({ message: '请登录 CDS 查看自己的设计评审通知' });
+    try {
+      const projects = deps.stateService.getProjects();
+      const notices = (await Promise.all(projects.map(project => {
+        const actor = resolveEngineeringPlanningAccess(req, deps.stateService, project.id);
+        return actor ? designWorkspace.reviewNotices(project.id, actor) : [];
+      }))).flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50);
+      res.json({ notices });
+    } catch { res.status(503).json({ message: '暂时无法读取设计评审通知' }); }
+  });
+  const stopPlanningSweep = startPlanningSweep({
+    projects: () => clusterIdentity.getConfig()?.role === 'member' ? []
+      : deps.stateService.getProjects().filter(project => !project.mirror).map(project => project.id),
+    sweep: async (projectId, through, signal) => {
+      await planning.sweepRecordedRemovals(projectId, through);
+      if (signal.aborted) return;
+      await planning.scanGithubFileAnchors(projectId);
+      if (signal.aborted) return;
+      await planning.sweepDuplicatePairs(projectId, through);
+    },
+    onError: () => console.warn('[engineering-planning] 功能消失巡检暂不可用，将重试'),
+  });
+  let planningShutdown: Promise<void> | undefined;
+  const closePlanning = () => planningShutdown ??= (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Reserve time in the process shutdown window for the control plane's state flush.
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('工程规划资源退出等待超时')), 2_000);
+    });
+    try {
+      await Promise.race([deadline, stopPlanningSweep().then(async () => {
+        await Promise.all([planningStore.close?.(), designStore.close?.(), previewAccessStore.close?.()]);
+      })]);
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  app.once('close', () => { void closePlanning().catch(() => console.warn('[engineering-planning] 资源收尾未确认')); });
+  deps.registerResourceShutdown?.(closePlanning);
+
+  const dtsActor = (req: express.Request): DtsActor => {
+    const r = req as express.Request & { cdsProjectKey?: { projectId: string; keyId: string }; _aiSession?: { id: string; token: string };
+      cdsPrincipal?: { credentialId: string }; _cdsBasicHumanAuth?: boolean; cdsUser?: { id?: string; username?: string } };
+    if (r.cdsProjectKey) return { kind: 'project-key', id: r.cdsProjectKey.keyId };
+    if (r.cdsPrincipal) return { kind: 'principal', id: r.cdsPrincipal.credentialId };
+    if (r._aiSession?.id === 'static') return { kind: 'static', id: 'static', fingerprint: dtsHash(r._aiSession.token) };
+    if (r._cdsBasicHumanAuth && r.cdsUser?.username) return { kind: 'legacy-owner', id: r.cdsUser.username };
+    if (r.cdsUser?.id) return { kind: 'user', id: r.cdsUser.id };
+    return dtsReject('dts_identity_required', '请先使用已授权的账号或项目凭据接入数据同步', 403);
+  };
+  const dtsStore = new DtsStore(process.env.CDS_MONGO_URI, process.env.CDS_MONGO_DB || 'cds_state_db');
+  const dtsService = new DtsService(dtsStore, deps.stateService, deps.serverEventLogStore, async (actor, projectId) => {
+    if (!deps.stateService.getProject(projectId) || authMode === 'disabled') return false;
+    if (actor.kind === 'project-key' || actor.kind === 'principal') return dtsCredentialAllowed(deps.stateService, actor, projectId);
+    if (actor.kind === 'static') return [process.env.CDS_AI_ACCESS_KEY || process.env.AI_ACCESS_KEY, deps.stateService.getCustomEnv()?.AI_ACCESS_KEY]
+      .some(value => value && dtsHash(value) === actor.fingerprint);
+    if (actor.kind === 'legacy-owner') return authEnabled && actor.id === cdsUser;
+    const user = await authService?.findUserById(actor.id);
+    return Boolean(user?.status === 'active' && user.isSystemOwner);
+  }, undefined, { freeBytes: c => dtsManagedFreeBytes(deps.stateService, deps.shell, c) });
+  app.locals.dtsService = dtsService;
+  app.use('/api', createDtsRouter({ service: dtsService, state: deps.stateService, actor: dtsActor }));
+  const dtsTimer = setInterval(() => {
+    if (clusterIdentity.getConfig()?.role !== 'member') void dtsService.tick(deps.stateService.getProjects().map(p => p.id))
+      .catch(() => console.warn('[dts] 后台同步状态核对失败，将保留任务保护并等待重试'));
+  }, 5_000);
+  dtsTimer.unref();
+  const stopDts = async () => { clearInterval(dtsTimer); await dtsStore.close(); };
+  app.once('close', () => { void stopDts(); });
+  deps.registerResourceShutdown?.(stopDts);
+
+  void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
+  app.use('/api/acceptance', createAcceptanceTasksRouter({ service: acceptanceTaskService }));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
@@ -4885,7 +5901,8 @@ export function createServer(deps: ServerDeps): express.Express {
       ?.partnerBaseUrl || process.env.CDS_MAP_BASE?.trim() || '',
     authenticateMapConnectionToken: (rawToken) => {
       if (!rawToken) return null;
-      return deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken)) ?? null;
+      const connection = deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken));
+      return connection?.clusterMemberId ? null : connection ?? null;
     },
     isSecretStorageEncrypted: () => isSealingEnabled(),
   }));
@@ -4893,14 +5910,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // 服务端站内信账本读写。挂在全局认证网关之后，与 bug-reports 同款；账本本身与
   // 事件订阅在上面（搜 startNoticeLedger）。外发未配置时如实回 configured:false，
   // 前端面板顶部据此显示「仅记录在本地，未外发」——绝不暗示已经通知过谁。
+  app.use('/api', createHostCapacityObservationRouter(hostCapacityObservation));
+  app.use('/api', createHostCapacitySamplingRouter(hostCapacitySampling));
   app.use('/api', createNoticesRouter({
     ledger: noticeLedger,
-    getOutboundStatus: () => (noticeOutbound
-      ? { configured: true }
-      : {
-        configured: false,
-        reason: '未连接 MAP，通知仅保存在 CDS',
-      }),
+    getOutboundStatus: () => {
+      try { return getNoticeOutbound() ? { configured: true } : { configured: false, reason: '未连接 MAP，通知仅保存在 CDS' }; }
+      catch { return { configured: false, reason: 'MAP 通知配置读取失败，请检查服务端接入配置' }; }
+    },
   }));
 
   app.use('/api', createDeploymentRunsRouter({
@@ -5007,7 +6024,9 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  if (deps.branchLifecycleService) app.use('/api', createBranchLifecycleRouter(deps.stateService, deps.branchLifecycleService));
   app.use('/api', createBranchRouter({
+    selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
     containerService: deps.containerService,
@@ -5037,6 +6056,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     shell: deps.shell,
     repoRoot: deps.config.repoRoot,
+    hostSessionCookies,
     serverEventLogStore: deps.serverEventLogStore,
   }));
 
@@ -5055,6 +6075,7 @@ export function createServer(deps: ServerDeps): express.Express {
     config: deps.config,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    observePlanningGithubEvent: createPlanningGithubObserver(deps.stateService, planning),
     // 自动发布规则：push 命中分支时由发布侧判据决定叫醒哪些规则。
     runPushRules: (ctx) => scheduledJobService.runPushRules(ctx),
   }));
@@ -5291,13 +6312,13 @@ export function installSpaFallback(
       try {
         rel = decodeURIComponent(req.path.slice('/assets/'.length));
       } catch {
-        return next();
+        return res.sendStatus(400);
       }
       let filePath = '';
       for (const assetRoot of assetSearchDirs) {
         const candidate = path.join(assetRoot, rel);
         // Path-traversal guard: resolved path must stay inside the selected assets root.
-        if (!candidate.startsWith(assetRoot + path.sep)) return next();
+        if (!candidate.startsWith(assetRoot + path.sep)) return res.sendStatus(404);
         try {
           if (fs.statSync(candidate).isFile()) {
             filePath = candidate;
@@ -5307,7 +6328,7 @@ export function installSpaFallback(
           /* try previous generation */
         }
       }
-      if (!filePath) return next();
+      if (!filePath) return res.sendStatus(404);
 
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       res.setHeader('Vary', 'Accept-Encoding');
@@ -5369,6 +6390,8 @@ export function installSpaFallback(
       index: false,
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
+          res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+          res.setHeader('X-Frame-Options', 'DENY');
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
           res.setHeader('Pragma', 'no-cache');
           res.setHeader('Expires', '0');
@@ -5391,6 +6414,9 @@ export function installSpaFallback(
     // 自己是预览实例时往 index.html 注入 window.__CDS_PREVIEW_INSTANCE__=true，
     // web 端据此关闭 /_cds 直通（见 cds/web/src/lib/api.ts shouldPreferCdsPassthrough）。
     // 生产实例走原 sendFile 路径，零改动。
+    // A normal independent CDS hosted behind another CDS also owns its API.
+    // Routing is explicit and separate from preview security/storage behavior.
+    const dashboardSameOriginApi = process.env.CDS_DASHBOARD_API_MODE === 'same-origin';
     let previewInstanceIndexCache: { filePath: string; mtimeMs: number; html: string } | null = null;
     const resolveReactIndex = (): string | null => {
       if (fs.existsSync(reactIndex)) return reactIndex;
@@ -5398,13 +6424,16 @@ export function installSpaFallback(
       return null;
     };
     const sendReactIndex = (res: express.Response): void => {
+      // 管理操作不能被不可信预览页以透明 iframe 诱导点击；报告 raw 嵌入走独立 API。
+      res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+      res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       const selectedIndex = resolveReactIndex();
       if (!selectedIndex) {
         res.status(503).type('text/plain').send('CDS web release is switching; retry shortly.');
         return;
       }
-      if (!isPreviewInstance()) {
+      if (!isPreviewInstance() && !dashboardSameOriginApi) {
         res.sendFile(selectedIndex);
         return;
       }
@@ -5420,7 +6449,10 @@ export function installSpaFallback(
           mtimeMs,
           html: raw.replace(
             '<head>',
-            '<head><script>window.__CDS_PREVIEW_INSTANCE__=true</script>',
+            '<head><script>' + [
+              isPreviewInstance() ? 'window.__CDS_PREVIEW_INSTANCE__=true' : '',
+              dashboardSameOriginApi ? 'window.__CDS_SAME_ORIGIN_API__=true' : '',
+            ].filter(Boolean).join(';') + '</script>',
           ),
         };
       }
@@ -5468,13 +6500,7 @@ export function installSpaFallback(
  * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
  * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
  */
-function basicSessionCookie(token: string, ttlMs: number, secure: boolean): string {
+function basicSessionCookie(token: string, ttlMs: number, secure: boolean, hostSessionCookies: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
-  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
-}
-
-function parseCookie(cookieStr: string, name: string): string | undefined {
-  const match = cookieStr.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  if (!match) return undefined;
-  try { return decodeURIComponent(match[1]); } catch { return undefined; }
+  return `${sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)}=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
 }

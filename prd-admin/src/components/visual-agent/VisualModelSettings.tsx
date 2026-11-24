@@ -166,6 +166,12 @@ export function VisualModelSettings() {
                 <p className="vms-muted">{selected.entry.imageCapabilities?.supportsImageToImage ? '支持参考图 · 文字生成图片' : '文字生成图片'}</p>
                 <ModelSizes key={selected.id} entry={selected.entry} />
               </>}
+              <section className="vms-detail-section"><label className="vms-field-label" htmlFor="visual-model-name">显示名称</label>
+                <input id="visual-model-name" aria-label={`${selected.id} 显示名称`} placeholder="给模型起个好记的名字" maxLength={80}
+                  value={selectedModel?.displayName ?? ''} disabled={saving || !selectedModel}
+                  className="w-full mt-1 rounded-md px-3 py-2 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  onChange={e => setPolicy({ ...policy, models: policy.models.map(model => model.modelId === selected.id ? { ...model, displayName: e.target.value } : model) })} />
+              </section>
               <section className="vms-detail-section"><label className="vms-field-label" htmlFor="visual-model-description">业务说明</label>
                 <textarea id="visual-model-description" aria-label={`${selected.name} 业务说明`} placeholder={selectedModel ? '业务说明（可选）' : '开放模型后可编辑业务说明'} maxLength={500} rows={1}
                   value={selectedModel?.description ?? ''} disabled={saving || !selectedModel}

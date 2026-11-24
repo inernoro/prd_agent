@@ -1,13 +1,63 @@
 ---
 name: cds-release
-description: 为任意 CDS 项目检测并配置正式发布。支持项目现有脚本、无脚本 Compose、无脚本静态站三种路径；强制项目级 Key、项目身份锁定、预检、最终入口验证、回滚与归档证据。用户提到正式发布、生产发布、无发布脚本、动态发布脚本、配置发布目标、发布中心混乱或跨项目发布时使用。
+metadata:
+  version: 1.2.0
+description: 当用户要求“部署 xxx 环境到 CDS”、接入新发布环境、配置、修改、排查或验收 CDS 发布时使用。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
 ---
 
 # CDS 正式发布配置技能
 
+## 主备实例选择
+
+存在主备实例时先通过 `cdscli instance list` 与 `instance check <实例ID>` 核对目标。
+`instance use` 只选择后续 CLI 使用的控制台，不会转移已登记的生产发布目标、数据库或线上流量。
+正式发布仍须独立核对目标身份并遵循原有发布合同，不因备用部署成功就自动接管生产。
+
 ## 目标
 
 把“某个分支能在 CDS 预览”推进为“该项目有一个身份明确、可重复、可回滚、可审计的正式发布目标”。本技能配置发布控制面，不把“容器 running”误报为发布完成。
+
+## 用户路径与 Agent 接入配套
+
+用户日常通过「项目分支卡片 → 发布到 → 选择环境」查看发布前检查，再提交发布，
+不要求用户进入发布中心配置服务器、脚本或流水线。
+
+MAP 正式发布前可查看生产依赖告警。收到用户明确的强制发布指令时，将一行原因
+`forceReason` 与完整 `expectedCommitSha` 一并提交给已有发布请求接口。强制原因写入当次发布记录，
+授权、提交、产物和最终入口仍按正式合同验证。失败记录应同时核对首次失败原因及整套恢复回执。
+
+用户说“帮我部署 xxx 环境到 CDS / 接入新环境”时，本技能负责环境接入：
+先查询当前项目及已有环境，复用已有服务器授权，按下文合同准备发布配置与预检。
+缺失的名称、域名或服务器身份从上下文和系统查询；查不到才询问，不让用户填整套表单。
+
+先按宿主提供的技能位置定位核心 `cds` 技能的 CLI，将实际绝对路径设为 `CDSCLI`，不要假定安装在某个仓库目录。
+
+```bash
+python3 "$CDSCLI" release-target list --project <projectId>
+python3 "$CDSCLI" release-target register --project <projectId> --file /tmp/release-environment.json
+```
+
+- register 使用下方目标配置合同，通过已有目标 API 登记，并立即从分支卡片同源列表读回。
+- 同名或同 ID 的已有环境先核对，不覆盖、不重复创建。追加同类别命名环境时保留已有主环境，新目标显式设 `isCanonical=false`。
+- 接入完成必须同时满足：当前项目身份一致、预检通过、登记后 `selectable=true`，分支卡片“发布到”能选到该环境。
+- 环境窗口定期刷新，用户切回页面也会刷新，不要求重新加载整个控制台。
+- 只要求接入环境时不发布分支。首次真正发布须有明确分支、commit 和环境授权，再遵循后续发布与公网验收合同。
+- 交付用用户语言说明环境名、所属项目、卡片入口、预检结果；不要把服务器和脚本配置步骤再转交用户。
+
+## 默认发布合同（优先于旧模式说明）
+
+新目标默认 `project-script`，文件名为 `cds-release.sh`：由项目提交到 Git，
+项目 CI 执行同一文件的 `check`，CDS 只在同一完整提交 CI 成功后执行
+该提交脚本的 `check / deploy`，记录脚本正文 SHA-256。资源或业务变化由
+项目同步修改脚本与回归，不能热改服务器、跳过检查或换旧模式绕过。
+只有明确选择时才使用 `managed-script`（CDS 独立保存、单独审查的备选）；
+项目文件缺失不能自动转备选。CDS 不推断项目应该怎样部署。
+
+项目发布 CI 工作流默认 `ci.yml`，可在目标里显式配置 `ciWorkflowFile`；
+必须确实测试项目脚本 check。CDS 权威读取 GitHub 的最新同分支、同提交
+运行结果；预构建镜像 CI 字段不作为发布审查，源码模式也必须能通过。
+
+下列旧模式仅为存量目标兼容，不能用于新目标的自动推荐。
 
 ## 适用边界
 
@@ -28,6 +78,20 @@ description: 为任意 CDS 项目检测并配置正式发布。支持项目现�
 - 正式发布必须锚定完整 commit SHA；禁止使用可漂移的 `latest` 代替不可变版本证据。
 - 生产完成证据必须包含最终公网 HTML、HTML 实际引用的 JS/CSS、API 健康和本次涉及的专项服务。
 - 日志、教程和回复中不得输出 Key、私钥、口令或带凭据的 Git URL。
+
+## 独立批准与调试窗口
+
+定时发布须在申请中选择真实任务，CLI 用 `--scheduled-job`；批准绑定任务配置、执行分支、版本与有效期，真实申请人保留且不能自批。未获此批准的旧任务仍被拦截。
+
+新建发布环境默认启用独立审批。存量目标由真实登录用户在发布中心启用后，所有发布、重试、回滚和定时入口统一受约束；普通配置更新不能关闭该策略。
+
+执行凭据先用 `release-target approval-request` 申请，另一位真实用户在发布中心核对并批准。单次批准绑定完整提交和一次运行；回滚须申请独立的单次回滚批准。连续调试须列出允许文件或以 `/` 结尾的目录，以及最长 24 小时的有效期，不允许通配符。
+
+批次固定版本与分支当前版本不同时，在单次申请中选择该项目已有的部署版本；CLI 使用 `--deployment-version <versionId>`。服务端核对项目、分支及完整提交，批准回执保留部署版本来源，不回退或改写分支。批次自身仍须具备该固定版本的通过验收依据。
+
+实际执行前重新核对项目、环境配置、分支身份、主干和生产基线，隔离执行真实 Git 合并，并检查从授权基线起的全部累计改动，包括修改后又撤回的文件。越界、主干前进、其他发布改变基线、撤销、到期和核验失败都会拒绝执行。每次运行保存独立的批准回执，拒绝也有审计记录。
+
+`release-target conflict-check` 主动核验线上版本；`release-target merge-back` 关联项目仓库中真实、面向项目主干且包含线上提交的 PR。Git 包含关系与 GitHub 的 open、closed、merged 状态分开呈现，读取失败显示未知。
 
 ## 前置输入
 
@@ -85,12 +149,11 @@ curl -sS \
 
 | 条件 | 策略 | 说明 |
 |---|---|---|
-| 仓库已有可信、可回滚的正式发布脚本 | `existing-script` | 复用项目 SSOT |
-| 没有脚本且检测到 Compose | `generated-compose` | CDS 为 commit 建隔离 worktree并动态执行 Compose |
-| 静态前端且能确认构建命令、产物目录 | `generated-static` | CDS 离线验证后原子切换 |
-| 三者都不成立 | 停止配置 | 明确缺少的能力，不拼凑危险命令 |
+| 默认 | `project-script` | 提交 `cds-release.sh` 并通过 CI；缺文件就修项目，不猜类型 |
+| 用户明确选择 CDS 独立脚本 | `managed-script` | 单独保存、审查，执行 check / deploy |
+| 已存在的旧目标 | 保留原模式或明确迁移 | 不静默改变存量行为 |
 
-如果现有脚本会直接清空在线目录、使用漂移 tag、没有最终入口验证，应选择动态安全路径或先修脚本，不能因为“脚本存在”就优先使用。
+如果项目脚本直接清空在线目录、使用漂移 tag 或没有最终入口验证，必须先修项目脚本并通过 CI，不得切旧部署模式绕过。
 
 ### 阶段 4：生成发布目标配置
 
@@ -102,17 +165,9 @@ curl -sS \
 - 当前项目远端 Git 仓库 `appPath`。
 - 最终公网 `healthcheckUrl`。
 - `environment=production` 与 `isCanonical=true`，除非明确配置临时或预发目标。
-- 三种策略之一。
+- 默认项目脚本，或用户明确选择的 CDS 独立脚本；存量目标按其兼容合同处理。
 
-调用：
-
-```bash
-curl -sS \
-  -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
-  -H "Content-Type: application/json" \
-  -X POST "$CDS_HOST/api/releases/targets" \
-  --data-binary @/tmp/cds-release-target.json
-```
+登记时使用上方 `release-target register --project ... --file ...`，不要只 POST 成功就宣称接入完成。
 
 服务端会写入 `projectIdentity`。调用方不得伪造该字段。
 
@@ -137,6 +192,7 @@ curl -sS \
 - 发布策略完整。
 - SSH 目标可连接。
 - 现有脚本可执行，或动态发布依赖可用。
+- 新项目脚本必须存在于指定提交，正文语法有效，同提交 CI 成功；必须保存正文哈希，不用文件路径字符串哈希冒充。
 - 非首次发布时，当前线上入口可访问。
 - 有历史成功版本时，回滚版本可定位。
 
@@ -176,23 +232,22 @@ curl -sS \
 
 ## 端到端示例
 
-### 示例 A：项目已有脚本
+### 示例 A：新项目默认使用项目脚本
 
-输入：仓库检测到 `./fast.sh` 与 `./exec_dep.sh`。
+输入：项目已提交 `cds-release.sh`，且同一完整提交 CI 已测试该文件并成功。
 
 选择：
 
 ```json
 {
-  "mode": "existing-script",
-  "command": "./fast.sh && ./exec_dep.sh",
-  "detectedFrom": ["./fast.sh", "./exec_dep.sh"]
+  "mode": "project-script",
+  "scriptFile": "cds-release.sh"
 }
 ```
 
-预期：预检逐个验证脚本存在且可执行；发布记录保存命令哈希；最终公网表面全绿后才完成。
+预期：Git blob 与远端该提交文件正文一致；同提交 CI、Bash 语法和 check 通过后 deploy；记录正文哈希，最终公网表面全绿后完成。
 
-### 示例 B：项目没有脚本但有 Compose
+### 示例 B：存量 Compose 目标兼容（不得新建为默认）
 
 输入：仓库检测到 `compose.yml`，远端仓库为 `/opt/example`。
 
@@ -209,7 +264,7 @@ curl -sS \
 
 预期：CDS 以完整 commit 在仓库同级 `.cds-releases/<targetId>/worktrees/<releaseId>` 创建隔离 worktree，动态执行 Compose，原子更新 `current/previous`，不要求项目新增发布脚本，也不污染仓库状态。
 
-### 示例 C：静态项目没有发布脚本
+### 示例 C：存量静态目标兼容（不得新建为默认）
 
 输入：Vite 项目，构建命令为 `pnpm install --frozen-lockfile && pnpm build`，产物为 `dist`。
 
@@ -247,7 +302,7 @@ CDS 发布配置结果
 - 项目：<projectId> / <repository>
 - 分支与 commit：<branchId> / <full sha>
 - 目标：<targetId> / <production domain>
-- 策略：<existing-script | generated-compose | generated-static>
+- 策略：<project-script 默认 | managed-script 明确备选 | 旧模式存量兼容>
 - 身份校验：<pass/fail + evidence>
 - 预检：<pass/fail + first blocking reason>
 - 发布：<not started/running/success/failed>

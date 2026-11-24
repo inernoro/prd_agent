@@ -887,3 +887,73 @@ services:
     warn.mockRestore();
   });
 });
+
+describe('explicit storage declarations survive compose roundtrip',()=>{
+  const binding={version:1 as const,instanceId:'instance',projectId:'default',scope:'branch-private' as const,branchId:'branch',serviceId:'app',mountKey:'cache',purpose:'cache' as const};
+  it('keeps named volume ownership, readonly config and additional relative mounts',()=>{
+    const profile={id:'app',projectId:'default',name:'app',dockerImage:'node:20',containerPort:8080,workDir:'.',command:'node server.js',cacheMounts:[
+      {kind:'volume' as const,hostPath:'stable-cache',containerPath:'/cache',storage:binding},
+      {kind:'bind' as const,hostPath:'./config/app.yml',containerPath:'/etc/app.yml',readOnly:true},
+      {kind:'bind' as const,hostPath:'./assets',containerPath:'/assets',readOnly:true}]};
+    const output=toCdsCompose([profile],{},[],[]);
+    const parsed=parseCdsCompose(output)!;
+    expect(parsed.buildProfiles[0].cacheMounts).toEqual(profile.cacheMounts);
+  });
+  it('keeps infrastructure stable volume ownership and readonly config',()=>{
+    const storage={...binding,scope:'project-shared' as const,branchId:undefined,serviceId:'redis',purpose:'persistent' as const};
+    const infra={id:'redis',projectId:'default',name:'redis',dockerImage:'redis:7',containerName:'redis',containerPort:6379,hostPort:16379,status:'stopped' as const,createdAt:'2026-10-23',env:{},volumes:[{name:'stable-data',containerPath:'/data',type:'volume' as const,storage},{name:'/stable/redis.conf',containerPath:'/etc/redis.conf',type:'bind' as const,readOnly:true}]};
+    const parsed=parseComposeString(toCdsCompose([], {}, [infra], []));
+    expect(parsed[0].volumes).toEqual(infra.volumes);
+  });
+  it('does not let a prior source mount hide a later relative database bind',()=>{
+    expect(()=>parseComposeString('services:\n  db:\n    image: mysql:8\n    ports: ["3306"]\n    volumes: [".:/repo", "./database:/var/lib/mysql"]\n')).toThrow('ambiguous-compose-data-bind');
+  });
+});
+
+it('strict infrastructure discovery preserves application classification for file and string input',async()=>{
+ const os=await import('node:os');const {parseComposeFile}=await import('../../src/services/compose-parser.js');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'strict-infra-'));
+ const content=`services:\n  built-app:\n    image: app:latest\n    build: .\n    ports: ["8080:80"]\n  source-app:\n    image: node:20\n    ports: ["8081:80"]\n    volumes: [".:/app"]\n  db:\n    image: postgres:16\n    ports: ["5432:5432"]\n    volumes: ["data:/var/lib/postgresql/data"]\n`;
+ try{const file=path.join(dir,'compose.yml');fs.writeFileSync(file,content);for(const defs of [parseComposeString(content,{preserveVolumeDeclaration:true}),parseComposeFile(file,{preserveVolumeDeclaration:true})])expect(defs.map(s=>s.id)).toEqual(['db']);}
+ finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+describe('非容器静态模式声明', () => {
+  const compose = `services:
+  web:
+    image: nginx
+    volumes: ["./web:/app"]
+    labels:
+      cds.port: "80"
+x-cds-deploy-modes:
+  web:
+    static-files:
+      label: 静态文件
+      image: ghcr.io/example/web:sha-abc
+      prebuilt: true
+      staticWeb:
+        imagePath: /usr/share/nginx/html
+        runtimeConfig: true
+        proxyRules: [{pathPrefix: /api, profileId: api}]
+`;
+  it('解析并导出模式时保留文件目录与接口转发，未选模式不改变默认容器行为', () => {
+    const parsed = parseCdsCompose(compose)!;
+    const profile = parsed.buildProfiles[0];
+    expect(profile.staticWeb).toBeUndefined();
+    expect(profile.deployModes?.['static-files'].staticWeb).toEqual({ imagePath: '/usr/share/nginx/html', runtimeConfig: true,
+      proxyRules: [{ pathPrefix: '/api', profileId: 'api' }] });
+    expect(toCdsCompose(parsed.buildProfiles, {}, parsed.infraServices, parsed.routingRules)).toContain('staticWeb:');
+  });
+  it('拒绝越界产物目录，不会静默退回容器运行', () => {
+    expect(() => parseCdsCompose(compose.replace('/usr/share/nginx/html', '/../../secret'))).toThrow('staticWeb.imagePath');
+  });
+  it.each([true, false])('实际配置解析和导出保留仅浏览器声明%s', browserOnly => {
+    const parsed = parseCdsCompose(compose.replace('runtimeConfig: true', `browserOnly: ${browserOnly}\n        runtimeConfig: true`))!;
+    expect(parsed.buildProfiles[0].deployModes?.['static-files'].staticWeb).toHaveProperty('browserOnly', browserOnly);
+    const exported = toCdsCompose(parsed.buildProfiles, {}, parsed.infraServices, parsed.routingRules);
+    expect(parseCdsCompose(exported)!.buildProfiles[0].deployModes?.['static-files'].staticWeb).toHaveProperty('browserOnly', browserOnly);
+  });
+  it('原仅浏览器声明拒绝字符串而不静默丢弃', () => {
+    expect(() => parseCdsCompose(compose.replace('runtimeConfig: true', 'browserOnly: "true"\n        runtimeConfig: true'))).toThrow('browserOnly');
+  });
+});

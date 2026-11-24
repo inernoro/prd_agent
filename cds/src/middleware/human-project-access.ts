@@ -20,7 +20,7 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       error: 'human_project_forbidden',
       message: '你没有此项目或系统操作的权限，请联系系统所有者分配项目授权。',
     });
-    if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity'].includes(path))
+    if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity', '/api/auth/design/notices'].includes(path))
       || (method === 'POST' && ['/api/auth/logout', '/api/logout', '/api/auth/change-password', '/api/auth/sso/logout'].includes(path))) {
       next(); return;
     }
@@ -33,12 +33,20 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
     try { segments = req.path.replace(/\/+$/, '').split('/').slice(2).map(decodeURIComponent); }
     catch { res.status(400).json({ error: '项目地址无效，请重新从项目列表进入。' }); return; }
     const [kind, id, action] = segments;
+    if (path === '/api/auth/preview/access' && (method === 'GET' || method === 'POST')) { next(); return; }
+    // Review handlers resolve task/report ownership after their bounded upload parser.
+    // They apply canHumanAccessProject to every read, mutation and report body.
+    if (kind?.toLowerCase() === 'code-reviews') { next(); return; }
     const checkProject = (value: unknown): boolean => {
       if (typeof value !== 'string' || !value) return false;
       const project = state.getProject(value);
       if (!project || !canHumanAccessProject(req, state, project.id)) return false;
       return true;
     };
+    if (kind === 'auth' && id === 'users' && segments.length === 5 && segments[3] === 'projects'
+      && method === 'POST' && typeof req.body?.previewRequestId === 'string' && checkProject(segments[4])) {
+      next(); return;
+    }
     const guardStream = (projectId: string): void => {
       const write = res.write.bind(res);
       res.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
@@ -55,6 +63,10 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       const source = typeof value === 'string' ? state.getBranch(value) : undefined;
       if (!source || !checkProject(source.projectId || 'default')) { deny(); return; }
     }
+    if (method === 'GET' && /^\/api\/dts\/(?:capabilities|connections|policies|runs(?:\/[^/]+)?)$/.test(path)) {
+      if (!checkProject(req.query.projectId)) { deny(); return; }
+      next(); return;
+    }
     if (kind?.toLowerCase() === 'config' && method === 'GET' && !id) { next(); return; }
     if (kind?.toLowerCase() === 'deployment-runs' && method === 'GET') {
       if (!id) {
@@ -67,7 +79,40 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       }
       next(); return;
     }
+    if (kind === 'releases' && id === 'approval-inbox' && method === 'GET' && segments.length === 2) {
+      const target = typeof req.query.targetId === 'string' ? state.getReleaseTarget(req.query.targetId) : undefined;
+      if (!target || target.projectId !== req.query.projectId || !checkProject(target.projectId)) { deny(); return; }
+      next(); return;
+    }
+    if (kind === 'releases' && id === 'authorizations' && segments[2]) {
+      const detail = method === 'GET' && segments.length === 3;
+      const decision = method === 'POST' && segments.length === 4 && ['approve', 'reject'].includes(segments[3]);
+      const record = detail || decision ? state.getReleaseGovernance().authorizations[segments[2]] : undefined;
+      if (!record || !checkProject(record.projectId)) { deny(); return; }
+      next(); return;
+    }
     if (kind?.toLowerCase() === 'projects') {
+      if (action?.toLowerCase() === 'planning') {
+        // The planning router checks command permissions as well as project membership.
+        const tail = segments.slice(3);
+        const read = method === 'GET' && (tail.length === 0
+          || (tail.length === 1 && /^(capabilities|decisions|changes|debts|stats|duplicates|checkup)$/i.test(tail[0]))
+          || (tail.length === 2 && /^(debts|preview|evidence)$/i.test(tail[0])));
+        const command = method === 'POST' && ((tail.length === 1 && /^(commands|import-preview)$/i.test(tail[0]))
+          || (tail.length === 2 && /^checkup$/i.test(tail[0]) && /^read$/i.test(tail[1])));
+        if ((read || command) && checkProject(id)) { next(); return; }
+        res.status(404).json({ error: 'not_found', message: '没有可访问的工程规划项目' }); return;
+      }
+      if (action?.toLowerCase() === 'design') {
+        const tail = segments.slice(3);
+        const read = (method === 'GET' || method === 'HEAD') && (tail.length === 0
+          || (tail.length === 1 && /^reviewers$/i.test(tail[0]))
+          || (tail.length === 2 && /^artifacts$/i.test(tail[0])));
+        const write = method === 'POST' && ((tail.length === 1 && /^(commands|packages)$/i.test(tail[0]))
+          || (tail.length === 3 && /^shares$/i.test(tail[0]) && /^handoff$/i.test(tail[2])));
+        if ((read || write) && checkProject(id)) { next(); return; }
+        res.status(404).json({ error: 'design_not_found', message: '没有可访问的设计项目' }); return;
+      }
       if (!id && method === 'GET') { next(); return; }
       // Credentials and cross-project migration remain system-owner actions.
       if (!id || /^(agent-keys|migration|migrate|github)$/i.test(action || '') || !checkProject(id)) { deny(); return; }

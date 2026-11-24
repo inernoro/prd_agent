@@ -110,8 +110,7 @@ describe('addAskPick / toggleAskPick', () => {
  *
  * 扫整个 ask 目录而不是钉死某个文件：渲染从 AskPanel 挪进 AskThread（浮层坞与嵌入面板
  * 共用）那次，钉死文件名的旧写法直接判到 -1 才被发现——守卫本身也会因为搬家而失效
- * （predicate-and-wiring-discipline 形状 7）。现在的判据是「目录里每一处 StreamingText
- * 都带齐两个属性，且至少有一处」。
+ * （predicate-and-wiring-discipline 形状 7）。现在检查 Markdown 模式与渲染器成对使用，且至少有一个答案渲染位置；思考以纯文本展示。
  */
 describe('提问答案的 markdown 接线', () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -131,14 +130,13 @@ describe('提问答案的 markdown 接线', () => {
     });
 
   it('答案渲染没被整块删掉（至少有一处 StreamingText）', () => {
-    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.some(({ props }) => /renderMarkdown=/.test(props))).toBe(true);
   });
 
-  it('每一处 StreamingText 都同时给 markdown 与 renderMarkdown', () => {
+  it('开启 Markdown 时必须同时提供 renderMarkdown', () => {
     for (const c of calls) {
       expect(c.props, `${c.file} 里的 StreamingText 没闭合`).not.toBe('');
-      expect(c.props, `${c.file}`).toMatch(/\bmarkdown\b/);
-      expect(c.props, `${c.file}`).toMatch(/renderMarkdown=/);
+      expect(/\bmarkdown\b/.test(c.props), c.file).toBe(/renderMarkdown=/.test(c.props));
     }
   });
 

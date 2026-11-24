@@ -22,6 +22,7 @@
 
 import { build } from 'esbuild';
 import { readdir } from 'node:fs/promises';
+import { copyRuntimeAssets } from './copy-runtime-assets.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,12 +57,17 @@ await build({
   format: 'esm',
   platform: 'node',
   target: 'node20',
+  // CI 与线上均使用支持 JSON import attributes 的 Node LTS，保留该运行时契约。
+  supported: { 'import-attributes': true },
   bundle: false,
   sourcemap: false,
   // tsc emit 一致的行为:source TS 已经在 import 语句写了 .js 后缀
   // (ESM module resolution 要求),esbuild 保持原样不动
   logLevel: 'info',
 });
+
+// Assets read at runtime belong in the emitted tree, including source-free prebuilt installs.
+await copyRuntimeAssets(outDir);
 
 const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
 console.log(`[build-dist-esbuild] 完成,耗时 ${elapsed}s`);

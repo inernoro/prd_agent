@@ -22,6 +22,12 @@ public class InfraAgentSession
 
     public string? CdsContainerName { get; set; }
 
+    /// <summary>CDS 确认本会话实际使用的固定工作区镜像摘要，供同一任务续跑。</summary>
+    public string? CdsWorkspaceImageDigest { get; set; }
+
+    /// <summary>工作区启动是否已确认。旧会话无此字段，续跑时保守沿用原启动记录。</summary>
+    public bool? CdsWorkspaceLaunchConfirmed { get; set; }
+
     public string TraceId { get; set; } = string.Empty;
 
     /// <summary>未认领预热会话的唯一键；认领或终止时清空，避免多副本重复创建。</summary>

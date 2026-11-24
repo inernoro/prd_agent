@@ -68,6 +68,11 @@ function SectionTitle({ title, sub, right }: { title: string; sub?: string; righ
 /** 无结论不是第四种结论，用中性色，别占语义三档的颜色。 */
 const segFill = (k: ReportVerdict | 'undetermined'): string =>
   (k === 'undetermined' ? 'hsl(var(--hairline-strong))' : VERDICT_META[k].color);
+const segInk = (k: ReportVerdict | 'undetermined'): string => {
+  if (k === 'undetermined') return 'hsl(var(--foreground))';
+  if (k === 'fail') return 'hsl(var(--bad-foreground))';
+  return 'hsl(var(--status-ink))';
+};
 const segLabel = (k: ReportVerdict | 'undetermined'): string =>
   (k === 'undetermined' ? '无结论' : VERDICT_META[k].label);
 
@@ -105,7 +110,7 @@ function VerdictBars({ overview }: { overview: ReportsOverview }): JSX.Element {
                       <title>{`${r.label} ${segLabel(s.key)} ${s.n} 份`}</title>
                     </rect>
                     {w >= 22 ? (
-                      <text x={x + w / 2} y={H / 2 + 4} textAnchor="middle" fontSize="11" fontWeight="600" fill="hsl(var(--status-ink))" fontFamily="var(--cds-font-mono)">{s.n}</text>
+                      <text x={x + w / 2} y={H / 2 + 4} textAnchor="middle" fontSize="11" fontWeight="600" fill={segInk(s.key)} fontFamily="var(--cds-font-mono)">{s.n}</text>
                     ) : null}
                   </g>
                 );
@@ -441,7 +446,7 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
                 </td>
                 <td className="w-[11.875rem] px-3 py-3 align-top"><DefectPills counts={c.defectCounts} /></td>
                 <td className="w-[6rem] px-3 py-3 text-right">
-                  <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
+                  <button type="button" data-report-cluster-target={c.target} title="查看此对象的全部报告，清除其它报告筛选" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
                 </td>
               </tr>
             );

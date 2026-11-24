@@ -36,6 +36,7 @@ export const listMarketplaceSkillsReal: ListMarketplaceSkillsContract = async (i
   if (input.keyword) params.append('keyword', input.keyword);
   if (input.sort) params.append('sort', input.sort);
   if (input.tag) params.append('tag', input.tag);
+  if (input.scope && input.scope !== 'all') params.append('scope', input.scope);
   const qs = params.toString();
   const url = qs ? `${api.marketplaceSkills.list()}?${qs}` : api.marketplaceSkills.list();
   return await apiRequest(url, { method: 'GET' });

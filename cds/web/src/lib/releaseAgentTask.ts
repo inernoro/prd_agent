@@ -87,3 +87,15 @@ export function buildReleaseAgentTask(input: ReleaseAgentTaskInput): string {
 
   return lines.join('\n');
 }
+
+/** 日常发布只选环境；接入所需的配置与验收交给 Agent。 */
+export function buildReleaseEnvironmentTask(input: { projectId: string; branchId: string; branchName: string; cdsHost: string }): string {
+  return [
+    '请帮我在当前项目接入新的发布环境到 CDS。环境名称和最终访问地址请先从上下文确认，缺失时再询问，不要猜测。',
+    `CDS：${input.cdsHost}`, `项目：${input.projectId}`, `检测分支：${input.branchName}（${input.branchId}）`,
+    '使用 cds-release 技能和当前项目级授权，核对项目与仓库身份，沿用项目发布脚本及同提交 CI、预检和回滚合同。不要输出密钥。',
+    '通过 cdscli release-target register 登记到当前项目，再用 release-target list 读回；不得新增到其他项目，也不得创建重复环境。',
+    '回到本项目分支卡片，展开“预览”旁的更多操作，再点击“发布到”，确认新环境可选。只接入环境，不自动发布任何分支；首次发布需明确分支、提交与环境。',
+    '分支卡片是当前分支的逐目标发布；若要将同一已验收版本发往多个目标，请进入发布工作台的“批次发布”。',
+  ].join('\n');
+}

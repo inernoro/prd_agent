@@ -1,6 +1,8 @@
 // Log copies only. Never use these values for routing, authorization or responses.
 const FILES = '/api/hosted-site-preview-files';
 const ACCESS = '/api/hosted-site-preview-access';
+const SHARES = '/api/web-pages/shares';
+const SHARE_CREATE = '/api/web-pages/share';
 
 function previewLogPath(value: string): string | null {
   const absolute = /^((?:https?:)?\/\/[^/?#]+)(.*)$/i.exec(value);
@@ -19,6 +21,12 @@ function previewLogPath(value: string): string | null {
   if (files !== null) return `${files}${FILES}/[redacted]`;
   const access = segmentPrefix(normalized, ACCESS);
   if (access !== null) return `${access}${ACCESS}`;
+  const share = segmentPrefix(normalized, SHARES);
+  if (share !== null) return `${share}${SHARES}/[redacted]`;
+  const create = normalized.replace(/\/+$/, '');
+  if (create.endsWith(SHARE_CREATE)) return create;
+  const logs = /^(.*)\/api\/web-pages\/[^/]+\/share-logs\/?$/.exec(normalized);
+  if (logs) return `${logs[1]}/api/web-pages/:siteId/share-logs`;
   return null;
 }
 
@@ -41,9 +49,17 @@ export function isHostedSitePreviewRequest(value: string): boolean {
 }
 
 export function redactHostedSitePreviewLog(value: string): string {
-  const wholePath = previewLogPath(value);
+  const redact = (candidate: string): string | null => {
+    const preview = previewLogPath(candidate);
+    if (preview !== null) return preview;
+    if (/\s/.test(candidate) || !candidate.includes('?')) return null;
+    const [pathname, search] = candidate.split(/\?(.*)/s, 2);
+    const parameters = new URLSearchParams(search.split('#', 1)[0]);
+    return parameters.has('state') && (parameters.has('code') || parameters.has('error')) ? pathname : null;
+  };
+  const wholePath = redact(value);
   if (wholePath !== null) return wholePath;
-  return value.replace(/https?:\/\/[^\s"'<>]+|(?:\/|%2f)[^\s"'<>]*/gi, (candidate) => previewLogPath(candidate) ?? candidate);
+  return value.replace(/https?:\/\/[^\s"'<>]+|(?:\/|%2f)[^\s"'<>]*/gi, (candidate) => redact(candidate) ?? candidate);
 }
 
 export function omitHostedSitePreviewBody<T extends { bodyPreview?: string; bodyBytes?: number }>(payload: T, sensitive: boolean): T {

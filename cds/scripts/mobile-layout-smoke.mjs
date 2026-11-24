@@ -18,6 +18,7 @@
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 
 import { startViteDevServer } from './lib/vite-dev-server.mjs';
 import { resolveFixture, isEventStream, FIXTURE_PROJECT_ID } from './fixtures/mobile-layout-fixtures.mjs';
@@ -118,6 +119,7 @@ async function checkLayout(page, label, anchor) {
     const squeezed = [];
     const textNodes = Array.from(root.querySelectorAll('button,a,h1,h2,h3,span,[role="button"],[role="tab"]'));
     for (const el of textNodes) {
+      if (!el.checkVisibility()) continue;
       const rect = el.getBoundingClientRect();
       const text = (el.textContent || '').trim().replace(/\s+/g, '');
       if (!text || text.length < 2 || text.length > 12) continue;
@@ -135,6 +137,8 @@ async function checkLayout(page, label, anchor) {
     const covered = [];
     const targets = Array.from(root.querySelectorAll('button:not([disabled]),a[href],[role="button"],[role="tab"]'));
     for (const el of targets) {
+      // 原生关闭的 details 子项可能仍返回几何尺寸，但并未绘制或参与点击。
+      if (!el.checkVisibility()) continue;
       const rect = el.getBoundingClientRect();
       const text = (el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().slice(0, 30);
       if (rect.width < 28 || rect.height < 28) continue;
@@ -237,6 +241,46 @@ const TASK_SCHEDULE_VIEWPORTS = [
   { label: '1920x860', width: 1920, height: 860 },
   { label: '1920x1080', width: 1920, height: 1080 },
 ];
+
+async function checkMobileNavigationWhileChunkLoads(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  let releaseChunk;
+  const chunkReady = new Promise(resolve => { releaseChunk = resolve; });
+  try {
+    await installFixtures(context);
+    const page = await context.newPage();
+    await page.route('**/TaskSchedulePage.tsx', async route => {
+      await chunkReady;
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/task-schedule`, { waitUntil: 'commit' });
+    await page.getByRole('status', { name: '页面加载中' }).waitFor();
+    await page.locator('.cds-rail a[href="/task-schedule"]').waitFor({ state: 'attached' });
+
+    const open = page.getByRole('button', { name: '打开导航菜单' });
+    const close = page.getByRole('button', { name: '关闭导航' });
+    const active = page.getByRole('navigation', { name: '主导航' }).locator('a[data-active="true"]');
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const loadingButton = await open.boundingBox();
+    assertOk(loadingButton, 'console-nav: 页面骨架必须保留手机导航按钮');
+    await open.click();
+    await active.waitFor();
+    assertOk(await active.getAttribute('href') === '/task-schedule', 'console-nav: 等待时抽屉高亮项与当前路由不符');
+
+    releaseChunk();
+    await page.getByText('今日调度轴').waitFor();
+    assertOk(await active.isVisible(), 'console-nav: 页面加载完成时重置了已打开的导航');
+    await close.click();
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const readyButton = await open.boundingBox();
+    assertOk(readyButton && Object.keys(loadingButton).every(key => Math.abs(readyButton[key] - loadingButton[key]) <= 1),
+      'console-nav: 页面加载后手机导航按钮发生位移', { loadingButton, readyButton });
+    console.log('PASS console-nav: 页面骨架期间手机导航可打开，菜单高亮和按钮位置与正文一致');
+  } finally {
+    releaseChunk();
+    await context.close();
+  }
+}
 
 async function checkTaskScheduleAction(browser, viewport) {
   const context = await browser.newContext({
@@ -408,6 +452,7 @@ async function runViewport(browser, project, viewport) {
     await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     await page.waitForTimeout(500);
     await checkLayout(page, `${viewport.label}:${label}`, OFFLINE ? anchor : undefined);
+    if (OFFLINE && label === 'project-list') await checkProjectInventory(page, `${viewport.label}:${label}`);
   }
 
   await page.goto(`${baseUrl}/branches/${encodeURIComponent(projectId)}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -439,6 +484,362 @@ async function runViewport(browser, project, viewport) {
   await context.close();
 }
 
+async function checkNativeDetailsVisibility(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  try {
+    await page.setContent(`<main><p>原生折叠内容不属于当前可点击区域，但真实可见控件被覆盖仍须失败。这是离线布局测量的固定正反控制，不请求任何实际服务或业务数据。</p>
+      <details style="position:absolute;left:10px;top:90px;width:250px"><summary style="padding:16px">展开原生菜单</summary><div style="position:absolute;top:50px;width:250px"><a href="#target" style="display:block;padding:16px">原生菜单入口</a></div></details>
+      <button style="position:absolute;left:10px;top:230px;width:250px;height:44px">真实点击控件</button></main>`);
+    await checkLayout(page, 'native-details-closed');
+    await page.getByText('展开原生菜单', { exact: true }).tap();
+    await checkLayout(page, 'native-details-open');
+    await page.evaluate(() => {
+      const cover = document.createElement('div'); cover.id = 'visibility-control-cover';
+      cover.textContent = '合成遮挡'; cover.style.cssText = 'position:absolute;left:10px;top:230px;width:250px;height:44px;z-index:100;background:white';
+      document.body.appendChild(cover);
+    });
+    let covered = false;
+    try { await checkLayout(page, 'native-details-real-covered-control'); }
+    catch (error) { covered = error.message.includes('clickable target is covered') && error.message.includes('真实点击控件'); }
+    assertOk(covered, '真实可见控件被遮挡时，原布局判据必须仍然失败');
+    console.log('PASS native-details-real-covered-control');
+    await installFixtures(context);
+    await page.goto(`${baseUrl}/project-list`, { waitUntil: 'networkidle' });
+    const hidden = await page.locator('details:not([open]) a').evaluateAll(links => links.map(el => ({
+      text: el.textContent, painted: el.checkVisibility(), height: el.getBoundingClientRect().height,
+    })));
+    console.log(`MEASURE native-details-real-closed-menu ${JSON.stringify(hidden)}`);
+    assertOk(hidden.every(entry => !entry.painted), '关闭的原生折叠入口不得绘制');
+    assertOk(hidden.every(el => !el.painted), '关闭的原生菜单子项必须未绘制');
+    const instanceTrigger = page.getByLabel('切换 CDS 实例', { exact: true }).filter({ visible: true }).first();
+    await instanceTrigger.waitFor();
+    const instancePanel = page.getByLabel('主备 CDS 入口', { exact: true });
+    assertOk(await instancePanel.count() === 0, '关闭的实例浮层必须未挂载');
+    await instanceTrigger.tap();
+    await instancePanel.waitFor();
+    const entries = instancePanel.getByRole('link');
+    assertOk(await entries.count() === 2, '展开实例浮层必须提供两个真实入口');
+    for (const entry of await entries.all()) assertOk(await entry.isVisible(), '展开实例入口必须可见');
+    await page.keyboard.press('Escape');
+    await instancePanel.waitFor({ state: 'detached' });
+    assertOk(await instanceTrigger.evaluate(el => document.activeElement === el), '关闭实例浮层后焦点返回触发器');
+    await checkLayout(page, 'native-details-real-closed-menu', '窄屏样例项目');
+  } finally { await context.close(); }
+}
+
+async function checkInstanceOutage(browser, mobile, pinned) {
+  const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1440, height: 844 }, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  const name = `instance-outage-${mobile ? 'mobile' : 'desktop'}-${pinned ? 'pinned' : 'hover'}`;
+  const page = await context.newPage();
+  try {
+    await installFixtures(context);
+    await context.route('**/api/**', route => isEventStream(new URL(route.request().url()).pathname) ? route.abort('failed') : route.fallback());
+    await page.goto(`${baseUrl}/project-list`);
+    const inbox = page.getByRole('button', { name: /^信息中心/ });
+    if (mobile) await inbox.tap(); else await inbox.click();
+    const badge = page.getByRole('button', { name: /^无法确认是重启、网络还是服务退出/ });
+    // 三次真实断线要经过原 5s + 10s 退避，另给首次页面编译留出准备时间。
+    await badge.waitFor({ timeout: 25000 });
+    const root = badge.locator('xpath=..').locator('xpath=..');
+    if (!pinned) await root.getByRole('button', { name: '取消钉住(切换到鼠标移开自动收起)' }).click();
+    const summary = root.getByLabel('切换 CDS 实例');
+    if (mobile) await summary.tap(); else await summary.click();
+    const link = root.getByRole('link', { name: '合成备用实例 · 打开控制台' });
+    await link.waitFor({ timeout: 5000 });
+    const download = root.getByRole('button', { name: '下载备用入口' });
+    for (const target of [link, download]) {
+      const measured = await target.evaluate(el => {
+        const r = el.getBoundingClientRect(); const x = r.left + r.width / 2; const y = r.top + r.height / 2;
+        const top = document.elementFromPoint(x, y);
+        return { width: r.width, height: r.height, x, y, hit: !!top && (top === el || el.contains(top)), viewport: innerWidth, touchPoints: navigator.maxTouchPoints };
+      });
+      console.log(`MEASURE ${name} ${JSON.stringify(measured)}`);
+      assertOk(measured.hit && measured.x >= 0 && measured.x <= measured.viewport, `${name}: 备用入口被裁切或遮挡`, measured);
+      if (mobile) assertOk(measured.touchPoints >= 1 && measured.viewport <= 480, `${name}: 必须是独立触控环境`, measured);
+    }
+    if (!mobile && !pinned) {
+      const rect = await link.boundingBox();
+      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await page.waitForTimeout(350);
+      assertOk(await link.isVisible(), `${name}: 移向菜单不能触发自动收起`);
+    }
+    const downloaded = page.waitForEvent('download', { timeout: 5000 });
+    if (mobile) await download.tap(); else await download.click();
+    const file = await downloaded; const stream = await file.createReadStream(); let text = '';
+    for await (const chunk of stream) text += chunk.toString();
+    assertOk(file.suggestedFilename() === 'cds-instance-addresses.txt' && text.includes('https://standby.example.invalid/project-list'), `${name}: 备用地址快照未交付`);
+    console.log(`PASS ${name}`);
+  } finally {
+    if (process.env.CDS_OUTAGE_EVIDENCE) {
+      fs.mkdirSync(process.env.CDS_OUTAGE_EVIDENCE, { recursive: true });
+      await page.screenshot({ path: `${process.env.CDS_OUTAGE_EVIDENCE}/${name}.png` });
+    }
+    await context.close();
+  }
+}
+
+async function checkProjectInventory(page, label) {
+  await page.getByRole('heading', { name: '项目', level: 1, exact: true }).waitFor();
+  await page.getByText('管理项目、分支环境与部署。', { exact: true }).waitFor();
+  const cards = page.locator('.cds-project-card[data-project-id]');
+  assertOk(await cards.count() === 1, `${label}: 项目页没有渲染真实样例卡片`);
+  const filters = page.getByRole('group', { name: '项目状态筛选', exact: true });
+  await filters.getByRole('button', { name: /^已暂停/ }).click();
+  await page.getByText('没有匹配的项目', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '清除筛选', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: '搜索项目或服务', exact: true });
+  await search.fill('没有这个样例项目');
+  await page.getByText('没有匹配的项目', { exact: true }).waitFor();
+  await search.fill('窄屏样例项目');
+  await cards.first().waitFor();
+  await search.fill('');
+  await page.getByRole('combobox', { name: '项目排序', exact: true }).selectOption('recent');
+  await page.getByRole('button', { name: '列表视图', exact: true }).click();
+  await page.locator('.cds-project-inventory--list').waitFor();
+  await page.getByRole('button', { name: '卡片视图', exact: true }).click();
+  await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Git 仓库 URL', exact: true }).waitFor();
+  await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+  assertOk(await page.getByRole('button', { name: '新建项目', exact: true }).isVisible(), `${label}: 项目页新建入口缺失`);
+  for (const view of ['列表视图', '卡片视图']) {
+    await page.getByRole('button', { name: view, exact: true }).click();
+    await checkProjectSkeletonAlignment(page, `${label}:${view}`);
+  }
+  console.log(`PASS ${label}: 项目页头、筛选搜索、视图切换与导入入口`);
+}
+
+async function checkProjectSkeletonAlignment(page, label, projectResult = resolveFixture('/api/projects')) {
+  let release, releaseChunk;
+  const gate = new Promise(resolve => { release = resolve; });
+  const chunkGate = new Promise(resolve => { releaseChunk = resolve; });
+  const pattern = '**/api/projects';
+  // Offline probes use the real Vite lazy module, so both code and data waiting states are measured.
+  const chunkPattern = '**/src/pages/ProjectListPage.tsx*';
+  const holdChunk = async route => { await chunkGate; await route.continue(); };
+  const holdProjects = async route => {
+    await gate;
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify(projectResult) });
+  };
+  const geometry = () => page.evaluate(() => Object.fromEntries([
+    '.cds-project-inventory-heading', '.cds-project-inventory-toolbar', '.cds-project-card',
+    '.cds-project-services', '.cds-project-metrics', '.cds-project-card-footer',
+  ].map(selector => {
+    const rect = document.querySelector(selector).getBoundingClientRect();
+    return [selector, { y: rect.y, height: rect.height }];
+  })));
+  await page.route(pattern, holdProjects);
+  await page.route(chunkPattern, holdChunk);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const fallback = page.getByRole('status', { name: '页面加载中', exact: true });
+    await fallback.waitFor();
+    await page.locator('[aria-label="加载项目列表"]').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    const chunkLoading = await geometry();
+    const expectedActions = projectResult.canManageProjects === false ? 0 : 1;
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === expectedActions, `${label}: 代码加载骨架的管理能力不匹配`);
+    releaseChunk();
+    await fallback.waitFor({ state: 'hidden' });
+    await page.locator('[aria-label="加载项目列表"]').waitFor();
+    const loading = await geometry();
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === expectedActions, `${label}: 数据加载骨架的管理能力不匹配`);
+    const transform = await page.locator('.cds-main').evaluate(main => getComputedStyle(main).transform);
+    assertOk(transform === 'none', `${label}: 骨架已显示后不应再次播放整页位移动画`, { transform });
+    release();
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    // content-visibility:auto initially reports its intrinsic placeholder; measure after paint.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const ready = await geometry();
+    for (const [phase, sample] of [['chunk', chunkLoading], ['data', loading]]) {
+      for (const [selector, rect] of Object.entries(sample)) {
+        assertOk(Math.abs(rect.y - ready[selector].y) <= 1 && Math.abs(rect.height - ready[selector].height) <= 1,
+          `${label}:${phase}: ${selector} 骨架与正文垂直错位`, { loading: rect, ready: ready[selector] });
+      }
+    }
+    console.log(`PASS ${label}: 延迟代码与项目响应，骨架与正文各区纵向偏差不超过 1px`);
+  } finally {
+    releaseChunk(); release();
+    await page.unroute(pattern, holdProjects);
+    await page.unroute(chunkPattern, holdChunk);
+  }
+}
+
+async function checkProjectEnvironmentRefresh(browser) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  let release;
+  try {
+    await installFixtures(context);
+    let refresh = false, started;
+    const requested = new Promise(resolve => { started = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    const targets = [{ id: 'fixture-refresh-target', projectId: FIXTURE_PROJECT_ID, environment: 'production', isEnabled: true }];
+    await context.route('**/api/releases/targets', async route => {
+      if (refresh) {
+        started(); await gate;
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: '合成刷新失败' }) });
+      } else await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ targets }) });
+    });
+    const page = await context.newPage();
+    await page.goto(`${baseUrl}/project-list`);
+    const filter = page.getByRole('combobox', { name: '环境筛选', exact: true });
+    await filter.locator('option[value="production"]').waitFor({ state: 'attached' });
+    await filter.selectOption('production');
+    const assertSnapshot = async () => {
+      assertOk(await filter.inputValue() === 'production' && !await filter.isDisabled(), '刷新不能清空或禁用已加载的环境筛选');
+      assertOk((await page.locator('.cds-project-environment').allTextContents()).join('').includes('production'), '刷新不能清空卡片已有环境名称');
+    };
+    await assertSnapshot(); refresh = true;
+    await page.getByRole('button', { name: '刷新项目列表', exact: true }).click();
+    await requested; await assertSnapshot(); release();
+    await page.getByText('发布环境刷新失败，已保留上次结果，请稍后刷新重试', { exact: true }).waitFor();
+    await assertSnapshot();
+    console.log('PASS project-environment-refresh: 等待及失败均保留环境名称、筛选值和可用性');
+  } finally { release?.(); await context.close(); }
+}
+
+async function checkNonOwnerProjectSkeleton(browser, ticketSso = false) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    await installFixtures(context);
+    const auth = resolveFixture('/api/auth/status');
+    const projectResult = { ...resolveFixture('/api/projects'), canManageProjects: ticketSso };
+    const label = ticketSso ? 'ticket-sso' : 'member';
+    await context.route('**/api/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ...auth, mode: ticketSso ? 'sso' : auth.mode, user: { ...auth.user, isSystemOwner: false } }) }));
+    await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(projectResult) }));
+    const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === (ticketSso ? 1 : 0), `${label}: 项目管理操作必须匹配既有权限`);
+    for (const view of ['列表视图', '卡片视图']) {
+      await page.getByRole('button', { name: view, exact: true }).click();
+      await checkProjectSkeletonAlignment(page, `${label}:${view}`, projectResult);
+    }
+    console.log(`PASS ${label}-project-skeleton: 代码、数据等待和正文管理能力一致且保持对齐`);
+  } finally { await context.close(); }
+}
+
+async function checkProjectListContinuity(browser) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  try {
+    await installFixtures(context);
+    const seed = resolveFixture('/api/projects');
+    const projects = Array.from({ length: 80 }, (_, i) => ({ ...seed.projects[0], id: `fixture-list-${i}`, slug: `fixture-list-${i}`, aliasName: undefined, name: `列表样例项目 ${i}`, paused: false }));
+    await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...seed, projects, canManageProjects: true }) }));
+    const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    await page.getByRole('button', { name: '列表视图', exact: true }).click();
+    await page.locator('.cds-project-inventory--list').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    const height = async scroll => page.evaluate(async shouldScroll => {
+      let node = document.querySelector('.cds-project-inventory--list');
+      while (node && node !== document.body && (!/(auto|scroll)/.test(getComputedStyle(node).overflowY) || node.scrollHeight <= node.clientHeight + 1)) node = node.parentElement;
+      const scroller = node && node !== document.body ? node : document.scrollingElement;
+      if (shouldScroll) scroller.scrollTop = scroller.scrollHeight;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return scroller.scrollHeight;
+    }, scroll);
+    const before = await height(false), after = await height(true);
+    assertOk(Math.abs(before - after) <= 1, '列表离屏行进入视口后不得改变滚动内容高度', { before, after });
+    assertOk(await page.locator('.cds-project-inventory--list .cds-project-card').count() === 80, '连续列表必须保留全部样例项目');
+    console.log(`PASS project-list-continuity: 80 行滚动前后高度 ${before}/${after}`);
+  } finally { await context.close(); }
+}
+
+async function checkEmptyProjectEntry(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    await installFixtures(context);
+    await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: [], total: 0, canManageProjects: true }) }));
+    const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
+    await page.getByText('还没有项目', { exact: true }).waitFor();
+    await page.getByText(/点击页头“导入仓库”/).waitFor();
+    await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Git 仓库 URL', exact: true }).waitFor();
+    console.log('PASS empty-project-entry: 首次项目提示对应可见入口，展开后可粘贴仓库地址');
+  } finally { await context.close(); }
+}
+
+async function checkProjectReviewRegressions(browser) {
+  await checkProjectEnvironmentRefresh(browser);
+  await checkNonOwnerProjectSkeleton(browser);
+  await checkNonOwnerProjectSkeleton(browser, true);
+  await checkProjectListContinuity(browser);
+  await checkEmptyProjectEntry(browser);
+}
+
+async function checkBranchErrorLayout(browser) {
+  const shortError = '容器自动唤醒失败';
+  const longError = Array.from({ length: 6 }, (_, i) =>
+    `service-${i}: 容器 fixture-${'a'.repeat(100)} 自动唤醒失败（可能已被回收），请改用「重新部署」`,
+  ).join('；');
+  const list = resolveFixture('/api/branches');
+  const evidenceDir = process.env.CDS_BRANCH_ERROR_EVIDENCE;
+  if (evidenceDir) fs.mkdirSync(evidenceDir, { recursive: true });
+  for (const [width, theme] of [[1920, 'light'], [390, 'dark']]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce' });
+    try {
+      await context.addInitScript((value) => localStorage.setItem('cds_theme', value), theme);
+      await installFixtures(context);
+      const page = await context.newPage();
+      page.on('pageerror', (error) => { throw error; });
+      let errorMessage = shortError;
+      await page.route((url) => url.pathname === '/api/branches/fixture-branch-beta/failure-diagnosis',
+        (route) => route.fulfill({ json: { failedServices: [] } }));
+      await page.route((url) => url.pathname === '/api/branches', (route) => route.fulfill({ json: {
+        ...list,
+        branches: list.branches.map((branch) => branch.id === 'fixture-branch-beta'
+          ? { ...branch, status: 'error', errorMessage }
+          : branch),
+      } }));
+      const card = page.locator('[data-branch-card-id="fixture-branch-beta"]');
+      const neighbor = page.locator('[data-branch-card-id="fixture-branch-alpha"]');
+      const openList = async () => {
+        await page.goto(`${baseUrl}/branches/${FIXTURE_PROJECT_ID}`);
+        const summary = card.getByText(errorMessage, { exact: true });
+        await summary.waitFor();
+        await page.evaluate(() => document.fonts.ready);
+        return summary;
+      };
+      await openList();
+      const shortCardHeight = await card.evaluate((el) => el.offsetHeight);
+      const shortNeighborHeight = await neighbor.evaluate((el) => el.offsetHeight);
+
+      errorMessage = longError;
+      const summary = await openList();
+      const layout = await summary.evaluate((el) => ({
+        height: el.clientHeight,
+        scrollHeight: el.scrollHeight,
+        lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+        cardHeight: el.closest('article').offsetHeight,
+        nativeTooltip: Boolean(el.closest('[title]')),
+        fitsWidth: el.scrollWidth <= el.clientWidth + 1,
+      }));
+      const label = `${width}px ${theme}`;
+      assertOk(layout.height <= 2 * layout.lineHeight + 1 && layout.scrollHeight > layout.height && layout.fitsWidth,
+        `${label}: 长错误摘要应截在两行以内且无横向溢出`, layout);
+      assertOk(layout.cardHeight <= shortCardHeight + layout.lineHeight + 1
+        && await neighbor.evaluate((el) => el.offsetHeight) <= shortNeighborHeight + layout.lineHeight + 1,
+        `${label}: 长错误最多比单行摘要多占一行高度`, { shortCardHeight, shortNeighborHeight, ...layout });
+      assertOk(!layout.nativeTooltip, `${label}: 长错误原文不应生成原生悬浮提示`);
+
+      const logs = card.getByRole('button', { name: '查看 feature/beta 的部署日志' });
+      const redeploy = card.getByRole('button', { name: '重新部署 feature/beta' });
+      assertOk(await logs.isVisible() && await redeploy.isVisible(), `${label}: 异常卡操作仍可见`);
+      if (evidenceDir) await page.screenshot({ path: `${evidenceDir}/branch-error-${width}-${theme}.png` });
+      await logs.click();
+      const detail = page.getByRole('dialog', { name: '分支详情' });
+      const reason = detail.getByText(longError, { exact: true });
+      await reason.waitFor();
+      assertOk(await reason.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), `${label}: 完整原因在详情中可换行阅读`);
+      console.log(`PASS ${label}: 长错误卡高 ${shortCardHeight} → ${layout.cardHeight}px，详情可读完整原因`);
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 async function main() {
   // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
   const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
@@ -458,6 +859,24 @@ async function main() {
   let browser = null;
   try {
     browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
+    if (only === 'layout-visibility') {
+      assertOk(OFFLINE, '原生折叠测量控制仅在离线合成环境运行');
+      await checkNativeDetailsVisibility(browser);
+    } else if (only === 'project-inventory') {
+      assertOk(OFFLINE, '项目页失败回归只在离线合成环境运行');
+      await checkProjectReviewRegressions(browser);
+    } else if (only === 'branch-error-layout') {
+      assertOk(OFFLINE, '分支卡片长错误回归仅在离线合成环境运行');
+      await checkBranchErrorLayout(browser);
+    } else if (only === 'instance-outage') {
+      assertOk(OFFLINE, '断线回归仅在离线合成环境运行，不向实际服务注入断线');
+      for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
+    } else {
+    if (OFFLINE && !only) {
+      await checkNativeDetailsVisibility(browser);
+      await checkProjectReviewRegressions(browser);
+      await checkBranchErrorLayout(browser);
+    }
     if (only !== 'task-schedule') {
       const probe = await browser.newPage();
       const project = await getFirstProject(probe);
@@ -466,8 +885,11 @@ async function main() {
         await runViewport(browser, project, viewport);
       }
     }
+    if (OFFLINE) await checkMobileNavigationWhileChunkLoads(browser);
     for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
       await checkTaskScheduleAction(browser, viewport);
+    }
+    if (OFFLINE && !only) for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
     }
   } finally {
     if (browser) await browser.close();

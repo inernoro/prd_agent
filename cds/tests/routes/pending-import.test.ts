@@ -16,6 +16,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import yaml from 'js-yaml';
 import { createPendingImportRouter } from '../../src/routes/pending-import.js';
 import { StateService } from '../../src/services/state.js';
 
@@ -231,9 +232,89 @@ describe('Pending-import router', () => {
   });
 
   describe('POST /api/pending-imports/:id/approve', () => {
-    it('applies profiles, env, and infra to the target project', async () => {
+    const fullSource = `services:
+  api:
+    image: example/api:1
+    ports: ["8080"]
+    labels: {cds.prebuilt-image: "true", cds.role: api}
+    environment: {TOKEN: original-private-fixture}
+  web:
+    image: example/web:1
+    ports: ["80"]
+    labels: {cds.prebuilt-image: "true", cds.role: web, cds.path-prefix: /}
+x-cds-env: {JWT_SECRET: original-project-fixture}
+x-cds-deploy-modes:
+  web:
+    express: {image: example/web:1, prebuilt: true}
+`;
+    const partialSource = `services:
+  web:
+    image: example/web:1
+    ports: ["80"]
+    labels: {cds.prebuilt-image: "true", cds.role: web, cds.path-prefix: /}
+x-cds-deploy-modes:
+  web:
+    static-files:
+      image: example/web:1
+      prebuilt: true
+      staticWeb: {imagePath: /usr/share/nginx/html, browserOnly: true}
+`;
+
+    it('merges a partial approval into the complete source without applying other services or env', async () => {
+      const version = stateService.setProjectCompose(projectId, fullSource, 'manual-edit');
+      stateService.setCustomEnvVar('JWT_SECRET', 'runtime-secret-fixture', projectId);
+      stateService.addBuildProfile({ id: 'api-sample', projectId, name: 'api', dockerImage: 'example/api:1',
+        workDir: '.', containerPort: 8080, env: { TOKEN: 'runtime-private-fixture' } });
+      stateService.addBuildProfile({ id: 'web-sample', projectId, name: 'web', dockerImage: 'example/web:1',
+        workDir: '.', containerPort: 80, activeDeployMode: 'express',
+        deployModes: { express: { dockerImage: 'example/web:1', prebuiltImage: true } } });
+      const apiBefore = structuredClone(stateService.getBuildProfile('api-sample'));
+      const submitted = await request(server, 'POST', `/api/projects/${projectId}/pending-import`,
+        { agentName: 'A', composeYaml: partialSource });
+      const result = await request(server, 'POST', `/api/pending-imports/${submitted.body.importId}/approve`,
+        { mergeSource: true, expectedComposeVersion: version });
+      expect(result.status).toBe(200);
+      expect(result.body.appliedProfiles).toEqual(['web-sample']);
+      expect(result.body.appliedEnvKeys).toEqual([]);
+      expect(stateService.getBuildProfile('api-sample')).toEqual(apiBefore);
+      expect(stateService.getCustomEnv(projectId).JWT_SECRET).toBe('runtime-secret-fixture');
+      const merged = yaml.load(stateService.getProject(projectId)!.composeYaml!) as any;
+      const original = yaml.load(fullSource) as any;
+      expect(merged.services.api).toEqual(original.services.api);
+      expect(merged['x-cds-env']).toEqual(original['x-cds-env']);
+      expect(Object.keys(merged['x-cds-deploy-modes'].web)).toEqual(['express', 'static-files']);
+      expect(Object.keys(stateService.getBuildProfile('web-sample')!.deployModes!)).toEqual(['express', 'static-files']);
+      expect(stateService.getBuildProfile('web-sample')!.activeDeployMode).toBe('express');
+      expect(result.body.composeVersion).toBe(version + 1);
+    });
+
+    it.each(['stale-version', 'missing-version', 'missing-source', 'global-env', 'unknown-service'])
+      ('refuses unsafe partial source merging before any state mutation: %s', async kind => {
+        const version = stateService.setProjectCompose(projectId, fullSource, 'manual-edit');
+        const source = kind === 'global-env' ? `${partialSource}\nx-cds-env: {ADDED: value}\n`
+          : kind === 'unknown-service' ? partialSource.replaceAll('web:', 'other:') : partialSource;
+        const submitted = await request(server, 'POST', `/api/projects/${projectId}/pending-import`,
+          { agentName: 'A', composeYaml: source });
+        expect(submitted.status).toBe(201);
+        if (kind === 'missing-source') stateService.updateProject(projectId, { composeYaml: undefined });
+        const before = JSON.stringify(stateService.getState());
+        const result = await request(server, 'POST', `/api/pending-imports/${submitted.body.importId}/approve`,
+          { mergeSource: true, ...(kind === 'missing-version' ? {} : { expectedComposeVersion: kind === 'stale-version' ? version - 1 : version }) });
+        expect(result.status).toBe(409);
+        expect(JSON.stringify(stateService.getState())).toBe(before);
+        expect(stateService.getPendingImport(submitted.body.importId)?.status).toBe('pending');
+      });
+
+    it('stateful compose approval remains pending and publishes no config before explicit new-only allocation',async()=>{
+      const created=await request(server,'POST',`/api/projects/${projectId}/pending-import`,{agentName:'A',composeYaml:SAMPLE_YAML});
+      const before=JSON.stringify(stateService.getState());
+      const result=await request(server,'POST',`/api/pending-imports/${created.body.importId}/approve`);
+      expect(result.status).toBe(409);expect(result.body.error).toBe('storage-provision-new-only-required');expect(JSON.stringify(stateService.getState())).toBe(before);expect(stateService.getPendingImport(created.body.importId)?.status).toBe('pending');
+    });
+
+    it('applies profiles, env, and stateless infra to the target project', async () => {
       const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       const importId = create.body.importId;
 
@@ -290,7 +371,7 @@ describe('Pending-import router', () => {
         updatedAt: now,
       });
       const create = await request(server, 'POST', `/api/projects/default/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       // The seeded default project mimics a migrated legacy instance;
       // clone status is absent so the not-ready guard doesn't fire.
@@ -305,7 +386,7 @@ describe('Pending-import router', () => {
 
     it('refuses to approve twice', async () => {
       const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       const importId = create.body.importId;
       await request(server, 'POST', `/api/pending-imports/${importId}/approve`);
@@ -317,7 +398,7 @@ describe('Pending-import router', () => {
     it('does not clobber existing env keys', async () => {
       stateService.setCustomEnvVar('JWT_SECRET', 'pre-existing');
       const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       await request(server, 'POST', `/api/pending-imports/${create.body.importId}/approve`);
       const env = stateService.getCustomEnv();

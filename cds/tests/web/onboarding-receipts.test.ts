@@ -7,6 +7,14 @@ function sessionStore() {
 }
 
 describe('新人回执跨页面与项目身份', () => {
+  it('已删除项目的历史回执在所有页面和信息中心自动归档，不依赖手工收起', () => {
+    const archived = { id: 'old', receiptArchived: true, createdProject: { id: 'gone', name: '已删除项目' } };
+    for (const placement of ['inline', 'floating'] as const) {
+      for (const projectId of ['', 'gone', 'another']) {
+        expect(receiptBelongsOnPage(archived, projectId, placement)).toBe(false);
+      }
+    }
+  });
   it('收起后新的组件读取同一会话仍收起，不改变另一条回执', () => {
     const session = sessionStore();
     expect(readDismissedReceipts(session)).toEqual([]);

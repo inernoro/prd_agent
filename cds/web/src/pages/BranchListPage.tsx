@@ -1,8 +1,24 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { BranchSearchDropdown } from '@/components/branch/BranchSearchDropdown';
+import { listRemoteBranches, type RemoteBranch } from '@/lib/remoteBranches';
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { flushSync } from 'react-dom';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { rememberRelationReturn, relationRestoreForVisit, consumeRelationRestore } from '@/lib/relationReturn';
+import { runSurfaceMotion } from '@/lib/surfaceMotion';
+import { ArchivedBranchCard, BranchLifecycleControls, type BranchArchiveView } from '@/components/branch/BranchLifecycleControls';
+import { CiImageNotice } from '@/components/branch/CiImageNotice';
+import { ciImageNotice, type CiDiagnosisView } from '@/lib/ci-image-notice';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import type { ReleasePreflightResult } from './release-center/types';
+import { projectUnavailable } from '../lib/project-availability.js';
+import { BranchListOverview } from '@/components/branch/BranchListOverview';
+import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useParams } from 'react-router-dom';
 import {
   Activity,
+  Database,
   AlertTriangle,
   ArrowLeft,
   Bot,
@@ -27,6 +43,7 @@ import {
   RotateCw,
   Rocket,
   Search,
+  SearchCode,
   Server,
   Settings,
   Square,
@@ -36,20 +53,21 @@ import {
   X,
   Layers,
   XCircle,
-  Zap,
   FolderInput,
   Pin,
   Users,
   Pencil,
 } from 'lucide-react';
 
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, ConsoleAuthContext, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { DatabaseDirectoryDialog } from '@/components/branch/DatabaseDirectoryDialog';
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
 import {
   BRANCH_GROUP_LIMITS,
+  assignBranchToGroup,
   groupAcceptsPin,
   BRANCH_GROUP_COLORS,
   groupBranches,
@@ -63,9 +81,14 @@ import {
 import { BranchGroupHeader, type BranchGroupSummaryPart } from '@/components/branch-groups/BranchGroupHeader';
 import { BranchGroupEditorDialog } from '@/components/branch-groups/BranchGroupEditorDialog';
 import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggestionDraft } from '@/components/branch-groups/BranchGroupSuggestions';
+import { BranchViewGroupHeader } from '@/components/branch-groups/BranchSubmitterHeader';
+import { BranchViewManagerDialog } from '@/components/branch-groups/BranchViewManagerDialog';
+import { BRANCH_VIEW_SOURCES, branchViewGroups, branchViewsStorageKey, defaultBranchViews, groupBranchesByView, readBranchViews, type BranchViewGroup, type BranchViewsSettings } from '@/lib/branchViews';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { buildReleaseEnvironmentTask } from '@/lib/releaseAgentTask';
+import { PrebuiltRuntimeIcon } from '@/components/branch/PrebuiltRuntimeIcon';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 
@@ -74,6 +97,7 @@ type RsCardMember = { id?: string; status?: string; hostPort?: number; projectGr
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -88,6 +112,7 @@ import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, isD
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
+import { branchPreviewUrls } from '@/lib/releaseDialogAddress';
 import { multiPreviewUrl, simplePreviewUrl } from '@/lib/previewUrl';
 import { resolveReleaseSteps, type ReleaseRunProgressLike, type ReleaseStepState } from '@/lib/releaseSteps';
 import {
@@ -188,6 +213,8 @@ type InfraServiceSummary = BranchResourceInfraInput;
 type BuildProfileSummary = BranchResourceProfileInput;
 
 interface BranchSummary {
+  previewUrl?: string;
+  previewUrls?: string[];
   id: string;
   projectId: string;
   branch: string;
@@ -197,6 +224,7 @@ interface BranchSummary {
   /** 仅前端：这条事件来自「部署跑完但分支状态没落盘」，收尾不播「部署成功」 */
   stateFlushFailed?: boolean;
   services: Record<string, ServiceState>;
+  replicaSets?: Record<string, { enabled?: boolean; members?: RsCardMember[] }>;
   /** 本分支额外服务（branch-local profile）；后端列表接口随分支下发，env 已脱敏，这里只用 id */
   extraProfiles?: Array<{ id: string }>;
   resources?: BranchResource[];
@@ -252,6 +280,8 @@ interface BranchSummary {
   ciWorkflowRunUrl?: string;
   ciWaitingSince?: string;
   ciImageError?: string;
+  ciDiagnosis?: CiDiagnosisView | null;
+  archive?: BranchArchiveView | null;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -311,9 +341,13 @@ interface ReleaseTargetSummary {
   name: string;
   type: string;
   isEnabled: boolean;
+  lifecycle?: string;
+  environment?: string;
   projectIdentity?: { projectId: string; projectSlug: string; repository?: string };
   strategy?: {
-    mode: 'existing-script' | 'generated-compose' | 'generated-static';
+    mode: 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
+    scriptFile?: string;
+    script?: string;
     command?: string;
     composeFile?: string;
     buildCommand?: string;
@@ -333,6 +367,9 @@ interface ReleaseTargetSummary {
 }
 
 interface ReleaseRunSummary {
+  forceReason?: string;
+  autoRestoreStartedAt?: string;
+  autoRestoredAt?: string;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -355,33 +392,6 @@ interface ReleaseLogEntry {
   level: 'info' | 'warn' | 'error';
   message: string;
   phase?: string;
-}
-
-interface ReleasePreflightCheck {
-  id: string;
-  label: string;
-  status: 'pass' | 'warn' | 'fail';
-  message: string;
-  blocking: boolean;
-}
-
-interface ReleasePreflightResult {
-  ok: boolean;
-  checks: ReleasePreflightCheck[];
-  previousRelease?: ReleaseRunSummary;
-}
-
-interface RemoteBranch {
-  name: string;
-  date?: string;
-  author?: string;
-  subject?: string;
-  isDefault?: boolean;
-}
-
-interface RemoteBranchesResponse {
-  branches: RemoteBranch[];
-  defaultBranch?: string | null;
 }
 
 interface PreviewModeResponse {
@@ -504,6 +514,7 @@ interface FocusBranchEventDetail {
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
+  | { status: 'unavailable'; message: string }
   | {
       status: 'ok';
       project: ProjectSummary;
@@ -1418,16 +1429,17 @@ function runningServiceCount(branch: BranchSummary): number {
 
 /**
  * 「未运行」分组的判据（2026-09-29）：停下的、从没部署过的分支收到网格下方一个可折叠分组里，
- * 让正在跑、正在构建、出了错的卡片占据第一屏。等 CI 镜像、CI 失败、在排队、有操作在跑的
- * 都不算——它们要么马上会动，要么需要人处理。
+ * 真有服务或部署操作在跑的留在活跃区；CI等待/失败但没有任何活跃服务的归入未运行。
  */
 function isDormantBranch(branch: BranchSummary, action?: BranchAction): boolean {
-  if (action?.status === 'running') return false;
+  if (branch.archive || action?.status === 'running') return false;
   if (branch.status !== 'idle' || branch.buildQueue) return false;
   // 从停止状态单独部署一个服务时，分支聚合状态到结束前一直是 idle，只有那个服务在 building / starting；
   // 这时它在部署，不许收进「未运行」分组被折叠藏起来（Codex P2，PR #1646）。
   if (deployingServiceIds(branch.services).length > 0) return false;
-  if (branch.deployRuntime?.prebuilt !== false && (branch.ciImageStatus === 'waiting' || branch.ciImageStatus === 'failed')) return false;
+  if (Object.values(branch.services || {}).some(service => service.status === 'running' || service.status === 'stopping')) return false;
+  if (Object.values(branch.replicaSets || {}).some(set => set.members?.some(member =>
+    ['running', 'starting', 'provisioning', 'stopping'].includes(member.status || '')))) return false;
   return true;
 }
 
@@ -1454,6 +1466,7 @@ function summarizeBranchStates(
   let running = 0;
   let slot: { active: number; max: number } | null = null;
   for (const branch of list) {
+    if (isDormantBranch(branch, actions[branch.id])) continue;
     const phase = branchCardPhase({
       status: branch.status,
       services: branch.services,
@@ -1485,18 +1498,13 @@ function summarizeBranchStates(
 }
 
 const DORMANT_COLLAPSED_KEY = 'cds_branch_dormant_collapsed';
-const BRANCH_VIEW_MODE_KEY = 'cds_branch_view_mode';
 const BRANCH_GROUP_COLLAPSED_KEY = 'cds_branch_group_collapsed';
 
-type BranchViewMode = 'status' | 'groups';
-
 /** 视图模式与分组收起状态按项目记在本机浏览器：个人习惯，不进项目共享数据。 */
-function readBranchViewMode(projectId: string): BranchViewMode {
+function loadBranchViewPreferences(key: string | null, projectId: string): BranchViewsSettings {
   try {
-    return localStorage.getItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`) === 'groups' ? 'groups' : 'status';
-  } catch {
-    return 'status';
-  }
+    return key ? readBranchViews(localStorage, key, projectId) : defaultBranchViews();
+  } catch { return defaultBranchViews(); }
 }
 
 function readCollapsedGroups(projectId: string): Set<string> {
@@ -1663,10 +1671,21 @@ export function BranchListPage(): JSX.Element {
 }
 
 function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const branchReturn = new URLSearchParams(location.search);
+  const returnBranchId = branchReturn.get('branch');
+  const returnToBranchSettings = branchReturn.get('branchTab') === 'config' && branchReturn.get('configSection') === 'settings';
   const canManageConsole = useCanManageConsole();
+  const { status: authStatus, pending: authPending } = useContext(ConsoleAuthContext);
+  const relationActor = authPending ? null : consoleAccountIdentity(authStatus);
+  const relationRestore = useMemo(() => relationRestoreForVisit(relationActor, location.key, window.history.state?.idx, projectId), [relationActor, location.key, projectId]);
+  const restoredRelationTask = relationRestore?.task ?? null;
+  const account = authStatus?.enabled === false ? 'local' : authStatus?.user?.githubLogin || authStatus?.user?.username;
+  const viewPreferencesKey = account ? branchViewsStorageKey(`${authStatus?.mode ?? 'local'}:${account}`, projectId) : null;
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
-  const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
+  const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>(() => [...(restoredRelationTask?.selectedBranchIds || [])]);
   const [manualBranchName, setManualBranchName] = useState('');
   // 用户从搜索下拉选中已有分支时,使用稳定选中态标记卡片。
   // 不再用短暂 pulse + 计时器,避免分支流刷新/列表重排时动画被吃掉。
@@ -1693,13 +1712,14 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
-  const [cleanupStoppedRunning, setCleanupStoppedRunning] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => restoredRelationTask?.showArchived || false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const projectNoticesAvailable = state.status === 'ok' && !state.projectWarning;
   const noticeProject = useMemo(() => (
     state.status === 'ok' ? state.project : projectId ? fallbackProjectSummary(projectId) : null
   ), [projectId, state.status, state.status === 'ok' ? state.project.id : null, state.status === 'ok' ? state.project.slug : null, state.status === 'ok' ? state.project.name : null, state.status === 'ok' ? state.project.aliasName : null]);
@@ -1708,7 +1728,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     branch: BranchSummary;
     needSlots: number;
   } | null>(null);
-  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
+  const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(() => restoredRelationTask?.branchId || returnBranchId);
+  useEffect(() => { if (returnBranchId) setDetailDrawerBranchId(returnBranchId); }, [location.key, returnBranchId]);
   const [detailDrawerResourceFocus, setDetailDrawerResourceFocus] = useState<{
     resourceId: string;
     detailTab: BranchResourceDetailTab;
@@ -1727,10 +1748,27 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
-  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
+  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(() => restoredRelationTask?.activeTagFilter || null);
+  const [pendingRelationExpanded, setPendingRelationExpanded] = useState(() => restoredRelationTask?.relationExpanded || false);
+  const appliedRelationRestore = useRef<string | null>(null);
+  useEffect(() => {
+    if (!relationRestore || appliedRelationRestore.current === relationRestore.token) return;
+    appliedRelationRestore.current = relationRestore.token;
+    const task = relationRestore.task;
+    setSelectedBranchIds([...task.selectedBranchIds]); setShowArchived(task.showArchived); setActiveTagFilter(task.activeTagFilter);
+    setDetailDrawerBranchId(task.branchId); setDetailDrawerResourceFocus(null); setPendingRelationExpanded(task.relationExpanded);
+    consumeRelationRestore(relationRestore.token);
+  }, [relationRestore]);
   const [dormantCollapsed, setDormantCollapsed] = useState<boolean>(() => readDormantCollapsed());
   /* 自定义分组（2026-09-29）：分组定义按项目存在服务端、项目内共享；视图模式与收起状态只记本机。 */
-  const [viewMode, setViewModeState] = useState<BranchViewMode>(() => readBranchViewMode(projectId));
+  const [viewPreferences, setViewPreferences] = useState(() => ({ key: viewPreferencesKey, settings: loadBranchViewPreferences(viewPreferencesKey, projectId) }));
+  // 切账号 / 项目时同步读取新偏好，防止 effect 执行前短暂沿用上一个人的分类。
+  const savedViewSettings = useMemo(() => loadBranchViewPreferences(viewPreferencesKey, projectId), [viewPreferencesKey, projectId]);
+  const viewSettings = viewPreferences.key === viewPreferencesKey ? viewPreferences.settings : savedViewSettings;
+  const selectedView = viewSettings.views.find((view) => view.id === viewSettings.selectedId) ?? viewSettings.views[0];
+  const viewMode = selectedView.source;
+  const automaticView = viewMode !== 'status' && viewMode !== 'groups';
+  const [viewManagerOpen, setViewManagerOpen] = useState(false);
   const [branchGroups, setBranchGroups] = useState<BranchGroupsSettings | null>(null);
   const [groupsLoadError, setGroupsLoadError] = useState('');
   const [groupsSaving, setGroupsSaving] = useState(false);
@@ -1751,8 +1789,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   // 切项目时把上一个项目的分组残留一并清掉：开着的编辑器、保存中 / 保存失败的提示、拖拽落点。
   // 不清的话，编辑器里上个项目的分组会带着新项目的版本号存进新项目（Codex P2，PR #1647）。
   useEffect(() => {
-    setViewModeState(readBranchViewMode(projectId));
     setCollapsedGroups(readCollapsedGroups(projectId));
+    setViewManagerOpen(false);
     // 已停止行的展开是按分组 id 记的，而「未分组」与同名 id 在各项目里是同一个键：
     // 不清的话 A 项目展开过的行，进 B 项目时照样展开着（Codex P2，PR #1647）
     setExpandedDormantGroups(new Set());
@@ -1784,10 +1822,15 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       });
     return () => { cancelled = true; };
   }, [projectId]);
-  const setViewMode = useCallback((mode: BranchViewMode) => {
-    setViewModeState(mode);
-    try { localStorage.setItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`, mode); } catch { /* 隐私模式：只影响记忆 */ }
-  }, [projectId]);
+  const saveViewPreferences = useCallback((settings: BranchViewsSettings): boolean => {
+    if (!viewPreferencesKey) return false;
+    setViewPreferences({ key: viewPreferencesKey, settings });
+    try { localStorage.setItem(viewPreferencesKey, JSON.stringify(settings)); return true; }
+    catch { return false; }
+  }, [viewPreferencesKey]);
+  const setViewMode = (id: string) => {
+    if (!saveViewPreferences({ ...viewSettings, selectedId: id })) setToast('分类已切换，但浏览器无法记住偏好；刷新后需要重新选择。');
+  };
   const toggleGroupCollapsed = useCallback((groupId: string) => {
     setCollapsedGroups((current) => {
       const next = new Set(current);
@@ -1924,6 +1967,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     detailTab: resourceDetailTabFromQuery(resourceOpenQueryParams.get('resourceTab')),
   });
   const resourceOpenQueryConsumedRef = useRef(false);
+  const [databaseDirectoryOpen, setDatabaseDirectoryOpen] = useState(() => new URLSearchParams(window.location.search).get('panel') === 'databases');
 
   const setAction = useCallback((key: string, next: BranchAction | null) => {
     actionRef.current = { ...actionRef.current };
@@ -1967,6 +2011,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
       ]);
+      const unavailable = projectResult.status === 'rejected' ? projectUnavailable(projectResult.reason) : null;
+      if (unavailable) {
+        setState({ status: 'unavailable', message: unavailable });
+        return;
+      }
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
           // 边缘 / CDN 抖动,静默保留缓存
@@ -2055,13 +2104,13 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     }
   }, [confirmEmptyBranchList, projectId]);
 
-  const refresh = useCallback(async (showLoading = false, forceLive = false) => {
+  const refresh = useCallback(async (showLoading = false, forceLive = false, fresh = false) => {
     if (!projectId) return;
     if (showLoading) {
       setState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
     }
     try {
-      const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
+      const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}&fresh=${fresh ? '1' : '0'}`;
       const infraUrl = `/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
       const profilesUrl = `/api/build-profiles?project=${encodeURIComponent(projectId)}`;
       const [projectResult, branchesResult, previewModeResult, configResult, infraResult, profilesResult] = await Promise.allSettled([
@@ -2072,6 +2121,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         canManageConsole ? apiRequest<{ services: InfraServiceSummary[] }>(infraUrl) : Promise.resolve({ services: [] }),
         apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
+      const unavailable = projectResult.status === 'rejected' ? projectUnavailable(projectResult.reason) : null;
+      if (unavailable) {
+        setState({ status: 'unavailable', message: unavailable });
+        return;
+      }
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
           return;
@@ -2108,6 +2162,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       );
       let needsEmptyRecheck = false;
       setState((prev) => {
+        if (prev.status !== 'ok' && projectResult.status === 'rejected' && branchesRes.branches.length === 0) {
+          return { status: 'error', message: `项目读取失败，请刷新重试。${readableError(projectResult.reason)}` };
+        }
         const base: OkLoadState = prev.status === 'ok'
           ? prev
           : {
@@ -2160,14 +2217,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     if (!projectId) return;
     setRemoteBranchesLoading(true);
     try {
-      const url = forceFetch
-        ? `/api/remote-branches?project=${encodeURIComponent(projectId)}`
-        : `/api/remote-branches?project=${encodeURIComponent(projectId)}&nofetch=true`;
-      const res = await apiRequest<RemoteBranchesResponse & { fetched?: boolean; cachedAt?: number | null }>(url);
-      const remoteDefault = res.defaultBranch || null;
-      const branches = (res.branches || [])
-        .map((branch) => ({ ...branch, isDefault: branch.isDefault || branch.name === remoteDefault }))
-        .sort((left, right) => Number(Boolean(right.isDefault)) - Number(Boolean(left.isDefault)));
+      const branches = await listRemoteBranches(projectId, forceFetch);
       setState((prev) => prev.status === 'ok' ? { ...prev, remoteBranches: branches } : prev);
       // Bug A 修复(2026-05-03):取消冷启动 force-fetch 兜底。
       // 历史:`if (!forceFetch && empty) → refreshRemoteBranches(true)` 让冷启动
@@ -2267,7 +2317,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   }, [projectId, state.status, canManageConsole]);
 
   useEffect(() => {
-    if (!projectId || !noticeProject) return;
+    if (!projectNoticesAvailable || !projectId || !noticeProject) return;
     if (missingRequiredKeys.length === 0) return;
     const keys = [...missingRequiredKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -2284,14 +2334,13 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         projectSlug: noticeProject.slug,
       },
     }));
-  }, [missingRequiredKeys, noticeProject, projectId]);
+  }, [missingRequiredKeys, noticeProject, projectId, projectNoticesAvailable]);
 
   useEffect(() => {
-    if (!projectId || !noticeProject) return;
+    if (!projectNoticesAvailable || !projectId || !noticeProject) return;
     // 项目元信息走了 fallback(project 404/暂不可读)时不发站内信:此时 projectId
     // 可能指向已删除的项目,发出去的通知会携带死链接,用户点开即 404
     // (2026-07-21 用户实例:通知里的项目 id 已被删除重建)。
-    if (state.status === 'ok' && state.projectWarning) return;
     if (pendingEnvKeys.length === 0) return;
     const keys = [...pendingEnvKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -2308,7 +2357,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         projectSlug: noticeProject.slug,
       },
     }));
-  }, [noticeProject, pendingEnvKeys, projectId]);
+  }, [noticeProject, pendingEnvKeys, projectId, projectNoticesAvailable]);
 
   useEffect(() => {
     if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;
@@ -2515,22 +2564,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  /*
-   * Close the branch search popover on outside-click. Esc handled inline
-   * on the input.
-   */
-  useEffect(() => {
-    if (!branchSearchOpen) return;
-    const onClick = (event: MouseEvent) => {
-      if (!branchSearchRef.current) return;
-      if (!branchSearchRef.current.contains(event.target as Node)) {
-        setBranchSearchOpen(false);
-      }
-    };
-    window.addEventListener('mousedown', onClick);
-    return () => window.removeEventListener('mousedown', onClick);
-  }, [branchSearchOpen]);
-
   useEffect(() => {
     if (!canManageConsole) return;
     const source = new EventSource(apiUrl('/api/activity-stream'));
@@ -2555,7 +2588,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     return () => source.close();
   }, [canManageConsole]);
 
-  const branches = state.status === 'ok' ? state.branches : [];
+  const allBranches = state.status === 'ok' ? state.branches : [];
+  const archivedCount = allBranches.filter(branch => branch.archive).length;
+  const branches = useMemo(() => allBranches.filter(branch => showArchived ? Boolean(branch.archive) : !branch.archive), [allBranches, showArchived]);
   const remoteBranches = state.status === 'ok' ? state.remoteBranches : [];
   const trackedByName = useMemo(() => new Map(branches.map((branch) => [branch.branch, branch])), [branches]);
   const selectedBranches = useMemo(
@@ -2571,6 +2606,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const failedDeployTargets = useMemo<FailedDeployTarget[]>(() => {
     const targets: FailedDeployTarget[] = [];
     for (const branch of branches) {
+      if (branch.archive) continue;
       if (!branchHasDeployFailure(branch, projectProfileIds)) continue;
       const failedServices = failedLiveServices(branch, projectProfileIds);
       if (failedServices.length > 0) {
@@ -2600,29 +2636,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       && service.status !== 'restarting'
     )).length
   ), 0), [branches]);
-  // 已停止分支数量（一键清理停止分支按钮的可用性与计数）。
-  // 注意：后端 BranchSummary.status 实际不会是 'stopped'——分支停掉后回落
-  // 'idle'，停止信号在服务级（svc.status === 'stopped'）。与后端
-  // isStoppedBranch 同口径：非进行中态 + 至少一个服务 stopped + 无任何活跃服务。
-  // 纯空白未部署的 idle 分支（services 为空）不计入，避免误删。
-  const stoppedBranchCount = useMemo(
-    () => branches.filter((branch) => {
-      if (branch.status === 'building' || branch.status === 'starting'
-        || branch.status === 'restarting' || branch.status === 'stopping') return false;
-      const services = Object.values(branch.services || {});
-      if (services.length === 0) return false;
-      const anyActive = services.some((svc) => (
-        svc.status === 'running' || svc.status === 'building'
-        || svc.status === 'starting' || svc.status === 'restarting'
-      ));
-      if (anyActive) return false;
-      return services.some((svc) => svc.status === 'stopped');
-    }).length,
-    [branches],
-  );
-  // Branches displayed in the grid: favorites first, then by recent activity.
-  // We no longer expose status filters or compact toggles in the list itself
-  // (the search dropdown and per-card status pill cover those needs).
   const sortedBranches = useMemo(() => {
     const score = (branch: BranchSummary) => Math.max(
       Date.parse(branch.lastPushAt || '') || 0,
@@ -2673,6 +2686,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     }
     return map;
   }, [state]);
+  const databaseDirectoryEntries = useMemo(() => branches.flatMap((branch) =>
+    (branchResourcesById.get(branch.id) || []).filter((resource) => resource.kind === 'database')
+      .map((resource) => ({ branchId: branch.id, branchName: branch.branch, resource }))), [branches, branchResourcesById]);
   const aiActivityByBranch = useMemo(() => {
     const map = new Map<string, ActivityEvent[]>();
     const aiEvents = activityEvents.filter((event) => event.source === 'ai');
@@ -2704,6 +2720,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const groupsReadOnly = !canManageConsole || Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
+  const automaticSections = useMemo(() => automaticView ? groupBranchesByView(selectedView, sortedBranches) : [], [automaticView, selectedView, sortedBranches]);
   // 当前每个分支归哪组、怎么归进去的；拖放 / 菜单移组前用来判断这次操作会不会真的改变什么
   const groupAssignmentRef = useRef<Map<string, { groupId: string; via: 'pin' | 'rule' }>>(new Map());
   groupAssignmentRef.current = groupedBranches.assignment;
@@ -2755,8 +2772,12 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   // 卡片根本没渲染——先把它所在的组与那一行展开（只临时展开，不改写收起记忆）。
   const revealInGroupsRef = useRef<(branchId: string) => void>(() => undefined);
   revealInGroupsRef.current = (branchId: string) => {
-    if (!groupedView) return;
-    const sectionId = groupedBranches.assignment.get(branchId)?.groupId ?? '__ungrouped__';
+    if (!groupedView && !automaticView) return;
+    // 搜索会清除标签筛选；从全部分支找身份，才能展开原先被筛掉的目标。
+    const target = branches.find((branch) => branch.id === branchId);
+    const sectionId = automaticView && target
+      ? branchViewGroups(selectedView, target)[0].id
+      : target ? assignBranchToGroup(groupList, target)?.groupId ?? '__ungrouped__' : '__ungrouped__';
     setCollapsedGroups((current) => {
       if (!current.has(sectionId)) return current;
       const next = new Set(current);
@@ -2863,14 +2884,14 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       }
     }
     const sharedInfra = Array.from(infraById.values());
-    return { total: branches.length, parts, queued, slot, sharedInfra };
-  }, [branches, actions, branchResourcesById, projectProfileIds]);
+    return { total: branches.length, parts: showArchived ? [] : parts, queued, slot: showArchived ? null : slot, sharedInfra: showArchived ? [] : sharedInfra };
+  }, [branches, actions, branchResourcesById, projectProfileIds, showArchived]);
   // 当前过滤的标签已被全部分支删除时,自动清除过滤
   useEffect(() => {
-    if (activeTagFilter && !allTags.includes(activeTagFilter)) {
+    if (state.status === 'ok' && activeTagFilter && !allTags.includes(activeTagFilter)) {
       setActiveTagFilter(null);
     }
-  }, [activeTagFilter, allTags]);
+  }, [activeTagFilter, allTags, state.status]);
   const deployments = useMemo<BranchDeploymentItem[]>(() => (
     Object.entries(actions)
       .reduce<BranchDeploymentItem[]>((items, [key, action]) => {
@@ -2914,10 +2935,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   }, [branches, selectedBranchId]);
 
   useEffect(() => {
-    if (selectedBranchIds.length === 0) return;
+    if (state.status !== 'ok' || selectedBranchIds.length === 0) return;
     const liveIds = new Set(branches.map((branch) => branch.id));
     setSelectedBranchIds((current) => current.filter((id) => liveIds.has(id)));
-  }, [branches, selectedBranchIds.length]);
+  }, [branches, selectedBranchIds.length, state.status]);
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
@@ -2961,18 +2982,24 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     }
   }, [canOpenPreview, setAction, state]);
 
+  const openRelations = useCallback((branchId: string, expanded: boolean) => {
+    const token = rememberRelationReturn({ kind: 'branches', projectId, branchId, activeTagFilter, showArchived, selectedBranchIds, relationExpanded: expanded }, relationActor, location.key, window.history.state?.idx);
+    navigate(`/branch-relations/${encodeURIComponent(branchId)}`, { state: token ? { relationReturn: token } : undefined });
+  }, [projectId, activeTagFilter, showArchived, selectedBranchIds, relationActor, location.key, navigate]);
+
   const openBranchDetail = useCallback((branchId: string) => {
-    setDetailDrawerResourceFocus(null);
-    setDetailDrawerBranchId(branchId);
+    const source = document.querySelector(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
+    runSurfaceMotion(() => flushSync(() => { setDetailDrawerResourceFocus(null); setDetailDrawerBranchId(branchId); }), source, false, true);
   }, []);
 
   const openBranchResourcePanel = useCallback((branch: BranchSummary, resource: BranchResource) => {
-    setDetailDrawerResourceFocus({
+    const source = document.querySelector(`[data-branch-card-id="${CSS.escape(branch.id)}"]`);
+    runSurfaceMotion(() => flushSync(() => { setDetailDrawerResourceFocus({
       resourceId: resource.id,
       detailTab: resource.kind === 'app' ? 'logs' : 'data',
       directWorkbench: resource.kind === 'database',
     });
-    setDetailDrawerBranchId(branch.id);
+    setDetailDrawerBranchId(branch.id); }), source, false, true);
   }, []);
 
   const deployBranch = useCallback(async (
@@ -3508,29 +3535,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     }
   }, [cleanupDamagedRunning, damagedContainerCount, projectId, refresh]);
 
-  // 一键清理所有已停止的分支（容器 + worktree + entry）。
-  const cleanupStoppedBranches = useCallback(async (): Promise<void> => {
-    if (cleanupStoppedRunning) return;
-    setCleanupStoppedRunning(true);
-    try {
-      const result = await apiRequest<{ removedCount?: number; skippedBusyCount?: number }>(
-        `/api/branches/cleanup-stopped?project=${encodeURIComponent(projectId)}`,
-        { method: 'POST' },
-      );
-      const removed = result.removedCount || 0;
-      const skipped = result.skippedBusyCount || 0;
-      setToast(removed > 0
-        ? `已清理 ${removed} 个已停止分支${skipped > 0 ? `，跳过 ${skipped} 个忙碌分支` : ''}`
-        : '当前没有可清理的已停止分支');
-      await refresh(false);
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setToast(`清理失败: ${message}`);
-    } finally {
-      setCleanupStoppedRunning(false);
-    }
-  }, [cleanupStoppedRunning, projectId, refresh]);
-
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -3598,6 +3602,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   // 搜索命中后将卡片设为稳定选中态并滚动到视口中部。选中态保留到下一次
   // 选择其它分支,比临时动画更符合"这是你刚选中的面板"的用户心智。
   const focusBranchCard = useCallback((branchId: string): void => {
+    // 搜索或命令面板定位到一个分支时，先清除会把目标卡片藏起来的标签筛选。
+    setActiveTagFilter(null);
     // 只临时展开、不写回 localStorage：用户收起分组的偏好不因一次定位被改掉。
     if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);
     revealInGroupsRef.current(branchId);
@@ -3733,27 +3739,27 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     setManualBranchName(requestedBranch);
     const params = new URLSearchParams(window.location.search);
     params.delete('preview');
-    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
     void previewBranchByName(requestedBranch);
   }, [previewBranchByName, state.status]);
 
   useEffect(() => {
     if (resourceOpenQueryConsumedRef.current || state.status !== 'ok') return;
     const request = resourceOpenQueryRef.current;
-    if (!request.branchId || !request.resourceId) return;
+    if (!request.branchId || (!request.resourceId && new URLSearchParams(window.location.search).get('configureAddress') !== '1')) return;
     const branch = state.branches.find((item) => item.id === request.branchId);
     if (!branch) return;
     resourceOpenQueryConsumedRef.current = true;
-    setDetailDrawerResourceFocus({
+    setDetailDrawerResourceFocus(request.resourceId ? {
       resourceId: request.resourceId,
       detailTab: request.detailTab,
-    });
+    } : null);
     setDetailDrawerBranchId(branch.id);
     const params = new URLSearchParams(window.location.search);
     params.delete('openBranch');
     params.delete('resource');
     params.delete('resourceTab');
-    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
   }, [state]);
 
   const capacityAssist = useMemo(() => {
@@ -3822,6 +3828,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
    */
   /* 一张分支卡（含紧随其后的复制集派生卡）。「活跃」与「未运行」两个网格共用。 */
   const renderBranchTile = (branch: BranchSummary): JSX.Element => {
+    if (branch.archive) return <ArchivedBranchCard key={branch.id} projectId={projectId} branch={{ ...branch, archive: branch.archive }}
+      onRefresh={async () => { await refresh(false, false, true); }} onToast={setToast} />;
+
     // 项目级复制集显形（2026-07-25 用户拍板）：派生卡紧随主卡右侧（网格自然换行），
     // 名为 <branch>-replicaset-N；非独立 git 分支，仅是同分支的复制集实例组视图。
     const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<RsCardMember> }> }).replicaSets ?? {};
@@ -3873,14 +3882,14 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   };
 
   /* 一个分组区块：组头（与页头同口径的一句话汇总）+ 组内运行中 / 构建中的卡片 + 停止的收成一行。 */
-  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[]): JSX.Element => {
-    const id = group ? group.id : '__ungrouped__';
+  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[], submitter?: BranchViewGroup): JSX.Element => {
+    const id = submitter?.id ?? (group ? group.id : '__ungrouped__');
     const collapsed = collapsedGroups.has(id);
     const summary = summarizeBranchStates(list, actions, projectProfileIds);
     const active = list.filter((branch) => !isDormantBranch(branch, actions[branch.id]));
     const dormant = list.filter((branch) => isDormantBranch(branch, actions[branch.id]));
     const dormantOpen = expandedDormantGroups.has(id);
-    const dropping = groupDropTarget?.id === id ? groupDropTarget : null;
+    const dropping = !submitter && groupDropTarget?.id === id ? groupDropTarget : null;
     const dropHint = !dropping
       ? ''
       : dropping.reject
@@ -3891,18 +3900,30 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     return (
       <section
         key={id}
-        aria-label={group ? group.name : '未归组'}
+        aria-label={submitter ? `${selectedView.name} ${submitter.name}` : group ? group.name : '未归组'}
         data-branch-group={id}
-        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !dropping ? 'opacity-80' : ''}`}
-        onDragOver={(event) => onGroupDragOver(event, id)}
-        onDragLeave={(event) => {
+        data-branch-submitter={viewMode === 'submitters' ? submitter?.id : undefined}
+        data-branch-view-section={submitter?.id}
+        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !submitter && !dropping ? 'opacity-80' : ''}`}
+        onDragOver={submitter ? undefined : (event) => onGroupDragOver(event, id)}
+        onDragLeave={submitter ? undefined : (event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setGroupDropTarget((current) => (current?.id === id ? null : current));
           }
         }}
-        onDrop={(event) => onGroupDrop(event, id)}
+        onDrop={submitter ? undefined : (event) => onGroupDrop(event, id)}
       >
-        <BranchGroupHeader
+        {submitter ? (
+          <BranchViewGroupHeader
+            group={submitter}
+            label={viewMode === 'submitters' ? '提交者' : selectedView.name}
+            userIcon={viewMode === 'submitters' || viewMode === 'roles'}
+            count={list.length}
+            parts={summary.parts}
+            collapsed={collapsed}
+            onToggle={() => toggleGroupCollapsed(id)}
+          />
+        ) : <BranchGroupHeader
           group={group}
           count={list.length}
           parts={summary.parts}
@@ -3916,11 +3937,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           } : undefined}
           onGripDragEnd={() => { draggingGroupIdRef.current = null; setGroupDropTarget(null); }}
           dropHint={dropHint}
-        />
+        />}
         {!collapsed ? (
           <>
             {active.length > 0 ? (
-              <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={onGroupAreaDragEnd}>
+              <div className="cds-branch-card-grid mt-3" onDragStart={submitter ? undefined : onGroupAreaDragStart} onDragEnd={submitter ? undefined : onGroupAreaDragEnd}>
                 {active.map(renderBranchTile)}
               </div>
             ) : null}
@@ -3947,7 +3968,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                   </span>
                 </button>
                 {dormantOpen ? (
-                  <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={onGroupAreaDragEnd}>
+                  <div className="cds-branch-card-grid mt-3" onDragStart={submitter ? undefined : onGroupAreaDragStart} onDragEnd={submitter ? undefined : onGroupAreaDragEnd}>
                     {dormant.map(renderBranchTile)}
                   </div>
                 ) : null}
@@ -4001,6 +4022,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       if (event.key === 'Escape') setBranchSearchOpen(false);
                     }}
                     className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                    role="combobox" aria-haspopup="dialog" aria-autocomplete="list" aria-expanded={branchSearchOpen} aria-controls="branch-search-options"
                     placeholder={canOpenPreview ? '搜索分支 · 粘贴 commit / tag · 回车预览' : '搜索或添加分支 · 粘贴 commit / tag'}
                     autoComplete="off"
                     spellCheck={false}
@@ -4013,6 +4035,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
               </form>
               {branchSearchOpen ? (
                 <BranchSearchDropdown
+                  anchorRef={branchSearchRef} id="branch-search-options" onDismiss={() => setBranchSearchOpen(false)}
+                  describeTracked={(branch) => { const time = branchTimeBadge(branch); return `${statusLabel(branch.status)} · 服务 ${runningServiceCount(branch)}/${serviceCount(branch)} · ${time.label} ${time.text}`; }}
+                  trackedStatusClass={(branch) => statusRailClass(branch.status)}
+                  trackedBusy={isBusy}
+                  emptyHint={`没有匹配的分支。按 Enter 直接尝试以「${manualBranchName.trim() || '...'}」预览。`}
                   query={manualBranchName}
                   tracked={branches}
                   remote={remoteBranches}
@@ -4068,6 +4095,17 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           right={
             <>
               <PaletteHint />
+              <Button variant="outline" size="sm" onClick={() => setDatabaseDirectoryOpen(true)} title="数据库操作面板、连接通行证和备份">
+                <Database />数据库
+              </Button>
+              <Button asChild variant="ghost" size="sm" title="同步当前项目数据">
+                <Link to={`/dts?project=${encodeURIComponent(projectId)}`}><Database />数据同步</Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm" title="审查当前项目代码">
+                <Link to={`/code-reviews?project=${encodeURIComponent(projectId)}`}>
+                  <SearchCode />代码审查
+                </Link>
+              </Button>
               <Button asChild variant="ghost" size="sm" title="项目列表">
                 <Link to="/project-list">
                   <ArrowLeft />
@@ -4097,16 +4135,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                 {redeployFailedRunning ? <Loader2 className="animate-spin" /> : <RotateCw />}
                 一键重部署{failedDeployTargets.length > 0 ? ` ${failedDeployTargets.length}` : ''}
               </Button>
-              <Button
-                variant={damagedContainerCount > 0 ? 'outline' : 'ghost'}
-                size="sm"
-                onClick={() => void cleanupDamagedContainers()}
-                disabled={cleanupDamagedRunning || damagedContainerCount === 0}
-                title={damagedContainerCount > 0 ? `删除 ${damagedContainerCount} 个未运行的损坏容器；不会删除分支或工作区` : '当前没有未运行的损坏容器'}
-              >
-                {cleanupDamagedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                清理损坏{damagedContainerCount > 0 ? ` ${damagedContainerCount}` : ''}
-              </Button>
+              <BranchLifecycleControls projectId={projectId} showArchived={showArchived} archivedCount={archivedCount}
+                onToggleArchive={() => { setShowArchived(value => !value); setSelectedBranchIds([]); setActiveTagFilter(null); }}
+                damagedCount={damagedContainerCount} damagedBusy={cleanupDamagedRunning} onDamaged={() => void cleanupDamagedContainers()}
+                onRefresh={async () => { setSelectedBranchIds([]); await refresh(false, false, true); }} onToast={setToast} />
               <Button
                 variant="ghost"
                 size="sm"
@@ -4146,11 +4178,15 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,
             type a few characters, click a row OR press Enter to preview. */}
-        {state.status === 'loading' ? (
-          <div className="mt-6">
-            {/* 骨架屏镜像真实分支卡网格(cds-branch-card-grid + 固定 15.25rem 卡形状),
-                加载完成时无缝切到真数据;不再用通用的几行横条骨架。 */}
-            <BranchListSkeleton />
+        <div key={projectId}>
+        {state.status === 'loading' ? <BranchListSkeleton /> : null}
+        {state.status === 'unavailable' ? (
+          <div className="mt-6 rounded-lg border border-border bg-card p-6" role="status">
+            <h2 className="text-lg font-semibold">项目不可用</h2>
+            <p className="mt-2 text-sm text-muted-foreground">{state.message}</p>
+            <Button asChild variant="outline" size="sm" className="mt-4">
+              <Link to="/project-list">返回项目列表</Link>
+            </Button>
           </div>
         ) : null}
         {state.status === 'error' ? (
@@ -4177,47 +4213,33 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             with more columns before falling back to stretched rows. */}
         {state.status === 'ok' ? (
           <div className="mt-6">
-            {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
-                还原 legacy app.js:2778-2792 的 renderTagFilterBar 行为,但改为
-                只在 active 时显示一行简单 chip(单标签过滤,不做 multi-select)。 */}
-            {/* 2026-05-07 wave 2.4:Tag filter bar — 列出所有 tags 横排,
-                点击 chip 切换过滤;再次点击清除。激活的 tag chip 高亮。 */}
-            {branches.length > 0 ? (
+            {/* 统计、视图和标签共用骨架已预留的工具条，返回数据不会再插入一行挤下卡片。 */}
+            {branches.length > 0 || viewPreferencesKey ? (
               /* 一句话汇总（2026-09-29）：先说「所以呢」——几个要处理、几个在动——再把每张卡都
                  重复的共享基础设施、全项目共用的构建槽收到这里说一次。 */
-              <div className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2" data-testid="branch-overview-bar">
-                <h2 className="min-w-0 text-[1.625rem] font-bold leading-tight tracking-tight text-foreground">
-                  <span>{branchOverview.total} 个分支</span>
-                  {branchOverview.parts.length > 0 ? '：' : ''}
-                  {branchOverview.parts.map((part, index) => (
-                    <span key={part.text}>
-                      {index > 0 ? '，' : ''}
-                      <span className={part.tone === 'plain' ? 'text-muted-foreground' : undefined}>{part.text}</span>
-                    </span>
-                  ))}
-                </h2>
-                <div className="flex flex-wrap items-center gap-2">
+              <BranchListOverview summary={
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1" data-branch-task-summary>
+                  <h2 className="text-[1.625rem] font-semibold leading-7 tracking-tight text-foreground">{showArchived ? `${branchOverview.total} 个归档分支` : `${branchOverview.total} 个分支`}</h2>
+                  <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm leading-5 text-muted-foreground">
+                    {showArchived ? <span>保留 30 天，可恢复</span> : null}
+                    {branchOverview.parts.map(part => <span key={part.text} className={part.tone === 'plain' ? undefined : 'font-medium text-foreground'}>{part.text}</span>)}
+                  </p>
+                </div>
+              }>
                   {branchOverview.sharedInfra.length > 0 ? (() => {
                     const broken = branchOverview.sharedInfra.filter((resource) => resource.status === 'error');
                     const stopped = branchOverview.sharedInfra.filter((resource) => resource.status !== 'running' && resource.status !== 'error');
                     return (
-                      <span
-                        className="inline-flex h-7 max-w-full items-center gap-2 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-2.5 text-xs text-muted-foreground"
-                        title={`共享基础设施：项目内所有分支共用同一组，逐分支的连接面板在卡片「+N」里\n${branchOverview.sharedInfra.map((resource) => `${resource.displayName}（${resource.status}）`).join('\n')}`}
-                      >
-                        <span className="shrink-0 font-medium text-foreground">共享基础设施</span>
-                        <span className={`inline-flex shrink-0 items-center gap-1 ${broken.length > 0 ? 'text-destructive' : stopped.length > 0 ? 'text-muted-foreground' : 'text-ok'}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${broken.length > 0 ? 'bg-destructive' : stopped.length > 0 ? 'bg-muted-foreground' : 'bg-ok'}`} aria-hidden />
-                          {broken.length > 0 ? `${broken.length} 个异常` : stopped.length > 0 ? `${stopped.length} 个未运行` : '全部健康'}
-                        </span>
-                        {branchOverview.sharedInfra.map((resource) => (
-                          <span key={resource.id} className="inline-flex shrink-0 items-center gap-1">
-                            <ResourceIcon resource={resource} className="h-3 w-3 shrink-0" />
-                            <span className="font-medium text-foreground/80">{infraShortName(resource.runtime)}</span>
-                            {typeof resource.port === 'number' ? <span className="font-mono">:{resource.port}</span> : null}
-                          </span>
-                        ))}
-                      </span>
+                      <details className="relative max-w-full" onKeyDown={event => { if (event.key === 'Escape') event.currentTarget.open = false; }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}>
+                        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-2.5 text-xs">
+                          <span className="font-medium">共享基础设施 {branchOverview.sharedInfra.length}</span>
+                          <span className={broken.length ? 'font-medium text-destructive' : stopped.length ? 'text-muted-foreground' : 'text-ok'}>{broken.length ? `${broken.length} 个异常` : stopped.length ? `${stopped.length} 个未运行` : '全部运行中'}</span>
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </summary>
+                        <ul className="absolute right-0 top-full z-50 mt-1 min-w-[17rem] max-w-[calc(100vw-3rem)] space-y-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3 text-sm shadow-lg">
+                          {branchOverview.sharedInfra.map(resource => <li key={resource.id} className="flex flex-wrap items-center gap-2"><ResourceIcon resource={resource} className="h-4 w-4" /><span>{resource.displayName}</span><span className="font-mono">{resource.port ? `:${resource.port}` : ''}</span><span className="text-muted-foreground">{resource.status === 'running' ? '运行中' : resource.status === 'error' ? '异常' : '未运行'}</span></li>)}
+                        </ul>
+                      </details>
                     );
                   })() : null}
                   {branchOverview.slot ? (
@@ -4230,21 +4252,31 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       <span>进行中 · 排队 {branchOverview.queued}</span>
                     </span>
                   ) : null}
-                  {/* 视图切换（2026-09-29 自定义分组）：「按状态」是默认视图；「按分组」按项目共享的分组规则分区。 */}
+                  {/* 自动提交者视图只读分类，沿用个人视图记忆，不写项目共享分组。 */}
                   <div className="inline-flex shrink-0 gap-0.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 p-[3px]" role="group" aria-label="分支视图">
-                    {([['status', '按状态'], ['groups', '按分组']] as const).map(([mode, label]) => (
+                    {viewSettings.views.slice(0, 3).map((view) => (
                       <button
-                        key={mode}
+                        key={view.id}
                         type="button"
-                        aria-pressed={viewMode === mode}
-                        data-branch-view-toggle={mode}
-                        className={`h-7 rounded-md px-3 text-[0.8125rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${viewMode === mode ? 'bg-[hsl(var(--surface-raised))] font-semibold text-foreground shadow-[0_0_0_1px_hsl(var(--hairline-strong))]' : 'text-muted-foreground hover:text-foreground'}`}
-                        onClick={() => setViewMode(mode)}
+                        aria-pressed={selectedView.id === view.id}
+                        data-branch-view-toggle={view.id}
+                        disabled={!viewPreferencesKey}
+                        className={`h-7 max-w-40 truncate rounded-md px-3 text-[0.8125rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${selectedView.id === view.id ? 'bg-[hsl(var(--surface-raised))] font-semibold text-foreground shadow-[0_0_0_1px_hsl(var(--hairline-strong))]' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setViewMode(view.id)}
                       >
-                        {label}
+                        {view.name}
                       </button>
                     ))}
+                    {viewSettings.views.length > 3 ? <DropdownMenu trigger={
+                      <Button size="sm" variant="ghost" className={`h-7 max-w-40 ${viewSettings.views.slice(3).some((view) => view.id === selectedView.id) ? 'bg-accent font-semibold' : 'text-muted-foreground'}`}>
+                        <span className="truncate">{viewSettings.views.slice(3).some((view) => view.id === selectedView.id) ? selectedView.name : '更多分类'}</span><ChevronDown />
+                      </Button>
+                    }>
+                      <DropdownLabel>其他分类</DropdownLabel>
+                      {viewSettings.views.slice(3).map((view) => <DropdownItem key={view.id} onSelect={() => setViewMode(view.id)}><span className="min-w-0 truncate">{view.name}</span>{selectedView.id === view.id ? <CheckCircle2 className="ml-auto h-4 w-4 shrink-0" /> : null}</DropdownItem>)}
+                    </DropdownMenu> : null}
                   </div>
+                  <Button type="button" variant="outline" size="sm" className="h-8" disabled={!viewPreferencesKey} onClick={() => setViewManagerOpen(true)} data-branch-view-manage><Settings />管理分类</Button>
                   {viewMode === 'groups' && groupsReadOnly ? (
                     <span
                       className="inline-flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-xs text-muted-foreground"
@@ -4280,38 +4312,37 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       </DropdownItem>
                     </DropdownMenu>
                   ) : null}
-                </div>
-              </div>
-            ) : null}
-            {allTags.length > 0 ? (
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">标签:</span>
-                {allTags.map((tag) => {
-                  const active = activeTagFilter === tag;
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => setActiveTagFilter(active ? null : tag)}
-                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors ${
-                        active
-                          ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
-                          : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
-                      }`}
-                      title={active ? '清除过滤' : `按 #${tag} 过滤`}
-                    >
-                      <Tags className="h-3 w-3" />
-                      <span>#{tag}</span>
-                      {active ? <X className="h-3 w-3" /> : null}
-                    </button>
-                  );
-                })}
-                {activeTagFilter ? (
-                  <span className="text-xs text-muted-foreground">
-                    共 {sortedBranches.length} 个分支
-                  </span>
+                {allTags.length > 0 ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs text-muted-foreground">标签:</span>
+                    {allTags.map((tag) => {
+                      const active = activeTagFilter === tag;
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => setActiveTagFilter(active ? null : tag)}
+                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                            active
+                              ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+                              : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                          }`}
+                          title={active ? '清除过滤' : `按 #${tag} 过滤`}
+                        >
+                          <Tags className="h-3 w-3" />
+                          <span>#{tag}</span>
+                          {active ? <X className="h-3 w-3" /> : null}
+                        </button>
+                      );
+                    })}
+                    {activeTagFilter ? (
+                      <span className="text-xs text-muted-foreground">
+                        共 {sortedBranches.length} 个分支
+                      </span>
+                    ) : null}
+                  </div>
                 ) : null}
-              </div>
+              </BranchListOverview>
             ) : null}
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">
@@ -4351,7 +4382,14 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                 </div>
               </div>
             ) : (
-              viewMode === 'groups' ? (
+              automaticView ? (
+                <div className="flex flex-col gap-5" data-branch-submitters-view={viewMode === 'submitters' ? '' : undefined} data-branch-auto-view={selectedView.id}>
+                  <p className="px-2 text-xs text-muted-foreground">
+                    {BRANCH_VIEW_SOURCES[viewMode].description}{viewMode === 'tag-prefix' ? ` 当前前缀：${selectedView.tagPrefix}` : ''}
+                  </p>
+                  {automaticSections.map(({ group, branches: list }) => renderGroupSection(null, list, group))}
+                </div>
+              ) : viewMode === 'groups' ? (
                 <div className="flex flex-col gap-4" data-branch-view="groups">
                   {/* 拖拽 / 菜单移组是先乐观挪卡、再排队落盘；落盘慢时（上限 30 秒）要让人看见「还没存住」，
                       否则看着已经完成，超时后又被撤回，像是自己弹回去的（Codex P2，PR #1647） */}
@@ -4372,7 +4410,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       分组读取失败：{groupsLoadError}。刷新页面重试；在此之前可切回「按状态」查看全部分支。
                     </div>
                   ) : !branchGroups ? (
-                    <div className="px-2 text-sm text-muted-foreground">正在读取分组…</div>
+                    <ContentLoading label="读取分支分组" />
                   ) : groupList.length === 0 && groupsReadOnly ? (
                     <div className="px-2 text-sm text-muted-foreground">{canManageConsole ? '这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。' : '项目还没有分组，请联系系统所有者创建；你可以按状态查看分支。'}</div>
                   ) : groupList.length === 0 ? (
@@ -4436,11 +4474,19 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           </div>
         ) : null}
 
+        </div>
+
         {/* Ops drawer — slide-in panel for capacity / hosts / executors /
             batch / activity. Triggered by the "运维" button in the topbar. */}
         {/* Branch detail drawer — opens when 详情 is clicked on a card.
             Avoids the page navigation the user explicitly asked us to skip
             ("能在一个页面完成的，切勿跳转页面"). */}
+        {viewManagerOpen && viewPreferencesKey ? <BranchViewManagerDialog
+          key={viewPreferencesKey}
+          settings={viewSettings}
+          onApply={saveViewPreferences}
+          onClose={() => setViewManagerOpen(false)}
+        /> : null}
         <BranchGroupEditorDialog
           open={Boolean(groupEditor) && !groupsReadOnly}
           initial={groupEditor?.group ?? null}
@@ -4473,16 +4519,26 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             if (state.status !== 'ok' || !releaseBranchId) return '';
             const target = state.branches.find((b) => b.id === releaseBranchId);
             if (!target) return '';
-            if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
-            return multiPreviewUrl(target, state.config);
+            return branchPreviewUrls(target)[0] || '';
           })()}
           onClose={() => setReleaseBranchId(null)}
           onToast={setToast}
         />
+        <DatabaseDirectoryDialog open={databaseDirectoryOpen} onOpenChange={setDatabaseDirectoryOpen} entries={databaseDirectoryEntries} loading={state.status !== 'ok'} onOpen={(entry, detailTab) => {
+          setDatabaseDirectoryOpen(false);
+          setDetailDrawerResourceFocus({ resourceId: entry.resource.id, detailTab, directWorkbench: detailTab === 'data' });
+          setDetailDrawerBranchId(entry.branchId);
+        }} />
         <BranchDetailDrawer
+          key={detailDrawerBranchId || 'closed'}
           open={!!detailDrawerBranchId}
           branchId={detailDrawerBranchId}
+          initialTab={restoredRelationTask?.branchId === detailDrawerBranchId ? 'overview' : returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'config' : undefined}
+          initialConfigSection={returnToBranchSettings && detailDrawerBranchId === returnBranchId ? 'settings' : undefined}
           projectId={projectId}
+          onOpenRelations={openRelations}
+          initialRelationExpanded={pendingRelationExpanded && restoredRelationTask?.branchId === detailDrawerBranchId}
+          onRelationRestoreConsumed={() => setPendingRelationExpanded(false)}
           deployments={deployments}
           activityEvents={activityEvents}
           previewUrl={(() => {
@@ -4507,8 +4563,13 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             return target?.status;
           })()}
           onClose={() => {
-            setDetailDrawerBranchId(null);
-            setDetailDrawerResourceFocus(null);
+            const source = detailDrawerBranchId ? document.querySelector(`[data-branch-card-id="${CSS.escape(detailDrawerBranchId)}"]`) : null;
+            runSurfaceMotion(() => { flushSync(() => { setDetailDrawerBranchId(null); setDetailDrawerResourceFocus(null); }); if (source instanceof HTMLElement && source.isConnected) source.focus({ preventScroll: true }); }, source, true, true);
+            if (returnBranchId) {
+              const next = new URLSearchParams(location.search);
+              for (const key of ['branch', 'branchTab', 'configSection']) next.delete(key);
+              navigate(`${location.pathname}${next.size ? `?${next}` : ''}${location.hash}`, { replace: true, preventScrollReset: true });
+            }
           }}
           onToast={setToast}
           onActionComplete={() => void refresh()}
@@ -4560,24 +4621,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                           </Button>
                         )}
                       />
-                      <ConfirmAction
-                        title="清理所有已停止的分支?"
-                        description={`把当前项目 ${projectId} 下所有处于「已停止」状态的分支整条清掉（容器 + worktree + 分支条目），git 历史不动。正在运行/构建中的分支不受影响。${stoppedBranchCount > 0 ? `共 ${stoppedBranchCount} 个已停止分支。` : '当前没有已停止分支。'}`}
-                        confirmLabel="开始清理"
-                        onConfirm={() => cleanupStoppedBranches()}
-                        trigger={(
-                          <Button
-                            type="button"
-                            variant={stoppedBranchCount > 0 ? 'outline' : 'ghost'}
-                            size="sm"
-                            disabled={cleanupStoppedRunning || stoppedBranchCount === 0}
-                            title={stoppedBranchCount > 0 ? `清理 ${stoppedBranchCount} 个已停止分支（容器 + worktree + 条目）` : '当前没有已停止分支'}
-                          >
-                            {cleanupStoppedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                            清理停止分支{stoppedBranchCount > 0 ? ` ${stoppedBranchCount}` : ''}
-                          </Button>
-                        )}
-                      />
+                      <span className="text-xs text-muted-foreground">可从顶部“清理分支”归档，数据保留30天。</span>
                     </div>
                     <div>
                       <div className="mb-3 flex items-center justify-between gap-3">
@@ -4745,7 +4789,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       </div>
                     </div>
                     {slowHttpState.status === 'idle' || slowHttpState.status === 'loading' ? (
-                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取 HTTP 耗时样本</div>
+                      <ContentLoading label="读取 HTTP 耗时样本" variant="table" />
                     ) : slowHttpState.status === 'error' ? (
                       <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
                         {slowHttpState.message}
@@ -5040,687 +5084,170 @@ function ProjectSwitcher({
   );
 }
 
-function BranchSearchDropdown({
-  query,
-  tracked,
-  remote,
-  remoteLoading,
-  trackedByName,
-  actions,
-  configSourceBranchId,
-  onChangeConfigSource,
-  onPickTracked,
-  onPickRemote,
-  onForceFetchRemote,
-}: {
-  query: string;
-  tracked: BranchSummary[];
-  remote: RemoteBranch[];
-  remoteLoading: boolean;
-  trackedByName: Map<string, BranchSummary>;
-  actions: Record<string, BranchAction>;
-  configSourceBranchId: string | null;
-  onChangeConfigSource: (branchId: string | null) => void;
-  onPickTracked: (branch: BranchSummary) => void;
-  onPickRemote: (remote: RemoteBranch) => void;
-  onForceFetchRemote: () => void;
-}): JSX.Element {
-  const trimmed = query.trim().toLowerCase();
-  const matches = (text: string) => !trimmed || text.toLowerCase().includes(trimmed);
-  // 波3 补 UI:新建分支的「配置来源」——按分支名排序,供用户从本项目已有分支
-  // 快照拷贝分支级配置。跨项目派生后端已拒绝,这里天然只列本项目分支。
-  const sourceCandidates = [...tracked].sort((a, b) => a.branch.localeCompare(b.branch));
-
-  const visibleTracked = tracked
-    .filter((branch) => matches(branch.branch) || matches(branch.commitSha || '') || (branch.tags || []).some(matches))
-    .slice(0, 12);
-  const visibleRemote = remote.filter((row) => !trackedByName.get(row.name) && matches(row.name)).slice(0, 12);
-
-  const empty = visibleTracked.length === 0 && visibleRemote.length === 0;
-
-  return (
-    <div
-      className="cds-overlay-anim absolute left-0 right-0 top-full z-30 mt-2 max-h-[28.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
-      role="listbox"
-      aria-label="分支建议"
-    >
-      {/* 波3 补 UI:配置来源分支选择器。常驻于建议列表之上,仅在新建分支时生效
-          (选中已跟踪分支只是聚焦卡片,不创建,忽略此项)。默认「项目模板」= 不派生。 */}
-      {sourceCandidates.length > 0 ? (
-        <div className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2">
-          <label htmlFor="cds-config-source" className="shrink-0 text-[0.6875rem] font-medium text-muted-foreground">
-            配置来源
-          </label>
-          <select
-            id="cds-config-source"
-            value={configSourceBranchId ?? ''}
-            onChange={(event) => onChangeConfigSource(event.target.value || null)}
-            className="min-w-0 flex-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
-            title="新建分支时从来源分支快照拷贝分支级配置;默认走项目模板(不派生)"
-          >
-            <option value="">项目模板(默认,不派生)</option>
-            {sourceCandidates.map((branch) => (
-              <option key={branch.id} value={branch.id}>
-                派生自 {branch.branch}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
-      <div className="max-h-[26.25rem] overflow-y-auto py-1">
-        {empty ? (
-          <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-            没有匹配的分支。按 Enter 直接尝试以「{query.trim() || '...'}」预览。
-          </div>
-        ) : null}
-
-        {visibleTracked.length > 0 ? (
-          <>
-            <div className="px-4 pt-2 pb-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
-              已跟踪 · {visibleTracked.length}
-            </div>
-            {visibleTracked.map((branch) => {
-              const action = actions[branch.id];
-              const busy = action?.status === 'running' || isBusy(branch);
-              const timeBadge = branchTimeBadge(branch);
-              return (
-                <button
-                  key={branch.id}
-                  type="button"
-                  onClick={() => onPickTracked(branch)}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]"
-                >
-                  <span
-                    className={`h-2 w-2 shrink-0 rounded-full ${statusRailClass(branch.status)}`}
-                    aria-hidden
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{branch.branch}</span>
-                    <span className="block truncate text-[0.6875rem] text-muted-foreground">
-                      {statusLabel(branch.status)} · 服务 {runningServiceCount(branch)}/{serviceCount(branch)} · {timeBadge.label} {timeBadge.text}
-                    </span>
-                  </span>
-                  {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                  {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-warn" /> : null}
-                </button>
-              );
-            })}
-          </>
-        ) : null}
-
-        {remoteLoading && visibleRemote.length === 0 ? (
-          <div className="px-4 py-3 text-[0.6875rem] text-muted-foreground/80">
-            <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
-            远程分支加载中…
-          </div>
-        ) : null}
-
-        {/* Bug A:取消自动 force-fetch 兜底后,空 remote 时给个手动触发入口。
-            5 分钟内点了 force-fetch 后端会真跑 git fetch(可能 30s)。
-            Bugbot fix(2026-05-04):去掉 `tracked.length === 0` 限制 — 之前
-            有任何本地分支 hint 就消失,用户无法发现新远程分支。footer 里的
-            「刷新远程」永久按钮兜底 hint 可见性,这里只在空 remote 时给醒目提示。 */}
-        {!remoteLoading && visibleRemote.length === 0 ? (
-          <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-4 py-2.5 text-[0.6875rem] text-muted-foreground">
-            <span>远程分支缓存为空。</span>
-            <button
-              type="button"
-              onClick={onForceFetchRemote}
-              className="rounded px-2 py-1 text-[0.6875rem] font-medium text-foreground hover:bg-[hsl(var(--surface-sunken))]"
-            >
-              <RefreshCw className="mr-1 inline h-3 w-3" />
-              拉取远程(可能 ~10s)
-            </button>
-          </div>
-        ) : null}
-
-        {visibleRemote.length > 0 ? (
-          <>
-            <div className="flex items-center gap-2 px-4 pb-1 pt-3 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
-              <span>远程 · {visibleRemote.length}</span>
-              {remoteLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-            </div>
-            {visibleRemote.map((remoteBranch) => {
-              const action = actions[remoteBranch.name];
-              return (
-                <button
-                  key={remoteBranch.name}
-                  type="button"
-                  onClick={() => onPickRemote(remoteBranch)}
-                  disabled={!!action}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))] disabled:opacity-60"
-                >
-                  <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-medium">{remoteBranch.name}</span>
-                      {remoteBranch.isDefault ? (
-                        <span className="shrink-0 rounded border border-info/35 bg-info-soft px-1.5 py-0.5 text-[0.625rem] text-info">
-                          默认分支
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="block truncate text-[0.6875rem] text-muted-foreground">
-                      {remoteBranch.subject || remoteBranch.author || '部署并预览'}
-                    </span>
-                  </span>
-                  {action ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                </button>
-              );
-            })}
-          </>
-        ) : null}
-      </div>
-      <div className="flex items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-4 py-2 text-[0.6875rem] text-muted-foreground">
-        <span>↑↓ 浏览 · Enter 预览 · Esc 关闭</span>
-        <div className="flex items-center gap-2">
-          <span>{visibleTracked.length + visibleRemote.length} 项</span>
-          {/* Bugbot fix(2026-05-04):永久暴露"刷新远程"入口,
-              不再依赖空状态 hint。即使 tracked/remote 都有,缓存可能仍 stale。 */}
-          <button
-            type="button"
-            onClick={onForceFetchRemote}
-            disabled={remoteLoading}
-            title="重新拉取 origin 远程分支(可能 ~10s)"
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] hover:bg-[hsl(var(--surface-raised))] disabled:opacity-50"
-          >
-            {remoteLoading ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3 w-3" />
-            )}
-            刷新远程
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // OpsDrawer 已并入统一的「运维」面板（MonitoringDialog 的「运维操作」页签），
 // 不再单独存在右侧抽屉 + 独立的「运维监控」按钮（2026-06-22 用户指出二者本是一个东西）。
 
-function ReleaseBranchDialog({
-  branch,
-  previewUrl,
-  onClose,
-  onToast,
-}: {
-  branch: BranchSummary | null;
-  previewUrl: string;
-  onClose: () => void;
-  onToast: (message: string) => void;
+function ReleaseBranchDialog({ branch, previewUrl, onClose, onToast }: {
+  branch: BranchSummary | null; previewUrl: string; onClose: () => void; onToast: (message: string) => void;
 }): JSX.Element {
   const [targets, setTargets] = useState<ReleaseTargetSummary[]>([]);
-  const [targetId, setTargetId] = useState('');
   const [loadingTargets, setLoadingTargets] = useState(false);
+  const [selectedTarget, setSelectedTarget] = useState<ReleaseTargetSummary | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [phase, setPhase] = useState<'choose' | 'checking' | 'starting' | 'running'>('choose');
+  const [error, setError] = useState('');
   const [preflight, setPreflight] = useState<ReleasePreflightResult | null>(null);
-  const [preflightState, setPreflightState] = useState<'idle' | 'running' | 'error'>('idle');
+  const [forceReason, setForceReason] = useState('');
   const [run, setRun] = useState<ReleaseRunSummary | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
-  const [starting, setStarting] = useState(false);
-  // 发布弹窗改成分阶段向导（选站点 → 发布前检查 → 发布），避免旧版一条长滚动把
-  // 实时发布状态挤到最底部（被遮挡）。stage 由 wizardStep + run 派生：一旦 run 存在
-  // 就固定进入「发布」阶段，前序配置/预检收起成一行摘要，状态区直接占满弹窗。
-  const [wizardStep, setWizardStep] = useState<'config' | 'preflight'>('config');
-  const [scriptOpen, setScriptOpen] = useState(false);
-  // 发布过程是分钟级长任务（远端脚本 + 健康检查）。每秒滴答一次，
-  // 让运行中的步骤显示"已用时 mm:ss"，用户随时知道在动而非卡死（2 秒原则）。
+  const operation = useRef<AbortController | null>(null);
+  const inFlight = useRef(false);
+  const hasRun = useRef(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  // 分支轮询会替换对象；不能因此重置已经开始的发布。
   useEffect(() => {
-    if (!run || isReleaseTerminal(run.status)) return undefined;
-    const timer = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [run?.releaseId, run?.status]);
-
+    setTargets([]); setSelectedTarget(null); setLoadError(''); setRun(null); setLogs([]); setPreflight(null); setForceReason(''); setError(''); setPhase('choose');
+    hasRun.current = false; inFlight.current = false;
+    if (!branch) return;
+    const projectId = branch.projectId;
+    const ctrl = new AbortController(); let disposed = false; let fetching = false;
+    const refresh = async () => {
+      if (fetching || inFlight.current || hasRun.current) return;
+      fetching = true; setLoadingTargets(true);
+      try {
+        const data = await apiRequest<{ targets: ReleaseTargetSummary[] }>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`, { signal: ctrl.signal });
+        if (!disposed) {
+          setTargets((data.targets || []).filter((target) => target.projectId === projectId && target.isEnabled && target.lifecycle !== 'archived'));
+          setLoadError('');
+        }
+      } catch (failure) {
+        if (!disposed) setLoadError(failure instanceof ApiError ? failure.message : '环境未能加载，请稍后重试。');
+      } finally { fetching = false; if (!disposed) setLoadingTargets(false); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    window.addEventListener('focus', refresh);
+    return () => { disposed = true; ctrl.abort(); operation.current?.abort(); window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [branch?.id, branch?.projectId]);
   useEffect(() => {
-    if (!branch) return undefined;
-    setPreflight(null);
-    setRun(null);
-    setLogs([]);
-    setWizardStep('config');
-    setScriptOpen(false);
-    setLoadingTargets(true);
-    const ctrl = new AbortController();
-    apiRequest<{ targets: ReleaseTargetSummary[] }>(
-      `/api/releases/targets?project=${encodeURIComponent(branch.projectId)}`,
-      { signal: ctrl.signal },
-    )
-      .then((data) => {
-        const enabled = (data.targets || []).filter((target) => target.isEnabled && target.type === 'ssh');
-        setTargets(enabled);
-        setTargetId((current) => current && enabled.some((target) => target.id === current) ? current : enabled[0]?.id || '');
-      })
-      .catch((err) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
-        onToast(err instanceof ApiError ? err.message : String(err));
-      })
-      .finally(() => setLoadingTargets(false));
-    return () => ctrl.abort();
-  }, [branch, onToast]);
-
-  useEffect(() => {
-    if (!run || isReleaseTerminal(run.status)) return undefined;
+    if (!run || isReleaseTerminal(run.status)) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     const source = new EventSource(apiUrl(`/api/releases/runs/${encodeURIComponent(run.releaseId)}/stream?afterSeq=${run.logs.at(-1)?.seq || 0}`));
     source.addEventListener('snapshot', (event) => {
       const data = parseSseJson<{ run: ReleaseRunSummary; logs: ReleaseLogEntry[] }>(event);
-      if (!data) return;
-      setRun(data.run);
-      setLogs(dedupeReleaseLogs(data.run.logs || []));
+      if (data?.run) { setRun(data.run); setLogs((items) => dedupeReleaseLogs([...items, ...(data.run.logs || []), ...(data.logs || [])])); }
     });
     source.addEventListener('release.log', (event) => {
-      const data = parseSseJson<{ log: ReleaseLogEntry }>(event);
-      if (!data?.log) return;
-      setLogs((current) => dedupeReleaseLogs([...current, data.log]));
+      const data = parseSseJson<{ releaseId: string; log: ReleaseLogEntry }>(event);
+      if (data?.log) setLogs((items) => dedupeReleaseLogs([...items, data.log]));
     });
     source.addEventListener('release.status', (event) => {
       const data = parseSseJson<{ run: ReleaseRunSummary }>(event);
-      if (data?.run) {
-        setRun(data.run);
-        setLogs((current) => dedupeReleaseLogs([...(data.run.logs || []), ...current]));
-      }
+      if (data?.run) { setRun(data.run); if (isReleaseTerminal(data.run.status)) source.close(); }
     });
-    return () => source.close();
+    return () => { source.close(); window.clearInterval(timer); };
   }, [run?.releaseId, run?.status]);
-
-  const selectedTarget = useMemo(
-    () => targets.find((target) => target.id === targetId),
-    [targetId, targets],
-  );
-  const selectedScripts = useMemo(
-    () => releaseStepsFromTarget(selectedTarget),
-    [selectedTarget],
-  );
-  const selectedServer = selectedTarget?.ssh
-    ? `${selectedTarget.ssh.user}@${selectedTarget.ssh.host}:${selectedTarget.ssh.port}`
-    : '-';
-
-  const runPreflight = async (): Promise<void> => {
-    if (!branch || !targetId) return;
-    // 进入「发布前检查」阶段：把配置收起、只显示检查进度与结果，避免选项和结果同屏堆叠。
-    setWizardStep('preflight');
-    setScriptOpen(false);
-    setPreflightState('running');
-    setPreflight(null);
+  const publish = async (target: ReleaseTargetSummary): Promise<void> => {
+    if (!branch || inFlight.current || hasRun.current) return;
+    inFlight.current = true;
+    const ctrl = new AbortController(); operation.current = ctrl;
+    setSelectedTarget(target); setError(''); setPreflight(null); setForceReason(''); setPhase('checking');
     try {
-      const result = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, {
-        method: 'POST',
-        body: { targetId, previewUrl },
+      const check = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, {
+        method: 'POST', body: { targetId: target.id, previewUrl }, signal: ctrl.signal,
       });
-      setPreflight(result);
-      setPreflightState('idle');
-    } catch (err) {
-      setPreflightState('error');
-      onToast(err instanceof ApiError ? err.message : String(err));
-    }
+      if (ctrl.signal.aborted) return;
+      setPreflight(check);
+      setPhase('choose');
+    } catch (failure) {
+      if (!ctrl.signal.aborted) { setError(failure instanceof ApiError ? failure.message : '发布前检查失败'); setPhase('choose'); }
+    } finally { if (operation.current === ctrl) inFlight.current = false; }
   };
-
-  const startRelease = async (): Promise<void> => {
-    if (!branch || !targetId) return;
-    setStarting(true);
+  const start = async (force = false): Promise<void> => {
+    if (!branch || !selectedTarget || !preflight || inFlight.current || hasRun.current) return;
+    inFlight.current = true;
+    const ctrl = new AbortController(); operation.current = ctrl;
+    setError(''); setPhase('starting');
     try {
       const result = await apiRequest<{ run: ReleaseRunSummary }>(`/api/releases/branches/${encodeURIComponent(branch.id)}/runs`, {
-        method: 'POST',
-        body: { targetId, previewUrl },
+        method: 'POST', signal: ctrl.signal,
+        body: { targetId: selectedTarget.id, previewUrl, preflightId: preflight.preflightId,
+          expectedCommitSha: preflight.artifact?.commitSha,
+          ...(force ? { forceReason: forceReason.trim() } : {}) },
       });
-      setRun(result.run);
-      setLogs(result.run.logs || []);
-      onToast('发布已开始');
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setStarting(false);
-    }
+      if (ctrl.signal.aborted) return;
+      hasRun.current = true; setRun(result.run); setLogs(result.run.logs || []); setPhase('running'); onToast('发布已开始');
+    } catch (failure) {
+      if (!ctrl.signal.aborted) { setError(failure instanceof ApiError ? failure.message : '发布请求未确认，请检查发布记录后重试。'); setPhase('choose'); }
+    } finally { if (operation.current === ctrl) inFlight.current = false; }
   };
-
-  // stage 由向导步骤 + run 派生：一旦发布开始（run 存在），永远进入「发布」阶段，
-  // 前序配置 / 预检收起成一行摘要，实时状态直接占满弹窗（不再被长滚动挤到最底部）。
-  const stage: 'config' | 'preflight' | 'releasing' = run ? 'releasing' : wizardStep;
-  const releaseTerminal = run ? isReleaseTerminal(run.status) : false;
-  const passCount = preflight ? preflight.checks.filter((check) => check.status === 'pass').length : 0;
-  const totalChecks = preflight ? preflight.checks.length : 0;
-
+  const copyOnboarding = async () => {
+    if (!branch) return;
+    try { await navigator.clipboard.writeText(buildReleaseEnvironmentTask({ projectId: branch.projectId, branchId: branch.id, branchName: branch.branch, cdsHost: window.location.origin })); onToast('已复制接入任务，交给你的 Agent 即可'); }
+    catch { setError('复制未成功。请告诉你的 Agent：帮我接入新的发布环境到 CDS。'); }
+  };
   return (
     <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(48rem, calc(100vw - 2rem))' }}>
-        <DialogHeader>
-          <DialogTitle>发布 {branch?.branch}</DialogTitle>
-          <DialogDescription>从已验收预览分支发布到站点。</DialogDescription>
+      <DialogContent frame className="max-w-none" style={{ width: 'min(40rem, calc(100vw - 1rem))' }}>
+        <DialogHeader className="min-w-0 shrink-0 p-4 pr-12"><DialogTitle>{run ? releaseStatusLabel(run.status) : '发布到'}</DialogTitle>
+          <DialogDescription className="truncate">{branch?.branch} · {branch ? shortCommitSha(branch) : ''}</DialogDescription>
         </DialogHeader>
-        {!branch ? null : (
-          <div className="space-y-4">
-            <div className="grid gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm md:grid-cols-3">
-              <div>
-                <div className="text-xs text-muted-foreground">Commit</div>
-                <div className="mt-1 font-mono">{shortCommitSha(branch) || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">预览地址</div>
-                <div className="mt-1 truncate font-mono">{previewUrl || '-'}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">分支状态</div>
-                <div className="mt-1">{statusLabel(branch.status)}</div>
-              </div>
-            </div>
-
-            <ReleaseWizardRail stage={stage} status={run?.status} />
-
-            {stage === 'config' ? (
-              <div className="space-y-4">
-                <label className="grid gap-1 text-sm">
-                  <span className="text-muted-foreground">发布站点</span>
-                  <select
-                    value={targetId}
-                    onChange={(event) => {
-                      setTargetId(event.target.value);
-                      setPreflight(null);
-                    }}
-                    disabled={loadingTargets || targets.length === 0}
-                    className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
-                  >
-                    {targets.length === 0 ? <option value="">没有可用站点发布目标</option> : null}
-                    {targets.map((target) => (
-                      <option key={target.id} value={target.id}>
-                        {target.name} · {target.ssh?.host || '-'} · {target.ssh?.appPath || '-'}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {targets.length === 0 && !loadingTargets ? (
-                  <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
-                    当前项目没有站点发布目标。先到发布中心添加站点发布。
-                  </div>
-                ) : null}
-
-                {selectedTarget ? (
-                  <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-3">
-                    <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                      <Server className="h-4 w-4 text-primary" />
-                      发布确认
-                    </div>
-                    <div className="grid gap-3 text-sm md:grid-cols-2">
-                      <ReleaseConfirmItem label="发布目标" value={selectedTarget.name} />
-                      <ReleaseConfirmItem label="服务器" value={selectedServer} mono />
-                      <ReleaseConfirmItem label="目录" value={selectedTarget.ssh?.appPath || '-'} mono />
-                      <ReleaseConfirmItem label="上线地址" value={selectedTarget.ssh?.healthcheckUrl || '-'} mono />
-                      <div className="md:col-span-2">
-                        <div className="text-xs text-muted-foreground">执行计划</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          {selectedScripts.map((script, index) => (
-                            <span key={`${script}-${index}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
-                              {script}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {stage === 'preflight' ? (
-              <div className="space-y-3">
-                <ReleaseStageSummary
-                  target={selectedTarget}
-                  server={selectedServer}
-                  pass={passCount}
-                  total={totalChecks}
-                  editable
-                  onEdit={() => setWizardStep('config')}
-                />
-
-                {preflightState === 'running' ? (
-                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    正在连接发布服务器并执行发布前检查…首次建立 SSH 连接可能需要若干秒，请稍候。
-                  </div>
-                ) : null}
-
-                {starting && !run ? (
-                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    正在提交发布任务，准备连接服务器…
-                  </div>
-                ) : null}
-
-                {preflight ? (
-                  <div className="grid gap-2">
-                    {preflight.checks.map((check) => {
-                      const longMessage = check.id === 'deploy-command' && check.message.length > 80;
-                      return (
-                        <div
-                          key={check.id}
-                          className={`rounded-md border text-sm ${
-                            check.status === 'pass'
-                              ? 'border-ok/30 bg-ok-soft'
-                              : check.status === 'warn'
-                                ? 'border-warn/30 bg-warn-soft'
-                                : 'border-bad/30 bg-bad-soft'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3 px-3 py-2">
-                            <div className="min-w-0">
-                              <div className="font-medium">{releaseCheckLabel(check)}</div>
-                              {longMessage ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setScriptOpen((value) => !value)}
-                                  className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                >
-                                  {scriptOpen ? '收起脚本' : '查看脚本'}
-                                  <ChevronDown className={`h-3 w-3 transition-transform ${scriptOpen ? 'rotate-180' : ''}`} />
-                                </button>
-                              ) : (
-                                <div className="mt-0.5 break-words text-xs text-muted-foreground">{check.message}</div>
-                              )}
-                            </div>
-                            <span className="shrink-0 font-mono text-xs">{releaseCheckStatusLabel(check.status)}</span>
-                          </div>
-                          {longMessage && scriptOpen ? (
-                            <div className="mx-3 mb-2 max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
-                              <pre className="p-2.5 font-mono text-[0.6875rem] leading-5 text-muted-foreground" style={{ whiteSpace: 'pre', minWidth: 'max-content' }}>{check.message}</pre>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {stage === 'releasing' && run ? (
-              <div className="space-y-3">
-                <ReleaseStageSummary
-                  target={selectedTarget}
-                  server={selectedServer}
-                  pass={passCount}
-                  total={totalChecks}
-                />
-                <div className="flex items-center justify-between gap-3 text-sm">
-                  <span className="font-mono">{run.releaseId}</span>
-                  <span className="flex items-center gap-2">
-                    {!isReleaseTerminal(run.status) ? (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        已用时 {formatReleaseElapsed(Math.max(0, nowTick - Date.parse(run.startedAt)))}
-                      </span>
-                    ) : null}
-                    <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{releaseStatusLabel(run.status)}</span>
-                  </span>
-                </div>
-                {!isReleaseTerminal(run.status) ? (
-                  <div className="text-xs text-muted-foreground">
-                    当前阶段：{releaseCurrentStepText(run, logs)}。发布为分钟级任务，进度会随服务器日志实时刷新。
-                  </div>
-                ) : null}
-                <ReleaseRunStepList run={run} logs={logs} />
-                <pre className="max-h-72 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
-                  {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待发布日志...'}
-                </pre>
-              </div>
-            ) : null}
-
-            <div className="sticky bottom-0 -mx-6 -mb-6 flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] bg-card px-6 py-3">
-              {stage === 'config' ? (
-                <>
-                  <Button asChild variant="outline">
-                    <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-                  </Button>
-                  <div className="flex-1" />
-                  <span className="hidden text-xs text-muted-foreground sm:inline">下一步：连接服务器并检查</span>
-                  <Button onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running'}>
-                    {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <Gauge />}
-                    发布前检查
-                  </Button>
-                </>
-              ) : null}
-              {stage === 'preflight' ? (
-                <>
-                  <Button variant="outline" onClick={() => setWizardStep('config')} disabled={preflightState === 'running' || starting}>
-                    上一步
-                  </Button>
-                  <Button variant="ghost" onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running' || starting}>
-                    {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
-                    重新检查
-                  </Button>
-                  <div className="flex-1" />
-                  {preflight ? (
-                    <span className="hidden text-xs text-muted-foreground sm:inline">
-                      {preflight.ok ? `${passCount}/${totalChecks} 通过，可发布` : '存在阻塞项，先修复再发布'}
-                    </span>
-                  ) : null}
-                  <Button onClick={() => void startRelease()} disabled={!targetId || !preflight?.ok || starting || !!run}>
-                    {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
-                    开始发布
-                  </Button>
-                </>
-              ) : null}
-              {stage === 'releasing' && run ? (
-                releaseTerminal ? (
-                  <>
-                    <Button asChild variant="outline">
-                      <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-                    </Button>
-                    <div className="flex-1" />
-                    {run.status === 'success' && selectedTarget?.ssh?.healthcheckUrl ? (
-                      <Button asChild>
-                        <a href={selectedTarget.ssh.healthcheckUrl} target="_blank" rel="noreferrer">
-                          <ExternalLink />
-                          打开上线地址
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button variant="outline" onClick={onClose}>关闭</Button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <Button asChild variant="ghost">
-                      <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-                    </Button>
-                    <div className="flex-1" />
-                    <span className="text-xs text-muted-foreground">发布中，可关闭弹窗，任务在服务器继续运行</span>
-                  </>
-                )
-              ) : null}
-            </div>
+        <DialogBody className="grid gap-4 p-4" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+        {error || loadError ? <div role="alert" className="break-words rounded-md border border-bad/30 bg-bad-soft p-3 text-sm text-bad">{error || loadError}</div> : null}
+        {phase === 'choose' && !run ? <>
+          <p className="text-sm text-muted-foreground">选择发布环境，查看检查结果后开始发布。</p>
+          {loadingTargets && targets.length === 0 ? <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />正在加载环境…</p> : null}
+          <div className="grid min-w-0 gap-2">
+            {targets.map((target) => <button key={target.id} type="button" aria-label={`发布到 ${target.name}`} onClick={() => void publish(target)}
+              className="flex min-w-0 items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] p-3 text-left hover:border-primary/60 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              <span className="min-w-0 flex-1 break-words font-medium">{target.name}
+                {target.ssh?.healthcheckUrl ? <span className="mt-1 block break-all text-xs font-normal text-muted-foreground">{target.ssh.healthcheckUrl}</span> : null}</span>
+            </button>)}
           </div>
-        )}
+          {!loadingTargets && targets.length === 0 ? <p className="text-sm text-muted-foreground">还没有发布环境。告诉你的 Agent：“帮我接入 xxx 环境到 CDS。”</p> : null}
+          {preflight && selectedTarget ? (
+            <div className="grid gap-3 rounded-lg border p-3 text-sm">
+              <p className="font-medium">{selectedTarget.name} · {preflight.ok ? '可以发布' : '普通发布有阻断项'}</p>
+              <ul className="grid gap-2">
+                {preflight.checks.filter((check) => check.status !== 'pass').map((check) => (
+                  <li key={check.id} className="break-words">
+                    {check.blocking ? '阻断' : '警告'} · {check.label} · {check.message}
+                  </li>
+                ))}
+              </ul>
+              {preflight.forceAvailable ? (
+                <label className="grid gap-1">
+                  强制发布原因
+                  <input className="rounded-md border bg-background px-3 py-2" value={forceReason}
+                    maxLength={300} onChange={(event) => setForceReason(event.target.value)}
+                    placeholder="强制发布会将外部业务依赖故障记为警告" />
+                </label>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void start()} disabled={!preflight.ok}>开始发布</Button>
+                {preflight.forceAvailable ? <Button variant="outline" onClick={() => void start(true)}
+                  disabled={!forceReason.trim() || !preflight.artifact?.commitSha}>强制发布</Button> : null}
+              </div>
+            </div>
+          ) : null}
+          <Button variant="ghost" className="h-auto min-w-0 whitespace-normal break-words py-2" title="复制接入任务给 Agent" onClick={() => void copyOnboarding()}>接入新环境</Button>
+        </> : null}
+        {phase === 'checking' || phase === 'starting' ? <div className="grid min-w-0 gap-2 rounded-lg bg-primary/10 p-4 text-sm"><p className="break-words">{phase === 'checking' ? `正在检查 ${selectedTarget?.name || '环境'}…` : '正在开始发布…'}</p><ContentLoading variant="inline" label={phase === 'checking' ? '检查发布环境' : '开始发布'} /></div> : null}
+        {run ? <div className="min-w-0 space-y-3">
+          <p className="break-words text-sm">{selectedTarget?.name} · {releaseStatusLabel(run.status)}{!isReleaseTerminal(run.status) ? ` · 已用时 ${formatReleaseElapsed(Math.max(0, nowTick - Date.parse(run.startedAt)))}` : ''}</p>
+          {run.forceReason ? <p className="break-words text-sm text-warn">强制发布 · {run.forceReason}</p> : null}
+          {run.autoRestoreStartedAt && isReleaseTerminal(run.status) ? (
+            <p className="text-sm">{run.autoRestoredAt ? '已恢复发布前的运行版本，公网复验通过。' : '自动回滚尚未验证，请查看发布日志。'}</p>
+          ) : null}
+          {!isReleaseTerminal(run.status) ? <p className="text-xs text-muted-foreground">当前阶段：{releaseCurrentStepText(run, logs)}</p> : null}
+          <ReleaseRunStepList run={run} logs={logs} />
+          <details open={run.status === 'failed' || undefined}><summary className="cursor-pointer text-sm">查看发布日志</summary><pre className="mt-2 max-h-72 min-w-0 overflow-auto whitespace-pre-wrap break-all rounded-md bg-[hsl(var(--surface-sunken))] p-3 text-xs">{logs.map((log) => `[${formatShortTime(log.at)}] ${log.message}`).join('\n') || '等待发布日志…'}</pre></details>
+          {!isReleaseTerminal(run.status) ? <p className="text-xs text-muted-foreground">可关闭窗口，发布会继续运行。</p> : null}
+        </div> : null}
+        </DialogBody>
+        <div className="flex min-w-0 shrink-0 flex-wrap justify-between gap-2 border-t p-4"><Button asChild variant="ghost" className="h-auto min-w-0 whitespace-normal break-words py-2"><Link to={branch ? releaseCenterHref(branch.projectId) : '/release-center'}>发布记录</Link></Button><Button variant="outline" className="h-auto min-w-0 whitespace-normal py-2" onClick={onClose}>关闭</Button></div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** 发布向导阶段条：选择站点 → 发布前检查 → 发布，走到哪高亮哪。 */
-function ReleaseWizardRail({ stage, status }: { stage: 'config' | 'preflight' | 'releasing'; status?: string }): JSX.Element {
-  const nodes: Array<{ key: 'config' | 'preflight' | 'releasing'; label: string }> = [
-    { key: 'config', label: '选择站点' },
-    { key: 'preflight', label: '发布前检查' },
-    { key: 'releasing', label: '发布' },
-  ];
-  const currentIdx = nodes.findIndex((node) => node.key === stage);
-  const terminalSuccess = status === 'success' || status === 'rollback_success';
-  const terminalFailed = status === 'failed' || status === 'rollback_failed';
-  return (
-    <div className="flex items-center">
-      {nodes.map((node, idx) => {
-        let state: 'done' | 'active' | 'failed' | 'pending';
-        if (idx < currentIdx) state = 'done';
-        else if (idx === currentIdx) {
-          state = node.key === 'releasing'
-            ? (terminalSuccess ? 'done' : terminalFailed ? 'failed' : 'active')
-            : 'active';
-        } else state = 'pending';
-        const dotClass = state === 'done'
-          ? 'border-ok/70 bg-ok-soft text-ok'
-          : state === 'failed'
-            ? 'border-bad/70 bg-bad-soft text-bad'
-            : state === 'active'
-              ? 'border-primary bg-primary/12 text-primary'
-              : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
-        return (
-          <div key={node.key} className="flex flex-1 items-center last:flex-none">
-            <div className="flex items-center gap-2">
-              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-xs font-semibold ${dotClass}`}>
-                {state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5" /> : state === 'failed' ? <XCircle className="h-3.5 w-3.5" /> : idx + 1}
-              </span>
-              <span className={`text-xs font-medium ${state === 'pending' ? 'text-muted-foreground' : 'text-foreground'}`}>{node.label}</span>
-            </div>
-            {idx < nodes.length - 1 ? (
-              <span className={`mx-2 h-px flex-1 ${idx < currentIdx ? 'bg-ok/60' : 'bg-[hsl(var(--hairline-strong))]'}`} />
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** 收起态摘要条：发布开始后把「发布到哪 / 预检结果」压成一行，为实时状态腾出主视觉。 */
-function ReleaseStageSummary({
-  target,
-  server,
-  pass,
-  total,
-  editable,
-  onEdit,
-}: {
-  target?: ReleaseTargetSummary;
-  server: string;
-  pass: number;
-  total: number;
-  editable?: boolean;
-  onEdit?: () => void;
-}): JSX.Element {
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-3 py-2 text-xs">
-      {total > 0 ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 font-medium text-ok">
-          <CheckCircle2 className="h-3 w-3" />
-          预检 {pass}/{total}
-        </span>
-      ) : null}
-      <span className="text-muted-foreground">
-        发布到 <span className="font-medium text-foreground">{target?.name || '-'}</span>
-      </span>
-      <span className="truncate font-mono text-muted-foreground">{server}</span>
-      {editable ? (
-        <button type="button" onClick={onEdit} className="ml-auto shrink-0 text-primary hover:underline">修改</button>
-      ) : null}
-    </div>
-  );
-}
-
-function ReleaseConfirmItem({ label, value, mono }: { label: string; value: string; mono?: boolean }): JSX.Element {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`mt-1 min-w-0 break-words ${mono ? 'font-mono text-xs' : 'font-medium'}`}>{value || '-'}</div>
-    </div>
   );
 }
 
@@ -5776,40 +5303,6 @@ function isReleaseTerminal(status: string): boolean {
   return ['success', 'failed', 'rollback_success', 'rollback_failed'].includes(status);
 }
 
-/**
- * 「执行计划」chips 的展开：只把用户**真配了**的发布命令拆开展示。
- *
- * 这里原本兜底成 `./fast.sh && ./exec_dep.sh`——本仓库的脚本名，写死在 CDS 这个
- * 通用产品里。换个项目、或者目标还没配命令，界面就会煞有介事地展示两个根本不会
- * 执行的脚本。没配就说没配。
- */
-function releaseScriptsFromCommand(command?: string): string[] {
-  const source = command?.trim() || '';
-  if (!source) return ['未配置发布命令'];
-  const parts = source.replace(/&&/g, '\n').replace(/;/g, '\n')
-    .split('\n').map((item) => item.trim()).filter(Boolean);
-  return parts.length > 0 ? parts : [source];
-}
-
-function releaseStepsFromTarget(target?: ReleaseTargetSummary): string[] {
-  if (target?.strategy?.mode === 'generated-compose') {
-    return [
-      'CDS 生成 commit 隔离 worktree',
-      `动态执行 ${target.strategy.composeFile || 'compose.yml'}`,
-      '验证最终入口并记录脚本哈希',
-    ];
-  }
-  if (target?.strategy?.mode === 'generated-static') {
-    return [
-      target.strategy.buildCommand || '执行静态构建',
-      `离线验证 ${target.strategy.artifactDirectory || 'dist'}/index.html 与入口资源`,
-      `原子切换 ${target.strategy.publicDirectory || '-'}/current`,
-    ];
-  }
-  return releaseScriptsFromCommand(target?.strategy?.command || target?.ssh?.deployCommand);
-}
-
-/** 当前正在跑（或下一个待跑）的发布步骤，供进行中的状态行展示「第 N/M 步 · 标题」。 */
 function releaseCurrentStepText(run: ReleaseRunSummary, logs: ReleaseLogEntry[]): string {
   const { currentIndex, total, currentLabel, degraded } = resolveReleaseSteps({ ...run, logs });
   if (total === 0) return '收尾中';
@@ -5839,28 +5332,6 @@ function releaseStatusLabel(status: string): string {
     rollback_failed: '回滚失败',
   };
   return map[status] || status;
-}
-
-function releaseCheckLabel(check: ReleasePreflightCheck): string {
-  const map: Record<string, string> = {
-    branch: '分支部署成功',
-    commit: 'commit 明确',
-    artifact: '可发布产物',
-    target: '站点发布目标',
-    'project-scope': '项目一致',
-    ssh: '服务器可连接',
-    'deploy-command': '发布脚本已配置',
-    scripts: '发布脚本可执行',
-    healthcheck: '上线地址可访问',
-    'rollback-version': '可回滚版本',
-  };
-  return map[check.id] || check.label;
-}
-
-function releaseCheckStatusLabel(status: ReleasePreflightCheck['status']): string {
-  if (status === 'pass') return '通过';
-  if (status === 'warn') return '提醒';
-  return '失败';
 }
 
 /**
@@ -5958,9 +5429,7 @@ function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Elemen
         <p className="mb-3 text-xs text-muted-foreground">
           CDS 系统设置 · 调度器空闲阈值（对全部分支生效）。保存即刻生效——调度器下一轮判定就按新值执行；被降温的分支访问预览或手动启动即回温。
         </p>
-        {phase === 'loading' ? (
-          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取当前配置…</div>
-        ) : (
+        {phase === 'loading' ? <ContentLoading label="读取降温配置" variant="rows" /> : (
           <>
             <div className="flex items-center gap-2">
               <label className="text-xs text-muted-foreground" htmlFor="cool-idle-minutes">空闲超过</label>
@@ -6185,6 +5654,8 @@ const BranchCard = memo(function BranchCard({
   const appResources = portedResources.filter((resource) => resource.source !== 'infra');
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
   const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
+  const portsAnchorRef = useRef<HTMLSpanElement>(null);
+  const portsPanelRef = useRef<HTMLDivElement>(null);
   /* 复制集标识与端口 chip 挤在同一条单行槽里。它占一格，端口就少露一个，否则最窄卡宽下
      排在后面的端口与「+N」会被卡片的 overflow-hidden 裁掉、点不到（Codex P2，PR #1646）。 */
   const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
@@ -6430,6 +5901,9 @@ const BranchCard = memo(function BranchCard({
   const footerSubject = commitSubject(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  const commitAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const aiAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const tagAnchorRef = useRef<HTMLButtonElement | null>(null);
   // 降温条件快捷编辑（2026-07-26 用户拍板）：调度器降温的提示条悬浮显示设置入口，
   // 就地改空闲阈值（PUT /api/scheduler/config，调度器每 tick 读配置——保存即生效）
   const [coolEditOpen, setCoolEditOpen] = useState(false);
@@ -6479,10 +5953,7 @@ const BranchCard = memo(function BranchCard({
     && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
   // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。
   const shouldShowStopReason = !isRunning && !isInterim && !isCiWaiting && !isCiFailed && !isNeverDeployed;
-  const ciWaitSinceText = branch.ciWaitingSince
-    ? formatRelativeTime(branch.ciWaitingSince)
-    : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
-  const ciImageErrorText = branch.ciImageError || 'CI 预构建镜像未就绪';
+  const ciNotice = ciImageNotice(branch);
   const stopReasonText = branch.lastStopReason || '无停止记录';
   /* 卡面上的停止原因先说外因、再说要不要紧（external-cause-first）：来源标签已经写了
      「GitHub」，原因里再重复「GitHub webhook」只剩内部术语；容器还在就直接告诉用户能秒级恢复。 */
@@ -6577,8 +6048,8 @@ const BranchCard = memo(function BranchCard({
     setTagDeleteTarget(null);
   };
   const commitHistoryPanel = commitMenuOpen ? (
-    <div
-      className="absolute bottom-[calc(100%+0.5rem)] left-0 z-[140] w-[min(22.5rem,calc(100vw-3rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+    <AnchoredPopover open anchorRef={commitAnchorRef} widthRem={22.5} side="top" autoFocus="first" onDismiss={() => setCommitMenuOpen(false)}
+      className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
       role="menu"
       aria-label={`${branch.branch} 最近提交`}
       onClick={(event) => event.stopPropagation()}
@@ -6587,9 +6058,7 @@ const BranchCard = memo(function BranchCard({
         <span>最近提交</span>
         <span className="truncate font-mono">{branch.branch}</span>
       </div>
-      {commitHistoryState.status === 'loading' ? (
-        <div className="px-2 py-3 text-xs text-muted-foreground">读取提交历史...</div>
-      ) : null}
+      {commitHistoryState.status === 'loading' ? <ContentLoading label="读取提交历史" variant="rows" /> : null}
       {commitHistoryState.status === 'error' ? (
         <div className="px-2 py-3 text-xs leading-5 text-destructive">{commitHistoryState.message || '读取失败'}</div>
       ) : null}
@@ -6604,7 +6073,7 @@ const BranchCard = memo(function BranchCard({
             <div
               key={`${commit.hash}-${index}`}
               className="grid grid-cols-[4rem_minmax(0,1fr)] gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
-              role="menuitem"
+              role="menuitem" tabIndex={0}
               title={`${commit.hash} ${commit.subject}`}
             >
               <span className="block truncate font-mono text-muted-foreground">{commit.hash}</span>
@@ -6618,7 +6087,7 @@ const BranchCard = memo(function BranchCard({
           ))}
         </div>
       ) : null}
-    </div>
+    </AnchoredPopover>
   ) : null;
 
   return (
@@ -6627,7 +6096,7 @@ const BranchCard = memo(function BranchCard({
       data-branch-card-id={branch.id}
       data-deploy-phase={deployPhaseAttr}
       draggable={draggableToGroup || undefined}
-      className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : showsIssue ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : showsIssue ? 'overflow-visible' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         failedPhase
           // 刚在眼前失败（含单服务部署失败、分支仍 running）：红边框承担「构建失败」信号；
           // 历史错误仍按错误分类配色。
@@ -6642,6 +6111,7 @@ const BranchCard = memo(function BranchCard({
       tabIndex={0}
       onClick={onDetail}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onDetail();
@@ -6669,10 +6139,12 @@ const BranchCard = memo(function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
-            {runtime?.prebuilt ? (
-              <Zap
-                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
-                aria-label={runtime.label}
+            {runtime && (runtime.prebuilt || branch.deployRuntime?.prebuiltCoverage === 'partial') ? (
+              <PrebuiltRuntimeIcon
+                partial={branch.deployRuntime?.prebuiltCoverage === 'partial'}
+                pending={runtime.kind === 'pending'}
+                label={runtime.label}
+                className={isInterim ? 'animate-pulse' : ''}
               />
             ) : runtime ? (
               <Rocket
@@ -6689,7 +6161,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="cds-branch-name min-w-0 flex-1 truncate text-[1.0625rem] font-semibold leading-7"
+                className="cds-branch-name min-w-0 flex-1 line-clamp-2 break-all group-focus-visible:line-clamp-none text-[1.0625rem] font-semibold leading-7"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
@@ -6726,6 +6198,7 @@ const BranchCard = memo(function BranchCard({
                     event.stopPropagation();
                     setTagEditorOpen(false);
                     setTagDeleteTarget(null);
+                    aiAnchorRef.current = event.currentTarget;
                     setAiPanelOpen((current) => !current);
                   }}
                 >
@@ -6758,16 +6231,9 @@ const BranchCard = memo(function BranchCard({
       </header>
 
       {aiPanelOpen && isAiOperated ? (
-        <div
-          className="absolute right-4 top-14 z-[130] w-[min(21.25rem,calc(100%-2rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
-          role="dialog"
-          aria-label={`${branch.branch} AI 操作记录`}
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (event.key === 'Escape') setAiPanelOpen(false);
-          }}
-        >
+        <AnchoredPopover open anchorRef={aiAnchorRef} widthRem={21.25} align="end" onDismiss={() => setAiPanelOpen(false)}
+          className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
+          role="dialog" aria-label={`${branch.branch} AI 操作记录`} onClick={event => event.stopPropagation()}>
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2 font-semibold">
               <Bot className={`h-4 w-4 ${isAiActive ? 'text-info' : aiState.status === 'timeout' ? 'text-warn' : 'text-muted-foreground'}`} />
@@ -6875,7 +6341,7 @@ const BranchCard = memo(function BranchCard({
               </Button>
             ) : null}
           </div>
-        </div>
+        </AnchoredPopover>
       ) : null}
 
       {/* 状态/服务 chip 行 — wrap 不 nowrap。应用 chips 全部显示(超过 8 个才
@@ -6885,21 +6351,15 @@ const BranchCard = memo(function BranchCard({
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
-      {/* 固定槽位（2026-09-29 等高改版）：卡片 = 标题 / 端口槽 / 信息槽 / 标签槽 / 页脚，
-          每一槽高度写死、内容再多也不换行——高低不齐的根因就是这几处「有时出现、
-          有时不出现」的行（CI 标签挤换行、基础设施托盘、被挤下去的时间行、折两行的名字）。
-          出错卡把端口槽 + 信息槽合成一块两行的原因说明，总高度与其它卡相同。 */}
+      {/* 网格按同排最高卡片拉齐，失败摘要最多两行，完整原因在分支详情。 */}
       {showsIssue && !failedPhase ? (
-        <div
-          className={`mx-5 mt-3 flex h-[3.375rem] min-w-0 flex-col justify-center gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
-          title={deployFailureMessage(branch, projectProfileIds)}
-        >
+        <div className={`mx-5 mt-3 flex min-w-0 flex-col gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}>
           <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="min-w-0 truncate">{issueLabel}</span>
             <span className="ml-auto shrink-0 whitespace-nowrap font-normal opacity-75">{statusTimeText}</span>
           </div>
-          <div className="line-clamp-2 break-all text-[0.6875rem] font-normal leading-[0.875rem] text-foreground/85">
+          <div className="line-clamp-2 break-words text-xs font-normal leading-5 text-foreground/85">
             {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
           </div>
         </div>
@@ -6952,36 +6412,8 @@ const BranchCard = memo(function BranchCard({
             让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。
             2026-06-24：在「停止」面板之前先拦截「等 CI 镜像 / CI 未就绪 / 待部署」三种
             其实没停止的 idle 态，别再把它们误标成「容器停止 · 无记录 · 时间未知」。 */}
-        {isCiWaiting ? (
-          <div
-            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
-            title={`等待 GitHub Actions 预构建镜像${branch.ciTargetSha ? ` (${branch.ciTargetSha.slice(0, 7)})` : ''}${ciWaitSinceText ? `\n自 ${ciWaitSinceText}` : ''}`}
-          >
-            <Rocket className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="shrink-0 font-medium text-foreground/80">尚未启动</span>
-            <span className="min-w-0 flex-1 truncate text-muted-foreground/85">镜像就绪后自动部署</span>
-          </div>
-        ) : isCiFailed ? (
-          <div
-            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${issueClass}`}
-            title={ciImageErrorText}
-          >
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="shrink-0 font-medium">CI 镜像未就绪</span>
-            <span className="min-w-0 flex-1 truncate">{ciImageErrorText}</span>
-            {branch.ciWorkflowRunUrl ? (
-              <a
-                href={branch.ciWorkflowRunUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="shrink-0 inline-flex items-center gap-1 underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                查看构建
-                <ExternalLink className="h-3 w-3" aria-hidden />
-              </a>
-            ) : null}
-          </div>
+        {isCiWaiting || isCiFailed ? (
+          <CiImageNotice branch={branch} className={`h-7 min-w-0 flex-1 rounded-md border px-2.5 text-xs [&>div]:h-full ${isCiFailed ? issueClass : 'border-[hsl(var(--hairline))] text-muted-foreground'}`} />
         ) : isNeverDeployed ? (
           <div
             className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
@@ -7033,16 +6465,16 @@ const BranchCard = memo(function BranchCard({
         {ciFailedChip ? (
           <span
             className="inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，请查看 CI 日志，修复并重试 CI，通过后再部署。`}
+            title={`${ciNotice.title}：${ciNotice.message} 旧版本仍在服务，点击查看详情。`}
           >
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDetail(); }}
               className="inline-flex min-w-0 items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
-              aria-label="新版本 CI 失败，查看失败原因；旧版本仍在服务"
+              aria-label={`${ciNotice.title}，查看原因；旧版本仍在服务`}
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
-              <span className="min-w-0 truncate">CI 失败</span>
+              <span className="min-w-0 truncate">{ciNotice.title}</span>
             </button>
             {branch.ciWorkflowRunUrl ? (
               <a
@@ -7107,7 +6539,7 @@ const BranchCard = memo(function BranchCard({
             {foldedAppCount + infraResources.length > 0 ? (
               // 「+N」折叠气泡（2026-09-29 起 N 含基础设施：托盘从卡面挪到页头汇总，
               // 这里保留逐分支直达资源面板 / 数据库工作台的入口，不丢能力）:悬浮 / 点击 / 键盘弹出浮层展开全部端口。浮层
-              // position:absolute 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度。
+              // 经共享浮层挂到 body，只展开当前卡，不推挤网格，并按可见视口避让。
               // 交互契约(2026-07-14,修 Codex P2 键盘/触摸可达性):
               //  - 点击/回车/触摸 = 打开(set true,不 toggle):触摸端 mouseenter+click 会
               //    连发两次,toggle 会一开一关净关闭 → 改为幂等打开,任何模态都能开。
@@ -7116,11 +6548,12 @@ const BranchCard = memo(function BranchCard({
               //    (原来 onBlur 挂 button 上,Tab 一离开 button 就 unmount,菜单永远够不到)。
               //  - 关闭走:鼠标移出 / 焦点离开 wrapper / Esc / 点中某个端口。
               <span
+                ref={portsAnchorRef}
                 className="relative inline-flex shrink-0"
                 onMouseEnter={() => setPortsPopoverOpen(true)}
-                onMouseLeave={() => setPortsPopoverOpen(false)}
+                onMouseLeave={event => { if (!portsPanelRef.current?.contains(event.relatedTarget as Node | null)) setPortsPopoverOpen(false); }}
                 onBlur={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null) && !portsPanelRef.current?.contains(event.relatedTarget as Node | null)) {
                     setPortsPopoverOpen(false);
                   }
                 }}
@@ -7130,6 +6563,7 @@ const BranchCard = memo(function BranchCard({
                   // 只 stopPropagation、不 preventDefault:让原生 button click 照常触发
                   // onClick(打开浮层 / 打开端口面板)。Esc 关闭浮层。
                   if (event.key === 'Escape') {
+                    portsAnchorRef.current?.querySelector('button')?.focus();
                     setPortsPopoverOpen(false);
                   }
                   event.stopPropagation();
@@ -7152,14 +6586,13 @@ const BranchCard = memo(function BranchCard({
                   // 外层从 +N 底边(top-full,0 间距)起,用透明 pt-1.5 把可见面板往下推 6px:
                   // 视觉上仍有 6px 间隙,但这 6px 属于 wrapper 子树、被 hover 覆盖 —— 鼠标从
                   // +N 移到端口时不再跨越「空隙」触发 wrapper 的 onMouseLeave(Codex P2 悬停桥)。
-                  <div
-                    className="absolute left-0 top-full z-[140] pt-1.5"
+                  <AnchoredPopover open anchorRef={portsAnchorRef} contentRef={portsPanelRef} widthRem={20} gap={0} onDismiss={() => setPortsPopoverOpen(false)}
+                    onMouseLeave={event => { if (!portsAnchorRef.current?.contains(event.relatedTarget as Node | null)) setPortsPopoverOpen(false); }}
+                    className="z-[300] pt-1.5" role="menu" aria-label="全部服务端口"
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div
                       className="flex max-w-[min(20rem,calc(100vw-3rem))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
-                      role="menu"
-                      aria-label="全部服务端口"
                     >
                       {appResources.map((resource) => (
                         <button
@@ -7203,7 +6636,7 @@ const BranchCard = memo(function BranchCard({
                         </>
                       ) : null}
                     </div>
-                  </div>
+                  </AnchoredPopover>
                 ) : null}
               </span>
             ) : null}
@@ -7275,9 +6708,9 @@ const BranchCard = memo(function BranchCard({
       </div>
       )}
       {!showsIssue || failedPhase ? (
-        <div className="mx-5 mt-2.5 flex h-[1.125rem] min-w-0 items-center justify-between gap-3 text-xs leading-[1.125rem] text-muted-foreground">
+        <div className="mx-5 mt-2.5 mb-3 flex min-h-[1.125rem] min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs leading-[1.125rem] text-muted-foreground">
           {failedPhase ? (
-            <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch, projectProfileIds)}>
+            <span className="min-w-0 max-w-full truncate text-destructive">
               {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
             </span>
           ) : finishing ? (
@@ -7306,8 +6739,8 @@ const BranchCard = memo(function BranchCard({
           - 多于 3 个时折叠为"+N",避免撑爆卡片宽度。点击折叠按钮跳到批量编辑。
           - 只有 × / +N / +标签 这些明确按钮 stopPropagation。 */}
       {/* handlers 重构后标签回调恒定存在，原可选 prop 守卫移除 */}
-      {(
-        <div className="relative mx-5 mt-2 flex h-6 min-w-0 flex-nowrap items-center gap-1.5">
+      {(branch.tags?.length || tagEditorOpen || tagDeleteTarget) ? (
+        <div className="relative mx-5 mt-2 mb-3 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5">
           {(branch.tags || []).slice(0, 3).map((tag) => {
             const isActive = activeTagFilter === tag;
             return (
@@ -7327,6 +6760,7 @@ const BranchCard = memo(function BranchCard({
                   onClick={(event) => {
                     event.stopPropagation();
                     setTagEditorOpen(false);
+                    tagAnchorRef.current = event.currentTarget;
                     setTagDeleteTarget((current) => (current === tag ? null : tag));
                   }}
                   className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-destructive/20 hover:text-destructive group-hover/tag:opacity-100 focus:opacity-100"
@@ -7355,6 +6789,7 @@ const BranchCard = memo(function BranchCard({
             type="button"
             onClick={(event) => {
               event.stopPropagation();
+              tagAnchorRef.current = event.currentTarget;
               setTagEditorOpen((current) => !current);
               setTagDeleteTarget(null);
               setTagDraftError('');
@@ -7371,12 +6806,14 @@ const BranchCard = memo(function BranchCard({
             <span>标签</span>
           </button>
           {tagEditorOpen ? (
+            <AnchoredPopover open anchorRef={tagAnchorRef} widthRem={17.5} role="dialog" aria-label="添加标签" onDismiss={() => setTagEditorOpen(false)} className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl">
             <form
-              className="absolute left-5 top-[calc(100%-0.25rem)] z-30 w-[min(17.5rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              className="min-w-0"
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => {
                 event.stopPropagation();
                 if (event.key === 'Escape') {
+                  tagAnchorRef.current?.focus();
                   setTagEditorOpen(false);
                   setTagDraft('');
                   setTagDraftError('');
@@ -7402,27 +6839,19 @@ const BranchCard = memo(function BranchCard({
                   className="h-8 min-w-0 flex-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55 focus:ring-2 focus:ring-primary/20"
                   placeholder="输入标签名称"
                 />
-                <button
+                <Button
                   type="submit"
-                  className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                  size="sm"
+                  className="shrink-0 font-semibold"
                 >
                   添加
-                </button>
+                </Button>
               </div>
               {tagDraftError ? <div className="mt-1.5 text-[0.6875rem] text-destructive">{tagDraftError}</div> : null}
-            </form>
+            </form></AnchoredPopover>
           ) : null}
           {tagDeleteTarget && onRemoveTag ? (
-            <div
-              className="absolute left-5 top-[calc(100%-0.25rem)] z-[120] w-[min(18.75rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
-              role="dialog"
-              aria-label={`删除标签 ${tagDeleteTarget}`}
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === 'Escape') setTagDeleteTarget(null);
-              }}
-            >
+            <AnchoredPopover open anchorRef={tagAnchorRef} widthRem={18.75} onDismiss={() => setTagDeleteTarget(null)} role="dialog" aria-label={`删除标签 ${tagDeleteTarget}`} className="z-[300] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="mb-1.5 flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                 <Tags className="h-3 w-3" aria-hidden />
                 删除标签
@@ -7439,9 +6868,11 @@ const BranchCard = memo(function BranchCard({
                 >
                   取消
                 </button>
-                <button
+                <Button
                   type="button"
-                  className="inline-flex h-8 items-center rounded-md bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90"
+                  variant="destructive"
+                  size="sm"
+                  className="font-semibold"
                   onClick={() => {
                     const target = tagDeleteTarget;
                     setTagDeleteTarget(null);
@@ -7449,12 +6880,12 @@ const BranchCard = memo(function BranchCard({
                   }}
                 >
                   删除
-                </button>
+                </Button>
               </div>
-            </div>
+            </AnchoredPopover>
           ) : null}
         </div>
-      )}
+      ) : null}
 
       {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 
@@ -7578,15 +7009,11 @@ const BranchCard = memo(function BranchCard({
               /* 刚在眼前失败的这一次：页脚左侧直接说「失败在哪一段」，与阶段条上那段红色对上。 */
               <span className="flex min-w-0 flex-1 items-center gap-1.5 text-destructive" title={`部署停在「${failedPhase.label}」这一段`} data-footer-status>
                 <XCircle className="h-4 w-4 shrink-0" aria-hidden />
-                {/* 两行：右边两个按钮占掉大半宽度，单行会把「在哪一段」截成省略号。 */}
-                <span className="flex min-w-0 flex-col leading-tight">
-                  <span className="text-[0.8125rem] font-medium">构建失败</span>
-                  <span className="truncate text-[0.6875rem] opacity-85">在「{failedPhase.label}」</span>
-                </span>
+                <span className="min-w-0 truncate whitespace-nowrap text-[0.8125rem] font-medium">构建失败</span>
               </span>
             ) : footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；待发布目标 ${branch.targetCommitSha || '未确认'}`}>
-                运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}{branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? ` · 待发布 ${branch.targetCommitSha.slice(0, 7)}` : ''}
+              <span data-footer-primary-status className="min-w-0 max-w-full shrink truncate whitespace-nowrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；待发布目标 ${branch.targetCommitSha || '未确认'}`}>
+                {showsIssue ? '异常' : branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? '待发布' : isRunning ? '运行中' : '待部署'}
               </span>
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
@@ -7620,7 +7047,7 @@ const BranchCard = memo(function BranchCard({
             ) : (
               <span className="min-w-0 flex-1" aria-hidden />
             )}
-            {failedPhase ? null : (
+            {failedPhase || showsIssue ? null : (
             <button
               type="button"
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
@@ -7629,6 +7056,7 @@ const BranchCard = memo(function BranchCard({
               aria-expanded={commitMenuOpen}
               onClick={(event) => {
                 event.stopPropagation();
+                commitAnchorRef.current = event.currentTarget;
                 void toggleCommitMenu();
               }}
             >
@@ -7706,7 +7134,7 @@ const BranchCard = memo(function BranchCard({
                 disabled={busy || (!isAiOperated && !handlers.canPreview)}
                 loading={busy}
                 fill={!isAiOperated}
-                className={isAiOperated ? '' : 'w-32'}
+                className={isAiOperated ? '' : 'min-w-0'}
                 icon={isAiOperated ? <Bot className="h-4 w-4" /> : undefined}
                 previewLabel={isAiOperated ? undefined : '预览'}
                 previewTitle={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
@@ -7727,7 +7155,10 @@ const BranchCard = memo(function BranchCard({
               disabled={busy}
               title="启动已停止的容器，不拉取代码、不重建镜像"
               aria-label={`一键启动 ${branch.branch}`}
-              onClick={onRestart}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRestart();
+              }}
             >
               <Play />
               一键启动
@@ -7883,7 +7314,7 @@ function BranchMoreMenu({
 /**
  * 整条分支是不是极速版（2026-10-08）：所有服务都走预构建镜像才算。
  * deployRuntime.prebuilt 只表示「任一服务」，9 个服务里 1 个极速、8 个在宿主编译时它也是 true，
- * 拿它亮闪电就是把混合分支说成极速版。旧后端没有 prebuiltCoverage 时沿用 prebuilt。
+ * 全部与部分分别用黄、蓝闪电；待生效不亮完成态闪电。旧后端沿用 prebuilt。
  */
 function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
   if (!runtime) return false;
@@ -7893,8 +7324,7 @@ function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
 
 function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
   const runtime = branch.deployRuntime;
-  // 只有一部分服务走极速版：如实显示「混合 · 极速 x/y」，不亮闪电（2026-10-08 用户指出：
-  // 「左上角显示了闪电，意味着这必须是极速版，不然是既设置错了，又显示错了」）。
+  // 全部服务仍计入分母；辅助服务未标记预构建，不等于正在宿主编译。
   if (runtime?.prebuiltCoverage === 'partial') {
     const fast = runtime.prebuiltProfileIds?.length ?? 0;
     const total = runtime.activeProfiles;
@@ -7902,14 +7332,14 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
     return {
       kind: runtime.pendingPublish ? 'pending' : 'mixed',
       label: runtime.pendingPublish ? `混合 · ${ratio} · 待生效` : `混合 · ${ratio}`,
-      title: `${total} 个服务里只有 ${fast} 个走极速版（CI 预构建），其余仍在 CDS 宿主上编译。${runtime.title ? ` ${runtime.title}` : ''}`,
+      title: `${total} 个服务里 ${fast} 个配置为极速版（CI 预构建）；其余可能是依赖镜像、辅助服务或源码模式，不能据此判定正在宿主编译。${runtime.title ? ` ${runtime.title}` : ''}`,
       className: runtime.pendingPublish
         ? 'border-warn/40 bg-warn/10 text-warn'
-        : 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300',
+        : 'border-express-partial/35 bg-express-partial/10 text-express-partial',
     };
   }
   // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
-  // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
+  // 全量已生效用黄闪电；部分用蓝闪电，待生效显示时钟。
   if (runtime && isFullyPrebuilt(runtime)) {
     // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
     // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
@@ -7927,7 +7357,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
       prebuilt: true,
       label: '极速版',
       title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
-      className: 'border-info/35 bg-info/10 text-info',
+      className: 'border-express-full/35 bg-express-full/10 text-express-full',
     };
   }
   if (runtime?.kind === 'release') {

@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -44,6 +45,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         }).Build();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var inputs = new[]
         {
@@ -100,6 +102,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         }
         broker.Verify(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
         broker.Verify(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        broker.Verify(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
         broker.VerifyNoOtherCalls();
     }
 
@@ -146,6 +149,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
@@ -165,6 +169,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
@@ -187,6 +192,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
@@ -302,7 +308,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         IDesignArtifactWorkspaceBroker broker, HttpMessageHandler handler, IConfiguration configuration, string requestBody)
     {
         var controller = new DesignArtifactRuntimeController(broker, new SingleClientFactory(handler), configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -480,7 +486,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             configuration["DesignArtifactRuntime:Model"] = "changed-again";
             var handler = new CapturingHandler();
             var proxy = new DesignArtifactRuntimeController(broker.Object, new SingleClientFactory(handler), configuration,
-                NullLogger<DesignArtifactRuntimeController>.Instance)
+                NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
                 { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             var bytes = Encoding.UTF8.GetBytes("""{"model":"runtime","temperature":1.2,"top_p":0.2,"reasoning":{"effort":"high"},"reasoning_effort":"high","messages":[],"max_tokens":32768}""");
             proxy.Request.Body = new MemoryStream(bytes); proxy.Request.ContentLength = bytes.Length;
@@ -572,12 +578,14 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
         var proxy = new DesignArtifactRuntimeController(
             broker.Object, new SingleClientFactory(handler), configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -762,6 +770,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
@@ -776,7 +786,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             broker.Object,
             new SingleClientFactory(handler),
             configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -814,6 +824,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler(
@@ -829,7 +841,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             broker.Object,
             new SingleClientFactory(handler),
             configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -927,6 +939,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.RestoreExecutionAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
@@ -941,7 +955,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             broker.Object,
             new SingleClientFactory(handler),
             configuration,
-            NullLogger<DesignArtifactRuntimeController>.Instance)
+            NullLogger<DesignArtifactRuntimeController>.Instance, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };
@@ -1050,6 +1064,103 @@ public sealed class DesignArtifactWorkspaceContractTests
         var expected = JsonNode.Parse(File.ReadAllText(fixturePath));
 
         Assert.Equal(expected?.ToJsonString(), actual?.ToJsonString());
+    }
+
+    [Fact]
+    public void PresentationManualEditProposal_IsFrozenSeparatelyFromTheTrustedMultiFileParent()
+    {
+        var run = BuildRun();
+        var proposal = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"assets/deck.css\"></head><body>"
+            + new string('a', 166_629)
+            + "</body></html>";
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 20,
+            SourceContent = "完整来源",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("完整来源")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+            ParentRunId = "parent-ppt",
+            ParentPackageHash = new string('a', 64),
+            ManualEditHtml = proposal,
+            ManualEditHtmlHash = Hash(Encoding.UTF8.GetBytes(proposal)),
+        };
+        var currentFiles = new[]
+        {
+            BuildFile("current/index.html", "<!doctype html><html><body>父版本</body></html>", "text/html"),
+            BuildFile("current/assets/deck.css", "body{color:#123}", "text/css"),
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null, currentFiles);
+        Assert.NotEmpty(DesignArtifactWorkspaceContract.ValidateInputPackageSize(
+            package,
+            DesignArtifactWorkspaceBroker.MaxInputBytes));
+
+        var proposalFile = Assert.Single(package.Files, file => file.Path == "proposal/manual-edit.html");
+        Assert.Equal(proposal, Encoding.UTF8.GetString(Convert.FromBase64String(proposalFile.ContentBase64)));
+        Assert.Contains(package.Files, file => file.Path == "current/index.html");
+        Assert.Contains(package.Files, file => file.Path == "current/assets/deck.css");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+        var manual = task.RootElement.GetProperty("presentationContract").GetProperty("manualEditProposal");
+        Assert.Equal("user-authored-untrusted-proposal", manual.GetProperty("authority").GetString());
+        Assert.Equal("proposal/manual-edit.html", manual.GetProperty("path").GetString());
+        Assert.Equal(run.PresentationInput.ManualEditHtmlHash, manual.GetProperty("contentHash").GetString());
+    }
+
+    [Fact]
+    public void PresentationGeneratePackage_OmitsAbsentManualEditProposal()
+    {
+        var run = BuildRun();
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.Operation = DesignArtifactOperations.Generate;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 20,
+            SourceContent = "完整来源",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("完整来源")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+
+        Assert.False(task.RootElement.GetProperty("presentationContract")
+            .TryGetProperty("manualEditProposal", out _));
+        Assert.DoesNotContain(package.Files, file => file.Path == "proposal/manual-edit.html");
+    }
+
+    [Fact]
+    public void PresentationSourcePlan_IsASeparateServerOwnedWorkspaceFile()
+    {
+        var run = BuildRun();
+        const string plan = "{\"SchemaVersion\":\"map-mdppt-source-plan-v2\",\"Fingerprint\":\"frozen\",\"Blocks\":[],\"Pages\":[]}";
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 24,
+            SourceContent = "只包含用户需求，不包含附件正文",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("只包含用户需求，不包含附件正文")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+            SourcePlanJson = plan,
+            SourcePlanHash = Hash(Encoding.UTF8.GetBytes(plan)),
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var planFile = Assert.Single(package.Files, file => file.Path == "brief/source-plan.json");
+        Assert.Equal(plan, Encoding.UTF8.GetString(Convert.FromBase64String(planFile.ContentBase64)));
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+        var contract = task.RootElement.GetProperty("presentationContract").GetProperty("sourcePlan");
+        Assert.Equal("brief/source-plan.json", contract.GetProperty("path").GetString());
+        Assert.Equal(run.PresentationInput.SourcePlanHash, contract.GetProperty("contentHash").GetString());
     }
 
     [Theory]
@@ -1242,6 +1353,39 @@ public sealed class DesignArtifactWorkspaceContractTests
             .Cast<System.Text.RegularExpressions.Match>());
         Assert.Contains("name=\"viewport\"", hardenedAgain, StringComparison.Ordinal);
         Assert.Contains("CDS result", hardenedAgain, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CurrentPresentationFilesUseNormalizedTrustedIndexAndPreserveOrdinaryAssets()
+    {
+        var hardenedHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head><body>父稿</body></html>";
+        var normalizedHtml = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(hardenedHtml);
+        var hardenedIndex = BuildFile("index.html", hardenedHtml, "text/html; charset=utf-8");
+        var asset = BuildFile("assets/deck.css", "body{color:#123}", "text/css; charset=utf-8");
+        var evidence = BuildFile("assets/provenance.json", "{}", "application/json; charset=utf-8");
+
+        var current = DesignArtifactWorkspaceBroker.MaterializeCurrentPresentationFiles(
+            new ParsedDesignWorkspaceResult(normalizedHtml, [hardenedIndex, asset, evidence]));
+
+        var currentIndex = Assert.Single(current, file => file.Path == "current/index.html");
+        Assert.Equal(normalizedHtml, Encoding.UTF8.GetString(Convert.FromBase64String(currentIndex.ContentBase64)));
+        Assert.Equal(Hash(Encoding.UTF8.GetBytes(normalizedHtml)), currentIndex.Sha256);
+        Assert.Equal(Encoding.UTF8.GetByteCount(normalizedHtml), currentIndex.Size);
+        var currentAsset = Assert.Single(current, file => file.Path == "current/assets/deck.css");
+        Assert.Equal(asset.ContentBase64, currentAsset.ContentBase64);
+        Assert.Equal(asset.Sha256, currentAsset.Sha256);
+        Assert.Equal(asset.Size, currentAsset.Size);
+        Assert.Equal(asset.MediaType, currentAsset.MediaType);
+        Assert.DoesNotContain(current, file => file.Path.EndsWith("provenance.json", StringComparison.Ordinal));
+
+        const string unsafeHtml = "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"></head><body><iframe></iframe><object></object></body></html>";
+        var unsafeIndex = BuildFile("index.html", unsafeHtml, "text/html; charset=utf-8");
+        var unsafeCurrent = Assert.Single(DesignArtifactWorkspaceBroker.MaterializeCurrentPresentationFiles(
+            new ParsedDesignWorkspaceResult(
+                HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(unsafeHtml),
+                [unsafeIndex])));
+        Assert.Equal(unsafeHtml, Encoding.UTF8.GetString(Convert.FromBase64String(unsafeCurrent.ContentBase64)));
+        Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(unsafeHtml));
     }
 
     [Theory]
@@ -1469,6 +1613,33 @@ public sealed class DesignArtifactWorkspaceContractTests
                 DesignArtifactWorkspaceBroker.MaxOutputBytes));
 
         Assert.Contains("不允许", error.Message);
+    }
+
+    [Fact]
+    public void TrustedPptBridgeMustKeepThePublicManifestConsistentWithTheDeliveredPackage()
+    {
+        var html = HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+            "<!doctype html><html><head></head><body><h1>现有演示稿</h1></body></html>", ["index.html", "assets/style.css"]);
+        var index = BuildFile("index.html", html, "text/html; charset=utf-8");
+        var asset = BuildFile("assets/style.css", "body{color:#111}", "text/css; charset=utf-8");
+        DesignWorkspaceFile[] original = [index, asset, BuildManifest(index, asset)];
+        var before = JsonSerializer.Serialize(original);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.PrepareTrustedPresentationHtmlForHosting(It.IsAny<byte[]>(), "index.html"))
+            .Returns<byte[], string>((bytes, entry) => HostedSiteService.RewritePublishedEntryHtml(bytes, entry, true));
+        var delivered = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(sites.Object, original, html,
+            trustedPresentation: true);
+        Assert.NotEqual(index.Sha256, delivered.Single(x => x.Path == "index.html").Sha256);
+        var package = new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, "ppt", "base", delivered);
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            JsonSerializer.SerializeToUtf8Bytes(package, DesignArtifactWorkspaceContract.JsonOptions), "ppt", "base",
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        Assert.Contains("map-slide-nav-bridge-only", parsed.IndexHtml);
+        Assert.Equal(asset, parsed.Files.Single(x => x.Path == asset.Path));
+        Assert.Equal(before, JsonSerializer.Serialize(original));
+        var web = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(sites.Object, original, html,
+            preserveVerifiedWebPackage: true);
+        Assert.Equal(original, web);
     }
 
     private static DesignArtifactRun BuildRun() => new()

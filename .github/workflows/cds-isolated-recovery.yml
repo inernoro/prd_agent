@@ -45,6 +45,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  default-parallel-cleanup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the actual source and Web test dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Fetch the unchanged historical stop reference required by the original test
+        run: |
+          git fetch --depth 1 origin 1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8
+          git cat-file -e 1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8:cds/src/routes/branches.ts
+      - name: Original default parallel suite and unchanged test deadlines
+        shell: bash
+        run: |
+          node -e 'const fs=require("node:fs"),os=require("node:os");fs.writeFileSync("default-parallel-platform.json",JSON.stringify({head:process.env.GITHUB_SHA,node:process.version,platform:process.platform,arch:process.arch,availableParallelism:os.availableParallelism(),workersOverride:process.env.VITEST_MAX_THREADS||null}))'
+          pnpm -C cds test 2>&1 | tee default-parallel-cleanup.log
+      - name: Preserve complete default parallel result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-default-parallel-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            default-parallel-cleanup.log
+            default-parallel-platform.json
+          if-no-files-found: error
+          retention-days: 14
+
   cpu-fairness-stop:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -129,7 +168,14 @@ jobs:
           docker --version
           pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
       - name: Verify unconfirmed delayed creation exit and owned restart recovery
-        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --qualify-unknown-create-shutdown
+        env:
+          CDS_RESOURCE_ROOT: ${{ runner.temp }}/cds-resource-lifecycle
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --qualify-unknown-create-shutdown
+      - name: Reconcile owned acceptance resources independently of the producer
+        env:
+          CDS_RESOURCE_ROOT: ${{ runner.temp }}/cds-resource-lifecycle
+        if: always()
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/owned-resource-task.ts reconcile
       - name: Preserve original application Docker prerequisite evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -168,7 +214,14 @@ jobs:
           docker --version
           pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
       - name: Original application cancels after daemon create before CLI acknowledgement
-        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --cancel-after-daemon-create
+        env:
+          CDS_RESOURCE_ROOT: ${{ runner.temp }}/cds-resource-lifecycle
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --cancel-after-daemon-create
+      - name: Reconcile cancelled acceptance resources independently of the producer
+        env:
+          CDS_RESOURCE_ROOT: ${{ runner.temp }}/cds-resource-lifecycle
+        if: always()
+        run: sudo -E env PATH="$PATH" pnpm -C cds exec tsx scripts/owned-resource-task.ts reconcile
       - name: Preserve separate budget cancellation evidence
         if: always()
         uses: actions/upload-artifact@v4

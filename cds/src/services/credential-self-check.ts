@@ -39,7 +39,8 @@
 
 import crypto from 'node:crypto';
 
-import { credentialUsability } from './identity.js';
+import type { AgentKey } from '../types.js';
+import { credentialUsability, hasProjectKeyGrant } from './identity.js';
 
 /** 凭据类型。与 server.ts 的鉴权分支一一对应。 */
 export type CredentialKind =
@@ -92,7 +93,7 @@ export interface CredentialFacts {
     slug: string;
     name?: string;
     /** 含已吊销条目 —— 少了它就分不出 revoked 与 never-issued */
-    agentKeys?: StoredCredential[];
+    agentKeys?: (StoredCredential & Pick<AgentKey, 'designAccess' | 'designAccessRequestId'>)[];
   }>;
   globalAgentKeys?: StoredCredential[];
   /**
@@ -211,7 +212,7 @@ function base(kind: CredentialKind, status: CredentialStatus, summary: string, n
  * 自检要回答「这把发生了什么」，所以必须看得见已吊销的那条 —— 否则
  * 「被吊销」和「从没签发」就永远分不开，正是本模块要解决的问题。
  */
-function matchStored(entries: StoredCredential[] | undefined, presentedHash: string): StoredCredential | undefined {
+function matchStored<T extends StoredCredential>(entries: T[] | undefined, presentedHash: string): T | undefined {
   for (const entry of entries || []) {
     if (hashesEqual(entry.hash, presentedHash)) return entry;
   }
@@ -345,23 +346,19 @@ export function checkCredential(plaintext: string, facts: CredentialFacts): Cred
       if (dead) return { ...describeDead('project', dead, entry, facts), ...identity };
       // 授权被撤：凭据本身、主体都没问题，但鉴权照样拒。少了这一档，自检会对着
       // 自己造成的 401 回答「有效」。判据与鉴权同一条（未撤销的授权算数）。
-      if (entry.principalId && facts.grants) {
-        const granted = facts.grants.some((g) =>
-          g.principalId === entry.principalId && g.projectId === project.id && !g.revokedAt);
-        if (!granted) {
-          return {
-            ...describeStored(
-              base(
-                'project',
-                'grant-revoked',
-                `凭据本身有效、主体也正常，但该主体对项目「${project.name || project.slug}」的授权已被撤销 —— 鉴权因此拒绝它。`,
-                '这不是凭据问题，重新签发也进不来。请人重新批准一次该项目的接入；批准之后这把凭据无需更换即可恢复。',
-              ),
-              entry,
+      if (facts.grants && !hasProjectKeyGrant(facts.grants, entry, project.id)) {
+        return {
+          ...describeStored(
+            base(
+              'project',
+              'grant-revoked',
+              `凭据本身有效、主体也正常，但该主体对项目「${project.name || project.slug}」的授权已被撤销 —— 鉴权因此拒绝它。`,
+              '这不是凭据问题，重新签发也进不来。请人重新批准一次该项目的接入；批准之后这把凭据无需更换即可恢复。',
             ),
-            ...identity,
-          };
-        }
+            entry,
+          ),
+          ...identity,
+        };
       }
       return {
         ...describeStored(

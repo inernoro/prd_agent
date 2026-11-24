@@ -1,5 +1,12 @@
+x-production-logging: &production-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
   gateway:
+    logging: *production-logging
     image: nginx:1.27-alpine
     container_name: prdagent-gateway
     ports:
@@ -27,6 +34,7 @@ services:
     restart: unless-stopped
 
   mongodb:
+    logging: *production-logging
     image: mongo:8.0
     container_name: prdagent-mongodb
     volumes:
@@ -38,6 +46,7 @@ services:
     restart: unless-stopped
 
   redis:
+    logging: *production-logging
     image: redis:7-alpine
     container_name: prdagent-redis
     volumes:
@@ -47,6 +56,7 @@ services:
     restart: unless-stopped
 
   api:
+    logging: *production-logging
     # 生产环境禁止本地构建：默认拉取 :latest（由 GitHub Actions 推送）
     # 如需固定版本/自建仓库，设置 PRD_AGENT_API_IMAGE 覆盖（tag 或 digest）
     # 例：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server:v1.1.1
@@ -58,6 +68,14 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      # 模型更新探测单独授权，不扩大其他自动任务的执行范围。
+      - LlmGateway__ModelUpgrades__CanaryEnabled=${LLMGW_MODEL_UPGRADE_CANARY_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__ScheduledCanaryEnabled=${LLMGW_MODEL_UPGRADE_SCHEDULED_CANARY_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__CanaryDeployment=${LLMGW_MODEL_UPGRADE_CANARY_DEPLOYMENT:-}
+      # 正式实例明确承担既有定时任务；共库预览仍由 CDS 标记与运行时权限拒绝。
+      - Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}
+      # 正式部署独立启用产品申领通知，其他共享任务继续使用各自的授权。
+      - ProductAgent__ClaimNotificationsEnabled=${PRODUCT_CLAIM_NOTIFICATIONS_ENABLED:-true}
       # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。
       # 截止线之后由仍在线旧容器创建的新任务不会进入生产 worker；显式 false 可紧急关闭。
       - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
@@ -180,6 +198,7 @@ services:
   # LlmGateway__DatabaseName（默认 llm_gateway）读取。ApiKeyCrypto__Secret 与资产存储由两实例共享。
   # MAP 的全部模型调用都跨进程打到这里。
   llmgw-serve:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve
     environment:
@@ -233,6 +252,7 @@ services:
 
   # serving 第二实例。两实例使用同一不可变镜像和 GW-owned 数据库，由 gateway nginx 做被动摘流。
   llmgw-serve-b:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve-b
     environment:
@@ -286,11 +306,16 @@ services:
   # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
   # 跨服务隔离见 cross-project-isolation.md）。不依赖 prd-api 任何项目，剥离失败不波及主站。
   llmgw:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw:latest}
     container_name: prdagent-llmgw
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
+      - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      - LlmGateway__ModelUpgrades__WorkerEnabled=${LLMGW_MODEL_UPGRADE_WORKER_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__WorkerDeployment=${LLMGW_MODEL_UPGRADE_WORKER_DEPLOYMENT:-}
+      - LlmGateway__ModelReferences__MapDeploymentIdentity=${LLMGW_MODEL_REFERENCE_MAP_DEPLOYMENT_IDENTITY:-prd-agent:production::main}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
@@ -327,6 +352,7 @@ services:
   # 独立 LLM 网关前端静态站 llmgw-web —— 独立 llmgw/web 镜像（nginx 托管构建产物，监听 80）。
   # SPA 回退 + /gw 反代到 llmgw:8090（见 llmgw/web/nginx.conf）。
   llmgw-web:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_WEB_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:latest}
     container_name: prdagent-llmgw-web
     depends_on:
@@ -339,6 +365,7 @@ services:
   # 不发布端口。镜像与 api 同一个发布 ref（exec_dep.sh 钉版并同批拉取）。任务状态只在进程内存里，
   # 发布重建容器会中断正在跑的设计任务，api 侧会把它标为「服务重启中断」并如实告知用户。
   design-opendesign:
+    logging: *production-logging
     image: ${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:latest}
     container_name: prdagent-design-opendesign
     environment:

@@ -181,7 +181,7 @@ timeline
 > **价值**：doc/ 引入第 7 类前缀 `debt.*` 用于"已知边界 / 后续可补 / TODO / 不确定风险"的台账记录。从此交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里——否则下一次 session 没人记得。同时回填 W14-W16 三周缺失的周报，把项目历史首尾接上。
 
 - PR #460：W14-W16 周报回填（797+56 行）。
-- 新增 [doc/debt.video-agent.md](./debt.video-agent.md) 录入视频 Agent 4 条债务 + 修订 [doc/rule.doc.naming.md](./rule.doc.naming.md) 引入 debt 前缀 + 同步 `doc/index.yml` 与 [doc/guide.list.directory.md](./guide.list.directory.md)。
+- 新增 [doc/debt.video-agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.video-agent.md) 录入视频 Agent 4 条债务 + 修订 [doc/rule.doc.naming.md](./rule.doc.naming.md) 引入 debt 前缀 + 同步 `doc/index.yml` 与 [doc/guide.list.directory.md](./guide.list.directory.md)。
 - AI 竞技场 v1 单轮设计文案对齐（避免暗示多轮上下文）。
 - 跨 PR 的文档沉淀：14 个新文档（design / spec / plan / guide / report / debt / rule 全套），符合 W16 P1 提的"多项目 + GitHub + 技能同步文档化"方向。
 

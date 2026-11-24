@@ -4,18 +4,30 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chromium, type Page } from 'playwright';
+import { createRequire } from 'node:module';
+import type { Page } from 'playwright';
 import { buildWidgetScript } from '../src/widget-script.js';
+
+const require = createRequire(import.meta.url);
+function loadPlaywright(): typeof import('playwright') {
+  const failures: string[] = [];
+  for (const candidate of [process.env.PWPATH, 'playwright'].filter(Boolean) as string[]) {
+    try { return require(candidate); }
+    catch (error) { failures.push(`${candidate}: ${(error as Error).message}`); }
+  }
+  throw new Error(`Unable to load Playwright. Tried ${failures.join('; ')}`);
+}
+const { chromium } = loadPlaywright();
 
 declare global {
   interface Window {
-    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void };
+    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void; showOwnedPanel?: (kind: 'handshake' | 'navigate') => void; detachedReads?: number };
   }
 }
 
 const output = process.env.CDS_WIDGET_FIXTURE_OUTPUT || mkdtempSync(path.join(tmpdir(), 'cds-widget-mobile-'));
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ headless: true, executablePath: process.env.CDS_CHROMIUM_PATH || undefined });
+const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'], executablePath: process.env.CDS_CHROMIUM_PATH || undefined });
 const results: { name: string; status: string; detail?: string; geometry?: Record<string, unknown> }[] = [];
 const externalRequests: string[] = [];
 const pageErrors: string[] = [];
@@ -23,12 +35,12 @@ const script = buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(
   .replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '');
 const scriptSha256 = createHash('sha256').update(script).digest('hex');
 
-async function fixture() {
-  const page = await browser.newPage({ viewport: { width: 390, height: 664 } });
+async function fixture(hosted = false, width = 390, tags: string[] = [], profileCount = 0) {
+  const page = await browser.newPage({ viewport: { width, height: 664 } });
   page.on('pageerror', error => { pageErrors.push(error.message); });
   await page.route('**/*', route => { externalRequests.push(route.request().url()); return route.abort(); });
   await page.setContent('<html><head><title>deterministic-fixture</title></head><body style="margin:0;min-height:1200px;background:#faf9f6"><h1 style="margin:16px;font:20px sans-serif">业务主任务</h1></body></html>');
-  await page.evaluate(() => {
+  await page.evaluate(({ tags, profileCount }) => {
     const streams: EventTarget[] = [];
     window.EventSource = class extends EventTarget {
       constructor(public url: string) {
@@ -51,13 +63,18 @@ async function fixture() {
       const url = String(input);
       window.widgetFixture.calls.push(url);
       let body;
-      if (url === '/_cds/api/branches') body = { tabTitleEnabled: false, branches: [{ id: 'fixture-branch', status: window.widgetFixture.status, runningCommitSha: 'a'.repeat(40) }] };
-      else if (url === '/_cds/api/build-profiles') body = { profiles: [] };
+      if (url === '/_cds/api/branches') body = { tabTitleEnabled: false, branches: [{ id: 'fixture-branch', status: window.widgetFixture.status, runningCommitSha: 'a'.repeat(40), tags }] };
+      else if (url === '/_cds/api/build-profiles') body = { profiles: Array.from({ length: profileCount }, (_, index) => ({ id: `service-${index}`, name: `合成服务 ${index}` })) };
+      else if (url === '/_cds/api/hosted-sso/panel/status') body = { enabled: false };
       else { window.widgetFixture.unknown.push(url); throw new Error(`未登记的夹具请求：${url}`); }
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
-  });
-  await page.addScriptTag({ content: script });
+  }, { tags, profileCount });
+  const content = hosted ? buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(40), '', true).replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '') : script;
+  const close = content.lastIndexOf('\n})();'); assert.ok(close > 0);
+  // 仅暴露实际渲染闭包与固定合成请求；不启用Bridge、不点击授权或发送请求。
+  const hooks = '\nwindow.widgetFixture.showOwnedPanel=function(kind){if(kind==="handshake"){bridgeHandshakeRequest={id:"synthetic-handshake",agentName:"fixture"};renderHandshakeRequest();}else{bridgeNavRequest={id:"synthetic-navigate",url:"about:blank"};renderNavRequest();}};';
+  await page.addScriptTag({ content: content.slice(0, close) + hooks + content.slice(close) });
   await page.waitForFunction(() => window.widgetFixture.calls.length === 2 && !!document.querySelector('#cds-widget .cds-badge'), undefined, { timeout: 3000 });
   return page;
 }
@@ -99,18 +116,20 @@ async function geometry(page: Page) {
   });
 }
 
-async function check(name: string, run: (page: Page) => Promise<void>) {
-  const page = await fixture();
+async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390, tags: string[] = [], profileCount = 0, finish?: (page: Page) => Promise<void>) {
+  const page = await fixture(hosted, width, tags, profileCount);
   try {
     await run(page);
     assert.deepEqual(await page.evaluate(() => window.widgetFixture.unknown), []);
+    assert.equal(await page.locator('button[data-action="site-sign-in"], button[data-action="site-switch"]').count(), 0);
     const measured = await geometry(page);
-    assert.equal(measured.touch, true, '保留 44px 触控目标');
+    if (await page.evaluate(() => innerWidth <= 640)) assert.equal(measured.touch, true, '手机保留 44px 触控目标');
     assert.equal(measured.visible, true, '保留可见、可命中的徽标入口');
     if (measured.placement === 'clear') assert.equal(measured.safe, true, '避让成功必须以落位后的真实安全区为准');
+    if (finish) await finish(page);
     results.push({ name, status: 'PASS', geometry: measured });
   } catch (error) {
-    results.push({ name, status: 'FAIL', detail: String(error), geometry: await geometry(page) });
+    results.push({ name, status: 'FAIL', detail: String(error), geometry: await geometry(page).catch(() => ({ detached: true })) });
   } finally {
     await page.screenshot({ path: path.join(output, `${name}.png`) });
     await page.close();
@@ -174,6 +193,161 @@ try {
     const measured = await geometry(page);
     assert.equal(measured.safe, true, '写入候选后真实 BCR 必须仍在12px安全区内');
     assert.equal(measured.overlap, false);
+  });
+  await check('rejected-real-position-restores-origin', async page => {
+    await settle(page);
+    await page.locator('#cds-widget').evaluate(el => { (el as HTMLElement).style.transform = 'translateX(100px)'; });
+    const before = await geometry(page);
+    assert.equal(before.safe, true);
+    await page.evaluate(() => {
+      const box = document.createElement('section'); box.id = 'fixture-status'; box.setAttribute('role', 'status');
+      box.style.cssText = 'position:fixed;left:100px;right:0;top:0;bottom:0;z-index:70;background:#fff';
+      box.textContent = '所有真实落位均不可用'; document.body.append(box);
+    });
+    await settle(page);
+    const after = await geometry(page);
+    assert.equal(after.placement, 'blocked');
+    assert.deepEqual([after.x, after.y], [before.x, before.y], '真实落位拒绝不能留下被拒绝的候选位置');
+  });
+  for (const host of ['shell', 'body']) await check(`fixed-${host}-semantic-region`, async page => {
+    await page.evaluate(host => {
+      const shell = host === 'body' ? document.body : document.createElement('main');
+      shell.style.cssText = 'position:fixed;inset:0';
+      if (host !== 'body') document.body.append(shell);
+      const box = document.createElement('section'); box.id = 'fixture-status'; box.setAttribute('role', 'status');
+      box.style.cssText = 'position:absolute;left:8px;right:8px;bottom:80px;height:64px;background:#fff;z-index:70';
+      box.textContent = '固定应用容器内的真实状态内容'; shell.append(box);
+    }, host);
+    await settle(page);
+    assert.equal((await geometry(page)).placement, 'clear', '固定应用外壳不能冒充整屏语义浮层');
+    assert.equal((await geometry(page)).overlap, false);
+  });
+  for (const width of [360, 390]) await check(`hosted-sync-controls-${width}`, async page => {
+    for (const status of ['building', 'error', 'starting', 'running']) {
+      await page.evaluate(status => window.widgetFixture.emit(status), status); await settle(page);
+      const controls = await page.locator('.cds-badge-main').evaluate(row => [...row.querySelectorAll('button')].map(button => {
+        const r = button.getBoundingClientRect(), badge = row.parentElement!.getBoundingClientRect();
+        return { action: button.dataset.action, visible: r.width >= 44 && r.height >= 44 && r.left >= badge.left && r.right <= badge.right
+          && r.top >= badge.top && r.bottom <= badge.bottom && button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
+      }));
+      assert.deepEqual(controls.map(control => control.action), ['toggle', 'dismiss']);
+      assert.ok(controls.every(control => control.visible), `${status} 的真实托管徽标两按钮都必须可点击`);
+      assert.equal(await page.locator('.cds-sync-chip').isVisible(), true);
+      await page.screenshot({ path: path.join(output, `hosted-${width}-${status}.png`) });
+    }
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    assert.equal(await page.locator('.cds-hosted-panel-note').isVisible(), true, '托管限制说明仍可经真实按钮打开查看');
+  }, true, width);
+  for (const hosted of [false, true]) for (const width of [360, 390]) await check(`tagged-${hosted ? 'hosted' : 'normal'}-sync-controls-${width}`, async page => {
+    for (const status of ['building', 'error', 'starting', 'running']) {
+      await page.evaluate(status => window.widgetFixture.emit(status), status); await settle(page);
+      assert.equal(await page.locator('.cds-tag').count(), 8, '沿用真实 branches.tags 渲染，不删标签数据');
+      const controls = await page.locator('.cds-badge-main').evaluate(row => [...row.querySelectorAll('button')].map(button => {
+        const r = button.getBoundingClientRect(), badge = row.parentElement!.getBoundingClientRect();
+        return { action: button.dataset.action, visible: r.width >= 44 && r.height >= 44 && r.left >= badge.left && r.right <= badge.right
+          && r.top >= badge.top && r.bottom <= badge.bottom && button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
+      }));
+      assert.deepEqual(controls.map(control => control.action), ['toggle', 'dismiss']);
+      assert.ok(controls.every(control => control.visible), `${status} 的带标签徽标仍须可展开、可关闭`);
+      assert.equal(await page.locator('.cds-sync-chip').isVisible(), true);
+    }
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    if (hosted) assert.equal(await page.locator('.cds-hosted-panel-note').isVisible(), true);
+  }, hosted, width, ['开发', '测试', '验收', '手机', '构建', '回归', '待合并', '功能修复']);
+  await check('native-nonzero-safe-area', async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, left: 20, right: 30, bottom: 34 } });
+    await addFloat(page, 'status');
+    assert.equal(await page.locator('#cds-widget').evaluate(el => parseFloat(getComputedStyle(el).getPropertyValue('--cds-safe-bottom'))), 34, '原生env在当前Chromium计算后须为真实像素');
+    const bounds = await page.locator('#cds-widget').evaluate(el => {
+      const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    });
+    assert.ok(bounds.left >= 32 && bounds.top >= 52 && bounds.right <= 348 && bounds.bottom <= 618,
+      `非零原生env安全区必须真的生效：${JSON.stringify(bounds)}`);
+    assert.equal((await geometry(page)).placement, 'clear');
+  });
+  for (const hosted of [false, true]) await check(`top-relocated-panel-safe-area-${hosted}`, async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
+    await addFloat(page, 'status');
+    await page.locator('#fixture-status').evaluate(el => { (el as HTMLElement).style.cssText = 'position:fixed;left:0;right:0;top:160px;bottom:0;background:#fff;z-index:70'; });
+    await settle(page);
+    assert.equal((await geometry(page)).placement, 'clear');
+    assert.ok((await geometry(page)).y >= 52 && (await geometry(page)).y < 160, '真实底部浮层应先把徽标移到顶部安全槽');
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    const bounds = await page.locator('#cds-widget').evaluate(el => {
+      const root = el.getBoundingClientRect(), close = el.querySelector('button[data-action="close-panel"]')!.getBoundingClientRect();
+      return { top: root.top, bottom: root.bottom, closeTop: close.top, closeBottom: close.bottom };
+    });
+    assert.ok(bounds.top >= 52 && bounds.bottom <= 618 && bounds.closeTop >= 52 && bounds.closeBottom <= 618,
+      `由顶部槽展开后，面板和关闭按钮仍须在实际上下安全区内：${JSON.stringify(bounds)}`);
+    await page.locator('button[data-action="close-panel"]').click(); await settle(page);
+  }, hosted);
+  for (const hosted of [false, true]) for (const resize of [false, true, 'native'] as const) await check(`filled-panel-safe-band-${hosted}-${resize}`, async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
+    if (hosted && resize === 'native') {
+      await page.evaluate(() => window.widgetFixture.emit('building')); await settle(page);
+      const beforeDrag = await geometry(page), badge = (await page.locator('.cds-badge').boundingBox())!;
+      await page.mouse.move(badge.x + 8, badge.y + badge.height - 4); await page.mouse.down();
+      await page.mouse.move(badge.x + 8, badge.y + badge.height - 28, { steps: 3 }); await page.mouse.up(); await settle(page);
+      assert.ok((await geometry(page)).y < beforeDrag.y, '先实际拖动徽标，不能拿默认位置冒手动位置');
+    }
+    const collapsed = await geometry(page);
+    // native用真实视觉视口；另四场景只替换高度合同输入，不冒真实键盘。
+    if (!resize) await page.evaluate(() => Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 400 }));
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    if (resize === true) await page.evaluate(() => {
+      Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 400 });
+      window.visualViewport!.dispatchEvent(new Event('resize'));
+    });
+    await settle(page);
+    const bounds = await page.locator('#cds-widget').evaluate((el, native) => {
+      const root = el.getBoundingClientRect(), close = el.querySelector('button[data-action="close-panel"]')!.getBoundingClientRect();
+      const panel = el.querySelector<HTMLElement>('.cds-panel')!, hit = document.elementFromPoint(close.x + close.width / 2, close.y + close.height / 2);
+      return { top: root.top, bottom: root.bottom, closeTop: close.top, closeBottom: close.bottom,
+        closeHit: !!hit && el.querySelector('button[data-action="close-panel"]')!.contains(hit), scrollable: panel.scrollHeight > panel.clientHeight,
+        layoutHeight: innerHeight, visualHeight: visualViewport!.height, syntheticVisualBand: !native };
+    }, resize === 'native');
+    writeFileSync(path.join(output, `filled-panel-${hosted}-${resize}.json`), JSON.stringify(bounds, null, 2));
+    await page.screenshot({ path: path.join(output, `filled-panel-${hosted}-${resize}-expanded.png`) });
+    const bottom = resize === 'native' ? 618 : 354;
+    assert.ok(bounds.top >= 52 && bounds.bottom <= bottom && bounds.closeTop >= 52 && bounds.closeBottom <= bottom && bounds.closeHit,
+      `填满服务的面板须留在视觉安全区，关闭入口可命中：${JSON.stringify(bounds)}`);
+    assert.equal(bounds.scrollable, true, '缩小面板后实际内容仍可滚动，不删服务内容');
+    await page.locator(hosted && resize === 'native' ? 'button[data-action="toggle"]' : 'button[data-action="close-panel"]').click(); await settle(page);
+    if (resize === 'native') { const closed = await geometry(page); assert.deepEqual([closed.x, closed.y], [collapsed.x, collapsed.y], '原生视口下收起后须恢复原徽标落位'); }
+  }, hosted, 390, [], 8);
+  for (const hosted of [false, true]) await check(`rotate-expanded-origin-${hosted}`, async page => {
+    await page.locator('button[data-action="toggle"]').click(); await page.setViewportSize({ width: 844, height: 390 }); await settle(page);
+    await page.locator('button[data-action="close-panel"]').click(); await settle(page);
+    assert.deepEqual(await page.locator('#cds-widget').evaluate(el => ({ left: (el as HTMLElement).style.left, bottom: (el as HTMLElement).style.bottom })), { left: '352px', bottom: '12px' }, '屏幕旋转后收起须保留当前桌面默认落位');
+  }, hosted);
+  await check('dismiss-removes-expanded-viewport-listeners', async page => {
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+  }, false, 390, [], 8, async page => {
+    await page.evaluate(() => {
+      const root = document.querySelector('#cds-widget')!, original = window.getComputedStyle;
+      window.widgetFixture.detachedReads = 0;
+      window.getComputedStyle = (el, pseudo) => { if (el === root && !root.isConnected) window.widgetFixture.detachedReads!++; return original.call(window, el, pseudo); };
+    });
+    await page.screenshot({ path: path.join(output, 'before-dismiss-expanded.png') });
+    await page.locator('button[data-action="dismiss"]').click();
+    await page.evaluate(() => { visualViewport!.dispatchEvent(new Event('resize')); visualViewport!.dispatchEvent(new Event('scroll')); }); await settle(page);
+    assert.equal(await page.locator('#cds-widget').count(), 0);
+    assert.equal(await page.evaluate(() => window.widgetFixture.detachedReads), 0, '实际移除后视觉视口事件不得再访问旧根节点');
+  });
+  for (const kind of ['handshake', 'navigate'] as const) for (const status of ['running', 'building', 'error']) await check(`owned-${kind}-${status}-panel-stays-with-badge`, async page => {
+    if (status !== 'running') await page.evaluate(status => window.widgetFixture.emit(status), status);
+    await settle(page); const before = await geometry(page);
+    await page.evaluate(kind => window.widgetFixture.showOwnedPanel!(kind), kind); await settle(page);
+    const panel = page.locator(kind === 'handshake' ? '#cds-handshake-request' : '#cds-nav-request');
+    assert.equal(await panel.isVisible(), true); assert.equal(await panel.locator('button').count(), 2);
+    const after = await geometry(page);
+    writeFileSync(path.join(output, `owned-${kind}-${status}.json`), JSON.stringify({ before, after }, null, 2));
+    await page.screenshot({ path: path.join(output, `owned-${kind}-${status}.png`) });
+    assert.deepEqual([after.x, after.y], [before.x, before.y], '不能把自己的实际确认面板按钮当成业务障碍而移动徽标');
+    await panel.evaluate(el => el.remove()); await settle(page);
   });
   await check('no-safe-slot', async page => {
     await addFloat(page, 'alert');

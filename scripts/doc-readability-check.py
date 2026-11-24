@@ -38,7 +38,7 @@ BASELINE_PATH = os.path.join(REPO_ROOT, "scripts", "fixtures", "doc-readability-
 # 导读三行必须出现在文件开头这么多行内（第一屏）
 HEAD_LINES = 25
 
-TYPES = ["spec", "design", "plan", "rule", "guide", "report", "debt"]
+TYPES = ["spec", "design", "plan", "rule", "guide", "report", "debt", "adr", "pdr"]
 
 FIELDS = ("一句话", "谁该读", "读完能做什么")
 # 周报是定期刊物，读者固定（老板 / 产品经理，在周报技能里已声明），
@@ -88,7 +88,7 @@ BARE_REF = re.compile(r"`([^`\n]*?([\w][\w.-]*\.md))`")
 PROSE_REF = re.compile(
     r"(?<![\w`\-\[(])"                                        # 前面不是词/反引号/括号
     r"(?:doc/)?"                                               # 带不带 doc/ 前缀都算
-    r"((?:spec|design|plan|rule|guide|report|debt)\.[\w.-]*\.md)"
+    rf"((?:{'|'.join(TYPES)})\.[\w.-]*\.md)"
     r"(?![\w`)\]])")
 # 行内链接：目标后面可以跟一个 "标题"（单双引号或圆括号三种写法都合法）。
 # 只认最朴素那一种，等于给「带标题的死链」开了一道后门。
@@ -292,7 +292,7 @@ def check_file(path: str) -> list[str]:
         problems.append(f"「谁该读」只有 {len(audience)} 字，等于没写")
 
     if doc_type(name) not in TYPES:
-        problems.append(f"前缀 {doc_type(name)} 不在七类里")
+        problems.append(f"前缀 {doc_type(name)} 不在允许的文档类型里")
 
     return problems
 
@@ -1028,7 +1028,7 @@ def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
         if t not in TYPES:
             # 前缀非法的文档过去被整篇跳过 —— 连「有没有导读」都没人查，
             # 只要进了两份目录就一路绿灯。单独收集，由棘轮直接判红。
-            bad_prefix.append(f"doc/{name} — 前缀 {t} 不在七类里")
+            bad_prefix.append(f"doc/{name} — 前缀 {t} 不在允许的文档类型里")
             continue
         stats[t]["total"] += 1
         problems = check_file(os.path.join(DOC_DIR, name))
@@ -1322,7 +1322,7 @@ def main() -> int:
                 print(f"  {line}", file=sys.stderr)
             return 1
         if bad_prefix:
-            print("\n[FAIL] 有文档用了七类之外的前缀 —— 命名判据见 doc/rule.doc.naming.md",
+            print("\n[FAIL] 有文档用了未登记的前缀 —— 命名判据见 doc/rule.doc.naming.md",
                   file=sys.stderr)
             for line in bad_prefix:
                 print(f"  {line}", file=sys.stderr)

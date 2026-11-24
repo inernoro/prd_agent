@@ -248,12 +248,20 @@ describe('发布控制台把「翻旧记录」和「本次发布」分开', () =
    * 而行为完全正确。数量不是不变量，「接管主屏之前先清掉历史选择」才是。
    */
   it('每一条发起路径都在接管主屏前清掉历史选择', () => {
-    const takeovers = [...page.matchAll(/setRun\(res\.run\);/g)];
-    expect(takeovers.length).toBeGreaterThanOrEqual(3);
-    for (const match of takeovers) {
-      const before = page.slice(Math.max(0, match.index! - 120), match.index!);
-      expect(before, `第 ${page.slice(0, match.index).split('\n').length} 行的 setRun(res.run) 之前没有清 historyRun`)
-        .toContain('setHistoryRun(null);');
+    // 单POST/核对共用adoptRun后，数量不再是判据；历史清理必须留在唯一接管点。
+    const adopt = page.slice(page.indexOf('const adoptRun ='), page.indexOf('const beginCommand ='));
+    expect(adopt.indexOf('setHistoryRun(null)')).toBeGreaterThanOrEqual(0);
+    expect(adopt.indexOf('setHistoryRun(null)')).toBeLessThan(adopt.indexOf('setRun(next)'));
+    const submit = page.slice(page.indexOf('const submitRelease ='), page.indexOf('const startRelease ='));
+    expect(submit).toContain('adoptRun(result.run)');
+    expect(submit.indexOf("result.kind !== 'found'")).toBeLessThan(submit.indexOf('adoptRun(result.run)'));
+    const names = ['startRelease', 'retryRun', 'rollbackToVersion', 'rollbackRun'];
+    for (const name of names) {
+      const at = page.indexOf(`const ${name} =`);
+      const next = page.indexOf('\n  const ', at + 1);
+      const action = page.slice(at, next);
+      expect(action, name).toContain('await submitRelease(');
+      expect(action, name).not.toContain('setRun(');
     }
   });
 });
@@ -313,8 +321,13 @@ describe('发布控制台：切项目后丢弃旧响应', () => {
     }
   });
 
-  it('切项目时把上一个项目的数据清空，宁可空一瞬', () => {
-    expect(page).toMatch(/setProjectId\(item\.id\);\s*setCenter\(null\);\s*setBranches\(\[\]\);/);
+  it('顶部和列表切项目共用清理入口，不展示上一项目的数据', () => {
+    const reset = page.slice(page.indexOf('const selectProject ='), page.indexOf('const workspaceHref ='));
+    expect(reset).toContain('currentProject.current = id');
+    expect(reset).toMatch(/setProjectId\(id\);\s*setCenter\(null\);\s*setBranches\(\[\]\);/);
+    expect(reset).toContain("['target', 'intent', 'batch', 'batchView', 'branch']");
+    expect(page).toContain('onChange={(event) => selectProject(event.target.value)}');
+    expect(page).toContain('onClick={() => selectProject(item.id)}');
   });
 });
 
@@ -447,7 +460,8 @@ describe('发布控制台回滚请求走 plan（接线守卫）', () => {
   it('请求路径与 body 都取自 plan，不在页面里手搓 id', () => {
     expect(page).toContain('planRollbackToVersion({');
     expect(page).toContain('encodeURIComponent(plan.from)');
-    expect(page).toContain('body: { targetReleaseId: plan.targetReleaseId }');
+    expect(page).toContain('scope, { targetReleaseId: plan.targetReleaseId }');
+    expect(page).toContain("{ method: 'POST', body, headers:");
   });
 });
 

@@ -1,15 +1,17 @@
-import type { BranchEntry, SchedulerConfig } from '../types.js';
+import type { BranchEntry, BranchPin, SchedulerConfig } from '../types.js';
+import { createBranchPin, pinExpired, pinNeedsReview, reviewedConfigPin } from './branch-pin.js';
 import type { StateService } from './state.js';
 import { resolveBranchProtection } from './branch-protection.js';
+import { resolvePreviewActivity, type PreviewActivityUnknownReason } from '../forwarder/preview-activity.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import type { PreviewMemoryCapacity } from './deployment-phase-budget.js';
+import { isAutoWakeEligible } from './branch-wake-eligibility.js';
 
 /**
  * SchedulerService — branch warm-pool manager for small servers.
  *
- * Core idea: CDS does NOT keep every branch running forever. It maintains a
- * bounded "warm pool" of HOT branches. When a new branch needs to wake, if the
- * pool is full, the least-recently-accessed non-pinned branch is cooled down.
- * Idle branches are cooled automatically after `idleTTLSeconds`.
+ * The warm pool follows live memory pressure. A new wake waits for capacity.
+ * During pressure, only branches with confirmed idle time become eligible for cooling.
  *
  * See `doc/design.cds.resilience.md` for the full design.
  *
@@ -29,12 +31,32 @@ import { serviceRuntimeRefs } from './service-runtime.js';
  * behavior bit-for-bit.
  */
 
+export interface PreviewActivityStatus {
+  status: 'ready' | 'unknown';
+  reason?: PreviewActivityUnknownReason;
+  observedAt?: string;
+  lastUnknownAt?: string;
+  recoveryGraceRemainingMs: number;
+}
+
+export interface PreviewActivityTransition {
+  status: 'ready' | 'unknown';
+  reason?: PreviewActivityUnknownReason;
+  observedAt: string;
+  lastUnknownAt?: string;
+}
+
 export interface SchedulerSnapshot {
   enabled: boolean;
   config: SchedulerConfig;
   hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
   cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
-  capacityUsage: { current: number; max: number };
+  capacityUsage: { current: number; max: number | null };
+  memoryCapacity?: PreviewMemoryCapacity | null;
+  previewActivity?: PreviewActivityStatus;
+  resourcePressure: 'ample' | 'pressure' | 'unknown';
+  occupancy: Array<{ slug: string; state: 'resident' | 'reserved' | 'unknown' | 'nonresident'; reason: string }>;
+  protections: Array<{ slug: string; source: string; active: boolean; reviewRequired: boolean; pin?: BranchPin }>;
 }
 
 export type WakeFn = (slug: string) => Promise<void>;
@@ -45,6 +67,7 @@ export type CoolFn = (slug: string) => Promise<void>;
  */
 export interface Clock {
   now(): number;
+  monotonicNow?(): number;
 }
 
 export const systemClock: Clock = {
@@ -57,6 +80,8 @@ export const systemClock: Clock = {
  * don't need each one to hit disk. In-memory timestamps are always fresh.
  */
 const TOUCH_PERSIST_THROTTLE_MS = 15_000;
+const ACTIVITY_RECOVERY_GRACE_MS = 60_000;
+export const MAX_HOT_BRANCHES = 25;
 
 export class SchedulerService {
   private tickHandle: NodeJS.Timeout | null = null;
@@ -65,8 +90,29 @@ export class SchedulerService {
   private runtimePresence?: () => ReadonlySet<string> | null;
   private operationProtection?: (slug: string) => boolean;
   private readonly cooling = new Set<string>();
+  private readonly coolingTasks = new Map<string, Promise<void>>();
+  private readonly waking = new Map<string, Promise<void>>();
+  private readonly reservations = new Set<string>();
+  private admission: Promise<unknown> = Promise.resolve();
+  private tickInFlight?: Promise<void>;
+  private pressure?: () => SchedulerSnapshot['resourcePressure'] | Promise<SchedulerSnapshot['resourcePressure']>;
+  private observedPressure: SchedulerSnapshot['resourcePressure'] = 'unknown';
+  private memoryCapacityProvider?: () => Promise<PreviewMemoryCapacity | null>;
+  private hasStartupMemoryPressure?: (limitMB: number, requestedWakeMB?: number) => boolean;
+  private deferredWake?: { slug: string; memoryMB: number; expiresAt: number };
+  private memoryCapacity: PreviewMemoryCapacity | null = null;
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
+  private activitySource?: { read: () => Promise<unknown>; isProbe: (fingerprint: string) => boolean; masterStartedAt: number };
+  private activityRefresh?: Promise<boolean>;
+  private activityUnknown = false;
+  private activityGraceDeadline?: number;
+  private activityUnknownReported = false;
+  private activityReason?: PreviewActivityUnknownReason;
+  private activityObservedAt?: string;
+  private activityLastUnknownAt?: string;
+  private activityLastObservedStatus?: PreviewActivityStatus['status'];
+  private activityTransition?: (event: PreviewActivityTransition) => void;
 
   constructor(
     private readonly stateService: StateService,
@@ -74,15 +120,121 @@ export class SchedulerService {
     private readonly clock: Clock = systemClock,
   ) {}
 
+  setPreviewActivitySource(read: () => Promise<unknown>, isProbe: (fingerprint: string) => boolean,
+    masterStartedAt = Date.now() - process.uptime() * 1000): void {
+    this.activitySource = { read, isProbe, masterStartedAt };
+    this.activityUnknown = true;
+  }
+
+  private activityMonotonicNow(): number { return this.clock.monotonicNow?.() ?? performance.now(); }
+
+  setPreviewActivityTransitionListener(listener: (event: PreviewActivityTransition) => void): void {
+    this.activityTransition = listener;
+  }
+
+  async readPreviewActivityStatus(): Promise<PreviewActivityStatus | undefined> {
+    await this.refreshPreviewActivity();
+    return this.getSnapshot().previewActivity;
+  }
+
+  private async refreshPreviewActivity(): Promise<boolean> {
+    const source = this.activitySource;
+    if (!source) return true;
+    if (this.activityRefresh) return this.activityRefresh;
+    this.activityRefresh = (async () => {
+      const previousReason = this.activityReason;
+      try {
+        const value = await source.read();
+        const historicalBoundarySettled = this.activityGraceDeadline !== undefined
+          && this.activityMonotonicNow() >= this.activityGraceDeadline;
+        const result = resolvePreviewActivity(value, this.clock.now(), source.masterStartedAt, source.isProbe, historicalBoundarySettled);
+        for (const observation of result.observations) this.touchAt(observation.branchId, observation.at);
+        this.activityUnknown = result.unknown;
+        this.activityReason = result.reason;
+      } catch { this.activityUnknown = true; this.activityReason = 'read-failed'; }
+      const status = this.activityUnknown ? 'unknown' : 'ready';
+      this.activityObservedAt = new Date(this.clock.now()).toISOString();
+      if (this.activityUnknown && this.activityReason !== 'historical-marker') this.activityLastUnknownAt = this.activityObservedAt;
+      const previousStatus = this.activityLastObservedStatus;
+      this.activityLastObservedStatus = status;
+      if ((status !== previousStatus || this.activityReason !== previousReason) && (previousStatus !== undefined || status === 'unknown')) {
+        try { this.activityTransition?.({ status, reason: this.activityReason, observedAt: this.activityObservedAt, lastUnknownAt: this.activityLastUnknownAt }); }
+        catch { console.warn('[scheduler] 预览活动状态事件未写入，请检查诊断存储'); }
+      }
+      if (!this.activityUnknown) return true;
+      // 每进程只有一次恢复宽限。重复旧收据、持续读取失败及墙钟回拨都不能续期。
+      this.activityGraceDeadline ??= this.activityMonotonicNow() + ACTIVITY_RECOVERY_GRACE_MS;
+      if (this.activityMonotonicNow() >= this.activityGraceDeadline && !this.activityUnknownReported) {
+        this.activityUnknownReported = true;
+        console.warn('[scheduler] 预览访问状态仍不可确认，暂停自动降温和需要腾位的新唤醒');
+      }
+      return false; // 当前未知永远不是闲置证明；宽限只结算启动前的历史标记。
+    })();
+    try { return await this.activityRefresh; }
+    finally { this.activityRefresh = undefined; }
+  }
+
   setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
+  setResourcePressureProvider(provider: NonNullable<SchedulerService['pressure']>): void { this.pressure = provider; }
+  setMemoryCapacityProvider(provider: NonNullable<SchedulerService['memoryCapacityProvider']>,
+    hasStartupMemoryPressure?: NonNullable<SchedulerService['hasStartupMemoryPressure']>): void {
+    this.memoryCapacityProvider = provider;
+    this.hasStartupMemoryPressure = hasStartupMemoryPressure;
+  }
+
+  noteDeferredWakeMemory(slug: string, memoryMB: number): void {
+    // Remember recent demand for cooling decisions. Only a later user visit can restart it.
+    const tickMs = Math.max(1000, (this.config.tickIntervalSeconds || 60) * 1000);
+    this.deferredWake = { slug, memoryMB, expiresAt: this.activityMonotonicNow() + 2 * tickMs };
+  }
+
+  private requestedWakeMemory(): number | undefined {
+    const demand = this.deferredWake;
+    if (!demand) return undefined;
+    const branch = this.stateService.getBranch(demand.slug);
+    if (this.activityMonotonicNow() < demand.expiresAt && branch && isAutoWakeEligible(branch,
+      { projectPaused: this.stateService.getProject(branch.projectId || 'default')?.paused })) return demand.memoryMB;
+    this.deferredWake = undefined;
+    return undefined;
+  }
+
+  async refreshMemoryCapacity(): Promise<PreviewMemoryCapacity | null> {
+    try { this.memoryCapacity = await this.memoryCapacityProvider?.() ?? null; }
+    catch { this.memoryCapacity = null; }
+    return this.memoryCapacity;
+  }
+  private async refreshResourcePressure(): Promise<void> {
+    try { this.observedPressure = await this.pressure?.() ?? 'unknown'; } catch { this.observedPressure = 'unknown'; }
+  }
+  private maxHot(): number { return Math.min(MAX_HOT_BRANCHES, this.config.maxHotBranches > 0 ? this.config.maxHotBranches : MAX_HOT_BRANCHES); }
+
+  private occupancy(branch: BranchEntry): SchedulerSnapshot['occupancy'][number] {
+    const row = (state: SchedulerSnapshot['occupancy'][number]['state'], reason: string) => ({ slug: branch.id, state, reason });
+    if (this.reservations.has(branch.id) || this.operationProtection?.(branch.id)) return row('reserved', '在途操作');
+    if (this.hasResidentRuntime(branch) || Object.values(branch.services || {}).some(s => s.status === 'running' && (s.staticWeb || s.runtimeKind === 'static'))) return row('resident', '已确认运行资源');
+    const hinted = branch.heatState === 'hot' || branch.heatState === 'warming' || (branch.heatState === undefined && branch.status === 'running');
+    if (!this.runtimePresence) return row(hinted ? 'resident' : 'nonresident', '兼容未接入运行盘点的实例');
+    const services = Object.values(branch.services || {});
+    const members = Object.values(branch.replicaSets || {}).flatMap(set => set.members);
+    if (!this.readRunningNames()) return row(hinted || services.length > 0 || members.length > 0 ? 'unknown' : 'nonresident', '运行盘点未知，保留既有预约');
+    // Absence alone is insufficient: require explicit idle/stop intent as well.
+    const idle = branch.status === 'idle' && services.every(s => ['idle', 'stopped'].includes(s.status))
+      && members.every(m => ['idle', 'stopped'].includes(m.status));
+    if (idle && branch.heatState !== 'warming') return row('nonresident', services.length || members.length ? '已确认停止且无驻留资源' : '空闲登记，无服务或副本预约');
+    return row(hinted || services.length > 0 || members.length > 0 ? 'unknown' : 'nonresident', '用途或运行状态待核对，保留预约');
+  }
 
   private hasResidentRuntime(branch: BranchEntry): boolean {
-    const names = this.runtimePresence?.();
+    const names = this.readRunningNames();
     return Boolean(names && (Object.values(branch.services || {}).some(service =>
       serviceRuntimeRefs(service).some(runtime => names.has(runtime.containerName)))
       || Object.values(branch.replicaSets || {}).some(set => set.members.some(member =>
         member.containerName && names.has(member.containerName)))));
+  }
+
+  private readRunningNames(): ReadonlySet<string> | null {
+    try { return this.runtimePresence?.() ?? null; } catch { return null; }
   }
 
   setWakeFn(fn: WakeFn): void {
@@ -157,7 +309,8 @@ export class SchedulerService {
     if (typeof this.tickHandle.unref === 'function') {
       this.tickHandle.unref();
     }
-    console.log(`[scheduler] started (maxHot=${this.config.maxHotBranches}, idleTTL=${this.config.idleTTLSeconds}s, tick=${this.config.tickIntervalSeconds}s)`);
+    const capacity = this.memoryCapacityProvider ? 'dynamic-memory' : `maxHot=${this.maxHot()}`;
+    console.log(`[scheduler] started (${capacity}, idleTTL=${this.config.idleTTLSeconds}s, tick=${this.config.tickIntervalSeconds}s)`);
   }
 
   /**
@@ -183,17 +336,22 @@ export class SchedulerService {
    * No-op when scheduler is disabled.
    */
   touch(slug: string): void {
+    this.touchAt(slug, this.clock.now());
+  }
+
+  private touchAt(slug: string, observedAt: number): void {
     if (!this.isEnabled()) return;
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
-
     const now = this.clock.now();
-    branch.lastAccessedAt = new Date(now).toISOString();
+    if (!Number.isFinite(observedAt) || observedAt > now || observedAt < Date.parse(branch.createdAt)
+      || observedAt <= (Date.parse(branch.lastAccessedAt ?? '') || 0)) return;
+    branch.lastAccessedAt = new Date(observedAt).toISOString();
 
     const lastPersist = this.lastPersistedTouch.get(slug) || 0;
     if (now - lastPersist >= TOUCH_PERSIST_THROTTLE_MS) {
       this.lastPersistedTouch.set(slug, now);
-      this.stateService.save();
+      this.stateService.save([{ kind: 'branches', id: slug }]);
     }
   }
 
@@ -219,11 +377,19 @@ export class SchedulerService {
    * Pinned branches are never cooled — the call is a silent no-op.
    */
   async markCold(slug: string): Promise<void> {
+    if (this.coolingTasks.has(slug)) return;
+    const task = this.performCold(slug);
+    this.coolingTasks.set(slug, task);
+    try { await task; } finally { this.coolingTasks.delete(slug); }
+  }
+
+  private async performCold(slug: string): Promise<void> {
     if (!this.isEnabled()) return;
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
     if (this.isPinned(branch)) return;
     if ((branch.heatState === 'cold' && !this.hasResidentRuntime(branch)) || this.cooling.has(slug)) return;
+    if (!this.coolFn) throw new Error('降温执行器未接入，保留现有占用');
 
     this.cooling.add(slug);
     branch.heatState = 'cooling';
@@ -253,6 +419,7 @@ export class SchedulerService {
    * the LRU non-pinned branch first.
    */
   async wake(slug: string): Promise<void> {
+    if (this.stateService.getBranch(slug)?.archive) throw new Error('分支已归档，请先恢复后再启动');
     if (!this.isEnabled()) {
       if (this.wakeFn) await this.wakeFn(slug);
       return;
@@ -260,14 +427,27 @@ export class SchedulerService {
     const branch = this.stateService.getBranch(slug);
     // Note: branch may not yet exist if this is a first-time request. In that
     // case we still call wakeFn (it will create the branch), and mark hot after.
-    if (branch && (branch.heatState === 'hot' || branch.heatState === 'warming')) {
+    if (this.waking.has(slug)) return this.waking.get(slug);
+    if (branch && branch.heatState === 'hot' && this.occupancy(branch).state === 'resident') {
       // Already hot — just refresh access time.
       this.touch(slug);
       return;
     }
 
-    // Evict LRU if the new branch would push us over capacity.
-    await this.evictLruIfOverCapacity(slug);
+    const operation = this.performWake(slug, branch);
+    this.waking.set(slug, operation);
+    try { await operation; } finally { this.waking.delete(slug); this.reservations.delete(slug); }
+  }
+
+  private async performWake(slug: string, branch: BranchEntry | undefined): Promise<void> {
+    // Do not start a runtime while an already dispatched stop is still pending.
+    await this.coolingTasks.get(slug);
+    const admitted = this.admission.then(async () => {
+      await this.evictLruIfOverCapacity(slug);
+      this.reservations.add(slug);
+    });
+    this.admission = admitted.catch(() => {});
+    await admitted;
 
     if (branch) {
       branch.heatState = 'warming';
@@ -297,10 +477,11 @@ export class SchedulerService {
   /**
    * Mark a branch as pinned-by-user.
    */
-  pin(slug: string): void {
+  pin(slug: string, pin: BranchPin = createBranchPin({}, {}, 'internal', this.clock.now())): void {
     const branch = this.stateService.getBranch(slug);
     if (!branch) throw new Error(`分支 "${slug}" 不存在`);
     branch.pinnedByUser = true;
+    branch.userPin = pin;
     this.stateService.save();
   }
 
@@ -315,6 +496,13 @@ export class SchedulerService {
     this.stateService.save();
   }
 
+  reviewConfigPin(slug: string, pin: BranchPin): void {
+    const branch = this.stateService.getBranch(slug);
+    if (!branch || !this.config.pinnedBranches.includes(slug) || !pin.authorizationRef) throw new Error('仅可复核已登记的配置保护，且必须保留授权依据');
+    branch.configPinReview = { ...pin, configuredBranches: [...this.config.pinnedBranches] };
+    this.stateService.save();
+  }
+
   /**
    * Is this branch protected from eviction?
    *
@@ -326,7 +514,7 @@ export class SchedulerService {
    * 收敛到同一个函数后，两处漂移在结构上不再可能发生。行为与此前逐条判定完全一致。
    */
   isPinned(branch: BranchEntry): boolean {
-    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []).protected
+    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? [], this.clock.now()).protected
       || Boolean(this.operationProtection?.(branch.id));
   }
 
@@ -334,8 +522,13 @@ export class SchedulerService {
    * Find the LRU (least-recently-accessed) non-pinned HOT branch.
    * Returns null if there's nothing to evict.
    */
-  selectLruVictim(excludeSlug?: string): BranchEntry | null {
-    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b));
+  selectLruVictim(excludeSlug?: string, idleThrough?: number): BranchEntry | null {
+    const hotBranches = this.getHotBranches().filter(b => {
+      const accessedAt = Date.parse(b.lastAccessedAt || '');
+      return b.id !== excludeSlug && !this.isPinned(b) && this.occupancy(b).state === 'resident'
+        && !this.cooling.has(b.id) && !this.reservations.has(b.id)
+        && (idleThrough === undefined || (accessedAt > 0 && accessedAt <= idleThrough));
+    });
     if (hotBranches.length === 0) return null;
 
     return hotBranches.reduce<BranchEntry | null>((oldest, b) => {
@@ -347,28 +540,34 @@ export class SchedulerService {
   }
 
   /**
-   * If the hot pool would exceed maxHotBranches after waking `excludeSlug`,
-   * cool the LRU victim. Returns the number of branches cooled (0 or 1).
-   *
-   * maxHotBranches === 0 means unlimited.
+   * Dynamic hosts defer wake at their memory limit without stopping another
+   * branch. The count-based path remains for callers without a host sampler.
    */
   async evictLruIfOverCapacity(excludeSlug?: string): Promise<number> {
-    if (!this.isEnabled()) return 0;
-    const max = this.config.maxHotBranches;
-    if (!max || max <= 0) return 0;
-
-    const hotCount = this.getHotBranches().filter(b => b.id !== excludeSlug).length;
-    // +1 for the branch we're about to wake (if it's not already hot).
-    if (hotCount + 1 <= max) return 0;
-
-    const victim = this.selectLruVictim(excludeSlug);
-    if (!victim) {
-      console.warn(`[scheduler] capacity overrun: ${hotCount + 1} hot but no evictable branch (all pinned)`);
+    if (this.memoryCapacityProvider) {
+      const capacity = await this.refreshMemoryCapacity();
+      if (!capacity) throw new Error('暂时无法确认预览内存容量，请稍后重试。');
+      if (capacity.usedMB >= capacity.limitMB) throw new Error('预览内存已达容量上限，请等资源释放后重试。');
       return 0;
     }
+    if (!this.isEnabled()) return 0;
+    const max = this.maxHot();
 
-    await this.markCold(victim.id);
-    return 1;
+    const hotCount = this.hotIds(excludeSlug).size;
+    // +1 for the branch we're about to wake (if it's not already hot).
+    if (hotCount + 1 <= max) return 0;
+    if (!await this.refreshPreviewActivity()) throw new Error('预览访问状态暂不可确认，请稍后重试');
+
+    let cooled = 0;
+    while (this.hotIds(excludeSlug).size + 1 > max) {
+      const victim = this.selectLruVictim(excludeSlug);
+      const before = this.hotIds(excludeSlug).size;
+      if (!victim) throw new Error(`热池已满（${before}/${max}），现有保护或用途待确认，暂不新增唤醒`);
+      await this.markCold(victim.id);
+      if (this.hotIds(excludeSlug).size >= before) throw new Error('降温未确认释放容量，暂不新增唤醒');
+      cooled++;
+    }
+    return cooled;
   }
 
   /**
@@ -376,15 +575,36 @@ export class SchedulerService {
    * and ensure capacity is within budget.
    */
   async tick(): Promise<void> {
+    if (this.tickInFlight) return this.tickInFlight;
+    this.tickInFlight = this.runTick();
+    try { await this.tickInFlight; } finally { this.tickInFlight = undefined; }
+  }
+
+  private async runTick(): Promise<void> {
     if (!this.isEnabled()) return;
+    if (!await this.refreshPreviewActivity()) return;
+    await this.refreshResourcePressure();
 
     const now = this.clock.now();
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;
+    if (this.memoryCapacityProvider) {
+      const capacity = await this.refreshMemoryCapacity();
+      if (!capacity) return;
+      const requestedWakeMB = this.requestedWakeMemory();
+      const startupPressure = this.hasStartupMemoryPressure?.(capacity.limitMB, requestedWakeMB);
+      if (!startupPressure) this.deferredWake = undefined;
+      if (capacity.usedMB < capacity.limitMB && !startupPressure) return;
+      this.observedPressure = 'pressure';
+      const victim = this.selectLruVictim(undefined, now - idleTTLMs);
+      if (victim) await this.markCold(victim.id);
+      return;
+    }
 
     // 1. Idle-based cooling
     const hotBranches = this.getHotBranches();
-    for (const branch of hotBranches) {
+    for (const branch of this.observedPressure === 'ample' ? [] : hotBranches) {
       if (this.isPinned(branch)) continue;
+      if (this.occupancy(branch).state !== 'resident') continue;
       const lastAccess = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
       if (lastAccess <= 0) continue; // never accessed; don't cool yet
       if (now - lastAccess > idleTTLMs) {
@@ -397,15 +617,15 @@ export class SchedulerService {
     }
 
     // 2. Capacity-based cooling (in case external deploys bypassed wake())
-    const max = this.config.maxHotBranches;
+    const max = this.maxHot();
     if (max > 0) {
-      let hotCount = this.getHotBranches().length;
-      while (hotCount > max) {
+      const attempted = new Set<string>();
+      while (this.hotIds().size > max) {
         const victim = this.selectLruVictim();
-        if (!victim) break;
+        if (!victim || attempted.has(victim.id)) break;
+        attempted.add(victim.id);
         try {
           await this.markCold(victim.id);
-          hotCount--;
         } catch {
           break;
         }
@@ -419,13 +639,11 @@ export class SchedulerService {
    * but the branch is actually running (legacy branches pre-scheduler).
    */
   private getHotBranches(): BranchEntry[] {
-    const all = this.stateService.getAllBranches();
-    return all.filter(b => {
-      if (b.heatState === 'hot') return true;
-      if (this.hasResidentRuntime(b)) return true;
-      if (b.heatState === undefined && b.status === 'running') return true;
-      return false;
-    });
+    return this.stateService.getAllBranches().filter(b => this.occupancy(b).state !== 'nonresident');
+  }
+
+  private hotIds(exclude?: string): Set<string> {
+    return new Set([...this.getHotBranches().map(b => b.id), ...this.reservations].filter(id => id !== exclude));
   }
 
   /**
@@ -433,8 +651,7 @@ export class SchedulerService {
    */
   getSnapshot(): SchedulerSnapshot {
     const all = this.stateService.getAllBranches();
-    const hot = all
-      .filter(b => b.heatState === 'hot' || this.hasResidentRuntime(b) || (b.heatState === undefined && b.status === 'running'))
+    const hot = this.getHotBranches()
       .map(b => ({
         slug: b.id,
         lastAccessedAt: b.lastAccessedAt,
@@ -449,13 +666,33 @@ export class SchedulerService {
 
     return {
       enabled: this.isEnabled(),
-      config: this.config,
+      config: { ...this.config, maxHotBranches: this.maxHot() },
       hot,
       cold,
       capacityUsage: {
-        current: hot.length,
-        max: this.config.maxHotBranches,
+        current: this.hotIds().size,
+        max: this.memoryCapacityProvider ? null : this.maxHot(),
       },
+      memoryCapacity: this.memoryCapacityProvider ? this.memoryCapacity : undefined,
+      resourcePressure: this.observedPressure,
+      occupancy: all.map(b => this.occupancy(b)),
+      protections: all.flatMap(branch => {
+        const rows: SchedulerSnapshot['protections'] = [];
+        for (const [source, enabled, pin] of [['user', branch.pinnedByUser, branch.userPin], ['debug', branch.isColorMarked, branch.colorMarkPin]] as const) {
+          if (enabled) rows.push({ slug: branch.id, source, active: !pinExpired(pin, this.clock.now()), reviewRequired: pinNeedsReview(pin), pin });
+        }
+        if (this.config.pinnedBranches.includes(branch.id)) {
+          const pin = reviewedConfigPin(branch.configPinReview, this.config.pinnedBranches);
+          rows.push({ slug: branch.id, source: 'config-pinned', active: !pinExpired(pin, this.clock.now()), reviewRequired: pinNeedsReview(pin), pin });
+        }
+        const implicit = resolveBranchProtection({ ...branch, pinnedByUser: false, isColorMarked: false }, this.stateService, [], this.clock.now());
+        if (implicit.protected) rows.push({ slug: branch.id, source: implicit.reason!, active: true, reviewRequired: implicit.reason === 'config-pinned' });
+        return rows;
+      }),
+      ...(this.activitySource ? { previewActivity: { status: this.activityUnknown ? 'unknown' as const : 'ready' as const,
+        reason: this.activityReason, observedAt: this.activityObservedAt, lastUnknownAt: this.activityLastUnknownAt,
+        recoveryGraceRemainingMs: this.activityUnknown && this.activityGraceDeadline !== undefined
+          ? Math.max(0, this.activityGraceDeadline - this.activityMonotonicNow()) : 0 } } : {}),
     };
   }
 }

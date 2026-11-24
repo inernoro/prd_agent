@@ -23,7 +23,7 @@ assert 'DESIGN_RUNTIME_LLMGW_BASE_URL: "http://llmgw-serve:8091/gw/v1"' in CDS_C
 assert "DesignRuntime__OpenDesign__Transport=service" in COMPOSE
 # 专项服务必须在静态站切换与成功证据之前通过就绪门禁，否则发布会在设计服务不可用时记成功。
 _compose_up = DEPLOY.index("compose_run up -d --force-recreate $release_services")
-_design_gate = DEPLOY.index("\n  wait_for_design_runtime_readiness\n")
+_design_gate = DEPLOY.index("\n  check_design_runtime_after_deploy\n")
 _activate = DEPLOY.index("\n  activate_pending_static_release\n", _design_gate)
 assert _compose_up < _design_gate < _activate
 

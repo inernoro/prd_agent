@@ -251,7 +251,17 @@ public class McpGatewayController : ControllerBase
             props[p.Name] = ps;
             if (p.Required) required.Add(p.Name);
         }
+        // 准入层已读取此标识；未声明领域参数的工具也须向客户端公开入口。
+        // 保留原有工具自己的同名参数及必填规则，回环只转发 t.Params 中的领域参数。
+        if (!props.ContainsKey("clientRequestId"))
+            props["clientRequestId"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["maxLength"] = 256,
+                ["description"] = "本次逻辑操作的稳定标识；每次新操作使用新值，重试保持标识和原始请求不变。也可由客户端通过 Idempotency-Key 请求头提供。",
+            };
         var schema = new JsonObject { ["type"] = "object", ["properties"] = props };
+        if (t.RejectUnknownArguments) schema["additionalProperties"] = false;
         if (required.Count > 0) schema["required"] = required;
         return new JsonObject
         {
@@ -328,7 +338,7 @@ public class McpGatewayController : ControllerBase
             // 工具名那条至少还得先想个名字刷，这条是建一把名字几 MB 的密钥，此后每笔调用自动放大。
             KeyName = McpInputBounds.ForAudit(User.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars) ?? string.Empty,
             ToolName = name!,
-            ArgumentsPreview = McpUsageService.SummarizeArguments(args),
+            ArgumentsPreview = McpUsageService.SummarizeArguments(args, name),
             CreatedAt = startedAt,
         };
 
@@ -522,13 +532,14 @@ public class McpGatewayController : ControllerBase
     /// 原来去重与正常两条分支各抄一遍同样的四行赋值 —— 那是判据分裂的现成温床：
     /// 截了一处、漏了另一处，谁也看不出来。收敛成一处，两条分支都从这儿走。
     /// </summary>
-    private static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
+    internal static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
     {
         // Kind 是我方枚举（不是调用方给的），原样留着。
         log.ArtifactKind = artifact.Kind;
         log.ArtifactId = McpInputBounds.ForAudit(artifact.Id, McpInputBounds.ArtifactIdChars);
         log.ArtifactUrl = McpInputBounds.ForAudit(artifact.Url, McpInputBounds.ArtifactUrlChars);
         log.ArtifactTitle = McpInputBounds.ForAudit(artifact.Title, McpInputBounds.ArtifactTitleChars);
+        log.ArtifactStatus = McpInputBounds.ForAudit(artifact.Status, 32);
     }
 
     /// <summary>
@@ -567,6 +578,8 @@ public class McpGatewayController : ControllerBase
 
     internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)
     {
+        if (t.RejectUnknownArguments && args.Any(kv => kv.Key != "clientRequestId" && !t.Params.Any(p => p.Name == kv.Key)))
+            return (t.PathTemplate, null, "包含当前工具不支持的参数，请查询能力与工具定义后重试。");
         var path = t.PathTemplate;
         var query = new List<string>();
         JsonObject? body = null;
@@ -610,7 +623,7 @@ public class McpGatewayController : ControllerBase
 
         // 自证「这一跳是网关的续跳」：下游的用量闸门与全局限流据此不再重复计一次。
         // 用进程内随机令牌而不是「对端是不是 127.0.0.1」，见 McpLoopbackSignal 的说明。
-        req.Headers.TryAddWithoutValidation(McpLoopbackSignal.HeaderName, _loopback.Token);
+        _loopback.AttachTaskContinuation(req);
 
         var auth = Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrWhiteSpace(auth))

@@ -77,7 +77,7 @@ public sealed class AdminPermissionService : IAdminPermissionService
         rolePerms.UnionWith(allow);
         rolePerms.ExceptWith(deny);
 
-        return rolePerms.OrderBy(x => x, StringComparer.Ordinal).ToList();
+        return ProductPermissionRules.Apply(user, rolePerms);
     }
 
     public async Task<AdminUserAuthzSnapshot?> GetUserAuthzSnapshotAsync(string userId, CancellationToken ct = default)

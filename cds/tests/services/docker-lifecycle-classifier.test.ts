@@ -78,6 +78,16 @@ describe('classifyDockerLifecycleEvent 的分类判断', () => {
     expect(result.nextServiceStatus).toBe('stopped');
     expect(result.reason).toContain('持久化结果'); expect(result.reason).not.toContain('无需处理');
   });
+  it('原地重启保留当前叙述与正常等待，强制退出仍须核对持久化结果', () => {
+    for (const exitCode of [0, 143, 137]) {
+      const result = classifyDockerLifecycleEvent({ ...base, action: 'die', exitCode,
+        lifecycleIntent: intentOf({ kind: 'cds-restart' }) });
+      expect(result.source).toBe('cds'); expect(result.stopClass).toBe('cds-restart');
+      expect(result.reason).toContain('原地重启服务，保留现有容器和数据');
+      expect(result.reason).toContain(exitCode === 137 ? '持久化结果' : '等服务重新就绪');
+      expect(result.reason).not.toContain('OOM killer');
+    }
+  });
   it('匹配到 CDS 意图：可追溯字段一个不丢', () => {
     const result = classifyDockerLifecycleEvent({
       ...base,

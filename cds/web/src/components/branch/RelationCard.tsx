@@ -1,3 +1,4 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 /*
  * RelationCard — 分支总览页的「关系」卡 + 展开视图（plan.cds.service-relations 第四 / 五批）。
  *
@@ -8,25 +9,45 @@
  * 2026-09-16 之前这里画的是缩略版二维图，固定 180px 高、只按宽度缩放，宽屏上被裁得只剩
  * 「入口」一枚节点——文案说 2 个服务挂在壳下面，图里一个都没有。
  */
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Expand, Maximize2, Wrench, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+
+import { Expand, Maximize2, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
 import { RelationEmptyState, RelationGraph, RelationLegend, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
 import { FlowFacts, RelationFlowSkeleton, RelationFlowStrip, layoutFlow } from './RelationFlowStrip';
 
-export function useRelationPayload(branchId: string | undefined): { state: { status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string }; reload: () => void } {
-  const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string }>({ status: 'loading' });
+type RelationLoadState = { status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string };
+
+export function useRelationPayload(branchId: string | undefined): { state: RelationLoadState; reload: () => void; refreshing: boolean; refreshError: string } {
+  const [snapshot, setSnapshot] = useState<{ key: string | undefined; state: RelationLoadState }>({ key: branchId, state: { status: 'loading' } });
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+  const request = useRef<AbortController | null>(null);
   const reload = useCallback(() => {
-    if (!branchId) return;
-    setState({ status: 'loading' });
-    apiRequest<RelationPayload>(`/api/branches/${encodeURIComponent(branchId)}/service-graph`)
-      .then((data) => setState({ status: 'ok', data }))
-      .catch((err) => setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
+    request.current?.abort();
+    if (!branchId) {
+      setSnapshot({ key: branchId, state: { status: 'error', message: '缺少分支 ID' } });
+      return;
+    }
+    const controller = new AbortController();
+    request.current = controller;
+    setRefreshing(true);
+    setRefreshError('');
+    setSnapshot(prev => prev.key === branchId && prev.state.status === 'ok' ? prev : { key: branchId, state: { status: 'loading' } });
+    apiRequest<RelationPayload>(`/api/branches/${encodeURIComponent(branchId)}/service-graph`, { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) setSnapshot({ key: branchId, state: { status: 'ok', data } }); })
+      .catch(err => {
+        if (controller.signal.aborted) return;
+        const message = err instanceof ApiError ? err.message : String(err);
+        setRefreshError(message);
+        setSnapshot(prev => prev.key === branchId && prev.state.status === 'ok' ? prev : { key: branchId, state: { status: 'error', message } });
+      })
+      .finally(() => { if (!controller.signal.aborted) setRefreshing(false); });
   }, [branchId]);
-  useEffect(() => { reload(); }, [reload]);
-  return { state, reload };
+  useEffect(() => { reload(); return () => request.current?.abort(); }, [reload]);
+  return { state: snapshot.key === branchId ? snapshot.state : { status: 'loading' }, reload, refreshing, refreshError };
 }
 
 const SEV_LABEL: Record<LintFindingView['severity'], string> = { error: '错误', warn: '警告', info: '建议' };
@@ -113,7 +134,7 @@ export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems =
   const hidden = findings.filter((f) => !visible.includes(f));
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="relation-workspace">
-      <div className="max-h-[45%] shrink-0 overflow-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 sm:px-[1.375rem] sm:py-4">
+      {findings.length > 0 ? <div className="max-h-[45%] shrink-0 overflow-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 sm:px-[1.375rem] sm:py-4">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-[0.78rem] text-muted-foreground">
           <b className="font-semibold text-foreground-muted">需要处理 · {findings.length} 条</b>
           {(['error', 'warn', 'info'] as const).map((sev) => (count(sev) ? <span key={sev} className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.6875rem] font-semibold ${SEV_CLS[sev]}`}>{count(sev)} {SEV_LABEL[sev]}</span> : null))}
@@ -126,7 +147,7 @@ export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems =
             <span className="shrink-0 text-muted-foreground">展开</span>
           </button>
         ) : null}
-      </div>
+      </div> : null}
       <RelationGraph payload={data} highlight={highlight} entryHost={entryHost} hideLegend className="min-h-0 flex-1" />
       <RelationLegend className="hidden h-10 shrink-0 border-t border-[hsl(var(--hairline))] px-[1.375rem] sm:flex" />
     </div>
@@ -140,7 +161,7 @@ export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems =
  */
 export type RelationCardVariant = 'card' | 'row';
 
-export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成', variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
+export function RelationCardSkeleton({ badge = '正在体检', note, variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
   if (variant === 'row') {
     return (
       <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-3.5" data-testid="relation-card" data-loading="true" data-variant="row">
@@ -161,9 +182,17 @@ export function RelationCardSkeleton({ badge = '正在体检', note = '正在算
   );
 }
 
-export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'card' }: { branchId: string; /** 主入口地址：入口 chip 上写域名；没有就写分支名 */ previewUrl?: string; /** 「去配置」的落点（配置页签） */ onConfigure?: () => void; /** row = 指挥台底部的一行（标题、流向条、事实、按钮排成一排）；card = 独立卡片 */ variant?: RelationCardVariant }): JSX.Element | null {
+export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'card', initialExpanded = false, onExpandedRestored, onFullScreen }: { branchId: string; /** 主入口地址：入口 chip 上写域名；没有就写分支名 */ previewUrl?: string; /** 「去配置」的落点（配置页签） */ onConfigure?: () => void; /** row = 指挥台底部的一行（标题、流向条、事实、按钮排成一排）；card = 独立卡片 */ variant?: RelationCardVariant; initialExpanded?: boolean; onExpandedRestored?: () => void; onFullScreen?: (expanded: boolean) => void }): JSX.Element | null {
   const { state, reload } = useRelationPayload(branchId);
   const [open, setOpen] = useState(false);
+  const expandButton = useRef<HTMLButtonElement>(null);
+  const restoreExpanded = useRef(initialExpanded);
+  useEffect(() => {
+    if (!restoreExpanded.current || state.status !== 'ok') return;
+    restoreExpanded.current = false;
+    expandButton.current?.focus({ preventScroll: true });
+    setOpen(true); onExpandedRestored?.();
+  }, [state.status, onExpandedRestored]);
   const navigate = useNavigate();
   useEffect(() => {
     if (!open) return undefined;
@@ -179,6 +208,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
   }, [open]);
   const entryHost = previewUrl ? previewUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : undefined;
   const fullHref = `/branch-relations/${encodeURIComponent(branchId)}`;
+  const showExpanded = () => { expandButton.current?.focus({ preventScroll: true }); setOpen(true); };
+  const showFullScreen = () => onFullScreen ? onFullScreen(open) : navigate(fullHref);
   const shell = (tone: string, children: JSX.Element) => (
     <div className={`flex flex-col gap-3 rounded-xl border bg-[hsl(var(--surface-raised))] px-5 pb-5 pt-4 transition-colors duration-150 ${tone}`} data-testid="relation-card">
       {children}
@@ -222,12 +253,12 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
         <h2 className="m-0 text-[1.0625rem] font-bold">关系</h2>
         {pill}
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
-        <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
+        <Button ref={expandButton} variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showExpanded} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
+        <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
       </div>
       <p className="m-0 text-[0.875rem] leading-[1.7] text-foreground-muted [text-wrap:pretty]">{relationHeadline(data)}</p>
       <FlowFacts facts={model.facts} />
-      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击展开查看">
+      <div className="cursor-pointer" onClick={showExpanded} title="点击展开查看">
         <RelationFlowStrip model={model} />
       </div>
       {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} layout="grid" /> : null}
@@ -237,39 +268,31 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
       <div className="flex flex-wrap items-center gap-2 text-base font-bold">
         关系{pill}
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
-        <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
+        <Button ref={expandButton} variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showExpanded} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
+        <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
       </div>
       <div className="text-[0.92rem] leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
       <FlowFacts facts={model.facts} />
-      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击展开查看">
+      <div className="cursor-pointer" onClick={showExpanded} title="点击展开查看">
         <RelationFlowStrip model={model} />
       </div>
       {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} layout="grid" /> : null}
     </>
   ));
   return (
-    <>
+    <Dialog open={open} onOpenChange={setOpen}>
       {body}
-      {open ? (
-        /* 展开视图：居中大浮层，四周留边、底下一层均匀遮罩。此前是右侧半屏抽屉，盖住一半总览，
-           被盖住的关系卡只露出半截 chip（2026-09-30 用户：「一边是遮挡，一边是折叠压缩」） */
-        <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:p-4 lg:p-8" role="dialog" aria-modal="true" aria-label="关系图" data-testid="relation-sheet">
-          <div className="absolute inset-0 bg-[hsl(var(--status-ink))]/55 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
-          <div className="relative flex w-full max-w-[96rem] flex-col overflow-hidden border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl sm:rounded-2xl">
-            <div className="flex h-[3.25rem] shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
-              <h2 className="m-0 text-base font-bold">关系</h2>
-              <span className="hidden min-w-0 truncate font-mono text-[0.78rem] text-muted-foreground sm:inline">{data.branch}</span>
-              {errors ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-bad">{errors} 错误</span> : null}
-              {warnings ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-[hsl(var(--warn-ink))]">{warnings} 警告</span> : null}
-              <span className="flex-1" />
-              <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
-              <Button variant="ghost" size="sm" onClick={() => setOpen(false)} aria-label="关闭"><X /></Button>
-            </div>
-            <RelationWorkspace data={data} entryHost={entryHost} onConfigure={onConfigure ? () => { setOpen(false); onConfigure(); } : undefined} />
-          </div>
+      <DialogContent frame className="cds-relation-sheet max-w-none" style={{ width: 'calc(100vw - 1rem)', height: 'calc(100dvh - 2rem)', maxHeight: 'calc(100dvh - 2rem)' }} aria-label="关系图" data-testid="relation-sheet">
+        <DialogDescription className="sr-only">完整服务关系与待处理事项；关闭后返回分支总览。</DialogDescription>
+        <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2" style={{ paddingRight: '4rem' }}>
+          <DialogTitle className="min-w-0 flex-1 text-base font-bold [overflow-wrap:anywhere]">{data.branch} · 服务关系</DialogTitle>
+          {data.lint.findings.length === 0 ? <span className="shrink-0 text-sm text-foreground-muted">体检无发现</span> : null}
+          {errors ? <span className="shrink-0 text-sm text-bad">{errors} 错误</span> : null}
+          {warnings ? <span className="shrink-0 text-sm text-[hsl(var(--warn-ink))]">{warnings} 警告</span> : null}
+          <Button variant="ghost" size="sm" style={{ minHeight: '3.25rem' }} onClick={showFullScreen} title="在独立页面查看完整关系图，可复制链接"><Maximize2 />全屏</Button>
         </div>
-      ) : null}
-    </>
+        <RelationWorkspace data={data} entryHost={entryHost} onConfigure={onConfigure ? () => { setOpen(false); onConfigure(); } : undefined} />
+      </DialogContent>
+    </Dialog>
   );
 }

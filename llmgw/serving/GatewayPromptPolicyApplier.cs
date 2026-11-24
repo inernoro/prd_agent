@@ -126,6 +126,7 @@ public static partial class GatewayPromptPolicyApplier
         EnablePromptCache = source.EnablePromptCache,
         TimeoutSeconds = source.TimeoutSeconds,
         IncludeThinking = source.IncludeThinking,
+        ForwardAvailableThinking = source.ForwardAvailableThinking,
         Context = context,
     };
 

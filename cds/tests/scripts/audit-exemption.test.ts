@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 import { evaluateExemption } from '../../scripts/resolve-audit-exemption.mjs';
 
@@ -116,26 +117,19 @@ describe('audit workflow wires the exemption in', () => {
   });
 });
 
-// 债务 ID 撞号在这条链路上已经发生两次：先是 E34 与 redis 备份撞，改成 E35 又和
-// redis 恢复撞——而 workflow 里那两句「处置见 E35」就静默指到了另一条债务上。
-// 靠人眼挑下一个空号挑不准，用守卫钉死。
-describe('debt ledger IDs', () => {
-  it('has no duplicate E-numbers', () => {
-    const ledger = readFileSync(new URL('../../../doc/debt.cds.md', import.meta.url), 'utf8');
-    const ids = [...ledger.matchAll(/^\| (E\d+) \|/gm)].map((m) => m[1]);
-    const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
-    expect([...new Set(dup)], '债务台账出现重号，指向它的引用会落到错的那一条').toEqual([]);
-  });
-
-  it('every debt ID referenced from code or workflows exists in the ledger', () => {
-    const ledger = readFileSync(new URL('../../../doc/debt.cds.md', import.meta.url), 'utf8');
-    const known = new Set([...ledger.matchAll(/^\| (E\d+) \|/gm)].map((m) => m[1]));
-    const workflow2 = readFileSync(
+describe('external audit debt references', () => {
+  it('links the workflow to CDS through an unambiguous archived source number', () => {
+    const source = new URL('https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md');
+    const [commit, ...segments] = source.pathname.split('/').slice(4);
+    const ledger = execFileSync('git', ['show', `${commit}:${segments.join('/')}`], { encoding: 'utf8' });
+    const known = [...ledger.matchAll(/^\| (E\d+) \|/gm)].map(match => match[1]);
+    expect(new Set(known).size).toBe(known.length);
+    const workflow = readFileSync(
       new URL('../../../.github/workflows/cds-external-port-audit.yml', import.meta.url),
       'utf8',
     );
-    const referenced = [...workflow2.matchAll(/debt\.cds\.md 的 (E\d+)/g)].map((m) => m[1]);
-    expect(referenced.length, '这份 workflow 本来就该指向债务台账').toBeGreaterThan(0);
-    for (const id of referenced) expect(known.has(id), `workflow 指向了不存在的债务 ${id}`).toBe(true);
+    const referenced = [...workflow.matchAll(/CDS 项目债务中查原台账编号 (E\d+)/g)].map(match => match[1]);
+    expect(referenced).toEqual(['E46', 'E46']);
+    expect(known).toContain('E46');
   });
 });

@@ -40,6 +40,12 @@ public class ReportTeam
     public string ReportVisibility { get; set; } = ReportVisibilityMode.AllMembers;
 
     /// <summary>
+    /// 月报可见性（与周报独立设置，取值同 ReportVisibilityMode）。
+    /// 老文档无此字段时保持初始值 all_members，无需迁移。
+    /// </summary>
+    public string MonthlyReportVisibility { get; set; } = ReportVisibilityMode.AllMembers;
+
+    /// <summary>
     /// 每周自动提交时间（如 "friday-18:00"），null 表示不自动提交。
     /// 格式: "{dayOfWeek}-{HH:mm}" (UTC+8)
     /// </summary>

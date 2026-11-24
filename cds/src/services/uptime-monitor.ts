@@ -1,3 +1,4 @@
+import { publicUptimeSample } from './monitor-evidence.js';
 import { decideSelfMonitorAlarm, type SelfMonitorAlarmState } from './self-monitor-alarm-policy.js';
 /**
  * uptime-monitor — CDS 自建存活监控（Uptime Kuma 风格）的探测器。
@@ -27,7 +28,7 @@ import { decideSelfMonitorAlarm, type SelfMonitorAlarmState } from './self-monit
  *    端口的服务），命中者标「未纳入监控」而不是「故障」。此外，端口开着但
  *    不说 HTTP 的目标会在连续拿到协议层错误后**自动降级**为容器状态判定，
  *    不再永久标红。两条合起来治「非 HTTP 服务被永久误报」，
- *    见 doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
+ *    见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 存活监控（uptime-monitor）」。
  *
  * 纯计算（可用率 / 去抖 / 降采样 / 事件合成）全在 services/uptime-metrics.ts，
  * 本文件只做「发探测 + 编排 + 落盘」。
@@ -81,6 +82,7 @@ import {
   appendCapped,
   applyDailyRollup,
   applyIncidentTransition,
+  snapshotUptimeSample,
   availabilityOverRange,
   calendarDayWindow,
   bucketizeSamples,
@@ -215,10 +217,13 @@ export interface UserViewState {
 export type UptimeAlertEventType = 'uptime.target.down' | 'uptime.target.recovered';
 
 export interface UptimeAlertEventData {
+  incidentId?: string;
+  urgency?: 'urgent' | 'normal';
   businessName?: string;
   finding?: string;
   assessment?: 'observation-unavailable' | 'check-failed';
   affectedChecks?: number;
+  notificationEnvironment?: import('../shared/notification-templates.js').NotificationEnvironment;
   environmentLabel?: string;
   /** 自监控恢复只发给实际接收过本轮故障的通道。 */
   recoveryChannelIds?: string[];
@@ -1241,7 +1246,10 @@ export class UptimeMonitorService {
        * 不接不报错，只是掉线永远没人被通知——所以有源码守卫钉住这行接线。
        */
       onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
-      onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void;
+      observeScheduledJobs?: () => void;
+      onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
+      /** 状态事实与通知抑制独立：未投递过故障的稳定恢复也须关闭原报告。 */
+      onReportEvent?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
     },
   ) {
     this.load();
@@ -1391,6 +1399,8 @@ export class UptimeMonitorService {
     let customLane: Promise<number> = Promise.resolve(0);
     const cycleStartedAt = this.now();
     try {
+      try { this.deps.observeScheduledJobs?.(); }
+      catch (err) { this.deps.logger?.warn?.(`[uptime] 任务健康观测失败: ${(err as Error).message}`); }
       const now = cycleStartedAt;
       const targets = this.selectTargets();
       const liveIds = new Set(targets.map((t) => t.id));
@@ -1704,10 +1714,12 @@ export class UptimeMonitorService {
    * 新项目看不见，等于隔离穿透（Codex PR #1514 第三轮 P2）。没有台账 = 还没探过，无事可同步。
    */
   refreshTarget(targetId: string): boolean {
-    const record = this.records.get(targetId);
-    if (!record) return false;
     const live = this.selectTargets().find((t) => t.id === targetId);
     if (!live) return false;
+    // Newly subscribed services appear immediately as unknown; a real sample is
+    // still required before they can become healthy.
+    const record = this.records.get(targetId) || emptyRecord(live, this.now());
+    this.records.set(targetId, record);
     this.syncRecordIdentity(record, live);
     // 定义里把它停了：台账立刻转 paused、开着的故障就地收尾，不等下一轮
     // （直接调 API 停用、或界面的跟进探测失败时，摘要不能还挂着「故障」）。
@@ -1840,7 +1852,10 @@ export class UptimeMonitorService {
   ): void {
     const record = this.records.get(target.id);
     if (!record) return;
-    const sample = options.allowDegrade ? this.maybeDegrade(target, record, rawSample) : rawSample;
+    const sanitized = publicUptimeSample(rawSample);
+    const sample = options.allowDegrade ? this.maybeDegrade(target, record, sanitized) : sanitized;
+    // Detailed receipts are retained only for the latest twenty attempts; charts keep their existing window.
+    if (record.samples.length >= 20) delete record.samples[record.samples.length - 20].exchange;
     if (sample.noData) {
       appendCapped(record.samples, sample, this.deps.config.maxSamples);
       if (!record.lastSample?.noData && target.source === 'custom') this.deps.onAlarmSuppressed?.({
@@ -1879,16 +1894,25 @@ export class UptimeMonitorService {
       targetId: target.id,
       at: sample.t,
       cause,
+      sample,
     }, MAX_INCIDENTS_PER_TARGET);
     if (next.transition === 'to-down') this.attachReleaseAttribution(target, record, sample.t);
     // 所有业务监控共享持久化通知节奏；首次探测成功不等于从故障恢复。
     // 可用性与事件照常记录，通知只在真实故障及持续恢复后发送。
     if (target.source === 'custom' && !record.excluded) {
+      const facet = this.environmentFacet(record, this.previewBranchLookup());
       const decision = decideSelfMonitorAlarm(record.notification ??= {}, {
         at: sample.t, up: sample.up, down: next.status === 'down', intervalMs: target.intervalMs ?? this.deps.config.intervalMs,
+        urgent: facet.environment === 'production' && facet.observeMode === 'active'
+          && !target.collection && target.monitor?.kind !== 'health-json',
       });
       if (decision.emit) this.emitAlert(decision.emit === 'down' ? 'uptime.target.down' : 'uptime.target.recovered', target, record, sample.t,
         decision.emit === 'down' ? cause : '指标连续稳定 10 分钟');
+      else if (decision.reason === 'no-delivered-down' || (next.transition === 'to-down' && decision.reason === 'cooldown-30m')) {
+        this.emitAlert(decision.reason === 'no-delivered-down' ? 'uptime.target.recovered' : 'uptime.target.down', target, record, sample.t,
+          decision.reason === 'no-delivered-down' ? '检查连续稳定 10 分钟，未发送恢复通知' : cause, false);
+        if (next.transition) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name, projectId: target.projectId, reason: decision.reason, at: sample.t });
+      }
       else if (next.transition && decision.reason) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name,
         projectId: target.projectId, reason: decision.reason, at: sample.t });
     } else if (next.transition && !record.excluded) {
@@ -1919,16 +1943,34 @@ export class UptimeMonitorService {
     record: UptimeTargetRecord,
     at: number,
     message: string,
+    notify = true,
   ): void {
-    if (!this.deps.onAlert) return;
+    const callback = notify ? this.deps.onAlert || this.deps.onReportEvent : this.deps.onReportEvent;
+    if (!callback) return;
     try {
-      this.deps.onAlert(type, {
+      const incident = [...record.incidents].reverse().find(i => type === 'uptime.target.down' ? i.endedAt === null : i.endedAt !== null);
+      // 首次成功、暂停或旧历史结束记录不能充当本次恢复证据。
+      if (type === 'uptime.target.recovered' && (!incident?.endedSample?.up || incident.endedSample.noData
+        || (target.source !== 'custom' && incident.endedAt !== at))) return;
+      if (notify && incident && record.lastSample && record.lastSample.t === at) {
+        const evidence = incident.notificationSamples ??= [];
+        if (!evidence.some(s => s.t === at)) appendCapped(evidence, snapshotUptimeSample(record.lastSample), 20);
+      }
+      const facet = this.environmentFacet(record, this.previewBranchLookup());
+      const urgent = type === 'uptime.target.down' && facet.environment === 'production'
+        && facet.observeMode === 'active' && !target.collection && target.monitor?.kind !== 'health-json';
+      void Promise.resolve(callback(type, {
         targetId: target.id,
+        ...(incident ? { incidentId: incident.id } : {}),
+        urgency: urgent ? 'urgent' : 'normal',
         businessName: target.projectId === SELF_PROJECT_ID ? '部署平台' : target.projectName,
         finding: record.lastSample?.finding,
         assessment: target.collection ? 'observation-unavailable' : 'check-failed',
         affectedChecks: target.collectionMembers?.length,
-        environmentLabel: this.environmentFacet(record, this.previewBranchLookup()).environmentLabel,
+        notificationEnvironment: facet.environment === 'preview' ? 'preview'
+          : target.collection || target.source === 'release' ? (facet.environment === 'production' ? 'production' : facet.environment === 'staging' ? 'staging' : 'unknown')
+          : target.monitor?.environment === 'production' ? 'production' : target.monitor?.environment === 'staging' ? 'staging' : 'unknown',
+        environmentLabel: facet.environmentLabel,
         ...(type === 'uptime.target.recovered' && target.source === 'custom'
           ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
         projectId: target.projectId,
@@ -1940,7 +1982,7 @@ export class UptimeMonitorService {
         message,
         consecutiveFailures: record.consecutiveFailures,
         detectedAt: new Date(at).toISOString(),
-      });
+      })).catch(err => this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`));
     } catch (err) {
       this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`);
     }
@@ -2055,7 +2097,7 @@ export class UptimeMonitorService {
         excluded: Boolean(record.excluded),
         degraded: Boolean(record.degraded),
         degradeReason: record.degradeReason,
-        lastSample: record.lastSample,
+        lastSample: record.lastSample ? publicUptimeSample(record.lastSample) : null,
         availability24h: a24.ratio,
         availability7d: a7.ratio,
         avgLatencyMs24h: a24.avgLatencyMs,
@@ -2230,7 +2272,7 @@ export class UptimeMonitorService {
     const points = needsRollup
       ? dailyRollupPoints(record, from, now)
       : bucketizeSamples(record.samples, from, now, bucketCount);
-    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points, recentSamples: record.samples.slice(-20).reverse() };
+    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points, recentSamples: record.samples.slice(-20).reverse().map(publicUptimeSample) };
   }
 
   /** 全局故障事件时间线，最近的在前。 */
@@ -2257,6 +2299,18 @@ export class UptimeMonitorService {
     }
     rows.sort((a, b) => b.startedAt - a.startedAt);
     return rows.slice(0, Math.min(Math.max(1, limit), 200));
+  }
+
+  /** Read the exact retained event after scope filtering, independent of the global recent-list limit. */
+  getIncident(id: string, projectId?: string | null): UptimeIncidentView | undefined {
+    const now = this.now();
+    for (const record of this.records.values()) {
+      if (projectId && record.projectId !== projectId) continue;
+      const incident = record.incidents.find(item => item.id === id);
+      if (incident) return { ...incident, targetName: record.name, source: record.source || probeSourceOfId(record.id),
+        branchId: record.branchId, projectId: record.projectId, durationMs: incidentDurationMs(incident, now), ongoing: incident.endedAt === null };
+    }
+    return undefined;
   }
 
   /** 测试/诊断用：读取内部台账。 */
@@ -2297,7 +2351,9 @@ export class UptimeMonitorService {
       if (!parsed || !Array.isArray(parsed.targets)) return;
       for (const record of parsed.targets) {
         if (!record || typeof record.id !== 'string') continue;
-        record.samples = Array.isArray(record.samples) ? record.samples.slice(-this.deps.config.maxSamples) : [];
+        record.samples = Array.isArray(record.samples) ? record.samples.slice(-this.deps.config.maxSamples).map(publicUptimeSample) : [];
+        for (const sample of record.samples.slice(0, -20)) delete sample.exchange;
+        if (record.lastSample) record.lastSample = publicUptimeSample(record.lastSample);
         record.daily = Array.isArray(record.daily) ? record.daily.slice(-MAX_DAILY_ROLLUPS) : [];
         record.incidents = Array.isArray(record.incidents) ? record.incidents.slice(-MAX_INCIDENTS_PER_TARGET) : [];
         if (!record.source) record.source = probeSourceOfId(record.id);

@@ -6,8 +6,7 @@ namespace PrdAgent.Core.Models;
 /// 一份模型排行榜快照（一个榜单 = 一条文档，每次同步覆盖写）。
 ///
 /// 为什么存快照而不是实时代理：
-/// 数据来自 arena.ai 的公开榜单页，它没有开放 API（实测 /api/leaderboard 返回 403
-/// "Route not allowed"），只能解析页面 HTML。页面每次请求 1.8MB 左右，且随时可能改版。
+/// 数据来自 Arena 官方发布在 Hugging Face 的榜单数据集。
 /// 所以由后台任务每天抓一次落库，页面永远读库——外站抖动不会打到用户，改版也只是
 /// 让快照变旧而不是让页面开天窗（配合 <see cref="FetchedAt"/> 如实显示数据日期）。
 /// </summary>
@@ -29,8 +28,11 @@ public class ModelLeaderboardSnapshot
     /// </summary>
     public string Kind { get; set; } = "agent";
 
-    /// <summary>抓取成功的时刻（UTC）。页面上「数据截至」显示的就是它，不许拿当前时间冒充</summary>
+    /// <summary>抓取时刻（UTC），用于并发写入排序；镜像保留源抓取时刻</summary>
     public DateTime FetchedAt { get; set; }
+
+    /// <summary>官方数据发布日期（UTC），与抓取时刻分开；旧页面来源未知时为 null</summary>
+    public DateTime? PublishedAt { get; set; }
 
     /// <summary>抓取的源地址，原样记录便于复核与追责</summary>
     public string SourceUrl { get; set; } = string.Empty;
@@ -127,6 +129,9 @@ public class ModelLeaderboardEntry
 
     /// <summary>命令恢复（Bash Recovery）</summary>
     public ModelLeaderboardMetric? BashRecovery { get; set; }
+
+    /// <summary>命令可靠性。官方 2026-10-12 替代命令恢复，两种指标分别保存，避免旧快照被误标。</summary>
+    public ModelLeaderboardMetric? BashReliability { get; set; }
 
     /// <summary>工具幻觉（Tool Hallucination）——这项越低越好</summary>
     public ModelLeaderboardMetric? ToolHallucination { get; set; }

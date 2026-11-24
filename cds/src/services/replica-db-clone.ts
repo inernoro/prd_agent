@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_ARGS } from './docker-log-policy.js';
 /**
  * 复制集一键隔离数据库（design.cds.replica-set MVP-2，2026-07-23）。
  *
@@ -636,6 +637,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
   let authSetup = 'set --';
   const toolsHelper = (network: string, script: string): string[] => [
     'run', '--rm', '-i', '--pull', 'never',
+    ...DOCKER_LOG_LIMIT_ARGS,
     // dump / restore 是 CPU 与 IO 大户，同样挂低权重 slice（Codex PR #1516 P2）。
     ...workloadCgroupArgv(),
     '--network', `container:${network}`,
@@ -726,7 +728,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
       '-p', publishSpec,
       // 日志限额（2026-07-27 宕机复盘 P1）：专用隔离实例是长跑容器，默认 json-file
       // 无上限，restore 期间的 mongod 日志尤其密集。
-      '--log-opt', 'max-size=50m', '--log-opt', 'max-file=3',
+      ...DOCKER_LOG_LIMIT_ARGS,
       '--memory', '1536m', '--memory-swap', '1536m',
       ...authEnv,
       isoImage, 'mongod', '--wiredTigerCacheSizeGB', '1',

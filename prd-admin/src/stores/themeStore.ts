@@ -144,8 +144,7 @@ export const useThemeStore = create<ThemeState>()(
 );
 
 /**
- * 初始化主题
- * 应在应用启动时调用，优先使用本地缓存，后台加载后端配置
+ * 应用启动时使用本地主题，并跟踪系统的动态效果偏好。
  */
 export function initializeTheme(): void {
   const state = useThemeStore.getState();
@@ -166,7 +165,4 @@ export function initializeTheme(): void {
       (mq as MediaQueryList & { addListener: (cb: () => void) => void }).addListener(onChange);
     }
   }
-
-  // 后台加载后端配置（如果有差异会自动更新）
-  state.loadFromServer();
 }

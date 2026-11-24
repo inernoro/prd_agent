@@ -1,4 +1,5 @@
 import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 
 export interface EffectiveNavEntry {
@@ -21,7 +22,7 @@ export function buildEffectiveNavOrder(args: {
   /** 侧栏对该用户可见的目录 appKey（不含 home），顺序即 AppShell 追加顺序 */
   sidebarIds: readonly string[];
 }): EffectiveNavEntry[] {
-  const hidden = new Set(args.hidden.map(migrateLegacyNavId));
+  const hidden = new Set([...SIDEBAR_HIDDEN_APPKEYS, ...args.hidden.map(migrateLegacyNavId)]);
   const seen = new Set<string>();
   const result: EffectiveNavEntry[] = [];
   for (const token of args.order) {

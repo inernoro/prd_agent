@@ -40,6 +40,7 @@ const MUST_STAY_CLEAN = [
   'pages/status/TargetDetail.tsx',
   'pages/status/IncidentTimeline.tsx',
   'pages/ReleaseCenterPage.tsx',
+  'components/skeletons/ReleaseCenterSkeleton.tsx',
   'pages/ReleaseConsolePage.tsx',
   'pages/release-center/EnvironmentSidebar.tsx',
   'pages/release-center/EvidenceSection.tsx',
@@ -88,7 +89,9 @@ describe('滚动链不许被页内面板切断', () => {
     // 内容区在自己那一格里滚。用户「应该固定一屏」的要求不变。
     expect(src).toContain('cds-workspace--fill');
     expect(src).toContain('flex h-full min-h-0 flex-col');
-    expect(src).toContain('min-h-0 flex-1 overflow-y-auto');
+    expect(src).toContain('className={RELEASE_CENTER_BODY_CLASS}');
+    const loading = fs.readFileSync(path.join(WEB, 'components/skeletons/ReleaseCenterSkeleton.tsx'), 'utf8');
+    expect(loading).toContain("RELEASE_CENTER_BODY_CLASS = 'min-h-0 flex-1 overflow-y-auto");
   });
 
   /**

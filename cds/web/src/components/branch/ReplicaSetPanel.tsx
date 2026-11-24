@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ReplicaSetPanel — 复制集双画布（草稿预期管理版，2026-07-25 用户拍板）。
  *
@@ -319,11 +320,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
   }, '变更计划已保存，开始按序执行'), [branchId, draft, onFailure, tab, call]);
 
   if (state.status === 'loading') {
-    return (
-      <section className="cds-surface-raised cds-hairline flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />正在加载复制集配置…
-      </section>
-    );
+    return <ContentLoading label="加载复制集配置" variant="rows" />;
   }
   if (state.status === 'error') {
     return (
@@ -600,7 +597,7 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
             <Loader2 className="h-3.5 w-3.5 animate-spin text-warn" />
             <b>执行中</b>
             <span className="text-muted-foreground">失败策略：{activePlan.onFailure === 'rollback' ? '停止并回滚' : '仅停止'}</span>
-            <ConfirmAction title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
+            <ConfirmAction scopeKey={`${branchId}:${activePlan.id}`} title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
               trigger={<Button type="button" size="sm" variant="ghost" disabled={busy}><X />取消剩余</Button>}
               onConfirm={() => onCall(async () => { await apiRequest(api(`/${encodeURIComponent(activePlan.id)}/cancel`), { method: 'POST' }); }, '剩余步骤已取消')} />
           </div>
@@ -1830,7 +1827,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                 <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-warn/60 bg-warn/[.04] text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
                   <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-warn">
-                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-white">PRJ</span>
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-status-ink">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目-复制集-{num}</span>
                     <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                       title="撤销这条整组副本草稿" onClick={() => onRemoveAction(n.node.actionKey!)}>

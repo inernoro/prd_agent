@@ -124,6 +124,8 @@ export function createReportObjectStore(
     upload?: typeof uploadAndVerifyR2Object;
     fetchObject?: typeof fetchR2ObjectBuffer;
     remove?: typeof deleteR2Object;
+    /** 私有输入可追加独立键前缀，凭据仍按原规则实时解析。 */
+    keyPrefixSuffix?: string;
   } = {},
 ): ReportObjectStore {
   const upload = deps.upload ?? uploadAndVerifyR2Object;
@@ -160,8 +162,11 @@ export function createReportObjectStore(
     isConfigured: () => current() !== null,
 
     async put(meta, content) {
-      const config = current();
-      if (!config) return null;
+      const currentConfig = current();
+      if (!currentConfig) return null;
+      const config = deps.keyPrefixSuffix
+        ? { ...currentConfig, prefix: [currentConfig.prefix, deps.keyPrefixSuffix].filter(Boolean).join('/') }
+        : currentConfig;
       const objectKey = reportObjectKey(meta, config.prefix);
       // 空正文不写：uploadAndVerifyR2Object 拒收空对象，且一份空报告本身就是缺陷，
       // 与其写一个取回来也没用的对象，不如让调用方拿到 null 走「只在本地」那条路。

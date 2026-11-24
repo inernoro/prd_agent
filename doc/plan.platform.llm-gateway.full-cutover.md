@@ -15,7 +15,7 @@
 | 阶段 | 进度 | 状态 | 当前 blocker | 下一步 | 验收证据 |
 | --- | --- | --- | --- | --- | --- |
 | S6 删除 MAP 进程内旧路径 | 100% | 已验收 | 无 | 无 | 源码守卫 `Api_LlmGateway_IsHttpOnly`、`ExecDep_HasNoGatewayModeAndProbesGatewayAfterDeploy` 与 compose 守卫全绿 |
-| serving 内部 legacy 配置兜底 | 0% | 未开始 | 需要先看新版本上线后哪些调用方还落在这一档 | 按 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 的四步还债 | 无 |
+| serving 内部 legacy 配置兜底 | 0% | 未开始 | 需要先看新版本上线后哪些调用方还落在这一档 | 按 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md) 的四步还债 | 无 |
 | S5.5 把网关引擎搬进网关侧项目 | 0% | 未开始 | 无（MAP 已不再构造引擎，前置条件已满足） | 单独开一轮，只搬不改行为 | 无 |
 
 ## 删了什么
@@ -34,7 +34,7 @@
 
 ## 还留着的两处
 
-1. **serving 内部的 legacy 配置兜底**：网关里没配置的调用方会退回 MAP 旧配置选模。它决定的是网关怎么选模型，不是 MAP 走哪条路；删除当天正式机仍在 inproc，切到 HTTP 后其余调用方可能正靠它选模，直接删会让它们解析不到模型。还债步骤见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)。
+1. **serving 内部的 legacy 配置兜底**：网关里没配置的调用方会退回 MAP 旧配置选模。它决定的是网关怎么选模型，不是 MAP 走哪条路；删除当天正式机仍在 inproc，切到 HTTP 后其余调用方可能正靠它选模，直接删会让它们解析不到模型。还债步骤见 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)。
 2. **网关引擎仍在主系统的基础设施项目里**：搬迁不改运行时行为，此前卡在「MAP 还在装配它」，现在这个前提已经消失，可以单独做。
 
 存量数据：`llmshadow_comparisons` 里的历史文档不再被读写；开启过 TTL 索引的环境会自然过期，没开过的可手工删除该集合（只读历史，不影响任何功能）。
@@ -43,5 +43,5 @@
 
 - [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)
 - [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)
-- [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)
-- [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
+- [doc/debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)
+- [doc/debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)

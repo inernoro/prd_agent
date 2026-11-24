@@ -108,7 +108,15 @@ public record LlmLogStart(
     string? OfferingTargetKind = null,
     string? Operation = null,
     string? LogicalRequestId = null,
-    string? ProviderTaskId = null);
+    string? ProviderTaskId = null,
+    string? TaskPermitId = null,
+    string? TaskLeaseRunId = null,
+    long? TaskLeaseFence = null,
+    string? ExecutionOrigin = null,
+    string? TriggerCredentialId = null,
+    string? TriggerActorUserId = null,
+    string? SourceDeployment = null,
+    string? SourceTask = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -161,7 +169,11 @@ public record LlmLogDone(
     string? ModelGroupName = null,
     decimal? ProviderReportedCost = null,
     string? ProviderCostCurrency = null,
-    List<LlmLogImagePayload>? OutputImagePayloads = null);
+    List<LlmLogImagePayload>? OutputImagePayloads = null,
+    int? ReasoningTokens = null,
+    bool? CacheCreationCountedInsideInput = null,
+    string? CostKind = null,
+    string? ProviderTaskId = null);
 
 public sealed record LlmLogImagePayload(
     string? Base64Data,

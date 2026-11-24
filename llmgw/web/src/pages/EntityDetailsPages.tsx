@@ -1,4 +1,9 @@
 import { providerForDetail, logicalForDetail, physicalForDetail, offeringParticipationStatus } from '@/lib/modelDetailIdentity';
+import { callerCandidateDetailHref, entityBackTarget, modelProviderDetailHref, providerCollectionContext, providerModelDetailHref } from '@/lib/entityNavigation';
+import { appCallerDetailCandidates, callerManagementState } from '@/lib/appCallerIdentity';
+import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { AppCallerDefaultModel, AppCallerDefaultsProvider } from '@/components/AppCallerDefaultModel';
+import { formatPlatformTime } from '@/lib/platformTime';
 import { HINT_TEXT } from '@/lib/typography';
 import { CollectionView } from '@/components/CollectionView';
 import { collectProviderModels } from '@/components/ProviderModelsPanel';
@@ -7,15 +12,14 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowUpRight, Check, CircleDollarSign, Clock3, Gauge, KeyRound, Route, Server, ShieldCheck } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from '@/components/LogEntityIcon';
-import { Chip, SectionLoader } from '@/components/ui';
-import { getGatewayAppCallers, getLogicalModels, getLogs, getModels, getPlatforms, getPools } from '@/lib/api';
+import { Button, Chip, SectionLoader } from '@/components/ui';
+import { getGatewayAppCallers, getLogicalModels, getLogs, getModels, getPlatforms } from '@/lib/api';
 import type {
   GatewayAppCaller,
   LlmLogListItem,
   LogicalModelItem,
   ModelItem,
   ModelOfferingItem,
-  ModelPool,
   PlatformItem,
 } from '@/lib/types';
 import { fmtCompact, fmtDate, fmtMs, statusBadgeStyle } from '@/lib/logsHelpers';
@@ -70,14 +74,15 @@ function EntityDetailsShell({
           ))}
         </div>;
   const bounded = kind === 'model' || kind === 'provider';
+  const appTask = kind === 'app';
   return (
-    <div className={`lg-entity-detail-page${bounded ? ' lg-entity-detail-bounded' : ''}`}>
+    <div className={`lg-entity-detail-page${bounded ? ' lg-entity-detail-bounded' : ''}${appTask ? ' lg-entity-detail-app-task' : ''}`}>
       <div className="lg-entity-detail-content">
         <Link className="lg-entity-detail-back" to={backHref}><ArrowLeft size={15} />{backLabel}</Link>
         <header className="lg-entity-detail-hero">
-          {!bounded ? <div className={`lg-entity-detail-brand lg-entity-detail-brand-${kind}`}>{icon}</div> : null}
+          {!bounded && !appTask ? <div className={`lg-entity-detail-brand lg-entity-detail-brand-${kind}`}>{icon}</div> : null}
           <div className="lg-entity-detail-heading">
-            {bounded ? <><h1>{title}</h1>{kind === 'model' ? <code title={identifier}>{identifier}</code> : null}{kind === 'provider' ? <span>{subtitle}</span> : null}</> : <><span>{subtitle}</span><h1>{title}</h1><code title={identifier}>{identifier}</code></>}
+            {bounded || appTask ? <><h1>{title}</h1>{kind === 'model' || appTask ? <code title={identifier}>{identifier}</code> : null}{kind === 'provider' || appTask ? <span>{subtitle}</span> : null}</> : <><span>{subtitle}</span><h1>{title}</h1><code title={identifier}>{identifier}</code></>}
           </div>
           <div className="lg-entity-detail-actions">
             <Link to={primaryHref}>{primaryLabel}<ArrowUpRight size={15} /></Link>
@@ -85,10 +90,10 @@ function EntityDetailsShell({
           </div>
         </header>
 
-        {bounded ? <div className={`lg-collection-entity-meta lg-collection-entity-meta-${kind}`}>{connectionSummary}{statusContent}<details className="lg-entity-detail-properties"><summary>{kind === 'provider' ? '完整连接参数' : '模型属性'}</summary><div><p>{subtitle}</p>{descriptionContent}<code>{identifier}</code>{metricsContent}{kind === 'provider' ? sections.filter((section) => section.id === 'connection').map((section) => <div key={section.id}>{section.description ? <p>{section.description}</p> : null}{section.content}</div>) : null}<nav aria-label="详情章节">{sections.filter((section) => !(kind === 'provider' && section.id === 'connection')).map((section) => <a key={section.id} href={`#${section.id}`}>{section.title}</a>)}</nav></div></details></div> : <>{descriptionContent}{statusContent}{metricsContent}</>}
+        {bounded ? <div className={`lg-collection-entity-meta lg-collection-entity-meta-${kind}`}>{connectionSummary}{statusContent}<details className="lg-entity-detail-properties"><summary>{kind === 'provider' ? '完整连接参数' : '模型属性'}</summary><div><p>{subtitle}</p>{descriptionContent}<code>{identifier}</code>{metricsContent}{kind === 'provider' ? sections.filter((section) => section.id === 'connection').map((section) => <div key={section.id}>{section.description ? <p>{section.description}</p> : null}{section.content}</div>) : null}<nav aria-label="详情章节">{sections.filter((section) => !(kind === 'provider' && section.id === 'connection')).map((section) => <a key={section.id} href={`#${section.id}`}>{section.title}</a>)}</nav></div></details></div> : appTask ? <><div className="lg-entity-detail-app-observation">{statusContent}{metricsContent}</div>{descriptionContent}</> : <>{descriptionContent}{statusContent}{metricsContent}</>}
 
         <div className="lg-entity-detail-layout">
-          {!bounded ? <aside aria-label="详情章节">
+          {!bounded && !appTask ? <aside aria-label="详情章节">
             <nav>
               {sections.map((section) => <a key={section.id} href={`#${section.id}`}>{section.title}</a>)}
             </nav>
@@ -138,7 +143,7 @@ function RecentRequests({ items, emptyText }: { items: LlmLogListItem[]; emptyTe
         return (
           <Link key={item.id} to={`/logs/${encodeURIComponent(item.id)}`}>
             <div><strong>{item.logicalModelPublicId || item.model || '未标注模型'}</strong><span>{item.platformName || item.provider || '未标注 Provider'}</span></div>
-            <div><span>{fmtDate(item.startedAt)}</span><span>{fmtMs(item.durationMs)}</span><Chip label={badge.label} color={badge.color} bg={badge.bg} /></div>
+            <div><span>{formatPlatformTime(item.startedAt)}</span><span>{fmtMs(item.durationMs)}</span><Chip label={badge.label} color={badge.color} bg={badge.bg} /></div>
           </Link>
         );
       })}
@@ -146,13 +151,14 @@ function RecentRequests({ items, emptyText }: { items: LlmLogListItem[]; emptyTe
   );
 }
 
-function DetailError({ message, backHref }: { message: string; backHref: string }) {
+function DetailError({ message, backHref, backLabel = '返回请求记录', retry }: { message: string; backHref: string; backLabel?: string; retry?: () => void }) {
   return (
     <div className="lg-entity-detail-page">
       <div className="lg-entity-detail-empty lg-entity-detail-empty-page">
         <strong>无法打开实体详情</strong>
         <p>{message}</p>
-        <Link to={backHref}>返回请求记录</Link>
+        {retry ? <Button size="sm" onClick={retry}>重新读取</Button> : null}
+        <Link to={backHref}>{backLabel}</Link>
       </div>
     </div>
   );
@@ -184,12 +190,15 @@ function modelSuccessRate(model?: ModelItem | null) {
 
 export function ModelDetailsPage() {
   const [params] = useSearchParams();
+  const back = entityBackTarget(params, params.has('logicalModelId') ? { href: '/logical-models', label: '返回公开模型' } : { href: '/models', label: '返回上游模型' });
   const physicalModelId = params.get('modelId') || '';
   const logicalModelId = params.get('logicalModelId') || '';
   const requestedModel = params.get('model') || '';
   const requestedPlatformId = params.get('platformId') || '';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [recentError, setRecentError] = useState<string | null>(null);
   const [logical, setLogical] = useState<LogicalModelItem | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
@@ -198,13 +207,14 @@ export function ModelDetailsPage() {
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setError(null); setRecentError(null); setRecent([]);
     setError(null);
     const range = last30Days();
     Promise.all([
       getLogicalModels(),
       getModels(),
       getPlatforms(),
-      requestedModel ? getLogs({ ...range, model: requestedModel, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedModel ? getLogs({ ...range, model: requestedModel, platformId: requestedPlatformId || undefined, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([logicalResult, modelResult, platformResult, logResult]) => {
       if (!alive) return;
       if (!logicalResult.success || !modelResult.success || !platformResult.success) {
@@ -217,22 +227,24 @@ export function ModelDetailsPage() {
       setModels(modelResult.data.items);
       setPlatforms(platformResult.data.items);
       if (logResult?.success) setRecent(logResult.data.items);
+      else if (logResult) setRecentError('最近请求读取失败，未判断为没有记录。');
       setLoading(false);
-    });
+    }).catch(() => { if (alive) { setError('实体读取中断，请重新读取；未改用同名对象。'); setLoading(false); } });
     return () => {
       alive = false;
     };
-  }, [logicalModelId, physicalModelId, requestedModel]);
+  }, [logicalModelId, physicalModelId, requestedModel, requestedPlatformId, reload]);
 
   const physicalModels = useMemo(() => {
     if (physicalModelId) return physicalForDetail(models, physicalModelId, requestedPlatformId, requestedModel);
+    if (logicalModelId && !logical) return [];
     if (logical) {
       const targetIds = new Set(logical.offerings.filter((item) => item.targetKind === 'model').map((item) => item.targetId));
       const matched = models.filter((item) => targetIds.has(item.id));
-      if (matched.length) return matched;
+      return matched;
     }
     return physicalForDetail(models, '', requestedPlatformId, requestedModel);
-  }, [logical, models, physicalModelId, requestedModel, requestedPlatformId]);
+  }, [logical, logicalModelId, models, physicalModelId, requestedModel, requestedPlatformId]);
   const primaryModel = physicalModels[0] ?? null;
   const relatedPlatforms = useMemo(() => {
     const ids = new Set([
@@ -243,6 +255,7 @@ export function ModelDetailsPage() {
   }, [physicalModels, platforms, requestedPlatformId]);
   const providerGroups = useMemo(() => groupModelProviders(logical?.offerings || [], models, platforms), [logical, models, platforms]);
   const providerGroupByRoute = new Map(providerGroups.flatMap((group) => group.offerings.map((route) => [route.id, group] as const)));
+  const registeredModel = Boolean(logical || primaryModel);
   const title = logical?.name || primaryModel?.name || primaryModel?.modelName || requestedModel;
   const identifier = logical?.publicId || primaryModel?.modelName || requestedModel;
   const capabilities = logical?.capabilities.length
@@ -250,33 +263,33 @@ export function ModelDetailsPage() {
     : primaryModel?.capabilities.filter((item) => item.value).map((item) => item.type) ?? [];
 
   if (loading) return <SectionLoader text="正在加载模型详情" />;
-  if (error) return <DetailError message={error} backHref="/logs" />;
-  if (!logical && !primaryModel && !requestedModel) return <DetailError message="日志没有提供可解析的模型标识。" backHref="/logs" />;
+  if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} retry={() => setReload(value => value + 1)} />;
+  if (physicalModelId && !primaryModel || logicalModelId && !logical) return <DetailError message="当前可见范围未找到链接指定的精确模型ID，可能已删除或无权查看；未改用同名对象。" backHref={back.href} backLabel={back.label} retry={() => setReload(value => value + 1)} />;
+  if (!logical && !primaryModel && !requestedModel) return <DetailError message="日志没有提供可解析的模型标识。" backHref={back.href} backLabel={back.label} />;
 
   return (
     <EntityDetailsShell
       kind="model"
       title={title || '未命名模型'}
       identifier={identifier || '未标注模型'}
-      subtitle={logical ? '逻辑模型目录' : '上游模型'}
-      description={logical?.description || primaryModel?.remark || `该模型由 LLM Gateway 统一解析并路由。页面展示当前租户可见的真实配置、Provider、能力、价格和最近请求，不发起新的上游调用。`}
+      subtitle={logical ? '公开模型' : registeredModel ? '上游模型' : '请求中的模型标识 · 当前配置未解析'}
+      description={!registeredModel ? '当前可见配置未解析到这个请求标识；仅展示已读取的请求记录，不补造启用状态或配置关系。' : logical?.description || primaryModel?.remark || `该模型由 LLM Gateway 统一解析并路由。页面展示当前租户可见的真实配置、Provider、能力、价格和最近请求，不发起新的上游调用。`}
       icon={<ModelEntityIcon model={identifier} size="lg" />}
-      status={[
+      status={!registeredModel ? [{ label: '当前配置未解析', tone: 'neutral' }] : [
         { label: (logical?.enabled ?? primaryModel?.enabled ?? true) ? '已启用' : '已停用', tone: (logical?.enabled ?? primaryModel?.enabled ?? true) ? 'good' : 'warning' },
         { label: logical ? `${providerGroups.length} 个供应方 · ${logical.offerings.length} 条上游线路` : `${relatedPlatforms.length} 个可见上游`, tone: 'neutral' },
         { label: capabilities.length ? `${capabilities.length} 项能力` : '能力未标注', tone: capabilities.length ? 'good' : 'warning' },
       ]}
       metrics={[
-        { label: '上下文', value: formatContext(primaryModel?.maxTokens), hint: '来自模型权威配置', icon: <Gauge size={17} /> },
-        { label: '输入 / 输出价格', value: formatPrice(primaryModel), hint: '每百万 Token 或每次', icon: <CircleDollarSign size={17} /> },
-        { label: '历史调用', value: fmtCompact(primaryModel?.callCount ?? recent.length), hint: '当前租户可见范围', icon: <Route size={17} /> },
-        { label: '成功率', value: modelSuccessRate(primaryModel), hint: '模型累计统计', icon: <ShieldCheck size={17} /> },
+        { label: '上下文', value: primaryModel ? formatContext(primaryModel.maxTokens) : '未取得', hint: primaryModel ? '来自上游型号配置' : '未取得上游型号配置', icon: <Gauge size={17} /> },
+        { label: '输入 / 输出价格', value: primaryModel ? formatPrice(primaryModel) : '未取得', hint: '每百万 Token 或每次', icon: <CircleDollarSign size={17} /> },
+        { label: primaryModel ? '历史调用' : '已载入记录', value: fmtCompact(primaryModel?.callCount ?? recent.length), hint: primaryModel ? '当前租户可见范围' : '最多8条，非窗口总量', icon: <Route size={17} /> },
+        { label: '成功率', value: modelSuccessRate(primaryModel), hint: primaryModel ? '上游型号累计统计' : '未取得上游型号累计统计', icon: <ShieldCheck size={17} /> },
       ]}
-      backHref="/logs"
-      backLabel="返回请求记录"
-      primaryHref={`/logs?model=${encodeURIComponent(identifier || requestedModel)}`}
+      backHref={back.href} backLabel={back.label}
+            primaryHref={`/logs?model=${encodeURIComponent(identifier || requestedModel)}`}
       primaryLabel="查看模型日志"
-      management={{ href: logical ? "/logical-models" : "/models", label: "管理模型" }}
+      management={registeredModel ? { href: logical ? `/logical-models?publicId=${encodeURIComponent(logical.publicId)}` : `/models?search=${encodeURIComponent(primaryModel!.id)}`, label: logical ? '查看此公开模型配置' : '查看此上游型号配置' } : undefined}
       sections={[
         {
           id: 'providers',
@@ -285,21 +298,21 @@ export function ModelDetailsPage() {
           description: '同一逻辑模型可以绑定多个上游。Gateway 按优先级、权重、健康和限流选择实际调用目标。',
           content: logical?.offerings.length ? <>
             <div className="lg-collection-supplier-section"><h3 className="lg-collection-section-title">供应方 · {providerGroups.length}</h3><div className="lg-collection-provider-groups">
-              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}><Server size={20}/><div><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></div><small>供应方详情</small></Link>)}
+              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? modelProviderDetailHref({ id: group.platformId, name: group.name }, params) : '/models'}><Server size={20}/><div><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></div><small>供应方详情</small></Link>)}
               {providerGroups.length > 2 ? <span style={HINT_TEXT}>全部供应方见下方线路清单</span> : null}
             </div></div>
             <h3 className="lg-collection-section-title">上游线路 · {logical.offerings.length}</h3><CollectionView items={logical.offerings} filterLabel="供应方筛选" allFilterLabel="全部供应方" filters={providerGroups.map((group) => ({ value: group.id, label: group.name, matches: (route: ModelOfferingItem) => providerGroupByRoute.get(route.id)?.id === group.id }))} placeholder="搜索上游模型、供应方或协议" searchText={(item) => [providerGroupByRoute.get(item.id)?.name, item.providerName, item.targetName, item.upstreamModelId, item.protocol, item.notes].filter(Boolean).join(' ')}>
               {(routes) => <table className="lg-collection-entity-table lg-collection-route-table"><colgroup><col style={{width: '38%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '17%'}}/></colgroup><thead><tr><th>上游模型</th><th>供应方</th><th>协议</th><th>顺位 / 权重</th><th>状态</th></tr></thead><tbody>{routes.map((route) => {
                 const group = providerGroupByRoute.get(route.id)!;
                 const participation = offeringParticipationStatus(route);
-                return <tr key={route.id}><td><strong title={route.upstreamModelId || route.targetName}>{route.upstreamModelId || route.targetName}</strong>{route.skipReason ? <small title={route.skipReason}>{route.skipReason}</small> : null}</td><td><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}>{group.name}</Link></td><td>{route.protocol || '继承协议'}</td><td>{route.priority} / {route.weight}</td><td><span title={participation.detail}><StatusPill label={participation.label} tone={participation.tone} /></span></td></tr>;
+                return <tr key={route.id}><td><strong title={route.upstreamModelId || route.targetName}>{route.upstreamModelId || route.targetName}</strong>{route.skipReason ? <small title={route.skipReason}>{route.skipReason}</small> : null}</td><td><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : group.platformId ? modelProviderDetailHref({ id: group.platformId, name: group.name }, params) : '/models'}>{group.name}</Link></td><td>{route.protocol || '继承协议'}</td><td>{route.priority} / {route.weight}</td><td><span title={participation.detail}><StatusPill label={participation.label} tone={participation.tone} /></span></td></tr>;
               })}</tbody></table>}
 
             </CollectionView>
           </> : <CollectionView items={physicalModels} placeholder="搜索上游模型或协议" searchText={(item) => `${item.name} ${item.modelName} ${item.protocol || ''}`}>
             {(pageModels) => <>{pageModels.map((model) => {
               const platform = platforms.find((item) => item.id === model.platformId);
-              return <div key={model.id} className="lg-collection-detail-card"><div><strong>{model.name || model.modelName}</strong><span>{model.protocol || '继承协议'}</span></div><Link to={`/platforms/view?id=${encodeURIComponent(model.platformId || '')}&name=${encodeURIComponent(platform?.name || '')}`}>{platform?.name || model.platformId || '未标注 Provider'}</Link></div>;
+              return <div key={model.id} className="lg-collection-detail-card"><div><strong>{model.name || model.modelName}</strong><span>{model.protocol || '继承协议'}</span></div><Link to={modelProviderDetailHref({ id: model.platformId || '', name: platform?.name }, params)}>{platform?.name || model.platformId || '未标注 Provider'}</Link></div>;
             })}</>}
           </CollectionView>,
         },
@@ -307,13 +320,13 @@ export function ModelDetailsPage() {
           id: 'capabilities',
           title: '模型能力',
           description: '能力来自模型或逻辑模型权威配置，不根据名称猜测。',
-          content: capabilities.length ? <div className="lg-entity-detail-capabilities">{capabilities.map((item) => <span key={item}>{item}</span>)}</div> : <div className="lg-entity-detail-empty">当前模型尚未声明能力。</div>,
+          content: capabilities.length ? <div className="lg-entity-detail-capabilities">{capabilities.map((item) => <span key={item}>{item}</span>)}</div> : <div className="lg-entity-detail-empty">{registeredModel ? '当前模型尚未声明能力。' : '未取得当前配置的能力声明。'}</div>,
         },
         {
           id: 'routing',
           title: '能力与路由',
-          content: <Facts items={[
-            { label: '路由策略', value: logical?.routingStrategy || '由模型池决定' },
+          content: !registeredModel ? <Facts items={[{ label: '解析结果', value: '未取得当前配置；不推断供应方、协议或路由参数。' }]} /> : <Facts items={[
+            { label: '路由策略', value: logical?.routingStrategy || '未解析公开模型配置' },
             { label: '上游协议', value: primaryModel?.protocol || '继承 Provider' },
             { label: '优先级', value: primaryModel?.priority ?? logical?.displayOrder ?? '未配置' },
             { label: '最大并发', value: primaryModel?.maxConcurrency || '未配置' },
@@ -325,7 +338,7 @@ export function ModelDetailsPage() {
           id: 'activity',
           title: '最近请求活动',
           description: '最近 30 天该模型的请求记录，点击可进入完整请求详情。',
-          content: <RecentRequests items={recent} emptyText="最近 30 天没有匹配请求。" />,
+          content: recentError ? <div role="alert">{recentError}<Button size="sm" onClick={() => setReload(value => value + 1)}>重新读取</Button></div> : <RecentRequests items={recent} emptyText={requestedModel ? '最近 30 天没有匹配请求。' : '该链接未提供可查询的请求模型标识；可到请求记录按实际模型查找。'} />,
         },
       ]}
     />
@@ -334,6 +347,9 @@ export function ModelDetailsPage() {
 
 export function ProviderDetailsPage() {
   const [params] = useSearchParams();
+  const back = entityBackTarget(params, { href: '/platforms', label: '返回上游' });
+  const restoredCollection = providerCollectionContext(params);
+  const [hostedView, setHostedView] = useState({ query: restoredCollection.query, filter: restoredCollection.filter, page: restoredCollection.page });
   const requestedId = params.get('id') || '';
   const requestedName = params.get('name') || '';
   const [provider, setProvider] = useState<PlatformItem | null>(null);
@@ -343,16 +359,19 @@ export function ProviderDetailsPage() {
   const [registered, setRegistered] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [recentError, setRecentError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setError(null); setRecentError(null); setRecent([]);
     const range = last30Days();
     Promise.all([
       getLogicalModels().catch(() => null),
       getPlatforms(),
       getModels(requestedId ? { platformId: requestedId } : undefined),
-      requestedName ? getLogs({ ...range, provider: requestedName, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
+      requestedId || requestedName ? getLogs({ ...range, platformId: requestedId || undefined, provider: requestedId ? undefined : requestedName, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([logicalResult, platformResult, modelResult, logResult]) => {
       if (!alive) return;
       if (!platformResult.success || !modelResult.success) {
@@ -361,8 +380,9 @@ export function ProviderDetailsPage() {
         return;
       }
       const matched = providerForDetail(platformResult.data.items, requestedId, requestedName) ?? null;
-      const recentItems = logResult?.success ? logResult.data.items : [];
-      const observed = recentItems.find((item) => (item.platformName || item.provider) === requestedName) ?? recentItems[0] ?? null;
+      const recentItems = logResult?.success ? logResult.data.items.filter(item => requestedId ? item.platformId === requestedId : (item.platformName || item.provider) === requestedName) : [];
+      const observed = !requestedId ? recentItems.find((item) => (item.platformName || item.provider) === requestedName) ?? null : null;
+      if (logResult && !logResult.success) setRecentError('最近请求读取失败，未判断为没有记录。');
       setLogicalModels(logicalResult?.success ? logicalResult.data.items : null);
       setRegistered(Boolean(matched));
       setProvider(matched ?? (observed ? observedProvider(observed, requestedName) : null));
@@ -373,11 +393,11 @@ export function ProviderDetailsPage() {
         : []);
       setRecent(recentItems);
       setLoading(false);
-    });
+    }).catch(() => { if (alive) { setError('实体读取中断，请重新读取；未改用同名对象。'); setLoading(false); } });
     return () => {
       alive = false;
     };
-  }, [requestedId, requestedName]);
+  }, [requestedId, requestedName, reload]);
 
   const providerRows = useMemo(() => provider ? collectProviderModels(provider.id, models, logicalModels || []) : [], [provider, models, logicalModels]);
   const totalCalls = models.reduce((sum, item) => sum + item.callCount, 0);
@@ -389,8 +409,8 @@ export function ProviderDetailsPage() {
   const observedProtocol = recent.find((item) => item.protocol)?.protocol || provider?.platformType || '未标注';
   const observedTransport = recent.find((item) => item.transport)?.transport || '未标注';
   if (loading) return <SectionLoader text="正在加载 Provider 详情" />;
-  if (error) return <DetailError message={error} backHref="/logs" />;
-  if (!provider) return <DetailError message="当前租户中没有找到该 Provider，可能已删除或不在你的权限范围内。" backHref="/logs" />;
+  if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} retry={() => setReload(value => value + 1)} />;
+  if (!provider) return <DetailError message={requestedId ? "当前可见范围未找到链接指定的精确供应方ID；未改用同名对象或日志身份。" : "当前可见范围没有找到该供应方，也没有同名观测记录。"} backHref={back.href} backLabel={back.label} />;
 
   return (
     <EntityDetailsShell
@@ -412,19 +432,18 @@ export function ProviderDetailsPage() {
       metrics={registered ? [
         { label: '托管模型', value: models.length, hint: '当前租户可见', icon: <Server size={17} /> },
         { label: '最大并发', value: provider.maxConcurrency || '未配置', hint: 'Provider 级上限', icon: <Gauge size={17} /> },
-        { label: '累计调用', value: fmtCompact(totalCalls || recent.length), hint: '可见模型累计', icon: <Route size={17} /> },
+        { label: '累计调用', value: fmtCompact(totalCalls), hint: '可见模型累计', icon: <Route size={17} /> },
         { label: '密钥状态', value: provider.hasKey ? '就绪' : '未就绪', hint: '不会显示密钥明文', icon: <KeyRound size={17} /> },
       ] : [
-        { label: '最近请求', value: fmtCompact(recent.length), hint: '当前筛选窗口', icon: <Route size={17} /> },
+        { label: '已载入记录', value: fmtCompact(recent.length), hint: '最多8条，非窗口总量', icon: <Route size={17} /> },
         { label: '观察模型', value: observedModels.length, hint: '来自日志，不代表配置', icon: <Server size={17} /> },
         { label: '上游协议', value: observedProtocol, hint: '最近记录', icon: <Gauge size={17} /> },
         { label: '传输方式', value: observedTransport, hint: '最近记录', icon: <KeyRound size={17} /> },
       ]}
-      backHref="/logs"
-      backLabel="返回请求记录"
-      primaryHref={`/logs?provider=${encodeURIComponent(provider.name)}`}
+      backHref={back.href} backLabel={back.label}
+            primaryHref={`/logs?provider=${encodeURIComponent(provider.name)}`}
       primaryLabel="查看 Provider 日志"
-      management={registered ? { href: "/platforms?view=provider", label: "管理供应方" } : undefined}
+      management={registered ? { href: `/platforms?${new URLSearchParams({ view: 'provider', providerId: provider.id, providerTab: 'connection' })}`, label: '管理此供应方连接' } : undefined}
       connectionSummary={registered ? <div className="lg-collection-connection-summary"><Server size={20}/><div><strong>{provider.platformType === "openai" ? "OpenAI compatible" : provider.platformType || "未配置协议"}</strong><code title={provider.apiUrl || "未配置"}>{provider.apiUrl || "未配置"}</code></div><span>{models.length} 个托管模型</span></div> : undefined}
       sections={[
         {
@@ -444,8 +463,8 @@ export function ProviderDetailsPage() {
           id: 'models',
           title: '托管模型',
           description: registered ? '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。' : '从最近请求中观察到的模型；只证明实际请求经过这里，不补造托管关系。',
-          content: registered ? <CollectionView items={providerRows} placeholder="搜索模型名称、标识或协议" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${model.protocol || ''} ${publicIds.join(' ')}`} filters={logicalModels ? [{ value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }, { value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }] : []}>
-            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
+          content: registered ? <CollectionView initialView={hostedView} onViewChange={setHostedView} items={providerRows} placeholder="搜索模型名称、标识或协议" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${model.protocol || ''} ${publicIds.join(' ')}`} filters={logicalModels ? [{ value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }, { value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }] : []}>
+            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id} className={model.id === restoredCollection.focus ? 'lg-collection-selected-row' : undefined}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={providerModelDetailHref({ modelId: model.id, model: model.modelName || model.name, platformId: provider.id }, 'provider-detail', hostedView, params)}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
           </CollectionView> : <CollectionView items={observedModels} placeholder="搜索日志观察到的模型" searchText={(model) => model}>
             {(pageModels) => <>{pageModels.map((model) => <Link className="lg-collection-detail-card" key={model} to={`/models/view?model=${encodeURIComponent(model)}`}><ModelEntityIcon model={model} /><div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div><ArrowUpRight size={15} /></Link>)}</>}
           </CollectionView>,
@@ -454,7 +473,7 @@ export function ProviderDetailsPage() {
           id: 'activity',
           title: '最近请求活动',
           description: '最近 30 天由该 Provider 处理的请求。',
-          content: <RecentRequests items={recent} emptyText="最近 30 天没有匹配请求。" />,
+          content: recentError ? <div role="alert">{recentError}<Button size="sm" onClick={() => setReload(value => value + 1)}>重新读取</Button></div> : <RecentRequests items={recent} emptyText="最近 30 天没有匹配请求。" />,
         },
       ]}
     />
@@ -482,17 +501,18 @@ function observedProvider(item: LlmLogListItem, requestedName: string): Platform
   };
 }
 
-function observedAppCaller(item: LlmLogListItem, requestedCode: string): GatewayAppCaller {
-  const requestType = item.requestType?.trim() || requestedCode.split('::').pop() || 'unknown';
+type AppCallerDetail = Omit<GatewayAppCaller, 'purpose'> & { purpose: GatewayAppCaller['purpose'] | null };
+function observedAppCaller(item: LlmLogListItem, requestedCode: string): AppCallerDetail {
+  const requestType = item.requestType!.trim();
   return {
-    id: `observed:${requestedCode}`,
+    id: `observed:${requestedCode}:${requestType}`,
     teamId: item.teamId || null,
     appCallerCode: item.appCallerCode || requestedCode,
     requestType,
     sourceSystem: item.sourceSystem || '未标注',
     clientCode: item.clientCode || '未标注',
     environment: item.environment || '未标注',
-    purpose: 'runtime',
+    purpose: null,
     ingressProtocol: item.ingressProtocol || '未标注',
     observedIngressProtocols: item.ingressProtocol ? [item.ingressProtocol] : [],
     title: item.appCallerCodeDisplayName || item.appCallerTitle || null,
@@ -524,64 +544,65 @@ function observedAppCaller(item: LlmLogListItem, requestedCode: string): Gateway
 
 export function AppCallerDetailsPage() {
   const [params] = useSearchParams();
-  // 先按**原样**认，削掉 G- 只作为兜底。
-  // 要兼容的是 2026-08-14 之前控制台把 App 名显示成 `G-<code>` 时用户收藏的链接；
-  // 但 appCallerCode 本身完全可能真的以 G- 开头（GatewayAppCallerIdentity.NormalizePart
-  // 只做 trim，不限制字符），无条件削前缀会让 `G-suite.sync::chat` 这类真实 App
-  // 从自己的日志行点进来时报「找不到」。所以顺序是：精确优先，兜底其次。
+  const back = entityBackTarget(params);
   const requestedCode = (params.get('code') || '').trim();
-  const legacyCode = requestedCode.replace(/^G-/, '');
-  const matchesRequested = (code?: string | null) => !!code && (code === requestedCode || code === legacyCode);
-  const requestedId = params.get('id') || '';
-  const [app, setApp] = useState<GatewayAppCaller | null>(null);
-  const [pool, setPool] = useState<ModelPool | null>(null);
+  const requestedType = (params.get('requestType') || '').trim().toLowerCase();
+  const requestedId = (params.get('id') || '').trim();
+  const [app, setApp] = useState<AppCallerDetail | null>(null);
+  const [candidates, setCandidates] = useState<GatewayAppCaller[]>([]);
   const [recent, setRecent] = useState<LlmLogListItem[]>([]);
+  const [recentError, setRecentError] = useState<string | null>(null);
   const [registered, setRegistered] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    const range = last30Days();
-    Promise.all([
-      // search 用削过前缀的那个（更宽）：它同时能捞回 `foo` 与 `G-foo`，
-      // 具体认哪一个交给下面的精确优先匹配，避免为两种写法各发一次请求。
-      getGatewayAppCallers({ page: 1, pageSize: 50, search: legacyCode || requestedId }),
-      getPools(),
-      requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
-    ]).then(([appResult, poolResult, logResult]) => {
-      if (!alive) return;
-      if (!appResult.success || !poolResult.success) {
-        setError(appResult.error?.message || poolResult.error?.message || 'App 详情加载失败');
-        setLoading(false);
-        return;
-      }
-      // 精确命中优先于兜底命中：同时存在 `G-foo` 与 `foo` 两个 App 时，
-      // 从 `G-foo` 的日志行点进来必须落到 `G-foo`，而不能被兜底规则拐到 `foo`。
-      const items = appResult.data.items;
-      const matched = items.find((item) => item.id === requestedId || item.appCallerCode === requestedCode)
-        ?? items.find((item) => matchesRequested(item.appCallerCode))
-        ?? null;
-      const recentItems = logResult?.success ? logResult.data.items : [];
-      const observed = recentItems.find((item) => item.appCallerCode === requestedCode)
-        ?? recentItems.find((item) => matchesRequested(item.appCallerCode))
-        ?? recentItems[0] ?? null;
-      const resolved = matched ?? (observed ? observedAppCaller(observed, requestedCode) : null);
-      setRegistered(Boolean(matched));
-      setApp(resolved);
-      setPool(poolResult.data.items.find((item) => item.id === resolved?.modelPoolId) ?? null);
-      setRecent(recentItems);
-      setLoading(false);
-    });
-    return () => {
-      alive = false;
+    setLoading(true); setError(null); setApp(null); setCandidates([]); setRecent([]); setRecentError(null);
+    const load = async () => {
+      try {
+        if (!requestedCode && !requestedId) { if (alive) setError('链接缺少调用方身份，请从请求记录或调用方清单重新打开。'); return; }
+        // Exact id is ANDed with the existing tenant/team scope on the server. Code search
+        // is anchored, then checked again as a code+requestType identity on the client.
+        const escapedCode = requestedCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const result = await getGatewayAppCallers(requestedId
+          ? { id: requestedId, page: 1, pageSize: 1 }
+          : { search: `^${escapedCode}$`, requestType: requestedType || undefined, page: 1, pageSize: 200 });
+        if (!alive) return;
+        if (!result.success) { setError(result.error?.message || '调用方登记读取失败，请重试。'); return; }
+        const matches = appCallerDetailCandidates(result.data.items, requestedId, requestedCode, requestedType);
+        if (matches.length > 1 || (!requestedType && !requestedId && result.data.total > result.data.items.length)) {
+          setCandidates(matches);
+          if (!matches.length) setError('此身份查询结果过多，无法确认目标。请从调用方清单按业务名与请求类型打开。');
+          return;
+        }
+        const matched = matches[0] || null;
+        if (!matched && requestedId) { setError('当前租户与团队范围内没有这个精确调用方 ID；未改用同名对象。'); return; }
+        if (!matched && !requestedType) { setError('没有找到登记身份，且链接未指定请求类型，无法将日志记录归为某个调用方。'); return; }
+        if (!matched && result.data.total > result.data.items.length) { setError('查询结果未完整返回，无法确认该调用方是否登记。请从调用方清单重新打开。'); return; }
+        if (matched) { setApp(matched); setRegistered(true); }
+        const identityCode = matched?.appCallerCode || requestedCode;
+        const identityType = matched?.requestType || requestedType;
+        try {
+          const logs = await getLogs({ ...last30Days(), appCallerCode: identityCode, requestType: identityType, view: 'logical', page: 1, pageSize: 8 });
+          if (!alive) return;
+          if (!logs.success) { if (!matched) setError(logs.error?.message || '日志身份读取失败，无法确认该调用方。'); else setRecentError(logs.error?.message || '最近请求读取失败'); return; }
+          const items = logs.data.items.filter(item => item.appCallerCode?.toLowerCase() === identityCode.toLowerCase() && item.requestType?.toLowerCase() === identityType.toLowerCase());
+          setRecent(items);
+          if (!matched && items.length) { setApp(observedAppCaller(items[0], identityCode)); setRegistered(false); }
+        } catch { if (alive) { if (!matched) setError('日志读取中断，未确认该调用方身份。请重新读取。'); else setRecentError('最近请求读取中断，请重新读取。'); } }
+      } catch { if (alive) setError('调用方登记读取中断，请重新读取；未将失败结果当作未登记。'); }
+      finally { if (alive) setLoading(false); }
     };
-  }, [requestedCode, requestedId]);
+    void load();
+    return () => { alive = false; };
+  }, [requestedCode, requestedType, requestedId, revision]);
 
   if (loading) return <SectionLoader text="正在加载 App 详情" />;
-  if (error) return <DetailError message={error} backHref="/logs" />;
-  if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref="/logs" />;
+  if (error) return <DetailError message={error} backHref={back.href} backLabel={back.label} retry={() => setRevision(value => value + 1)} />;
+  if (candidates.length) return <div className="lg-entity-detail-page"><h1>选择要查看的调用方用途</h1><div className="lg-entity-detail-request-list">{candidates.map(item => <Link key={item.id} to={callerCandidateDetailHref(item, params)}><div><strong>{item.title || item.appCallerCode}</strong><code>{item.appCallerCode}</code></div><span>{item.requestType}</span></Link>)}</div><Link to={back.href}>{back.label}</Link></div>;
+  if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref={back.href} backLabel={back.label} />;
 
   const displayCode = app.appCallerCode;
   return (
@@ -591,82 +612,54 @@ export function AppCallerDetailsPage() {
       identifier={displayCode}
       subtitle={`${app.sourceSystem || '未知来源'} · ${app.requestType || '未标注类型'}`}
       description={app.notes || (registered
-        ? 'App 表示发起 Gateway 请求的业务身份。页面汇总它的调用来源、模型路由、预算与速率治理以及最近请求，便于从一条日志继续定位完整业务上下文。'
-        : '该 App 已出现在请求日志中，但当前租户注册表尚无对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
+        ? '查看此业务用途的调用记录、未点名默认模型与治理设置。允许调用是管理设置，不代表线路健康或保证请求成功。'
+        : '该 App 已出现在请求日志中，但当前可见范围未找到对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
       icon={<AppEntityIcon size="lg" />}
       status={[
-        { label: registered ? (app.status === 'active' ? '已启用' : app.status || '状态未知') : '仅日志观测', tone: registered && app.status === 'active' ? 'good' : 'warning' },
-        { label: app.modelPolicy || 'auto', tone: 'neutral' },
-        { label: app.owner ? `负责人 ${app.owner}` : '未指定负责人', tone: app.owner ? 'good' : 'warning' },
+        registered ? callerManagementState(app.status) : { label: '仅日志观测', tone: 'warning' },
       ]}
       metrics={[
-        { label: registered ? '累计请求' : '近 30 天请求', value: fmtCompact(registered ? app.totalSeen : recent.length), hint: registered ? '注册表累计观察' : '来自当前日志范围', icon: <Route size={17} /> },
-        { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}`, hint: '租户治理边界内', icon: <CircleDollarSign size={17} /> },
-        { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute, hint: 'App 级速率限制', icon: <Gauge size={17} /> },
-        { label: '最近调用', value: app.lastSeenAt ? fmtDate(app.lastSeenAt) : '暂无', hint: '最后一次观察时间', icon: <Clock3 size={17} /> },
+        { label: registered ? '累计请求' : '已载入记录', value: fmtCompact(registered ? app.totalSeen : recent.length), hint: registered ? '注册表累计观察' : '最近30天 · 最多8条', icon: <Route size={17} /> },
+        { label: '最近调用', value: app.lastSeenAt ? formatPlatformTime(app.lastSeenAt) : '暂无', hint: '最后一次观察时间', icon: <Clock3 size={17} /> },
       ]}
-      backHref="/logs"
-      backLabel="返回请求记录"
-      primaryHref={`/app-callers?search=${encodeURIComponent(app.appCallerCode)}&focus=${encodeURIComponent(app.appCallerCode)}`}
-      primaryLabel={registered ? '打开治理配置' : '打开 App 注册表'}
+      backHref={back.href} backLabel={back.label}
+            primaryHref={callerWorkspaceReturnHref(app.appCallerCode, app.requestType, '')}
+      primaryLabel={registered ? '查看调用方治理' : '查看调用方登记'}
       sections={[
         {
-          id: 'identity',
-          title: 'Identity',
-          description: '这些字段回答“谁在调用、从哪里调用、以什么方式调用”。',
+          id: 'activity',
+          title: '最近请求',
+          description: `最近30天 · ${app.requestType} · 最多8条`,
+          content: recentError ? <div role="alert">{recentError}<Button size="sm" onClick={() => setRevision(value => value + 1)}>重新读取</Button></div> : <RecentRequests items={recent} emptyText="最近30天没有这个调用方与请求类型的记录。" />,
+        },
+        {
+          id: 'routing',
+          title: '未点名默认模型',
+          description: '仅影响未显式指定模型的这个请求类型；允许范围、用途能力和线路状态仍会决定请求结果。',
+          content: registered ? <AppCallerDefaultsProvider returnSearch=""><AppCallerDefaultModel item={app} /></AppCallerDefaultsProvider> : <span>仅有历史日志，未推断当前默认配置。</span>,
+        },
+        {
+          id: 'governance',
+          title: '治理设置',
           content: <Facts items={[
-            { label: 'appCallerCode', value: <code>{app.appCallerCode}</code> },
+            { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
+            { label: '单次预占', value: !registered ? '未登记' : app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
+            { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
+            { label: '负责人', value: app.owner || '未指定' },
+            { label: '首次观察', value: app.firstSeenAt ? formatPlatformTime(app.firstSeenAt) : '未记录' },
+            { label: '最近更新', value: app.updatedAt ? formatPlatformTime(app.updatedAt) : '未记录' },
+          ]} />,
+        },
+        {
+          id: 'identity',
+          title: '调用身份',
+          content: <Facts items={[
             { label: '来源系统', value: app.sourceSystem || '未标注' },
             { label: '调用客户端', value: app.clientCode || '未标注' },
             { label: '环境', value: app.environment || '未标注' },
             { label: '入口协议', value: app.ingressProtocol || '未标注' },
             { label: '用途', value: app.purpose || '未标注' },
           ]} />,
-        },
-        {
-          id: 'routing',
-          title: 'Routing',
-          description: 'App 自己不维护上游连接，只声明模型策略；具体 Provider 选择由 Gateway 完成。',
-          content: <Facts items={[
-            { label: '模型策略', value: app.modelPolicy || 'auto' },
-            // 池已退场：这个字段是存量回执，不是可点进去的对象。
-            // 原先它链到池页并带一个 focus 参数，而那条路由整条 302 到对外模型列表、参数被丢掉——
-            // 点过去看不到这个池，也看不到这条绑定（第 71 轮 review）。
-            // 所以只把值原样摆出来，并说清它现在不参与路由、该去哪儿改。
-            {
-              label: '模型池（存量绑定）',
-              value: (
-                <span>
-                  {pool ? (pool.name || pool.code || pool.id) : (app.modelPoolId || '未绑定')}
-                  <span style={{ opacity: 0.7 }}>
-                    {' '}· 池已退场，这条绑定不参与路由；要改这个调用方落到哪个模型，去对外模型页设认领或用途默认
-                  </span>
-                </span>
-              ),
-            },
-            { label: '参数策略', value: app.parameterPolicy || 'default-drop' },
-            { label: '模型池健康', value: pool?.health || '未解析' },
-            { label: '健康成员', value: pool ? `${pool.healthyMembers} / ${pool.models.length}` : '未解析' },
-            { label: '最近实际模型池', value: app.lastObservedModelPoolId || '未观察到' },
-          ]} />,
-        },
-        {
-          id: 'governance',
-          title: 'Governance',
-          content: <Facts items={[
-            { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
-            { label: '单次预占', value: !registered ? '未登记' : app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
-            { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
-            { label: '负责人', value: app.owner || '未指定' },
-            { label: '首次观察', value: app.firstSeenAt ? fmtDate(app.firstSeenAt) : '未记录' },
-            { label: '最近更新', value: app.updatedAt ? fmtDate(app.updatedAt) : '未记录' },
-          ]} />,
-        },
-        {
-          id: 'activity',
-          title: 'Activity',
-          description: '最近 30 天该 App 发起的请求。',
-          content: <RecentRequests items={recent} emptyText="最近 30 天没有匹配请求。" />,
         },
       ]}
     />

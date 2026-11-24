@@ -1,4 +1,5 @@
 using PrdAgent.Core.Attributes;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
@@ -44,13 +45,17 @@ public enum ModelLabSuite
 
 public class ModelLabSelectedModel
 {
+    public string? LogicalModelId { get; set; }
+    [BsonIgnore] public string? ModelReferenceStatus { get; set; }
+    [BsonIgnore] public string? ModelReferenceReason { get; set; }
+
     public string ModelId { get; set; } = string.Empty;
     public string PlatformId { get; set; } = string.Empty;
 
     /// <summary>管理后台里配置的展示名称</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>真实调用的模型名（如 gpt-5-fast / deepseek-v3.2）</summary>
+    /// <summary>逻辑模型公开标识快照；旧记录原值保留。</summary>
     public string ModelName { get; set; } = string.Empty;
 
     /// <summary>平台可用模型列表的分组字段（如 qwen / deepseek）</summary>

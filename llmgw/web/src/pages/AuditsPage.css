@@ -1,0 +1,13 @@
+.lg-audits-mobile { display: none; }
+@media (max-width: 680px) {
+  .lg-audits-desktop { display: none; }
+  .lg-audits-mobile { display: block; }
+  .lg-audits-mobile article { padding: 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--border-subtle); overflow-wrap: anywhere; }
+  .lg-audits-mobile article:last-child { border-bottom: 0; }
+  .lg-audit-mobile-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .lg-audit-mobile-meta { color: var(--text-secondary); font-size: var(--fs-secondary); }
+  .lg-audits-mobile button { justify-self: start; padding: 6px 0; min-height: 36px; color: var(--accent); background: transparent; border: 0; font: inherit; }
+  .lg-audits-mobile button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .lg-audit-mobile-detail { display: grid; gap: 6px; color: var(--text-secondary); }
+  .lg-audit-mobile-detail pre { margin: 0; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-elevated); color: var(--text-primary); }
+}

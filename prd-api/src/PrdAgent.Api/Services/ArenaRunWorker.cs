@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.Core.Helpers;
@@ -16,6 +17,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class ArenaRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunQueue _queue;
     private readonly IRunEventStore _runStore;
@@ -29,8 +31,10 @@ public sealed class ArenaRunWorker : BackgroundService
         IRunQueue queue,
         IRunEventStore runStore,
         IConfiguration config,
-        ILogger<ArenaRunWorker> logger)
+        ILogger<ArenaRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _runStore = runStore;
@@ -47,6 +51,7 @@ public sealed class ArenaRunWorker : BackgroundService
 
     private sealed record ArenaSlotInput(
         string SlotId,
+        string LogicalModelId,
         string PlatformId,
         string ModelId,
         string Label,
@@ -125,12 +130,13 @@ public sealed class ArenaRunWorker : BackgroundService
                 foreach (var s in slotsArr.EnumerateArray())
                 {
                     var slotId = s.TryGetProperty("slotId", out var si) ? (si.GetString() ?? "") : "";
+                    var logicalModelId = s.TryGetProperty("logicalModelId", out var lm) ? (lm.GetString() ?? "") : "";
                     var platformId = s.TryGetProperty("platformId", out var pi) ? (pi.GetString() ?? "") : "";
                     var modelId = s.TryGetProperty("modelId", out var mi) ? (mi.GetString() ?? "") : "";
                     var label = s.TryGetProperty("label", out var lb) ? (lb.GetString() ?? "") : "";
                     var labelIndex = s.TryGetProperty("labelIndex", out var li) && li.TryGetInt32(out var liVal) ? liVal : 0;
                     if (!string.IsNullOrWhiteSpace(slotId) && !string.IsNullOrWhiteSpace(platformId) && !string.IsNullOrWhiteSpace(modelId))
-                        slots.Add(new ArenaSlotInput(slotId.Trim(), platformId.Trim(), modelId.Trim(), label.Trim(), labelIndex));
+                        slots.Add(new ArenaSlotInput(slotId.Trim(), logicalModelId.Trim(), platformId.Trim(), modelId.Trim(), label.Trim(), labelIndex));
                 }
             }
 
@@ -156,6 +162,10 @@ public sealed class ArenaRunWorker : BackgroundService
     {
         var meta = await _runStore.GetRunAsync(RunKinds.Arena, runId, stoppingToken);
         if (meta == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, meta.TaskPermitId, meta.RunId);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(meta.TaskPermitId, meta.RunId));
         if (meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled) return;
 
         var input = ParseInput(meta.InputJson);
@@ -271,6 +281,7 @@ public sealed class ArenaRunWorker : BackgroundService
         // Process all slots in parallel
         var sem = new SemaphoreSlim(Math.Min(input.Slots.Count, 20), Math.Min(input.Slots.Count, 20));
         var tasks = new List<Task>();
+        var successfulSlots = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
 
         foreach (var slot in input.Slots)
         {
@@ -279,7 +290,7 @@ public sealed class ArenaRunWorker : BackgroundService
                 await sem.WaitAsync(CancellationToken.None);
                 try
                 {
-                    await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, gateway, ctxAccessor, slotTexts, cts.Token);
+                    successfulSlots[slot.SlotId] = await RunOneSlotAsync(runId, slot, input.Prompt, input.UserId, llmAttachments, db, gateway, ctxAccessor, slotTexts, cts.Token);
                 }
                 catch (OperationCanceledException) { /* expected on cancel */ }
                 catch (Exception ex)
@@ -317,7 +328,12 @@ public sealed class ArenaRunWorker : BackgroundService
         }
         else
         {
-            meta.Status = RunStatuses.Done;
+            meta.Status = successfulSlots.Values.Any(x => x) ? RunStatuses.Done : RunStatuses.Error;
+            if (meta.Status == RunStatuses.Error)
+            {
+                meta.ErrorCode = "ARENA_ALL_MODELS_FAILED";
+                meta.ErrorMessage = "本次阵容均未完成回答，请查看各成员状态并修复模型配置后重试。";
+            }
         }
         meta.EndedAt = DateTime.UtcNow;
         await _runStore.SetRunAsync(RunKinds.Arena, meta, ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
@@ -345,7 +361,7 @@ public sealed class ArenaRunWorker : BackgroundService
                         PlatformId = slot.PlatformId,
                         ModelId = slot.ModelId,
                         Content = text,
-                        Status = string.IsNullOrEmpty(text) ? "error" : "done",
+                        Status = successfulSlots.GetValueOrDefault(slot.SlotId) ? "done" : "error",
                     };
                 }).ToList(),
                 Revealed = false,
@@ -371,7 +387,7 @@ public sealed class ArenaRunWorker : BackgroundService
         }
     }
 
-    private async Task RunOneSlotAsync(
+    private async Task<bool> RunOneSlotAsync(
         string runId,
         ArenaSlotInput slot,
         string prompt,
@@ -383,40 +399,16 @@ public sealed class ArenaRunWorker : BackgroundService
         Dictionary<string, StringBuilder> slotTexts,
         CancellationToken ct)
     {
-        // Resolve platform + model
-        var platform = await db.LLMPlatforms.Find(p => p.Id == slot.PlatformId).FirstOrDefaultAsync(CancellationToken.None);
-        if (platform == null || !platform.Enabled)
+        // 再读只读目录，处理排队期间的停用/撤权；真正线路仅在 Gateway 发送时解析。
+        var references = new BusinessModelReferenceService(gateway);
+        var options = await references.GetOptionsAsync(AppCallerRegistry.Desktop.Arena.BattleChat, ModelTypes.Chat, ct);
+        var reference = BusinessModelReferenceService.Resolve(options, slot.LogicalModelId, slot.PlatformId, slot.ModelId);
+        if (!reference.Success)
         {
             await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
-                new { type = "modelStart", slotId = slot.SlotId },
+                new { type = "modelError", slotId = slot.SlotId, errorCode = "MODEL_REFERENCE_UNAVAILABLE", errorMessage = reference.Reason },
                 ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
-            await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
-                new { type = "modelError", slotId = slot.SlotId, errorCode = "PLATFORM_NOT_FOUND", errorMessage = "平台不存在或未启用" },
-                ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
-            return;
-        }
-
-        var apiUrl = platform.ApiUrl;
-        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-
-        // Check if model exists in llm_models for override config
-        var model = await db.LLMModels.Find(m => m.PlatformId == slot.PlatformId && m.ModelName == slot.ModelId).FirstOrDefaultAsync(CancellationToken.None);
-        if (model != null)
-        {
-            if (!string.IsNullOrEmpty(model.ApiUrl)) apiUrl = model.ApiUrl;
-            if (!string.IsNullOrEmpty(model.ApiKeyEncrypted))
-                apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
-        }
-
-        if (string.IsNullOrWhiteSpace(apiUrl) || string.IsNullOrWhiteSpace(apiKey))
-        {
-            await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
-                new { type = "modelStart", slotId = slot.SlotId },
-                ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
-            await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
-                new { type = "modelError", slotId = slot.SlotId, errorCode = "INVALID_CONFIG", errorMessage = "API 配置不完整" },
-                ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
-            return;
+            return false;
         }
 
         // 设置 LLM 请求上下文（确保 AppCallerCode 不为空，日志可追溯）
@@ -431,16 +423,14 @@ public sealed class ArenaRunWorker : BackgroundService
             SystemPromptRedacted: "[ARENA]",
             RequestType: "reasoning",
             AppCallerCode: "prd-agent.arena.battle::chat",
-            ModelResolutionType: ModelResolutionType.DirectModel));
+            ModelResolutionType: ModelResolutionType.LogicalModel));
 
         ILLMClient client = gateway.CreateClient(
             AppCallerRegistry.Desktop.Arena.BattleChat,
             ModelTypes.Chat,
             maxTokens: 4096,
             temperature: 0.2,
-            expectedModel: slot.ModelId,
-            pinnedPlatformId: platform.Id,
-            pinnedModelId: slot.ModelId);
+            expectedModel: reference.PublicId);
 
         // Emit modelStart
         var startedAt = DateTime.UtcNow;
@@ -518,22 +508,30 @@ public sealed class ArenaRunWorker : BackgroundService
             await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
                 new { type = "modelError", slotId = slot.SlotId, errorCode = "CANCELLED", errorMessage = "请求已被取消" },
                 ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
-            return;
+            return false;
         }
         catch (Exception ex)
         {
             await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
                 new { type = "modelError", slotId = slot.SlotId, errorCode = "LLM_ERROR", errorMessage = ex.Message },
                 ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
-            return;
+            return false;
         }
 
+        if (string.IsNullOrWhiteSpace(sb.ToString()))
+        {
+            await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
+                new { type = "modelError", slotId = slot.SlotId, errorCode = "EMPTY_RESPONSE", errorMessage = "模型未返回回答，请稍后重试或检查模型线路。" },
+                ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+            return false;
+        }
         var totalMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
         var ttftFinal = sawFirstDelta ? (long?)null : totalMs;
 
         await _runStore.AppendEventAsync(RunKinds.Arena, runId, "model",
             new { type = "modelDone", slotId = slot.SlotId, totalMs, ttftMs = ttftFinal },
             ttl: TimeSpan.FromHours(24), ct: CancellationToken.None);
+        return true;
     }
 
     private async Task WriteFinalSnapshotAsync(string runId, Dictionary<string, StringBuilder> slotTexts, ArenaRunInput input)

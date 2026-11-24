@@ -17,7 +17,7 @@ x-cds-project:
 #
 # 为什么剥离：仓库携带 `TODO: 请填写实际值` 占位符会让全量 `cdscli import`
 # 被审核拒绝（占位值覆盖线上真实密钥），结构变更无法落地（见
-# doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
+# https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
 #
 # 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
 #   ASSETS_PROVIDER=cloudflareR2 时：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
@@ -204,6 +204,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/console-api/**"
+        - "prd-api/src/LlmGateway.Transport/**"
         - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
@@ -447,6 +448,7 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      LlmGateway__ModelReferences__MapDeploymentIdentity: "prd-agent:cds::${VITE_GIT_BRANCH}"
       # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
       # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
       # 口令里一个 @ 就能把主机名解析歪。

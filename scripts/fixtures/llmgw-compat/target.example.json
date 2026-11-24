@@ -1,0 +1,14 @@
+{
+  "base": "https://your-test-gateway.example",
+  "model": "existing-fixed-logical-model-id",
+  "upstream": "openai",
+  "appCallerCode": "llmgw.compat-regression::chat",
+  "keyEnv": "LLMGW_COMPAT_KEY",
+  "headersEnv": "LLMGW_COMPAT_HEADERS",
+  "caseIds": [
+    "native-text-json", "native-text-stream", "native-tools-json", "native-tools-stream",
+    "openai-text-json", "openai-text-stream", "openai-tools-json", "openai-tools-stream",
+    "claude-text-json", "claude-text-stream", "claude-tools-json", "claude-tools-stream",
+    "gemini-text-json", "gemini-text-stream", "gemini-tools-json", "gemini-tools-stream"
+  ]
+}

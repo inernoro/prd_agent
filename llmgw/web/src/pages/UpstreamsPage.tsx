@@ -10,12 +10,13 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { PlatformsPage } from '@/pages/PlatformsPage';
 import { ExchangesPage } from '@/pages/ExchangesPage';
 import { TabBar } from '@/components/ui';
+import { GlobalUpstreamProxyControl, UpstreamProxyProvider } from '@/components/UpstreamProxySettings';
 import { GAP } from '@/lib/surface';
 
 type UpstreamView = 'provider' | 'exchange' | 'catalog' | 'imagegen';
 
 const VIEWS: Array<{ key: UpstreamView; label: string }> = [
-  { key: 'provider', label: 'Provider' },
+  { key: 'provider', label: '供应方' },
   { key: 'exchange', label: '转接上游' },
   { key: 'catalog', label: '模型名录' },
   { key: 'imagegen', label: '生图契约' },
@@ -35,8 +36,8 @@ export function UpstreamsPage() {
       : 'provider';
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
-      <TabBar
+    <UpstreamProxyProvider><div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+      <div className="lg-upstream-navigation"><TabBar
         ariaLabel="上游配置分类"
         items={VIEWS}
         activeKey={view}
@@ -47,7 +48,8 @@ export function UpstreamsPage() {
           setParams(next, { replace: true });
         }}
       />
-      {view === 'exchange' ? <ExchangesPage /> : <PlatformsPage section={view} />}
-    </div>
+      {view !== 'provider' ? <GlobalUpstreamProxyControl /> : null}</div>
+        {view === 'exchange' ? <ExchangesPage /> : <PlatformsPage section={view} />}
+    </div></UpstreamProxyProvider>
   );
 }

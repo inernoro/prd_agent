@@ -11,6 +11,14 @@ namespace PrdAgent.Core.Models;
 [BsonIgnoreExtraElements]
 public class DefectReport
 {
+    /// <summary>初次创建内容指纹，响应丢失重试时识别同键异内容。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CreationFingerprint { get; set; }
+
+    /// <summary>内容与状态修改的原子比较版本，不含附件、已读和文件夹等独立元数据。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long EditRevision { get; set; }
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -246,6 +254,12 @@ public class DefectVersion
 /// </summary>
 public class DefectAttachment
 {
+    /// <summary>当前上传请求的关联标识，供表单恢复时识别本次附件；旧客户端为空。</summary>
+    public string? ClientRequestId { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? RequestFingerprint { get; set; }
+
     /// <summary>附件 ID</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 

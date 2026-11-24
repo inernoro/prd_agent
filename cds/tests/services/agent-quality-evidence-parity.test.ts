@@ -8,11 +8,13 @@ import { createArtifactQualityGate as createRuntimeGate, knowledgeEvidenceOf as 
  * 同一页面在执行器的质量闸里通过、到 MAP 发布闸才被拒，用户白等一整轮——根因是两道闸的证据口径分裂：
  * MAP（HostedSiteEditRunWorker.BuildQualityEvidence）明确不把用户写的标题与要求当证据，
  * 执行器这边却算进去了（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
- * 两份执行器（CDS 会话运行时、独立设计执行服务）都只许用「不含标题与要求」的证据。
+ * 仍执行内容硬校验的 CDS 会话运行时只许用「不含标题与要求」的证据。
+ * 独立设计执行服务现只做安全交付、内容与浏览器结果仅作观察；其接线和真实交付正反例
+ * 由 design-runtime/opendesign/tests/{moved-pure-functions,executor}.test.ts 覆盖。
+ * 下方两套纯函数的证据规则仍有效，不代表独立执行器重新启用内容硬校验。
  */
 const RUNTIMES = [
   path.join(process.cwd(), 'src/services/agent-workspace-session-runtime.ts'),
-  path.join(process.cwd(), '../design-runtime/opendesign/src/executor.ts'),
 ];
 
 describe('执行器质量闸与 MAP 发布闸同一证据口径', () => {

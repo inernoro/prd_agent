@@ -162,6 +162,15 @@ public static class LiteraryIllustrationChoices
             + "请改传其中之一（比例或宽x高都行），或在智能体接入台给这台客户端换一个支持该比例的模型。");
     }
 
+    /// <summary>网页尺寸菜单是有限目录。即使范围模型缺最小面积字段，也不能提交目录外的旧尺寸。</summary>
+    public static string? ValidateWebSize(string size, ImageGenAdapterInfo model)
+    {
+        var error = GatewayImageModelCatalog.ValidateSize(size, model);
+        if (error != null || model.SizesNotApplicable) return error;
+        return model.SizesByResolution.Values.SelectMany(x => x).Any(x => x.Size == size)
+            ? null : "当前模型不支持这个配图尺寸，请从尺寸菜单重新选择后生成。";
+    }
+
     /// <summary>这个模型每个比例实际会落到的尺寸。智能体看预设、被拒时看可选项，都是这一份。</summary>
     public static List<SizeChoice> SupportedSizes(ImageGenAdapterInfo model)
     {

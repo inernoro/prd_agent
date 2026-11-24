@@ -133,6 +133,7 @@ export const AUTH_SCHEME_OPTIONS = [
   { value: 'XApiKey', label: 'x-api-key (Header: x-api-key)' },
   { value: 'x-goog-api-key', label: 'x-goog-api-key (Google Gemini 原生)' },
   { value: 'DoubaoAsr', label: '豆包 ASR (X-Api-App-Key + X-Api-Access-Key)' },
+  { value: 'DoubaoTts', label: '豆包 TTS (AppID|AccessToken，新版单密钥用 XApiKey)' },
 ] as const;
 
 /** Exchange 导入模板定义 */

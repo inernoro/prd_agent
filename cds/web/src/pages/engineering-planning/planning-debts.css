@@ -1,0 +1,269 @@
+.ep-ledger { display: flex; align-items: center; min-width: 0; min-height: 55px; }
+.ep-ledger-body { min-width: 0; }
+.ep-ledger-body p { margin-top: 3px; color: var(--ep-muted); font-size: 13px; }
+.ep-ledger-metrics { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 22px; color: var(--ep-muted); }
+.ep-ledger-metrics > span { display: inline-flex; align-items: baseline; gap: 5px; font-size: 13px; font-weight: 600; white-space: nowrap; line-height: 1.02; }
+.ep-ledger-metrics strong { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.ep-ledger-metrics small { font-size: 12px; font-weight: 400; }
+.ep-ledger-metrics [data-tone] strong { color: var(--ep-fg); }
+.ep-debt-controls { display: grid; gap: 11px; }
+.ep-search {
+  display: flex; align-items: center; gap: 7px; width: min(100%, 380px); min-width: 0;
+  padding-inline-start: 9px; border: 1px solid var(--ep-line); border-radius: 7px; background: var(--ep-panel);
+}
+.ep-search:focus-within { border-color: var(--ep-accent); }
+.ep-search > svg { width: 16px; height: 16px; color: var(--ep-muted); flex: none; }
+.ep-search > input { width: 100%; min-width: 0; min-height: 34px; padding: 4px 9px 4px 0; font: inherit; background: transparent; }
+.ep-search > input:focus-visible { outline: 0; }
+.ep-search > input::placeholder { color: var(--ep-muted); }
+.ep-list-filters > .ep-search { flex: 0 1 380px; }
+.ep-priority-pills { display: flex; gap: 6px; align-items: center; }
+.ep-priority-pills > button {
+  display: flex; align-items: center; justify-content: center; min-width: 48px; min-height: 30px;
+  border: 1px solid var(--ep-line); border-radius: 16px; background: var(--ep-panel); padding: 2px 6px;
+}
+.ep-priority-pills > button[aria-pressed="true"] { border-color: var(--ep-accent); box-shadow: 0 0 0 1px var(--ep-accent); }
+.ep-priority {
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px; justify-self: start; white-space: nowrap;
+  padding: 1px 5px; color: var(--ep-muted); font-size: 12px; font-weight: 650;
+}
+.ep-priority > svg { width: 14px; height: 14px; }
+.ep-priority[data-priority="high"] { color: var(--ep-fg); font-weight: 650; }
+.ep-priority[data-priority="high"] > svg { color: var(--ep-danger); }
+.ep-priority[data-priority="mid"] { color: var(--ep-fg); }
+.ep-list-filter-menu { position: relative; }
+.ep-list-filter-menu > summary { min-height: 33px; border-color: transparent; background: transparent; font-size: 13px; color: var(--ep-muted); }
+.ep-list-filter-menu > summary::-webkit-details-marker { display: none; }
+.ep-list-filter-pop {
+  position: absolute; z-index: 7; display: grid; gap: 9px; min-width: 195px; margin-top: 4px; padding: 10px;
+  inset-inline-start: 0; border: 1px solid var(--ep-line); border-radius: 8px; background: var(--ep-panel);
+  box-shadow: var(--shadow-card);
+}
+.ep-list-filter-pop select { width: 100%; padding-inline-end: 20px; }
+.ep-filter-count { background: var(--ep-warn-soft); color: var(--ep-warn); padding: 0 5px; border-radius: 6px; }
+.ep-clear-tag { font-size: 12px; color: var(--ep-accent-ink); background: color-mix(in srgb, var(--ep-accent) 10%, var(--ep-panel)); }
+.ep-debt-list-bar { display: flex; align-items: center; gap: 7px 12px; justify-content: space-between; min-width: 0; }
+.ep-debt-segments {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-width: 0; max-width: 100%;
+  padding: 2px; border-radius: 7px; background: var(--ep-soft);
+}
+.ep-debt-segments > button {
+  display: flex; align-items: center; gap: 5px; padding: 4px 7px; min-height: 28px; border: 1px solid transparent;
+  border-radius: 6px; color: var(--ep-muted); white-space: nowrap; font-size: 12.5px;
+}
+.ep-debt-segments > button[aria-pressed="true"] { background: var(--ep-panel); border-color: var(--ep-line); color: var(--ep-fg); font-weight: 620; }
+.ep-debt-segments > button > span { font-variant-numeric: tabular-nums; }
+.ep-debt-segments > button[data-view="review_due"] > span { color: var(--ep-warn); }
+.ep-debt-list-order { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--ep-muted); white-space: nowrap; }
+.ep-debt-list-order select { min-height: 29px; padding: 3px 23px 3px 8px; }
+.ep-debt-surface { padding: 0; overflow: hidden; }
+.ep-debt-surface > .ep-empty { margin: 12px; }
+.ep-debt-header, .ep-debt-line {
+  display: grid; grid-template-columns: 30px minmax(110px, 1fr) minmax(95px, .29fr) 83px 65px 75px 14px;
+  align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; padding: 8px 14px;
+}
+.ep-debt-header { min-height: 34px; background: color-mix(in srgb, var(--ep-soft) 46%, var(--ep-base)); font-size: 12px; color: var(--ep-muted); }
+.ep-debt-line { min-height: 62px; background: var(--ep-panel); cursor: pointer; }
+.ep-debt-line:focus-visible { outline-offset: -3px; }
+.ep-debt-line:hover { background: color-mix(in srgb, var(--ep-base) 48%, var(--ep-panel)); }
+.ep-debts { margin: 0; padding: 0; list-style: none; }
+.ep-debts > li { border-top: 1px solid var(--ep-line); }
+.ep-debt-title { display: grid; align-content: center; gap: 4px; min-width: 0; }
+.ep-debt-title > strong { font-weight: 625; font-size: 14px; overflow-wrap: anywhere; line-height: 1.25; }
+.ep-debt-title > small { display: block; color: var(--ep-muted); font-size: 12px; line-height: 17px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ep-debt-title > small .ep-id { font-size: inherit; }
+.ep-row-tag { border-radius: 4px; background: var(--ep-soft); color: var(--ep-muted); margin-inline-start: 5px; padding: 1px 4px; font-size: 11px; }
+.ep-hit-count {
+  display: inline-flex; align-items: center; gap: 2px; margin-inline-start: 6px; padding: 0 4px;
+  background: var(--ep-soft); color: var(--ep-muted); border-radius: 6px; font: 600 11px/16px var(--cds-font-sans), sans-serif;
+}
+.ep-hit-count svg { width: 11px; height: 11px; }
+.ep-row-owner, .ep-row-state { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-row-state i { display: inline-block; width: 6px; height: 6px; margin-inline-end: 5px; border-radius: 50%; background: var(--ep-muted); vertical-align: 1px; }
+.ep-row-state[data-status="in_progress"] i { background: var(--ep-info); }
+.ep-row-state[data-status="repaid"] i { background: var(--ep-ok); }
+.ep-row-state[data-status="deferred"] i { background: var(--ep-warn); }
+.ep-row-open { width: 14px; height: 14px; color: var(--ep-muted); }
+.ep-deadline { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 0; font-size: 12px; gap: 2px; color: var(--ep-muted); }
+.ep-deadline > time { font-size: 11.5px; white-space: nowrap; }
+.ep-due-chip {
+  padding: 1px 7px; border-radius: 13px; color: var(--ep-fg); background: var(--ep-soft);
+  white-space: nowrap; font-size: 12px; line-height: 19px; font-variant-numeric: tabular-nums;
+}
+.ep-deadline--large .ep-due-chip { padding: 4px 13px; font-size: 14px; line-height: 26px; }
+.ep-due-chip strong { font-size: 15px; font-weight: 750; }
+.ep-deadline--large .ep-due-chip strong { font-size: 23px; }
+.ep-due-chip[data-tone="bad"] { color: var(--ep-danger); background: transparent; }
+.ep-due-chip[data-tone="soon"] { color: var(--ep-accent-ink); background: color-mix(in srgb, var(--ep-accent) 11%, var(--ep-panel)); }
+.ep-due-chip[data-tone="review"] { color: var(--ep-warn); background: transparent; }
+.ep-coin {
+  position: relative; display: grid; place-items: center; width: 15px; height: 15px; flex: none;
+  border: 2px solid var(--ep-accent); border-radius: 50%; background: transparent;
+}
+.ep-coin[data-status="in_progress"] { border-color: var(--ep-info); }
+.ep-coin[data-status="repaid"] { border-color: var(--ep-ok); color: var(--ep-ok); }
+.ep-coin[data-status="dropped"] { border: 1px dashed var(--ep-muted); color: var(--ep-muted); }
+.ep-coin[data-status="deferred"], .ep-coin[data-status="pending-extinct"] { border: 0; color: var(--ep-muted); }
+.ep-coin svg { width: 100%; height: 100%; }
+.ep-pagination { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--ep-line); }
+@media (max-width: 780px) {
+  .ep-debt-list-bar { flex-wrap: wrap; }
+  .ep-debt-segments { flex: 1 1 100%; }
+  .ep-debt-header, .ep-debt-line { grid-template-columns: 26px minmax(110px, 1fr) 90px 70px 55px 68px 12px; gap: 7px; padding-inline: 9px; }
+}
+@media (max-width: 680px) {
+  .ep-ledger { flex-direction: column; align-items: flex-start; gap: 8px; min-height: 0; }
+  .ep-ledger-metrics { column-gap: 9px; }
+  .ep-ledger-metrics strong { font-size: 24px; }
+  .ep-ledger-metrics [data-tone="gone"] strong { font-size: 20px; }
+  .ep-ledger-metrics > span { gap: 3px; font-size: 11.5px; }
+  .ep-ledger-body p { margin-top: 6px; font-size: 13px; }
+  .ep-search { width: 100%; }
+  .ep-list-filters > .ep-search { flex: 1 1 100%; }
+  .ep-search > input { min-height: 38px; }
+  .ep-list-filter-pop { inset-inline-start: auto; inset-inline-end: 0; }
+  .ep-debt-segments > button { min-height: 33px; }
+  .ep-debt-header { display: none; }
+  .ep-debt-line {
+    grid-template-columns: 27px minmax(0, 1fr) auto 12px; padding: 9px; gap: 4px 7px; min-height: 66px;
+  }
+  .ep-debt-line > .ep-coin { grid-row: 1 / 3; align-self: start; }
+  .ep-debt-line > .ep-debt-title { grid-column: 2 / 4; }
+  .ep-debt-line > .ep-deadline { grid-column: 2; flex-flow: row wrap; align-items: center; gap: 4px; }
+  .ep-debt-line .ep-row-state { grid-column: 3; }
+  .ep-debt-line .ep-priority, .ep-debt-line .ep-row-owner { grid-row: 3; }
+  .ep-debt-line .ep-priority { grid-column: 2; }
+  .ep-debt-line .ep-row-owner { grid-column: 3; max-width: 14ch; }
+  .ep-debt-line > .ep-row-open { grid-column: 4; grid-row: 1 / 4; }
+}
+
+.ep-dialog.ep-dialog--repay { width: min(760px, calc(100vw - 16px)) !important; max-width: 100%; }
+.ep-dialog--repay .ep-dialog-head { padding: 15px 60px 12px 17px; }
+.ep-dialog--repay .ep-dialog-head h2 { font-size: 18px; }
+.ep-dialog--repay .ep-dialog-content { padding: 14px 16px 16px; gap: 14px; }
+.ep-dialog--defer .ep-dialog-content { padding: 16px 20px; gap: 14px; }
+.ep-defer-shortcuts, .ep-defer-plan { display: flex; flex-wrap: wrap; gap: 6px; }
+.ep-defer-plan { flex-direction: column; gap: 10px; }
+@media (max-width: 560px) {
+  .ep-dialog.ep-dialog--defer { width: 100vw !important; max-width: none; height: 100dvh; max-height: 100dvh !important; border-radius: 0; border-width: 0; }
+  .ep-dialog--defer .ep-dialog-form { flex: 1; }
+  .ep-dialog--defer .ep-dialog-content { flex: 1; align-content: start; }
+}
+.ep-repay-record { font-weight: 560; }
+.ep-repay-section { display: grid; gap: 10px; min-width: 0; }
+.ep-repay-check {
+  display: grid; gap: 6px; border: 1px solid var(--ep-line); border-radius: 8px;
+  min-width: 0; background: var(--ep-panel); padding: 9px 11px;
+}
+.ep-repay-check .ep-field > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ep-dialog .ep-repay-check select, .ep-dialog .ep-repay-check input[type=text] { min-height: 32px; padding-block: 4px; }
+.ep-repay-check input::placeholder { color: var(--ep-muted); opacity: 1; }
+.ep-repay-check-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ep-repay-check-head strong { font-weight: 650; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+.ep-verdicts {
+  display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--ep-line);
+  border-radius: 7px; background: var(--ep-soft); padding: 2px; flex: 0 0 auto;
+}
+.ep-verdicts label { min-height: 28px; display: flex; align-items: center; padding: 4px 10px; border-radius: 5px; color: var(--ep-muted); cursor: pointer; font-size: 13px; }
+.ep-verdicts label:has(input:focus-visible) { outline: 2px solid var(--ep-accent); outline-offset: 2px; }
+.ep-verdicts label:has(input:checked) { background: var(--ep-panel); color: var(--ep-fg); font-weight: 650; }
+.ep-verdicts label[data-verdict="met"]:has(input:checked) { background: var(--ep-ok-soft); color: var(--ep-ok); }
+.ep-verdicts label[data-verdict="unmet"]:has(input:checked) { background: var(--ep-bad-soft); color: var(--ep-danger); }
+.ep-repay-proof-line { display: grid; grid-template-columns: 112px minmax(0, 1fr) minmax(0, .9fr); gap: 7px; }
+.ep-collateral { border: 1px solid var(--ep-line); border-radius: 8px; padding: 9px 12px; gap: 6px; }
+.ep-collateral legend { font-weight: 650; padding-inline: 5px; }
+.ep-collateral label { overflow-wrap: anywhere; }
+.ep-collateral input { flex: none; }
+.ep-detail-strip {
+  display: flex; flex: 0 0 auto; align-items: center; gap: 7px; min-height: 52px; min-width: 0; padding: 6px 56px 6px 14px;
+  border-bottom: 1px solid var(--ep-line); background: var(--ep-base); color: var(--ep-muted); font-size: 13px;
+}
+.ep-detail-strip code { color: var(--ep-fg); font-family: var(--cds-font-mono), monospace; font-size: 13px; }
+.ep-detail-strip button { padding: 4px 2px; min-height: 32px; }
+.ep-detail-strip button:hover { color: var(--ep-accent-ink); text-decoration: underline; }
+.ep-open-in-list { margin-left: auto; }
+.ep-escape-help { margin-left: auto; white-space: nowrap; }
+.ep-open-in-list + .ep-escape-help { margin-left: 2px; }
+.ep-dialog--debt-detail { background: var(--ep-base); container: debt-detail / inline-size; border-width: 0 0 0 1px; }
+.ep-dialog--debt-detail .ep-detail { padding-inline: 24px; }
+@container debt-detail (max-width: 560px) {
+  .ep-dialog--debt-detail .ep-detail { padding-inline: 16px; }
+}
+.ep-dialog.ep-dialog--debt-detail {
+  /* The v21 reference sizes its drawer from the content area beside its navigation. */
+  --debt-drawer-content-offset: 208px;
+  width: min(calc((100vw - var(--debt-drawer-content-offset)) * .72), 880px) !important;
+}
+@media (max-width: 1240px) {
+  .ep-dialog.ep-dialog--debt-detail { --debt-drawer-content-offset: 78px; }
+}
+@media (max-width: 900px) {
+  .ep-dialog.ep-dialog--debt-detail { --debt-drawer-content-offset: 0px; }
+}
+@media (max-width: 720px) {
+  .ep-dialog.ep-dialog--debt-detail { width: 100vw !important; border-inline-start-width: 0; }
+}
+.ep-dialog.ep-dialog--debt-detail > button:last-child,
+.ep-dialog.ep-dialog--repay > button:last-child { top: 4px; right: 4px; width: 44px; height: 44px; background: transparent; }
+.ep-dialog.ep-dialog--debt-detail > button:last-child svg,
+.ep-dialog.ep-dialog--repay > button:last-child svg { width: 18px; height: 18px; }
+.ep-detail-scroll > .ep-debt-head { padding: 17px clamp(14px, 1.75vw, 24px) 4px; background: transparent; border-bottom: 0; margin: 0; gap: 10px; }
+.ep-debt-headline { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-width: 0; }
+.ep-debt-headline > .ep-coin { width: 17px; height: 17px; }
+.ep-debt-headline > .ep-debt-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.ep-debt-kicker { flex-wrap: wrap; gap: 7px; }
+.ep-debt-heading h2 { font-size: 20px; line-height: 1.3; font-weight: 680; }
+.ep-debt-meta { gap: 5px 12px; font-size: 13px; }
+.ep-debt-meta > span { min-width: 0; max-width: 100%; }
+.ep-debt-deadline > .ep-deadline { align-items: flex-end; }
+.ep-debt-actions { align-items: stretch; gap: 7px; margin-bottom: 4px; }
+.ep-debt-actions .ep-button { min-height: 33px; font-size: 13px; }
+.ep-debt-actions .ep-button svg { width: 15px; height: 15px; }
+.ep-debt-actions .ep-debt-hit, .ep-debt-actions .ep-debt-more { border-color: transparent; background: transparent; color: var(--ep-muted); }
+.ep-debt-actions .ep-debt-more { min-width: 44px; }
+.ep-paid-banner { display: flex; gap: 12px; border-color: color-mix(in srgb, var(--ep-ok) 35%, var(--ep-line)); background: var(--ep-ok-soft); }
+.ep-paid-banner > svg { width: 23px; height: 23px; color: var(--ep-ok); flex: none; }
+.ep-paid-banner h3 { color: var(--ep-ok); }
+.ep-paid-banner p { margin: 4px 0; }
+.ep-history-tabs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ep-history-tabs > button { border: 1px solid transparent; border-radius: 6px; color: var(--ep-muted); min-height: 28px; padding: 2px 7px; font-size: 12px; }
+.ep-history-tabs > button[aria-pressed="true"] { background: var(--ep-soft); border-color: var(--ep-line); color: var(--ep-fg); font-weight: 620; }
+.ep-evidence li > svg { display: inline-block; vertical-align: -.13em; width: 15px; height: 15px; margin-right: 4px; color: var(--ep-accent-ink); }
+@media (max-width: 560px) {
+  .ep-dialog.ep-dialog--repay { --ep-repay-max-height: 100dvh; height: 100dvh; }
+  .ep-dialog--repay .ep-dialog-form { flex: 1; }
+  .ep-dialog--repay .ep-dialog-content { padding-inline: 10px; }
+  .ep-repay-proof-line { grid-template-columns: 1fr; }
+  .ep-verdicts { max-width: 100%; }
+  .ep-verdicts label { min-height: 36px; padding-inline: 8px; }
+  .ep-debt-heading h2 { font-size: 20px; }
+  .ep-debt-deadline { grid-column: 1 / -1; }
+  .ep-debt-deadline > .ep-deadline { align-items: flex-start; }
+  .ep-debt-actions .ep-button { min-height: 44px; padding-inline: 5px; }
+  .ep-debt-actions .ep-button svg { width: 13px; height: 13px; }
+  .ep-dialog.ep-dialog--debt-detail > button:last-child svg,
+  .ep-dialog.ep-dialog--repay > button:last-child svg { width: 25px; height: 25px; }
+  .ep-detail-strip { padding-left: 11px; }
+  .ep-detail-strip .ep-escape-help { display: none; }
+  .ep-history-tabs > button { min-height: 35px; }
+}
+.ep-debt-similar { display: grid; gap: 5px; padding: 10px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 9px; }
+.ep-debt-similar .ep-text-button { text-align: left; justify-self: start; overflow-wrap: anywhere; }
+.ep-merge-compare { display: grid; grid-template-columns: minmax(46px, .48fr) repeat(2, minmax(0, 1fr)); gap: 8px; font-size: .84rem; }
+.ep-merge-row { display: contents; }
+.ep-merge-compare label { display: flex; align-items: flex-start; gap: 4px; overflow-wrap: anywhere; }
+.ep-lifecycle-actions { margin-block: 8px; }
+.ep-linked-items { display: grid; gap: 5px; max-height: 170px; overflow: auto; }
+.ep-import-preview li { margin-block: 4px 10px; }
+
+.ep-debt-kicker .ep-badge { border: 0; border-radius: 0; background: transparent; padding-inline: 0; }
+.ep-debt-kicker .ep-badge::before { content: ''; display: inline-block; width: 6px; height: 6px;
+  margin-right: 5px; border-radius: 50%; border: 1px solid currentColor; }
+.ep-debt-kicker .ep-badge[data-tone=success]::before, .ep-debt-kicker .ep-badge[data-tone=info]::before {
+  background: currentColor;
+}
+@media (max-width: 680px) {
+  .ep-dialog--debt-detail .ep-debt-headline { grid-template-columns: 18px minmax(0, 1fr) auto; gap: 5px; }
+  .ep-dialog--debt-detail .ep-debt-headline .ep-coin { width: 14px; height: 14px; }
+  .ep-debt-heading h2 { font-size: 19px; }
+}

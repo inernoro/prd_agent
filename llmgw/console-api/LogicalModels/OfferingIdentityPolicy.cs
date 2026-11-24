@@ -22,7 +22,7 @@ namespace PrdAgent.LlmGw.LogicalModels;
 ///
 /// 存的值不动（仍存原值）：把回落后的名字固化进去会把「跟着目标走」变成「建那一刻钉死」，
 /// 目标改名之后这条线路还指着旧名字，那是另一种语义，不在这一刀里改。代价是**数据库那一层
-/// 仍然看不穿回落**，并发下两个人同时建仍可能各插一条——已记 `doc/debt.platform.llm-gateway.md`。
+/// 仍然看不穿回落**，并发下两个人同时建仍可能各插一条——已记 `https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md`。
 /// </summary>
 public static class OfferingIdentityPolicy
 {

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,15 +17,11 @@ const monitors: SystemLogMonitor[] = [];
 const dirs: string[] = [];
 const originalPath = process.env.PATH;
 const originalSince = process.env.CDS_JOURNAL_BACKFILL_SINCE;
-beforeEach(async () => {
-  // 每条仍启动独立真实进程池，保留生产启动期限；夹具预热不占用日志行为的断言期限。
-  const streams = new ObservationStreamExecutor(1); pools.push(streams); await streams.start(); vi.clearAllMocks();
-});
 async function until(predicate: () => boolean | Promise<boolean>, attempts = 500): Promise<void> {
   for (let i = 0; i < attempts; i++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); }
   throw new Error('Journal fixture did not become ready');
 }
-async function fixture(mode = 'normal') {
+async function fixture(mode = 'normal', prewarmed?: ObservationStreamExecutor) {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-journal-stream-')); dirs.push(dir);
   const traceFile = path.join(dir, 'trace.jsonl'); const childFile = path.join(dir, 'child.pid');
   const script = String.raw`#!${process.execPath}
@@ -47,7 +44,9 @@ if(!args.includes('-f')) {
 `;
   await writeFile(path.join(dir, 'journalctl'), script, { mode: 0o700 });
   process.env.PATH = `${dir}:${originalPath || ''}`;
-  const streams = pools[pools.length - 1];
+  const streams = prewarmed ?? traceExecutor(new ObservationStreamExecutor(1), `system-journal:${mode}`);
+  if (!prewarmed) pools.push(streams);
+  await streams.start(); vi.clearAllMocks();
   const trace = async (): Promise<Array<{ pid: number; ppid: number; args: string[] }>> => {
     try { return (await readFile(traceFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return []; }
   };
@@ -76,7 +75,8 @@ describe('系统journal独立读取与真实收尾', () => {
     const sentinel = path.join(f.dir, 'must-not-exist');
     process.env.CDS_JOURNAL_BACKFILL_SINCE = `15 minutes ago $(touch '${sentinel}')`;
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
-    await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail'));
+    await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail')
+      && rows.some(row => row.action === 'tail.stderr' && row.message.includes('synthetic-journal-stderr')));
     const trace = await f.trace();
     if (process.env.CDS_JOURNAL_REFERENCE === '1') console.info(JSON.stringify({ referenceTrace: trace, rows: rows.map(row => ({ action: row.action, message: row.message.length < 200 ? row.message : row.message.length })) }));
     expect(trace).toHaveLength(2); expect(trace.every(row => row.ppid !== process.pid)).toBe(true);
@@ -88,8 +88,10 @@ describe('系统journal独立读取与真实收尾', () => {
     expect(rows.some(row => row.action === 'tail.stderr' && row.message.includes('synthetic-journal-stderr'))).toBe(true);
     await monitor.stop(); expect(f.streams.getStats().admitted).toBe(0); expect(monitor.getStats().bufferedBytes).toBe(0);
   });
-  it('12MiB历史不积累全文，跳过整行后继续记录', async () => {
-    const f = await fixture('large-backfill'); const rows: any[] = [];
+  it('12MiB历史和未换行超长尾部不积累全文，跳过整行后继续记录', async () => {
+    // 保留两份独立池与全部原数据量；提前并行预热第二池，不在半途串行重复冷启动。
+    const nextStreams = traceExecutor(new ObservationStreamExecutor(1), 'system-journal:overflow'); pools.push(nextStreams);
+    const [f] = await Promise.all([fixture('large-backfill'), nextStreams.start()]); const rows: any[] = [];
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
     await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail'));
     if (process.env.CDS_JOURNAL_REFERENCE === '1') console.info(JSON.stringify({ maximumMessage: Math.max(...rows.map(row => row.message.length)), actions: rows.map(row => row.action) }));
@@ -98,9 +100,7 @@ describe('系统journal独立读取与真实收尾', () => {
     expect(rows.every(row => Buffer.byteLength(row.message) <= 65536)).toBe(true);
     expect(monitor.getStats().overflowLines).toBe(1);
     await monitor.stop(); expect(f.streams.getStats().admitted).toBe(0);
-  });
-  it('未换行超长尾部保持缓冲上限，跳过整行后继续记录', async () => {
-    const next = await fixture('overflow'); const tailRows: any[] = [];
+    const next = await fixture('overflow', nextStreams); const tailRows: any[] = [];
     const tail = new SystemLogMonitor(new ShellExecutor(), { record: row => tailRows.push(row) }, ['fixture.service'], next.streams); monitors.push(tail);
     await tail.start(); await until(() => tail.getStats().overflowLines === 1);
     expect(tail.getStats().bufferedBytes).toBeLessThanOrEqual(65536);

@@ -1,3 +1,5 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { AuthPageFrame, AuthFormSkeleton } from '@/components/skeletons/AuthPageSkeleton';
 /*
  * LoginPage — CDS 控制台的唯一认证入口。
  *
@@ -16,10 +18,8 @@
  *   - GitHub OAuth 入口
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Eye, EyeOff, Github, KeyRound, Loader2, Moon, ShieldCheck, Sun } from 'lucide-react';
-import ShapeGrid from '@/components/effects/ShapeGrid';
-import { ShinyText } from '@/components/effects/ShinyText';
+
+import { ArrowRight, Eye, EyeOff, Github, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,32 +29,29 @@ import {
   fetchBootstrapStatus,
   bootstrapFirstUser,
   fetchSessionAuthed,
+  isChildPreviewCdsInstance,
 } from '@/lib/api';
-import { useTheme } from '@/lib/theme';
 import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
+import { signInWithPasskey } from '@/lib/passkeys';
 
-/* 与首页 board ticker 同一套"活的控制面"语言,登录时就能看到系统在呼吸。 */
-const FEED_LINES = [
-  'pull origin feature/auth-flow · 3 commits',
-  'detect stack · .NET 8 + React + mongo + redis',
-  'build api :5000 · admin :5500 ......  ok',
-  'container.observed · health checks passing',
-  'preview live · auth-flow.example.test',
-];
+import { PreviewAccessFrame, PreviewLabel, WhyPreviewLogin, type PreviewLoginContext } from './PreviewAccessPage';
 
-function redirectTarget(): string {
+export function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('redirect') || '/project-list';
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/project-list';
+  if (!raw.startsWith('/') || raw.startsWith('//') || /[\\\x00-\x1f]|%5c/i.test(raw)) return '/project-list';
   // 绝不把目标指回登录路由本身 —— 否则已登录用户从 /login 跳 /login 是 no-op,
   // spinner 永远转、登录框永不出现(Bugbot Medium「Login redirect target loops」)。
   const path = raw.split(/[?#]/)[0];
   if (path === '/login') return '/project-list';
-  return raw;
+  // Fragments never reach the server. Its unauthenticated redirect preserves
+  // the original fragment on /login, so carry it back to the internal target.
+  // An explicitly encoded target fragment takes precedence.
+  return raw.includes('#') || !params.get('redirect') ? raw : raw + window.location.hash;
 }
 
-function AuthForm(): JSX.Element {
+function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -66,9 +63,11 @@ function AuthForm(): JSX.Element {
   // First-run bootstrap: when the system has zero users, the login form turns
   // into a "create the first system-owner account" form instead.
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [bootstrapReady, setBootstrapReady] = useState(false);
   const [loginMethodsReady, setLoginMethodsReady] = useState(false);
   const [localLoginEnabled, setLocalLoginEnabled] = useState(false);
   const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
+  const [passkeyEnabled, setPasskeyEnabled] = useState(false);
   const [ssoLogin, setSsoLogin] = useState<{ enabled: boolean; label: string }>({
     enabled: false,
     label: '使用 SSO 登录',
@@ -84,6 +83,7 @@ function AuthForm(): JSX.Element {
         if (!alive) return;
         setLocalLoginEnabled(s.loginMethods.local);
         setGithubLoginEnabled(s.loginMethods.github);
+        setPasskeyEnabled(s.loginMethods.passkey === true && Boolean(window.PublicKeyCredential));
         setSsoLogin({
           enabled: s.loginMethods.sso === true && s.sso?.enabled === true,
           label: s.sso?.label || '使用 SSO 登录',
@@ -100,20 +100,35 @@ function AuthForm(): JSX.Element {
       });
     fetchBootstrapStatus()
       .then((s) => { if (alive) setNeedsBootstrap(s.needsBootstrap); })
-      .catch(() => { /* endpoint absent in non-github modes — ignore */ });
+      .catch(() => { /* endpoint absent in non-github modes — ignore */ })
+      .finally(() => { if (alive) setBootstrapReady(true); });
     return () => { alive = false; };
   }, []);
 
   const showLocalLogin = needsBootstrap || localLoginEnabled;
-  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled;
+  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled || passkeyEnabled;
 
   function goToTarget() {
-    // Legacy server 路径(/settings.html?project=… 等)必须 hard-load,让 Express
-    // 的 legacy→React 重定向生效;干净的 React 路由走 SPA navigate + view transition。
-    if (/\.html(?:$|[?#])/i.test(target)) {
+    // Server endpoints (including the cluster login handoff) must reach Express.
+    // Dashboard routes retain SPA navigation and their view transition.
+    if (target.startsWith('/api/') || target.split(/[?#]/)[0] === '/preview/authorize' || /\.html(?:$|[?#])/i.test(target)) {
       window.location.assign(target);
     } else {
       navigate(target, { replace: true, viewTransition: true });
+    }
+  }
+
+  async function signInPasskey() {
+    setError('');
+    setBusy(true);
+    try {
+      await signInWithPasskey();
+      goToTarget();
+    } catch {
+      setError('通行密钥登录未完成，请重试或使用其他登录方式。');
+      setShake(true);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -157,6 +172,30 @@ function AuthForm(): JSX.Element {
     }
   }
 
+  if (!loginMethodsReady || !bootstrapReady) return <AuthFormSkeleton />;
+
+  if (preview && !needsBootstrap) {
+    const previewAccount = <form onSubmit={submit} aria-busy={busy}>
+      <small>本预览单独生成的账号用于自动化测试和运维排障。</small>
+      <label>预览用户名<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" required /></label>
+      <label>预览密码<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+      {error && <p className="pv-error" role="alert">预览专用账号校验失败。{ssoLogin.enabled ? '可用 CDS 账号继续。' : '请核对本预览的账号和密码。'}</p>}
+      <button type="submit" className={ssoLogin.enabled ? 'pv-secondary' : 'pv-primary'} disabled={busy}>{busy ? '正在验证…' : '用预览专用账号登录'}</button>
+    </form>;
+    return <article className="pv-card">
+      <PreviewLabel {...preview} />
+      <h1>登录这个分支预览</h1>
+      {ssoLogin.enabled && <>
+        <a className="pv-primary" href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}><KeyRound />用 CDS 账号继续</a>
+        <small>用平时的 CDS 账号确认身份。已登录 CDS 时，页面会直接返回预览。</small>
+      </>}
+      <WhyPreviewLogin policyUrl={preview.policyUrl} />
+      {showLocalLogin && (ssoLogin.enabled
+        ? <details className="pv-native"><summary>其他方式 · 预览专用账号</summary>{previewAccount}</details>
+        : previewAccount)}
+    </article>;
+  }
+
   return (
     <form
       onSubmit={submit}
@@ -183,12 +222,7 @@ function AuthForm(): JSX.Element {
             : '使用已配置的身份提供方进入分支预览控制台。'}
       </p>
 
-      {!loginMethodsReady ? (
-        <div className="cds-auth-fields" aria-label="正在读取登录方式">
-          <div className="cds-loading-skeleton-line h-10 w-full" />
-          <div className="cds-loading-skeleton-line h-10 w-full" />
-        </div>
-      ) : null}
+
 
       {loginMethodsReady && showLocalLogin ? <div className="cds-auth-fields">
         <label className="cds-auth-field">
@@ -250,7 +284,7 @@ function AuthForm(): JSX.Element {
       ) : null}
 
       {loginMethodsReady && showLocalLogin ? (
-        <Button type="submit" disabled={busy} className="cds-auth-submit">
+        <Button type="submit" disabled={busy} className="cds-auth-submit h-10">
           {busy ? <Loader2 className="animate-spin" /> : null}
           {busy
             ? (needsBootstrap ? '正在创建…' : '正在验证…')
@@ -267,6 +301,13 @@ function AuthForm(): JSX.Element {
             </div>
           ) : null}
           <div className="grid gap-2">
+            {passkeyEnabled ? (
+              <Button type="button" variant="outline" className="cds-auth-github" disabled={busy}
+                onClick={() => { void signInPasskey(); }}>
+                <ShieldCheck />
+                使用通行密钥登录
+              </Button>
+            ) : null}
             {ssoLogin.enabled ? (
               <Button asChild type="button" variant="outline" className="cds-auth-github">
                 <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
@@ -292,101 +333,19 @@ function AuthForm(): JSX.Element {
   );
 }
 
-/*
- * TheLine — 页面唯一的视觉装置:一条横贯画布的部署光路。
- * 三个站点是用户故事的时间轴(0:00 push / 0:40 build / 2:00 live),
- * 一束橙色电流每 6.5s 走完一生,最后没入登录卡(线从卡下方穿过,
- * 视觉上"进门")。桌面(lg+)专属;reduced-motion 下电流静止为常亮段。
- */
-const LINE_STATIONS = [
-  { left: '7%', word: 'push', time: '0:00' },
-  { left: '26%', word: 'build', time: '0:40' },
-  { left: '45%', word: 'live', time: '2:00' },
-];
-
-/*
- * MobileLine — 「一条线」的手机形态:竖排三站时间轴 + 下落电流。
- * 桌面横贯光路(TheLine)在 <lg 隐藏后,手机曾只剩一行灰字,整页显得空;
- * 竖线把同一个视觉思想带进窄屏:结构、节奏、动效都还在,只是转了 90 度。
- */
-const MOBILE_STATIONS = [
-  { word: 'push', time: '0:00', desc: '推送你的分支' },
-  { word: 'build', time: '0:40', desc: '构建镜像 · 启动容器' },
-  { word: 'live', time: '2:00', desc: '预览域名就绪' },
-];
-
-function MobileLine(): JSX.Element {
-  return (
-    <div className="cds-auth-line-m" aria-hidden>
-      <span className="cds-auth-line-m-beam" />
-      {MOBILE_STATIONS.map((s) => (
-        <div key={s.word} className="cds-auth-line-m-station">
-          <i />
-          <b>{s.word}</b>
-          <em>{s.time}</em>
-          <span>{s.desc}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TheLine(): JSX.Element {
-  return (
-    <div className="cds-auth-line" aria-hidden>
-      <span className="cds-auth-line-base" />
-      <span className="cds-auth-line-beam" />
-      {LINE_STATIONS.map((s, idx) => (
-        <span key={s.word} className="cds-auth-station" style={{ left: s.left, animationDelay: `${idx * 0.9 + 0.35}s` }}>
-          <i className="cds-auth-station-dot" />
-          <b>{s.word}</b>
-          <em>{s.time}</em>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/*
- * 会话探测期间的占位:与真实表单同一副轮廓的骨架(产物形状的等待,
- * 不是居中 spinner),探测结束换成表单时零跳动。
- */
-function AuthFormSkeleton(): JSX.Element {
-  return (
-    <div className="cds-auth-card" role="status" aria-label="正在检查会话">
-      <div className="cds-auth-mark" aria-hidden>
-        <CdsGem className="h-10 w-10" />
-      </div>
-      <div className="cds-loading-skeleton-line h-6 w-44 max-w-full" />
-      <div className="mt-2 cds-loading-skeleton-line h-4 w-64 max-w-full" />
-      <div className="cds-auth-fields">
-        <div className="cds-loading-skeleton-line h-10 w-full" />
-        <div className="cds-loading-skeleton-line h-10 w-full" />
-      </div>
-      <div className="mt-5 cds-loading-skeleton-line h-10 w-full" />
-    </div>
-  );
-}
-
 export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
-  const { theme, setTheme } = useTheme();
   // 'checking' = 正在探会话态;'anon' = 未登录,展示登录框。已登录则直接跳走,
   // 不会停留在此状态。探测期间用同轮廓骨架占位,避免先闪一下登录框再跳转。
   const [authPhase, setAuthPhase] = useState<'checking' | 'anon'>('checking');
-  // 底部 ticker:线上正在发生的事(与首页 board 同一套语言)。
-  const [feedIndex, setFeedIndex] = useState(0);
+  const [preview, setPreview] = useState<PreviewLoginContext | undefined>(() => isChildPreviewCdsInstance() ? {} : undefined);
   useEffect(() => {
-    const timer = window.setInterval(() => setFeedIndex((i) => (i + 1) % FEED_LINES.length), 2600);
-    return () => clearInterval(timer);
+    let mounted = true;
+    void fetchAuthPublicStatus().then(status => {
+      if (mounted && (status.preview || status.sso?.providerId === 'cds-preview')) setPreview(status.preview ?? {});
+    }).catch(() => {});
+    return () => { mounted = false; };
   }, []);
-
-  // 暗场纹理:蜂窝压到阈下(0.032/0.055)——2026-07-04 用户反馈整体"像 2010",
-  // 大面积几何壁纸是主要年代信号之一;保留质感但退出注意力。
-  const grid = theme === 'dark'
-    ? { border: 'rgba(255,255,255,0.032)', fill: 'rgba(255,255,255,0.02)' }
-    : { border: 'rgba(68,45,22,0.055)', fill: 'rgba(68,45,22,0.03)' };
-
   // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
   // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
   useEffect(() => {
@@ -398,6 +357,10 @@ export function LoginPage(): JSX.Element {
   // (默认 /project-list,或 ?redirect= 指定的合法内部路径)。
   useEffect(() => {
     let alive = true;
+    if (new URLSearchParams(window.location.search).get('choose_account') === '1') {
+      setAuthPhase('anon');
+      return;
+    }
     fetchSessionAuthed().then((ok) => {
       if (!alive) return;
       if (!ok) {
@@ -411,8 +374,8 @@ export function LoginPage(): JSX.Element {
         setAuthPhase('anon');
         return;
       }
-      if (/\.html(?:$|[?#])/i.test(target)) {
-        // legacy server 路径:hard-load 让 Express 的 legacy→React 重定向生效。
+      if (target.startsWith('/api/') || target.split(/[?#]/)[0] === '/preview/authorize' || /\.html(?:$|[?#])/i.test(target)) {
+        // Authenticated visits also need the server to perform the handoff.
         window.location.assign(target);
       } else {
         navigate(target, { replace: true, viewTransition: true });
@@ -423,82 +386,8 @@ export function LoginPage(): JSX.Element {
     };
   }, [navigate]);
 
-  return (
-    <main className="cds-auth-page cds-grain">
-      {/* 一块画布:暗场蜂窝(极弱) + 单一光源,没有分屏没有接缝。 */}
-      <div className="cds-auth-bg" aria-hidden>
-        <ShapeGrid
-          key={theme}
-          className="cds-auth-bg-grid"
-          shape="hexagon"
-          direction="diagonal"
-          speed={0.3}
-          squareSize={34}
-          hoverTrailAmount={0}
-          borderColor={grid.border}
-          hoverFillColor={grid.fill}
-        />
-        <div className="cds-auth-backdrop" />
-      </div>
-
-      <header className="cds-auth-header">
-        <Link to="/" className="cds-auth-brand" viewTransition>
-          <CdsGem detail="simple" className="h-6 w-6" />
-          <span>Cloud Dev Suite</span>
-        </Link>
-        {/* 未登录页也能切主题:白天形态是刻意设计过的,不该藏到登录后才被发现。 */}
-        <button
-          type="button"
-          className="cds-auth-theme"
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          aria-label={theme === 'dark' ? '切换到白天主题' : '切换到黑夜主题'}
-        >
-          {theme === 'dark' ? <Sun /> : <Moon />}
-        </button>
-      </header>
-
-      {/* 舞台:左侧用户故事,右侧终点站(登录卡),一条线横贯两者。 */}
-      <section className="cds-auth-stage">
-        <TheLine />
-        <div className="cds-auth-copy">
-          <p className="cds-auth-cmd">$ git push origin your-branch</p>
-          <h1 className="cds-auth-display">
-            <span>Push a branch.</span>
-            <ShinyText
-              text="Watch it come alive."
-              speed={3.4}
-              spread={112}
-              color={theme === 'dark' ? 'rgba(226,226,235,0.58)' : 'rgba(92,64,38,0.55)'}
-              shineColor={theme === 'dark' ? 'rgba(255,247,238,0.98)' : 'rgba(45,28,12,0.98)'}
-              className="block"
-            />
-          </h1>
-          <p className="cds-auth-story">
-            构建、容器、日志、预览域名——大约两分钟，你推送的分支就是一套活的在线环境。登录，领取它。
-          </p>
-          <div className="cds-auth-proof" aria-hidden>
-            <span>构建隔离容器</span>
-            <span>独立预览域名</span>
-            <span>PR 状态回写</span>
-          </div>
-          <MobileLine />
-        </div>
-        <div className="cds-auth-card-wrap cds-page-enter">
-          {authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm />}
-        </div>
-      </section>
-
-      <footer className="cds-auth-footer">
-        <p className="cds-auth-ticker" aria-hidden>
-          <span className="cds-auth-ticker-k">cds</span>
-          <span className="cds-auth-ticker-gt">&gt;</span>
-          <span className="cds-auth-ticker-feed" key={feedIndex}>{FEED_LINES[feedIndex]}</span>
-          <span className="cds-auth-ticker-caret" />
-        </p>
-        <span className="cds-auth-footer-tag">每个分支，都是一套在线环境</span>
-      </footer>
-    </main>
-  );
+  const content = authPhase === 'checking' ? <AuthFormSkeleton /> : <AuthForm preview={preview} />;
+  return preview ? <PreviewAccessFrame>{content}</PreviewAccessFrame> : <AuthPageFrame>{content}</AuthPageFrame>;
 }
 
 function readSsoCallback(): { code: string; state: string } | null {
@@ -527,7 +416,7 @@ export function TicketSsoPage(): JSX.Element {
       .then((result) => {
         if (!alive) return;
         const target = result.redirect || '/project-list';
-        if (/\.html(?:$|[?#])/i.test(target)) {
+        if (target.startsWith('/api/') || target.split(/[?#]/)[0] === '/preview/authorize' || /\.html(?:$|[?#])/i.test(target)) {
           window.location.assign(target);
           return;
         }

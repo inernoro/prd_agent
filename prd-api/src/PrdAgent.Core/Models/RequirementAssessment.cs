@@ -3,8 +3,12 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 产品评审员 — 需求评估任务（一次 Excel 需求表的批量评估）
 /// </summary>
-public class RequirementAssessmentRun
+public class RequirementAssessmentRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>发起人 UserId</summary>

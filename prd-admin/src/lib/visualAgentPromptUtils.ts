@@ -1,4 +1,5 @@
 import { ASPECT_OPTIONS } from '@/lib/imageAspectOptions';
+import { parseChipTokenText } from '@/lib/chipTokenText';
 
 const INLINE_IMAGE_RX = /^\[IMAGE([^\]]*)\]\s*/;
 const INLINE_IMAGE_LEGACY_RX = /^\[IMAGE=([^\]|]+)(?:\|([^\]]+))?\]\s*/;
@@ -18,6 +19,7 @@ const SIZE_TOKEN_RE = new RegExp(SIZE_TOKEN_RE_SRC, 'g');
 export function cleanDisplayTitle(raw: string, maxLen = 60): string {
   let s = String(raw ?? '').trim();
   if (!s) return '';
+  s = parseChipTokenText(s).map(segment => segment.type === 'text' ? segment.text : ' ').join('');
   // [IMG:url|label] → 保留 label；无 label 的整段去掉
   s = s.replace(/\[IMG:[^|\]]*\|([^\]]*)\]/gi, '$1');
   s = s.replace(/\[IMG:[^\]]*\]/gi, ' ');

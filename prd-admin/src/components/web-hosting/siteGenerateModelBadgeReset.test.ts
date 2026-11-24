@@ -12,7 +12,9 @@ const dialog = readFileSync(new URL('./workbench/useSiteGenerationRun.ts', impor
  */
 describe('生成弹窗的模型徽章', () => {
   it('在进入 generating 的同一拍清空，且排在创建任务之前', () => {
-    const generatingAt = dialog.lastIndexOf('setGenerating(true);');
+    const startAt = dialog.indexOf('const start = async');
+    expect(startAt).toBeGreaterThan(-1);
+    const generatingAt = dialog.indexOf('setGenerating(true);', startAt);
     expect(generatingAt).toBeGreaterThan(-1);
     const createAt = dialog.indexOf('await createDesignArtifactRun(', generatingAt);
     expect(createAt, 'createDesignArtifactRun 不见了，契约可能被挪走了').toBeGreaterThan(generatingAt);
@@ -26,7 +28,18 @@ describe('生成弹窗的模型徽章', () => {
   it('打开弹窗那一段也仍然清空（两处语义不同，都要在）', () => {
     const openReset = dialog.indexOf('setResolvedModel(null);');
     expect(openReset).toBeGreaterThan(-1);
+    const startAt = dialog.indexOf('const start = async');
     expect(openReset, '打开弹窗的重置被删了，重开会显示上一次的模型')
-      .toBeLessThan(dialog.lastIndexOf('setGenerating(true);'));
+      .toBeLessThan(startAt);
+  });
+
+  it('重开中断任务时也先清空上一轮模型徽章', () => {
+    const restartAt = dialog.indexOf('const restart = async');
+    expect(restartAt).toBeGreaterThan(-1);
+    const requestAt = dialog.indexOf('await restartDesignArtifactRun(', restartAt);
+    const resetAt = dialog.indexOf('setResolvedModel(null);', restartAt);
+    expect(requestAt).toBeGreaterThan(restartAt);
+    expect(resetAt).toBeGreaterThan(restartAt);
+    expect(resetAt).toBeLessThan(requestAt);
   });
 });

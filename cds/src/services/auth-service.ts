@@ -386,7 +386,7 @@ export class AuthService {
    */
   async createSessionForUser(
     userId: string,
-    meta: { userAgent: string | null; ipAddress: string | null },
+    meta: { userAgent: string | null; ipAddress: string | null; passkeyAuthenticated?: true },
     now = new Date(),
   ): Promise<CdsSession> {
     await this.store.touchUserLastLogin(userId, now);
@@ -396,6 +396,7 @@ export class AuthService {
         ttlMs: this.config.sessionTtlMs,
         userAgent: meta.userAgent,
         ipAddress: meta.ipAddress,
+        ...(meta.passkeyAuthenticated ? { passkeyAuthenticated: true } : {}),
       },
       now,
     );

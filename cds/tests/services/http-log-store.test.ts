@@ -31,6 +31,34 @@ describe('http log body redaction', () => {
     expect(result.bodyPreview).not.toContain('cdsp_demo_abc123secretplaintext');
   });
 
+  it('接入提议被拒前的请求日志也按值脱敏 cdsmon_，不依赖字段名', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    const result = bodyPreviewFromUnknown({
+      agentName: '审核智能体',
+      proposals: [{ name: credential, kind: 'http', url: 'https://audit.example/health' }],
+    }, 'application/json');
+    expect(result.bodyPreview).toContain('"name":"[redacted]"');
+    expect(result.bodyPreview).toContain('https://audit.example/health');
+    expect(result.bodyPreview).not.toContain(credential);
+  });
+
+  it('纯文本中的 cdsmon_ 接入凭据脱敏且保留普通服务名称', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    expect(redactBodyText(`agent returned ${credential} for cdsmon_healthz`))
+      .toBe('agent returned [redacted] for cdsmon_healthz');
+  });
+
+  it('截断后无法解析的 JSON 捕获仍清除未知字段中的完整 cdsmon_ 凭据', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    const capture = createBodyCapture(undefined, 'application/json');
+    capture.onChunk(JSON.stringify({ proposals: [{ name: credential }], tail: 'x'.repeat(10_000) }));
+    const result = capture.snapshot('application/json');
+    expect(result.bodyBytes).toBeGreaterThan(8192);
+    expect(result.bodyPreview).toContain('"name":"[redacted]"');
+    expect(() => JSON.parse(result.bodyPreview!)).toThrow();
+    expect(result.bodyPreview).not.toContain(credential);
+  });
+
   it('keeps malformed html-like previews linear and bounded', () => {
     const hostile = `<html>${' "not-a-json-key": "'.repeat(600)}${'x'.repeat(9000)}</html>`;
     const started = performance.now();

@@ -71,6 +71,7 @@ function makeBranches() {
       status: 'idle', services: { ...services(22000, 'stopped'), 'legacy-gw': { profileId: 'legacy-gw', containerName: 'fixture-legacy-gw', hostPort: 22999, status: 'error', errorMessage: '构建配置已删除' } },
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-18 * 60 * MIN),
       lastDeployAt: iso(-20 * 60 * MIN),
+      deployRuntime: { kind: 'source', drift: { hasDrift: true, expectedCount: 13, healthyCount: 0, missingProfileIds: [], unhealthyProfileIds: PROFILES } },
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
@@ -173,11 +174,16 @@ const check = (ok, message) => { if (!ok) failures.push(message); console.log(`$
 
 async function openPage(browser, url, theme) {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: 1180 }, deviceScaleFactor: 1 });
+  const actionRequests = [];
+  const browserErrors = [];
   await context.addInitScript(`try{localStorage.setItem('cds_theme','${theme}')}catch(e){}`);
   await context.addInitScript(FAKE_SSE);
   await context.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (isEventStream(pathname)) {
+    if (route.request().method() === 'POST' && /\/(restart|deploy)$/.test(pathname)) {
+      actionRequests.push(pathname);
+    }
+    if (isEventStream(pathname) || route.request().headers().accept?.includes('text/event-stream')) {
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': fixture\n\n' });
       return;
     }
@@ -185,10 +191,20 @@ async function openPage(browser, url, theme) {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body ?? {}) });
   });
   const page = await context.newPage();
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
   await page.goto(`${url}/branch-list?project=${PROJECT_ID}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  try {
+    await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  } catch (error) {
+    await page.screenshot({ path: path.join(OUT, `load-failure-${theme}.png`) });
+    console.error((await page.locator('body').innerText()).slice(0, 3000));
+    throw error;
+  }
   await page.waitForTimeout(1200);
-  return { context, page };
+  return { context, page, actionRequests, browserErrors };
 }
 
 /* 同一排 = 卡片顶边 y 相同。量每排的高度差。 */
@@ -234,7 +250,36 @@ async function main() {
     browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/opt/pw-browsers/chromium' });
     for (const theme of ['dark', 'light']) {
       branches = makeBranches();
-      const { context, page } = await openPage(browser, server.url, theme);
+      const { context, page, actionRequests, browserErrors } = await openPage(browser, server.url, theme);
+      const card = (id) => page.locator(`[data-branch-card-id="${id}"]`);
+      const deployButtons = (id) => card(id).getByRole('button', { name: /^(重新部署|部署) / });
+      for (const id of ['b-test', 'b-edison', 'b-pack', 'b-ident', 'b-relaxed']) {
+        check(await deployButtons(id).count() === 0, `[${theme}] ${id} 运行、等待、构建或停止态不显示直接部署入口`);
+      }
+      check(await card('b-test').getByRole('button', { name: '预览', exact: true }).count() === 1,
+        `[${theme}] 健康运行卡保留预览入口`);
+      check(await deployButtons('b-scan').count() === 1
+        && await card('b-scan').getByRole('button', { name: /^预览/ }).count() === 0,
+        `[${theme}] 异常卡保留重新部署，且不同时显示预览`);
+      await card('b-relaxed').getByRole('button', { name: /^一键启动 / }).click();
+      await page.waitForTimeout(400);
+      check(actionRequests.filter((p) => p === '/api/branches/b-relaxed/restart').length === 1
+        && !actionRequests.some((p) => p.endsWith('/deploy')),
+        `[${theme}] 一键启动只发送一次 restart，不发送 deploy`);
+      const drawer = page.getByRole('dialog', { name: '分支详情', exact: true });
+      check(await drawer.count() === 0, `[${theme}] 一键启动不冒泡打开分支详情`);
+      if (await drawer.count()) await page.getByRole('button', { name: '关闭', exact: true }).click();
+      // 卡片空白仍能打开详情；不能靠禁用整卡点击修复按钮冒泡。
+      await card('b-relaxed').click({ position: { x: 10, y: 10 } });
+      await drawer.waitFor({ state: 'visible' });
+      check(await drawer.isVisible(), `[${theme}] 信息槽空白仍可打开分支详情`);
+      await page.getByRole('button', { name: '关闭', exact: true }).click();
+      if (process.argv.includes('--interactions-only')) {
+        check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
+        await page.screenshot({ path: path.join(OUT, `interactions-${theme}.png`), fullPage: true });
+        await context.close();
+        continue;
+      }
       const rows = await measureRows(page);
       rows.forEach((row, i) => {
         const hs = row.list.map((c) => c.h);
@@ -242,6 +287,19 @@ async function main() {
         console.log(`[${theme}] 第 ${i + 1} 排 ${row.list.map((c) => `${c.id}=${c.h}`).join('  ')}`);
         check(spread <= 1, `[${theme}] 第 ${i + 1} 排卡片等高（差 ${spread.toFixed(1)}px）`);
       });
+      const names = await page.$$eval('[data-branch-card-id] h3', (headings) => headings.map((heading) => {
+        const style = getComputedStyle(heading);
+        return style.whiteSpace === 'nowrap' && style.textOverflow === 'ellipsis'
+          && heading.clientHeight <= parseFloat(style.lineHeight) + 1
+          && heading.title === heading.textContent.trim();
+      }));
+      check(names.length > 0 && names.every(Boolean), `[${theme}] 分支名保持单行省略，完整名称保留在提示中`);
+      const titleSpace = await page.$$eval('[data-branch-card-id] header', (headers) => headers.map((header) => {
+        const headingRow = header.querySelector('h3').parentElement.getBoundingClientRect();
+        const menu = header.querySelector('button[aria-label="更多操作"]').getBoundingClientRect();
+        return !header.querySelector('button[aria-label="删除分支"]') && menu.left - headingRow.right <= 10;
+      }));
+      check(titleSpace.length > 0 && titleSpace.every(Boolean), `[${theme}] 标题用满更多按钮前空间，不为隐藏删除按钮预留空白`);
       // 复制集卡：与分支卡同高，成员区真的溢出并可在卡内滚动，底部按钮没被挤出卡片
       const replica = await page.evaluate(() => {
         const members = document.querySelector('[data-replica-members]');
@@ -277,6 +335,7 @@ async function main() {
       const erroredInitial = Number((headline.match(/(\d+)\s*个出错需要处理/) || [])[1] || 0);
       check(erroredInitial === 1, `[${theme}] 僵尸服务不计入「出错需要处理」（实际 ${erroredInitial}，「${headline.trim()}」）`);
       const mainRedeploy = await page.$$eval('[data-branch-card-id="b-main"] button[aria-label^="重新部署"]', (els) => els.length).catch(() => 0);
+      check(await page.locator('[data-branch-card-id="b-main"] [data-drift-chip]').count() === 0, `[${theme}] 已停止分支保留停止说明，不把漂移统计显示成服务异常`);
       check(phases['b-main'] !== 'failed' && mainRedeploy === 0, `[${theme}] 带僵尸 error 条目的分支卡不进出错态（phase=${phases['b-main']}，重新部署按钮 ${mainRedeploy} 个）`);
       const metaTimes = await page.$$eval('[data-branch-card-id="b-pack"], [data-branch-card-id="b-ident"]', (els) => els.map((el) => el.textContent || ''));
       check(metaTimes.every((t) => /最近推送/.test(t)), `[${theme}] 构建中卡片右侧有「最近推送」时间`);
@@ -307,6 +366,20 @@ async function main() {
               && inside(card.querySelector('[data-drift-chip]')),
           };
         });
+        // 按钮本身在卡内仍可能是假的安全：其不可收缩的子文字能溢出按钮，
+        // 用户实际看到「重新部署」被卡边裁掉。检查内容宽度与状态行分离。
+        const warnings = await page.$$eval('[data-branch-card-id] [data-drift-chip]', (buttons) => buttons.map((button) => {
+          const card = button.closest('[data-branch-card-id]');
+          const bounds = card.getBoundingClientRect();
+          const resourceRow = card.querySelector('[data-branch-resource-row]');
+          return {
+            id: card.getAttribute('data-branch-card-id'),
+            fits: button.scrollWidth <= button.clientWidth + 1 && [...button.children].every((child) => child.getBoundingClientRect().right <= bounds.right - 8),
+            separate: button.getBoundingClientRect().top >= resourceRow.getBoundingClientRect().bottom,
+          };
+        }));
+        check(warnings.length > 0 && warnings.every((warning) => warning.fits && warning.separate),
+          `[${theme}] 视口 ${vw}px 异常提示独占状态行，重新部署文字不溢出：${JSON.stringify(warnings)}`);
         if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
         check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }
@@ -490,7 +563,8 @@ async function main() {
         const redeployVisible = await page.isVisible('[data-branch-card-id="b-test"] button[aria-label^="重新部署"]');
         await shotCard(page, 'b-test', 'single-service-failed.png');
         check(partialPhase === 'failed', `单服务部署失败进入失败态（实际 data-deploy-phase=${partialPhase}）`);
-        check(/构建失败/.test(partialFooter) && /就绪探测/.test(partialFooter), `单服务失败页脚写「构建失败 · 在「就绪探测」」（实际「${partialFooter.trim()}」）`);
+        const partialTitle = await page.getAttribute('[data-branch-card-id="b-test"] [data-footer-status]', 'title');
+        check(partialFooter.trim() === '构建失败' && /就绪探测/.test(partialTitle || ''), `单服务失败只显示一个状态，失败阶段保留在悬浮说明（实际「${partialFooter.trim()}」，title「${partialTitle}」）`);
         check(redeployVisible, '单服务失败时直接给出「重新部署」');
         const erroredAfter = await erroredCount();
         check(erroredAfter.n === erroredBefore.n + 1, `单服务失败计入页头「出错需要处理」（${erroredBefore.n} → ${erroredAfter.n}，「${erroredAfter.text}」）`);

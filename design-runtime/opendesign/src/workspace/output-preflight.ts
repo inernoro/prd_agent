@@ -22,6 +22,13 @@ import { normalizeRelativePath } from './primitives.js';
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
 const MAX_WORKSPACE_DIRECTORY_DEPTH = 16;
+// OpenDesign 的原生 deck skill 可能在公开资源目录旁写一份给执行代理看的说明。
+// 它不是网页资源，也不能因为位于 assets/** 就被当成公网文件；只认这一个已证实路径。
+const WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS = new Set(['ASSETS/README.MD']);
+
+function isWorkspaceOnlyAuxiliaryOutputPath(filePath: string): boolean {
+  return WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS.has(filePath.toUpperCase());
+}
 
 type PreflightFailureCode =
   | 'node_count' | 'directory_depth' | 'special_file' | 'workspace_file_count' | 'file_count'
@@ -39,6 +46,8 @@ export interface OutputPreflightInput {
   allowedOutputPaths: readonly string[];
   inputFiles: ReadonlyArray<{ path: string; sha256: string; size: number }>;
   maxOutputBytes: number;
+  /** 原始公开文件总量上限；旧调用方省略时沿用历史 maxOutputBytes。 */
+  maxPublicOutputBytes?: number;
 }
 
 /** 以不跟随符号链接的方式读一个普通文件；读到的不是普通文件就抛。 */
@@ -89,11 +98,14 @@ function runPreflight(input: OutputPreflightInput): void {
       if (stat.isDirectory()) { walk(absolute); continue; }
       workspaceFileCount += 1;
       if (workspaceFileCount > MAX_WORKSPACE_FILE_COUNT) throw new PreflightFailure('workspace_file_count');
+      if (isWorkspaceOnlyAuxiliaryOutputPath(relative) && !inputFiles.has(relative)) continue;
       if (allowed(relative)) {
         fileCount += 1;
         totalBytes += stat.size;
         if (fileCount > MAX_OUTPUT_FILE_COUNT) throw new PreflightFailure('file_count');
-        if (totalBytes > input.maxOutputBytes) throw new PreflightFailure('total_bytes');
+        if (totalBytes > (input.maxPublicOutputBytes ?? input.maxOutputBytes)) {
+          throw new PreflightFailure('total_bytes');
+        }
         const target = path.join(input.outputDir, ...relative.split('/'));
         const targetRelative = path.relative(input.outputDir, target);
         if (targetRelative.startsWith('..') || path.isAbsolute(targetRelative)) throw new PreflightFailure('path_not_allowed', relative);

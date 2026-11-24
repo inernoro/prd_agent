@@ -7,6 +7,36 @@ namespace PrdAgent.Core.LlmGateway;
 /// <summary>原生 HTTP 响应的一段字节；Data 仅在回调期间有效，不包含上游认证头。</summary>
 public sealed record GatewayNativeResponseChunk(int StatusCode, string ContentType, ReadOnlyMemory<byte> Data);
 
+/// <summary>原生请求全部协议与模型上限生效后、真正发送前的可核验预算输入。</summary>
+public record GatewayPhysicalAdmissionContext(
+    string RequestId,
+    int RequestBodyUtf8Bytes,
+    int EffectiveMaxOutputTokens,
+    string LogicalModelPublicId,
+    string Provider,
+    string Model,
+    string? OfferingId,
+    string? Protocol = null);
+
+public sealed record GatewayNativeAdmissionContext(
+    string RequestId,
+    int RequestBodyUtf8Bytes,
+    int EffectiveMaxOutputTokens,
+    string LogicalModelPublicId,
+    string Provider,
+    string Model,
+    string? OfferingId,
+    string? Protocol = null)
+    : GatewayPhysicalAdmissionContext(
+        RequestId,
+        RequestBodyUtf8Bytes,
+        EffectiveMaxOutputTokens,
+        LogicalModelPublicId,
+        Provider,
+        Model,
+        OfferingId,
+        Protocol);
+
 /// <summary>
 /// LLM Gateway 统一响应模型
 /// </summary>
@@ -119,11 +149,20 @@ public class GatewayResponse
 /// </summary>
 public class GatewayModelResolution
 {
+    [JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; init; }
+
+    /// <summary>本次调用已确认的线路计费拒绝；即使备用线路成功也必须传回 MAP。</summary>
+    public IReadOnlyList<GatewayBillingAlert> BillingAlerts { get; init; } = [];
+
     /// <summary>调用方选择的逻辑模型 ID。</summary>
     public string? LogicalModelId { get; init; }
 
     /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
     public string? LogicalModelPublicId { get; init; }
+
+    /// <summary>已解析逻辑模型的显式兼容标识。</summary>
+    public List<string> AcceptedModelAliases { get; init; } = new();
 
     /// <summary>本次实际命中的上游 Offering ID。</summary>
     public string? OfferingId { get; init; }
@@ -423,19 +462,32 @@ public class GatewayTokenUsage
     public int? OutputTokens { get; init; }
 
     /// <summary>
+    /// 输出 token 中属于推理过程的数量。它已经包含在 <see cref="OutputTokens"/> 中，
+    /// 只用于解释用量，绝不能再次计费。
+    /// </summary>
+    public int? ReasoningTokens { get; init; }
+
+    /// <summary>
     /// 总 Token 数
     /// </summary>
     public int? TotalTokens => (InputTokens ?? 0) + (OutputTokens ?? 0);
 
     /// <summary>
-    /// 缓存创建 Token 数（仅 Claude）
+    /// 缓存创建 Token 数
     /// </summary>
     public int? CacheCreationInputTokens { get; init; }
 
     /// <summary>
-    /// 缓存读取 Token 数（仅 Claude）
+    /// 缓存读取 Token 数
     /// </summary>
     public int? CacheReadInputTokens { get; init; }
+
+    /// <summary>
+    /// 缓存创建 token 是否已经包含在 <see cref="InputTokens"/> 中。
+    /// OpenAI Responses 的 input_tokens_details.cache_write_tokens 属于这一形态；
+    /// Claude 根级 cache_creation_input_tokens 则是独立计数。
+    /// </summary>
+    public bool CacheCreationCountedInsideInput { get; init; }
 
     /// <summary>
     /// Token 统计来源

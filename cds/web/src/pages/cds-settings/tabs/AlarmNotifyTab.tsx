@@ -1,3 +1,4 @@
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { AlarmIdentityPanel } from '../AlarmIdentityPanel';
 /*
  * 通知通道（CDS 系统设置 → 接入）。
@@ -11,7 +12,7 @@ import { AlarmIdentityPanel } from '../AlarmIdentityPanel';
  * 「填完就走」是不够的——没演练过的通道和没配的通道，在真出事那天是一样的。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { BellRing, CheckCircle2, XCircle } from 'lucide-react';
+import { BellRing, CheckCircle2, XCircle, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { AlarmChannelsPanel } from '../AlarmChannelsPanel';
@@ -20,23 +21,27 @@ import { cn } from '@/lib/utils';
 
 interface AlarmNotifyView {
   configured: boolean;
+  unavailable?: boolean;
+  reason?: string;
   source: 'settings' | 'env' | null;
   endpoint?: string;
   keyId?: string;
   username?: string;
+  targetUsername?: string;
+  secretStorage?: 'encrypted' | 'legacy' | 'env';
   /** 指纹而不是私钥：够核对「配的是不是我给的那把」，又不构成泄漏面 */
   privateKeyFingerprint?: string;
   missingEnv?: string[];
 }
 
-const INPUT = 'w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary/50';
+const INPUT = 'min-h-[3.25rem] w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary/50';
 
 export function AlarmNotifyTab(): JSX.Element {
   const [view, setView] = useState<AlarmNotifyView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [drill, setDrill] = useState<{ ok: boolean; reason?: string } | null>(null);
-  const [form, setForm] = useState({ endpoint: '', keyId: '', username: '', privateKey: '' });
+  const [form, setForm] = useState({ endpoint: '', keyId: '', username: '', targetUsername: '', privateKey: '' });
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -53,7 +58,7 @@ export function AlarmNotifyTab(): JSX.Element {
     try {
       await apiRequest('/api/cds-system/alarm-notify', { method: 'PUT', body: form });
       // 私钥只在这一次提交里出现，存完立刻从表单里抹掉——留在 DOM 里没有任何好处。
-      setForm({ endpoint: '', keyId: '', username: '', privateKey: '' });
+      setForm({ endpoint: '', keyId: '', username: '', targetUsername: '', privateKey: '' });
       setErr(null);
       await load();
     } catch (e) {
@@ -78,12 +83,13 @@ export function AlarmNotifyTab(): JSX.Element {
    * 项目清单给通道编辑器的「只管这些项目」选择器用。监控中心那一侧传的是按目标算出来的项目，
    * 这里没有目标，直接拉登记表；拉不到就空——选择器藏起来，通道只能是「全部项目」，不装知道。
    */
+  const [projectReadError, setProjectReadError] = useState(false);
   const [projects, setProjects] = useState<ReadonlyArray<{ id: string; name: string }>>([]);
   useEffect(() => {
     let alive = true;
     apiRequest<{ projects?: Array<{ id: string; name?: string }> }>('/api/projects')
       .then((res) => { if (alive) setProjects((res.projects ?? []).map((p) => ({ id: p.id, name: p.name || p.id }))); })
-      .catch(() => { if (alive) setProjects([]); });
+      .catch(() => { if (alive) setProjectReadError(true); });
     return () => { alive = false; };
   }, []);
 
@@ -92,7 +98,7 @@ export function AlarmNotifyTab(): JSX.Element {
     try {
       await apiRequest('/api/cds-system/alarm-notify', { method: 'PUT', body: { clear: true } });
       await load();
-    } finally {
+    } catch(e) {setErr(e instanceof ApiError?e.message:String(e));} finally {
       setBusy(false);
     }
   }, [load]);
@@ -102,40 +108,43 @@ export function AlarmNotifyTab(): JSX.Element {
       {/* 多协议通道在前：它是现在该用的那条路。Bark 的 key 当场就能粘进来，
           不必先定「发给哪个 MAP 账号、用哪个 MAP 实例」那两件只有人能定的事。 */}
       <AlarmIdentityPanel />
+      {projectReadError?<p role="alert" className="text-sm text-muted-foreground">项目目录读取失败。通道会保留原项目范围；新建默认全部项目，暂不能从目录选择项目。</p>:null}
       <AlarmChannelsPanel projects={projects} />
 
       {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经
           接好的铃在升级那天哑掉，所以留着，只是降到第二位并说清它和上面的关系。 */}
+      {!view && !err ? <SettingsContentSkeleton label="读取 MAP 签名配置" /> : <>
       <div className="flex flex-col gap-4 border-t border-[hsl(var(--hairline))] pt-5">
       <div className="text-xs text-muted-foreground">
-        下面这条是早先的单一 MAP 通道（走 .cds.env 或这一页的凭据）。它仍然工作；
-        新配通道请用上面那一块，MAP 也在那里能选。
+        容量与站内事件复用下面的 MAP 签名配置；上方通道用于监控订阅。
+        签名账号可以是独立服务身份，接收账号必须与 MAP 固定通知目标一致。
       </div>
       <div className={cn(
         'flex flex-wrap items-center gap-2 rounded-lg border px-3.5 py-3',
-        view?.configured ? 'border-ok/30 bg-ok-soft/40' : 'border-destructive/40 bg-destructive/10',
+        view?.configured ? 'border-ok/30 bg-ok-soft/40' : 'border-border',
       )}>
         <BellRing className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="text-sm font-medium">
           {view?.configured
-            ? `通知通道已配置（来自${view.source === 'settings' ? 'CDS 系统设置' : '.cds.env'}）`
-            : '出问题时不会有任何人被通知'}
+            ? `MAP 签名通道已配置（来自${view.source === 'settings' ? 'CDS 系统设置' : '.cds.env'}）`
+            : !view ? 'MAP 签名通道状态未确认' : view.unavailable ? 'MAP 签名凭据当前不可用' : 'MAP 签名通道未配置'}
         </span>
         {view?.configured ? (
           <span className="font-mono text-[0.6875rem] text-muted-foreground">
-            {view.username} @ {view.endpoint} · 私钥指纹 {view.privateKeyFingerprint}
+            {view.username} → {view.targetUsername || view.username} @ {view.endpoint} · 私钥指纹 {view.privateKeyFingerprint}
+            {view.secretStorage === 'encrypted' ? ' · 已加密保存' : view.secretStorage === 'legacy' ? ' · 旧凭据尚未加密，请重新保存' : ''}
           </span>
         ) : (
           <span className="text-[0.6875rem] text-muted-foreground">
-            监控探到故障时，告警只会留在 CDS 自己的台账里。填好下面四项即可接上。
+            {view?.reason || '配置后仍需实际演练确认送达；其他通知通道按各自配置投递。'}
           </span>
         )}
         <div className="flex-grow" />
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void runDrill()}>
-          {busy ? '处理中' : '演练一次通知'}
+        <Button size="sm" className="min-h-[3.25rem]" variant="outline" disabled={busy||!view?.configured} onClick={() => void runDrill()}>
+          {busy ? '处理中' : '演练旧版 MAP 通道'}
         </Button>
-        {view?.configured && view.source === 'settings' ? (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void clear()}>清除</Button>
+        {view?.source === 'settings' ? (
+          <Button size="sm" className="min-h-[3.25rem]" variant="outline" disabled={busy} onClick={() => void clear()}>清除签名配置</Button>
         ) : null}
       </div>
 
@@ -147,15 +156,17 @@ export function AlarmNotifyTab(): JSX.Element {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
+      {err?<div role="alert" className="space-y-2 text-sm text-destructive"><p>旧版 MAP 配置读取或操作失败：{err}</p><Button className="min-h-[3.25rem]" variant="outline" disabled={busy} onClick={()=>void load()}>重新读取旧版 MAP 配置</Button></div>:null}
+      <details className="group/legacy"><summary className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 text-sm font-medium"><ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/legacy:rotate-90"/>配置 MAP 签名通道</summary><fieldset disabled={busy} className="min-w-0 mt-3 flex flex-col gap-3">
         <div className="text-xs text-muted-foreground">
-          与 MAP 的签名通道对齐：MAP 侧只存公钥，私钥只留在 CDS、从不过网络。
-          四项缺一即拒 —— 半套凭据只会在真出事那天以 401 的形式暴露。
+          MAP 只保存公钥，私钥在 CDS 密封存储中加密保存，不会转发给 MAP。
+          先启用密封存储，再填写签名配置与固定接收账号。
         </div>
         {([
           ['endpoint', '通知端点', 'https://<你的 MAP>/api/dashboard/notifications/events'],
           ['keyId', '密钥 ID', '与 MAP 配置里那条的 KeyId 一致'],
-          ['username', '通知账号', '与 MAP 配置里那条的 Username 一致，通知会发给这个账号'],
+          ['username', '签名账号', '与 MAP 公钥配置的 Username 一致'],
+          ['targetUsername', '接收账号', '与 MAP 固定通知目标一致；留空沿用签名账号'],
         ] as const).map(([key, label, ph]) => (
           <label key={key} className="flex flex-col gap-1">
             <span className="text-[0.6875rem] text-muted-foreground">{label}</span>
@@ -173,14 +184,15 @@ export function AlarmNotifyTab(): JSX.Element {
           />
         </label>
         {err ? <div className="text-[0.6875rem] text-destructive">{err}</div> : null}
-        <div className="flex items-center gap-2">
-          <Button size="sm" disabled={busy} onClick={() => void save()}>保存并生效</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" className="min-h-[3.25rem]" disabled={busy} onClick={() => void save()}>保存并生效</Button>
           <span className="text-[0.6875rem] text-muted-foreground">
             保存后立刻生效，不需要重启 CDS；存完请紧接着演练一次 —— 没演练过的通道，和没配的通道在真出事那天是一样的。
           </span>
         </div>
+      </fieldset></details>
       </div>
-      </div>
+      </>}
     </div>
   );
 }

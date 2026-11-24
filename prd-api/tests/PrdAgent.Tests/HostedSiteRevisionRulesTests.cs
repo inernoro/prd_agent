@@ -8,6 +8,23 @@ namespace PrdAgent.Tests;
 
 public class HostedSiteRevisionRulesTests
 {
+    [Theory]
+    [InlineData("styles.css", false)]
+    [InlineData("review.js", false)]
+    [InlineData("product.html", false)]
+    [InlineData("lesson.pdf", true)]
+    [InlineData("downloads/tutorial-package.json", true)]
+    public void PreviewBridge_ShouldPreserveRegisteredCourseDownloads(string asset, bool expected)
+    {
+        var site = new HostedSite
+        {
+            EntryFile = "index.html",
+            Files = [new() { Path = "index.html" }, new() { Path = asset,
+                MimeType = asset.EndsWith(".pdf") ? "application/pdf" : "text/plain", CosKey = "test/" + asset, Size = 10 }],
+        };
+        Assert.Equal(expected, site.RequiresPreviewBridge);
+    }
+
     [Fact]
     public void ContentShape_ShouldTreatOnlyTheExactGeneratedPackageAsSelfContainedHtml()
     {
@@ -333,6 +350,44 @@ public class HostedSiteRevisionRulesTests
         // 后两条隔着 <br>，靠行界兜住。
         HostedSiteRevisionRules.ValidateGeneratedContentQuality(
             $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence);
+    }
+
+    [Theory]
+    [InlineData("项目代号")]
+    [InlineData("页面结构")]
+    [InlineData("章节安排")]
+    [InlineData("步骤说明")]
+    [InlineData("类型说明")]
+    public void ValidateGeneratedContentQuality_ChineseMonthDayAndInlineNounLabelAreNotReadAsOneCount(string noun)
+    {
+        const string evidence = "唯一主按钮写‘查看 12 月 16 日评审安排’，项目代号为 NOVA-04。";
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            $"<!doctype html><html><body><span>评审日期</span><strong>12.16</strong><span>{noun}</span></body></html>",
+            evidence);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_MonthDayBoundaryDoesNotAllowInventedDatesOrCounts()
+    {
+        const string evidence = "唯一主按钮写‘查看 12 月 16 日评审安排’，项目代号为 NOVA-04。";
+        Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            "<!doctype html><html><body><span>评审日期</span><strong>12.17</strong><span>项目代号</span></body></html>",
+            evidence));
+
+        var dottedCountError = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>本轮新增 12.16项待办。</p></body></html>",
+                evidence));
+        Assert.Contains("未支持的数值陈述", dottedCountError.Message, StringComparison.Ordinal);
+
+        foreach (var claim in new[] { "3项", "3项项目", "3个项目", "12人" })
+        {
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                    $"<!doctype html><html><body><p>本轮新增{claim}。</p></body></html>",
+                    "本轮没有数量承诺。"));
+            Assert.Contains("未支持的数值陈述", error.Message, StringComparison.Ordinal);
+        }
     }
 
     [Theory]

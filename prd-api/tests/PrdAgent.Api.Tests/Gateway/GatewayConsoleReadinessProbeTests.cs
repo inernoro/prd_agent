@@ -130,17 +130,23 @@ public sealed class GatewayConsoleReadinessProbeTests
     public async Task CheckAsync_ShouldStillProbeTheSecondDatabaseAfterTheFirstOneTimesOut()
     {
         var healthyProbeEntered = false;
+        CancellationToken timedOutToken = default;
         CancellationToken healthyToken = default;
         var probe = new GatewayConsoleReadinessProbe(
             [
                 // 网关库掉线：吃满整条超时，且认令牌（真 Mongo ping 就是这个形状）。
-                ("mongodb", token => Task.Delay(TimeSpan.FromSeconds(30), token)),
+                ("mongodb", token =>
+                {
+                    timedOutToken = token;
+                    return Task.Delay(TimeSpan.FromSeconds(30), token);
+                }),
                 // MAP 库好着：同样认令牌，所以拿到一条已取消的令牌就会直接失败。
-                ("map-mongodb", async token =>
+                ("map-mongodb", token =>
                 {
                     healthyProbeEntered = true;
                     healthyToken = token;
-                    await Task.Delay(TimeSpan.FromMilliseconds(20), token);
+                    token.ThrowIfCancellationRequested();
+                    return Task.CompletedTask;
                 }),
             ],
             TimeSpan.FromMilliseconds(150));
@@ -148,11 +154,43 @@ public sealed class GatewayConsoleReadinessProbeTests
         var snapshot = await probe.CheckAsync();
 
         healthyProbeEntered.ShouldBeTrue();
+        healthyToken.ShouldNotBe(timedOutToken, customMessage: "两条探测必须实际收到各自独立的取消令牌");
+        timedOutToken.IsCancellationRequested.ShouldBeTrue();
         healthyToken.IsCancellationRequested.ShouldBeFalse(
-            customMessage: "好着的那条库拿到的令牌被另一条的超时取消了，说明两条探测共用同一个作用域");
+            customMessage: "已完成的健康探测不应被另一条探测的超时连带取消");
         snapshot.Components.Single(x => x.Name == "mongodb").Ready.ShouldBeFalse();
         snapshot.Components.Single(x => x.Name == "map-mongodb").Ready.ShouldBeTrue(
             customMessage: "网关库超时不得连带把 MAP 库判成不可用——那会把运维指向错误的依赖");
+        snapshot.Status.ShouldBe("not-ready");
+    }
+
+    [Fact]
+    public async Task CheckAsync_ShouldKeepTokensIndependentWhenBothDatabasesTimeOut()
+    {
+        CancellationToken gatewayToken = default;
+        CancellationToken mapToken = default;
+        var probe = new GatewayConsoleReadinessProbe(
+            [
+                ("mongodb", token =>
+                {
+                    gatewayToken = token;
+                    return Task.Delay(TimeSpan.FromSeconds(30), token);
+                }),
+                ("map-mongodb", token =>
+                {
+                    mapToken = token;
+                    return Task.Delay(TimeSpan.FromSeconds(30), token);
+                }),
+            ],
+            TimeSpan.FromMilliseconds(50));
+
+        var snapshot = await probe.CheckAsync();
+
+        gatewayToken.ShouldNotBe(mapToken);
+        gatewayToken.IsCancellationRequested.ShouldBeTrue();
+        mapToken.IsCancellationRequested.ShouldBeTrue();
+        snapshot.Components.Single(x => x.Name == "mongodb").Ready.ShouldBeFalse();
+        snapshot.Components.Single(x => x.Name == "map-mongodb").Ready.ShouldBeFalse();
         snapshot.Status.ShouldBe("not-ready");
     }
 

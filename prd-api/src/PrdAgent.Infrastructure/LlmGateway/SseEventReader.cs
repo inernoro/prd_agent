@@ -11,6 +11,8 @@ public class SseEventReader
 {
     private readonly StreamReader _reader;
 
+    public bool Completed { get; private set; }
+
     public SseEventReader(StreamReader reader) => _reader = reader;
 
     /// <summary>
@@ -19,9 +21,10 @@ public class SseEventReader
     public async IAsyncEnumerable<string> ReadEventsAsync(
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        while (!_reader.EndOfStream)
+        while (true)
         {
             var line = await _reader.ReadLineAsync(ct);
+            if (line is null) yield break;
             if (string.IsNullOrEmpty(line)) continue;
 
             // 注释行跳过
@@ -33,6 +36,7 @@ public class SseEventReader
                 var value = line.Substring(5).TrimStart();
                 if (value == "[DONE]")
                 {
+                    Completed = true;
                     yield break;
                 }
                 yield return value;

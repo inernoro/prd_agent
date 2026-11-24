@@ -234,6 +234,9 @@ public interface IHostedSitePrivateSourceGate
         string userId,
         string? confirmedFingerprint,
         CancellationToken ct);
+
+    Task<HostedSitePrivateSourceDecision> EnforceForRevisionShareAsync(
+        HostedSite site, HostedSiteRevision revision, string userId, string? confirmedFingerprint, CancellationToken ct);
 }
 
 /// <summary>
@@ -247,7 +250,7 @@ public interface IHostedSitePrivateSourceGate
 /// 见 ResolveCurrentRevisionAsync。血缘超过 MaxLineageDepth 或成环、没读到头时同样按「无法确认」列出，
 /// 见 TruncatedLineageItem。
 ///
-/// 已知边界（同步记在 doc/debt.platform.open-design.md）：
+/// 已知边界（同步记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md）：
 /// - 没有版本账本（也没有活动发布指针）的旧站点、从未在工作台打开过的上传站点，查不到来源，按现状放行；
 /// - 手动重传 / 上传优化改写内容后生成的新基线不继承旧来源，按无来源放行；
 /// - 站点原始对象地址、访问 / 扫码便捷链、导出 HTML 不经过这道闸。
@@ -411,6 +414,13 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
             userId,
             confirmedFingerprint,
             ct);
+    }
+
+    public async Task<HostedSitePrivateSourceDecision> EnforceForRevisionShareAsync(
+        HostedSite site, HostedSiteRevision revision, string userId, string? confirmedFingerprint, CancellationToken ct)
+    {
+        var report = await InspectRevisionAsync(site, revision, ct);
+        return await DecideAndRecordAsync(report, HostedSitePrivateSourceActions.ShareCreate, userId, confirmedFingerprint, ct);
     }
 
     private async Task<HostedSitePrivateSourceDecision> DecideAndRecordAsync(

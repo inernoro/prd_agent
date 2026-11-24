@@ -91,10 +91,10 @@
 }
 
 /*
- * 深色档。两处 :root 变体都要写：显式选了深色（data-theme）与跟随系统各一次，
- * 只写一个的话另一条路径会退回浅色值（cds-theme-tokens 那条纪律的同一根因）。
+ * 全站仅在浅色时写 data-theme='light'，深色会移除属性；局部皮肤遵循同一协议。
+ * 默认深色、显式黑夜与随系统解析成深色，均不能等待一个不存在的 dark 属性。
  */
-[data-theme='dark'] .recording-design-palette {
+:root:not([data-theme='light']) .recording-design-palette {
   --bg-primary: #0B0D0F;
   --bg-base: #08090B;
   --bg-card: #15181B;

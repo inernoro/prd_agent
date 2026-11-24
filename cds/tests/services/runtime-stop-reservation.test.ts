@@ -8,11 +8,11 @@ describe('按真实停止身份释放预留', () => {
     const svc: ServiceState = { profileId: 'api', containerName: 'reservation-test', containerId: 'a'.repeat(64),
       hostPort: 10001, status: 'error', creationIssued: true };
     const container = Object.create(ContainerService.prototype) as ContainerService;
-    container.stop = vi.fn().mockResolvedValue(undefined);
+    container.stop = vi.fn().mockImplementation(async (_identity, _reason, _context, onStopped) => { await onStopped(); });
     deploymentPhaseBudget.reserveKnownMemory(svc.containerName, 512, {});
     try {
       await container.stopRuntimeGroup(svc, 'test', { branchId: 'b', projectId: 'p' });
-      expect(container.stop).toHaveBeenCalledWith('a'.repeat(64), 'test', expect.any(Object));
+      expect(container.stop).toHaveBeenCalledWith('a'.repeat(64), 'test', { branchId: 'b', projectId: 'p' }, expect.any(Function));
       expect(deploymentPhaseBudget.memorySnapshot().some(row => row.key === svc.containerName)).toBe(false);
     } finally { deploymentPhaseBudget.releaseMemory(svc.containerName); }
   });

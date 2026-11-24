@@ -208,7 +208,6 @@ export function ProductsSection() {
                   </span>
                   <div className="min-w-0 flex-1">
                   <div className="text-token-primary font-medium truncate">{p.name}</div>
-                  <div className="text-[11px] text-token-muted mt-0.5">{p.productNo}</div>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -304,12 +303,6 @@ export function ProductsSection() {
               header: formatListSectionTitle('产品名称', visibleProducts.length),
               defaultWidth: 180,
               render: (p) => <TruncateCell text={p.name} maxChars={24} className="text-token-primary font-medium" />,
-            },
-            {
-              key: 'productNo',
-              header: '编号',
-              defaultWidth: 120,
-              render: (p) => <span className="font-mono text-xs text-token-secondary">{p.productNo}</span>,
             },
             {
               key: 'grade',

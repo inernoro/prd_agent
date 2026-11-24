@@ -1,0 +1,170 @@
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import express from 'express';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createAcceptanceTasksRouter } from '../../src/routes/acceptance-tasks.js';
+import { AcceptanceTaskService } from '../../src/services/acceptance-tasks.js';
+import { StateService } from '../../src/services/state.js';
+import { createServer, installSpaFallback, resolveApiLabel } from '../../src/server.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { WorktreeService } from '../../src/services/worktree.js';
+import type { CdsConfig } from '../../src/types.js';
+import type { AcceptanceCase, AcceptanceTask, AcceptanceTemplate } from '../../src/acceptance-types.js';
+
+const testcase: AcceptanceCase = {
+  caseId: 'WEB-001', title: '分享网页能阅读并撤销', module: '网页托管', criticality: 'core', environments: ['production', 'cds'],
+  breadcrumb: ['百宝箱', '网页托管'], entryPath: '/web-pages', preconditions: [], inputs: [{ name: '标题', value: 'stsmk-任务' }],
+  steps: [{ id: 'share', action: '分享并撤销', expected: '正文可读，撤销后失效' }], assertions: [{ id: 'revoked', description: '撤销后分享失效' }],
+  evidenceRequired: true, cleanup: 'required', cleanupInstructions: '删除本轮站点并回读', owner: '网页负责人',
+};
+
+describe('验收API真实HTTP与项目隔离', () => {
+  let dir: string, state: StateService, service: AcceptanceTaskService, server: http.Server;
+  let templates: Record<string, AcceptanceTemplate>, tasks: Record<string, AcceptanceTask>;
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-acceptance-route-'));
+    state = new StateService(path.join(dir, 'state.json')); state.load();
+    service = new AcceptanceTaskService(state);
+    templates = {}; tasks = {};
+    for (const projectId of ['p1', 'p2']) {
+      state.addProject({ id: projectId, slug: projectId, name: projectId, kind: 'git', createdAt: '', updatedAt: '' });
+      templates[projectId] = await service.publishTemplate({ projectId, title: `${projectId}核心清单`, cases: [testcase] });
+      tasks[projectId] = await service.createTask({ projectId, templateId: templates[projectId].id, environment: 'production' });
+    }
+    const app = express();
+    app.use((req, res, next) => {
+      res.setHeader('x-cds-acceptance-fixture', path.basename(dir));
+      const id = req.header('x-test-project');
+      if (id) (req as any).cdsProjectKey = { projectId: id, keyId: `key-${id}` };
+      if (req.header('x-test-global') === 'empty') (req as any).cdsAccess = { keyId: 'global', access: { projects: [] } };
+      next();
+    });
+    app.use('/api/acceptance', createAcceptanceTasksRouter({ service }));
+    await new Promise<void>((resolve, reject) => {
+      server = app.listen(0, '127.0.0.1', resolve);
+      server.once('error', reject);
+    });
+    expect(server.address()).toMatchObject({ address: '127.0.0.1', family: 'IPv4' });
+  });
+  afterEach(async () => { await new Promise<void>((resolve) => server.close(() => resolve())); await state.flush(); vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(dir, { recursive: true, force: true }); });
+  async function request(method: string, route: string, body?: unknown, headers: Record<string, string> = { 'x-test-project': 'p1' }) {
+    const port = (server.address() as { port: number }).port;
+    return new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port, path: `/api/acceptance${route}`, method, headers: { 'content-type': 'application/json', ...headers } }, (res) => {
+        if (res.headers['x-cds-acceptance-fixture'] !== path.basename(dir)) {
+          res.resume(); reject(new Error('HTTP 响应不属于本次独立验收测试')); return;
+        }
+        let raw = ''; res.setEncoding('utf8'); res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => { try { resolve({ status: res.statusCode!, body: JSON.parse(raw) }); } catch (err) { reject(err); } });
+      });
+      req.on('error', reject); req.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+  }
+  it('验收租约异常保留专属503诊断但不摘除整个CDS实例', async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.stubEnv('CDS_PUBLIC_HEALTH_DETAILS', '1');
+    vi.stubEnv('CDS_USERNAME', ''); vi.stubEnv('CDS_PASSWORD', ''); vi.stubEnv('CDS_AUTH_MODE', 'none');
+    // 本用例只验证健康信号隔离；干净 CI checkout 不一定已经生成 Web dist。
+    const fileExists = fs.existsSync;
+    vi.spyOn(fs, 'existsSync').mockImplementation((file) => String(file).replaceAll('\\', '/').endsWith('/cds/web/dist/index.html') || fileExists(file));
+    const shell = new MockShellExecutor();
+    shell.addResponse('docker version --format "{{.Server.Version}}"', { stdout: 'fixture', stderr: '', exitCode: 0 });
+    const config = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'), masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture', portStart: 10001, sharedEnv: {}, jwt: { secret: 'fixture', issuer: 'fixture' }, mode: 'standalone', executorPort: 9901, rootDomains: ['fixture.example.test'] } as CdsConfig;
+    const app = createServer({ stateService: state, shell, config, worktreeService: new WorktreeService(shell, dir), containerService: {} as any, bridgeService: {} as any, proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
+    installSpaFallback(app);
+    const health = app.locals.acceptanceTaskService.health();
+    vi.spyOn(app.locals.acceptanceTaskService, 'health').mockReturnValue({ ...health, ok: false, lastReconcileOk: false });
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const probe = await fetch(`http://127.0.0.1:${port}/healthz`);
+      const body = await probe.json() as any;
+      expect(body.checks.acceptanceLeases.ok).toBe(false);
+      expect(Object.fromEntries(Object.entries(body.checks).filter(([name, value]) => name !== 'acceptanceLeases' && !(value as { ok: boolean }).ok))).toEqual({});
+      expect(probe.status).toBe(200); expect(body.ok).toBe(true); expect(body.degraded).toBe(true);
+      const dedicated = await fetch(`http://127.0.0.1:${port}/api/acceptance/health?projectId=p1`);
+      expect(dedicated.status).toBe(503);
+    } finally { await app.locals.stopAcceptanceLeaseReaper(); }
+  });
+  it('拒绝非字符串状态，数组不能绕过通过条件', async () => {
+    const claimed = await request('POST', `/tasks/${tasks.p1.id}/claim`, { agentName: 'A' });
+    const sent = await request('POST', `/tasks/${tasks.p1.id}/results/WEB-001`, {
+      leaseToken: claimed.body.leaseToken, submissionId: 'malformed-status', status: ['pass'],
+      actual: '没有执行', assertions: [], evidence: [], cleanup: { status: 'fail', details: '未清理' },
+    });
+    expect(sent.status).toBe(400);
+    expect(sent.body.error).toBe('invalid_result');
+    const read = await request('GET', `/tasks/${tasks.p1.id}`);
+    expect(read.body.task.summary).toMatchObject({ pass: 0, notRun: 1, gate: 'fail' });
+    expect(read.body.task.results).toEqual({});
+  });
+  it('全部验收路由在操作记录中都有中文操作说明', () => {
+    const router = createAcceptanceTasksRouter({ service });
+    for (const layer of router.stack) {
+      if (!layer.route) continue;
+      const route = layer.route;
+      const path = `/api/acceptance${route.path}`.replace(/:[^/]+/g, 'probe-id');
+      for (const method of Object.keys(route.methods)) {
+        expect(resolveApiLabel(method.toUpperCase(), path), `${method} ${path}`).toMatch(/\p{Script=Han}/u);
+      }
+    }
+  });
+
+  it('列表缺省锁定项目，明确跨项目读取拒绝', async () => {
+    expect((await request('GET', '/templates')).body.templates.map((t: AcceptanceTemplate) => t.projectId)).toEqual(['p1']);
+    expect((await request('GET', '/tasks')).body.tasks.map((t: AcceptanceTask) => t.projectId)).toEqual(['p1']);
+    for (const route of ['/templates?projectId=p2', '/tasks?projectId=p2', '/matrix?projectId=p2', '/health?projectId=p2', `/templates/${templates.p2.id}`, `/tasks/${tasks.p2.id}`, `/matrix?templateId=${templates.p2.id}`]) {
+      expect((await request('GET', route)).status, route).toBe(403);
+    }
+  });
+  it.each(['claim', 'heartbeat', 'release', 'results/WEB-001', 'complete', 'cancel', 'report', 'bind-report'])('跨项目 %s 必须在操作之前拒绝', async (operation) => {
+    const response = await request('POST', `/tasks/${tasks.p2.id}/${operation}`, { agentName: 'A', leaseToken: 'unknown', reportId: 'report-other' });
+    expect(response.status).toBe(403); expect(service.getTask(tasks.p2.id).status).toBe('pending');
+  });
+  it('跨项目创建或引用模板不得绕过作用域，全局空授权也拒绝', async () => {
+    expect((await request('POST', '/templates', { projectId: 'p2', title: '越权', cases: [testcase] })).status).toBe(403);
+    expect((await request('POST', '/templates', { projectId: 'p1', templateId: templates.p2.id, expectedVersion: 1, title: '越权版本', cases: [testcase] })).status).toBe(403);
+    expect((await request('POST', '/tasks', { projectId: 'p1', templateId: templates.p2.id, environment: 'production' })).status).toBe(403);
+    expect((await request('GET', '/tasks?projectId=p1', undefined, { 'x-test-global': 'empty' })).status).toBe(403);
+    expect((await request('GET', '/tasks', undefined, {})).status).toBe(400);
+  });
+  it('HTTP完整路径：领取、心跳、回填、完成、报告、矩阵与重建回读', async () => {
+    const claimed = await request('POST', `/tasks/${tasks.p1.id}/claim`, { agentName: '执行Agent' });
+    expect(claimed.status).toBe(200); const leaseToken = claimed.body.leaseToken;
+    const read = await request('GET', `/tasks/${tasks.p1.id}`);
+    expect(read.body.task.lease.agentName).toBe('执行Agent'); expect(JSON.stringify(read.body)).not.toContain(leaseToken); expect(read.body.task).not.toHaveProperty('leaseTokenHash');
+    expect((await request('POST', `/tasks/${tasks.p1.id}/heartbeat`, { leaseToken })).status).toBe(200);
+    const submission = { leaseToken, submissionId: 'web-result-1', status: 'pass', actual: '正文可读，撤销后失效', assertions: [{ id: 'revoked', passed: true, actual: '刷新分享页面不能再读取' }], evidence: [{ kind: 'image', url: 'https://images.example.com/share.png', caption: '撤销后的页面' }], cleanup: { status: 'pass', details: '本轮站点回读无残留' } };
+    const submitted = await request('POST', `/tasks/${tasks.p1.id}/results/WEB-001`, submission);
+    expect(submitted.status).toBe(200); expect(submitted.body.task.summary).toMatchObject({ planned: 1, pass: 1, gate: 'pass' });
+    const complete = await request('POST', `/tasks/${tasks.p1.id}/complete`, { leaseToken });
+    expect(complete.body.task.status).toBe('completed');
+    const report = await request('POST', `/tasks/${tasks.p1.id}/report`);
+    expect(report.body.report).toMatchObject({ sourceId: tasks.p1.id, format: 'md', verdict: 'pass', verification: 'pending' });
+    expect(report.body.report.content).toContain('WEB-001'); expect(state.listAcceptanceReports('p1')).toHaveLength(0);
+    const matrix = await request('GET', '/matrix');
+    expect(matrix.body.rows[0].cells[0]).toMatchObject({ status: 'pass', flaky: false });
+    const rebuilt = new StateService(path.join(dir, 'state.json')); rebuilt.load();
+    expect(new AcceptanceTaskService(rebuilt).getTask(tasks.p1.id).summary.pass).toBe(1); await rebuilt.flush();
+  });
+  it('正文无效或过大使用用户可读错误而不是HTML', async () => {
+    const response = await request('POST', '/templates', { title: '大正文', cases: [testcase], padding: 'a'.repeat(1_100_000) });
+    expect(response.status).toBe(413); expect(response.body.message).toContain('超过请求容量');
+  });
+  it('非法模板版本、环境和重复用例不给假通过', async () => {
+    expect((await request('GET', `/templates/${templates.p1.id}?version=bad`)).status).toBe(400);
+    expect((await request('GET', '/matrix?environment=test')).status).toBe(400);
+    expect((await request('POST', '/templates', { title: '重复', cases: [testcase, testcase] })).body.error).toBe('duplicate_id');
+    expect((await request('POST', '/tasks', { templateId: templates.p1.id, environment: 'cds', caseIds: ['NOT-IN-TEMPLATE'] })).body.error).toBe('invalid_scope');
+  });
+  it('HTTP取消运行任务必须当前票据，管理员也不能绕过', async () => {
+    const claim = await request('POST', `/tasks/${tasks.p1.id}/claim`, { agentName: 'A' });
+    expect((await request('POST', `/tasks/${tasks.p1.id}/cancel`, {})).status).toBe(409);
+    expect((await request('POST', `/tasks/${tasks.p1.id}/cancel`, {}, {})).status).toBe(409);
+    expect((await request('POST', `/tasks/${tasks.p1.id}/cancel`, { leaseToken: claim.body.leaseToken })).body.task.status).toBe('cancelled');
+    expect((await request('POST', `/tasks/${tasks.p2.id}/cancel`, {}, { 'x-test-project': 'p2' })).body.task.status).toBe('cancelled');
+  });
+});

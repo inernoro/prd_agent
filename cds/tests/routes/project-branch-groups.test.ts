@@ -8,11 +8,22 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { getHttpFixtureTrace, listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
 import { createProjectsRouter, isBranchGroupsSaveRequest } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { BRANCH_GROUP_LIMITS } from '../../src/services/branch-groups.js';
+
+/** 只保留定位夹具所需的有界元数据，不输出 URL、请求头或正文。 */
+function fixtureArrivals(server: http.Server) {
+  return getHttpFixtureTrace(server)?.arrivals.slice(-8).map(arrival => ({
+    method: arrival.method?.slice(0, 12), localAddress: arrival.localAddress,
+    localPort: arrival.localPort, status: arrival.status,
+  })) ?? [];
+}
 
 async function request(
   server: http.Server,
@@ -20,14 +31,22 @@ async function request(
   urlPath: string,
   body?: unknown,
   extraHeaders: Record<string, string> = {},
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: any; meta: Record<string, unknown> }> {
+  if (!server.listening) await once(server, 'listening');
+  const addr = server.address();
+  if (!addr || typeof addr === 'string') throw new Error('测试 HTTP 夹具未就绪');
+  const trace = getHttpFixtureTrace(server);
   return new Promise((resolve, reject) => {
-    const addr = server.address() as { port: number };
+    let snapshot: () => Record<string, unknown> = () => ({
+      fixtureId: trace?.id, fixturePid: trace?.pid, listener: trace?.listener, arrivals: fixtureArrivals(server),
+    });
+    const fail = (code: string) => reject(Object.assign(new Error('测试 HTTP 响应未满足夹具契约'), { code, meta: snapshot() }));
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
     const req = http.request(
       {
         hostname: '127.0.0.1',
         port: addr.port,
+        agent: false,
         path: urlPath,
         method,
         headers: payload
@@ -35,16 +54,35 @@ async function request(
           : { ...extraHeaders },
       },
       (res) => {
-        let raw = '';
-        res.on('data', (chunk) => { raw += chunk; });
+        const chunks: Buffer[] = [];
+        let rawBytes = 0, parseKind = 'empty';
+        const socket = { localAddress: res.socket?.localAddress, localPort: res.socket?.localPort,
+          remoteAddress: res.socket?.remoteAddress, remotePort: res.socket?.remotePort };
+        const id = res.headers['x-cds-fixture-id'], pid = res.headers['x-cds-fixture-pid'];
+        const contentType = res.headers['content-type'], length = res.headers['content-length'];
+        snapshot = () => ({ status: res.statusCode || 0, rawBytes, parseKind, complete: res.complete, reusedSocket: !!req.reusedSocket,
+          contentType: typeof contentType === 'string' && /^application\/json(?:\s*;|$)/i.test(contentType) ? 'json' : contentType === undefined ? 'missing' : 'other',
+          declaredBytes: typeof length === 'string' && /^\d{1,10}$/.test(length) ? Number(length) : null,
+          responseFixtureId: typeof id === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id) ? id : id === undefined ? 'missing' : 'invalid',
+          responseFixturePid: typeof pid === 'string' && /^\d{1,10}$/.test(pid) ? Number(pid) : null,
+          fixtureId: trace?.id, fixturePid: trace?.pid, listener: trace?.listener, socket,
+          arrivals: fixtureArrivals(server) });
+        res.on('data', (chunk: Buffer) => { chunks.push(chunk); rawBytes += chunk.length; });
+        res.on('aborted', () => fail('response_aborted'));
+        res.on('error', () => fail('response_error'));
         res.on('end', () => {
-          let parsed: any = null;
-          try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = raw; }
-          resolve({ status: res.statusCode || 0, body: parsed });
+          let parsed: any;
+          try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); parseKind = parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed; }
+          catch { parseKind = rawBytes ? 'invalid-json' : 'empty'; }
+          const meta = snapshot();
+          if (!res.complete) return fail('incomplete_response');
+          if (!trace || id !== trace.id || pid !== String(trace.pid)) return fail('fixture_identity');
+          if (meta.contentType !== 'json' || parseKind === 'invalid-json' || parseKind === 'empty') return fail('invalid_json');
+          resolve({ status: res.statusCode || 0, body: parsed, meta });
         });
       },
     );
-    req.on('error', reject);
+    req.on('error', () => fail('request_error'));
     if (payload) req.write(payload);
     req.end();
   });
@@ -68,7 +106,7 @@ describe('项目分支自定义分组', () => {
   /** 模拟全局 Agent Key（cdsg_）鉴权通过后盖上的 req.cdsAccess */
   let currentAccess: { keyId: string; access: unknown } | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     currentUser = null;
     currentProjectKey = null;
     currentAccess = null;
@@ -95,7 +133,8 @@ describe('项目分支自定义分组', () => {
       next();
     });
     app.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.listening) await once(server, 'listening');
   });
 
   afterEach(async () => {
@@ -298,7 +337,7 @@ describe('项目分支自定义分组', () => {
     // 与生产同形：全局解析器对这条路径放行，由路由自带的解析器接手
     const bare = express();
     bare.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
-    const bareServer = bare.listen(0);
+    const bareServer = listenLoopbackFixture(bare);
     try {
       const pins = Array.from({ length: 200 }, (_, i) => `branch-${'x'.repeat(40)}-${i}`);
       const groups = Array.from({ length: 12 }, (_, g) => ({
@@ -321,7 +360,7 @@ describe('项目分支自定义分组', () => {
   it('校验能接受的最大请求也在解析上限之内：钉入 id 限长限字符，超长或带转义字符的 id 回 400 而不是 413（Codex P2）', async () => {
     const bare = express();
     bare.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
-    const bareServer = bare.listen(0);
+    const bareServer = listenLoopbackFixture(bare);
     try {
       // 最坏情形：30 组 × 200 个最长钉入 id，每组 20 条每个字符都要转义成 \\u0001 的最长规则值
       const worstRule = '\u0001'.repeat(BRANCH_GROUP_LIMITS.ruleValueLength);
@@ -514,6 +553,8 @@ describe('项目分支自定义分组', () => {
     const spy = vi.spyOn(Date, 'now').mockReturnValue(frozen);
     try {
       const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+      console.info('[branch-groups-first-response]', JSON.stringify(first.meta));
+      expect(first.status, JSON.stringify(first.meta)).toBe(200);
       const second = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
       expect(second.status).toBe(200);
       expect(second.body.updatedAt).not.toBe(first.body.updatedAt);
@@ -521,6 +562,38 @@ describe('项目分支自定义分组', () => {
       expect(stale.status).toBe(409);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: '完整响应但 fixture 身份错误', raw: '{"ok":true}', wrongIdentity: true, parseKind: 'object', code: 'fixture_identity' },
+    { name: '完整 JSON 类型响应但 JSON 字节损坏', raw: '{"broken":', wrongIdentity: false, parseKind: 'invalid-json', code: 'invalid_json' },
+  ])('原请求消费者应拒绝 $name', async ({ raw, wrongIdentity, parseKind, code }) => {
+    let finished = false;
+    const foreignId = randomUUID();
+    const peerApp = express();
+    peerApp.use((_req, res) => {
+      res.statusCode = 200; res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Length', Buffer.byteLength(raw));
+      if (wrongIdentity) res.setHeader('x-cds-fixture-id', foreignId);
+      res.on('finish', () => { finished = true; }); res.end(raw);
+    });
+    const peer = listenLoopbackFixture(peerApp);
+    try {
+      if (!peer.listening) await once(peer, 'listening');
+      const trace = getHttpFixtureTrace(peer)!;
+      if (wrongIdentity) expect(foreignId).not.toBe(trace.id);
+      const outcome = await request(peer, 'GET', '/consumer-negative').then(response => ({ response, error: undefined }),
+        error => ({ response: undefined, error }));
+      expect(finished).toBe(true); expect(trace.arrivals).toHaveLength(1); expect(trace.arrivals[0].status).toBe(200);
+      if (outcome.response) expect(outcome.response.meta).toMatchObject({ complete: true, rawBytes: Buffer.byteLength(raw), contentType: 'json', parseKind });
+      expect(outcome.error?.meta).toMatchObject({ complete: true, rawBytes: Buffer.byteLength(raw), contentType: 'json', parseKind });
+      console.info('[branch-groups-negative-response]', JSON.stringify(outcome.response?.meta ?? outcome.error?.meta ?? {
+        rejected: true, fixtureId: trace.id, fixturePid: trace.pid, listener: trace.listener, arrivals: fixtureArrivals(peer),
+      }));
+      expect(outcome).toHaveProperty('error', expect.objectContaining({ code }));
+    } finally {
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
     }
   });
 

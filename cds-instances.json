@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "cluster": { "id": "map-cds", "authorityId": "primary" },
+  "instances": [
+    { "id": "primary", "name": "主用 CDS", "role": "primary", "url": "https://cds.miduo.org" },
+    { "id": "standby", "name": "备用 CDS", "role": "standby", "url": "https://mycds.net" }
+  ]
+}

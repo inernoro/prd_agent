@@ -340,14 +340,14 @@
   }
 }
 
-/* Radix Dialog：从小到大弹出（用于“背景停 -> 弹窗出场”的顺序感） */
+/* 遮罩只动画背景色：Content嵌在Overlay内，动画父opacity会让实底内容一同透底。 */
 @keyframes prdDialogOverlayIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { background-color: transparent; }
+  to { background-color: var(--dialog-overlay); }
 }
 @keyframes prdDialogContentIn {
-  from { opacity: 0; transform: scale(0.96); }
-  to   { opacity: 1; transform: scale(1); }
+  from { transform: scale(0.96); }
+  to   { transform: scale(1); }
 }
 
 .prd-dialog-content {

@@ -71,7 +71,42 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         payload.GetProperty("maxInputBytes").GetInt64().ShouldBe(1024);
         payload.GetProperty("maxOutputBytes").GetInt64().ShouldBe(2048);
         payload.GetProperty("allowedOutputPaths")[0].GetString().ShouldBe("index.html");
+        payload.GetProperty("continuingRun").GetBoolean().ShouldBeFalse();
+        payload.TryGetProperty("previousImageDigest", out _).ShouldBeFalse();
         payload.TryGetProperty("SchemaVersion", out _).ShouldBeFalse();
+
+        var digest = $"sha256:{new string('a', 64)}";
+        var continuation = transfer with { ContinuingRun = true, PreviousImageDigest = digest };
+        using var continued = JsonDocument.Parse(JsonSerializer.Serialize(continuation));
+        continued.RootElement.GetProperty("continuingRun").GetBoolean().ShouldBeTrue();
+        continued.RootElement.GetProperty("previousImageDigest").GetString().ShouldBe(digest);
+
+        using var legacy = JsonDocument.Parse(JsonSerializer.Serialize(continuation with { PreviousImageDigest = null }));
+        legacy.RootElement.GetProperty("continuingRun").GetBoolean().ShouldBeTrue();
+        legacy.RootElement.TryGetProperty("previousImageDigest", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void WorkspaceStartReceipt_ShouldPreserveTheActualFixedImageDigest()
+    {
+        var digest = $"sha256:{new string('a', 64)}";
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            runtimeImage = $"ghcr.io/example/open-design@{digest}"
+        }));
+
+        InfraAgentSessionService.ReadCdsWorkspaceImageDigest(response.RootElement).ShouldBe(digest);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("ghcr.io/example/open-design:latest")]
+    [InlineData("ghcr.io/example/open-design@sha256:invalid")]
+    public void WorkspaceStartReceipt_ShouldLeaveAnUnconfirmedImageUnknown(string? runtimeImage)
+    {
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(new { runtimeImage }));
+
+        InfraAgentSessionService.ReadCdsWorkspaceImageDigest(response.RootElement).ShouldBeNull();
     }
 
     [Fact]

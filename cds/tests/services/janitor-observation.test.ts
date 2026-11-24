@@ -1,3 +1,4 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -30,6 +31,10 @@ if ((args[0]==='ps'||args[0]==='images') && process.env.CDS_JANITOR_QUERY_FAILUR
 else if(args[0]==='ps') {
  if(args.includes('-aq'))console.log('111a\\n222b');
  else if(!args.includes('--filter'))console.log(${JSON.stringify(image)});
+} else if(args[0]==='container'&&args[1]==='inspect') {
+ console.log(args.slice(4).map(Id=>JSON.stringify({Id,Image:'sha256:fixture'})).join('\\n'));
+} else if(args[0]==='image'&&args[1]==='inspect') {
+ console.log(JSON.stringify({Id:'sha256:fixture',RepoTags:[${JSON.stringify(image)}]}));
 } else if(args[0]==='inspect') {
  if(process.env.CDS_JANITOR_INSPECT!=='empty')console.log('/owned/mounted');
  if(process.env.CDS_JANITOR_INSPECT)process.exitCode=1;
@@ -44,18 +49,19 @@ else if(args[0]==='ps') {
   const operation = { exec: vi.fn((...args: Parameters<ShellExecutor['exec']>) => new ShellExecutor().exec(...args)) };
   const owned = ownedRemoval ? new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2,
     maxQueued: 4, maxBytes: 256 * 1024, reservedCleanup: 1, reservedCleanupBytes: 64 * 1024 }) : undefined;
+  if (owned) { traceExecutor(owned, 'janitor-operation'); executors.push(owned); }
+  const shell = new IsolatedShellExecutor({ ...operation,
+    ...(owned ? { execOwnedOperation: owned.execOwnedOperation.bind(owned) } : {}) });
+  traceExecutor(shell, 'janitor-observation'); executors.push(shell);
+  // 两个独立夹具池并行准备，业务仍等两者就绪；各自启动和用例5秒期限均不变。
+  await Promise.all([shell.start(), ...(owned ? [owned.start()] : [])]);
   if (owned) {
-    executors.push(owned); await owned.start();
     const deadline = Date.now() + 5000;
     while (owned.getStats().actors.filter(actor => actor.heapLimit !== undefined).length !== 2) {
       if (Date.now() >= deadline) throw new Error('Owned fixture not ready within original startup budget');
       await new Promise(resolve => setTimeout(resolve, 5));
     }
   }
-  const shell = new IsolatedShellExecutor({ ...operation,
-    ...(owned ? { execOwnedOperation: owned.execOwnedOperation.bind(owned) } : {}) });
-  executors.push(shell);
-  await shell.start();
   const adapters = process.env.CDS_JANITOR_REFERENCE === '1'
     ? { imageDocker: janitorModule.defaultImageDocker, orphanWorktreeFs: janitorModule.defaultOrphanWorktreeFs, dockerPrune: janitorModule.defaultDockerPrune }
     : janitorModule.createJanitorDockerAdapters(shell);
@@ -76,7 +82,7 @@ describe('Janitor 真实命令与观测隔离', () => {
     const [images, inUse, mounts] = await Promise.all([
       f.adapters.imageDocker.listImages(), f.adapters.imageDocker.listInUseImages(), f.adapters.orphanWorktreeFs.listMountedHostPaths(),
     ]);
-    expect(images).toEqual([f.image]); expect(inUse).toEqual([f.image]); expect(mounts).toEqual(['/owned/mounted']);
+    expect(images).toEqual([f.image]); expect(inUse).toEqual(['sha256:fixture', f.image]); expect(mounts).toEqual(['/owned/mounted']);
     const trace = await f.trace();
     // 原默认 execFile 路径中，真实 fixture 进程以 Master 为父进程，此断言失败。
     expect(trace.every(item => item.ppid !== process.pid)).toBe(true);
@@ -100,7 +106,7 @@ describe('Janitor 真实命令与观测隔离', () => {
     await expect(f.adapters.imageDocker.listImages()).rejects.toThrow();
   });
 
-  it('强删前引用未知时保留镜像，恶意样式参数仍只是一个真实 argv', async () => {
+  it('任何删除前引用未知时保留镜像，恶意样式参数仍只是一个真实 argv', async () => {
     const f = await fixture();
     process.env.CDS_JANITOR_CONFLICT = '1';
     process.env.CDS_JANITOR_QUERY_FAILURE = 'ps';
@@ -109,9 +115,8 @@ describe('Janitor 真实命令与观测隔离', () => {
     const result = await f.adapters.imageDocker.removeImage(image);
     expect(result?.startsWith(janitorModule.IMAGE_HELD_PREFIX)).toBe(true);
     const trace = await f.trace();
-    expect(trace.find(item => item.args[0] === 'rmi')?.args).toEqual(['rmi', image]);
     expect(trace.find(item => item.args[0] === 'ps')?.args).toContain(`ancestor=${image}`);
-    expect(trace.filter(item => item.args[0] === 'rmi')).toHaveLength(1);
+    expect(trace.filter(item => item.args[0] === 'rmi')).toHaveLength(0);
     expect(f.operation.exec.mock.calls.every(([, options]) => options?.executionLane === 'operation')).toBe(true);
     await expect(access(sentinel)).rejects.toMatchObject({ code: 'ENOENT' });
   });

@@ -71,9 +71,12 @@ import { isMachineCaller } from '../services/machine-caller.js';
 // 判「这把钥匙能不能碰这个项目」的逻辑抄第二份，就是这个 PR 反复栽的那个跟头。
 import { assertProjectAccess } from './projects.js';
 import { resolveProjectScope } from '../services/project-scope.js';
+import type { PlanningGithubObserver } from '../services/engineering-planning-pull-requests.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
+  /** Receives repository facts only after the existing signature and owner gates. */
+  observePlanningGithubEvent?: PlanningGithubObserver;
   /**
    * 发布中心「自动发布规则」的触发钩子，由 server 接 ScheduledJobService.runPushRules。
    * 不接就等于整条规则链路静默失效，所以 tests/services 有一条接线守卫盯着。
@@ -218,6 +221,14 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     githubApp: githubApp || undefined,
     runPushRules,
   });
+
+  async function observePlanning(eventName: string, payload: unknown, deliveryId?: string) {
+    try {
+      await deps.observePlanningGithubEvent?.(eventName, payload, deliveryId);
+    } catch (error) {
+      console.warn(`[webhook] 工程规划 PR 同步失败 (${deliveryId || eventName}):`, (error as Error).message);
+    }
+  }
 
   // 2026-07-23: 部署派发失败时向 GitHub 写一个已完结的 failure check run。
   // 派发失败发生在部署路由的 ensureOpen 之前，此前 GitHub 上该 commit 连
@@ -438,6 +449,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // workflow_run.requested/in_progress …），与 dispatcher 的判定同源，同样廉价 ack。
     const noiseVerdict = classifyWebhookNoise(eventName, payload);
     if (noiseVerdict.noise) {
+      if (eventName === 'check_run' && deps.observePlanningGithubEvent && outcome.repoFullName
+        && evaluateGitHubOwner({ repoFullName: outcome.repoFullName, owner: outcome.githubOwner }, stateService.getGithubAppWhitelist()).allowed) {
+        await observePlanning(eventName, payload, deliveryId);
+      }
       outcome.dispatchAction = 'ignored';
       outcome.dispatchReason = noiseVerdict.reason || 'noise';
       outcome.cheapAck = true;
@@ -481,6 +496,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         });
         return;
       }
+    }
+
+    if (deps.observePlanningGithubEvent && (eventName === 'pull_request' || eventName === 'check_run')) {
+      await observePlanning(eventName, payload, deliveryId);
     }
 
     let result: WebhookDispatchResult;

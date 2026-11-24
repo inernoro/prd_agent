@@ -29,6 +29,7 @@
  * The raw HTML is therefore never executed in the CDS origin with session
  * access — only inside the no-same-origin sandbox the frontend builds.
  */
+import { parseReportClassification, matchesClassification } from '../shared/notification-templates.js';
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -38,6 +39,8 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
 import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
 import { buildReportsOverview, effectiveVerdict } from '../services/acceptance-overview.js';
+import { AcceptanceTaskService } from '../services/acceptance-tasks.js';
+import { assertProjectAccess } from './projects.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -80,6 +83,25 @@ export interface ReportsRouterDeps {
   githubApp?: GitHubAppClient;
 }
 
+function boundTaskReport(stateService: StateService, reportId: string): boolean {
+  return (stateService.getState().acceptanceTasks ?? []).some((task) => task.report?.id === reportId);
+}
+
+function taskOwnedReport(stateService: StateService, sourceId?: string | null): boolean {
+  return Boolean(sourceId && (stateService.getState().acceptanceTasks ?? []).some((task) => task.id === sourceId));
+}
+
+// Only structured task identities are serialized. Ordinary historical reports
+// keep their existing creation semantics; a new acceptance run always has a new id.
+const taskReportWrites = new Map<string, Promise<unknown>>();
+async function serializeTaskReport<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = taskReportWrites.get(taskId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  taskReportWrites.set(taskId, next);
+  try { return await next; }
+  finally { if (taskReportWrites.get(taskId) === next) taskReportWrites.delete(taskId); }
+}
+
 /** 验收结论 → GitHub check-run conclusion。 */
 const VERDICT_CONCLUSION: Record<'pass' | 'conditional' | 'fail', 'success' | 'neutral' | 'failure'> = {
   pass: 'success',
@@ -93,7 +115,7 @@ const VERDICT_CN: Record<'pass' | 'conditional' | 'fail', string> = {
 };
 
 /** 从请求推断 CDS 对外可达基地址（PR 评论里的链接要绝对路径）。 */
-function publicBaseFromReq(req: Request): string {
+export function publicBaseFromReq(req: Request): string {
   const envBase = (process.env.CDS_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
   if (envBase) return envBase;
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
@@ -122,13 +144,6 @@ const UPLOADABLE_IMAGE_TYPES: Record<string, { ext: string; valid: (data: Buffer
   },
 };
 
-/** Matches inline base64 image data URIs (HTML `src="data:..."` or Markdown
- *  `![](data:...)` — we operate on the data-URI substring, syntax-agnostic). */
-const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
-const MIME_EXT: Record<string, string> = {
-  png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
-};
-
 /**
  * Ingest-time normalization: pull inline `data:image/*;base64,...` images out of
  * a report body, store them content-addressed via the state layer, and rewrite
@@ -146,32 +161,7 @@ async function normalizeInlineImages(
   base: string,
   stateService: StateService,
 ): Promise<{ content: string; extracted: number }> {
-  let extracted = 0;
-  // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
-  //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
-  const pendingWrites = new Map<string, Buffer>();
-  const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
-    const clean = b64.replace(/\s+/g, '');
-    if (!clean) return whole;
-    let buf: Buffer;
-    try {
-      buf = Buffer.from(clean, 'base64');
-    } catch {
-      return whole;
-    }
-    if (!buf.length) return whole;
-    const ext = MIME_EXT[mime.toLowerCase()] || 'png';
-    const hash = createHash('sha256').update(buf).digest('hex');
-    const name = `${hash}.${ext}`;
-    pendingWrites.set(name, buf); // 内容寻址，同名去重
-    extracted += 1;
-    const rel = `/api/reports/assets/${name}`;
-    return base ? `${base}${rel}` : rel;
-  });
-  await Promise.all(
-    [...pendingWrites.entries()].map(([name, buf]) => stateService.writeReportAssetAsync(name, buf)),
-  );
-  return { content: out, extracted };
+  return stateService.normalizeReportInlineImages(content, base);
 }
 
 type ReportFormat = 'html' | 'md';
@@ -219,6 +209,7 @@ interface ParsedUpload {
   branch?: string;
   prNumber?: string;
   deployMode?: string;
+  sourceId?: string;
 }
 
 const VERDICTS = ['pass', 'conditional', 'fail'] as const;
@@ -315,6 +306,8 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.prNumber = value;
     } else if (fieldName === 'deployMode') {
       out.deployMode = value;
+    } else if (fieldName === 'sourceId') {
+      out.sourceId = value;
     } else if (fieldName === 'content' && out.content === undefined) {
       out.content = value;
     }
@@ -473,6 +466,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let rawBranch: unknown;
     let rawPrNumber: unknown;
     let rawDeployMode: unknown;
+    let rawClassification: unknown;
+    let rawSourceId: unknown;
 
     if (contentType.includes('multipart/form-data')) {
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -492,6 +487,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = parsed.branch;
       rawPrNumber = parsed.prNumber;
       rawDeployMode = parsed.deployMode;
+      rawSourceId = parsed.sourceId;
     } else if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       const body = req.body as Record<string, unknown>;
       title = typeof body.title === 'string' ? body.title : undefined;
@@ -508,6 +504,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = body.branch;
       rawPrNumber = body.prNumber;
       rawDeployMode = body.deployMode;
+      rawClassification = body.classification;
+      rawSourceId = body.sourceId;
     } else if (typeof req.body === 'string') {
       content = req.body;
     }
@@ -542,6 +540,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       // 报告，也不许挂到别的项目（PR #865 Bugbot「orphan creates」+「read global」）。
       resolvedProjectId = key.projectId;
     }
+    const structuredTask = (stateService.getState().acceptanceTasks ?? []).find((task) => task.id === normShort(rawSourceId, 120));
+    if (structuredTask && !stateService.isReportObjectStoreConfigured()) {
+      const denied = assertProjectAccess(req as Request & Parameters<typeof assertProjectAccess>[0], structuredTask.projectId);
+      if (denied) return res.status(denied.status).json(denied.body);
+      return res.status(503).json({ error: 'report_storage_unavailable', message: '任务报告未归档：请先恢复对象存储，再重试；不会回退到本地报告' });
+    }
     // 关联分支必须属于报告所属项目，避免跨项目挂分支（PR #865 Bugbot「branch ignores
     // scope」）。全局报告(null projectId，仅 owner 可建)可挂任意已存在分支。
     let resolvedBranchId: string | null = null;
@@ -550,6 +554,15 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (br && (resolvedProjectId === null || (br.projectId ?? 'default') === (resolvedProjectId ?? 'default'))) {
         resolvedBranchId = branchId;
       }
+    }
+
+    let classification;
+    try {
+      classification = rawClassification === undefined ? undefined : parseReportClassification(rawClassification);
+      // 一份明确绑定预览分支的报告不能自称正式调用；跨环境汇总不绑定单分支。
+      if (resolvedBranchId && classification) classification.environments = ['preview'];
+    } catch (error) {
+      return res.status(400).json({ error: 'invalid_classification', message: (error as Error).message });
     }
 
     // 文件夹归属（硬性要求 2026-06-26：项目 = 根目录，技能自取子文件夹路径）：
@@ -581,6 +594,24 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
 
     const verdict = normVerdict(rawVerdict);
     const tier = normShort(rawTier, 80);
+    const sourceId = normShort(rawSourceId, 120);
+    const sourceTask = (stateService.getState().acceptanceTasks ?? []).find((task) => task.id === sourceId);
+    if (sourceTask) {
+      const denied = assertProjectAccess(req as Request & Parameters<typeof assertProjectAccess>[0], sourceTask.projectId);
+      if (denied) return res.status(denied.status).json(denied.body);
+      if (sourceTask.projectId !== resolvedProjectId) {
+        return res.status(403).json({ error: 'project_mismatch', message: '任务与报告必须属于同一项目' });
+      }
+      if (sourceTask.status !== 'completed') {
+        return res.status(409).json({ error: 'task_not_completed', message: '请先结束本轮执行，再归档报告' });
+      }
+      const canonical = new AcceptanceTaskService(stateService).reportSource(sourceTask.id);
+      const counts = normDefectCounts(rawDefectCounts);
+      if (format !== canonical.format || cleanTitle !== canonical.title || content !== canonical.content
+        || verdict !== canonical.verdict || counts?.p0 !== canonical.defectCounts.p0 || counts?.p1 !== canonical.defectCounts.p1) {
+        return res.status(422).json({ error: 'task_report_mismatch', message: '报告与本轮结构化结果不一致，请重新生成报告后归档' });
+      }
+    }
     const templateGate = validateAcceptanceHtmlTemplate({
       title: cleanTitle,
       format,
@@ -594,27 +625,64 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         message: templateGate.message,
       });
     }
-    // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
-    // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
-    const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
-
-    const meta = await stateService.createAcceptanceReportAsync({
-      title: cleanTitle,
-      format,
-      content: normalizedContent,
-      projectId: resolvedProjectId,
-      branchId: resolvedBranchId,
-      folderId: resolvedFolderId,
-      verdict,
-      tier,
-      defectCounts: normDefectCounts(rawDefectCounts),
-      commitSha: resolvedCommitSha,
-      branch: resolvedBranch,
-      prNumber: normPrNumber(rawPrNumber),
-      deployMode: resolvedDeployMode,
-      createdBy: resolveActorFromRequest(req),
-    });
-    return res.status(201).json({ report: meta });
+    const scheduledJobRunId = String(req.get('X-CDS-Job-Run-Id') || req.body?.scheduledJobRunId || '').trim() || undefined;
+    if (scheduledJobRunId) {
+      const run = stateService.getState().scheduledJobRuns?.find(r => r.id === scheduledJobRunId);
+      if (!run || run.projectId !== resolvedProjectId) {
+        return res.status(400).json({ error: '报告运行标识不存在或不属于当前项目' });
+      }
+    }
+    const createReport = async () => {
+      const existing = sourceTask
+        ? stateService.listAcceptanceReports(resolvedProjectId).find((report) => report.sourceId === sourceId)
+        : undefined;
+      // 在任务归档队列内固定结构化基址；重试和绑定共用创建时的地址，不重新解释正文链接。
+      const inlineAssetBaseUrl = existing?.inlineAssetBaseUrl ?? publicBaseFromReq(req);
+      const { content: normalizedContent } = await normalizeInlineImages(content, inlineAssetBaseUrl, stateService);
+      if (sourceTask) {
+        if (existing) {
+          const storedContent = await stateService.readAcceptanceReportContentAsync(existing.id);
+          const sameContent = storedContent === normalizedContent || (existing.storage !== 'object' && storedContent === content);
+          if (existing.format !== format || !sameContent || existing.title !== cleanTitle
+            || existing.verdict !== verdict) {
+            throw new Error('已有任务报告与本轮内容或持久化存储不一致，请排查归档链路');
+          }
+          if (existing.storage !== 'object') {
+            // 未绑定的旧规范草稿在依赖恢复后迁入对象存储，保持同一身份。
+            const recovered = await stateService.updateAcceptanceReportAsync(existing.id, { content: normalizedContent, inlineAssetBaseUrl });
+            if (!recovered || recovered.storage !== 'object') throw new Error('任务报告仍未进入对象存储，请恢复存储后重试');
+            return { meta: recovered, reused: true };
+          }
+          return { meta: existing, reused: true };
+        }
+      }
+      const meta = await stateService.createAcceptanceReportAsync({
+        scheduledJobRunId,
+        reportType: 'acceptance',
+        classification,
+        title: cleanTitle,
+        format,
+        content: normalizedContent,
+        projectId: resolvedProjectId,
+        branchId: resolvedBranchId,
+        folderId: resolvedFolderId,
+        verdict,
+        tier,
+        defectCounts: normDefectCounts(rawDefectCounts),
+        commitSha: resolvedCommitSha,
+        branch: resolvedBranch,
+        prNumber: normPrNumber(rawPrNumber),
+        deployMode: resolvedDeployMode,
+        sourceId,
+        inlineAssetBaseUrl: sourceTask ? inlineAssetBaseUrl : undefined,
+        createdBy: resolveActorFromRequest(req),
+      });
+      return { meta, reused: false };
+    };
+    const { meta, reused } = sourceTask
+      ? await serializeTaskReport(sourceTask.id, createReport)
+      : await createReport();
+    return res.status(reused ? 200 : 201).json({ report: meta });
     } catch (err) {
       return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }
@@ -644,6 +712,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : undefined;
     const reports = stateService
       .listAcceptanceReports(projectId ?? null, folderFilter, updatedSince)
+      .filter((report) => matchesClassification(report.classification, {
+        categories: typeof req.query.categories === 'string' ? req.query.categories.split(',').filter(Boolean) : [],
+        systems: typeof req.query.systems === 'string' ? req.query.systems.split(',').filter(Boolean) : [],
+        environments: typeof req.query.environments === 'string' ? req.query.environments.split(',').filter(Boolean) : [],
+      }))
+      .filter((report) => typeof req.query.targetId !== 'string' || report.monitorEvent?.targetId === req.query.targetId)
       .filter((report) => typeof req.query.reportId !== 'string' || !req.query.reportId || report.id === req.query.reportId)
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
@@ -959,9 +1033,26 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (Object.prototype.hasOwnProperty.call(body, 'sourcePath')) metaUpdates.sourcePath = normShort(body.sourcePath, 240);
     if (Object.prototype.hasOwnProperty.call(body, 'contentHash')) metaUpdates.contentHash = normShort(body.contentHash, 120);
     if (Object.prototype.hasOwnProperty.call(body, 'publishedAt')) metaUpdates.publishedAt = normShort(body.publishedAt, 80);
+    if (Object.prototype.hasOwnProperty.call(body, 'classification')) {
+      try {
+        metaUpdates.classification = parseReportClassification(body.classification);
+        if (existing.branchId) metaUpdates.classification.environments = ['preview'];
+      } catch (error) {
+        return res.status(400).json({ error: 'invalid_classification', message: (error as Error).message });
+      }
+    }
+    if (existing.monitorEvent && (content !== undefined || Object.keys(metaUpdates).length > 0)) {
+      return res.status(409).json({ error: 'monitor_snapshot_readonly', message: '监控事件事实由监控记录追加，不能改写历史' });
+    }
+    if (taskOwnedReport(stateService, metaUpdates.sourceId)) {
+      return res.status(409).json({ error: 'task_report_association_readonly', message: '任务报告请从执行任务生成并归档，不能通过修改报告来源关联' });
+    }
     const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
+    if ((boundTaskReport(stateService, existing.id) || taskOwnedReport(stateService, existing.sourceId)) && (title !== undefined || content !== undefined || hasFormat || hasMeta)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '已绑定的任务报告不可修改，请创建新一轮验收保留历史' });
+    }
     if (title === undefined && content === undefined && !hasFormat && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
     }
@@ -1033,6 +1124,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    if (boundTaskReport(stateService, meta.id) || taskOwnedReport(stateService, meta.sourceId)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '任务报告不可删除，请创建新一轮验收保留历史' });
+    }
     const removed = stateService.deleteAcceptanceReport(req.params.id);
     if (!removed) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     return res.json({ success: true });

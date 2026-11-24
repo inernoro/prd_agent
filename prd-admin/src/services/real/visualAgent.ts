@@ -140,7 +140,8 @@ export const updateVisualAgentWorkspaceReal: UpdateVisualAgentWorkspaceContract 
     body: {
       title: input.title,
       memberUserIds: input.memberUserIds,
-      coverAssetId: input.coverAssetId ?? null,
+      coverAssetId: input.coverAssetId,
+      suppressAutoSubmit: input.suppressAutoSubmit,
       articleContent: input.articleContent,
       scenarioType: input.scenarioType,
       folderName: input.folderName,
@@ -296,6 +297,7 @@ export async function* generateArticleMarkersReal(input: {
   userInstruction?: string;
   idempotencyKey?: string;
   insertionMode?: 'legacy' | 'anchor';
+  positionStrategy?: 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
   modelId?: string;
 }): AsyncIterable<{ type: string; text?: string; fullText?: string; message?: string; index?: number; mode?: string; markerCount?: number; size?: string; anchor?: string }> {
   const headers: Record<string, string> = {
@@ -318,6 +320,7 @@ export async function* generateArticleMarkersReal(input: {
       articleContent: input.articleContent,
       userInstruction: input.userInstruction,
       insertionMode: input.insertionMode,
+      positionStrategy: input.positionStrategy,
       modelId: input.modelId || undefined,
     }),
   });
@@ -356,6 +359,7 @@ export async function* generateArticleMarkersReal(input: {
       }
     }
   } finally {
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }
@@ -398,6 +402,7 @@ export async function updateArticleMarkerReal(params: {
   draftText?: string;
   status?: string;
   runId?: string;
+  generationRequestId?: string;
   errorMessage?: string;
   planItem?: { prompt: string; count: number; size?: string };
   url?: string;

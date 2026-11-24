@@ -64,8 +64,12 @@ public class ChatAgentSession
 /// 会话里的一条消息。assistant 消息在流式过程中持续累积 Content，done 时定稿。
 /// </summary>
 [BsonIgnoreExtraElements]
-public class ChatAgentMessage
+public class ChatAgentMessage : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string SessionId { get; set; } = string.Empty;

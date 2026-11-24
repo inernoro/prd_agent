@@ -8,6 +8,7 @@
 - [核心分组速查](#核心分组速查)
 - [AI 配对](#ai-配对)
 - [项目](#项目)
+- [工程规划](#工程规划)
 - [分支](#分支)
 - [日志与诊断](#日志与诊断)
 - [基础设施](#基础设施)
@@ -15,6 +16,15 @@
 - [Agent Key](#agent-key)
 - [自更新](#自更新)
 - [维护](#维护)
+
+## 智能体短入口
+
+- `GET /api/agent/setup.md`：匿名接入说明，只返回公开操作约定；目标使用 `target=existing&project=<id>`、`target=new` 或 `target=system`。
+- `mission=<登记任务 ID>` 复用页面任务目录；`stage=task` 在自检后按需读取该任务的步骤、安全边界和验收条件。
+- `GET /api/agent/setup.json`：匿名协议与 CLI 版本、技能选择，不查询项目数据、不签发凭据。
+- `cdscli setup-check --host <接入主机> --project <真实项目 ID> --skills <逗号分隔技能>`：实际校验技能、版本、凭据及目标访问；系统只读任务使用 `--system`。失败返回非零状态和脱敏的阶段、原因与恢复动作，不能作为业务验收通过的证据。
+  自检请求不跟随重定向；任一阶段遇到 301/302/303/307/308 时返回 `unexpected_redirect`，停止后续请求并提示核对主机与代理，不把它当作缺权限重新授权。
+  五技能包必须包含可读、版本匹配的 `cds/cli/cds-skill-manifest.json`，并通过其中所有分发文件的 SHA-256 摘要校验；缺失或混装时统一更新完整包，用户额外文件不受影响。
 
 ## 核心分组速查
 
@@ -28,6 +38,31 @@
 | 环境变量 | `/api/env*` | scope 感知 _global / projectId |
 | Agent Key | `/api/projects/:id/agent-keys`, `/api/global-agent-keys` | 签发 / 吊销 |
 | 自更新 | `/api/self-*` | 切 CDS 自身分支 |
+| 结构化验收 | `/api/acceptance/*` | 模板版本、任务领取、逐项结果和历史矩阵 |
+| 工程规划 | `/api/projects/:id/planning` | 推进、项目内提案和工程债务 |
+
+## 结构化验收
+
+所有读写沿用 CDS 身份，项目级 Key 仅能访问所属项目。任务领取票据只在领取响应返回，后续读取不返回票据或摘要。
+
+| 方法 | 路径 | CLI 等价 |
+|------|------|----------|
+| GET / POST | `/api/acceptance/templates` | `acceptance templates / publish --file` |
+| GET | `/api/acceptance/templates/:id` | 模板读取（可指定 version） |
+| GET / POST | `/api/acceptance/tasks` | `acceptance tasks / create --template` |
+| GET | `/api/acceptance/tasks/:id` | `acceptance get` |
+| POST | `/api/acceptance/tasks/:id/claim` | `acceptance claim --agent` |
+| POST | `/api/acceptance/tasks/:id/heartbeat` | `acceptance heartbeat` |
+| POST | `/api/acceptance/tasks/:id/release` | `acceptance release` |
+| POST | `/api/acceptance/tasks/:id/results/:caseId` | `acceptance result --case --file` |
+| POST | `/api/acceptance/tasks/:id/complete` | `acceptance complete` |
+| POST | `/api/acceptance/tasks/:id/cancel` | 页面取消待执行任务 |
+| GET | `/api/acceptance/matrix` | `acceptance matrix` |
+| POST | `/api/acceptance/tasks/:id/report` | `acceptance report-source` |
+| POST | `/api/acceptance/tasks/:id/bind-report` | `acceptance bind-report --report` |
+
+归档走已有 `POST /api/reports`，携带任务 `sourceId`；规范正文与结果不一致时拒绝归档。
+`acceptance archive-report` 顺序执行报告源、归档、绑定。绑定成功只代表持久化关联，线上打开仍为待验证，不能自动放行发布。
 
 ## AI 配对
 
@@ -51,6 +86,24 @@
 | POST | `/api/projects/:id/pending-import` | 提交 compose YAML 待审批 | `cdscli scan --apply-to-cds <id>` |
 
 > 一键 onboarding（create + clone + 检测 required env keys）: `cdscli onboard <git-url>`。
+
+## 工程规划
+
+| 方法 | 路径 | CLI 等价 |
+|------|------|----------|
+| GET | `/api/projects/:id/planning` | `planning show`、`proposal list`、`decision show`、`pr list`、`pr show` |
+| GET | `/api/projects/:id/planning/capabilities` | `planning capabilities` |
+| GET | `/api/projects/:id/planning/duplicates?title=...` | `debt duplicates --title` |
+| GET | `/api/projects/:id/planning/checkup` | `debt checkup` |
+| POST | `/api/projects/:id/planning/commands` | `planning submit --file`、`proposal create`、`debt create` |
+
+项目内的技能可以提交结构化 `proposal.submit`。`skill`、`confidence` 和 `source.excerpt` 为可选字段，提案身份由 CDS 授权确定。同一来源编号和标题的同类新提案返回原有记录。待确认的债务提案可能含有 CDS 查出的 `suggest.dupOf`。
+
+决策提案可附上 `decisionChange`，指定同项目的 `decisionId`、`expectedVersion` 及 `change`（`amended` 或 `accepted`）。成员确认时再次核对当前版本，更新原决策并记录提案来源。债务草稿以 `module` 填写所属模块，`GET /api/projects/:id/planning/debts?module=...` 按同名模块筛选。
+
+普通登记遇到高度相似的债务会返回 `possible_duplicate` 和该项目的候选。核对后决定单独登记时，在 `debt.create` 提交 `distinction: { debtIds, reason }`。保存时系统会再核对候选，并把区别写入记录历史。
+
+有审批权限的项目成员在页面调用 `proposal.accept` 或 `proposal.reject`。确认疑似重复时发送 `as: 'hit'` 和页面显示的 `debtId`，服务器在原债追加一次踩坑。`as: 'new'` 表示明确新记一笔。
 
 ## 分支
 
@@ -159,3 +212,22 @@ CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类
 现有通道的故障入口可用 `cdscli monitor incident-page --file` 更新。私有文件提供 channelId 与 incidentPageUrl；CLI 先读当前通道，再使用已有管理员 PUT 接口保留其他配置，地址限 HTTPS 且不得含登录凭据。
 
 管理员使用 `cdscli monitor identity` 读取，或 `--file` 从私有 JSON 文件更新。对应 `GET/PUT /api/cds-system/alarm-identity`，使用与通知通道相同的系统管理员权限；项目 Key 不可读写。配置含当前 instance 与可选 targets，名称与环境必填，自身稳定 ID 由服务端生成且改名不变。真实配置不得作为文档示例提交。
+
+
+## 主备实例目录
+
+`GET /api/instance-catalog`：通过现有 CDS 鉴权后读取仓库根目录 `cds-instances.json`，只返回
+`version` 与实例的 `id/name/role/url`。无配置返回空列表，无效配置返回 503，响应禁止缓存。
+CLI：`instance sync` 同步目录，`instance list` 离线发现；网页与 CLI 使用相同目录格式。
+CLI 优先读取项目根目录；没有时回退技能包 `reference/instance-catalog.json` 的公开快照，
+快照由仓库根目录生成且 CI 对拍。它不包含凭据，不检查站点健康，也不要求当前服务支持目录 API。
+
+`instance recommend` 只读查询当前 `GET /api/host-stats`，返回 `state=normal|high|unknown`、
+CPU 数值、阈值 80%、HTTP 状态和备用列表。备用 `authorization` 是本地授权存在性
+（`required|stored-not-verified`），不代表健康或授权有效；命令不会访问备用或改变选择。
+站点密钥隔离沿用 `instance connect/check/use`，跨站点复用 Key、项目和分支 ID 均被禁止。
+常用部署命令的高负载提示额外出现在顶层 `notices`，正常结果不增加该字段，也不改变原命令退出码。
+负载查询成功、非成功响应、网络失败和解析异常均在本地 `.cds/instance-load-checks/` 留下
+trace、来源、状态、响应类型/哈希及有限 CPU 数值；不保存原始正文、密钥或错误文本。
+
+不返回或复用任何实例 Key，不进行远端探测或写请求转发。

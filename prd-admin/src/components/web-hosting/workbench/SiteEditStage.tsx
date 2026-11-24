@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ExternalLink, FileDown, ImagePlus, Library, RefreshCw, RotateCcw, Share2, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -14,6 +14,7 @@ import { useOfflineExport } from '../useOfflineExport';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
+  REQUIRED_WEB_PAGE_RUNTIME,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   revisionChangeSummary,
   revisionLabel,
@@ -30,6 +31,7 @@ import {
   useSiteEditSession,
 } from './useSiteEditSession';
 import type { GenerationIntro } from './NewSiteStage';
+import { RevisionRunRecord } from './RevisionRunRecord';
 import { missingRuntimeBlocker } from './outputForm';
 import {
   AssistantBubble,
@@ -79,11 +81,11 @@ export default function SiteEditStage({
     prefillInstructionFromDraft: false,
   });
   const {
-    instruction, setInstruction, phase, elapsedSeconds, resolvedModel, thinking,
+    instruction, setInstruction, phase, elapsedSeconds, resolvedModel,
     previewHtml, previewUrl, previewedRevision, previewFromEvent, revisions, loadingHistory,
     generating, mutatingId, mutatingAction, recentKnowledge, selectedKnowledge, setSelectedKnowledge,
-    loadingKnowledge, selectedRuntime, setSelectedRuntime, screenshots, runInfo, activeRunId,
-    stopRequested, recoveryNotice, runtimeRecoveryGate, enabledRuntimes, runtimesLoaded, activeRuntime, runtimeFallback,
+    loadingKnowledge, screenshots, runInfo, activeRunId,
+    stopRequested, recoveryNotice, runtimeRecoveryGate, runtimesLoaded, activeRuntime, requestRuntime,
     screenshotsSupported, addScreenshots, generationStageIndex, openRevision, generate, stopGeneration,
     publish, rollback, reject, retryRecovery, progress,
   } = session;
@@ -134,6 +136,11 @@ export default function SiteEditStage({
   const pendingDraft = [...ordered].reverse().find((item) => item.status === 'draft' || item.status === 'publishing') ?? null;
   const view: 'live' | 'draft' = pendingDraft && previewedRevision?.id === pendingDraft.id ? 'draft' : 'live';
   const shareLink = pickQuickShareLink(shareLinks, site.id);
+  const showRevision = useCallback((revisionId: string) => {
+    // 默认打开和“看这版”必须走同一可见预览路径，不能在尚未切到预览时启动首个 iframe 导航。
+    onPaneChange('preview');
+    void openRevision(revisionId);
+  }, [onPaneChange, openRevision]);
 
   // 进来先让右边有东西：有待确认的草稿就看草稿，否则看线上版。
   useEffect(() => {
@@ -141,8 +148,8 @@ export default function SiteEditStage({
     const target = pendingDraft ?? liveRevision;
     if (!target) return;
     openedInitialRef.current = true;
-    void openRevision(target.id);
-  }, [generating, liveRevision, loadingHistory, openRevision, pendingDraft]);
+    showRevision(target.id);
+  }, [generating, liveRevision, loadingHistory, pendingDraft, showRevision]);
 
   // 一轮修改做完（出了新草稿）就清空输入框：那一轮已经作为对话显示在上面了。
   const lastDraftRef = useRef<string | null>(null);
@@ -182,7 +189,7 @@ export default function SiteEditStage({
       icon: ImagePlus,
       onPick: () => screenshotInputRef.current?.click(),
       disabledReason: !screenshotsSupported
-        ? '截图需要「精细」方式；在输入框下面切到精细后可用'
+        ? '设计服务就绪后可以附上截图'
         : screenshots.items.length >= MAX_EDIT_SCREENSHOTS
           ? `最多 ${MAX_EDIT_SCREENSHOTS} 张，先移除一张`
           : undefined,
@@ -200,7 +207,7 @@ export default function SiteEditStage({
       key: item.key,
       label: item.fileName,
       status: !screenshotsSupported
-        ? '快速方式不带截图'
+        ? '设计服务尚未就绪'
         : item.status === 'uploading'
           ? `上传 ${item.progress}%`
           : item.status === 'ready' ? '截图' : item.status === 'failed' ? item.error || '失败' : '保存中',
@@ -209,8 +216,7 @@ export default function SiteEditStage({
     })),
   ];
 
-  const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
-  const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
+  const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const sendBlocker = !requestRuntime
     ? missingRuntimeBlocker(runtimesLoaded)
     : screenshots.busy ? '截图还在上传，传完就能生成' : '';
@@ -247,10 +253,11 @@ export default function SiteEditStage({
                   : `${outcome.text}。${revision.source === 'ai-edit' ? revisionChangeSummary(revision, null) : ''}`}
               </p>
               <p className="mt-0.5 text-[11px] text-token-muted">{formatRevisionTime(revision.publishedAt || revision.createdAt)}</p>
+              {isFirst && <RevisionRunRecord siteId={site.id} sourceRunId={revision.sourceRunId} />}
             </div>
             <button
               type="button"
-              onClick={() => { void openRevision(revision.id); onPaneChange('preview'); }}
+              onClick={() => showRevision(revision.id)}
               disabled={previewing}
               className="shrink-0 rounded-md px-2 py-1 text-[11px] text-token-secondary hover-bg-soft disabled:opacity-50"
             >
@@ -291,6 +298,7 @@ export default function SiteEditStage({
 
   const recoveryLabel = runtimeRecoveryGate
     ? `正在回收运行环境，已检查 ${runtimeRecoveryGate.checks + 1} 次`
+    : recoveryNotice?.action === 'restart' ? '按原要求重新开始'
     : recoveryNotice?.action === 'publish' ? '重试发布'
       : recoveryNotice?.action === 'rollback' ? '重试换回'
         : recoveryNotice?.action === 'reject' ? '重试放弃草稿'
@@ -315,7 +323,6 @@ export default function SiteEditStage({
             provenance={runProvenanceText(runInfo)}
             steps={steps}
             activity={runningGenerationActivity(phase, elapsedSeconds)}
-            thinking={thinking}
             onStop={() => void stopGeneration()}
             stopRequested={stopRequested}
             canStop={Boolean(activeRunId)}
@@ -338,9 +345,6 @@ export default function SiteEditStage({
           </button>
         </AssistantBubble>
       )}
-      {runtimeFallback && !generating && (
-        <p className="rounded-lg px-2.5 py-2 text-[11px]" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>{runtimeFallback}</p>
-      )}
       <div ref={conversationEndRef} />
     </>
   );
@@ -362,19 +366,6 @@ export default function SiteEditStage({
           event.preventDefault();
           addScreenshots(files);
         }}
-        options={enabledRuntimes.length > 1 ? (
-          <Segmented
-            label="修改方式"
-            value={requestRuntime?.id ?? ''}
-            disabled={generating}
-            onChange={setSelectedRuntime}
-            options={enabledRuntimes.map((item) => ({
-              value: item.id,
-              label: runtimeCardTitle(item).replace('生成', '').replace('设计', ''),
-              title: RUNTIME_CARD_REGISTRY[item.id]?.description ?? item.label,
-            }))}
-          />
-        ) : undefined}
         sendLabel={generating ? '正在修改…' : '生成修改草稿 · 线上不变'}
         sendDisabled={generating || !instruction.trim() || Boolean(sendBlocker)}
         sendDisabledReason={generating ? undefined : sendBlocker || '先写一句想改哪里'}

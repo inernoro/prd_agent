@@ -1,6 +1,9 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ContainerService, type ProjectNetworkResolver } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { withStorageImages } from '../helpers/storage-image-mock.js';
 import type { CdsConfig, BranchEntry, BuildProfile, ServiceState, InfraService } from '../../src/types.js';
 
 /**
@@ -89,7 +92,16 @@ describe('ContainerService 分支级网络隔离', () => {
   let prevIsolation: string | undefined;
 
   beforeEach(() => {
-    mock = new MockShellExecutor();
+    mock = withStorageImages(new MockShellExecutor());
+    // Synthetic image inventory: this network fixture declares no Dockerfile VOLUME.
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json \.Id\}\},/, () => ({
+      stdout: JSON.stringify(['sha256:' + 'a'.repeat(64), null]), stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/^docker inspect --format '\[\{\{json \.Id\}\}.*json \.Mounts/, () => ({stdout: '', stderr: '', exitCode: 0}));
+    // First-create infra precondition: exact requested name is absent, never an unknown inspect.
+    mock.addResponsePattern(/^docker inspect --format='\{\{json \.Id\}\}\|\{\{json \.State\.Status\}\}\|\{\{json \.Name\}\}' '([^']+)'$/, (match) => ({
+      stdout: '', stderr: `Error: No such object: ${match[1]}`, exitCode: 1,
+    }));
     prevIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
     delete process.env.CDS_BRANCH_NETWORK_ISOLATION; // 默认开
   });
@@ -100,7 +112,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('app 容器主网 = 分支网，并连到共享 infra 网（无别名）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     okStubs(mock);
 
@@ -109,6 +121,7 @@ describe('ContainerService 分支级网络隔离', () => {
     // 隔离路径用 docker create（进程尚未启动），不是 docker run -d
     const runCmd = mock.commands.find((c) => c.includes('docker create'))!;
     expect(runCmd).toBeDefined();
+    expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
     expect(mock.commands.some((c) => c.includes('docker run -d'))).toBe(false);
     expect(runCmd).toContain('--network cds-br-feature-a');
     expect(runCmd).not.toContain('--network cds-proj-a');
@@ -126,7 +139,8 @@ describe('ContainerService 分支级网络隔离', () => {
     // 启动时序（Codex P1）：create → connect(infra) → start，infra 网必须在进程启动前就位
     const createIdx = mock.commands.findIndex((c) => c.includes('docker create'));
     const connectIdx = mock.commands.findIndex((c) => c.includes('docker network connect') && c.includes('cds-feature-a-apigateway'));
-    const startIdx = mock.commands.findIndex((c) => c.includes('docker start cds-feature-a-apigateway'));
+    const expectedId = createHash('sha256').update('cds-feature-a-apigateway').digest('hex');
+    const startIdx = mock.commands.findIndex((c) => c === `docker start ${expectedId}`);
     expect(createIdx).toBeGreaterThanOrEqual(0);
     expect(connectIdx).toBeGreaterThan(createIdx);
     expect(startIdx).toBeGreaterThan(createIdx);
@@ -137,7 +151,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('确保分支网存在（inspect 失败则 create cds-br-feature-a）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     mock.addResponsePattern(/docker network inspect cds-br-feature-a/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -155,7 +169,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('分支网地址池耗尽时清理空闲 cds-br 网络并重试创建', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     let createAttempts = 0;
 
@@ -201,7 +215,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('地址池清理后重试遇到并发 already exists 也视为成功', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     let createAttempts = 0;
 
@@ -237,7 +251,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('分支网地址池耗尽时会释放只挂停止容器的 cds-br 网络', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     let createAttempts = 0;
 
@@ -289,7 +303,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('容忍并发竞态：分支网 create 报 "already exists" 不抛（同分支多服务同时首建）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     // 分支网 inspect 失败（不存在）→ create 报 already exists（另一个并发服务抢先建好了）
     mock.addResponsePattern(/docker network inspect cds-br-feature-a/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
@@ -309,7 +323,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('infra 连接失败（no such container）让部署显式失败，绝不 docker start（Bugbot Medium）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     // 先注册失败的 connect（first-match-wins），再用 okStubs 兜底其它命令。
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: 'Error: No such container: cds-feature-a-apigateway', exitCode: 1 }));
@@ -319,11 +333,11 @@ describe('ContainerService 分支级网络隔离', () => {
     await expect(service.runService(makeEntry('proj-a'), makeProfile(), makeService())).rejects.toThrow(/共享 infra 网/);
     // create 已发但 connect 失败 → 绝不能 start 一个只挂分支网、连不到共享 infra 的容器。
     expect(mock.commands.some((c) => c.includes('docker create'))).toBe(true);
-    expect(mock.commands.some((c) => c.includes('docker start cds-feature-a-apigateway'))).toBe(false);
+    expect(mock.commands.some((c) => c.startsWith('docker start '))).toBe(false);
   });
 
   it('一次性 job（runProfileCommand）隔离时也跑分支网 + 连共享 infra 网（Bugbot「Job containers miss branch app DNS」）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -341,36 +355,42 @@ describe('ContainerService 分支级网络隔离', () => {
     // 隔离 job 用 create→connect→start→wait→logs→rm，不是一次性 docker run --rm。
     const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('cds-job-feature-a-apigateway'))!;
     expect(createCmd).toBeDefined();
+    expect(createCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
     expect(createCmd).toContain('--network cds-br-feature-a'); // 主网=分支网 → 能解析兄弟 app 别名
     expect(mock.commands.some((c) => c.includes('docker run --rm'))).toBe(false);
+    // 后续动作只使用本次 create 对应的完整CID，不能借同名后继容器。
+    const jobName = /--name '([^']+)'/.exec(createCmd)?.[1];
+    expect(jobName).toMatch(/^cds-job-feature-a-apigateway-[a-f0-9]{12}$/);
+    const jobId = createHash('sha256').update(jobName!).digest('hex');
     // 连共享 infra 网（mysql/redis 可达）。
-    expect(mock.commands.some((c) => c.includes('docker network connect') && c.includes('cds-proj-a') && c.includes('cds-job-feature-a-apigateway'))).toBe(true);
+    expect(mock.commands.some((c) => c === `docker network connect cds-proj-a ${jobId}`)).toBe(true);
     // 时序：create → connect → start → wait → rm。
     const ci = mock.commands.findIndex((c) => c.includes('docker create') && c.includes('cds-job-feature-a-apigateway'));
-    const coni = mock.commands.findIndex((c) => c.includes('docker network connect') && c.includes('cds-job-feature-a-apigateway'));
-    const si = mock.commands.findIndex((c) => c.includes('docker start') && c.includes('cds-job-feature-a-apigateway'));
-    const wi = mock.commands.findIndex((c) => c.includes('docker wait') && c.includes('cds-job-feature-a-apigateway'));
+    const coni = mock.commands.findIndex((c) => c === `docker network connect cds-proj-a ${jobId}`);
+    const si = mock.commands.findIndex((c) => c === `docker start ${jobId}`);
+    const wi = mock.commands.findIndex((c) => c === `docker wait ${jobId}`);
     expect(coni).toBeGreaterThan(ci);
     expect(si).toBeGreaterThan(coni);
     expect(wi).toBeGreaterThan(si);
     // 收尾删除临时 job 容器。
-    expect(mock.commands.some((c) => c.includes('docker rm -f') && c.includes('cds-job-feature-a-apigateway'))).toBe(true);
+    expect(mock.commands.some((c) => c === `docker rm -f '${jobId}'`)).toBe(true);
   });
 
   it('infra 容器不受分支隔离影响，仍在项目共享网', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     okStubs(mock);
 
     await service.startInfraService(makeInfra('proj-a'));
 
     const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
     expect(runCmd).toContain('--network cds-proj-a');
+    expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
     expect(runCmd).not.toContain('--network cds-br-');
   });
 
   it('逃生开关关闭隔离：app 主网退回项目共享网，无 network connect', async () => {
     process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     okStubs(mock);
 

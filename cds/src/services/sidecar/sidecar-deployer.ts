@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_FLAGS } from '../docker-log-policy.js';
 /**
  * SidecarDeployer — 共享基础设施服务的部署引擎（5 阶段流程）。
  *
@@ -219,6 +220,7 @@ export class SidecarDeployer {
 
       const runCmd = [
         'docker run -d',
+        ...DOCKER_LOG_LIMIT_FLAGS,
         `--name ${qContainer}`,
         `--restart unless-stopped`,
         `-p ${port}:${port}`,

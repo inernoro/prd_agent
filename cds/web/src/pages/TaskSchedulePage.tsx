@@ -1,20 +1,23 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlarmClock, ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Rocket, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiRequest } from '@/lib/api';
+import { userErrorMessage } from '@/lib/userErrorMessage';
+import { createLatestWinsGate } from '@/lib/latest-wins';
 import { parseCurlCommand } from '@/lib/curl-import';
 import { resolveTaskScheduleProjectId, taskScheduleProjectReference } from '@/lib/task-schedule-project';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock } from '@/pages/cds-settings/components';
+import { TASK_LAYOUT, TaskScheduleSkeleton } from '@/components/skeletons/TaskScheduleSkeleton';
 import type {
   HttpMethod, RunStatus, ScheduleType, ScheduledJob, ScheduledJobAction,
   ScheduledJobRun, ScheduledJobTarget, TargetType,
 } from '@/types/task-schedule';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  groupJobs, runStatusLabel, scheduleLabel, statusTone,
+  groupJobs, runStatusLabel, scheduleLabel, statusTone, taskHealthTone,
   type JobHealth, type TimelineHourTick, type TimelineLane,
 } from '@/lib/task-schedule-view';
 
@@ -68,6 +71,7 @@ type FormState = {
   actions: ActionForm[];
   timeoutSeconds: string;
   retryCount: string;
+  completion: ScheduledJob['completion'] | null;
 };
 
 type ActionDraft = ActionForm;
@@ -85,6 +89,7 @@ const emptyForm = (projectId = ''): FormState => ({
   actions: [],
   timeoutSeconds: '300',
   retryCount: '0',
+  completion: null,
 });
 
 const emptyAction = (): ActionForm => ({
@@ -115,6 +120,21 @@ const RUN_FILTERS: { key: RunFilterKey; label: string }[] = [
 
 export function TaskSchedulePage(): JSX.Element {
   const location = useLocation();
+  const [selectionParams, setSelectionParams] = useSearchParams();
+  const selectedId = selectionParams.get('job') || '';
+  const setSelectedId = useCallback((id: string) => {
+    setSelectionParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (id) next.set('job', id); else next.delete('job');
+      return next;
+    }, { replace: true });
+  }, [setSelectionParams]);
+  // 只改变任务选择不应重拉目录或重新展示整页加载器。
+  const projectSearch = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    params.delete('job');
+    return params.toString();
+  }, [location.search]);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [runs, setRuns] = useState<ScheduledJobRun[]>([]);
@@ -135,12 +155,14 @@ export function TaskSchedulePage(): JSX.Element {
   const [selectedRuns, setSelectedRuns] = useState<{ jobId: string; runs: ScheduledJobRun[]; failed: boolean }>({ jobId: '', runs: [], failed: false });
   /** 完整史拉失败后的重试计数：进 effect 的依赖，加一次就重拉一次。 */
   const [historyRetry, setHistoryRetry] = useState(0);
-  const [selectedId, setSelectedId] = useState('');
   const [form, setForm] = useState<FormState>(() => emptyForm());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [runningId, setRunningId] = useState('');
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [hasSnapshot, setHasSnapshot] = useState(false);
+  const readGate = useRef(createLatestWinsGate());
   const [toast, setToast] = useState('');
   const [actionDialogOpen, setActionDialogOpen] = useState(false);
   const [editingActionIndex, setEditingActionIndex] = useState<number | null>(null);
@@ -162,30 +184,37 @@ export function TaskSchedulePage(): JSX.Element {
     return () => window.clearInterval(timer);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const load = useCallback(async (quiet = false) => {
+    const ticket = readGate.current.begin();
+    if (!quiet) setLoading(true);
     try {
       const [projectRes, jobRes, runRes] = await Promise.all([
         apiRequest<{ projects?: ProjectLite[] }>('/api/projects'),
         apiRequest<{ jobs: ScheduledJob[] }>('/api/scheduled-jobs?nextRuns=24'),
         apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=400'),
       ]);
+      if (!readGate.current.accept(ticket)) return;
       const nextProjects = projectRes.projects || [];
-      const initialProjectId = resolveTaskScheduleProjectId(location.search, nextProjects);
+      const initialProjectId = resolveTaskScheduleProjectId(projectSearch, nextProjects);
       setProjects(nextProjects);
       setJobs(jobRes.jobs || []);
       setRuns(runRes.runs || []);
       setForm((prev) => prev.projectId ? prev : emptyForm(initialProjectId));
+      setHasSnapshot(true);
+      setLoadError('');
+      setLoading(false);
     } catch (err) {
-      setError((err as Error).message);
-    } finally {
+      if (!readGate.current.accept(ticket)) return;
+      setLoadError(userErrorMessage(err));
       setLoading(false);
     }
-  }, [location.search]);
+  }, [projectSearch]);
 
   useEffect(() => {
+    readGate.current.newSession();
     void load();
+    const refresh = window.setInterval(() => { void load(true); }, 30_000);
+    return () => { readGate.current.newSession(); window.clearInterval(refresh); };
   }, [load]);
 
   useEffect(() => {
@@ -249,7 +278,7 @@ export function TaskSchedulePage(): JSX.Element {
     return map;
   }, [mergedRuns]);
 
-  const healthOf = useCallback((jobId: string): JobHealth => computeHealth(runsByJob.get(jobId) || []), [runsByJob]);
+  const healthOf = useCallback((jobId: string): JobHealth => computeHealth((runsByJob.get(jobId) || []).filter(run => run.trigger === 'schedule')), [runsByJob]);
 
   const jobNameOf = useCallback((jobId: string) => jobs.find((job) => job.id === jobId)?.name || jobId, [jobs]);
 
@@ -261,12 +290,12 @@ export function TaskSchedulePage(): JSX.Element {
     return [
       { key: 'attention', label: '需要注意', tone: 'text-bad', jobs: attention },
       { key: 'soon', label: '即将触发', tone: 'text-primary-ink', jobs: soon },
-      { key: 'normal', label: '正常运行', tone: 'text-muted-foreground', jobs: normal },
+      { key: 'normal', label: '其他已启用', tone: 'text-muted-foreground', jobs: normal },
     ].filter((group) => group.jobs.length > 0);
   }, [jobs, now]);
 
   // 第一屏不该是一张空表单 —— 那正是这次重构要治的病。有任务就默认打开最该看的
-  // 那一个（分组已按「需要注意 → 即将触发 → 正常运行」排好），新建始终是显式动作。
+  // 那一个（分组已按「需要注意 → 即将触发 → 其他已启用」排好），新建始终是显式动作。
   // 只在首次落位一次：用户点了「新建任务」把 selectedId 清空后，不许再被抢回去。
   // 选中某个任务时运行流默认只看它 —— 归因要的就是这个。但低频任务只有一两条记录，
   // 中栏会空掉大半（content-fills-canvas）。所以给一个显式的作用域开关，
@@ -460,8 +489,8 @@ export function TaskSchedulePage(): JSX.Element {
     setRunningId(jobId);
     setError('');
     try {
-      await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' });
-      setToast('手动执行已完成');
+      const result = await apiRequest<{ run: ScheduledJobRun }>(`/api/scheduled-jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST', headers: { 'Idempotency-Key': `${Date.now()}:${crypto.randomUUID()}` } });
+      setToast(result.run.status === 'success' ? '手动执行已完成；定时健康单独统计' : `手动执行：${runStatusLabel(result.run.status)}`);
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -495,14 +524,15 @@ export function TaskSchedulePage(): JSX.Element {
     >
       <Workspace fluid className="cds-workspace--fill min-h-0">
         {error ? <ErrorBlock message={error} /> : null}
+        {loadError ? <div role="alert" className={`mb-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 ${hasSnapshot ? 'border-warn/30 bg-warn-soft text-warn' : 'border-bad/30 bg-bad-soft text-bad'}`}><p className="min-w-0 flex-1 basis-[15rem] text-sm">{hasSnapshot ? '刷新失败：' : '任务读取失败：'}{loadError}；{hasSnapshot ? '最新状态待确认。' : '尚未确认是否存在任务。'}</p><Button className="min-h-11" size="sm" variant="outline" disabled={loading} onClick={() => void load()}>重试读取</Button></div> : null}
         {toast ? (
           <div className="mb-3 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok">
             {toast}
           </div>
         ) : null}
 
-        {loading ? <LoadingBlock label="加载任务调度配置" /> : (
-          <div className="flex flex-col gap-3 xl:min-h-0 xl:flex-1">
+        {loading && !hasSnapshot ? <TaskScheduleSkeleton /> : !hasSnapshot ? null : (
+          <div className={TASK_LAYOUT.root}>
 
             {/* 值班条：常驻，跨左右两栏。它回答的是页面级的「有没有出事」，
                 与选中了哪个任务无关，所以不进右栏。 */}
@@ -510,13 +540,13 @@ export function TaskSchedulePage(): JSX.Element {
               {/* 一块，不是三块。原来是「卡片 + 橙色实心块」两种容器并排，
                   卡片内部又用左分割线切了一段统计——同一行里三种分组语言。
                   现在统一成「结论句 + 等分统计段」，与详情里的指标条同一套节奏。 */}
-              <div className="flex min-w-0 flex-1 items-stretch overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
-                <div className="flex min-w-0 flex-1 flex-col justify-center px-4 py-3">
+              <div className={TASK_LAYOUT.summary}>
+                <div className={TASK_LAYOUT.summaryText}>
                   <div className="flex items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${overview.tone === 'bad' ? 'bg-bad' : overview.tone === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
-                    <span className="truncate text-base font-semibold">{overview.headline}</span>
+                    <span className="min-w-0 break-words text-base font-semibold">{loadError ? '上次记录：' : ''}{overview.headline}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs leading-5 text-muted-foreground">{overview.detail}</div>
+                  <div className="mt-1 break-words text-sm leading-5 text-muted-foreground">{overview.detail}</div>
                 </div>
                 {/*
                   * 从 lg 起才露，不是 md：这一条统计段是固定宽的（5 个 86px 格 + 188px
@@ -526,14 +556,14 @@ export function TaskSchedulePage(): JSX.Element {
                   * 1024px 起才有余量：888 − 618 ≈ 270px 留给结论条。
                   * 露不出来的那一档不是信息丢失：统计值在下面的调度轴与运行流里都还在。
                   */}
-                <div className="hidden shrink-0 items-stretch lg:flex">
+                <div className={TASK_LAYOUT.summaryStats}>
                   {overview.stats.map((stat) => (
-                    <div key={stat.label} className="flex w-[5.375rem] flex-col justify-center border-l border-[hsl(var(--hairline))] px-3 py-2">
+                    <div key={stat.label} className={TASK_LAYOUT.summaryStat}>
                       <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
                       <div className={`mt-0.5 font-mono text-[1.0625rem] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
                     </div>
                   ))}
-                  <div className="flex w-[11.75rem] flex-col justify-center border-l border-[hsl(var(--hairline))] bg-primary-soft/50 px-3 py-2">
+                  <div className={TASK_LAYOUT.nextStat}>
                     <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">下一次触发</div>
                     <div className="mt-0.5 flex items-baseline gap-2">
                       <span className="font-mono text-[1.0625rem] font-semibold leading-tight text-primary-ink">{overview.nextCountdown}</span>
@@ -552,11 +582,11 @@ export function TaskSchedulePage(): JSX.Element {
                 此前索引被时间轴压到 y=445（52% 屏高）、只有 280×367，而它是使用频率
                 最高的元件；同时 2xl 才存在的第三栏让「新建」在 1536px 以下不可见。
                 两栏之后没有断点分歧，那个洞从结构上被填掉。 */}
-            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[18.75rem_minmax(0,1fr)]">
+            <div className={TASK_LAYOUT.columns}>
 
               {/* 左：任务索引。窄屏（<xl）退回自然流并限高，桌面才满高填充。 */}
-              <section className="flex min-h-0 max-h-[52vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
-                <div className="flex shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
+              <section className={`${TASK_LAYOUT.panel} max-h-[52vh] xl:max-h-none`}>
+                <div className={TASK_LAYOUT.indexHeader}>
                   <div className="text-sm font-semibold">任务</div>
                   <span className="font-mono text-xs text-muted-foreground">{jobs.length}</span>
                   <div className="flex-1" />
@@ -597,7 +627,7 @@ export function TaskSchedulePage(): JSX.Element {
 
               {/* 右：两态。未选中 = 值班概览（时间轴在这里满高展开）；
                   选中 = 这一个任务（时间轴收成 44px 细带，高度让给动作链与运行流）。 */}
-              <section className="flex min-h-0 flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+              <section className={TASK_LAYOUT.panel}>
                 {selectedJob ? (
                   <>
                     {/* 三层表头（页面 / 上下文 / 详情）连排是噪音：细带自己就写着任务名，
@@ -611,6 +641,14 @@ export function TaskSchedulePage(): JSX.Element {
                       onEdit={() => { selectJob(selectedJob); openEditor(); }}
                       onBack={() => setSelectedId('')}
                     />
+                    {selectedJob.health ? <div role="status" className="border-b px-4 py-2 text-sm">
+                      定时健康：{selectedJob.health.message}
+                      {selectedJob.recoveryRequiredRunId ? <Button variant="ghost" size="sm" onClick={() => {
+                        setError('');
+                        void apiRequest(`/api/scheduled-jobs/${encodeURIComponent(selectedJob.id)}/recover`, { method: 'POST', body: { runId: selectedJob.recoveryRequiredRunId } })
+                          .then(() => load()).catch(err => setError((err as Error).message));
+                      }}>核实已有产物</Button> : null}
+                    </div> : null}
                     {selectedRuns.jobId === selectedId && selectedRuns.failed ? (
                       <div
                         role="status"
@@ -709,7 +747,7 @@ export function TaskSchedulePage(): JSX.Element {
             <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] py-3 pl-5 pr-12">
               <div className="text-left">
                 <DialogTitle className="text-[0.9375rem]">{form.id ? '编辑任务' : '新建任务'}</DialogTitle>
-                <div className="mt-0.5 text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</div>
+                <DialogDescription className="mt-0.5 text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</DialogDescription>
               </div>
             </DialogHeader>
 
@@ -779,6 +817,21 @@ export function TaskSchedulePage(): JSX.Element {
                           <input className={compactInputClass} value={form.retryCount} onChange={(e) => setForm({ ...form, retryCount: e.target.value })} inputMode="numeric" />
                         </Field>
                       </div>
+                      <p className="text-xs text-muted-foreground">自动重试仅适用于 GET。发布、命令和写请求失败后需核实已有结果。</p>
+                      <Field label="报告验收">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={Boolean(form.completion)} onChange={e => setForm({ ...form, completion: e.target.checked ? { type: 'reports', minCount: 1 } : null })} />
+                          报告归档并验证后才完成
+                        </label>
+                      </Field>
+                      {form.completion ? <>
+                        <Field label="预期报告数量">
+                          <input className={compactInputClass} type="number" min={1} max={20} value={form.completion.minCount} onChange={e => setForm({ ...form, completion: { ...form.completion!, minCount: Number(e.target.value) } })} />
+                        </Field>
+                        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(form.completion.requireObjectStorage)} onChange={e => setForm({ ...form, completion: { ...form.completion!, requireObjectStorage: e.target.checked } })} />要求持久归档到对象存储</label>
+                        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.completion.allowedVerdicts?.length === 1 && form.completion.allowedVerdicts[0] === 'pass'} onChange={e => setForm({ ...form, completion: { ...form.completion!, allowedVerdicts: e.target.checked ? ['pass'] : undefined } })} />仅接受验收通过的报告</label>
+                        <p className="text-xs text-muted-foreground">报告生成流程需支持任务关联。未归档、正文缺失或结论不符都会判为产物验证失败。</p>
+                      </> : null}
                       <Field label="时区">
                         <input className={compactInputClass} value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} />
                       </Field>
@@ -1198,10 +1251,11 @@ function jobToForm(job: ScheduledJob): FormState {
     actions: normalizeJobActions(job),
     timeoutSeconds: String(job.timeoutSeconds || 300),
     retryCount: String(job.retryCount || 0),
+    completion: job.completion || null,
   };
 }
 
-function formToPayload(form: FormState): Omit<ScheduledJob, 'id' | 'createdAt' | 'updatedAt' | 'concurrencyPolicy'> {
+function formToPayload(form: FormState): Omit<ScheduledJob, 'id' | 'createdAt' | 'updatedAt' | 'concurrencyPolicy' | 'completion'> & { completion: ScheduledJob['completion'] | null } {
   const actions = form.actions.map(actionPayloadFromForm);
   if (actions.length === 0) throw new Error('至少需要添加一个动作');
   return {
@@ -1218,6 +1272,7 @@ function formToPayload(form: FormState): Omit<ScheduledJob, 'id' | 'createdAt' |
     actions,
     timeoutSeconds: Number(form.timeoutSeconds) || 300,
     retryCount: Number(form.retryCount) || 0,
+    completion: form.completion,
   };
 }
 
@@ -1256,7 +1311,7 @@ function TimelineBand({
     <section className={compact
       ? 'shrink-0 overflow-hidden border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]'
       : 'shrink-0 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}>
-      <div className={`items-center justify-between border-b border-[hsl(var(--hairline))] px-4 py-2 ${compact ? 'hidden' : 'flex'}`}>
+      <div className={`${TASK_LAYOUT.timelineHeader} ${compact ? 'hidden' : 'flex'}`}>
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold">今日调度轴</span>
           <span className="text-xs text-muted-foreground">左侧已发生，右侧待触发</span>
@@ -1347,7 +1402,7 @@ function TimelineBand({
           />
           {compact ? null : (
             <span
-              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[0.625rem] font-semibold text-[hsl(var(--status-ink))]"
+              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[0.625rem] font-semibold text-primary-foreground"
               style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
             >
               现在 {nowLabel}
@@ -1387,7 +1442,7 @@ function RunStream({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {/* 380px 那一栏里，标题不写 shrink-0 会被 min-w-0 的兄弟挤成一列竖排的「运行流」。
           实测截图见 2026-09-01 本地 1512 档。 */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+      <div className={TASK_LAYOUT.runHeader}>
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 whitespace-nowrap text-sm font-semibold">运行流</span>
           <span className="min-w-0 truncate text-xs text-muted-foreground">{caption}</span>
@@ -1457,7 +1512,7 @@ function JobRow({
       className={`mb-1 block w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selected ? 'border-primary/50 bg-primary-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:border-primary/40'} ${disabled ? 'opacity-75' : ''}`}
     >
       <div className="flex items-center gap-2">
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${disabled ? 'bg-muted-foreground' : job.lastRunStatus === 'failed' ? 'bg-bad' : job.lastRunStatus === 'skipped' ? 'bg-warn' : 'bg-ok'}`} />
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${taskHealthTone(job)}`} />
         <span className={`min-w-0 flex-1 truncate text-[0.8125rem] font-semibold ${selected ? 'text-primary-ink' : ''}`}>{job.name}</span>
         <span className={`shrink-0 font-mono text-[0.6875rem] ${disabled ? 'text-bad' : selected ? 'text-primary-ink' : 'text-muted-foreground'}`}>
           {disabled ? '已停用' : countdown}
@@ -1473,6 +1528,7 @@ function JobRow({
           ))}
         </span>
       </div>
+      {job.health ? <div data-task-health={job.health.state} className="mt-1 text-xs text-muted-foreground">{job.health.message}{job.health.recoveryRequired ? '；需核实产物' : ''}</div> : null}
       {job.autoDisabledReason ? (
         <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[0.625rem] leading-4 text-destructive">
           {job.autoDisabledReason}
@@ -1536,6 +1592,12 @@ function RunRow({
               ))}
             </div>
           ) : null}
+          {run.scheduledFor ? <div className="mb-2 text-xs">应执行：{new Date(run.scheduledFor).toLocaleString()} · {run.failureKind || runStatusLabel(run.status)}</div> : null}
+          {run.recovery ? <div data-recovery-record className="mb-2 text-xs text-warn">
+            已核实已有产物：{new Date(run.recovery.verifiedAt).toLocaleString()}；原失败：{run.recovery.error || '执行失败，原因见原运行记录'}
+            {run.recovery.failedAt ? <span>（{new Date(run.recovery.failedAt).toLocaleString()}）</span> : null}
+          </div> : null}
+          {run.artifacts?.map(artifact => <a key={artifact.reportId} className="mb-2 block text-xs underline" href={`/reports?report=${encodeURIComponent(artifact.reportId)}`}>已验证报告 · {artifact.sha256.slice(0, 12)} · {artifact.sizeBytes} 字节</a>)}
           {run.error ? <div className="mb-2 text-[0.7188rem] text-destructive">{run.error}</div> : null}
           {run.log ? (
             <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
@@ -1631,7 +1693,7 @@ function JobOverview({
       tone: disabled ? 'text-muted-foreground' : 'text-primary-ink',
     },
     {
-      label: `近 ${health.total} 次`,
+      label: `近 ${health.total} 次定时`,
       value: health.successRate === null ? '—' : `${health.successRate}%`,
       tone: health.successRate !== null && health.successRate < 100 ? 'text-warn' : 'text-ok',
     },

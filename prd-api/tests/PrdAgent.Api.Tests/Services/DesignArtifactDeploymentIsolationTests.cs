@@ -1,6 +1,10 @@
+using PrdAgent.Api.Tests.Gateway;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -58,6 +62,58 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             Environment.SetEnvironmentVariable(name, value);
         }
         Assert.Equal(CurrentScope, DeploymentScope.Current);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task HtmlPptQueue_PreservesAdmittedIntentAcrossRecovery_AndCancellationRevokesGrantIssuance()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["DesignArtifactRuntime:Model"] = "default-chat-curated",
+        }).Build();
+        var admitted = Run("ppt-admitted-queue", RunStatuses.Queued);
+        admitted.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        admitted.Operation = DesignArtifactOperations.Generate;
+        var identity = await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, admitted);
+        var compatibility = new MdToPptRun
+        {
+            Id = admitted.Id, UserId = admitted.UserId, TaskPermitId = admitted.TaskPermitId,
+            Op = "convert", Status = RunStatuses.Queued,
+        };
+        await _db.MdToPptRuns.InsertOneAsync(compatibility);
+        var provider = new Mock<IDesignArtifactProviderCatalog>();
+        provider.Setup(item => item.FindAsync(admitted.UserId, DesignArtifactRuntimes.OpenDesign, default))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.OpenDesign, "合成执行器", DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent, DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.HtmlPpt], [DesignArtifactOperations.Generate],
+                [DesignArtifactSourceSurfaces.HtmlPpt], true, true, true, null));
+        var settings = new Mock<IDesignGenerationSettingsService>();
+        settings.Setup(item => item.FreezeCatalogStyleAsync(It.IsAny<string>(), default))
+            .ReturnsAsync(new DesignArtifactDesignDirection());
+        var queue = new HtmlPptOpenDesignRunService(_db, provider.Object, _queue, _events,
+            settings.Object, configuration, NullLogger<HtmlPptOpenDesignRunService>.Instance);
+        using (PrdAgent.Core.Security.TaskExecutionContext.Enter(new(Guid.NewGuid().ToString("N"))))
+            await queue.QueueAsync(compatibility,
+                new("冻结来源", "{\"pages\":[{\"title\":\"第一章\"}]}", 1, "swiss-minimal", "制作演示稿"), default);
+
+        var recovered = await Read(admitted.Id);
+        Assert.Equal(admitted.TaskPermitId, recovered.TaskPermitId);
+        Assert.Equal(admitted.TaskPermitId, (await _events.GetRunAsync(RunKinds.DesignArtifact, admitted.Id))!.TaskPermitId);
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var grants = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object,
+            new TaskExecutionAuthorizer(_gateway, configuration));
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(identity);
+        var issued = await grants.IssueAsync(recovered, Now.AddMinutes(5), default);
+        Assert.False(string.IsNullOrWhiteSpace(issued.Id));
+        await new TaskExecutionCoordinator(_gateway).RevokeAsync(admitted.TaskPermitId!, admitted.Id, default);
+        var rejected = await Assert.ThrowsAsync<PrdAgent.Core.Security.TaskExecutionAdmissionException>(() =>
+            grants.IssueAsync(recovered, Now.AddMinutes(5), default));
+        Assert.Equal("TASK_EXECUTION_LEASE_INVALID", rejected.Code);
+        Assert.Equal(1, await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true));
     }
 
     [DesignScopeMongoFact]
@@ -229,7 +285,7 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     [InlineData("queued")]
     public async Task RetiredRevision_RunWhoseResultHasLanded_IsNeverMisjudgedAsFailed(string shape)
     {
-        // 「结果已落定却没交付」另有台账（doc/debt.platform.open-design.md），本修复只收「执行方丢了任务」这一类。
+        // 「结果已落定却没交付」另有台账（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md），本修复只收「执行方丢了任务」这一类。
         var run = OrphanedGeneration(shape);
         switch (shape)
         {
@@ -491,15 +547,25 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     public async Task AllThreeCreationEntrypoints_FreezeCurrentScopeInTheNewCollection()
     {
         var provider = new Mock<IDesignArtifactProviderCatalog>();
-        provider.Setup(item => item.FindAsync("owner", DesignArtifactRuntimes.MapGateway, CancellationToken.None))
+        provider.Setup(item => item.FindAsync("owner", DesignArtifactRuntimes.OpenDesign, CancellationToken.None))
             .ReturnsAsync(new DesignArtifactProviderCapability(
-                DesignArtifactRuntimes.MapGateway, "测试执行器", DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactRuntimes.OpenDesign, "测试执行器", DesignArtifactAdapterKinds.RemoteAgent,
                 DesignArtifactExecutionOwners.CdsRemoteAgent, DesignArtifactIsolationModes.SessionContainer,
                 [DesignArtifactTypes.WebPage], [DesignArtifactOperations.Generate, DesignArtifactOperations.Edit],
                 [DesignArtifactSourceSurfaces.WebHosting], true, true, true, null));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
-        knowledge.Setup(item => item.ResolveForRunAsync("owner", It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(), CancellationToken.None))
-            .ReturnsAsync(new List<DesignKnowledgeSnapshot> { new() { EntryId = "entry", StoreId = "store", ContentHash = new string('a', 64) } });
+        knowledge.Setup(item => item.ResolveWorkspaceForRunAsync(
+                "owner",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(
+                [new DesignKnowledgeSnapshot
+                {
+                    EntryId = "entry",
+                    StoreId = "store",
+                    ContentHash = new string('a', 64),
+                }],
+                new DesignKnowledgeOriginalSnapshot()));
         var generation = WithUser(new DesignArtifactsController(
             _db, _events, _queue, provider.Object, knowledge.Object, _gateway,
             new DesignArtifactCancellationCoordinator(_db, Lifecycle()), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>()));
@@ -713,8 +779,28 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         }).Build();
         var environment = new Mock<IHostEnvironment>();
         environment.SetupGet(item => item.EnvironmentName).Returns("Production");
-        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+        run.TaskPermitId = Guid.NewGuid().ToString("N");
+        var permit = new GatewayTaskPermitRecord
+        {
+            Id = run.TaskPermitId,
+            TenantId = GatewayTenantDefaults.InternalTenantId,
+            ActorUserId = run.UserId,
+            TriggerCredentialId = "synthetic-session",
+            Origin = TaskExecutionOrigins.Interactive,
+            SourceDeployment = TaskPermitDeployment.Resolve(configuration),
+            SourceTask = "design-grant-fixture",
+            AllowedAppCallerCodes = [AppCallerRegistry.Admin.WebHosting.GenerateHtml],
+            MaxCalls = 256,
+            MaxRuns = 1,
+            CreatedAt = Now.AddMinutes(-1),
+            ExpiresAt = Now.AddMinutes(15),
+        };
+        await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
+        var authorizer = new TaskExecutionAuthorizer(_gateway, configuration);
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object, authorizer);
 
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, run.Id));
         var issued = await service.IssueAsync(run, Now.AddMinutes(15), default);
         var stored = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .Find(item => item.Id == issued.Id)
@@ -725,6 +811,12 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal("http://gateway/gw/v1", issued.BaseUrl);
         Assert.Equal("default-chat-curated", issued.Model);
         Assert.Equal("pool-chat-premium", stored.ModelPoolId);
+        Assert.Equal(run.TaskPermitId, stored.TaskPermitId);
+        Assert.Equal(256, stored.MaxCalls);
+        var admitted = await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .Find(item => item.Id == permit.Id).SingleAsync();
+        Assert.Equal([run.Id], admitted.BoundRunIds);
+        Assert.Equal(0, admitted.CallCount);
         Assert.Equal(AppCallerRegistry.Admin.WebHosting.GenerateHtml, issued.AppCallerCode);
         Assert.Equal(expectedHash, stored.KeyHash);
         Assert.Equal(expectedHash[..12], stored.KeyPrefix);
@@ -744,6 +836,11 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal(run.Id, authorization.RuntimeGrant?.RunId);
         Assert.Equal(run.UserId, authorization.RuntimeGrant?.UserId);
 
+        var admission = await new GatewayRuntimeGrantCallCounter(_gateway).TryReserveAsync(
+            stored,
+            new GatewayRuntimeGrantCallRequest("observe-request", 1, 1),
+            default);
+        Assert.True(admission.Allowed);
         var usage = await service.ObserveAsync(issued.Id, run, default);
         Assert.Equal(1, usage.CallCount);
         Assert.Equal(1, (await Read(run.Id)).RuntimeModelCallCount);
@@ -752,6 +849,511 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal(0, await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .CountDocumentsAsync(item => item.Id == issued.Id));
     }
+
+    [DesignScopeMongoFact]
+    public async Task HtmlPptConvertAndManualEdit_InheritOneFrozenTaskBudgetScope()
+    {
+        var sourcePlanPath = Environment.GetEnvironmentVariable("PPT_COMPLETION_SOURCE_PLAN_PATH");
+        MdToPptSourcePlan catalog;
+        string boundJson;
+        IReadOnlyList<MdToPptSourcePlan.PagePlan> pages;
+        if (!string.IsNullOrWhiteSpace(sourcePlanPath))
+        {
+            boundJson = await File.ReadAllTextAsync(sourcePlanPath);
+            Assert.Equal(
+                "f811184612a2379787782f123531347bb4cd7db90600217d5f81f363fa3f3cb2",
+                HashBytes(Encoding.UTF8.GetBytes(boundJson)));
+            catalog = MdToPptSourcePlan.RestoreCatalog(boundJson);
+            pages = MdToPptSourcePlan.RestoreBound(boundJson);
+            Assert.Equal(210, catalog.Blocks.Count);
+            Assert.Equal(34, pages.Count);
+            Assert.Equal(
+                "93fea52f8a30d753cf1d49e80732d8fd4bb788b53a138320e2b9e5d80de30646",
+                catalog.Fingerprint);
+        }
+        else
+        {
+            catalog = MdToPptSourcePlan.Create(
+                "# 发布资料\n\n必须保留完整条件。",
+                Array.Empty<DesignKnowledgeSnapshot>());
+            boundJson = catalog.SerializeBound(catalog.Bind(new[]
+            {
+                new MdToPptOutlinePageDto
+                {
+                    Title = "发布资料",
+                    SourceBlockIds = catalog.Blocks.Select(block => block.Id).ToList(),
+                },
+            }, 1));
+            pages = MdToPptSourcePlan.RestoreBound(boundJson);
+        }
+        var completionChainOutput = Environment.GetEnvironmentVariable("PPT_COMPLETION_CHAIN_OUTPUT_DIR");
+        if (!string.IsNullOrWhiteSpace(completionChainOutput))
+        {
+            AssertCompletionRuntimePackage(Path.Combine(completionChainOutput, "generation-result.json"));
+            AssertCompletionRuntimePackage(Path.Combine(completionChainOutput, "manual-result.json"));
+        }
+        var parentHtml = "<!doctype html><html><body><p>原版说明</p>"
+                         + string.Join(string.Empty, pages.Select((page, index) =>
+                             $"<section data-slide-index=\"{index + 1}\"><h2>{System.Net.WebUtility.HtmlEncode(page.DisplayTitle)}</h2>"
+                             + string.Join(string.Empty, page.Blocks.Select(block =>
+                                 $"<div data-mdppt-source=\"{block.Id}\">{block.Html}</div>"))
+                             + "</section>"))
+                         + "</body></html>";
+        var sourceBlock = catalog.Blocks.First(block => Regex.IsMatch(block.Html, @">[^<]*\S[^<]*<"));
+        var editedSourceBlock = Regex.Replace(
+            sourceBlock.Html,
+            @">(?<text>[^<]*\S[^<]*)<",
+            match => $">{match.Groups["text"].Value}（用户修订）<",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(1));
+        var proposalHtml = parentHtml
+            .Replace("原版说明", "用户修改后的说明", StringComparison.Ordinal)
+            .Replace(sourceBlock.Html, editedSourceBlock, StringComparison.Ordinal);
+        var overlayJson = MdToPptSourcePlan.ApplyManualEditOverlay(
+            boundJson, parentHtml, proposalHtml, out _);
+        Assert.NotEqual(MdToPptSourcePlan.Hash(boundJson), MdToPptSourcePlan.Hash(overlayJson));
+        Assert.Equal(catalog.Fingerprint, MdToPptSourcePlan.RestoreFingerprint(
+            overlayJson, MdToPptSourcePlan.Hash(overlayJson)));
+        var outline = new MdToPptRun
+        {
+            Id = "outline-budget-root", UserId = "owner", Op = "outline", Status = "done",
+            SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        var convert = new MdToPptRun
+        {
+            Id = "convert-budget-child", UserId = "owner", Op = "convert", Status = "done",
+            ParentOutlineRunId = outline.Id,
+            HtmlHash = MdToPptSourcePlan.Hash(parentHtml),
+            SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        var manual = new MdToPptRun
+        {
+            Id = "manual-budget-child", UserId = "owner", Op = "manual-edit", Status = "running",
+            ParentRunId = convert.Id,
+            ParentHtmlHash = convert.HtmlHash,
+            ParentOutlineRunId = outline.Id,
+            SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = overlayJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(overlayJson),
+        };
+        await _db.MdToPptRuns.InsertManyAsync(new[] { outline, convert, manual });
+        var candidateCommit = DesignArtifactGatewayGrantService.ActualRuntimeCommit();
+        Assert.False(string.IsNullOrWhiteSpace(candidateCommit));
+        var packageBytes = BuildTrustedResultPackage(convert.Id, "trusted-parent-base", parentHtml);
+        var parsedPackage = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            packageBytes,
+            convert.Id,
+            "trusted-parent-base",
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        Assert.Equal(parentHtml, parsedPackage.IndexHtml);
+        var parentPackageHash = HashBytes(packageBytes);
+        Assert.NotEqual(parentPackageHash, convert.HtmlHash);
+        var generation = new GatewayPptCompletionStageBudgetRecord
+        {
+            MaxPhysicalCalls = 3, UsedPhysicalCalls = 1,
+            MaxBodyUtf8Bytes = 300_000, MaxOutputTokens = 8192, PerCallUpperUsd = 2m,
+        };
+        var manualStage = new GatewayPptCompletionStageBudgetRecord
+        {
+            MaxPhysicalCalls = 2, MaxBodyUtf8Bytes = 200_000,
+            MaxOutputTokens = 8192, PerCallUpperUsd = 1m,
+        };
+        await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .InsertOneAsync(new GatewayRuntimeBudgetScopeRecord
+            {
+                Id = "scope-ppt-chain", TenantId = GatewayTenantDefaults.InternalTenantId,
+                RootOutlineRunId = outline.Id, UserId = "owner", SourcePlanHash = catalog.Fingerprint,
+                Status = "active", MaxOutputTokens = 8192, ExpiresAt = Now.AddHours(1),
+                ExpectedLogicalModelPublicId = "default-chat-curated",
+                ExpectedProvider = "apiyi-openai", ExpectedModel = "gpt-5.6-sol",
+                PptCompletion = new GatewayPptCompletionBudgetRecord
+                {
+                    Id = "pptc-chain", ContractHash = new string('b', 64),
+                    CandidateCommit = candidateCommit!, RootOutlineRunId = outline.Id,
+                    StableSourceHash = catalog.Fingerprint, GenerationRunId = convert.Id,
+                    Status = GatewayPptCompletionStatuses.GenerationActive,
+                    FutureHeldUsd = 6m, GenerationAndRepairs = generation,
+                    ManualSave = manualStage, ExpiresAt = Now.AddHours(1),
+                },
+            });
+        var parentDesignRun = Run(convert.Id, RunStatuses.Done);
+        parentDesignRun.Operation = DesignArtifactOperations.Generate;
+        parentDesignRun.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        parentDesignRun.WorkspaceResultSha256 = parentPackageHash;
+        parentDesignRun.PresentationInput = new DesignArtifactPresentationInput
+        {
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        await InsertAsync(parentDesignRun, CurrentScope);
+        var designRun = Run(manual.Id, RunStatuses.Running);
+        designRun.Operation = DesignArtifactOperations.Edit;
+        designRun.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        designRun.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
+        designRun.PresentationInput = new DesignArtifactPresentationInput
+        {
+            ParentRunId = convert.Id, ParentPackageHash = parentPackageHash,
+            SourcePlanJson = overlayJson, SourcePlanHash = MdToPptSourcePlan.Hash(overlayJson),
+            ManualEditHtml = proposalHtml, ManualEditHtmlHash = MdToPptSourcePlan.Hash(proposalHtml),
+        };
+        await InsertAsync(designRun, CurrentScope);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+        }).Build();
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object,
+            new TaskExecutionAuthorizer(_gateway, configuration));
+
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, designRun));
+        var issued = await service.IssueAsync(designRun, Now.AddMinutes(15), default);
+        var grant = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .Find(item => item.Id == issued.Id)
+            .SingleAsync();
+
+        Assert.Equal("scope-ppt-chain", grant.BudgetScopeId);
+        Assert.Equal(8192, grant.BudgetMaxOutputTokens);
+        Assert.Equal(AppCallerRegistry.MdToPptAgent.Generation.Patch, grant.AppCallerCode);
+        Assert.Equal("pptc-chain", grant.PptCompletionId);
+        Assert.Equal(GatewayPptCompletionPhases.ManualSave, grant.PptCompletionPhase);
+        Assert.Equal(MdToPptSourcePlan.Hash(boundJson), outline.SourcePlanHash);
+        Assert.Equal(catalog.Fingerprint, MdToPptSourcePlan.RestoreCatalog(boundJson).Fingerprint);
+        var transitioned = await _gateway.Database
+            .GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .Find(item => item.Id == "scope-ppt-chain")
+            .SingleAsync();
+        Assert.Equal(GatewayPptCompletionStatuses.ManualActive, transitioned.PptCompletion!.Status);
+        Assert.Equal(manual.Id, transitioned.PptCompletion.ManualRunId);
+        Assert.Equal(convert.HtmlHash, transitioned.PptCompletion.ParentArtifactHash);
+        Assert.Equal(parentPackageHash, transitioned.PptCompletion.ParentPackageHash);
+        Assert.Equal(2m, transitioned.PptCompletion.FutureHeldUsd);
+
+        // 同一人工保存 run 在 grant 写入后重连可幂等续发，不会再次释放 generation hold。
+        var reissued = await service.IssueAsync(designRun, Now.AddMinutes(15), default);
+        Assert.NotEqual(issued.Id, reissued.Id);
+        Assert.Equal(2m, (await _gateway.Database
+            .GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .Find(item => item.Id == "scope-ppt-chain")
+            .SingleAsync()).PptCompletion!.FutureHeldUsd);
+
+        designRun.PresentationInput.ParentPackageHash = new string('0', 64);
+        var wrongPackage = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(designRun, Now.AddMinutes(15), default));
+        Assert.Equal("task_budget_manual_parent_invalid", wrongPackage.Code);
+        designRun.PresentationInput.ParentPackageHash = parentPackageHash;
+
+        await _db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == manual.Id,
+            Builders<MdToPptRun>.Update.Set(item => item.ParentHtmlHash, new string('1', 64)));
+        var wrongHtml = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(designRun, Now.AddMinutes(15), default));
+        Assert.Equal("task_budget_manual_parent_invalid", wrongHtml.Code);
+        await _db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == manual.Id,
+            Builders<MdToPptRun>.Update.Set(item => item.ParentHtmlHash, convert.HtmlHash));
+
+        var competingManual = new MdToPptRun
+        {
+            Id = "manual-budget-other", UserId = "owner", Op = "manual-edit", Status = "running",
+            ParentRunId = convert.Id, ParentHtmlHash = convert.HtmlHash, ParentOutlineRunId = outline.Id,
+            SourcePlanVersion = MdToPptSourcePlan.Version, SourcePlanJson = overlayJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(overlayJson),
+        };
+        await _db.MdToPptRuns.InsertOneAsync(competingManual);
+        var competingDesign = Run(competingManual.Id, RunStatuses.Running);
+        competingDesign.Operation = DesignArtifactOperations.Edit;
+        competingDesign.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        competingDesign.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
+        competingDesign.PresentationInput = new DesignArtifactPresentationInput
+        {
+            ParentRunId = convert.Id, ParentPackageHash = parentPackageHash,
+            SourcePlanJson = overlayJson, SourcePlanHash = MdToPptSourcePlan.Hash(overlayJson),
+        };
+        await InsertAsync(competingDesign, CurrentScope);
+        using var competingExecution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, competingDesign));
+        var competing = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(competingDesign, Now.AddMinutes(15), default));
+        Assert.Equal("task_budget_manual_phase_unavailable", competing.Code);
+        competingExecution.Dispose();
+
+        var grantCount = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true);
+        await _db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == outline.Id,
+            Builders<MdToPptRun>.Update.Set(item => item.SourcePlanHash, new string('0', 64)));
+        var mismatch = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(designRun, Now.AddMinutes(15), default));
+        Assert.Equal("source_plan_binding_mismatch", mismatch.Code);
+        Assert.Equal(grantCount, await _gateway.Database
+            .GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true));
+
+        await _db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == outline.Id,
+            Builders<MdToPptRun>.Update.Set(item => item.SourcePlanHash, MdToPptSourcePlan.Hash(boundJson)));
+        await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .UpdateOneAsync(
+                item => item.Id == "scope-ppt-chain",
+                Builders<GatewayRuntimeBudgetScopeRecord>.Update
+                    .Set("PptCompletion.CandidateCommit", new string('f', 40)));
+        var wrongCandidate = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(designRun, Now.AddMinutes(15), default));
+        Assert.Equal("task_budget_candidate_commit_mismatch", wrongCandidate.Code);
+        Assert.Equal(grantCount, await _gateway.Database
+            .GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true));
+    }
+
+    [DesignScopeMongoFact]
+    public void RuntimeResultEnvelope_AllowsBase64ExpansionButKeepsPublishedFilesWithinSixMiB()
+    {
+        var validHtml = "<!doctype html><html><body>" + new string('a', 5 * 1024 * 1024) + "</body></html>";
+        var valid = BuildTrustedResultPackage("large-valid", "base", validHtml);
+        Assert.True(valid.LongLength > DesignArtifactWorkspaceBroker.MaxPublicOutputBytes);
+        Assert.True(valid.LongLength < DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        Assert.Equal(
+            validHtml,
+            DesignArtifactWorkspaceContract.ParseAndValidateResult(
+                valid, "large-valid", "base", DesignArtifactWorkspaceBroker.MaxOutputBytes).IndexHtml);
+
+        var oversizedPublicHtml = "<!doctype html><html><body>" + new string('b', 6 * 1024 * 1024) + "</body></html>";
+        var oversizedPublic = BuildTrustedResultPackage("large-public", "base", oversizedPublicHtml);
+        Assert.Throws<InvalidOperationException>(() => DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            oversizedPublic, "large-public", "base", DesignArtifactWorkspaceBroker.MaxOutputBytes));
+
+        Assert.Throws<InvalidOperationException>(() => DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            new byte[checked((int)DesignArtifactWorkspaceBroker.MaxOutputBytes + 1)],
+            "too-large-envelope",
+            "base",
+            DesignArtifactWorkspaceBroker.MaxOutputBytes));
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("assets/accessibility-static-report.json")]
+    [InlineData("assets/design-tokens.json")]
+    [InlineData("assets/page-outline.json")]
+    [InlineData("assets/provenance.json")]
+    [InlineData("assets/visual-quality-report.json")]
+    [InlineData("assets/quality/attempt-0-desktop-slide-1.png")]
+    [InlineData("ASSETS/QUALITY/attempt-0-mobile-slide-34.png")]
+    public void PresentationRuntimeEvidence_IsNotCopiedBackAsEditableInput(string path)
+    {
+        Assert.True(DesignArtifactWorkspaceBroker.IsPresentationRuntimeEvidencePath(path));
+        Assert.False(DesignArtifactWorkspaceBroker.IsPresentationRuntimeEvidencePath("assets/deck.css"));
+        Assert.False(DesignArtifactWorkspaceBroker.IsPresentationRuntimeEvidencePath("assets/quality-notes.txt"));
+    }
+
+    [DesignScopeMongoFact]
+    public async Task HtmlPptFailedGenerationRestart_RebindsOneTrustedRunWithoutResettingPool()
+    {
+        var catalog = MdToPptSourcePlan.Create(
+            "# 发布资料\n\n失败后只允许同来源继续打磨。",
+            Array.Empty<DesignKnowledgeSnapshot>());
+        var boundJson = catalog.SerializeBound(catalog.Bind(new[]
+        {
+            new MdToPptOutlinePageDto
+            {
+                Title = "发布资料",
+                SourceBlockIds = catalog.Blocks.Select(block => block.Id).ToList(),
+            },
+        }, 1));
+        var outline = new MdToPptRun
+        {
+            Id = "outline-restart-budget", UserId = "owner", Op = "outline", Status = "done",
+            SourcePlanVersion = MdToPptSourcePlan.Version, SourcePlanJson = boundJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        var failed = new MdToPptRun
+        {
+            Id = "convert-budget-failed", UserId = "owner", Op = "convert", Status = "error",
+            ParentOutlineRunId = outline.Id, SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        var retry = new MdToPptRun
+        {
+            Id = "convert-budget-retry", UserId = "owner", Op = "convert", Status = "running",
+            ParentOutlineRunId = outline.Id, SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        await _db.MdToPptRuns.InsertManyAsync(new[] { outline, failed, retry });
+
+        var failedDesign = Run(failed.Id, RunStatuses.Error);
+        failedDesign.Operation = DesignArtifactOperations.Generate;
+        failedDesign.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        failedDesign.PresentationInput = new DesignArtifactPresentationInput
+        {
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        await InsertAsync(failedDesign, CurrentScope);
+        var retryDesign = Run(retry.Id, RunStatuses.Running);
+        retryDesign.Operation = DesignArtifactOperations.Generate;
+        retryDesign.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        retryDesign.RestartedFromRunId = failed.Id;
+        retryDesign.PresentationInput = new DesignArtifactPresentationInput
+        {
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        retryDesign.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
+        await InsertAsync(retryDesign, CurrentScope);
+
+        const decimal perCallUpper = 1.5m;
+        var candidateCommit = DesignArtifactGatewayGrantService.ActualRuntimeCommit();
+        Assert.False(string.IsNullOrWhiteSpace(candidateCommit));
+        await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .InsertOneAsync(new GatewayRuntimeBudgetScopeRecord
+            {
+                Id = "scope-ppt-restart", TenantId = GatewayTenantDefaults.InternalTenantId,
+                RootOutlineRunId = outline.Id, UserId = "owner", SourcePlanHash = catalog.Fingerprint,
+                Status = "active", MaxOutputTokens = 8192, ExpiresAt = Now.AddHours(1),
+                ExpectedLogicalModelPublicId = "default-chat-curated",
+                ExpectedProvider = "apiyi-openai", ExpectedModel = "gpt-5.6-sol",
+                PptCompletion = new GatewayPptCompletionBudgetRecord
+                {
+                    Id = "pptc-restart", ContractHash = new string('c', 64),
+                    CandidateCommit = candidateCommit!,
+                    RootOutlineRunId = outline.Id, StableSourceHash = catalog.Fingerprint,
+                    GenerationRunId = failed.Id, Status = GatewayPptCompletionStatuses.GenerationActive,
+                    FutureHeldUsd = 5m,
+                    GenerationAndRepairs = new GatewayPptCompletionStageBudgetRecord
+                    {
+                        MaxPhysicalCalls = 4, UsedPhysicalCalls = 2,
+                        MaxBodyUtf8Bytes = 300_000, MaxOutputTokens = 8192,
+                        PerCallUpperUsd = perCallUpper,
+                    },
+                    ManualSave = new GatewayPptCompletionStageBudgetRecord
+                    {
+                        MaxPhysicalCalls = 1, MaxBodyUtf8Bytes = 200_000,
+                        MaxOutputTokens = 8192, PerCallUpperUsd = 2m,
+                    },
+                    ExpiresAt = Now.AddHours(1),
+                },
+            });
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+        }).Build();
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object,
+            new TaskExecutionAuthorizer(_gateway, configuration));
+
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, retryDesign));
+        var issued = await service.IssueAsync(retryDesign, Now.AddMinutes(15), default);
+        var stored = await _gateway.Database
+            .GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .Find(item => item.Id == "scope-ppt-restart")
+            .SingleAsync();
+        Assert.Equal(retry.Id, stored.PptCompletion!.GenerationRunId);
+        Assert.Equal(2, stored.PptCompletion.GenerationAndRepairs.UsedPhysicalCalls);
+        Assert.Equal(5m, stored.PptCompletion.FutureHeldUsd);
+        var grant = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .Find(item => item.Id == issued.Id)
+            .SingleAsync();
+        Assert.Equal(2, grant.MaxCalls);
+
+        var reissued = await service.IssueAsync(retryDesign, Now.AddMinutes(15), default);
+        Assert.NotEqual(issued.Id, reissued.Id);
+        stored = await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .Find(item => item.Id == "scope-ppt-restart")
+            .SingleAsync();
+        Assert.Equal(2, stored.PptCompletion!.GenerationAndRepairs.UsedPhysicalCalls);
+        Assert.Equal(5m, stored.PptCompletion.FutureHeldUsd);
+
+        var competing = new MdToPptRun
+        {
+            Id = "convert-budget-competing", UserId = "owner", Op = "convert", Status = "running",
+            ParentOutlineRunId = outline.Id, SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        await _db.MdToPptRuns.InsertOneAsync(competing);
+        var competingDesign = Run(competing.Id, RunStatuses.Running);
+        competingDesign.Operation = DesignArtifactOperations.Generate;
+        competingDesign.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        competingDesign.RestartedFromRunId = failed.Id;
+        competingDesign.PresentationInput = new DesignArtifactPresentationInput
+        {
+            SourcePlanJson = boundJson, SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
+        };
+        competingDesign.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
+        await InsertAsync(competingDesign, CurrentScope);
+        using var competingExecution = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            await PlatformExecutionFixture.AdmitDesignRunAsync(_gateway, configuration, competingDesign));
+        var rejected = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(competingDesign, Now.AddMinutes(15), default));
+        Assert.Equal("task_budget_generation_phase_unavailable", rejected.Code);
+    }
+
+    private static byte[] BuildTrustedResultPackage(string runId, string baseRevision, string html)
+    {
+        var htmlBytes = Encoding.UTF8.GetBytes(html);
+        var htmlFile = new DesignWorkspaceFile(
+            "index.html",
+            Convert.ToBase64String(htmlBytes),
+            HashBytes(htmlBytes),
+            htmlBytes.LongLength,
+            "text/html");
+        var manifestFiles = new[]
+        {
+            new DesignArtifactManifestFile(htmlFile.Path, htmlFile.Sha256, htmlFile.Size, htmlFile.MediaType),
+        };
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(
+            new DesignArtifactManifest(
+                DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+                DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(manifestFiles),
+                "index.html",
+                manifestFiles),
+            DesignArtifactWorkspaceContract.JsonOptions);
+        var manifestFile = new DesignWorkspaceFile(
+            "manifest.json",
+            Convert.ToBase64String(manifestBytes),
+            HashBytes(manifestBytes),
+            manifestBytes.LongLength,
+            "application/json");
+        return JsonSerializer.SerializeToUtf8Bytes(
+            new DesignWorkspacePackage(
+                DesignArtifactWorkspaceBroker.SchemaVersion,
+                runId,
+                baseRevision,
+                [htmlFile, manifestFile]),
+            DesignArtifactWorkspaceContract.JsonOptions);
+    }
+
+    private static void AssertCompletionRuntimePackage(string path)
+    {
+        Assert.True(File.Exists(path), $"missing runtime completion package: {path}");
+        var bytes = File.ReadAllBytes(path);
+        Assert.True(bytes.LongLength > DesignArtifactWorkspaceBroker.MaxPublicOutputBytes);
+        Assert.True(bytes.LongLength < DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        var package = JsonSerializer.Deserialize<DesignWorkspacePackage>(
+            bytes,
+            DesignArtifactWorkspaceContract.JsonOptions);
+        Assert.NotNull(package);
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes,
+            package!.RunId,
+            package.BaseRevision,
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        Assert.InRange(
+            parsed.Files.Sum(file => file.Size),
+            1,
+            DesignArtifactWorkspaceBroker.MaxPublicOutputBytes);
+        Assert.Contains(parsed.Files, file => file.Path == "index.html");
+        Assert.Contains(parsed.Files, file => file.Path == "manifest.json");
+        Assert.Contains(parsed.Files, file => file.Path.StartsWith("assets/quality/", StringComparison.Ordinal)
+                                             && string.Equals(file.MediaType, "image/png", StringComparison.Ordinal));
+    }
+
+    private static string HashBytes(byte[] content)
+        => Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 
     private static DesignArtifactRun Run(string id, string status) => new()
     {

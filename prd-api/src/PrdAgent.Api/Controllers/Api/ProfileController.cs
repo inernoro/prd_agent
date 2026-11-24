@@ -237,6 +237,8 @@ public class ProfileController : ControllerBase
 
     private static (string errorCode, string errorMessage) MapAvatarGenerationFailure(string? itemErrorCode)
     {
+        if (PrdAgent.Core.LlmGateway.GatewayBillingFailure.FromCode(itemErrorCode) is { } billing)
+            return (billing.Code, billing.UserMessage);
         return (itemErrorCode ?? string.Empty).Trim().ToUpperInvariant() switch
         {
             "IMAGE_GEN_REQUEST_REJECTED" or "CONTENT_REJECTED" or "INVALID_FORMAT" => (
@@ -615,6 +617,7 @@ public class ProfileController : ControllerBase
         var sourceSha256 = Convert.ToHexString(SHA256.HashData(avatarBytes)).ToLowerInvariant();
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             // 幂等请求使用确定性 _id：即使 DBA 唯一索引尚未完成迁移，并发插入也由 Mongo 主键唯一性兜底。
             Id = string.IsNullOrWhiteSpace(idempotencyKey)
                 ? Guid.NewGuid().ToString("N")

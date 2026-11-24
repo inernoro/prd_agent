@@ -1,24 +1,15 @@
-/**
- * Cache diagnostic & migration routes.
- *
- * 解决的实际问题：
- * 1) 用户观察到 CDS 在本服务器跑了上千次，`dotnet restore` 还要 35 秒 ——
- *    理论上 `/cache/nuget` 应该已经 warm 了。这说明**挂载失效或缓存路径不对**。
- *    `/api/cache/status` 让用户一眼看到所有 cacheMount 的实际目录大小、
- *    文件数、最后写入时间，能立刻定位是哪个 profile 没走到缓存。
- *
- * 2) `POST /api/cache/repair` —— 强制重跑 migrateCacheMounts 合并逻辑，
- *    补齐混合 profile（含 pnpm 但缺 nuget）等缺失挂载。
- *
- * 3) `GET /api/cache/export?name=nuget` + `POST /api/cache/import?name=nuget`
- *    —— 换服务器时把预热好的缓存 tar.gz 搬过去，避免新服务器首次冷下载。
- */
+/** Cache diagnostics and explicit metadata retirement. Repair does not allocate,
+ * recreate host bindings or mkdir user paths. Existing physical caches are kept. */
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { retireGeneratedCatalogCaches, mergeRetiredCatalogCaches } from '../services/cache-catalog.js';
+
+// Security state is durable data even on installations that historically put it under CACHE_BASE.
+const protectedCacheName=(name:string)=>name.toLowerCase()==='database-passes';
 
 export interface CacheRouterDeps {
   stateService: StateService;
@@ -90,7 +81,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
 
       for (const profile of profiles) {
         for (const mount of profile.cacheMounts || []) {
-          if (mount.kind === 'volume') continue;
+          if (mount.kind === 'volume' || protectedCacheName(path.relative(CACHE_BASE,path.resolve(CACHE_BASE,mount.hostPath)).split(path.sep)[0])) continue;
           let entry = pathToInfo.get(mount.hostPath);
           if (!entry) {
             entry = {
@@ -127,7 +118,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       if (fs.existsSync(CACHE_BASE)) {
         const entries = fs.readdirSync(CACHE_BASE, { withFileTypes: true });
         for (const ent of entries) {
-          if (!ent.isDirectory()) continue;
+          if (!ent.isDirectory() || protectedCacheName(ent.name)) continue;
           if (profiles.some((profile) => profile.cacheMounts?.some((mount) =>
             mount.kind === 'volume' && mount.hostPath === ent.name))) continue;
           const full = path.join(CACHE_BASE, ent.name);
@@ -171,91 +162,19 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.post('/cache/repair', async (_req, res) => {
     try {
-      const CACHE_BASE = stateService.getCacheBase();
-      const IMAGE_CACHE_MAP: Record<string, Array<{ hostPath: string; containerPath: string }>> = {
-        'dotnet': [{ hostPath: `${CACHE_BASE}/nuget`, containerPath: '/root/.nuget/packages' }],
-        'node': [{ hostPath: `${CACHE_BASE}/pnpm`, containerPath: '/pnpm/store' }],
-      };
-
-      const actions: Array<{ profileId: string; action: string; added?: string; fixed?: string; error?: string }> = [];
-      const profiles = stateService.getBuildProfiles();
-
-      for (const profile of profiles) {
-        const mounts = [...(profile.cacheMounts || [])];
-        let touched = false;
-
-        // 路径迁移（host slug 漂移 + pnpm 容器路径纠正）
-        for (const cm of mounts) {
-          if (cm.kind === 'volume') continue;
-          const updated = stateService.normalizeCacheHostPath(cm.hostPath);
-          if (updated !== cm.hostPath) {
-            actions.push({ profileId: profile.id, action: 'rewrite-host-path', fixed: `${cm.hostPath} → ${updated}` });
-            cm.hostPath = updated;
-            touched = true;
-          }
-          if (cm.containerPath === '/root/.local/share/pnpm/store') {
-            actions.push({ profileId: profile.id, action: 'fix-pnpm-container-path', fixed: '/root/.local/share/pnpm/store → /pnpm/store' });
-            cm.containerPath = '/pnpm/store';
-            touched = true;
-          }
-        }
-
-        // 合并缺失的标准挂载
-        const image = profile.dockerImage || '';
-        for (const [key, templates] of Object.entries(IMAGE_CACHE_MAP)) {
-          if (!image.includes(key)) continue;
-          for (const template of templates) {
-            const exists = mounts.some(cm => cm.containerPath === template.containerPath);
-            if (!exists) {
-              mounts.push({ ...template });
-              actions.push({ profileId: profile.id, action: 'add-missing-mount', added: `${template.hostPath} → ${template.containerPath}` });
-              touched = true;
-            }
-          }
-        }
-
-        if (touched) {
-          stateService.updateBuildProfile(profile.id, { cacheMounts: mounts });
-        }
-      }
-
-      if (actions.length > 0) stateService.save();
-
-      // 确保所有 host 目录预创建好（避免容器首次启动因父目录缺失 mount 失败）
-      let directoryFailures = 0;
-      const allHostPaths = new Set<string>();
+      const actions: Array<{ profileId: string; action: string; count: number }> = [];
       for (const profile of stateService.getBuildProfiles()) {
-        for (const cm of profile.cacheMounts || []) {
-          if (cm.kind === 'volume') continue;
-          allHostPaths.add(cm.hostPath);
-        }
+        const result = retireGeneratedCatalogCaches(profile.dockerImage, stateService.getCacheBase(), profile.cacheMounts || []);
+        if (!result.retired.length) continue;
+        stateService.updateBuildProfile(profile.id, {
+          cacheMounts: result.kept,
+          retiredCatalogCacheMounts: mergeRetiredCatalogCaches(profile.retiredCatalogCacheMounts || [], result.retired),
+        });
+        actions.push({ profileId: profile.id, action: 'retire-generated-host-cache', count: result.retired.length });
       }
-      for (const hp of allHostPaths) {
-        if (fs.existsSync(hp)) continue;
-        const mkdir = await shell.exec(`mkdir -p "${hp}"`);
-        if (mkdir.exitCode === 0 && fs.existsSync(hp)) {
-          actions.push({ profileId: '(cache)', action: 'ensure-host-dir', added: hp });
-        } else {
-          directoryFailures += 1;
-          actions.push({
-            profileId: '(cache)',
-            action: 'ensure-host-dir-failed',
-            fixed: hp,
-            error: combinedOutput(mkdir) || '目录创建失败',
-          });
-        }
-      }
-
-      res.json({
-        repaired: actions.some(action => action.action !== 'ensure-host-dir-failed'),
-        actionsCount: actions.length,
-        actions,
-        message: directoryFailures > 0
-          ? `缓存挂载配置已检查，但 ${directoryFailures} 个宿主机目录创建失败`
-          : actions.length === 0
-          ? '所有 profile 的缓存挂载已正常，无需修复'
-          : `已修复 ${actions.length} 个挂载问题`,
-      });
+      if (actions.length) { stateService.save(); await stateService.flush(); }
+      res.json({ repaired: actions.length > 0, actionsCount: actions.length, actions,
+        cacheBackend: 'container-layer', message: '编译缓存使用容器可写层；重建时缓存为冷。原宿主目录和数据未移动或删除。' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -268,6 +187,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.get('/cache/export', async (req, res) => {
     const name = String(req.query.name || '').trim();
+    if(protectedCacheName(name)){res.status(409).json({error:'数据库通行证包含持久账号回收与审计记录，不属于构建缓存。'});req.resume();return;}
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数（只允许字母数字和连字符）' });
       return;
@@ -316,6 +236,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
     // pipe 时会自动 resume。
     req.pause();
     const name = String(req.query.name || '').trim();
+    if(protectedCacheName(name)){res.status(409).json({error:'数据库通行证包含持久账号回收与审计记录，不属于构建缓存。'});req.resume();return;}
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
       // 按住之后提前返回要把流放开，否则上传方看到的是卡住而不是这条 400。
@@ -327,7 +248,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
     await shell.exec(`mkdir -p "${CACHE_BASE}"`);
 
     const { spawn } = await import('node:child_process');
-    const tar = spawn('tar', ['-xzf', '-', '-C', CACHE_BASE], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const tar = spawn('tar', ['-xzf', '-', '--exclude=database-passes', '-C', CACHE_BASE], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stderrBuf = '';
     tar.stderr.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
 
@@ -359,6 +280,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.post('/cache/purge', async (req, res) => {
     const name = String(req.query.name || '').trim();
+    if(protectedCacheName(name)){res.status(409).json({error:'数据库通行证包含持久账号回收与审计记录，不属于构建缓存。'});req.resume();return;}
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
       return;

@@ -30,6 +30,7 @@ export function Dialog({
   contentStyle,
   titleAction,
   titleCenter,
+  onCloseAutoFocus,
   zIndex,
   closePlacement = 'right',
 }: {
@@ -55,6 +56,7 @@ export function Dialog({
   titleAction?: React.ReactNode;
   /** 标题栏居中的内容（如标签切换） */
   titleCenter?: React.ReactNode;
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogPrimitive.Content>['onCloseAutoFocus'];
   /** 覆盖 Overlay 的 z-index 层级（默认 z-100）；需要在更高层弹窗上方时使用 */
   zIndex?: number;
   /** 关闭按钮位置；沉浸式编辑器可放在左侧。 */
@@ -78,9 +80,10 @@ export function Dialog({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className="fixed inset-0 flex items-center justify-center prd-dialog-overlay"
-          style={{ background: 'var(--dialog-overlay)', zIndex: zIndex ?? 100 }}
+          style={{ zIndex: zIndex ?? 100 }}
         >
         <DialogPrimitive.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           {...(description ? {} : ({ 'aria-describedby': undefined } as const))}
           className={[
             'w-[92vw] rounded-[8px] overflow-hidden flex flex-col prd-dialog-content',

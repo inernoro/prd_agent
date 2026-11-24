@@ -84,7 +84,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
 
     public bool Supports(string artifactType, string operation) =>
-        artifactType == DesignArtifactTypes.WebPage
+        artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
         && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
 
     // ───────────────────────── 能力探针 ─────────────────────────
@@ -272,7 +272,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     yield return new DesignArtifactExecutorChunk(
                         "phase",
                         BusyPhase(submit.Slot, wait, UtcNow() - queuedSince),
-                        Progress: translator.Progress);
+                        Progress: translator.Progress,
+                        PhaseCode: DesignArtifactPhaseCodes.WaitingCapacity);
                     await Delay(wait, ct);
                     continue;
                 }
@@ -298,7 +299,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                             "engine_starting" or "engine_restarting" => $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
                             _ => $"设计执行服务暂时不能接单，约 {(int)wait.TotalSeconds} 秒后重试提交（同一任务重复提交不会重复生成）",
                         },
-                        Progress: translator.Progress);
+                        Progress: translator.Progress,
+                        PhaseCode: DesignArtifactPhaseCodes.ServiceRecovering);
                     await Delay(wait, ct);
                     continue;
                 }
@@ -346,8 +348,11 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     afterSeq = Math.Max(afterSeq, evt.Seq);
                     sawEvent = true;
                     consecutiveFailures = 0;
-                    if (evt.Type == OpenDesignEventTranslator.Done
-                        || evt.Type == OpenDesignEventTranslator.Status && observedModel is null)
+                    // 每个有限阶段事件都从短期 grant 的 CallCount 同步一次真实累计调用数。
+                    // 不能只在首次识别模型时观察：一个 OpenDesign 任务会在后续审查与修复阶段
+                    // 继续调用模型，首次快照通常只有 1。status 只由运行时阶段迁移产生，数量有界；
+                    // text_delta/preview 不触发查询，避免随高频内容事件放大网关读取。
+                    if (evt.Type is OpenDesignEventTranslator.Done or OpenDesignEventTranslator.Status)
                     {
                         var usage = await ObserveGrantUsageAsync(
                             workspace.ModelGrantId,
@@ -378,7 +383,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                             yield break;
                         case OpenDesignEventTranslator.Error:
                             remoteTerminal = true;
-                            var code = OpenDesignEventTranslator.ReadPayloadString(evt.PayloadJson, "code");
+                            var code = OpenDesignEventTranslator.ReadPayloadStableToken(evt.PayloadJson, "code");
                             _logger.LogWarning(
                                 "设计执行服务报告任务失败 transport={Transport} run={RunId} code={Code} message={RemoteMessage}",
                                 TransportLogName, run.Id, code ?? "unknown",
@@ -461,6 +466,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["baseRevision"] = workspace.BaseRevision,
                 ["maxInputBytes"] = workspace.MaxInputBytes,
                 ["maxOutputBytes"] = workspace.MaxOutputBytes,
+                ["maxPublicOutputBytes"] = workspace.MaxPublicOutputBytes ?? workspace.MaxOutputBytes,
                 ["allowedOutputPaths"] = new JsonArray(workspace.AllowedOutputPaths.Select(path => (JsonNode?)path).ToArray()),
                 // previewUrl 不传：服务按 resultCommitUrl 推导出同源的 /workspace/preview，与经 CDS 时一致。
             },
@@ -471,9 +477,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["apiKey"] = workspace.ModelToken,
                 ["model"] = workspace.Model,
                 ["sourceSystem"] = "map",
-                ["appCallerCode"] = run.Operation == DesignArtifactOperations.Edit
-                    ? AppCallerRegistry.Admin.WebHosting.EditHtml
-                    : AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ["appCallerCode"] = DesignArtifactGatewayGrantService.CallerFor(run),
                 ["userId"] = run.UserId,
                 ["runId"] = run.Id,
             },

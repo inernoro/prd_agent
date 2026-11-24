@@ -10,11 +10,61 @@ namespace PrdAgent.LlmGw.LogicalModels;
 /// MAP 会继续保存一个已经不存在的 PublicId，最终出现“仍是默认，但不可用”或在途任务执行失败。
 /// 新增一种 MAP 配置引用时，应把过滤器集中补在这里，并在镜像测试里对照实体字段与状态枚举。
 ///
-/// 历史日志、用户最近选择等非权威引用不阻断删除：它们不会发起未来调用。业务策略、模型绑定密钥
-/// 和未终结任务会阻断，因为它们仍可能把这个 PublicId 送进网关。
+/// 历史日志不改写。用户保存的选择会影响未来调用，必须由 ModelReferences 完整注册表审计；
+/// 此处保留业务策略、模型绑定密钥和未终结任务的专项过滤器，不能单独作为全量覆盖证明。
 /// </summary>
 public static class MapLogicalModelReferencePolicy
 {
+    // 这些是可复用的未来执行配置，不包括 battle/run/log 等历史快照。
+    public const string ArenaSlotsCollectionName = "arena_slots";
+    public const string ModelLabExperimentsCollectionName = "model_lab_experiments";
+    public const string ModelLabModelSetsCollectionName = "model_lab_model_sets";
+    public const string ModelLabGroupsCollectionName = "model_lab_groups";
+    public const string BusinessLogicalModelField = "LogicalModelId";
+
+    public sealed record BusinessReferenceQuery(
+        string CollectionName, string Usage, FilterDefinition<BsonDocument> Filter);
+
+    /// <summary>业务配置中的 LogicalModelId 是 GW 内部 ID，不是 PublicId。</summary>
+    public static IReadOnlyList<BusinessReferenceQuery> BuildBusinessLogicalModelQueries(string logicalModelId, string? publicId = null)
+    {
+        var fb = Builders<BsonDocument>.Filter;
+        var exactIdentity = fb.Eq(BusinessLogicalModelField, logicalModelId);
+        if (string.IsNullOrWhiteSpace(publicId)) return BusinessQueries(exactIdentity);
+        // 与业务 Resolve 的显式 logical-model 兼容入口一致。已有非空内部 ID 优先，
+        // 不能因公开名称相同而把被删除的旧身份认作重建的新身份。
+        return BusinessQueries(fb.Or(exactIdentity, fb.And(
+            fb.In(BusinessLogicalModelField, new BsonValue[] { BsonNull.Value, "" }),
+            fb.Eq("PlatformId", LogicalModelPlatformId),
+            fb.Eq("ModelId", publicId))));
+    }
+
+    /// <summary>
+    /// 只保护尚未迁移的物理绑定。已明确绑定逻辑模型后，保留的旧 pair 只是迁移来源，不能继续阻断退役。
+    /// null 同时匹配缺失字段；数组必须 ElemMatch，避免将不同成员的字段拼成一条引用。
+    /// </summary>
+    public static IReadOnlyList<BusinessReferenceQuery> BuildLegacyPlatformQueries(string platformId)
+    {
+        var fb = Builders<BsonDocument>.Filter;
+        return BusinessQueries(fb.And(
+            fb.In(BusinessLogicalModelField, new BsonValue[] { BsonNull.Value, "" }),
+            fb.Eq("PlatformId", platformId),
+            fb.Type("ModelId", BsonType.String),
+            fb.Ne("ModelId", "")));
+    }
+
+    private static IReadOnlyList<BusinessReferenceQuery> BusinessQueries(FilterDefinition<BsonDocument> memberFilter)
+    {
+        var fb = Builders<BsonDocument>.Filter;
+        return new BusinessReferenceQuery[]
+        {
+            new(ArenaSlotsCollectionName, "模型竞技场槽位", memberFilter),
+            new(ModelLabExperimentsCollectionName, "模型实验台实验", fb.ElemMatch<BsonDocument>("SelectedModels", memberFilter)),
+            new(ModelLabModelSetsCollectionName, "模型实验台模型集合", fb.ElemMatch<BsonDocument>("Models", memberFilter)),
+            new(ModelLabGroupsCollectionName, "模型实验台分组", fb.ElemMatch<BsonDocument>("Models", memberFilter)),
+        };
+    }
+
     public const string AppSettingsCollectionName = "appsettings";
     public const string VisualPolicyDefaultField = "VisualModelPolicy.DefaultModelId";
     public const string VisualPolicyModelsField = "VisualModelPolicy.Models.ModelId";

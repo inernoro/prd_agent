@@ -64,7 +64,7 @@ public class HttpLlmClientHealthProbeTests
             pinnedModelId: null,
             jsonOpts: GatewayJsonOptions(),
             logger: NullLogger.Instance,
-            ctxAccessor: contextAccessor);
+            ctxAccessor: contextAccessor, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
 
         var chunks = new List<LLMStreamChunk>();
         await foreach (var chunk in client.StreamGenerateAsync(

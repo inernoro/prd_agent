@@ -16,9 +16,11 @@
  * 滚动区 minHeight:0 + overflowY:auto。ESC 与点蒙版都能关（等价于取消）。
  * z-index 1500，与 BugReportDialog 同层——两者不会同时出现。
  */
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui';
+import { useDrawerFocus } from '@/components/EntityPreviewDrawer';
+import { useVisualViewport } from '@/lib/useVisualViewport';
 
 export type ConfirmOptions = {
   title: string;
@@ -64,9 +66,12 @@ export function useDialogs(): DialogApi {
 }
 
 export function DialogProvider({ children }: { children: ReactNode }) {
+  const viewport = useVisualViewport();
   const [pending, setPending] = useState<Pending | null>(null);
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const initialRef = useRef<HTMLElement | null>(null);
 
   const api = useRef<DialogApi>({
     confirm: (options) => new Promise<boolean>((resolve) => {
@@ -88,21 +93,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  useEffect(() => {
-    if (!pending) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.stopPropagation();
-      close(false, '');
-    };
-    window.addEventListener('keydown', onKey);
-    // 弹出即聚焦输入框：要输东西的场景不该让用户再点一下
-    const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.clearTimeout(timer);
-    };
-  }, [pending, close]);
+  useDrawerFocus(Boolean(pending), () => close(false, ''), dialogRef, initialRef);
 
   const options = pending?.options;
   const promptOptions = pending?.kind === 'prompt' ? pending.options : null;
@@ -116,7 +107,10 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       onMouseDown={(event) => { if (event.currentTarget === event.target) close(false, ''); }}
       style={{
         position: 'fixed',
-        inset: 0,
+        top: viewport.top,
+        left: viewport.left,
+        width: viewport.width,
+        height: viewport.height,
         zIndex: 1500,
         background: 'rgba(0,0,0,0.45)',
         display: 'flex',
@@ -126,13 +120,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       }}
     >
       <div
+        ref={element => { dialogRef.current = element; initialRef.current = element?.querySelector<HTMLInputElement>('input:not(:disabled)') || element?.querySelector<HTMLButtonElement>('button:not(:disabled)') || null; }}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={options.title}
         data-dialog="confirm"
         style={{
           width: 'min(440px, 100%)',
-          maxHeight: '80vh',
+          maxHeight: '100%',
+          minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
           borderRadius: 'var(--radius-lg, 12px)',
@@ -147,7 +144,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           </p>
         </div>
 
-        <div style={{ padding: '10px 18px 0', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        <div style={{ padding: '10px 18px 0', minHeight: 0, overflowY: 'auto', overflowWrap: 'anywhere', overscrollBehavior: 'contain' }}>
           {options.description
             ? options.description.split('\n').map((line, index) => (
               <p key={index} style={{ margin: '0 0 6px', fontSize: 'var(--fs-secondary)', lineHeight: 1.7, color: 'var(--text-secondary)' }}>
@@ -190,7 +187,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           ) : null}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '14px 18px 16px', flexShrink: 0 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, padding: '14px 18px 16px', flexShrink: 0 }}>
           <Button size="sm" variant="ghost" onClick={() => close(false, '')}>
             {options.cancelLabel ?? '取消'}
           </Button>

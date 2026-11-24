@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
+    inputs:
+      llmgw_provider:
+        description: Run real LLMGW provider compatibility against the configured test target
+        type: boolean
+        default: false
+      llmgw_expected_commit:
+        description: Exact deployed gateway commit for provider verification
+        type: string
+        required: false
 
 env:
   DOTNET_VERSION: '8.0.x'
@@ -60,7 +69,13 @@ jobs:
               - 'scripts/skill-bundles.json'
               - 'scripts/bundle-official-skills.mjs'
               - 'scripts/test-official-skill-bundles.mjs'
+              - 'scripts/llmgw-compat-regression.*'
+              - 'scripts/llmgw-compat-red-green.py'
+              - 'scripts/fixtures/llmgw-compat/**'
+              - 'scripts/tests/llmgw-compat-regression.test.py'
               - 'scripts/verify-dotnet-test-projects.sh'
+              - 'scripts/tests/mongo-ci-contract.test.py'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
@@ -69,9 +84,11 @@ jobs:
               # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
               - 'doc/report.*.md'
               - 'e2e/**'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
             desktop:
               - 'prd-desktop/**'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - '.github/workflows/ci.yml'
             # 设计执行服务（design-runtime/opendesign）：tsc + vitest。移植过来的纯函数测试读
             # 仓库根 scripts/fixtures 下的三份共享夹具，夹具改了也要跑。
@@ -84,6 +101,12 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/cds-prebuilt.yml'
+              - '.claude/skills/cds/**'
+              - '.claude/skills/cds-project-scan/**'
+              - '.claude/skills/cds-deploy-pipeline/**'
+              - '.claude/skills/cds-release/**'
+              - '.claude/skills/preview-url/**'
               # build-scope-ci-parity 守卫的两份被守文件，理由同 cds.yml 的同名条目（形状 7）。
               - 'cds-compose.yml'
               - '.github/workflows/branch-image.yml'
@@ -111,34 +134,61 @@ jobs:
               - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
+              - 'fast.sh'
+              - 'docker-compose.yml'
+              - 'deploy/systemd/prd-agent-*.service'
+              - 'deploy/systemd/prd-agent-*.timer'
+              - 'deploy/logrotate/**'
+              - 'deploy/journald/**'
+              - 'deploy/compose/production-logging.yml'
+              - 'scripts/prd-agent-*-retention.*'
+              - 'scripts/prd-agent-verify-offsite-backups.py'
+              - 'scripts/prd-agent-sync-small-backups.sh'
+              - 'scripts/llmgw-install-disk-monitor.sh'
+              - 'deploy/systemd/llmgw-backup-retention.service'
+              - 'scripts/prd-agent-container-log-rollout.py'
+              - 'scripts/prd-agent-with-release-lock.sh'
+              - 'scripts/prd-agent-install-disk-governance.sh'
+              - 'scripts/tests/prd-agent-*.test.*'
+              # 模型出口守卫读取所有 MAP 发送入口；漏登记新业务也必须触发构建检查。
+              - 'prd-api/src/**'
+              - 'llmgw/serving/**'
+              - 'scripts/check-map-model-egress.py'
+              - 'scripts/fixtures/map-model-egress-audit.json'
               - 'exec_dep.sh'
+              - '.github/workflows/web-latest-pages.yml'
+              - 'scripts/lib/release-artifacts.py'
               - 'scripts/lib/static-release.sh'
               - 'scripts/lib/gateway-bind-mount.sh'
+              - 'scripts/lib/production-runtime-rollback.py'
               - 'scripts/prd-agent-public-surface-smoke.py'
               - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
+              - 'scripts/tests/static-release-browser.mjs'
+              - 'scripts/ci/normalize-ubuntu-apt-sources.py'
               - 'scripts/tests/gateway-bind-mount-coherence.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
               - 'scripts/tests/release-evidence.test.py'
               - 'scripts/llmgw-prod-preflight.py'
+              - 'scripts/llmgw-serving-probe.py'
+              - 'scripts/tests/llmgw-feature-readiness.test.py'
               - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              - 'scripts/tests/mongo-ci-contract.test.py'
               # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
               # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
               # 它们守的是 gw-smoke / 发布双密钥 / ASR WebSocket 转发，
               # 所以连同各自的被测脚本一起登记进这道闸。
               - 'scripts/gw-smoke.py'
+              - 'scripts/host-capacity.py'
+              - 'scripts/capacity-behavior-proof.py'
               # changelog 碎片合并的被测文件：不登记的话，只改合并逻辑的 PR
               # 完全跳过这道闸，而它要防的重复日期段恰恰是在那里长出来的（形状 7）。
               - 'scripts/assemble-changelog.sh'
               - 'scripts/lib/changelog_merge.py'
               - 'scripts/tests/test_*.py'
-              # 债务台账解析器：守卫读的是它 collect() 出来的真实结果，
-              # 不登记被测文件的话，只改解析器的 PR 完全跳过这道闸（形状 7）。
+              # 旧解析器由隔离的历史夹具回归，同时防止恢复当前文件台账。
               - 'scripts/sync-debt-ledger.py'
-              # 台账本身也是被测输入：守卫扫的是 doc/debt.*.md 里的真实表格，
-              # 只登记解析器的话，「只改一份台账」的 PR 照样跳过这道闸 ——
-              # 而撞车的标识、认不出的表头、解析成空，恰恰都是在台账那边长出来的。
               - 'doc/debt.*.md'
               # 周报浅克隆闸的被测文件。守卫读的是采集器的退出码 + SKILL.md 里
               # Phase 2.0 那段 shell，两者都得登记：只登记守卫自己，这道闸就只在
@@ -233,8 +283,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ubuntu APT source and bounds contract
+        run: python3 scripts/tests/test_ci_ubuntu_apt.py
+
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+
       - name: Root layout contract
-        run: python3 scripts/tests/test_root_layout_contract.py
+        run: |
+          python3 scripts/tests/test_root_layout_contract.py
+          python3 scripts/tests/test_root_document_locations.py
 
       # 监控自发现的跨语言契约。挂在这个 job 是因为它无 needs、无 if，每次 CI 都跑——
       # 挂到带 path filter 的 job 上，只改自检端点的 PR 就会绕过守卫
@@ -246,6 +304,16 @@ jobs:
 
       - name: cdscli monitor contract
         run: python3 scripts/tests/test_cdscli_monitor.py
+
+      - name: cdscli release governance contract
+        run: python3 scripts/tests/test_cdscli_release_governance.py
+
+      - name: CDS isolated release script check
+        env:
+          CDS_COMMIT_SHA: ${{ github.sha }}
+          CDS_TARGET_ID: ci-cds-governance-isolated
+          CDS_RELEASE_ID: ci-script-check
+        run: bash e2e/fixtures/cds-batch/cds-release.sh check
 
   docs-readability:
     name: Docs Readability Ratchet
@@ -304,7 +372,8 @@ jobs:
     name: Production Release Script Test
     needs: changes
     if: needs.changes.outputs.release_scripts == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 与现有浏览器验收使用相同 LTS，避免 latest 升级后 Playwright 系统依赖不兼容。
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -312,8 +381,31 @@ jobs:
       - name: Static release layout
         run: sh scripts/tests/static-release-layout.test.sh
 
-      - name: Static release through nginx worker
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install browser regression dependencies
+        timeout-minutes: 10
+        run: |
+          pnpm --dir cds install --frozen-lockfile
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
+          pnpm --dir cds exec playwright install --with-deps chromium
+
+      - name: Static release through nginx worker and browser
+        env:
+          STATIC_RELEASE_BROWSER_TEST: "1"
         run: sh scripts/tests/static-release-nginx.test.sh
+
+      - name: Production disk governance regression
+        run: |
+          python3 scripts/tests/prd-agent-artifact-retention.test.py
+          python3 scripts/tests/prd-agent-verified-backup-retention.test.py
+          python3 scripts/tests/prd-agent-container-log-rollout.test.py
+          node --test scripts/tests/prd-agent-request-log-retention.test.mjs
+          sh scripts/tests/prd-agent-release-lock.test.sh
 
       - name: Gateway bind mount coherence
         run: sh scripts/tests/gateway-bind-mount-coherence.test.sh
@@ -330,6 +422,9 @@ jobs:
       - name: Gateway route self-test failure diagnosis
         run: python3 scripts/tests/gateway-route-self-test-diagnosis.test.py
 
+      - name: Scoped model feature readiness gate
+        run: python3 scripts/tests/llmgw-feature-readiness.test.py
+
       - name: Static dist validation
         run: sh scripts/tests/validate-static-dist.test.sh
 
@@ -340,6 +435,9 @@ jobs:
             echo "--- $t"
             python3 "$t"
           done
+
+      - name: MAP model egress guard
+        run: python3 scripts/check-map-model-egress.py
 
       - name: Prototype export audit tests
         run: python3 .agents/skills/prototype-export/tests/test_audit_prototype_package.py
@@ -379,10 +477,12 @@ jobs:
 
   # 后端服务构建和测试
   server-build:
-    name: Server Build & Test
+    name: Server Build & Test (execution)
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 临时兼容：24.04 镜像 20261018.339.1 的 Azure 7.0 内核被 Mongo 8.0 拒绝。
+    # SERVER-131779 修复在 8.0.35；可用并在原 runner 真验后回迁，见 debt.platform.md。
+    runs-on: ubuntu-22.04
     services:
       mongodb:
         image: mongo:8.0
@@ -403,13 +503,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: MongoDB runtime versions
+        run: |
+          uname -r
+          docker exec "${{ job.services.mongodb.id }}" mongosh --quiet --eval \
+            'const v = db.version(); print("MongoDB " + v); if (!/^8[.]0[.]/.test(v) || db.adminCommand({ ping: 1 }).ok !== 1) quit(1);'
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Install video test dependencies
+        timeout-minutes: 10
         run: |
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -438,6 +546,27 @@ jobs:
 
       - name: Build
         run: dotnet build PrdAgent.sln -c Release --no-restore
+
+      - name: Verify log archive and TTL boundaries in isolated MongoDB fixtures
+        run: |
+          dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~PrdAgent.Tests.Services.LogArchive'
+          dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj -c Release --no-build --no-restore \
+            --filter 'FullyQualifiedName~GatewayRuntimeGovernanceTests.Initializer_RestartKeepsExpiredExecutionBodiesAndTemporaryStateTtl|FullyQualifiedName~GatewayRuntimeGovernanceTests.ArchivedDetailFailuresReturnRecoverableError'
+
+      - name: LLMGW protocol simulation (production adapters, synthetic provider)
+        working-directory: ${{ github.workspace }}
+        env:
+          CONFIGURATION: Release
+        run: bash scripts/llmgw-compat-regression.sh work/llmgw-compat-simulation
+
+      - name: Upload LLMGW simulation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-compat-simulation-${{ github.run_id }}
+          path: work/llmgw-compat-simulation/
+          if-no-files-found: error
 
       - name: Run tests (exclude integration and manual tests)
         run: |
@@ -492,6 +621,52 @@ jobs:
           done
         shell: bash
 
+  llmgw-provider:
+    name: LLMGW Real Provider Verification
+    # No needs on simulation: a real failure must never be replaced or hidden by synthetic success.
+    if: github.event_name == 'workflow_dispatch' && inputs.llmgw_provider
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify configured real provider target
+        env:
+          LLMGW_COMPAT_TARGET: ${{ secrets.LLMGW_COMPAT_TARGET }}
+          LLMGW_COMPAT_KEY: ${{ secrets.LLMGW_COMPAT_KEY }}
+          LLMGW_COMPAT_HEADERS: ${{ secrets.LLMGW_COMPAT_HEADERS }}
+          EXPECTED_COMMIT: ${{ inputs.llmgw_expected_commit }}
+        run: |
+          mkdir -p work/llmgw-compat-provider
+          if [ -n "$LLMGW_COMPAT_TARGET" ]; then
+            printf '%s' "$LLMGW_COMPAT_TARGET" > work/llmgw-compat-target.json
+          fi
+          python3 scripts/llmgw-compat-regression.py --mode provider \
+            --target work/llmgw-compat-target.json --expected-commit "$EXPECTED_COMMIT" \
+            --output work/llmgw-compat-provider/provider.json
+      - name: Upload real provider report (including failures)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmgw-compat-provider-${{ github.run_id }}
+          path: work/llmgw-compat-provider/
+          if-no-files-found: error
+
+  server-required:
+    name: Server Build & Test
+    needs: [changes, server-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+      - name: Forward server result
+        run: |
+          [[ "${{ needs.changes.result }}" == success &&
+             ( "${{ needs.server-build.result }}" == success ||
+               ( "${{ needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}" == false &&
+                 "${{ needs.server-build.result }}" == skipped ) ) ]]
+
   # Web 管理后台构建
   admin-build:
     name: Admin Dashboard Build
@@ -500,7 +675,8 @@ jobs:
     # 如果上一轮某个模块构建失败,后续只改其他模块会导致失败模块永久 skipped。
     # PR/develop 仍按路径过滤节省资源。
     if: needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # e2e 锁定的 Playwright 1.59 不支持 Ubuntu 26.04，固定受支持的 LTS。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: prd-admin
@@ -543,6 +719,10 @@ jobs:
         run: pnpm test
 
       - name: Build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+          VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+          VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
         run: pnpm build
 
       - name: Install recording acceptance dependencies
@@ -554,14 +734,17 @@ jobs:
         run: pnpm typecheck
 
       - name: Install Chromium for recording acceptance
+        timeout-minutes: 10
         working-directory: ${{ github.workspace }}/e2e
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
+          pnpm exec playwright install --with-deps chromium
 
       - name: Run focused browser acceptance
         working-directory: ${{ github.workspace }}/e2e
         env:
           E2E_LOCAL_SERVER: '1'
-        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts specs/web-hosting-version-touch-target.spec.ts
+        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts specs/web-hosting-version-touch-target.spec.ts specs/hosted-native-preview.spec.ts specs/web-hosting-card-layout.spec.ts specs/toolbox-toolbar-layout.spec.ts specs/notification-dialog-opacity.spec.ts specs/public-login-entry.spec.ts
 
       - name: Upload recording acceptance evidence
         if: always()
@@ -675,7 +858,9 @@ jobs:
           set -e
 
       - name: Install system dependencies (Linux)
+        timeout-minutes: 10
         run: |
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
@@ -725,7 +910,8 @@ jobs:
     name: CDS Build & Test
     needs: changes
     if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # Playwright 1.59 的系统依赖尚不支持 ubuntu-latest 正在迁移的 Ubuntu 26。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: cds
@@ -770,11 +956,62 @@ jobs:
       - name: Install web dependencies
         run: pnpm run install:web
 
+      - name: Install design runtime test dependencies
+        run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
+
       - name: Type check
         run: pnpm exec tsc --noEmit
 
+      - name: Start isolated loopback OpenSSH for release lifecycle tests
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends openssh-server
+          cds_ssh_dir="$RUNNER_TEMP/cds-release-e2e"
+          mkdir -p "$cds_ssh_dir/evidence"
+          chmod 700 "$cds_ssh_dir"
+          ssh-keygen -q -t ed25519 -N '' -f "$cds_ssh_dir/hostkey"
+          ssh-keygen -q -t ed25519 -N '' -f "$cds_ssh_dir/clientkey"
+          cp "$cds_ssh_dir/clientkey.pub" "$cds_ssh_dir/authorized_keys"
+          chmod 600 "$cds_ssh_dir/authorized_keys"
+          cat > "$cds_ssh_dir/sshd_config" <<CONFIG
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey "$cds_ssh_dir/hostkey"
+          PidFile "$cds_ssh_dir/sshd.pid"
+          AuthorizedKeysFile "$cds_ssh_dir/authorized_keys"
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+          UsePAM yes
+          AllowUsers $(id -un)
+          CONFIG
+          sudo mkdir -p /run/sshd
+          sudo /usr/sbin/sshd -t -f "$cds_ssh_dir/sshd_config"
+          sudo /usr/sbin/sshd -f "$cds_ssh_dir/sshd_config" -E "$cds_ssh_dir/sshd.log"
+          printf '[127.0.0.1]:2222 %s\n' "$(ssh-keygen -y -f "$cds_ssh_dir/hostkey")" > "$cds_ssh_dir/known_hosts"
+          ssh -i "$cds_ssh_dir/clientkey" -p 2222 -o BatchMode=yes -o UserKnownHostsFile="$cds_ssh_dir/known_hosts" "$(id -un)@127.0.0.1" true
+          printf 'CDS_BATCH_E2E=1\nCDS_BATCH_E2E_SSH_KEY=%s\nCDS_RELEASE_E2E_SSH_KEY=%s\nCDS_BATCH_E2E_EVIDENCE_DIR=%s\nCDS_NATIVE_SSH_DIR=%s\n' "$cds_ssh_dir/clientkey" "$cds_ssh_dir/clientkey" "$cds_ssh_dir/evidence" "$cds_ssh_dir" >> "$GITHUB_ENV"
+
       - name: Run tests
         run: pnpm test
+
+      - name: Retain native SSH lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-native-ssh-${{ github.run_id }}
+          path: ${{ runner.temp }}/cds-release-e2e/evidence/
+          retention-days: 14
+
+      - name: Stop owned loopback OpenSSH
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${CDS_NATIVE_SSH_DIR:-}" ] && [ -f "$CDS_NATIVE_SSH_DIR/sshd.pid" ]; then
+            sudo kill "$(sudo cat "$CDS_NATIVE_SSH_DIR/sshd.pid")"
+          fi
 
   # 设计执行服务（design-runtime/opendesign）—— tsc + vitest。
   # 镜像构建在 branch-image.yml 里，而镜像的构建阶段只跑 `pnpm run build`（不编译测试、不跑 vitest），
@@ -783,7 +1020,11 @@ jobs:
     name: Design Runtime Test
     needs: changes
     if: needs.changes.outputs.design_runtime == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 固定已验证的 LTS，避免 latest 切换后原有字体依赖在 26.04 缺失。
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a
+      options: --init --shm-size=1g
     defaults:
       run:
         working-directory: design-runtime/opendesign
@@ -805,6 +1046,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify pinned quality browser
+        timeout-minutes: 10
+        run: pnpm exec playwright-core install chromium
+
       - name: Type check
         run: pnpm exec tsc --noEmit && pnpm run typecheck
 
@@ -815,7 +1060,7 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [changes, repository-layout, server-build, admin-build, desktop-check, cds-build, design-runtime-test, docs-readability, acceptance-report-gate]
+    needs: [changes, repository-layout, server-build, admin-build, desktop-check, cds-build, design-runtime-test, docs-readability, acceptance-report-gate, llmgw-provider]
     if: always()
     steps:
       - name: Check CI status
@@ -828,6 +1073,11 @@ jobs:
           echo "  Design runtime: ${{ needs.changes.outputs.design_runtime }}"
           echo "  Docs: ${{ needs.changes.outputs.docs }}"
           echo "  Acceptance report: ${{ needs.changes.outputs.acceptance_report }}"
+
+          if [[ "${{ github.event_name == 'workflow_dispatch' && inputs.llmgw_provider }}" == "true" && "${{ needs.llmgw-provider.result }}" != "success" ]]; then
+            echo 'Real LLMGW provider verification failed; simulation cannot override it.'
+            exit 1
+          fi
 
           # main push 是发布线,所有关键 job 都必须成功。
           # PR/develop 仍只要求本次改动涉及的模块成功。

@@ -15,6 +15,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY ["src/PrdAgent.Api/PrdAgent.Api.csproj", "src/PrdAgent.Api/"]
 COPY ["src/PrdAgent.Core/PrdAgent.Core.csproj", "src/PrdAgent.Core/"]
+COPY ["src/LlmGateway.Transport/LlmGateway.Transport.csproj", "src/LlmGateway.Transport/"]
 COPY ["src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "src/PrdAgent.Infrastructure/"]
 # 仅 restore API 项目：测试项目被 .dockerignore 排除，不进入生产镜像
 # BuildKit cache mount：NuGet 包跨 build 复用，避免换服务器 / 清 docker layer 后重新下载全量包

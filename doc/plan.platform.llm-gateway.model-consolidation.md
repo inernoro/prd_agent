@@ -49,7 +49,7 @@
 先删页面或先删 MAP 子系统都不减少任何东西：解析器照样在跑，判据照样是两份，只是少了看它的地方。
 
 **实际就是按这个顺序做的**，三刀之间各自能独立发独立退。删完之后剩下的已知边界，逐条记在
-[debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)：MAP 侧池调度子系统（2277 行）未删、
+[debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)：MAP 侧池调度子系统（2277 行）未删、
 一份内存版解析器化石（约 470 行，150 条用例还挂在它上面）未删、搬迁路径上一个已经恒为空的参数
 暂不动（正式环境的搬迁还没跑过，删它的收益小于碰那条路的风险）。
 
@@ -263,7 +263,7 @@ tsc 绿、lint 绿、文字预算守卫也绿（它只扫 `pages/`），只有�
 
 搬迁阶段用的那个影子比对脚本已随阶段 4 一并删除。它的比法是「把默认标记关掉，解析回落到池」，而阶段 4 删掉的正是生产解析路上的池分支（池解析此后只剩在测试用的内存实现里）。删路之后它的「旧路」那一腿量到的不再是旧路，而是「没有默认时新引擎会怎么走」，两腿比的是同一条路；非默认的搬迁模型还有第二层问题：脚本不会清掉该用途**已有的**默认，于是拿两个逻辑模型互比，两者物理线路碰巧相同时还会判「一致」。留着它比删掉更糟——下一个人跑一次、看到满屏「一致」，会以为搬迁被验证过（无根之木禁令的原则〇：根只在某个已经不存在的上下文里成立，就是虚幻的根）。搬迁一致性的证据是阶段 2.2 在**删路之前**跑出来的那一份，删路之后无法重跑，也不该假装能重跑。
 
-阶段 4 要删的 `PoolHealthTracker` / `ModelPoolDispatcher` 那套在生产请求链路上本来就是死代码（`IModelPool.DispatchAsync` 全仓无调用方），台账见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 的 `2026-09-11-model-pool-dispatcher-is-a-shell`。
+阶段 4 要删的 `PoolHealthTracker` / `ModelPoolDispatcher` 那套在生产请求链路上本来就是死代码（`IModelPool.DispatchAsync` 全仓无调用方），台账见 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md) 的 `2026-09-11-model-pool-dispatcher-is-a-shell`。
 
 ---
 

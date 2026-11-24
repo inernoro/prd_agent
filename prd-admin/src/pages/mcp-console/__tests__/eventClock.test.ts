@@ -14,7 +14,7 @@ const localIso = (day: number, hour: number, minute: number) => new Date(2026, 8
 
 describe('事件行时间列', () => {
   it('今天的只写时刻', () => {
-    expect(eventClock(localIso(5, 7, 31), NOW)).toBe('07:31');
+    expect(eventClock(localIso(5, 7, 31), NOW)).toBe('07:31:00.000');
   });
 
   it('昨天的必须带上日期——否则跟今天的同一时刻长得一模一样', () => {
@@ -36,11 +36,21 @@ describe('事件行时间列', () => {
   it('判据按本地自然日，不按 UTC 日期字符串——跨时区时前者才与眼睛看到的时刻一致', () => {
     // 同一个瞬间，只要跟 now 是同一个本地自然日，就只写时刻
     const now = new Date(2026, 8, 5, 0, 30);
-    expect(eventClock(localIso(5, 23, 30), now)).toBe('23:30');
+    expect(eventClock(localIso(5, 23, 30), now)).toBe('23:30:00.000');
     expect(eventClock(localIso(6, 0, 30), now)).toMatch(/09.*06/);
   });
 
   it('时间戳认不出来时给空串，不抛也不显示 Invalid Date', () => {
     expect(eventClock('不是时间', NOW)).toBe('');
   });
+});
+
+it('同一分钟内不同秒的请求可以分辨', () => {
+  expect(eventClock(new Date(2026, 8, 5, 7, 31, 2).toISOString(), NOW)).toBe('07:31:02.000');
+  expect(eventClock(new Date(2026, 8, 5, 7, 31, 8).toISOString(), NOW)).toBe('07:31:08.000');
+});
+
+it('同一秒内的请求显示毫秒，避免看起来没有顺序', () => {
+  expect(eventClock(new Date(2026, 8, 5, 7, 31, 2, 639).toISOString(), NOW)).toBe('07:31:02.639');
+  expect(eventClock(new Date(2026, 8, 5, 7, 31, 2, 47).toISOString(), NOW)).toBe('07:31:02.047');
 });

@@ -515,3 +515,29 @@ describe('接线守卫：index.ts 必须把自定义监控接进探测器与路�
     }
   });
 });
+
+describe('严重故障由生产可用性证据判定', () => {
+  it.each([
+    ['production', 'active', 'http', 'urgent'],
+    ['staging', 'active', 'http', 'normal'],
+    ['production', 'passive', 'http', 'normal'],
+    ['production', 'active', 'health-json', 'normal'],
+  ] as const)('%s / %s / %s 只有确认后才产生 %s 事件', async (environment, observeMode, kind, urgency) => {
+    let now = Date.UTC(2026, 9, 15); const events: unknown[] = [];
+    const mon = monitor({ environment, observeMode, kind, projectId: 'business',
+      healthComponentId: 'metric', healthField: 'observedValue', healthOp: 'eq', healthValue: '0' });
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ checks: { metric: { observedValue: 1 } } })));
+    const service = new UptimeMonitorService({
+      state: { getAllBranches: () => [], getUptimeMonitors: () => [mon] },
+      config: testConfig(), now: () => now,
+      probe: async () => ({ up: false, ms: 15_000, code: 503, err: '访问无响应' }),
+      onAlert: (_type, event) => events.push(event),
+    });
+    try {
+      await service.runCycle(); expect(events).toHaveLength(0);
+      now += MIN; await service.runCycle(); expect(events).toHaveLength(0);
+      now += MIN; await service.runCycle();
+      expect(events).toHaveLength(1); expect(events[0]).toMatchObject({ urgency });
+    } finally { fetch.mockRestore(); }
+  });
+});

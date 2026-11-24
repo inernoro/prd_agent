@@ -121,6 +121,7 @@ public static class DataSyncAssetUrls
             ["requirements"] = "SourceUrl 是需求的外部来源。",
             ["product_initiations"] = "PlanUrl 是人手填的外部文档链接。",
             ["product_releases"] = "AnnouncementUrl / PlanUrl 同上，人手填的外部文档链接。",
+            ["version_registrations"] = "PlanUrl 是版本立项或上线方案的外部文档链接。",
             ["shortcut_templates"] = "ICloudUrl 是 iCloud 的分享链接。",
             ["marketing_consult_reports"] = "HostedSiteUrl 指向网页托管出来的**站点页面**，不是对象存储里的文件。",
             ["pm_briefings"] = "同上，指向网页托管的站点页面。",

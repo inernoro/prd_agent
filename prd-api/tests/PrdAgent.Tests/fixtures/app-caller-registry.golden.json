@@ -120,6 +120,12 @@
     ]
   },
   {
+    "code": "cds.code-review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "channel-adapter.email.classify::chat",
     "modelTypes": [
       "chat"
@@ -252,6 +258,12 @@
     ]
   },
   {
+    "code": "document-store.writing::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "email-agent.draft::chat",
     "modelTypes": [
       "chat"
@@ -300,6 +312,12 @@
     ]
   },
   {
+    "code": "infra-agent.runtime::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "literary-agent.content::chat",
     "modelTypes": [
       "chat"
@@ -333,6 +351,12 @@
     "code": "marketplace-skill.summary::chat",
     "modelTypes": [
       "chat"
+    ]
+  },
+  {
+    "code": "mcp-speech.synthesize::tts",
+    "modelTypes": [
+      "tts"
     ]
   },
   {

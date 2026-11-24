@@ -61,7 +61,7 @@
 | 运行态 | 能 | 不管 | 是 | 容器、包缓存挂载、构建产物、worktree |
 | 审计证据 | 不能 | 管 | 否 | 活动日志、Webhook 投递记录、验收报告、发布记录 |
 
-混着管会出的事：备份把可丢弃的缓存也备了，却漏了唯一一份业务库；删分支把审计证据一起清了。数据库隔离页签管的是「业务数据」的**归属**（哪条分支用哪个库），不改变它的处置规则——分支独立库仍是业务数据，仍不随分支删除自动 drop（见 [债务台账](./debt.cds.branch-isolation.md) DBI 行）。
+混着管会出的事：备份把可丢弃的缓存也备了，却漏了唯一一份业务库；删分支把审计证据一起清了。数据库隔离页签管的是「业务数据」的**归属**（哪条分支用哪个库），不改变它的处置规则——分支独立库仍是业务数据，仍不随分支删除自动 drop（见 [债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.branch-isolation.md) DBI 行）。
 
 ## 五、数据库隔离页签（本次落地的实例）
 
@@ -89,7 +89,7 @@
 - `cds/.claude/rules/scope-naming.md` —— 系统级 vs 项目级的命名（与本文正交：那条管「哪一页」，本文管「哪一组」）
 - [CDS 配置树 · 技术设计](./design.cds.config-tree.md) —— 配置四层树（数据库隔离的项目默认 / 分支覆盖就是其中两层）
 - [CDS 多分支数据库隔离指南](./guide.cds.multi-branch-db.md) —— per-branch DB 用法与边界
-- [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) —— DBI 已知边界
+- [CDS 多分支跨分支隔离 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.branch-isolation.md) —— DBI 已知边界
 
 ## 实现来源
 

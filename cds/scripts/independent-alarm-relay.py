@@ -62,7 +62,9 @@ def send(channel, message):
 def process(state, now, persist, sender=send, platform_incident=None, dispatcher=None):
     channels = {c['id']: c for c in state.get('channels', []) if c.get('enabled')}
     for item in list(state.get('inbox', {}).values()):
-        if now - item['receivedAt'] < 30 and not item['event'].get('drill'): continue
+        urgent = (item['event'].get('urgency') == 'urgent' and not item['event'].get('drill')
+            and not item['event']['kind'].endswith('-recovered'))
+        if now - item['receivedAt'] < 30 and not urgent and not item['event'].get('drill'): continue
         event = item['event']; channel = channels.get(item['channelId'])
         if not channel: continue
         key = item['channelId'] + '/' + (event.get('correlationKey') or event.get('targetId') or item['id'])
@@ -87,7 +89,9 @@ def process(state, now, persist, sender=send, platform_incident=None, dispatcher
             if dispatcher is not None and incident.get('pendingItemId') not in (None, item['id']):
                 continue
             if dispatcher is not None:
-                outcome = dispatcher.submit(channel, item['message'], 'relay:' + item['id'], now)
+                urgent_key = json.dumps([event.get('identity', {}).get('subject', {}).get('id'), event.get('projectId'),
+                    event.get('correlationKey') or event.get('targetId') or event.get('targetName')]) if urgent else None
+                outcome = dispatcher.submit(channel, item['message'], 'relay:' + item['id'], now, urgent_key=urgent_key)
                 if outcome is None:
                     incident['pendingItemId'] = item['id']
                     persist()

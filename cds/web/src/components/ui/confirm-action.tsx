@@ -1,20 +1,20 @@
-import { ReactElement, ReactNode, cloneElement, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useAnchoredPosition } from '@/components/ui/anchored-popover';
+import { ReactElement, ReactNode, cloneElement, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 
+import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
 import { Button } from '@/components/ui/button';
 
-const POPOVER_WIDTH = 288;
-const POPOVER_GAP = 8;
-const VIEWPORT_PADDING = 8;
-
 interface ConfirmActionProps {
-  trigger: ReactElement<{ onClick?: () => void; disabled?: boolean; 'aria-expanded'?: boolean }>;
+  trigger: ReactElement<{ onClick?: React.MouseEventHandler<HTMLElement>; disabled?: boolean; 'aria-expanded'?: boolean; 'aria-controls'?: string; 'aria-haspopup'?: 'dialog'; onKeyDown?: React.KeyboardEventHandler<HTMLElement> }>;
   title: ReactNode;
   description?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   disabled?: boolean;
   pending?: boolean;
+  /** 调用方对象身份变化时，不能沿用已打开的确认。 */
+  scopeKey?: string;
   onConfirm: () => void | Promise<void>;
 }
 
@@ -26,122 +26,100 @@ export function ConfirmAction({
   cancelLabel = '取消',
   disabled = false,
   pending = false,
+  scopeKey,
   onConfirm,
 }: ConfirmActionProps): JSX.Element {
+  const authScope = useContext(ConsoleAuthContext).status;
+  const dialogId = useId();
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const didFocus = useRef(false);
+  const openingScope = useRef<{ auth: typeof authScope; key?: string; title?: string; description?: string } | null>(null);
+  const titleText = typeof title === 'string' ? title : undefined;
+  const descriptionText = typeof description === 'string' ? description : undefined;
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverNode, setPopoverNode] = useState<HTMLDivElement | null>(null);
+  const panelRef = useMemo(() => ({ current: popoverNode }), [popoverNode]);
+  const position = useAnchoredPosition({ open, anchorRef: rootRef, panelRef, widthRem: 18, align: 'end', gap: 8 });
+
+  function scopeIsCurrent(): boolean {
+    const snapshot = openingScope.current;
+    return Boolean(!disabled && !pending && !trigger.props.disabled && snapshot && snapshot.auth === authScope && snapshot.key === scopeKey && snapshot.title === titleText && snapshot.description === descriptionText);
+  }
+
+  useLayoutEffect(() => {
+    if (open && !scopeIsCurrent()) setOpen(false);
+  }, [open, authScope, scopeKey, titleText, descriptionText, disabled, pending, trigger.props.disabled]);
 
   useLayoutEffect(() => {
     if (!open) {
-      setPosition(null);
+      didFocus.current = false;
       return;
     }
-
-    function updatePosition(): void {
-      const triggerRect = rootRef.current?.getBoundingClientRect();
-      if (!triggerRect) return;
-
-      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const viewportLeft = window.visualViewport?.offsetLeft ?? 0;
-      const viewportTop = window.visualViewport?.offsetTop ?? 0;
-      const popoverHeight = popoverRef.current?.offsetHeight ?? 0;
-      const minLeft = viewportLeft + VIEWPORT_PADDING;
-      const maxLeft = viewportLeft + viewportWidth - POPOVER_WIDTH - VIEWPORT_PADDING;
-      const preferredLeft = triggerRect.right - POPOVER_WIDTH;
-      const left = Math.min(Math.max(preferredLeft, minLeft), Math.max(minLeft, maxLeft));
-
-      const belowTop = triggerRect.bottom + POPOVER_GAP;
-      const aboveTop = triggerRect.top - popoverHeight - POPOVER_GAP;
-      const belowSpace = viewportTop + viewportHeight - VIEWPORT_PADDING - belowTop;
-      const aboveSpace = triggerRect.top - (viewportTop + VIEWPORT_PADDING) - POPOVER_GAP;
-      const shouldPlaceAbove = popoverHeight > 0 && belowSpace < popoverHeight && aboveSpace > belowSpace;
-      const unclampedTop = shouldPlaceAbove ? aboveTop : belowTop;
-      const maxTop = viewportTop + viewportHeight - VIEWPORT_PADDING - popoverHeight;
-      const top = Math.min(Math.max(unclampedTop, viewportTop + VIEWPORT_PADDING), Math.max(viewportTop + VIEWPORT_PADDING, maxTop));
-      const maxHeight = Math.max(120, viewportHeight - VIEWPORT_PADDING * 2);
-
-      setPosition({ left, top, maxHeight });
-    }
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    window.visualViewport?.addEventListener('resize', updatePosition);
-    window.visualViewport?.addEventListener('scroll', updatePosition);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-      window.visualViewport?.removeEventListener('resize', updatePosition);
-      window.visualViewport?.removeEventListener('scroll', updatePosition);
-    };
-  }, [open, title, description]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    function onPointerDown(event: PointerEvent): void {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
-    }
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') setOpen(false);
-    }
-
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+    if (position.visibility !== 'visible' || !popoverNode || didFocus.current) return;
+    didFocus.current = true;
+    const cancel = popoverNode?.querySelector<HTMLElement>('[data-confirm-cancel]');
+    (cancel || popoverNode)?.focus({ preventScroll: true });
+  }, [open, position, popoverNode]);
 
   const triggerNode = cloneElement(trigger, {
     disabled: disabled || pending || trigger.props.disabled,
     'aria-expanded': open,
-    onClick: () => {
+    'aria-haspopup': 'dialog',
+    'aria-controls': open ? dialogId : undefined,
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+      trigger.props.onKeyDown?.(event);
+    },
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      event.preventDefault(); event.stopPropagation();
       if (disabled || pending) return;
+      if (!open) {
+        returnFocus.current = rootRef.current?.querySelector<HTMLElement>('button, a, [tabindex]') || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        openingScope.current = { auth: authScope, key: scopeKey, title: titleText, description: descriptionText };
+      }
       setOpen((value) => !value);
     },
   });
 
   const popover = open
-    ? createPortal(
-        // 2026-05-04 fix(.claude/rules/cds-theme-tokens.md):
-        // 之前 bg-popover / text-popover-foreground 在 cds/web/src/index.css
-        // 完全没定义 → CSS var 解析为空 → popover 透明,下方"更新日志"
-        // 卡片内容直接穿透显示,用户看不清是什么。
-        // 改用 CDS 已确实存在的 surface-raised + hairline + foreground 三 token,
-        // 两个主题(dark/light)都有显式定义,绝不透明。
-        // z-50 → z-[200] 提高,popover 必须高于同 tab 内的 surface 内容。
-        <div
-          ref={popoverRef}
+    ? (
+      <DialogPrimitive.Portal>
+        {/* CDS surface tokens are opaque in both themes; the confirmation stays above its workspace. */}
+        <DialogPrimitive.Content
+          ref={setPopoverNode}
           className="fixed z-[200] w-72 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3 text-left shadow-2xl"
-          role="dialog"
-          aria-label={typeof title === 'string' ? title : '确认操作'}
-          style={{
-            left: position?.left ?? VIEWPORT_PADDING,
-            top: position?.top ?? VIEWPORT_PADDING,
-            maxHeight: position?.maxHeight,
-            overflowY: 'auto',
-            visibility: position ? 'visible' : 'hidden',
+          id={dialogId}
+          {...(description ? {} : { 'aria-describedby': undefined })}
+          onOpenAutoFocus={event => {
+            event.preventDefault();
+            // FocusScope has paused the underlying workspace before this event.
+            popoverNode?.querySelector<HTMLElement>('[data-confirm-cancel]')?.focus({ preventScroll: true });
           }}
+          onCloseAutoFocus={event => {
+            event.preventDefault();
+            if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
+          }}
+          tabIndex={-1}
+          onClick={event => event.stopPropagation()}
+          onPointerDown={event => event.stopPropagation()}
+          onKeyDown={event => event.stopPropagation()}
+          onKeyUp={event => event.stopPropagation()}
+          aria-label={typeof title === 'string' ? title : '确认操作'}
+          style={position}
         >
-          <div className="text-sm font-semibold leading-5 text-foreground">{title}</div>
-          {description ? <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div> : null}
+          <DialogPrimitive.Title className="text-sm font-semibold leading-5 text-foreground">{title}</DialogPrimitive.Title>
+          {description ? <DialogPrimitive.Description asChild><div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div></DialogPrimitive.Description> : null}
           <div className="mt-3 flex justify-end gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={pending}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" data-confirm-cancel type="button" variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={pending}>
               {cancelLabel}
             </Button>
-            <Button type="button" variant="destructive" size="sm" onClick={() => void confirm()} disabled={pending}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="destructive" size="sm" onClick={() => void confirm()} disabled={disabled || pending || trigger.props.disabled}>
               {confirmLabel}
             </Button>
           </div>
-        </div>,
-        document.body,
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
       )
     : null;
 
@@ -155,7 +133,9 @@ export function ConfirmAction({
     // Bugbot PR #524 反馈:popover 已关 + onConfirm 抛异常时,如果调用方没自己
     // 包 try/catch,会变成 unhandled rejection 静默吞掉。这里加一层兜底:
     // 至少 console.error,让开发可见;调用方仍应自己 toast 提示用户。
+    const accepted = scopeIsCurrent();
     setOpen(false);
+    if (!accepted) return;
     try {
       await onConfirm();
     } catch (err) {
@@ -164,9 +144,11 @@ export function ConfirmAction({
   }
 
   return (
-    <div ref={rootRef} className="inline-flex">
-      {triggerNode}
-      {popover}
-    </div>
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+      <div ref={rootRef} className="inline-flex">
+        {triggerNode}
+        {popover}
+      </div>
+    </DialogPrimitive.Root>
   );
 }

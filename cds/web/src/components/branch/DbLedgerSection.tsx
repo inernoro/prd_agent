@@ -1,3 +1,5 @@
+import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * DbLedgerSection — 数据台账（数据库隔离收敛 3）。
  *
@@ -331,12 +333,22 @@ export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { proje
     catch (err) { setWritingBack(null); onToast?.(err instanceof ApiError ? err.message : String(err)); }
   };
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
-    try { setState({ status: 'ok', view: await apiRequest<DbLedgerView>(base) }); }
-    catch (err) { setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) }); }
-  }, [base]);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
+    try {
+      const view = await apiRequest<DbLedgerView>(base, { signal });
+      if (!signal.aborted) setState({ status: 'ok', view });
+    } catch (err) {
+      if (signal.aborted) return;
+      const message = err instanceof ApiError ? err.message : String(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
+    }
+  }, [base, beginRead]);
   useEffect(() => { void load(); }, [load, reloadToken]);
+  useProjectSettingsRefresh(() => load(true));
 
   const run = async (key: string, fn: () => Promise<{ message?: string }>): Promise<boolean> => {
     setBusy(key);
@@ -360,7 +372,7 @@ export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { proje
         </div>
       </div>
       <div className="mt-3">
-        {state.status === 'loading' || state.status === 'idle' ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />正在合并台账…</div> : null}
+        {state.status === 'loading' || state.status === 'idle' ? <ContentLoading label="读取数据库台账" variant="table" /> : null}
         {state.status === 'error' ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{state.message}</div> : null}
         {state.status === 'ok' ? (
           <>

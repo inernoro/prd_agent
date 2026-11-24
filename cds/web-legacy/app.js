@@ -4749,6 +4749,8 @@ async function importAndInit() {
     config = raw;
   }
 
+  if (!confirm('导入并初始化将为新增数据服务创建独立空数据卷。不会接管或替换任何已有数据卷；检测到既有或无法确认的卷会中止。确定按全新存储初始化？')) return;
+
   // Switch modal to progress view
   const modalBody = document.getElementById('configModalBody');
   if (!modalBody) return;
@@ -4786,7 +4788,7 @@ async function importAndInit() {
     const res = await fetch(API + '/import-and-init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config }),
+      body: JSON.stringify({ config, initializeStorage: 'new-only' }),
     });
 
     if (!res.ok) {
@@ -5181,7 +5183,7 @@ async function infraDiscover() {
 
     const html = `
       <p class="config-panel-desc">
-        从项目 compose 文件中发现了以下基础设施服务。勾选要导入的服务：
+        从项目 compose 文件中发现了以下基础设施服务。新服务使用独立空数据卷，已有服务不改动。勾选要创建的服务：
       </p>
       <div id="infraDiscoverList">${listHtml}</div>
       <div class="form-row" style="margin-top:10px;gap:6px">
@@ -5200,8 +5202,9 @@ async function infraQuickstartSelected() {
     showToast('请至少选择一个服务', 'error');
     return;
   }
+  if (!confirm('创建所选的新服务时，将分配独立空数据卷。已有服务保持不变；不会接管或替换历史卷，检测到既有或无法确认的卷会中止。是否继续？')) return;
   try {
-    const data = await api('POST', '/infra/quickstart', { serviceIds });
+    const data = await api('POST', '/infra/quickstart', { serviceIds, projectId: CURRENT_PROJECT_ID, initializeStorage: 'new-only' });
     const results = data.results || [];
     const msgs = results.map(r => `${r.id}: ${r.status === 'started' ? '已启动' : r.status === 'exists' ? '已存在' : r.error || r.status}`);
     showToast(msgs.join(' | '), results.every(r => r.status === 'started' || r.status === 'exists') ? 'success' : 'error');
@@ -5285,6 +5288,10 @@ async function saveCustomInfra() {
       showToast(`已按安全目录创建并启动 ${service.name || name}`, 'success');
       await loadInfraServices();
       openInfraModal();
+      return;
+    }
+    if (volumes.length) {
+      showToast('自定义持久卷尚未确认归属，未创建服务。请改用基础设施目录；现有数据卷请联系管理员恢复。', 'error');
       return;
     }
     await api('POST', `/infra?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`, {

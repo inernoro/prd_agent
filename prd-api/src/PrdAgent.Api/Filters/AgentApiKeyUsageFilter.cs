@@ -36,8 +36,7 @@ namespace PrdAgent.Api.Filters;
 /// 额度是**先占坑、失败退还**（与网关同一套 McpUsageService），所以这里也必须在动作返回非 2xx
 /// 或抛异常时把坑退回去，否则一次参数写错就白扣一张图。
 ///
-/// 已知边界（都记在 doc/debt.platform.md）：直连这条路拿不到下游的幂等命中信号，也不解析产物，
-/// 所以记录里产物列为空、重试命中幂等仍会扣一次额度；scope 不足的直连由 RequireScopeAttribute
+/// 网页内容交付提取站点回执。其余直连工具的产物仍不提取；scope 不足的直连由 RequireScopeAttribute
 /// 在授权阶段就 403 了，到不了这里，所以那类拒绝不进调用记录；动态工具的调用方白名单同样只在
 /// 网关那条路上生效（这一条早于本次改动就是如此）。
 /// </summary>
@@ -185,12 +184,19 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         if (unqueued > 0)
             await _usage.ReleaseAsync(keyId, verdict.ReservedKind!, unqueued, verdict.ReservedDay, CancellationToken.None);
 
+        var isHostedFileDelivery = HttpMethods.IsPost(method) && toolName is "map_web_publish_page" or "map_web_update_page";
+        var webResponse = (isHostedFileDelivery || (!ok && capability == "web")) && executed.Result is ObjectResult { Value: not null } body
+            ? System.Text.Json.JsonSerializer.Serialize(body.Value, ResponseJson) : null;
+        var deduplicated = ok && McpArtifactExtractor.IsDeduplicated(webResponse);
+        if (deduplicated && verdict.ReservedKind != null)
+            await _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, verdict.ReservedDay, CancellationToken.None);
         await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount,
             ok ? "success" : "error", status,
             ok ? null
                 : threw ? "直连开放接口抛了异常，原因见服务端日志。"
+                : webResponse != null ? McpArtifactExtractor.ExtractErrorMessage(webResponse)
                 : "直连开放接口返回了非 2xx，详情见接口自身的返回体。",
-            startedAt, invokedAt);
+            startedAt, invokedAt, ok && isHostedFileDelivery ? webResponse : null, deduplicated);
     }
 
     /// <summary>
@@ -304,8 +310,9 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
     private Task LogAsync(HttpContext http, ClaimsPrincipal? principal, string keyId, string toolName,
         string? capability,
         bool isWrite, int imageCount, string status, int httpStatus, string? error, long startedAt,
-        DateTime invokedAt)
-        => _usage.LogAsync(new McpCallLog
+        DateTime invokedAt, string? artifactResponse = null, bool deduplicated = false)
+    {
+        var log = new McpCallLog
         {
             // 发起时刻，不是完成时刻 —— 与额度扣减发生的那一天保持同一天（见 invokedAt 的取值处）。
             CreatedAt = invokedAt,
@@ -327,6 +334,11 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
             ErrorMessage = error,
             IsWrite = isWrite,
             ImageCount = imageCount,
+            Deduplicated = deduplicated,
             DurationMs = (int)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
-        }, CancellationToken.None);
+        };
+        if (artifactResponse != null)
+            McpGatewayController.ApplyArtifact(log, McpArtifactExtractor.Extract(toolName, isWrite, artifactResponse));
+        return _usage.LogAsync(log, CancellationToken.None);
+    }
 }

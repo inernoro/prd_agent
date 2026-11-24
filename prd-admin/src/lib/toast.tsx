@@ -21,15 +21,21 @@ export type Toast = {
 
 type ToastState = {
   toasts: Toast[];
-  addToast: (toast: Omit<Toast, 'id'>) => void;
+  addToast: (toast: Omit<Toast, 'id'>) => string;
   removeToast: (id: string) => void;
   /** 就地改写一条已存在的 toast（长任务推进度用，避免弹一串新条）。 */
   patchToast: (id: string, patch: Partial<Omit<Toast, 'id'>>) => void;
 };
 
-export const useToastStore = create<ToastState>((set) => ({
+export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
   addToast: (toast) => {
+    // 相同的失败反馈在可见期间只显示一次；保留带操作或进度提示的独立生命周期。
+    const existing = (toast.type === 'error' || toast.type === 'warning') && !toast.action && !toast.loading
+      ? get().toasts.find((item) => item.type === toast.type && item.title === toast.title &&
+          item.message === toast.message && !item.action && !item.loading)
+      : undefined;
+    if (existing) return existing.id;
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const newToast = { ...toast, id };
     
@@ -43,6 +49,7 @@ export const useToastStore = create<ToastState>((set) => ({
         toasts: state.toasts.filter((t) => t.id !== id),
       }));
     }, toast.duration);
+    return id;
   },
   removeToast: (id) => {
     set((state) => ({
@@ -68,7 +75,7 @@ export const toast = {
   },
 
   error: (title: string, message?: string, duration = 4000) => {
-    useToastStore.getState().addToast({
+    return useToastStore.getState().addToast({
       type: 'error',
       title,
       message,

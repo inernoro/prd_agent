@@ -87,6 +87,8 @@ export interface CdsSession {
   userId: string;
   /** ISO timestamp when the session was created. */
   createdAt: string;
+  /** True when the session started with verified WebAuthn user verification. */
+  passkeyAuthenticated?: true;
   /** ISO timestamp when the session expires (TTL in P2, mongo TTL index in P3). */
   expiresAt: string;
   /** Last time this session made a request. */

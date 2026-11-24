@@ -245,13 +245,14 @@ public class AskOpeningQuestionWiringTests
         {
             ("public async Task<HostedSite?> SetAskConfigAsync(", "site"),
             ("public async Task<HostedSite> ReuploadAsync(", "reloaded"),
+            ("public Task<HostedSite> ReuploadAsync(", "reloaded"),
             ("public async Task<ShareViewResult?> ViewShareAsync(", "askSite"),
             ("public async Task<HostedSite> ReplaceEntryHtmlAsync(", "reloaded"),
             ("public async Task<HostedSite> ReplaceWithVerifiedFilesAsync(", "reloaded"),
         };
         foreach (var (signature, siteArgument) in paths)
         {
-            var body = SourceSlice.Member(svc, signature);
+            var body = SourceSlice.HostedSiteImplementation(svc, SourceSlice.Member(svc, signature));
             Assert.Single(Regex.Matches(body, @"_askOpeners\.QueueEnsure\("));
             // 主干给其中几处补了「站主默认开关」第二个实参，按「第一个实参是该入口的站点变量」判，不锁实参个数。
             Assert.Matches($@"_askOpeners\.QueueEnsure\(\s*{siteArgument}\s*(?:,[^)]*)?\)", body);

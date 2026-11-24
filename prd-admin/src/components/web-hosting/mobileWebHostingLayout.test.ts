@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const previewSource = readFileSync(path.resolve(__dirname, 'SitePreviewModal.tsx'), 'utf8');
+const reviewStyles = readFileSync(path.resolve(__dirname, '../../styles/hosted-review-workbench.css'), 'utf8');
 const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8')
   + readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
 const pageSource = readFileSync(path.resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf8');
@@ -13,27 +14,27 @@ const changelogBellSource = readFileSync(path.resolve(__dirname, '../changelog/C
 const dialogSource = readFileSync(path.resolve(__dirname, '../ui/Dialog.tsx'), 'utf8');
 
 describe('mobile web hosting layout', () => {
-  it('keeps preview actions in one scrollable control strip on narrow screens', () => {
-    expect(previewSource).toContain('flex shrink-0 flex-col gap-2');
-    expect(previewSource).toContain('overflow-x-auto');
-    expect(previewSource).toContain('whitespace-nowrap');
-    expect(previewSource).toContain('sm:flex-row');
+  it('keeps preview actions together and tucks secondary actions into the menu on narrow screens', () => {
+    expect(previewSource).toContain('review-reader-toolbar');
+    expect(previewSource).toContain('review-reader-actions');
+    expect(previewSource).toContain('<ShareMoreMenu adaptive>');
+    expect(reviewStyles).toMatch(/grid-column:\s*3; grid-row:\s*1; justify-self:\s*end/);
   });
 
   it('gives every preview-header action at least a 44px touch target', () => {
-    expect(previewSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(7);
-    expect(previewSource).toContain('min-w-11');
+    expect(previewSource).toContain('<ReviewToolbarControls');
+    expect(reviewStyles).toMatch(/\.related-trigger\s*\{[^}]*min-width:\s*44px; min-height:\s*44px/);
+    expect(reviewStyles).toMatch(/\.share-more-menu\[data-theme\] \.share-topbar-btn\s*\{ min-height:\s*44px/);
     // 2026-09-24：「帮我修改」进生成工作台，版本记录作为那里的对话显示，预览顶栏只留一个入口。
     expect(previewSource).toContain('帮我修改');
     expect(previewSource).toContain('onClick={onEditInWorkbench}');
   });
 
   it('keeps the functional page controls at least 44px on mobile', () => {
-    expect(cardSource).toContain('className="absolute bottom-[-5px] left-[-5px] z-20 inline-flex h-11 w-11');
+    expect(cardSource).toContain('max-sm:right-[-4px] max-sm:top-[-4px] max-sm:h-11 max-sm:w-11');
     expect(cardActionsSource).toContain('max-sm:h-11 max-sm:min-h-11');
     expect(cardActionsSource).toContain('max-sm:w-11 max-sm:min-w-11');
-    expect(editPanelSource).toContain('aria-label="页面修改执行器"');
-    expect(editPanelSource).toContain('className="mt-3 min-h-11 w-full');
+    expect(editPanelSource).not.toContain('aria-label="页面修改执行器"');
     expect(pageSource).toContain('className="min-h-11 w-full pl-9');
     expect(pageSource).toContain('className="h-11 px-3 rounded-[12px]');
     expect(appShellSource).toContain("gridTemplateColumns: '44px minmax(0, 1fr) 92px'");
@@ -52,11 +53,12 @@ describe('mobile web hosting layout', () => {
     expect(editPanelSource).not.toContain('ref={composeRef} className="shrink-0');
   });
 
-  it('opens every right panel as a mobile overlay instead of squeezing the preview', () => {
+  it('switches the mobile reader between full-width document and discussion panels', () => {
     expect(previewSource).toContain('relative flex-1 min-h-0 flex overflow-hidden');
-    // 评论、提问两块侧栏；修改不再挤进 440px 侧栏，而是进生成工作台（一个对话 + 一个预览）。
-    expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(2);
-    expect(previewSource).toContain('sm:w-[360px]');
+    expect(previewSource).toContain('<ReviewReaderTabs');
+    expect(previewSource).toContain("aria-hidden={isMobile && rightPanel !== 'none' ? true : undefined}");
+    expect(previewSource).toContain("width: isMobile ? '100%' : reviewSidebar.width");
+    expect(previewSource).toContain('!isMobile && <ReviewSidebarResizeHandle');
     expect(previewSource).toContain('sm:w-[380px]');
     expect(previewSource).not.toContain('sm:w-[440px]');
     expect(previewSource.match(/background: 'var\(--bg-elevated\)'/g)?.length).toBeGreaterThanOrEqual(1);
@@ -73,8 +75,11 @@ describe('mobile web hosting layout', () => {
     expect(cardSource).not.toContain('data-site-version-actions');
   });
 
-  it('restores the original upload FAB and keeps knowledge generation inside that entry', () => {
-    expect(pageSource).toContain('<MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />');
+  it('keeps generation directly discoverable on touch navigation without hiding upload', () => {
+    expect(pageSource).toContain('<MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />');
+    expect(pageSource).toContain('data-tour-id="webpages-mobile-upload"');
+    expect(pageSource).toContain('aria-label="上传网页"');
+    expect(pageSource).toContain('className="h-11 w-11 rounded-[12px] inline-flex items-center justify-center shrink-0"');
     expect(pageSource).not.toContain('aria-label="网页托管快捷操作"');
     expect(pageSource).toContain('!isEdit && !file && !saving');
     expect(pageSource).toContain('data-tour-id="webpages-knowledge-generate"');

@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.9.1";
-    public const string AiDefectResolveReleaseDate = "2026-07-17";
+    public const string AiDefectResolveVersion = "1.9.2";
+    public const string AiDefectResolveReleaseDate = "2026-10-10";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -65,9 +65,9 @@ Content-Type: application/json
 
 1. `GET {domain}/api/defect-agent/agent/connector` 确认连接器协议和长期授权。响应会返回连接器类型、当前 K 元信息、授权创建建议和自动化端点清单。
 2. `POST {domain}/api/defect-agent/agent/workflow/start-next` 创建或复用运行记录，并领取下一条缺陷。响应必须包含 `protocol.version == defect-agent-workflow.v1`。
-3. `POST {domain}/api/defect-agent/agent/defects/{defectId}/comments` 评论修复计划，body 带 `runId`。
+3. 先读取任务返回的 `diagnostics`（`GET /api/defect-agent/agent/defects/{defectId}/diagnostics`），再评论修复计划，body 带 `runId`。诊断仍使用原 `defect-agent:use` Key，只读取服务端日志捕获、且属于报告人的关联生图任务；HTTP 200/SSE 建连不代表生图成功，必须核对任务与图片终态、尺寸、错误和 requestId。诊断缺失时记录缺口，结合已经授权的浏览器或其他真实证据排查，不因跨应用接口 403 直接停止，也不扩大 Key 权限。
 4. 按轻量标准判断能否自动修复；重量级问题调用 `POST /api/defect-agent/agent/workflow/block` 写失败原因并默认停止。
-5. 轻量修复后执行代码校验并提交中文 commit。
+5. 轻量修复后执行代码校验并提交中文 commit。是否创建 PR 遵循仓库规则和用户授权；没有 PR 本身不是业务阻塞。区分参数错误、上游额度不足和未覆盖模型，配置调整也要验证真实生成与刷新恢复后才能完成。
 6. `POST {domain}/api/defect-agent/agent/workflow/complete` 一次性回写 `commitSha`、分支、预览和验收报告地址，写入 `defect_resolution_traces`，并标记缺陷已修复。
 7. `workflow/complete` 返回下一次 `workflow/start-next` 入参；再拉下一条，重复以上步骤。
 
@@ -95,7 +95,7 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 
 1. `GET {domain}/api/defect-agent/agent/published-pending?limit=20` 拉取已正式发布但未通知提交人的修复记录。
 2. 正式缺陷系统只负责读取待验收 trace 和回写通知；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收，目标取 `item.acceptance.target`，验收地址取 `item.acceptance.previewUrl`。
-3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
+3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，保留 `report.mode=cds`，把 `report.cdsFolder` 改为“缺陷修复验收报告”。报告归 CDS 项目验收中心，MAP 知识库通过开放协议拉取；不要设置已经下线的 `storeName` 或 `doc-store` 模式。回调兼容字段 `knowledgeBaseUrl` 填真实归档报告链接，并注明归档位置是 CDS。
 4. 视觉验收应进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮，并点击按钮截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。若 UI 因时间窗口或环境状态无法展示目标 commit，按双轴规则标记证据缺口并记录兜底证据，不得直接判功能失败。普通 changelog 文案行不作为缺陷关联验收目标。
 5. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
 6. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；只有功能验收为 `fail` 才发送“需要继续改进”。`conditional` 必须提供 `message`，分别说明功能结论、闭环证据状态以及限制或缺口，缺少时后端返回 400。

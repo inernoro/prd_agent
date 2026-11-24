@@ -43,7 +43,7 @@ public class ActiveTaskDebtsTests
     [InlineData("platform active#1")]
     [InlineData("platform#1#2")]
     [InlineData("platform#99999")]  // 五位编号：没有哪份台账有上万条，多半是把别的数字塞进来了
-    [InlineData("doc/debt.cds.md#1")] // 路径不是模块名
+    [InlineData("doc/guide.doc.pri.debt.md#1")] // 路径不是模块名
     public void ParseKey_挡住不合法的标识(string? key)
     {
         Assert.Null(ActiveTaskDebtsController.ParseKey(key));
@@ -109,12 +109,12 @@ public class ActiveTaskDebtsTests
     }
 
     [Fact]
-    public void 同步工具走读档_读债务这件事不该只有管理档看得见()
+    public void 同步共享债务需管理档_读取债务仍允许使用档()
     {
         var sync = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_sync");
         var list = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_list");
 
-        Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, sync.RequiredScope);
+        Assert.Equal(McpCapabilityCatalog.ScopeTasksManage, sync.RequiredScope);
         Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, list.RequiredScope);
 
         // 读的那个必须是 GET：POST 会被算进写入额度，读债务不该扣额度

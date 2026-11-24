@@ -359,10 +359,9 @@ export function MetricsSkeleton({
           </div>
           {/* 呼吸着的占位色带：形状就是将要出现的那张堆叠图，不是转圈 */}
           <div
-            className="absolute inset-x-0 bottom-0 animate-pulse rounded-t"
+            className="cds-loading-skeleton-panel absolute inset-x-0 bottom-0 rounded-t"
             style={{
               height: '38%',
-              background: `linear-gradient(180deg, hsl(var(--series-4) / 0.16), hsl(var(--series-1) / 0.16))`,
             }}
             aria-hidden
           />
@@ -373,8 +372,8 @@ export function MetricsSkeleton({
           <span key={i} className="flex gap-2">
             <span className="w-[3px] rounded-full bg-[hsl(var(--hairline-strong))]" aria-hidden />
             <span className="flex flex-col gap-1">
-              <span className="h-2 w-24 animate-pulse rounded bg-[hsl(var(--hairline-strong))]" />
-              <span className="h-3.5 w-12 animate-pulse rounded bg-[hsl(var(--hairline-strong))]" />
+              <span className="cds-loading-skeleton-line h-2 w-24 rounded" />
+              <span className="cds-loading-skeleton-line h-3.5 w-12 rounded" />
             </span>
           </span>
         ))}
@@ -917,10 +916,10 @@ function EntryCards({
             type="button"
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             onClick={onConfigure}
-            title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
+            title="修改分支地址、项目 slug 或独立子域"
           >
             <Settings className="h-3.5 w-3.5" />
-            配置入口
+            修改地址
           </button>
         ) : null}
       </header>
@@ -939,64 +938,6 @@ function EntryCards({
           {rest.map((e) => <EntryCard key={e.url} e={e} reachable={reachable} />)}
         </div>
       ) : null}
-    </section>
-  );
-}
-
-/** 指标砖右下角那条走势：只连有样本的点，缺口断开，不补 0。 */
-function Sparkline({ values, present, color }: { values: number[]; present: boolean[]; color: string }): JSX.Element | null {
-  const W = 120, H = 34, PAD = 2;
-  const pts = values.map((v, i) => ({ v, i, ok: present[i] ?? false })).filter((x) => x.ok);
-  if (pts.length < 2) return null;
-  const max = Math.max(1e-9, ...pts.map((x) => x.v));
-  const x = (i: number) => PAD + (i / Math.max(1, values.length - 1)) * (W - PAD * 2);
-  const y = (v: number) => H - PAD - (v / max) * (H - PAD * 2);
-  const segments: string[] = [];
-  let cur: string[] = [];
-  values.forEach((v, i) => {
-    if (present[i]) cur.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-    else if (cur.length) { segments.push(cur.join(' ')); cur = []; }
-  });
-  if (cur.length) segments.push(cur.join(' '));
-  return (
-    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="shrink-0" aria-hidden>
-      {segments.map((d, i) => <polyline key={i} points={d} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />)}
-    </svg>
-  );
-}
-
-/**
- * 指标砖（方向 A「指挥台」，2026-09-18 用户拍板「还是 A 好一些，主要还是监控」）：
- * 六块等高，每块一个大数、一句来路、一条走势。「统治感」来自等高与对齐的重复，
- * 不来自任何单个元素——所以每块的结构必须一模一样，缺走势就留同样高的空位。
- */
-function KpiTile({
-  label, value, sub, tone = 'plain', size = 'num', spark, action, testId,
-}: {
-  label: string;
-  value: ReactNode;
-  sub: ReactNode;
-  /** 大数的色调：状态砖按结论着色，其余一律前景色 */
-  tone?: 'plain' | 'ok' | 'bad' | 'muted';
-  /** num = 等宽大数；text = 一句话结论（允许两行） */
-  size?: 'num' | 'text';
-  spark?: ReactNode;
-  action?: ReactNode;
-  testId?: string;
-}): JSX.Element {
-  const toneCls = tone === 'ok' ? 'text-ok' : tone === 'bad' ? 'text-bad' : tone === 'muted' ? 'text-muted-foreground' : 'text-foreground';
-  return (
-    <section className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-4" data-testid={testId}>
-      <div className="flex min-h-[1.5rem] items-center justify-between gap-2">
-        <span className="text-[0.8125rem] font-bold uppercase tracking-[0.1em] text-muted-foreground">{label}</span>
-        {action ?? null}
-      </div>
-      <span className={`${size === 'num' ? 'font-mono text-[2.2rem] tabular-nums' : 'text-[1.3rem] leading-tight'} min-h-[2.2rem] font-bold leading-none tracking-tight ${toneCls}`}>{value}</span>
-      {/* 副标题行固定走势线的高度：有没有走势，六块砖都一样高（两行也一样高） */}
-      <div className="flex min-h-[2.5rem] items-end justify-between gap-3">
-        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={typeof sub === 'string' ? sub : undefined}>{sub}</span>
-        {spark ?? null}
-      </div>
     </section>
   );
 }
@@ -1046,7 +987,7 @@ function ServiceTable({
       ) : rows.map(({ sv, name, on, cpu, mem, color }, i) => (
         <div key={`${name}-${i}`} className={`grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 border-b border-[hsl(var(--hairline))]/60 py-3 text-sm last:border-b-0 sm:h-14 ${COLS} sm:items-center sm:gap-4 sm:py-0`} data-service-row={name}>
           <div className="flex min-w-0 items-center gap-3">
-            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] font-mono text-[0.66rem] font-extrabold uppercase text-primary-foreground" style={{ background: color }} aria-hidden>{name.slice(0, 3)}</span>
+            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] border-b-2 bg-secondary font-mono text-[0.66rem] font-extrabold uppercase text-secondary-foreground" style={{ borderBottomColor: color }} aria-hidden>{name.slice(0, 3)}</span>
             <span className="truncate font-mono font-semibold text-foreground" title={name}>{name}</span>
           </div>
           <div className="flex items-center gap-2 whitespace-nowrap">
@@ -1454,9 +1395,6 @@ export function OverviewPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const dataToken = useMemo(() => ({}), [metricSeries]);
 
-  // 指标砖的走势：全部服务的合计，按轴级掩码断开缺口（与 CPU 图同一套掩码）
-  const cpuTotals = Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, sv) => n + (sv.values[i] ?? 0), 0));
-  const memTotals = Array.from({ length: sampleCount }, (_, i) => memSeries.reduce((n, sv) => n + (sv.values[i] ?? 0), 0));
   // 没历史可画时，合计退回实时快照（只算在跑的）；两者都没有就如实写「—」
   // 「有实时快照」要看在跑的服务里有没有一个真的采到了，不是 liveStats 这个对象存不存在——
   // 空对象会把合计算成 0，而 0 和「没测到」是两回事（演示分支就是这么被写成 0.0% 的）。
@@ -1465,74 +1403,38 @@ export function OverviewPanel({
   const liveMemTotal = liveRunning.length > 0 ? liveRunning.reduce((n, sv) => n + (liveStats![sv.profileId].memUsedBytes), 0) : undefined;
   const cpuTileValue = hasPlot ? `${cpuTotalNow.toFixed(1)}%` : liveCpuTotal != null ? `${liveCpuTotal.toFixed(1)}%` : '—';
   const memTileValue = hasPlot ? formatBytesShort(memTotalNow) : liveMemTotal != null ? formatBytesShort(liveMemTotal) : '—';
-  const topOf = (series: StackedSeries[], fmt: (v: number) => string): string => series
-    .filter((sv) => !sv.stopped && !sv.id.startsWith('其他'))
-    .sort((x, y) => y.nowValue - x.nowValue)
-    .slice(0, 2)
-    .map((sv) => `${sv.id} ${fmt(sv.nowValue)}`)
-    .join(' · ');
   const primaryEntry = entries.find((e) => e.primary) ?? entries[0];
   const entryHost = primaryEntry ? primaryEntry.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : undefined;
   const uptime = lastReadyAt && running ? formatUptime(lastReadyAt, now) : undefined;
 
   return (
     <div className="flex flex-col gap-3" data-testid="overview-command-deck">
-      {/* 1. 指标砖 —— 六块等高，每块一个数、一句来路、一条走势（方向 A「指挥台」，2026-09-18 用户拍板） */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="kpi-tiles">
-        <KpiTile
-          label="状态"
-          size="text"
-          tone={verdictTone === 'ok' ? 'ok' : verdictTone === 'bad' ? 'bad' : 'plain'}
-          value={<span className="flex items-start gap-2"><span className={`mt-[0.45rem] h-2.5 w-2.5 shrink-0 rounded-full ${verdictTone === 'ok' ? 'bg-ok' : verdictTone === 'bad' ? 'bg-bad' : 'bg-muted-foreground'}`} aria-hidden />{verdict}</span>}
-          sub={badServices.length > 0
-            ? `异常服务：${badServices.map((sv) => sv.profileId).join('、')}`
-            : commitSha
-              ? <><span className="font-mono text-foreground-muted">运行 {commitSha.slice(0, 7)}</span>{targetCommitSha && targetCommitSha !== commitSha ? <span className="block">待发布 <code>{targetCommitSha.slice(0, 7)}</code></span> : null}{lastDeployAt ? ` · ${formatDeployedAgo(lastDeployAt, now)}` : ''}{deployDurationMs ? ` · 耗时 ${formatDuration(deployDurationMs)}` : ''}{commitMessage ? ` · ${commitMessage}` : ''}</>
-              : <span className="font-mono">运行版本未确认{targetCommitSha ? ` · 待发布 ${targetCommitSha.slice(0, 7)}` : ` · ${branchName}`}</span>}
-          testId="kpi-status"
-        />
-        <KpiTile
-          label="服务就绪"
-          value={<>{okCount}<span className="text-[1.125rem] text-muted-foreground"> / {services.length}</span></>}
-          sub={services.length > 0 ? `${okCount} / ${services.length} 个服务就绪` : '还没有任何 service'}
-          testId="kpi-services"
-        />
-        <KpiTile
-          label="已运行"
-          value={uptime ?? <span className="text-[1.3rem] text-muted-foreground">{transitioning ? '正在部署' : running ? '—' : '未运行'}</span>}
-          sub={uptime ? (now - new Date(lastReadyAt as string).getTime() < 60_000 ? '刚就绪 · 满 1 分钟改按分钟计' : '自容器就绪起算') : running ? '就绪时刻没有记录' : copy.entryLabel.replace(/^\s*·\s*/, '')}
-          testId="kpi-uptime"
-        />
-        <KpiTile
-          label="CPU 合计"
-          value={cpuTileValue}
-          sub={hasPlot ? topOf(cpuSeries, (v) => `${v.toFixed(1)}%`) || `${totalledServiceCount} 个在跑服务合计` : anyRunning ? '曲线还在攒，数字来自实时快照' : '没有在跑的服务'}
-          spark={hasPlot ? <Sparkline values={cpuTotals} present={axisPresent} color="hsl(var(--series-1))" /> : undefined}
-          testId="kpi-cpu"
-        />
-        <KpiTile
-          label="内存合计"
-          value={memTileValue}
-          sub={hasPlot ? topOf(memSeries, formatBytesShort) || `${totalledServiceCount} 个在跑服务合计` : anyRunning ? '曲线还在攒，数字来自实时快照' : '没有在跑的服务'}
-          spark={hasPlot ? <Sparkline values={memTotals} present={axisPresent} color="hsl(var(--series-3))" /> : undefined}
-          testId="kpi-mem"
-        />
-        <KpiTile
-          label="入口"
-          value={<>{entries.length}<span className="text-[1.125rem] text-muted-foreground"> 个</span></>}
-          sub={primaryEntry
-            /* 入口的绿灯与顶部结论同源（entriesReachable / copy.entryLabel 都出自同一张状态表），
-               链接旁边把「服务已就绪 / 未就绪，暂不可达」写出来，不让一个绿链接和「还有服务没起来」互相打脸 */
-            ? <><a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`font-mono ${entriesReachable ? 'text-ok hover:underline' : 'text-muted-foreground hover:text-foreground'}`} title={primaryEntry.url}>{entryHost}</a><span className="ml-1.5">· {copy.entryLabel.replace(/^\s*·\s*/, '')}</span></>
-            : copy.entryLabel.replace(/^\s*·\s*/, '') || '没有入口'}
-          action={onConfigureEntries ? (
-            <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="手动配置入口（新增子域入口 / 改名 / 改落地路径）">
-              <Settings className="h-3 w-3" />配置
-            </button>
-          ) : undefined}
-          testId="kpi-entries"
-        />
-      </div>
+      <section className="space-y-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4" data-testid="kpi-tiles" aria-label={`${branchName} 当前状态`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_18rem]" data-testid="kpi-status">
+            <p className={`text-[1.3rem] font-semibold leading-7 ${verdictTone === 'ok' ? 'text-ok' : verdictTone === 'bad' ? 'text-bad' : 'text-foreground'}`}><span className={`mr-2 inline-block h-2 w-2 rounded-full ${verdictTone === 'ok' ? 'bg-ok' : verdictTone === 'bad' ? 'bg-bad' : 'bg-muted-foreground'}`} aria-hidden />{verdict}</p>
+            <p className="mt-1 break-words text-sm leading-5 text-muted-foreground">
+              {commitSha ? <>运行版本 <code>{commitSha.slice(0, 7)}</code></> : '运行版本未确认'}
+              {targetCommitSha && targetCommitSha !== commitSha ? <> · 待发布 <code>{targetCommitSha.slice(0, 7)}</code></> : null}
+              {lastDeployAt ? ` · ${formatDeployedAgo(lastDeployAt, now)}` : ''}
+              {deployDurationMs ? ` · 部署耗时 ${formatDuration(deployDurationMs)}` : ''}
+              {commitMessage ? ` · ${commitMessage}` : ''}
+            </p>
+            {badServices.length > 0 ? <p className="mt-1 text-sm text-bad">异常服务：{badServices.map(sv => sv.profileId).join('、')}</p> : null}
+          </div>
+          <div className="min-w-0 max-w-full text-sm" data-testid="kpi-entries">
+            {primaryEntry ? <a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`inline-flex max-w-full items-center gap-2 break-all font-medium hover:underline ${entriesReachable ? 'text-primary' : 'text-muted-foreground'}`} title={primaryEntry.url}><ExternalLink className="h-4 w-4 shrink-0" />{entryHost}</a> : <span className="text-muted-foreground">尚无入口</span>}
+            <p className="mt-1 text-sm text-muted-foreground">{entries.length} 个入口 · {copy.entryLabel.replace(/^\s*·\s*/, '')}</p>
+            {onConfigureEntries ? <button type="button" className="mt-1 inline-flex min-h-8 items-center gap-1 text-sm text-muted-foreground hover:text-foreground" onClick={onConfigureEntries}><Settings className="h-4 w-4" />修改地址</button> : null}
+          </div>
+        </div>
+        <dl className="flex flex-wrap gap-x-6 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3 text-sm">
+          <div className="flex items-baseline gap-2" data-testid="kpi-services"><dt className="text-muted-foreground">服务就绪</dt><dd className="font-mono font-semibold">{okCount} / {services.length}</dd></div>
+          <div className="flex items-baseline gap-2" data-testid="kpi-uptime"><dt className="text-muted-foreground">已运行</dt><dd className="font-mono font-semibold">{uptime ?? (transitioning ? '正在部署' : running ? '就绪时刻未记录' : '未运行')}</dd></div>
+          <div className="flex items-baseline gap-2" data-testid="kpi-cpu"><dt className="text-muted-foreground">CPU 合计</dt><dd className="font-mono font-semibold">{cpuTileValue}</dd></div>
+          <div className="flex items-baseline gap-2" data-testid="kpi-mem"><dt className="text-muted-foreground">内存合计</dt><dd className="font-mono font-semibold">{memTileValue}</dd></div>
+        </dl>
+      </section>
 
       {/* 1.5 关系 —— 这些服务怎么接在一起，由抽屉注入（行式变体，一行读完） */}
       {relationSlot ?? null}

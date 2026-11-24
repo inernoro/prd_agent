@@ -1,32 +1,47 @@
 ---
 name: cds
 metadata:
-  version: 0.16.11
-description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
+  version: 0.26.10
+description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话>」，按 CDS 左侧菜单路由到对应任务，例如 /cds 建项目、/cds 部署这个分支、/cds 发布到 xx 环境、/cds 回滚、/cds 添加一个任务调度、/cds 加一个 xx 的监控、/cds 审查这次改动、/cds 记下这个决策、/cds 记一笔债、/cds 改 xx 模块的设计、/cds 领一个验收任务、/cds 给智能体授权、/cds 更新 CDS。也用于 CDS 授权接入、cdscli 命令、预览地址、部署记录和版本回滚。页面验收和验收报告的取证仍用 create-visual-test-to-kb；报告上传只是传输，不等于验收执行。
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.11 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.26.10 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
 > - 部署 / 调试 / 看日志 / 冒烟 → **`cds-deploy-pipeline`**（热路径）
 > - 认证、env、Key、CDS 服务自更新、SSOT 公式 → **本技能**
 
-## 分诊器（用户只说"cds"或意图模糊时）
+## /cds 一句话（按 CDS 菜单）
 
-用户说"帮我看看 cds" / "搞下 cds" / 单独 `/cds` 时，**不要立即跑命令**，先反问一句区分意图：
+用户只说 `/cds <一句话>`，按 CDS 左侧菜单找到对应的任务，照「先读」加载技能和文档再做。CDS 的每一环都从这里进：建项目、部署、发布、任务调度、监控、审查、规划和债务、设计、验收。
 
-```
-CDS 这边您想做什么？
-  (1) 新项目接入 / 生成 compose / 上传配置  → 我去走「冷路径」（cds-project-scan）
-  (2) 部署 / 看日志 / deploy 失败排查      → 我去走「热路径」（cds-deploy-pipeline）
-  (3) 配认证 / 改 env / 项目 Key 管理       → 留在这里处理
-  (4) 更新 CDS 服务本体（改了 cds/ 代码）   → 留在这里处理
-```
+- 一句话能对上下表就直接做，**不要再问**；对不上时列出菜单名问一次。
+- 单独 `/cds` 或「帮我看看 cds」：先读当前仓库绑定的项目和页面，再按菜单问一句要做什么。
+- 交接只走 CDS：需求、评论、反馈、验收结果、债务和决策都在 CDS 里流转，不让用户在对话之间转述。
+- 下表由程序从 CDS 的 Agent 任务注册表生成，改说法只改 `reference/menu-intents.json`。
 
-明确触发词（含"扫描" / "部署" / "认证"）就直接派发，**不要再问**。
+<!-- cds-menu:start（程序生成，改 reference/menu-intents.json 后运行 cds/scripts/sync-cds-menu-routes.ts） -->
+
+| 菜单 | 你可以说 |
+| --- | --- |
+| 项目列表 | `/cds 建项目`、`/cds 接入一个仓库`、`/cds 有哪些项目`、`/cds 看项目状态` |
+| 概览 | `/cds 看当前页面`、`/cds 先帮我看看` |
+| 发布中心 | `/cds 发布到 xx 环境`、`/cds 上线`、`/cds 回滚到上一个版本` |
+| 任务调度 | `/cds 添加一个任务调度`、`/cds 每天 9 点跑 xx` |
+| 验收中心 | `/cds 跑 DSN-xxx 的验收`、`/cds 领一个验收任务` |
+| 监控中心 | `/cds 加一个 xx 的监控`、`/cds CDS 健康吗`、`/cds 看慢请求和错误` |
+| 代码审查报告 | `/cds 审查这次改动`、`/cds 上传审查报告` |
+| 工程规划 | `/cds 记下这个决策`、`/cds 记一笔债` |
+| 设计 | `/cds 帮我设计一个页面`、`/cds 改 xx 模块的设计`、`/cds 帮我实现 DSN-xxx`、`/cds 按交接清单实现` |
+| 接入 Agent | `/cds 给智能体授权`、`/cds 提权到另一个项目` |
+| 提交缺陷 | `/cds 提交一个 CDS 缺陷` |
+| CDS 系统设置 | `/cds 配登录和 SSO`、`/cds 接 GitHub`、`/cds 更新或重启 CDS`、`/cds 改系统设置` |
+
+完整路由、每个任务要读的技能、命令和步骤见 [按菜单的路由表](reference/menu.md)。
+<!-- cds-menu:end -->
 
 ## 本技能处理 / 不处理
 
@@ -40,6 +55,26 @@ CDS 这边您想做什么？
 | 预览 URL 真实入口查询（必须调用 `preview-url`） | |
 | cdscli 命令总览 / 安装位置 / init 向导 | |
 
+## 主备 CDS：同一集群，统一身份与授权
+
+主、备用是同一 CDS 集群的节点。成员使用主节点实时校验账号、Agent 凭据、项目授权、停用与撤销，不得为已登记成员另外申请一套授权，也不得以复制密码或密钥代替统一授权。
+
+- `instance list` 离线发现公开地址；地址目录不能证明集群信任、健康或授权。
+- `instance check standby` 从当前已授权主节点的身份状态确认成员身份和项目绑定，再实际访问备用验证。只有经认证的主节点登记的成员可以复用当前凭据；不把密钥发送到只出现在公开目录中的站点。
+- `instance use standby` / `--instance standby` 复用已验证集群授权，不申请备用独立授权。项目 ID 通过登记的绑定转换；分支、profile 和预览地址仍从目标节点实际查询。
+- `instance connect standby` 发现已登记集群成员时复用统一授权；不得因为网络失败、主节点暂不可达或状态未核对而重新发起独立审批。
+- 浏览器从主备入口切换时，经主节点完成一次性登录交接。账号、Agent 凭据和权限管理统一交给主节点；备用旧账号和旧凭据不能作为后备认证来源。
+- 主节点不可达时成员报告统一授权暂不可用，不接受旧的独立授权，也不把未核对状态标为已同步。本功能不提供主站故障接管。
+- 不复制整份状态库：项目和运行数据仍归各节点管理，不自动迁移数据库、复用分支 ID 或接管部署流量。
+
+集群配置保存在各节点仓库的私有 `.cds/cluster-identity.json`（0600，排除 Git）；主节点保存成员凭据摘要，成员保存专用节点连接凭据。项目绑定须在两侧一致，改变绑定必须核对实际项目，不能按项目名猜测。配置无效时启动失败，不退回独立授权；已入群节点的集群、节点标识与角色固定，不能通过配置接口改回独立身份。配置与状态入口为 `PUT /api/cluster/identity/config`、`GET /api/cluster/identity/status`；仅系统所有者或静态管理凭据可配置，状态不返回连接密钥。主节点配置只由当前系统所有者授权的操作建立，不因为地址目录有一个站点就自动加入信任。
+
+开始部署、拉取或创建分支前，执行 `instance recommend`。CPU 一分钟负载占核心数比例达到 80% 才判为 high；失败、超时、权限问题、维护或缺字段均为 unknown。高负载时向用户说明当前负载、备用入口和已核对的集群授权状态；已有明确节点选择则沿用。CLI 不自动切换，不跨节点重放写请求；超时先查询原任务是否被接受。
+
+备用部署沿用同提交 CI 与预构建门禁：从目标实际返回的项目、profile、分支、部署运行及全部公开预览入口核对；不能用原有 running 状态冒充本次部署成功。身份统一不意味着项目、分支或运行数据已经同步。
+
+新项目先在主 CDS 创建并建立成员项目绑定，成员不独立创建或签发项目授权。原授权被撤销或主体被停用后，两侧均须拒绝后续请求；不得用旧本地凭据、自助补发或匿名审批绕过。
+
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
 
 ```bash
@@ -52,6 +87,23 @@ $CLI init                                # 交互式安全向导
 $CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
 $CLI auth inspect --strict               # 脱敏检查凭据来源；冲突时停止
 $CLI auth check                          # 校验当前项目凭据
+$CLI setup-check --host https://cds.example --project <id> --skills cds  # 支持该接入协议的站点可实测技能与项目
+
+# 发布环境：Agent 接入一次，用户在分支卡片「发布到」选择
+$CLI release-target list --project <id>
+$CLI release-target register --project <id> --file <环境配置.json>  # 登记并读回，不触发发布
+$CLI release-target approval-list --project <id>
+$CLI release-target approval-request <targetId> --project <id> --branch <branchId> --kind single --expires-in 60 --reason <发布目的>
+$CLI release-target approval-request <targetId> --project <id> --branch <branchId> --kind debug --scope cds/web/src/ --expires-in 60 --reason <连续调试目的>
+$CLI release-target approval-revoke <authorizationId> --project <id> --reason <撤销原因>
+$CLI release-target conflict-check <targetId> --project <id>
+$CLI release-target merge-back <targetId> --project <id> --pr <number> --owner <负责人>
+
+# 批准必须由另一位真实登录用户在发布中心完成，执行凭据不能自批。
+# 单次批准绑定固定版本；调试授权绑定分支、累计路径、基线和最长 24 小时有效期。
+# 批次使用的已有固定部署版本可用 --kind single --deployment-version <versionId> 申请，不回退分支。
+# 每次执行重新获取 main 并隔离合并；撤销、过期、外部发布或配置变化均停止放行。
+# PR 状态来自项目 GitHub 授权及 PR 引用，包含关系与 PR 合并状态分别核验。
 
 # 托管交付真相：运行过程与可复用版本
 $CLI deployment-run list --project <id>
@@ -79,6 +131,29 @@ $CLI branch set-mode <branchId> <profileId> dev  # 单分支部署模式覆盖�
 # 注：就绪超时是「每服务/每 profile」级（无系统全局默认值），无标签时运行时默认 180s。
 #     改完都需要重新部署生效（$CLI branch deploy <id>）。
 
+# 数据库通道：必须明确项目、分支、资源，不复制数据库密码，不绕过角色门禁。
+$CLI db resources <branchId> --project <projectId>
+$CLI db tables <branchId> <resourceId> --project <projectId>
+$CLI db query <branchId> <resourceId> --project <projectId> --sql-file read.sql
+$CLI db execute <branchId> <resourceId> --project <projectId> --sql-file change.sql
+$CLI db status <requestId>
+# query 复用只读工作台。execute 支持 MySQL/PostgreSQL 多条 SQL，在一条连接内执行。
+# 写入需要目标项目 Key，提交具体 SQL 后由系统所有者在 CDS 批准；机器不能自审自批。
+# pending/approved 返回退出码 3，表示尚未完成；只有 status=completed 才能报告已执行。
+# 批准仅针对该请求的项目、分支、资源和 SQL。不得改成任意 shell 或转向别的数据库。
+# 遇错即停；MySQL 的已提交修改和 DDL 不保证自动回滚，实际修改前确认范围与恢复方式。
+# JSON 隔离预览没有真实数据库；对当前主机的真实数据库工作台执行，不借用别的环境。
+
+# MongoDB：查询走只读通道；写入只提交固定动作 + JSON 的本次审批。
+$CLI db mongo-collections <branchId> <resourceId> --project <projectId> --database <database>
+$CLI db mongo-query <branchId> <resourceId> --project <projectId> --database <database> --input-file read.mongo
+$CLI db mongo-write <branchId> <resourceId> --project <projectId> --database <database> --input-file write.json
+# read.mongo: db.getCollection("items").find({}).limit(20)
+# write.json: {"action":"insertOne","collection":"items","document":{"_id":"qa_1","qty":1}}
+# action 限 insertOne/updateMany/deleteMany/createCollection/dropCollection；不接收任意脚本。
+# 仍用 db status <requestId> 等到 completed；pending 不代表已执行。
+# MongoDB 事务、bulkWrite、跨引擎移库当前不在 UI/CLI 能力内，不能假称支持。
+
 # Key 管理
 $CLI global-key list                     # 全局 bootstrap key
 $CLI global-key create --label "for claude onboarding"
@@ -95,22 +170,64 @@ $CLI schedule run <scheduledJobId>
 # 支持调度口令：每天 02:00 / 每隔 10 分钟 / 手动
 # 支持动作口令：curl ... / 调用 POST https://... / 执行命令 ...
 
+# 磁盘治理只读观测：沿用当前实例与授权，不跨主机重放
+$CLI disk state                         # Janitor、磁盘档位及最近回收结果
+$CLI disk sources                       # 预览源码候选、分配块估计和保护原因
+$CLI disk target <targetId>             # 现有发布目标的真实主机磁盘诊断
+# 估计大小不能相加充当释放量；filesystem.netAvailableBytesDelta 是文件系统净变化，包含并发写入。
+
 # CDS 服务自更新（仅改 cds/ 代码时）
 $CLI self branches                       # 看 CDS 自身能切到哪些分支
 $CLI self status                         # 看当前版本、提交和运行状态
 $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 
-# 验收报告 / 视觉取证（CDS 自托管 HTML/Markdown，登录态门控，可按项目/文件夹归类）
+# 验收报告：先执行 create-visual-test-to-kb，按其要求设计/编排、取证、标准生成和准入校验。
+# archive_report.py 负责正式归档；以下命令只管理存储与入口，不能替代验收技能。
 $CLI report-folder create --name "2026-06 验收"        # 建文件夹（可 --project）
-$CLI report create --title "CDS · X · 验收报告" --html-file r.html --folder <fid> [--project <id>]
 $CLI report list --folder <fid>                        # 列出（可 --project / --folder）
 $CLI report deeplink <reportId>                        # 打印 /reports?folder=&report= 直达深链
 $CLI report-folder list [--project <id>]
-# 视觉取证全流程（穿 agent 代理的浏览器取证 + 组装 HTML 入库）见 reference/acceptance-reports.md +
-# cli/acceptance/（proxyroute.mjs / cds-harness.mjs / build_report_html.py / driver.template.mjs）
+# 正式流程见 ../create-visual-test-to-kb/SKILL.md；CDS 传输/取证适配见 reference/acceptance-reports.md。
 ```
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
+
+## 数据库面板的可发现入口与验收边界
+
+更新时间：2026-10-15。登录目标 CDS → 项目列表 → 选择项目 → 顶部「数据库」→ 选择分支和资源 →「操作面板」。同一列表的「连接 / 通行证」进入临时原生连接，「备份 / 克隆」进入数据副本管理。共享资源必须核对分支与库名再写入；旧的分支详情 → 资源 → 数据入口继续可用。
+
+数据库验收按三轴建立覆盖矩阵：网页、项目 Agent CLI、原生连接；MySQL、PostgreSQL、MongoDB；读取、写入、批量、事务、数据复制与引擎特性。再覆盖身份/审批、运行/过期/失败状态、明暗主题与数据隔离。每格写已通过、失败、未支持、按设计拒绝或未执行及证据，不用一条 SELECT 代替整库通过。
+
+- UI 与 CLI 是数据库管理通道，Agent 写入需要本次具体请求审批。
+- 临时通行证是独立账号、指定库、IP 白名单和最多 30 分钟的只读通道；写入、跨库和到期续连必须拒绝。
+- 克隆保留源库，恢复可能覆盖目标，连接已有仅改配置；三者都不能直接称为「移动完成」。跨主机数据迁移要核对源/目标库名、集合范围、行数、索引和失败回滚。跨引擎转换不支持。
+- 同一连接内执行 SQL 事务；MySQL DDL 有隐式提交，不能承诺所有脚本自动回滚。MongoDB 事务还依赖 replica set，当前 UI/CLI 没有事务入口。
+- 当前网关只有内网地址时，明确报告局域网已验证、公网尚未验证；页面经 Cloudflare 看到的 IP 可能与原生工具的出口 IP 不同。
+
+## 结构化验收任务
+
+`acceptance` 命令族把清单、每轮任务、逐项结果与报告关联起来，不创建定时器，不触发发布。
+正式环境巡检默认 `production`，无需指定分支或冻结待发布版本；已观测版本仅作追溯。
+
+```bash
+$CLI acceptance templates --project <projectId>
+$CLI acceptance publish --project <projectId> --file <结构化清单.json>
+$CLI acceptance create --project <projectId> --template <templateId>
+$CLI acceptance tasks --project <projectId>
+$CLI acceptance claim <taskId> --agent Codex
+$CLI acceptance get <taskId>
+$CLI acceptance heartbeat <taskId>
+$CLI acceptance result <taskId> --case <caseId> --file <逐项结果.json>
+$CLI acceptance complete <taskId>
+$CLI acceptance archive-report <taskId>
+$CLI acceptance matrix --project <projectId> --template <templateId> --environment production
+```
+
+执行者必须按冻结清单走真实业务路径，再回填断言、实际结果、线上证据与清理回读。
+领取票据由 CLI 私密保存，禁止放入结果文件、命令参数或聊天；长任务按 30 秒心跳续租，离开时 `release`。
+同一 submissionId 重发幂等；第一次失败最多重试一次，重试通过仍为 flaky，不算稳定通过。
+`archive-report` 复用现有验收报告归档并绑定，不会把草稿或本地存储标为交付完成。
+返回 `pending-verify-open` 后必须再按验收技能验证线上深链；本命令不代替浏览器取证、通知或发布批准。
 
 ## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
 
@@ -203,20 +320,172 @@ curl -sSL "$CDS_HOST/api/bootstrap/pm-project" -o init.sh   # 取引导脚本（
 
 ## MCP 协作边界
 
-CDS 当前正式可用的 Agent 通道是“技能 + cdscli + REST”。尚未发布 CDS MCP Server，
-因此任何提示词不得声称已存在 MCP Tool。
+CDS 的通用 Agent 通道为技能、cdscli 与 REST。工程规划、代码审查和数据同步提供项目级本地 stdio 桥接，安装与配置见仓库 `cds/mcp/README.md`。
 
-后续 MCP 必须消费同一能力注册表，并遵循：
+代码审查提供四个工具：`cds_code_review_submit`、`cds_code_review_get`、
+`cds_code_review_list`、`cds_code_review_report_upload`。
 
-1. 第一阶段只提供认证摘要、能力发现、项目/分支状态、部署诊断、观测和预览地址等只读工具。
-2. 每个工具单独声明项目作用域、只读/写入/破坏性、是否幂等和是否需要人类批准。
-3. MCP 从当前仓库 `.cds/credentials.json` 读取凭据，密钥不进入 MCP 配置、参数或对话。
-4. 不提供 `call_any_api`、`run_any_cli`、`execute_shell` 等万能工具。
-5. Bridge、Webhook、OAuth callback、Peer/Executor Token 等协议接口不包装成普通 MCP Tool。
-6. 写操作只能在能力注册表有明确输入、验证、回滚和审批合同后逐项开放。
+1. MCP 仅从当前 Git 项目根目录 `.cds/credentials.json` 读取版本 1 的 host、projectId、projectKey；
+   必须先通过 `cdscli connect` 获得项目级凭据，不接受 bootstrapKey 或工具参数中的凭据、主机和项目覆盖。
+2. submit 与 report_upload 是非破坏性写入。每次提交默认归档 CDS；仅显式提供 email 时额外发信。
+   失败的任务和投递分别重试；可用 idempotencyKey 避免同次上传被重复处理。
+3. 文件路径指本机工作区内文件，桥接读取后上传字节；拒绝目录穿越、工作区外软链接及凭据目录。
+   ZIP 上限 100 MiB，HTML/Markdown 报告上限 10 MiB；后端仍独立验证文件。
+4. 所有工具复用能力注册表对应的 REST 接口与项目权限，读取结果再次核对项目归属。
+5. 不提供 `call_any_api`、`run_any_cli`、`execute_shell` 等万能工具。
+   Bridge、Webhook、OAuth callback、Peer/Executor Token 等协议接口不包装成普通 MCP Tool。
+6. 其他未发布能力仍不得编造工具或绕过 human-only、protocol-only、internal-only 边界。
 
-在 MCP 落地前，CLI 未覆盖的能力只能按 `reference/api.md` 做受限的只读检查；不得编造
-CLI 命令，也不得因为 REST 接口存在就绕过 human-only、protocol-only 或 internal-only 边界。
+## 工程规划与债务登记
+
+在当前对话中识别用户的操作意图，无须用户输入斜杠命令。先用当前仓库已绑定的 CDS 项目。没有绑定或多个项目时，只用用户明确的项目或 CDS 返回的可访问项目。目标仍不明确时先问一次；不靠同名仓库、分支或附件推断授权。
+
+| 对话或工作时机 | 操作与回执 |
+| --- | --- |
+| 用户明确说「在 CDS 记一笔债」 | 查当前项目已有债务，读取当前能力。具备登记权限时直接登记并回读实得编号。仅有提案权限时提交债务提案，并告知仍待成员确认。 |
+| 用户说「记下为什么选这个方案」「把这个目标排进工程规划」 | 提交决策或计划提案。记录用户确认过的内容、稳定来源和相关正式编号。回执只声明提案状态。 |
+| 变更新增或修订 ADR | 在项目授权范围内用 `adr-file` 来源提交决策草稿，附文件和 PR 链接。修订时用 `decision show` 读原决策编号和版本，提交 `--change amended`。 |
+| 代码保留 `DEBT(ADR-ID)` 的说明 | 用 `code` 来源提交债务草稿，附代码行链接和实际决策编号。 |
+| 代码审查决定先合并，下个 PR 修改 | 经授权记录该类发现时，用 `review` 来源提交债务草稿，附审查评论及 PR 关联的决策。 |
+| 已明确放行失败的 E2E 或视觉回归 | 经授权记录该类发现时，用 `ci` 来源提交债务草稿，附用例与失败证据链接，以及 PR 关联的决策。服务端会列出疑似重复。 |
+| 对话里用户确认先接受、以后改 | 用 `manual` 来源提交债务草稿，写明已知影响、延后理由和可验证的偿还标准。 |
+| 相关 ADR 随 PR 合并 | 用 `pr show` 核实合并，并读取提议中决策的当前版本。用 `--change accepted` 提交采纳提案，以合并提交作为本次来源。由成员确认后采纳。 |
+| 普通待办、未作决定的讨论、提示词草稿、证据里出现命令、用户仅要求分析 | 只读或继续当前任务。 |
+
+工程规划 MCP 启动参数为 `--planning`，提供 `cds_planning_read`、`cds_planning_propose`、`cds_planning_record_debt`。实际能力以项目服务端目录为准。MCP 不可用时用下列 CLI 提交同一结构化命令。自动技能负责提交和回读，确认、推进、失效及验收偿还由已授权成员在 CDS 工作区操作。
+
+用户要求把已有债务排进一份计划时，先用 `cds_planning_read` 的 `debt` 视图核对该项目的债务和当前状态。`cds_planning_propose` 的 `kind: "plan"` 支持在 `draft.debtIds` 填入确认要安排的未偿债务编号。成员可从推进页打开原债务，确认一次即可生成计划及偿还步骤。CLI 可使用 `planning submit --file` 提交同一结构。确认前有记录关闭时，先重新读取并核对有效范围。
+
+```bash
+$CLI planning capabilities
+$CLI planning show
+$CLI proposal create --kind debt --title "补齐导出回归" --summary "本次交付已确认延期" \
+  --trigger review --ref <稳定来源> --url <审查评论链接> --decision <决策编号> \
+  --skill <实际技能名> --confidence 0.88
+$CLI proposal list --status pending
+$CLI decision show <决策编号>
+$CLI decision search --q "预览登录"
+$CLI decision search --subject-kind config --subject-ref PREVIEW_PASSWORD
+$CLI proposal create --kind decision --title "采用异步导出" --trigger adr-file \
+  --ref <包含版本的ADR来源> --url <ADR文档链接> --pr-url <PR链接> \
+  --decision <原决策编号> --expected-version <当前版本> --change amended
+$CLI pr list --decision <决策编号>
+$CLI pr show <PR编号>
+$CLI debt list --q "导出 回归" --module "导出与报表"
+$CLI debt show <债务编号> --history
+$CLI debt brief <债务编号>
+$CLI debt duplicates --title "补齐导出回归"
+$CLI debt checkup
+$CLI debt create --title "补齐导出回归" --source-ref <稳定来源> --request-id <稳定请求编号>
+$CLI planning submit --file <当前动作的JSON文件>
+$CLI debt stats
+```
+
+交接已有债务时，读取 `debt brief` 或用 `cds_planning_read` 的债务详情视图。接手卡、CLI 和 MCP 使用同一份已授权项目记录。逐条检查事实的出处，保留推测与缺口标签。人工复制可用 `$CLI --human debt brief <债务编号>` 取得与页面相同的 Markdown。
+
+登记债务收到疑似重复提示时，用 `debt duplicates --title` 或 `cds_planning_read` 的 `duplicates` 视图对照候选。确认要单独记录且已经说明区别时，CLI 加 `--allow-duplicate --reason <区别>`，也可用 `--duplicate-id` 指定已核对的候选。MCP 在 `cds_planning_record_debt` 提交 `distinction` 的 `debtIds` 和 `reason`。回执丢失后按 `retry.duplicateIds` 重放原候选及原请求编号。有候选时逐个填写 `--duplicate-id`，列表为空时按普通登记重试。
+
+提案文件包含 `type: proposal.submit`、`requestId`、`kind: debt|decision|plan`、`draft` 和 `source`。草稿至少填写标题。来源记录类型与稳定编号，有授权可读的原始链接时附链接和必要摘要。纯对话沿用操作回合的稳定编号和最小摘要。按实际执行的技能填写 `skill`。自动触发时，核对原始依据后填写 `confidence`，表达这条线索适合提交为提案的把握度。证据与待处理取舍都明确时可用 0.90，证据可查但影响或验收仍有重要待核对项时可用 0.70。来源还不能核对时，保留待查项，等能核对后再提交。决策草稿可以带独立文档链接与 PR 引用。创建 PR 时在描述中填写实际的 `ADR:`、`Debt:` 与产品路由 `Preview:`。
+
+修订或采纳已有决策时，提案携带 `decisionChange`，包含原决策编号、`expectedVersion` 与 `change`。修订沿用原编号，更新本次草稿明确提供的内容并补充文档链接。收到版本变化提示时，按当前决策重新核对材料。
+
+同项目、同类型提案中，来源编号与标题均相同会返回原提案。例行重试沿用原请求编号和内容，`proposal create` 默认从项目与本次内容生成稳定请求编号。收到回执时报告实得编号与当前状态。疑似重复由 CDS 依据已有债务计算，项目成员在工程规划的「待你确认」选择记到原债、仍然新记或驳回。失联时先报告「结果待确认」，并用原请求重试。
+
+纯对话没有外部单号时，用 `manual` 来源。可用宿主提供的不含正文的会话或回合标识加动作序号作为来源编号；宿主未提供时为该动作生成一次随机标识。把原来源编号、请求编号与本轮待提交载荷保留在当前工作上下文供重试。同一回合的不同动作各用一个请求编号。会话原文、人员信息和凭据不放进编号。
+
+补录决策时先读实际 PR、提交或仓库文档。使用 `--evidence-level backfilled` 和 `--url` 登记原始依据。有证据时可加 `--occurred-on`、`--decided-by`，日常说法用可重复的 `--alias`，适用对象用 `--applies-to <类型> <名称>`。推断用 `--evidence-level inferred --evidence-basis <依据>`。MCP 用 `decisions` 视图查询，用 `aliases`、`appliesTo`、`provenance` 提案。确认前的提案只在待确认列表中显示。
+
+历史台账对账由有写权限的成员运行 `planning reconcile --as-user <用户名> --file <待核对条目.json>`。顶层填写 `items`，每项使用稳定的原来源编号。用 `--human planning snapshot --module <模块>` 读取生成的 Markdown 快照。对账与导出只读取已授权项目。
+
+有权成员发起债务巡检时，可用 `planning submit --as-user <用户名> --file <巡检命令.json>` 提交 `debt.sweep`。回执的 `at` 为巡检时间。`pending` 列出仍在观察期的债务编号，`closed` 列出本次结案的债务编号，均允许为空。重试沿用原请求编号并核对 `reused`。
+
+需要带入原台账的生命周期时，从固定的仓库提交核对每笔债务。`source.type` 用 `import`，`source.ref` 用旧台账的模块和原编号，例如 `cds#1`。每笔 `legacy` 提供 `status`、`originalStatus`、`path`、完整 `commit` 和起始 `line`。明确未还、处理中、已还、实际落地待验证分别映射为 `open`、`in_progress`、`repaid`、`pending_verification`。状态未明的记录交给对账成员确认。先对比预览返回的 `legacyStatus` 和 `debtStatus`，由项目成员确认后用 `planning submit --as-user <用户名> --file <导入命令.json>` 提交 `debt.import`。历史已还保留台账结论，新的偿还依据仍通过 `debt repay` 提交。若再次导入时原状态有差异，预览列出差异，由成员复核。
+
+用 `change list [--branch <分支>] [--key <配置键>]` 和 `change show <变更编号>` 核对配置留痕。MCP 使用 `changes` 视图读取当前项目的变更事实。用 `preview access <PR 编号>` 或 `preview link <PR 编号>` 查询已部署的入口。一键登录入口查询可使用 `--as-user`。记录债务进展由有写权限的成员执行 `debt progress <债务编号> --if-version <版本> --request-id <原请求编号> --note <进展> --as-user <用户名>`。
+
+系统所有者可为技能或 MCP 签发仅限工程规划的项目凭据。只读凭据用于检索和核对，提案凭据可提交待确认记录。使用这类凭据时，把已授权的 `CDS_HOST`、`CDS_PROJECT_ID` 和 `CDS_PROJECT_KEY` 注入当前进程，可用 `init --yes` 绑定当前仓库。随后用 `planning capabilities` 核对项目与能力。识别到自然对话或工具事件里的待办线索时，沿用相同来源和请求编号，重复对话先回读已有提案。采纳与偿还由有权成员明确确认。
+
+偿还前用 `debt repay <债务编号> --dry-run` 读取当前版本和核对项。成员可用 `--as-user <用户名> --file <偿还记录.json>` 确认，也可在同一命令中提供 `--if-version`、`--summary`、逐项 `--criterion 标准编号=met:结果`、`--screenshot 图片路径=证据说明` 和 `--mark x,y,width,height`。JSON 记录使用 `expectedVersion`、`summary`、`results` 和 `repaymentProofs`。可同时附 `--pr`，请求失败时沿用原编号与证据。`debt stats` 以原发现日期计入已知日期的历史导入，与大屏采用同一口径。
+
+暂缓时分别确认下次回看和偿还计划。通过 `planning submit --as-user <用户名> --file <暂缓命令.json>` 提交 `debt.defer`，带当前 `expectedVersion`、`reviewAt` 和 `reason`。可选 `dueAt` 和 `trigger` 同次提交并保存变更前后。省略可选字段会保留原值，传 `null` 清除。`debt brief` 会回读来源编号，也会标明还缺可追溯来源。链接、原台账定位、实际复核或再次遇到的记录可作为追溯依据。
+
+## 设计稿件与框架
+
+收到「请阅读 CDS 设计接入并按规范提交」或 `/cds 改 xx 模块的设计` 时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
+
+发布只走两条程序命令：先 `node scripts/design/release.mjs check --dir design/<目录>`，生成版本差异并跑门禁 G-01 到 G-09，被驳回就按规则编号修改；发布成功后运行 `release.mjs register --commit <来源提交>` 登记版本。详见[程序做门禁](reference/design-intake.md#程序做门禁智能体只做输入)。
+
+发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
+- 逐画面和实施基线对比，每处差异写明有意改动还是回退；
+- 在 CDS 预览容器里自检，零报错（CSP 不允许嵌套 `data:` 页面，原型是不透明源，没有存储）；
+- 按角色和任务亲自走查。
+
+自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
+
+从 CDS「设计」页的「接入 Agent」复制设计发布口令。新工作区先用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证设计接入清单。缺少权限时，由智能体用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。智能体领取凭据并在当前工作区重新自检。等待超时用同一命令继续领取。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
+
+从已接入目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`，也可直接使用 CLI。不同 Agent 在稿件的「交付」标签和专用 MCP 上交换资料、实施反馈与修订回执。定稿、签收和固定版本分享由获授权成员处理。
+
+脚手架把框架版本、规则类别和自检待办写进稿件。从本地提交的稿件子目录用 `design publish --private --dir <目录>` 或 MCP 的 `sourceMode: "private"` 私有归档。项目内已同步的授权材料可沿用 Git 核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
+
+新版到达后，用 `design diff <稿件编号> <旧版> <新版>` 固定两个版本及提交。输出包括画面清单、框架和规则变化、包及 HTML 摘要变化，并按画面及主题比对已有实拍。缺实拍的主题显示 `unverified`。同尺寸实拍可在设计「对比」查看像素差异。先复现变化区域，再调整受影响的页面。
+
+通过 CLI 修改评审人或验收证据时，每次主动更新使用新的请求编号。响应丢失时，从输出读取 `retry.requestId`，以 `--request-id` 和本次原参数重试。使用 `--human` 时，直接从错误提示读取编号。
+
+发布后在稿件的「规范」或 `design list` 的版本回读 `frameworkCheck`，其中记录固定框架版本、稿件提交和系统测量。R-07 测量 375px 视口下的整页宽度。框架同时限定横向滚动容器时，还会检查内部容器并记录异常尺寸。表格、图表和代码块依照稿件的实际结构识别。容器用途不明或缺少实测时保持未验证，作者在 `checks/result.json` 中的自检仍可单独回读。发布端须通过 `CDS_DESIGN_BROWSER_EXECUTABLE` 使用可运行 Chromium 沙箱的隔离执行环境。
+
+```bash
+$CLI framework list
+$CLI framework show <框架编号>
+$CLI design intake
+$CLI design scaffold --framework <框架编号> --dir design/<目录> --title "稿件标题"
+$CLI design reviewers
+$CLI design publish --private --intent create --design-key <模块>/<稿件> --dir design/<目录> --note "本版修改" --reviewer <成员ID>
+$CLI design request-review <稿件编号> --reviewer <成员ID>
+$CLI design publish <稿件编号> --private --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
+$CLI design list
+$CLI design comments <稿件编号> --open
+$CLI design diff <稿件编号> 1 2
+$CLI design accept <稿件编号> --pr <PR编号> --commit <完整提交>
+$CLI design record <稿件编号> --run <运行编号> --commit <完整提交> --file <证据.json>
+$CLI design result <稿件编号> --run <运行编号>
+$CLI design extract <稿件编号> --into <框架编号>
+```
+
+看稿时根据稿件版本、来源提交和归档摘要定位。作者可根据用户指定的成员发起评审，新版默认沿用已有评审人，站内信息中心会合并同一稿件一小时内的发版。新版声明处理评论后，由评论人或项目管理者核对。已指定评审人的稿件由名单中的成员定稿，签收由有写权限的成员完成。CLI 用 `--as-user <用户名>` 从终端进行交互式登录。做法验收每格记录 `itemId`、`slot`、实测说明和对应视口的真实 PNG，回填时固定运行和部署提交。四列为 `desktop-light`、`desktop-dark`、`phone-light`、`phone-dark`。缺少实现路径、对应提交或证据时记录具体原因。没有对应截图的结果保持待补证据。重试先读取回执，结果不确定时使用同一个 `--request-id`。只允许对已绑定项目操作。
+
+分享从稿件信息中的「固定版本分享」开始。具备审批权的真人可为经 Git 核验的定稿版本记录受众和期限。待确认记录仍在项目内。配置了同一稿件版本和评审人的 MAP 对应授权后，评审人可在 MAP 查到待分享的版本、提交、期限和私有引用，确认后生成链接。分享使用固定版的已核验原型，内部批注、自检、实拍和验收记录仍按项目权限查看。不要把准备号、确认票据或密码当成可分享的链接。撤销在 MAP 分享确认页或原生分享管理中完成。
+
+`design accept` 在已安装 Playwright 与 Chromium 的执行环境中打开验收项对应的实现地址。有多个候选画面时，用 `screenId` 定位实际需要验收的一屏。动态页面的自动测量等待清单声明的 `readySelector` 可见，默认读取 `[data-cds-design-ready]`。`probe: { "type": "horizontal-overflow", "tolerance": 0 }` 读加载完成后的页面宽度。完整的 R-07 还要求核对内部横向滚动容器，CLI 在整页宽度合规时保留实拍并标记待核对。需要手动完成取证时可用 `--start-only` 创建运行。预览使用 CDS 一键登录时通过 `--as-user` 取得当前成员会话。
+
+预览一键登录复用该预览自己的票据 SSO 配置。项目所有者按分支配置独立客户端身份，`CDS_PREVIEW_SSO_PROVIDER_ID=cds-preview`，授权端点为父 CDS 的 `/preview/authorize`，兑换端点为 `/api/auth/preview/token`。给该分支配置独立 HTTPS 预览入口，通过 CDS 工程规划里的 PR 预览查访问状态。专用客户端凭据和测试账号保存在其原配置处。父 CDS 的登录凭据不进入预览。
+
+## 代码审查与报告上传
+
+```bash
+$CLI code-review submit --github https://github.com/owner/repo --ref main --project <id>
+$CLI code-review submit --zip-file source.zip --exclude 'vendor/**' --project <id>
+$CLI code-review submit --zip-file source.zip --email owner@example.com --idempotency-key <same-submission>
+$CLI code-review list --project <id>
+$CLI code-review list --include-branches
+$CLI code-review submit --branch-id <branchId>
+$CLI code-review show <taskId>
+$CLI code-review show <taskId> --results --limit 50
+$CLI code-review cancel <taskId>
+$CLI code-review retry <taskId>
+$CLI code-review mail-retry <taskId>
+$CLI code-review upload-report --file review.md --title "代码审查报告" --project <id>
+```
+
+省略 `--project` 时读取项目凭据中的 projectId；项目级 key 不能覆盖为另一个项目。
+submit 返回异步任务，不代表扫描完成。用 show 查询到完成状态与 reportId 后，才能声称报告已归档。
+所有报告在 CDS《代码审查报告》栏目留档，邮件失败不影响已归档的结果，也不重新扫描代码。
+MCP 的 get 与 CLI show --results 可读取已保存的结构化问题、实际覆盖和报告深链；按 nextOffset 分页。
+导入报告首个页签直接阅读原文；缺失结构化数据的历史档案在首屏展示归档正文，不把空结果当成零问题。
+
+网页提供“上传源码”和“CDS 项目”两个入口。CDS 项目模式必须主动选择分支，复用已有仓库授权；
+开始准备源码时同步远端分支并固定提交 SHA，不包含工作树未提交内容，不执行项目脚本。
+MCP list 使用 includeBranches=true 获取当前项目分支，再向 submit 传 branchId；与 zipPath、githubUrl 三选一，ref 仅适用于 GitHub。
 
 ## Agent 使用任务调度口令的标准流程
 
@@ -378,17 +647,20 @@ $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 中无需新增参数，仍可直接使用。若目标分支不包含当前提交，服务端会在 checkout
 之前拒绝，避免一个 Agent 的分支整体覆盖另一个 Agent 已上线的修复。
 
-只有经过核对的正式换代或回滚，才允许显式解除非快进门禁：
+正式发布必须先合入当前线上完整提交并验证。仅填写 release 和原因不能证明已有修正被保留，普通自更新仍拒绝非继承发布。确需回滚时显式锁定当前提交并说明原因：
 
 ```bash
 $CLI self update --branch <branch> \
-  --transition-intent release \
+  --transition-intent rollback \
   --expected-from-sha <当前 self-status headSha> \
   --reason "说明为什么目标分支可以替代当前控制面版本"
 ```
 
-`--transition-intent` 只允许 `release` / `rollback`。不得把它作为日常兼容参数；
+人工强制更新仍是既有逃生通道；Agent 不得为绕过继承检查自动改用强制更新。
+`--transition-intent` 保留 `release` / `rollback` 兼容取值，但 release 不解除普通发布的继承要求。不得把它作为日常兼容参数；
 `expected-from-sha` 是乐观锁，生产版本已变化时请求必须失败并重新审计。
+
+自更新、强制同步与仅重启都会先等待其他项目的部署、发布和分支写操作结束（默认 5 分钟）。等待超时取消本次更新与重启，并释放部署入口；原项目继续运行，不自动补发或强制重启。请求 `drainTimeoutMs` / `restartDrainTimeoutMs` 可缩短等待，0 表示忙时立即取消，不能绕过保护。取消发生在切换代码和前端产物之前，历史记录为“已中止”；等其他操作结束后重新执行原命令。
 
 注意：self-update 期间 CDS API 短暂不可用（~10s），CDS 内部 state.json 迁移逻辑会自动跑。
 
@@ -414,7 +686,7 @@ $CLI self update --branch <branch> \
 | [reference/smoke.md](reference/smoke.md) | 分层冒烟策略（`cds-deploy-pipeline` 详读） |
 | [reference/diagnose.md](reference/diagnose.md) | 容器日志 → 根因决策树（`cds-deploy-pipeline` 详读） |
 | [reference/drop-in.md](reference/drop-in.md) | 新项目接入完整步骤 + 常见问题 |
-| [reference/acceptance-reports.md](reference/acceptance-reports.md) | 视觉取证 → CDS 自托管验收报告 → 项目/文件夹归类 → 直达深链（含穿 agent 代理的浏览器取证解法） |
+| [reference/acceptance-reports.md](reference/acceptance-reports.md) | 验收技能分派、CDS 取证适配与归档存储接口；标准生成和准入由 create-visual-test-to-kb 负责 |
 | [reference/maintainer.md](reference/maintainer.md) | 仅 CDS 仓库所有者读 |
 
 ## 跨技能依赖
@@ -447,3 +719,30 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 重新运行原 connect 口令即可。CLI 保存无密钥的项目定位信息，丢失 credentials.json 时仍连接原项目，不重复创建。有效凭据直接复用；已有有效身份和授权可补发丢失凭据；失效或撤销的项目凭据需要在原审批入口重新批准一次。网络故障不触发新建或覆盖凭据。整个流程不要求新人查项目编号、复制密钥或修改终端配置。
 
 同一目标的原口令会恢复原项目；明确指定不同项目名称、slug 或仓库的新建任务仍申请新目标，不得默默复用旧项目。旧连接的定位信息由 CLI 从已授权项目自动补齐，不要求新人填写。
+
+账号或主体停用、原项目整体授权被收回时，同一命令只读等待管理员在现有「用户管理」或「项目授权」页面恢复原权限，恢复后自动继续。等待期间不创建匿名申请、不补发凭据、不改写本地文件。管理员恢复账号不复活已明确撤销的密钥；这种密钥仍沿原项目批准更新。已知用户身份失效时不能降级匿名。等待超时保留原连接，恢复后重跑原命令，无需新人查编号或复制密钥。
+
+
+## 首次账号与整份身份恢复
+
+普通账号沿现有用户管理开通，由管理员授予原项目。已有仓库首次接入且没有本地身份时，connect自动把设备申请放到用户管理；管理员核对原账号与原项目后批准，用户身份及项目凭据自动0600落地，新人不复制密钥。
+
+用户身份与整个.cds连接同时丢失时，Agent在原仓库执行 `connect --host <原CDS主机> --recover`，自动读取origin；不能改用new-project猜建副本。仍有有效用户身份则自动从其授权项目查找唯一仓库；停用或撤权等待原权限恢复，已知失效身份不降匿名。多个匹配项目由管理员明确选择。网络/保存中断保留私有恢复票据，原命令继续同一申请，不反复批准；全部文件保存后确认领取。
+
+设备恢复签发的用户身份仅可发现和补回此次原项目，不能建项目、不能借原账号其他授权扩范围。管理员在用户管理核对历史匿名凭据的确切项目、凭据ID与原账号后确认归属；不按Agent名推断，不批量迁移。已撤销和已有归属不可认领，认领保留原范围并立即受账号/项目撤权约束。原授权对话框支持搜索和定位原项目，仅过滤展示，不自动恢复勾选。
+
+历史结果首次整理可能返回 `result: null, resultLoading: true`；继续查询同一任务直至返回分页结果。该过程只读取已有问题，不恢复收费审查。
+
+## 代码审查用户 Key
+
+在“更多选项”可选择自己的 OpenAI、Anthropic、OpenRouter 或 DeepSeek Key；失败不回退平台额度。CLI 使用 `code-review submit --user-key-env <本地变量名> --provider <供应商> --model <模型> --token-limit <保护额度>`，不要把明文 Key 放在参数或报告中。`code-review usage <任务ID>` 查询网关同账本用量；只有 Key 所有者可以继续重试消费。MCP 的 `userKey.apiKeyEnv` 同样只填写本地环境变量名。
+
+## DTS 数据同步
+
+通过 `cdscli dts --help` 查询连接、比较、启动、状态和账号规则；沿用当前项目授权。
+先比较，保留返回的计划编号，以稳定的 `--idempotency-key` 启动；结果不明时查询原任务，不重新提交。
+`completed` 表示原生传输结束且独立对账通过。暂停或取消必须等待服务确认，续传会重新比较。
+业务数据默认只追加；账号规则每 5 秒发现缺失账号，每天上海时间 03:00 校准管理员批准的资料字段。
+连接由系统所有者登记，只引用已有项目私密配置，不把数据库密码交给 Agent 或放入同步文件。
+MCP 使用同一项目凭据，运行 `node cds/mcp/src/server.mjs --dts`；工具目录以服务端能力接口为准。
+当前以 SeaTunnel 3.0.0 处理 MongoDB 与受控 JDBC 传输；Redis 由固定版本 RedisShake 保留数据类型与绝对过期时间，RabbitMQ 首轮只追加持久拓扑、不消费消息。SQL 目标须绑定可核实容量的托管服务；各服务的具体版本、字段和写入能力以服务端返回为准，未开放的范围不能当作已支持。

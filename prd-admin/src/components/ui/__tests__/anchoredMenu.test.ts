@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  containingBlockOffset,
   resolveMenuPortalTarget,
   shouldCloseOnOutsidePointer,
 } from '../AnchoredMenu';
@@ -72,23 +71,6 @@ describe('AnchoredMenu 点外关闭', () => {
 
   it('不在任何弹窗里的点击，关菜单', () => {
     expect(shouldCloseOnOutsidePointer(asEl(node(body)), anchor as unknown as Node)).toBe(true);
-  });
-});
-
-describe('AnchoredMenu 参照系换算', () => {
-  it('参照系就是视口时偏移为零', () => {
-    expect(containingBlockOffset({ top: '120px', left: '40px' }, { top: 120, left: 40 })).toEqual({ dx: 0, dy: 0 });
-  });
-
-  it('弹窗成为参照系时量出偏移', () => {
-    expect(containingBlockOffset({ top: '-9999px', left: '-9999px' }, { top: -9999 + 64, left: -9999 + 240 })).toEqual({
-      dx: 240,
-      dy: 64,
-    });
-  });
-
-  it('还没写过坐标时不猜偏移', () => {
-    expect(containingBlockOffset({ top: '', left: '' }, { top: 10, left: 10 })).toEqual({ dx: 0, dy: 0 });
   });
 });
 

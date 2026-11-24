@@ -171,11 +171,87 @@ describe('ReleaseService 阶段一止血', () => {
     });
   }
 
+  it('生产入口已有 503 时允许发布，并保留故障证据', async () => {
+    seedRun({ releaseId: 'rel_previous', status: 'success' });
+    healthServer.removeAllListeners('request');
+    healthServer.on('request', (_req, res) => { res.writeHead(503); res.end('unavailable'); });
+    const { service, calls } = createService(async () => 'deployed');
+    const run = await start(service);
+    const stored = stateService.getReleasePreflight(run.preflightId!);
+    expect(stored?.checks.find((check) => check.id === 'healthcheck')).toMatchObject({
+      status: 'warn', blocking: false, message: expect.stringContaining('HTTP 503'),
+    });
+    await waitFor(() => isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status));
+    expect(calls.filter((call) => isDeployCommand(call.command))).toHaveLength(1);
+    expect(stateService.getReleaseRun(run.releaseId)?.status).toBe('failed');
+  });
+
+  it('强制发布只对受支持的正式目标生效并固定具体版本', async () => {
+    const { service } = createService(async () => 'deployed');
+    await expect(service.startRelease({
+      branchId: 'b1', targetId: 'target-prod', expectedCommitSha: 'a'.repeat(40), forceReason: '修复依赖',
+    })).rejects.toThrow('支持此模式的生产目标');
+    const target = releaseTarget(healthUrl);
+    stateService.upsertReleaseTarget({ ...target, environment: 'production', ssh: {
+      ...target.ssh!, deployCommand: './exec_dep.sh --commit "$CDS_COMMIT_SHA"',
+    } });
+    await expect(service.startRelease({
+      branchId: 'b1', targetId: 'target-prod', forceReason: '修复依赖',
+    })).rejects.toThrow('完整提交 SHA');
+    expect(stateService.getReleaseRuns()).toHaveLength(0);
+  });
+
+  it('通过授权检查后传递强制模式，失败仍记录完整回滚回执', async () => {
+    stateService.updateProject('p1', { githubRepoFullName: 'owner/map' });
+    const target = releaseTarget(healthUrl);
+    stateService.upsertReleaseTarget({ ...target, environment: 'production', ssh: {
+      ...target.ssh!, deployCommand: './exec_dep.sh --commit "$CDS_COMMIT_SHA"',
+    } });
+    const dispatched: string[] = [];
+    const readiness: string[] = [];
+    const service = new ReleaseService(stateService, {
+      verifyProjectCI: async () => ({ ok: true, message: '同提交通过' }),
+      sshExecutor: async (req) => {
+        if (req.command.includes('CDS_REPO_ORIGIN=')) return 'CDS_REPO_ORIGIN=https://github.com/owner/map.git\n';
+        if (req.command.includes('label=com.docker.compose.service=llmgw-serve')) {
+          readiness.push(req.command);
+          return '{"status":503,"components":["scenario-capability"]}';
+        }
+        if (!isDeployCommand(req.command)) return 'ok';
+        dispatched.push(req.command);
+        req.onOutput('warn', 'CDS_RELEASE_ROLL');
+        req.onOutput('info', 'CDS_RELEASE_ROLLBACK=ver');
+        req.onOutput('warn', 'BACK=started\r');
+        req.onOutput('warn', '\n');
+        req.onOutput('info', 'ified');
+        throw new Error('入口版本不一致');
+      },
+    });
+    services.push(service);
+    const run = await service.startRelease({
+      branchId: 'b1', targetId: 'target-prod', previewUrl: 'https://preview.example.test',
+      expectedCommitSha: 'a'.repeat(40), forceReason: '恢复外部依赖中断后的业务',
+    });
+    await waitFor(() => isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status));
+    expect(dispatched).toHaveLength(1);
+    expect(readiness).toHaveLength(1);
+    expect(readiness[0]).toContain('http://127.0.0.1:8091/gw/v1/readyz');
+    expect(readiness[0]).not.toContain(new URL(healthUrl).host);
+    expect(stateService.getReleasePreflight(run.preflightId!)?.checks).toContainEqual(expect.objectContaining({
+      id: 'map-readiness', status: 'warn', blocking: false, message: expect.stringContaining('scenario-capability'),
+    }));
+    expect(dispatched[0]).toContain("CDS_RELEASE_FORCE_EXTERNAL='1'");
+    expect(stateService.getReleaseRun(run.releaseId)).toMatchObject({
+      forceReason: '恢复外部依赖中断后的业务', status: 'failed',
+      autoRestoreStartedAt: expect.any(String), autoRestoredAt: expect.any(String),
+    });
+  });
+
   // ── 版本钳制 expectedCommitSha（「原样提升」成立的前提） ────────────────
 
   describe('expectedCommitSha 版本钳制', () => {
     it('与分支当前 commit 不一致时 fail-closed，且不建 ReleaseRun', async () => {
-      const { service } = createService(async () => 'deployed');
+      const { service, calls } = createService(async () => 'deployed');
       await expect(service.startRelease({
         branchId: 'b1',
         targetId: 'target-prod',
@@ -184,6 +260,7 @@ describe('ReleaseService 阶段一止血', () => {
         expectedCommitSha: 'c'.repeat(40),
       })).rejects.toThrow(/已前进到|不一致/);
       expect(stateService.getReleaseRuns({ targetId: 'target-prod' })).toHaveLength(0);
+      expect(calls.filter(call => isDeployCommand(call.command))).toHaveLength(0);
     });
 
     it('一致时正常放行', async () => {

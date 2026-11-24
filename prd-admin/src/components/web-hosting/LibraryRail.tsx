@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Folder, Grid3X3, Plus, X } from 'lucide-react';
+import { useId, useState } from 'react';
+import { ChevronDown, ChevronUp, Folder, Grid3X3, Hash, Plus, X } from 'lucide-react';
 import { SpaceRailSection, type Space } from '@/components/team/SpaceBar';
 import { WEB_PAGE_MIME } from './SiteCard';
 import { buildWebPageFolderSlot } from './folderDrop';
@@ -57,7 +57,9 @@ export function LibraryRail({
   const [folderName, setFolderName] = useState('');
   const [creatingFolderPending, setCreatingFolderPending] = useState(false);
   const VISIBLE_TAGS = 8;
-  const shownTags = tagsExpanded ? tags : tags.slice(0, VISIBLE_TAGS);
+  const tagListId = useId();
+  // 收起时仍保留当前筛选，避免已选的长尾标签从导航中消失。
+  const shownTags = tagsExpanded ? tags : tags.filter((tag, index) => index < VISIBLE_TAGS || tag.tag === activeTag);
   const restTags = tags.length - shownTags.length;
 
   const submitFolder = async () => {
@@ -74,27 +76,6 @@ export function LibraryRail({
       setCreatingFolderPending(false);
     }
   };
-
-  const chip = (label: string, count: number | null, on: boolean, onClick: () => void, key: string) => (
-    <button
-      key={key}
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1 transition-colors"
-      // 设计稿的标签是 11.5px 紧凑矩形（padding 3/7、radius 6），不是全圆角高胶囊
-      style={{
-        fontSize: 11.5,
-        padding: '3px 7px',
-        borderRadius: 'var(--radius-chip)',
-        ...(on
-          ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-          : { background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }),
-      }}
-    >
-      {label}
-      {typeof count === 'number' && <span className="tabular-nums opacity-70">{count}</span>}
-    </button>
-  );
 
   return (
     <aside
@@ -217,22 +198,32 @@ export function LibraryRail({
       </div>
 
       {tags.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="px-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-eyebrow)', color: 'var(--text-tertiary)' }}>标签</div>
-          <div className="flex flex-wrap gap-1.5">
-            {shownTags.map((t) => chip(t.tag, t.count, activeTag === t.tag, () => onTag(activeTag === t.tag ? null : t.tag), t.tag))}
-            {restTags > 0 && (
-              <button
-                type="button"
-                onClick={() => setTagsExpanded(true)}
-                className="inline-flex h-7 items-center rounded-full px-2 text-[12px]"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                +{restTags}
-              </button>
-            )}
+        <section aria-label="标签筛选" className="web-library-tags">
+          <div className="web-library-tags__heading">
+            <span>标签</span>
+            {activeTag && <button type="button" onClick={() => onTag(null)} aria-label="清除标签筛选" title="清除标签筛选" className="web-library-tags__clear">
+              <X size={12} aria-hidden="true" />
+            </button>}
           </div>
-        </div>
+          <div id={tagListId} className="web-library-tags__list">
+            {shownTags.map(({ tag, count }) => (
+              <button key={tag} type="button" className="web-library-tags__item"
+                aria-pressed={activeTag === tag} title={`${tag} · ${count} 个网页`}
+                onClick={() => onTag(activeTag === tag ? null : tag)}>
+                <Hash size={12} aria-hidden="true" className="web-library-tags__icon" />
+                <span className="web-library-tags__name">{tag}</span>
+                <span className="web-library-tags__count">{count}</span>
+              </button>
+            ))}
+          </div>
+          {tags.length > VISIBLE_TAGS && (tagsExpanded || restTags > 0) && (
+            <button type="button" className="web-library-tags__more" aria-expanded={tagsExpanded} aria-controls={tagListId}
+              onClick={() => setTagsExpanded((expanded) => !expanded)}>
+              {tagsExpanded ? <ChevronUp size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
+              {tagsExpanded ? '收起标签' : `更多标签 · ${restTags}`}
+            </button>
+          )}
+        </section>
       )}
 
       {footer && <div className="mt-auto pt-2">{footer}</div>}

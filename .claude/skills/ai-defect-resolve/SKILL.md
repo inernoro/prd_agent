@@ -5,7 +5,7 @@ description: AI 辅助缺陷修复技能。用于缺陷自动化日常任务：�
 
 # AI 辅助缺陷修复
 
-> **版本**：v1.9.1 | **状态**：已落地 | **触发**：「修复缺陷」、「缺陷自动修复」、`ai-defect-resolve` | **SSOT**：`doc/design.defect-agent.automation-autonomy.md`
+> **版本**：v1.9.2 | **状态**：已落地 | **触发**：「修复缺陷」、「缺陷自动修复」、`ai-defect-resolve` | **SSOT**：`doc/design.defect-agent.automation-autonomy.md`
 
 本技能的主目标是自动化闭环，不是让人在更新中心手动关联缺陷。
 
@@ -68,7 +68,7 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 2. 调用 `workflow/start-next` 创建或复用运行记录，并领取一条缺陷。
 3. 发表评论说明计划。
 4. 判断是否轻量修复。
-5. 轻量修复则改代码、验证、commit、创建 PR，然后调用 `workflow/complete` 一次性回写 PR、commit、写入 `defect_resolution_traces`、标记缺陷已修复。
+5. 轻量修复则改代码、验证、commit，按仓库规则和用户授权处理 PR，然后调用 `workflow/complete` 一次性回写 PR、commit、写入 `defect_resolution_traces`、标记缺陷已修复。
 6. 非轻量或无法自测时调用 `workflow/block`，写入阻塞原因并默认停止本轮运行。
 7. `workflow/complete` 返回下一次 `workflow/start-next` 入参后，继续下一条或结束。
 
@@ -114,12 +114,12 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 3. 领取响应包含 `protocol.version == defect-agent-workflow.v1`。
 4. `POST /agent/defects/{id}/comments` 返回 `messageId`，证明已评论开始分析和轻量判定。
 5. 代码或技能实际产生 diff，并通过对应校验。
-6. git commit 成功，取得完整 `commitSha`，并创建或更新 PR，取得 `pullRequestUrl`。
-7. `POST /agent/workflow/complete` 返回成功，证明 PR、commit 已写回缺陷系统，且单缺陷已标记修复。
+6. git commit 成功，取得完整 `commitSha`；仅在仓库规则和用户授权允许时创建或更新 PR，取得 `pullRequestUrl`。
+7. `POST /agent/workflow/complete` 返回成功，证明 commit 和已有 PR 已写回缺陷系统，且单缺陷已标记修复。
 8. `workflow/complete` 返回下一次 `workflow/start-next` 入参，证明流程能继续下一条。
 9. 阻塞或重量级缺陷必须调用 `POST /agent/workflow/block` 并写入失败原因。
 10. 更新中心的 commit 记录应在 UI 上出现可点击的“关联缺陷 N”或“我的缺陷 N”标志，点击后能看到缺陷编号、标题、PR、commit、发布状态、验收报告或知识库链接；只验证接口 `linkedDefects` 不能把闭环证据标为完整。普通 changelog 文案行没有 commit id，不允许按日期批量贴缺陷标志。如果目标 commit 越出最近一周列表、预览分支已下线、弹窗或截图无法取得，必须把闭环证据标为 `partial` 或 `blocked` 并使用完整历史、PR、commit、API trace 等可核验证据兜底；不得因此把已经通过的功能验收降为失败。
-11. 正式发布后才能跑 `create-visual-test-to-kb`，报告必须进入“缺陷修复验收报告”知识库。
+11. 正式发布后才能跑 `create-visual-test-to-kb`，报告必须进入 CDS 项目内的“缺陷修复验收报告”文件夹；MAP 知识库按开放协议拉取，不另建归档分支。
 12. 只有正式发布且验收报告已归档后，才能调用 `validation-report` 通知提交人。功能通过且证据完整用 `pass`；功能通过但闭环证据不完整，或功能本身存在已说明限制时用 `conditional`；只有用户可见功能仍失败或出现回归时才用 `fail`。
 
 执行者必须维护一份本轮证据摘要，至少记录 `domain`、`environment`、`runId`、`defectNo`、`defectId`、`messageId`、`commitSha`、`pullRequestUrl`、`commitInfoResult`、`fixStatusResult`、`nextResult`、`previewUrl`、`visualReportUrl`、更新中心 UI 截图路径和点击弹窗截图路径。摘要不能包含 K 明文。
@@ -171,6 +171,15 @@ Content-Type: application/json
 响应中的 `data.run.id` 是本轮运行记录，`data.defect` 是当前唯一要处理的缺陷。当 `data.hasNext == false` 或 `data.defect == null` 时，本轮结束。
 
 日常任务默认不传 `defectId`，让系统按项目、团队和状态自动领取。演练、回归或人工确认后的单点处理必须传 `defectId`，避免误领其它存量缺陷。
+
+### 2.1. 先取得异步业务终态
+
+领取后先调用连接器返回的 `diagnostics`：`GET /api/defect-agent/agent/defects/{defectId}/diagnostics`，仍用当前 `defect-agent:use` Key。该接口只读服务端日志捕获、且归属报告人的关联生图任务，返回终态、尺寸、错误和关联 requestId，不要求增加文学或视觉权限。
+
+- 创建任务或 SSE 返回 200 只说明入口可达；必须看 run 和 item 的最终状态。
+- 诊断缺失或 403 时，先检查已有附件及用户已授权的浏览器会话，复现并查看网关请求详情。不要因为缺陷 Key 不能访问另一应用，就直接判定为需要报告人补信息；不能扩大 Key 权限或读取其他用户任意任务。
+- 分开记录参数错误、供应商额度/健康和配置问题；网关泛化错误或旧验收的 SKIP 不能作为具体根因或全模型通过证据。
+- 在已授权范围内仍取不到必要证据时才 block，写清已尝试的路径和具体缺口。
 
 ### 3. 发表评论
 
@@ -225,7 +234,7 @@ Content-Type: application/json
 - `previewUrl`，如果已部署预览
 - `visualReportUrl`，如果已完成视觉验收
 
-所有代码改动必须通过 PR 完成。缺陷自动化可以提交分支和创建 PR，但不能把“有 commit”当成完成；`workflow/complete` 必须尽量带上 `pullRequestUrl`。如果仓库权限导致无法创建 PR，先评论阻塞并调用 `workflow/block`，不要把缺陷标记为已解决。
+提交与发布遵循仓库规则和用户授权；用户没有授权创建 PR 时不得自动创建。`pullRequestUrl` 有则填写，不能把缺少 PR 单独当成业务缺陷阻塞。commit、配置调整或发布动作都不等于完成：必须验证实际用户路径，并记录正式版本和验收证据后才回写修复状态。
 
 ### 6. 完成工作流
 
@@ -324,8 +333,8 @@ Authorization: Bearer {K}
 对每个 item：
 
 1. 正式缺陷系统只负责读取待验收 trace、回写报告和通知提交人；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收。目标优先取 `item.acceptance.target`，commit 取 `item.acceptance.commitSha`，验收地址取 `item.acceptance.previewUrl`。
-2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本里把 `report.storeName` 改成“缺陷修复验收报告”。
-3. 用验收技能归档报告；如果知识库不存在，归档脚本按 find-or-create 逻辑创建。归档必须走知识库传输共享协议：正文和截图 `assets[]` 一次性提交给知识库后端，由知识库决定正式图片域名和缓存刷新。禁止直接写 Mongo、禁止手动上传图片后拼 URL、禁止把 `data:image` 写进报告。
+2. 复制 `.claude/skills/create-visual-test-to-kb/acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，保留 `report.mode=cds`，在临时副本里把 `report.cdsFolder` 改成“缺陷修复验收报告”。不要设置已经下线的 `report.storeName` 或 `doc-store` 模式。
+3. 用验收技能归档到 CDS 项目验收中心；文件夹按 find-or-create 创建，截图由归档脚本上传到内容寻址资产库，返回可打开的报告深链。MAP 知识库通过开放协议拉取 CDS 报告，禁止直接写 Mongo、手动拼图片 URL 或把 `data:image` 写进报告。回调兼容字段 `knowledgeBaseUrl` 填真实归档报告链接，明确归档位置是 CDS。
 4. 视觉验收应进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮，并点击按钮截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。提交者本人场景应证明按钮显示“我的缺陷 N”或弹窗内出现“我提交的”。普通 changelog 文案行不作为缺陷关联验收目标。若 UI 因时间窗口或环境状态无法展示目标 commit，按双轴规则将证据标为不完整并记录兜底证据，不得直接判功能失败。
 5. 归档后必须用验收技能的 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
 6. 回写验收报告并通知提交人。只有功能验收为 `fail` 时才发送“需要继续改进”；功能通过但闭环证据不完整时回写 `conditional`，且必须提供 `message`，明确说明功能已通过以及待补证据，后端会拒绝缺少 `message` 的 conditional 回调。如果正式验收报告证明用户描述不成立，知识库报告先用 `conditional` 归档，正式回调 `verdict` 再使用 `invalid`，回复必须引用验收报告证明该结论。

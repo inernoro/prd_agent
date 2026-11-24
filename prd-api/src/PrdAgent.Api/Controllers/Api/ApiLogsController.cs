@@ -20,9 +20,16 @@ public class ApiLogsController : ControllerBase
 {
     private readonly MongoDbContext _db;
 
-    public ApiLogsController(MongoDbContext db)
+    private readonly PrdAgent.Infrastructure.Services.LogArchiveService _archives;
+    private readonly IConfiguration _config;
+    private readonly ILogger<ApiLogsController>? _logger;
+
+    public ApiLogsController(MongoDbContext db, PrdAgent.Infrastructure.Services.LogArchiveService archives, IConfiguration config, ILogger<ApiLogsController>? logger = null)
     {
         _db = db;
+        _archives = archives;
+        _config = config;
+        _logger = logger;
     }
 
     private sealed class MetaUser
@@ -65,12 +72,27 @@ public class ApiLogsController : ControllerBase
         return raw[..maxChars] + "…";
     }
 
+    private static readonly TimeSpan QueryTimeLimit = TimeSpan.FromSeconds(5);
+
+    private async Task<IActionResult> WithQueryBudget(Func<CancellationToken, Task<IActionResult>> query)
+    {
+        var aborted = HttpContext?.RequestAborted ?? CancellationToken.None;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(aborted);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        try { return await query(deadline.Token); }
+        catch (MongoExecutionTimeoutException) { return QueryTimedOut(); }
+        catch (OperationCanceledException) when (!aborted.IsCancellationRequested) { return QueryTimedOut(); }
+    }
+
+    private IActionResult QueryTimedOut() => StatusCode(503,
+        ApiResponse<object>.Fail("QUERY_TIMEOUT", "日志查询超时，请缩小日期范围或增加筛选条件后重试。"));
+
     [HttpGet("meta")]
-    public async Task<IActionResult> Meta()
+    public Task<IActionResult> Meta() => WithQueryBudget(async ct =>
     {
         var clientTypes = (await _db.ApiRequestLogs
-                .Distinct(x => x.ClientType, Builders<ApiRequestLog>.Filter.Empty)
-                .ToListAsync())
+                .Distinct(x => x.ClientType, Builders<ApiRequestLog>.Filter.Empty, new DistinctOptions { MaxTime = QueryTimeLimit })
+                .ToListAsync(ct))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -80,8 +102,8 @@ public class ApiLogsController : ControllerBase
 
         // 获取近期活跃的 userIds（最多 200 个），并解析用户名
         var rawUserIds = (await _db.ApiRequestLogs
-                .Distinct(x => x.UserId, Builders<ApiRequestLog>.Filter.Empty)
-                .ToListAsync())
+                .Distinct(x => x.UserId, Builders<ApiRequestLog>.Filter.Empty, new DistinctOptions { MaxTime = QueryTimeLimit })
+                .ToListAsync(ct))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -90,7 +112,7 @@ public class ApiLogsController : ControllerBase
 
         var dbUsers = await _db.Users.Find(u => rawUserIds.Contains(u.UserId))
             .Project(u => new MetaUser { UserId = u.UserId, Username = u.Username })
-            .ToListAsync();
+            .ToListAsync(ct);
 
         var users = dbUsers.ToList();
         var knownUserIds = new HashSet<string>(users.Select(x => x.UserId), StringComparer.OrdinalIgnoreCase);
@@ -108,8 +130,8 @@ public class ApiLogsController : ControllerBase
 
         // 获取 appNames 并映射中文显示名
         var rawAppNames = (await _db.ApiRequestLogs
-                .Distinct(x => x.AppName, Builders<ApiRequestLog>.Filter.Empty)
-                .ToListAsync())
+                .Distinct(x => x.AppName, Builders<ApiRequestLog>.Filter.Empty, new DistinctOptions { MaxTime = QueryTimeLimit })
+                .ToListAsync(ct))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -123,8 +145,8 @@ public class ApiLogsController : ControllerBase
 
         // 获取 directions（入站/出站）
         var directions = (await _db.ApiRequestLogs
-                .Distinct(x => x.Direction, Builders<ApiRequestLog>.Filter.Empty)
-                .ToListAsync())
+                .Distinct(x => x.Direction, Builders<ApiRequestLog>.Filter.Empty, new DistinctOptions { MaxTime = QueryTimeLimit })
+                .ToListAsync(ct))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -132,15 +154,15 @@ public class ApiLogsController : ControllerBase
 
         // 获取 statuses（请求状态）
         var statuses = (await _db.ApiRequestLogs
-                .Distinct(x => x.Status, Builders<ApiRequestLog>.Filter.Empty)
-                .ToListAsync())
+                .Distinct(x => x.Status, Builders<ApiRequestLog>.Filter.Empty, new DistinctOptions { MaxTime = QueryTimeLimit })
+                .ToListAsync(ct))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         return Ok(ApiResponse<object>.Ok(new { clientTypes, methods, users, appNames, directions, statuses }));
-    }
+    });
 
     /// <summary>
     /// 噪声路径列表（excludeNoise=true 时排除）
@@ -152,10 +174,12 @@ public class ApiLogsController : ControllerBase
         "/api/logs/llm/meta",
         "/api/logs/api",
         "/api/logs/api/meta",
+        "/api/logs/archives",
+        "/api/logs/archives/policy",
     };
 
     [HttpGet]
-    public async Task<IActionResult> List(
+    public Task<IActionResult> List(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 30,
         [FromQuery] DateTime? from = null,
@@ -173,7 +197,7 @@ public class ApiLogsController : ControllerBase
         [FromQuery] string? direction = null,
         [FromQuery] string? status = null,
         [FromQuery] bool excludeNoise = false,
-        [FromQuery] bool excludeRunning = false)
+        [FromQuery] bool excludeRunning = false) => WithQueryBudget(async ct =>
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 10, 200);
@@ -196,8 +220,8 @@ public class ApiLogsController : ControllerBase
         if (excludeNoise) filter &= Builders<ApiRequestLog>.Filter.Nin(x => x.Path, NoisePaths);
         if (excludeRunning) filter &= Builders<ApiRequestLog>.Filter.Ne(x => x.Status, "running");
 
-        var total = await _db.ApiRequestLogs.CountDocumentsAsync(filter);
-        var rawItems = await _db.ApiRequestLogs.Find(filter)
+        var total = await _db.ApiRequestLogs.CountDocumentsAsync(filter, new CountOptions { MaxTime = QueryTimeLimit }, ct);
+        var rawItems = await _db.ApiRequestLogs.Find(filter, new FindOptions { MaxTime = QueryTimeLimit })
             .SortByDescending(x => x.StartedAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
@@ -234,13 +258,13 @@ public class ApiLogsController : ControllerBase
                 x.Status
                 // 注意：不投影 ResponseBody，避免列表刷新时循环增长
             })
-            .ToListAsync();
+            .ToListAsync(ct);
 
         // 批量解析用户名（避免 N+1 查询）
         var listUserIds = rawItems.Select(x => x.UserId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToArray();
         var listUsers = await _db.Users.Find(u => listUserIds.Contains(u.UserId))
             .Project(u => new { u.UserId, u.Username })
-            .ToListAsync();
+            .ToListAsync(ct);
         var userNameMap = listUsers.ToDictionary(u => u.UserId, u => u.Username, StringComparer.OrdinalIgnoreCase);
 
         var uaRe = new Regex(@"\s+", RegexOptions.Compiled);
@@ -281,12 +305,28 @@ public class ApiLogsController : ControllerBase
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    });
+
+    private async Task<(ApiRequestLog? Log, IActionResult? Error)> ReadLogAsync(string id)
+    {
+        try
+        {
+            var raw = await _archives.HydrateAsync(PrdAgent.Api.Services.InstanceIdentity.Get(_config), "api", id, HttpContext.RequestAborted);
+            return (raw == null ? null : MongoDB.Bson.Serialization.BsonSerializer.Deserialize<ApiRequestLog>(raw), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogWarning("Log detail read failed; type {Type}", ex.GetType().Name);
+            return (null, StatusCode(503, ApiResponse<object>.Fail("LOG_ARCHIVE_UNAVAILABLE",
+                "日志原文暂时无法回读，请稍后重试或联系管理员检查冷库；已保存的日志仍保留。")));
+        }
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> Detail(string id)
     {
-        var log = await _db.ApiRequestLogs.Find(x => x.Id == id).FirstOrDefaultAsync();
+        var (log, error) = await ReadLogAsync(id);
+        if (error != null) return error;
         if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "日志不存在"));
 
         // 解析用户名

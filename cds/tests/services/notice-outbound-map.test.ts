@@ -105,7 +105,7 @@ describe('buildMapNotificationBody — 三个静默坑', () => {
     const body = buildMapNotificationBody(notice, config);
     expect(Object.keys(body)).toContain('dedupKey');
     expect(Object.keys(body)).not.toContain('dedupeKey');
-    expect(body.dedupKey).toBe('release.failed:tgt-1');
+    expect(body.dedupKey).toMatch(/^cds-notice:v1:[a-f0-9]{64}$/);
   });
 
   it('danger 映射成 MAP 的 error（MAP 的 AllowedLevels 没有 danger）', () => {
@@ -172,5 +172,31 @@ describe('forwardNoticeToMap', () => {
     const result = await forwardNoticeToMap(notice, config, fetchImpl);
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('权限不足');
+  });
+});
+
+
+describe('MAP 通知轮次身份边界', () => {
+  it('项目、来源、稳定id、创建事实和外发轮次均参与身份，长键不会被截断合并', () => {
+    const key = (value: CdsNoticeRecord) => buildMapNotificationBody(value, config).dedupKey;
+    const original = key(notice);
+    for (const changed of [
+      { projectId: 'other-project' }, { source: 'ops' }, { id: 'different-id' },
+      { dedupeKey: 'another-key' }, { createdAt: new Date(1).toISOString() }, { outboundGeneration: 1 },
+    ]) expect(key({ ...notice, ...changed })).not.toBe(original);
+    expect(key({ ...notice, projectId: 'a:b', dedupeKey: 'c' })).not.toBe(key({ ...notice, projectId: 'a', dedupeKey: 'b:c' }));
+    const long = 'very-long-target-'.repeat(100);
+    const first = String(key({ ...notice, dedupeKey: long + 'a' }));
+    expect(first.length).toBeLessThanOrEqual(160);
+    expect(first).not.toBe(key({ ...notice, dedupeKey: long + 'b' }));
+    expect(key({ ...notice, updatedAt: new Date(1000).toISOString(), occurrences: 182, readAt: new Date(1).toISOString() })).toBe(original);
+  });
+
+  it('旧记录缺轮次和非法轮次按0兼容，不根据更新或确认状态更换身份', () => {
+    const zero = buildMapNotificationBody({ ...notice, outboundGeneration: 0 }, config).dedupKey;
+    expect(buildMapNotificationBody(notice, config).dedupKey).toBe(zero);
+    for (const value of [-1, NaN, Infinity, 0.5, '1', null]) {
+      expect(buildMapNotificationBody({ ...notice, outboundGeneration: value } as CdsNoticeRecord, config).dedupKey).toBe(zero);
+    }
   });
 });

@@ -21,6 +21,7 @@
 // Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
 // （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled, updateModelImageSizeControl } from '@/lib/api';
 import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
@@ -37,6 +38,10 @@ import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL, 
 const IMAGE_GENERATION_CAPABILITY_TYPES = new Set(['image_generation', 'text_to_image', 'image']);
 
 export function ModelsPage() {
+  const [params, setParams] = useSearchParams();
+  const search = (params.get('search') || '').slice(0, 256);
+  const hasSearch = search.trim().length > 0;
+  function setSearch(value: string) { const next = new URLSearchParams(params); if (value) next.set('search', value.slice(0, 256)); else next.delete('search'); setParams(next, { replace: true }); }
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { confirm, promptText } = useDialogs();
@@ -48,6 +53,7 @@ export function ModelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
+  const [reloadModels, setReloadModels] = useState(0);
   const [editModel, setEditModel] = useState<ModelItem | null>(null);
   const [keyValue, setKeyValue] = useState('');
   const [bulkKeyValue, setBulkKeyValue] = useState('');
@@ -56,7 +62,9 @@ export function ModelsPage() {
   const [capabilityText, setCapabilityText] = useState('');
   const [capabilityOnlyMissing, setCapabilityOnlyMissing] = useState(true);
   const [capabilityConfirm, setCapabilityConfirm] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [createdPublicId, setCreatedPublicId] = useState<string | null>(null);
+  const [toast, setToastValue] = useState<string | null>(null);
+  function setToast(next: string | null) { setCreatedPublicId(null); setToastValue(next); }
   const [showCreate, setShowCreate] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createDraft, setCreateDraft] = useState<ModelDraftState>(emptyModelDraft());
@@ -87,20 +95,27 @@ export function ModelsPage() {
       if (!alive) return;
       if (res.success) {
         setItems(res.data.items);
-        if (!platformId) setShowCreate(res.data.items.length === 0);
+        if (!platformId && !enabledOnly && !hasSearch) setShowCreate(res.data.items.length === 0);
       }
       else setError(res.error?.message || '加载失败');
-    });
+    }).catch(() => { if (alive) setError('模型目录读取中断，请重新读取。'); });
     return () => {
       alive = false;
     };
-  }, [platformId, enabledOnly]);
+  }, [platformId, enabledOnly, reloadModels]);
 
   const platformById = useMemo(() => {
     const map = new Map<string, PlatformItem>();
     platforms.forEach((p) => map.set(p.id, p));
     return map;
   }, [platforms]);
+
+  const visibleModels = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return (items || []).filter(model => !query || [model.id, model.name, model.modelName, model.platformId && platformById.get(model.platformId)?.name].join(' ').toLocaleLowerCase().includes(query));
+  }, [items, search, platformById]);
+  const filtered = hasSearch || Boolean(platformId) || enabledOnly;
+  function clearFilters() { setSearch(''); setPlatformId(''); setEnabledOnly(false); }
 
   const ownedPlatforms = useMemo(
     () => platforms.filter((item) => item.authority === 'llm_gateway' && item.enabled),
@@ -125,6 +140,7 @@ export function ModelsPage() {
       remark: createDraft.remark.trim() || undefined,
     };
     setCreateBusy(true);
+    setCreatedPublicId(null);
     setToast(null);
     const res = await createModel(request);
     setCreateBusy(false);
@@ -141,18 +157,13 @@ export function ModelsPage() {
     });
     setCreateDraft((value) => emptyModelDraft(value.platformId));
     setShowCreate(false);
-    const poolMessage = res.data.modelsAppended > 0
-      ? `已加入 ${res.data.modelsAppended} 个匹配的默认池`
-      : '没有匹配用途的默认池被改动';
-    // 「保存成功」不等于「能调通」：调用方按公开模型名请求，找的是对外模型 + 线路。
-    // 没登上白名单时必须当场说出口，否则用户拿着一个库里看得见、界面报成功、
-    // 实际调不通的模型去排查，而他没做错任何事。
-    const whitelistMessage = res.data.whitelistMessage
-      ? `；${res.data.whitelistMessage}`
+    const association = res.data.whitelistMessage
+      ? res.data.whitelistMessage
       : res.data.publicId
-        ? `；已登上白名单，公开模型名 ${res.data.publicId}${res.data.linkedToExistingPublicId ? '（挂到了已有的公开名下，多一条线路）' : ''}`
-        : '';
-    setToast(`模型「${res.data.item.name || res.data.item.modelName}」已保存；${poolMessage}${whitelistMessage}`);
+        ? `已关联公开模型 ${res.data.publicId}${res.data.linkedToExistingPublicId ? '，新增一条上游线路' : ''}`
+        : '尚未读到公开模型关联，请到公开模型配置核对';
+    setToast(`上游模型「${res.data.item.name || res.data.item.modelName}」已保存；${association}`);
+    setCreatedPublicId(res.data.publicId || null);
   }
 
   function toggleCreateCapability(code: string) {
@@ -271,6 +282,7 @@ export function ModelsPage() {
   }
 
   async function applyBulkApiKey() {
+    if (hasSearch) { setToast('批量维护不按关键词限定；请先清除搜索，再确认供应方与启用范围。'); return; }
     const apiKey = bulkKeyValue.trim();
     if (!apiKey) {
       setToast('apiKey 不能为空');
@@ -307,6 +319,7 @@ export function ModelsPage() {
   }
 
   async function applyBulkCapabilities() {
+    if (hasSearch) { setToast('批量维护不按关键词限定；请先清除搜索，再确认供应方与启用范围。'); return; }
     const capabilities = parseCapabilities(capabilityText);
     if (capabilities.length === 0) {
       setToast('能力不能为空');
@@ -358,8 +371,8 @@ export function ModelsPage() {
   return (
     <PageShell>
       <PageHeader
-        title="模型管理"
-        subtitle="模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池。"
+        title="上游模型"
+        subtitle="维护上游型号与价格；调用时使用公开模型标识。"
         actions={canWrite && ownedPlatforms.length > 0 ? (
           <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
         ) : canWrite ? (
@@ -368,8 +381,8 @@ export function ModelsPage() {
       />
 
       <PageBody>
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {toast ? <InlineAlert tone="info">{toast}</InlineAlert> : null}
+        {error ? <InlineAlert tone="error">{error}<Button size="sm" variant="ghost" onClick={() => setReloadModels(value => value + 1)}>重新读取型号</Button></InlineAlert> : null}
+        {toast ? <InlineAlert tone="info">{toast}{createdPublicId ? <Link to={`/logical-models?publicId=${encodeURIComponent(createdPublicId)}`} className="lg-text-link">查看公开模型配置</Link> : null}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
         {showCreate && canWrite && ownedPlatforms.length > 0 ? (
@@ -508,6 +521,7 @@ export function ModelsPage() {
         ) : null}
 
         <div style={filterRowStyle}>
+          <input type="search" aria-label="搜索上游模型" placeholder="搜索名称、上游标识或供应方" value={search} onChange={event => setSearch(event.target.value)} style={{ ...inputStyle, flex: '1 1 260px' }} />
           <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} style={selectStyle}>
             <option value="">全部平台</option>
             {platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -516,13 +530,14 @@ export function ModelsPage() {
             <input type="checkbox" checked={enabledOnly} onChange={(e) => setEnabledOnly(e.target.checked)} />
             仅启用
           </label>
-          <span style={{ marginLeft: 'auto', ...countStyle }}>{items ? `${items.length} 个模型` : '加载中'}</span>
+          <span style={{ marginLeft: 'auto', ...countStyle }}>{items ? hasSearch ? `${visibleModels.length} / ${items.length} 个模型` : `${items.length} 个模型` : '加载中'}</span>
         </div>
 
         {items && items.length > 0 && canWrite ? (
           <details style={{ flexShrink: 0 }}>
             <summary style={summaryStyle}>高级：批量维护已有模型</summary>
             <div style={bulkStackStyle}>
+              {hasSearch ? <p style={HINT_TEXT}>搜索结果不能批量维护。<Button size="sm" variant="ghost" onClick={() => setSearch('')}>清除搜索后维护</Button></p> : null}
               <Card style={toolbarStyle}>
                 <span style={toolbarTitleStyle}>批量维护模型密钥</span>
                 <input
@@ -541,7 +556,7 @@ export function ModelsPage() {
                   <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
                   确认应用到当前筛选模型
                 </label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
+                <Button size="sm" variant="ghost" disabled={hasSearch || busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
                   {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
                 </Button>
               </Card>
@@ -573,7 +588,7 @@ export function ModelsPage() {
                   <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
                   确认应用到当前筛选模型
                 </label>
-                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
+                <Button size="sm" variant="ghost" disabled={hasSearch || busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
                   {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
                 </Button>
               </Card>
@@ -581,9 +596,9 @@ export function ModelsPage() {
           </details>
         ) : null}
 
-        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
+        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : visibleModels.length === 0 ? filtered ? <div role="status"><p style={HINT_TEXT}>没有匹配的上游模型。</p><Button size="sm" variant="ghost" onClick={clearFilters}>清除搜索与筛选</Button></div> : <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
           <div className="lg-config-table-shell" style={tableShellStyle}>
-            <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="lg-data-table lg-upstream-model-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
                 <tr>
                   <th style={th}>模型</th>
@@ -598,7 +613,7 @@ export function ModelsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((m) => {
+                {visibleModels.map((m) => {
                   const en = boolChip(m.enabled, '启用', '停用');
                   const key = boolChip(m.hasKey, '已配置', '继承平台');
                   const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
@@ -607,16 +622,16 @@ export function ModelsPage() {
                     || m.capabilities.find((capability) =>
                       IMAGE_GENERATION_CAPABILITY_TYPES.has(capability.type.toLowerCase()))?.value === true;
                   return (
-                    <tr key={m.id}>
-                      <td style={td}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 180 }}>
+                    <tr key={m.id} className="lg-upstream-model-row">
+                      <td data-label="型号" style={td}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 0 }}>
                           <span style={{ fontWeight: 600 }}>{m.name || m.modelName}</span>
                           <span style={MONO_META}>{m.modelName || m.id}</span>
                         </div>
                       </td>
-                      <td style={td}>
+                      <td data-label="供应方" style={td}>
                         {provider ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 150 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 0 }}>
                             <span>{provider.name}</span>
                             <EntityPreviewDrawer
                               buttonLabel="查看 Provider"
@@ -640,7 +655,7 @@ export function ModelsPage() {
                                 },
                                 {
                                   title: '运行边界',
-                                  description: '当前状态只说明配置是否具备调用条件；真实可用性仍由模型池健康和请求记录确认。',
+                                  description: '启用不代表当前可用；请结合最近请求核对。',
                                   fields: [
                                     { label: 'Provider 最大并发', value: provider.maxConcurrency ?? '未配置' },
                                     { label: '模型状态', value: m.enabled ? '已启用' : '已停用' },
@@ -652,8 +667,8 @@ export function ModelsPage() {
                           </div>
                         ) : m.platformId ? <code>{m.platformId}</code> : '—'}
                       </td>
-                      <td style={td}>{m.protocol || '继承平台'}</td>
-                      <td style={td}>
+                      <td data-label="协议" style={td}>{m.protocol || '继承平台'}</td>
+                      <td data-label="能力" style={td}>
                         <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
                           {caps.length ? caps.map((c) => <Chip key={`${m.id}:${c.type}`} label={c.type} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                         </span>
@@ -688,20 +703,20 @@ export function ModelsPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                      <td data-label="价格" style={{ ...td, whiteSpace: 'nowrap' }}>
                         <ModelPriceCell model={m} canWrite={canWrite} onEdit={() => setEditModel(m)} />
                       </td>
-                      <td style={td}>
+                      <td data-label="配置来源" style={td}>
                         {m.authority === 'llm_gateway' ? (
                           <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
                         ) : (
                           <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                         )}
                       </td>
-                      <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
-                      <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'nowrap' }}>
+                      <td data-label="管理状态" style={td}><Chip atomic label={en.label} color={en.color} bg={en.bg} /></td>
+                      <td data-label="密钥" style={td}><Chip atomic label={key.label} color={key.color} bg={key.bg} /></td>
+                      <td data-label="操作" style={{ ...td, whiteSpace: 'nowrap' }}>
+                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
                           {keyEditId === m.id ? (
                             <>
                               <input
@@ -764,6 +779,7 @@ export function ModelsPage() {
         <ModelPricingDrawer
           model={editModel}
           onClose={() => setEditModel(null)}
+          onUnknownEnd={() => { setEditModel(null); setReloadModels(value => value + 1); }}
           onSaved={(updated) => {
             setItems((prev) => (prev ? prev.map((x) => (x.id === updated.id ? updated : x)) : prev));
             setEditModel(null);
@@ -956,9 +972,9 @@ const submitRowStyle: React.CSSProperties = {
   flexWrap: 'wrap',
 };
 
-/** 表格自己滚动 + 表头吸顶：产物要填满 PageBody 剩余高度，不塌成内容高度。 */
+/** 少量型号自然排布；大量型号才占满剩余空间并由表内滚动。 */
 const tableShellStyle: React.CSSProperties = {
-  flex: 1,
+  flex: '0 1 auto',
   minHeight: 0,
   overflow: 'auto',
   overscrollBehavior: 'contain',

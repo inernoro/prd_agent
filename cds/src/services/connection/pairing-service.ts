@@ -30,6 +30,25 @@ export interface IssueRequest {
   ttlMinutes?: number;
   /** 协议给 MAP 的 hint（可选）。 */
   hint?: Record<string, unknown>;
+  memberBinding?: { nodeId: string; baseUrl: string; projectId: string; mapBaseUrl: string };
+}
+
+export interface PairingMember {
+  nodeId: string;
+  projects: Record<string, string>;
+}
+
+export function clusterMapOrigin(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048) return undefined;
+  try {
+    const url = new URL(value);
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (url.username || url.password || url.pathname !== '/' || url.search || url.hash
+      || (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))) return undefined;
+    return url.origin;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface IssueResult {
@@ -89,6 +108,7 @@ export const DEFAULT_SCOPES = [
   'deployment:stream',
   'report:read',
 ];
+export const CLUSTER_MAP_SCOPES = ['shared-service:deploy', 'instance:read', 'deployment:stream'];
 
 /**
  * 给存量连接补上 `report:read`。**默认不做**，必须由管理员显式打开开关。
@@ -155,13 +175,18 @@ export class CdsPairingService {
       pairingTokenHash: sha256Hex(pairingToken),
       pairingExpiresAt: expiresAt.toISOString(),
       createdAt: issuedAt.toISOString(),
+      ...(req.memberBinding ? {
+        clusterMemberId: req.memberBinding.nodeId,
+        projectId: req.memberBinding.projectId,
+        partnerBaseUrl: req.memberBinding.mapBaseUrl,
+      } : {}),
     };
     this.stateService.addCdsConnection(conn);
 
     const clipboardPayload = {
       version: 1,
-      cdsBaseUrl: this.cdsBaseUrl(),
-      cdsId: this.cdsId(),
+      cdsBaseUrl: req.memberBinding?.baseUrl ?? this.cdsBaseUrl(),
+      cdsId: req.memberBinding ? `${this.cdsId()}:${req.memberBinding.nodeId}` : this.cdsId(),
       cdsName: this.cdsName(),
       pairingToken,
       issuedAt: issuedAt.toISOString(),
@@ -184,6 +209,7 @@ export class CdsPairingService {
   accept(
     req: AcceptRequest,
     createProject: (intent: AcceptRequest['projectIntent']) => Project,
+    member?: PairingMember,
   ): AcceptResult {
     if (!req.pairingToken || typeof req.pairingToken !== 'string') {
       throw new PairingError('pairing_token_missing', 400, 'pairingToken is required');
@@ -201,8 +227,9 @@ export class CdsPairingService {
       // 区分 expired vs not_found：如果有匹配但已过期的，给更准确的错误码。
       // 简化版：直接看一下全表里有没有 used/expired 的同 hash。
       const all = this.stateService.getCdsConnections();
-      const matched = all.find(c => c.pairingTokenHash === hash);
-      if (matched && matched.status === 'active') {
+      const matched = all.find(c => c.clusterMemberId === member?.nodeId
+        && (c.redeemedPairingTokenHash === hash || c.status === 'active' && c.pairingTokenHash === hash));
+      if (matched) {
         throw new PairingError('pairing_token_used', 410, 'pairing token already used');
       }
       throw new PairingError('pairing_token_not_found', 404, 'pairing token not found or expired');
@@ -213,42 +240,55 @@ export class CdsPairingService {
     ) {
       throw new PairingError('pairing_token_expired', 410, 'pairing token expired');
     }
+    if (conn.clusterMemberId !== member?.nodeId) {
+      throw new PairingError('pairing_member_mismatch', 403, '配对码须在签发时指定的 CDS 节点兑换');
+    }
+    let boundProject: Project | undefined;
+    if (member) {
+      const origin = clusterMapOrigin(req.partnerBaseUrl);
+      if (req.partnerKind !== 'map' || !origin || origin !== conn.partnerBaseUrl) {
+        throw new PairingError('pairing_origin_mismatch', 403, 'MAP 地址与系统所有者批准的地址不一致');
+      }
+      const projectId = conn.projectId;
+      boundProject = projectId && Object.hasOwn(member.projects, projectId)
+        ? this.stateService.getProject(projectId)
+        : undefined;
+      if (!boundProject) {
+        throw new PairingError('pairing_project_unbound', 403, '配对授权的项目已解除绑定');
+      }
+    }
 
     // 同一个 partner 重新授权时，旋转 long token 并撤销旧连接。
     // MAP 端的 DataProtection key 丢失后旧 long token 无法解密，但 CDS 侧仍有 active
     // connection；如果这里继续返回 duplicate，用户会卡在“旧连接已失效但无法重连”。
     const dup = this.stateService
       .getActiveCdsConnections()
-      .find(c => c.partnerKind === req.partnerKind && c.partnerId === req.partnerId && c.id !== conn.id);
-    if (dup) {
-      this.stateService.updateCdsConnection(dup.id, {
-        status: 'revoked',
-      });
-    }
+      .find(c => c.partnerKind === req.partnerKind && c.partnerId === req.partnerId && c.id !== conn.id
+        && c.clusterMemberId === conn.clusterMemberId && (!member || c.projectId === conn.projectId));
 
     // 创建 shared-service Project
-    const project = createProject(req.projectIntent);
+    const project = boundProject ?? createProject(req.projectIntent);
 
     // 签发系统级长期 token。10 分钟只属于一次性 pairing token；
     // long token 不设置时间过期，除非管理员显式撤销连接。
     const longToken = `ct_${crypto.randomBytes(32).toString('hex')}`;
 
-    const updated = this.stateService.updateCdsConnection(conn.id, {
-      status: 'active',
+    const updated = this.stateService.activateCdsConnection(conn.id, {
       pairingTokenHash: undefined,
       pairingExpiresAt: undefined,
+      redeemedPairingTokenHash: member ? hash : undefined,
       longTokenHash: sha256Hex(longToken),
       longTokenIssuedAt: new Date().toISOString(),
       longTokenExpiresAt: undefined,
       partnerKind: req.partnerKind,
       partnerId: req.partnerId,
       partnerName: req.partnerName,
-      partnerBaseUrl: req.partnerBaseUrl,
+      partnerBaseUrl: member ? conn.partnerBaseUrl : req.partnerBaseUrl,
       projectId: project.id,
       activatedAt: new Date().toISOString(),
       // 给 connection 一个更友好的名（覆盖 issue 时的占位）
       name: `${req.partnerName} -> ${req.projectIntent.name}`,
-    });
+    }, dup?.id);
 
     return {
       connectionId: updated.id,
@@ -266,7 +306,7 @@ export class CdsPairingService {
     if (!rawToken) return null;
     const hash = sha256Hex(rawToken);
     const conn = this.stateService.findActiveCdsConnectionByLongTokenHash(hash);
-    if (!conn) return null;
+    if (!conn || conn.clusterMemberId) return null;
     // lastUsedAt is observability metadata, not part of auth correctness.
     // High-frequency discovery polling must not save the whole CDS state on
     // every request; in Mongo-backed state that path clones/sanitizes the full

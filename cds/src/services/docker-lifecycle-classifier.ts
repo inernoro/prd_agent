@@ -47,6 +47,10 @@ const INTENT_NARRATIVE: Record<
     happening: '部署，CDS 按流程停掉了上一版容器',
     verdict: { kind: 'wait', until: '新容器起来，预览会自动恢复' },
   },
+  'cds-restart': {
+    happening: '原地重启服务，保留现有容器和数据',
+    verdict: { kind: 'wait', until: '服务重新就绪' },
+  },
   'cds-stop': {
     happening: '停止这个服务，容器随之退出',
     verdict: { kind: 'act', nextStep: '要它继续跑就在分支面板重新启动' },

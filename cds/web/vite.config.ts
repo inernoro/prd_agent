@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import fs from 'node:fs';
+import { parseInstanceCatalog } from '../src/shared/instance-catalog';
 
 // CDS web build config (React + Vite + Tailwind + shadcn/ui).
 //
@@ -11,7 +13,15 @@ import path from 'node:path';
 // /api/* to the running CDS scheduler on :9900.
 export default defineConfig({
   base: '/',
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'cds-instance-catalog',
+    generateBundle() {
+      // Keep the public catalog in the same prebuilt artifact as the control panel.
+      const file = path.resolve(__dirname, '../../cds-instances.json');
+      this.emitFile({ type: 'asset', fileName: 'cds-instances.json', source: fs.existsSync(file)
+        ? JSON.stringify(parseInstanceCatalog(JSON.parse(fs.readFileSync(file, 'utf8')))) : JSON.stringify({ version: 1, instances: [] }) });
+    },
+  }],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

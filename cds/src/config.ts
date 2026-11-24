@@ -67,6 +67,7 @@ const schedulerUrl = process.env.CDS_SCHEDULER_URL || masterUrl || undefined;
 
 const DEFAULT_CONFIG: CdsConfig = {
   repoRoot: path.resolve(process.cwd(), '..'),
+  storageInstanceId: process.env.CDS_STORAGE_INSTANCE_ID || undefined,
   // P4 Part 18 (G1.4): reposBase is the mount point under which
   // per-project clones live (`${reposBase}/<projectId>`). Default
   // reads CDS_REPOS_BASE env (set by exec_cds.sh bind-mount) — when
@@ -178,6 +179,8 @@ export function loadConfig(configPath?: string): CdsConfig {
       break;
     }
   }
+
+  if (process.env.CDS_STORAGE_INSTANCE_ID) cfg.storageInstanceId = process.env.CDS_STORAGE_INSTANCE_ID;
 
   // Priority: CDS_REPOS_BASE env > config file > auto-default.
   // Apply env explicitly after merge so it always wins over any stored file

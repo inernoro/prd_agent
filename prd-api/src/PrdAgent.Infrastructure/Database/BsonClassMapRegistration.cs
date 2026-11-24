@@ -324,6 +324,7 @@ public static class BsonClassMapRegistration
                 cm.MapMember(x => x.DraftText).SetElementName("draftText");
                 cm.MapMember(x => x.Status).SetElementName("status");
                 cm.MapMember(x => x.RunId).SetElementName("runId");
+                cm.MapMember(x => x.GenerationRequestId).SetElementName("generationRequestId");
                 cm.MapMember(x => x.AssetId).SetElementName("assetId");
                 cm.MapMember(x => x.Url).SetElementName("url");
                 cm.MapMember(x => x.PlanItem).SetElementName("planItem");
@@ -1002,6 +1003,18 @@ public static class BsonClassMapRegistration
         if (!BsonClassMap.IsClassMapRegistered(typeof(WeeklyReport)))
         {
             BsonClassMap.RegisterClassMap<WeeklyReport>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(MonthlyReport)))
+        {
+            BsonClassMap.RegisterClassMap<MonthlyReport>(cm =>
             {
                 cm.AutoMap();
                 cm.MapIdMember(x => x.Id)

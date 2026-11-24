@@ -18,14 +18,13 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 为什么单独建：WebPagesController 走 JWT + GetRequiredUserId()（只读 sub），sk-ak 没有 sub 会 401。
 /// 这里走 ApiKey + RequireScope + boundUserId，业务落盘复用 IHostedSiteService（与人工上传同一条路径）。
 ///
-/// 收敛掉的东西（智能体不需要、也不该碰）：
-/// - 只收 HTML 文本，不收 zip / 二进制上传（MCP 传不了二进制，见接入台设计的「暂不支持」）
-/// - 不提供删除、不提供公开（public）分享：分享一律 owner-only，收不回来的动作第一期不开放
+/// MCP 负责操作描述与元数据；原始文件通过受同一密钥权限和用量约束的 multipart 入口上传。
+/// 不提供站点删除；对外分享及可见性修改必须明确确认，且沿用私有资料核查。
 /// </summary>
 [ApiController]
 [Route("api/open/web-pages")]
 [Authorize(AuthenticationSchemes = "ApiKey")]
-public class WebPagesOpenApiController : ControllerBase
+public partial class WebPagesOpenApiController : ControllerBase
 {
     public const string ScopeRead = "web-pages:read";
     public const string ScopeWrite = "web-pages:write";
@@ -43,11 +42,19 @@ public class WebPagesOpenApiController : ControllerBase
 
     private readonly IHostedSiteService _sites;
     private readonly MongoDbContext _db;
+    private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
+    private readonly IUploadProgressService? _uploadProgress;
+    private readonly IWebFolderService? _webFolders;
 
-    public WebPagesOpenApiController(IHostedSiteService sites, MongoDbContext db)
+    public WebPagesOpenApiController(IHostedSiteService sites, MongoDbContext db,
+        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
+        IUploadProgressService? uploadProgress = null, IWebFolderService? webFolders = null)
     {
         _sites = sites;
         _db = db;
+        _privateSources = privateSources;
+        _uploadProgress = uploadProgress;
+        _webFolders = webFolders;
     }
 
     private string GetBoundUserId()
@@ -71,6 +78,7 @@ public class WebPagesOpenApiController : ControllerBase
         public string? Description { get; set; }
         public string? Folder { get; set; }
         public List<string>? Tags { get; set; }
+        public bool ConfirmedExposure { get; set; }
         /// <summary>幂等键：智能体重试时不会重复建站。</summary>
         public string? ClientRequestId { get; set; }
     }
@@ -106,6 +114,7 @@ public class WebPagesOpenApiController : ControllerBase
                     siteId = existed.Id,
                     title = existed.Title,
                     url = Request.ResolveAbsoluteUrl(existed.SiteUrl),
+                    managementUrl = BuildSiteManagementUrl(existed.Id),
                     deduplicated = true,
                 }));
         }
@@ -114,7 +123,7 @@ public class WebPagesOpenApiController : ControllerBase
         // **叠在一起**的两次两边都查不到，于是各建一个站。这一点是明知的取舍，不再在应用层收敛：
         // 曾经用「确定性 id + 占坑 + 租约 + 接手补传」去收敛它，连续三轮 review 都在长新洞，
         // 根因是发布要跨对象存储与 Mongo 两套系统做原子动作，而对象存储没有条件写入原语。
-        // 多出一个站是浪费，不是坏数据。收敛方案见 doc/debt.platform.md 边界 12。
+        // 多出一个站是浪费，不是坏数据。收敛方案见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md 边界 12。
         HostedSite site;
         try
         {
@@ -144,6 +153,7 @@ public class WebPagesOpenApiController : ControllerBase
             siteId = site.Id,
             title = site.Title,
             url = Request.ResolveAbsoluteUrl(site.SiteUrl),
+            managementUrl = BuildSiteManagementUrl(site.Id),
             visibility = site.Visibility,
         }));
     }
@@ -171,6 +181,8 @@ public class WebPagesOpenApiController : ControllerBase
                 folder = s.Folder,
                 tags = s.Tags ?? new List<string>(),
                 createdAt = s.CreatedAt,
+                visibility = s.Visibility,
+                contentVersion = s.ContentVersion,
             })
         }));
     }
@@ -179,13 +191,16 @@ public class WebPagesOpenApiController : ControllerBase
     {
         public string? Title { get; set; }
         public string? Description { get; set; }
-        /// <summary>有效期天数，1-90，默认 7。</summary>
+        public string? Visibility { get; set; }
+        public bool ConfirmedExposure { get; set; }
+        public string? ConfirmedPrivateSourceFingerprint { get; set; }
+        /// <summary>有效期天数，0 表示永久，1-365 表示天数；默认 7。</summary>
         public int? ExpiresInDays { get; set; }
     }
 
     /// <summary>
     /// 给某个站点建一条分享链接。
-    /// 一律 owner-only（只有我和我的团队打得开）—— 公开发布不在第一期开放给智能体的动作里。
+    /// 默认 owner-only；明确确认后可设公开或登录可见，0 天表示永久。
     /// </summary>
     [HttpPost("pages/{siteId}/share")]
     [RequireScope(ScopeWrite)]
@@ -197,16 +212,23 @@ public class WebPagesOpenApiController : ControllerBase
 
         var userId = GetBoundUserId();
         var site = await _sites.GetByIdAsync(siteId, userId, ct);
-        if (site == null || site.OwnerUserId != userId)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或不属于你"));
+        if (site == null || !await _sites.CanCreateShareAsync([siteId], userId, CancellationToken.None))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无分享权限"));
 
-        // 省略 = 用默认 7 天；**显式给一个范围外的值**是另一回事，不能默默替换成 7 ——
-        // 调用方拿到的链接寿命和它要的不一样，而它多半要到链接提前失效那天才发现。
-        // 与 content 那条同一个道理：「没说」和「说了但说错了」是两件事，不能合成一件。
-        if (req?.ExpiresInDays is { } requestedDays && requestedDays is < 1 or > 90)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                $"expiresInDays 需要在 1-90 之间，收到 {requestedDays}。想用默认的 7 天就别传这个字段。"));
+        var settingsError = ValidateShareSettings(req?.Visibility, req?.ExpiresInDays, req?.ConfirmedExposure ?? false);
+        if (settingsError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, settingsError));
+        var visibility = NormalizeShareVisibility(req?.Visibility) ?? "owner-only";
         var days = req?.ExpiresInDays ?? 7;
+        if (IsExternalVisibility(visibility))
+        {
+            var grantError = RequireWebExposureGrant();
+            if (grantError != null) return grantError;
+            var refusal = await EnforcePrivateSourcesAsync([site],
+                PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareCreate,
+                req?.ConfirmedPrivateSourceFingerprint);
+            if (refusal != null) return refusal;
+        }
         var (share, reusedUnchanged) = await _sites.CreateShareWithReuseInfoAsync(
             userId, await ResolveDisplayNameAsync(userId, ct),
             siteId, siteIds: null, shareType: "single",
@@ -221,7 +243,7 @@ public class WebPagesOpenApiController : ControllerBase
             // forceNew=true 是给「用户在面板上明确点了新建」用的；智能体超时重试可不是那个意思 ——
             // 每重试一次多一条链接、多扣一次写入额度，而它本来只想要一条。
             forceNew: false,
-            visibility: "owner-only");
+            visibility: visibility);
 
         // 路径与 WebPagesController.CreateShare 一致（/s/wp/{token}），但**必须回绝对地址**：
         // 智能体拿到的相对路径会被它自己的客户端按自己的域名解析（Claude / Codex 那边），
@@ -264,11 +286,15 @@ public class WebPagesOpenApiController : ControllerBase
         => req == null
             ? null
             : McpInputBounds.Text(req.Title, McpInputBounds.TitleBytes, "title")
-              ?? McpInputBounds.Text(req.Description, McpInputBounds.DescriptionBytes, "description");
+              ?? McpInputBounds.Text(req.Description, McpInputBounds.DescriptionBytes, "description")
+              ?? ValidatePrivateSourceFingerprint(req.ConfirmedPrivateSourceFingerprint);
 
     private string? BuildSourceRef(string? clientRequestId)
     {
         var digest = McpIdempotency.Fingerprint("mcp-site", McpIdempotency.ScopedByKey(User, clientRequestId));
         return digest == null ? null : $"mcp:{digest}";
     }
+
+    private string? BuildSiteManagementUrl(string siteId)
+        => Request.ResolveAbsoluteUrl($"/web-pages?focusSite={Uri.EscapeDataString(siteId)}");
 }

@@ -1,10 +1,15 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useDismissableMenus } from '@/lib/useDismissableMenus';
+import { readSidebarCollapsed, saveSidebarCollapsed } from '@/lib/sidebarPreference';
+import { finishEntryArrival } from '@/components/entry/entryArrival';
+import { GatewaySoundToggle } from '@/components/entry/GatewaySoundToggle';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Bug, Building2, ChevronDown, CircleDollarSign, FileClock, Layers3,
-  Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
-  ShieldCheck, Sun, Tags, UserRound, X,
+  Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, MessageSquare, Moon, Search, Server, Settings, SlidersHorizontal,
+  ShieldCheck, Sun, Tags, UserRound, X, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { buildLogRequestHref } from '@/lib/logNavigation';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { shortcutHint } from '@/components/BugReportCore';
 import { getAvailableTenants, setSession, switchTenant } from '@/lib/api';
@@ -19,9 +24,10 @@ type NavGroup = { label: string; items: NavItem[] };
 
 const NAV_GROUPS: NavGroup[] = [
   { label: '工作区', items: [
+    { to: '/quickstart', label: '对话', icon: <MessageSquare size={16} />, page: 'quickstart' },
     { to: '/', label: '概览', icon: <LayoutDashboard size={16} />, page: 'home', end: true },
     { to: '/logs', label: '请求记录', icon: <Activity size={16} />, page: 'logs' },
-    { to: '/app-callers', label: 'appCaller', icon: <Tags size={16} />, page: 'appCallers' },
+    { to: '/app-callers', label: '调用方', icon: <Tags size={16} />, page: 'appCallers' },
   ] },
   // 路由这一组曾经是五条平级入口（模型白名单 / 模型池 / Provider / 模型 / Exchange），
   // 而它们回答的其实只有两个问题：**调用方能点名什么**（模型）、**东西从哪来**（上游）。
@@ -29,11 +35,10 @@ const NAV_GROUPS: NavGroup[] = [
   // 物理模型属于上游、在上游详情里展开看；Exchange 是上游的一种、收进上游页的第二段。
   // 旧地址仍然可达（/pools 重定向到 /logical-models），只是不再占导航。
   { label: '路由', items: [
-    { to: '/logical-models', label: '模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
+    { to: '/logical-models', label: '公开模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
     { to: '/platforms', label: '上游', icon: <Server size={16} />, page: 'routeConfig' },
   ] },
   { label: '开发者', items: [
-    { to: '/quickstart', label: 'Quickstart', icon: <BookOpen size={16} />, page: 'quickstart' },
     { to: '/service-keys', label: '接入密钥', icon: <KeyRound size={16} />, page: 'serviceKeys' },
     { to: '/learn', label: '学习中心', icon: <BookOpen size={16} />, page: 'learn' },
   ] },
@@ -57,7 +62,53 @@ export function ConsoleLayout() {
   const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const menuRoot = useDismissableMenus(location.key);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const isQuickstart = location.pathname === '/quickstart';
+  const toggleSidebar = () => setSidebarCollapsed(previous => { const next = !previous; saveSidebarCollapsed(next); return next; });
+  useEffect(() => { if (!isQuickstart) finishEntryArrival(); }, [isQuickstart]);
+  const headerRef = useRef<HTMLElement>(null);
+  const previousLocation = useRef(location);
+  useEffect(() => {
+    if (previousLocation.current === location) return;
+    previousLocation.current = location;
+    const header = headerRef.current;
+    const menus = [...(header?.querySelectorAll<HTMLDetailsElement>('details[open]') ?? [])];
+    const ownedFocus = menus.some(menu => menu.contains(document.activeElement));
+    menus.forEach(menu => { menu.open = false; });
+    if (ownedFocus) {
+      const shell = header?.parentElement;
+      const target = shell?.querySelector<HTMLElement>('main h1') ?? shell?.querySelector<HTMLElement>('main');
+      if (target) { if (!target.hasAttribute('tabindex')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
+    }
+  }, [location]);
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.('(max-width: 860px)').matches ?? false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 860px)');
+    if (!media) return;
+    const changed = () => { setNarrow(media.matches); if (!media.matches) setMobileOpen(false); };
+    media.addEventListener('change', changed);
+    return () => media.removeEventListener('change', changed);
+  }, []);
+  useEffect(() => { if (sidebarRef.current) sidebarRef.current.inert = narrow && !mobileOpen; }, [narrow, mobileOpen]);
+  useEffect(() => {
+    if (!narrow || !mobileOpen) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const sidebar = sidebarRef.current;
+    sidebar?.querySelector<HTMLElement>('button, a[href]')?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); setMobileOpen(false); return; }
+      if (event.key !== 'Tab' || !sidebar) return;
+      const controls = [...sidebar.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]')].filter(item => item.getClientRects().length > 0);
+      const first = controls[0], last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener('keydown', keydown);
+    return () => { document.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus(); };
+  }, [narrow, mobileOpen]);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [tenants, setTenants] = useState<AvailableTenant[]>([]);
@@ -87,7 +138,7 @@ export function ConsoleLayout() {
     event.preventDefault();
     const query = search.trim();
     if (!query) return;
-    navigate(`/logs?requestId=${encodeURIComponent(query)}`);
+    navigate(buildLogRequestHref(query));
     setMobileOpen(false);
     setMobileSearchOpen(false);
   }
@@ -143,25 +194,25 @@ export function ConsoleLayout() {
   }
 
   return (
-    <div className="lg-console-shell">
-      <header className="lg-console-header">
+    <div ref={menuRoot} className={`lg-console-shell${isQuickstart ? ' is-entry-workspace' : ''}${sidebarCollapsed ? ' has-collapsed-sidebar' : ''}`}>
+      <header ref={headerRef} className="lg-console-header entry-shell-chrome">
         <div className="lg-console-brand">
-          <button className="lg-mobile-menu-button" type="button" aria-label="打开导航" onClick={() => setMobileOpen(true)}><Menu size={18} /></button>
+          <button className="lg-mobile-menu-button" type="button" aria-label="打开导航" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}><Menu size={18} /></button>
           <span className="lg-brand-mark"><Activity size={17} /></span>
           <span>LLM Gateway</span>
         </div>
 
-        {renderTenantSwitcher('lg-desktop-tenant-switcher')}
+        {!isQuickstart && renderTenantSwitcher('lg-desktop-tenant-switcher')}
 
-        {canSearchRequests ? <form className="lg-global-search" role="search" onSubmit={submitSearch}>
+        {!isQuickstart && (canSearchRequests ? <form className="lg-global-search" role="search" onSubmit={submitSearch}>
           <Search size={15} />
           <input aria-label="按 requestId 搜索" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="按 requestId 定位请求" />
           <kbd>Enter</kbd>
           <button type="submit" aria-label="搜索请求"><Search size={14} /></button>
-        </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>当前角色仅查看用量</span></div>}
+        </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>当前角色仅查看用量</span></div>)}
 
         <div className="lg-header-actions">
-          {canSearchRequests ? (
+          {!isQuickstart && canSearchRequests ? (
             <button
               className="lg-mobile-search-button"
               type="button"
@@ -172,12 +223,27 @@ export function ConsoleLayout() {
               {mobileSearchOpen ? <X size={18} /> : <Search size={18} />}
             </button>
           ) : null}
-          {canOpenMapTutorials ? <a className="lg-header-link" href={mapTutorialHref}><BookOpen size={15} /><span>相关教程</span><ExternalLink size={12} /></a> : null}
-          <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>
+          {!isQuickstart && canOpenMapTutorials ? <a className="lg-header-link" href={mapTutorialHref}><BookOpen size={15} /><span>相关教程</span><ExternalLink size={12} /></a> : null}
+          {!isQuickstart && <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>}
+          {isQuickstart && <GatewaySoundToggle />}
           <details className="lg-user-menu">
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">
               <div><strong>{who}</strong><small>{tenant?.name ?? '当前租户'} · {tenant?.role ?? 'member'}</small></div>
+              {isQuickstart && <details className="gateway-account-organizations">
+                <summary aria-label="切换组织" aria-busy={switching}>
+                  <Building2 size={16} /><span>{tenant?.name ?? '当前组织'}</span><ChevronDown size={14} />
+                </summary>
+                <div className="gateway-account-organization-list" role="menu" aria-label="可用组织">
+                  {(tenants.length ? tenants : [{ id: tenant?.id ?? '', name: tenant?.name ?? '当前组织', role: tenant?.role ?? 'member', current: true }]).map(item => (
+                    <button key={item.id || item.name} type="button" role="menuitemradio" aria-checked={item.id === tenant?.id || item.current} disabled={switching} onClick={() => void changeTenant(item.id)}>
+                      <span><strong>{item.name}</strong><small>{item.role}</small></span>
+                      {item.id === tenant?.id || item.current ? <Check size={15} /> : null}
+                    </button>
+                  ))}
+                  <NavLink to="/organization"><Building2 size={15} /><span>管理团队与成员</span></NavLink>
+                </div>
+              </details>}
               {canOpenMapTutorials ? (
                 <a href={mapTutorialHref}>
                   <BookOpen size={15} />相关教程<ExternalLink className="lg-user-menu-end-icon" size={14} />
@@ -213,7 +279,13 @@ export function ConsoleLayout() {
 
       <div className="lg-console-body">
         {mobileOpen ? <button className="lg-sidebar-backdrop" type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
-        <aside className={`lg-console-sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
+        <aside className={`lg-console-sidebar entry-shell-chrome${mobileOpen ? ' is-open' : ''}`} ref={sidebarRef} aria-label="主导航" aria-hidden={narrow && !mobileOpen ? true : undefined}>
+          <div className="lg-sidebar-desktop-heading">
+            {!sidebarCollapsed && <span>工作空间</span>}
+            <button type="button" aria-label={sidebarCollapsed ? '展开菜单' : '收起菜单'} title={sidebarCollapsed ? '展开菜单' : '收起菜单'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}>
+              {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+            </button>
+          </div>
           <div className="lg-sidebar-mobile-heading"><span>导航</span><button type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button></div>
           {renderTenantSwitcher('lg-mobile-tenant-switcher')}
           <nav>
@@ -221,7 +293,7 @@ export function ConsoleLayout() {
               <div className="lg-nav-group" key={group.label}>
                 <div className="lg-nav-group-label">{group.label}</div>
                 {group.items.map((item) => (
-                  <NavLink key={`${group.label}:${item.to}:${item.label}`} to={item.to} end={item.end} onClick={() => setMobileOpen(false)} className={({ isActive }) => isActive ? 'is-active' : undefined}>
+                  <NavLink key={`${group.label}:${item.to}:${item.label}`} to={item.to} end={item.end} aria-label={item.label} title={sidebarCollapsed ? item.label : undefined} onClick={() => setMobileOpen(false)} className={({ isActive }) => isActive ? 'is-active' : undefined}>
                     {item.icon}<span>{item.label}</span>
                   </NavLink>
                 ))}
@@ -245,7 +317,7 @@ export function ConsoleLayout() {
             </button>
           </div>
         </aside>
-        <main className="lg-console-content"><Outlet /></main>
+        <main className={`lg-console-content${location.pathname === '/quickstart' ? ' is-quickstart' : ''}`}><Outlet /></main>
       </div>
     </div>
   );

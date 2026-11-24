@@ -200,6 +200,9 @@ public sealed class PersonalDesignStyleTests
             Assert.Contains("#d9480f", text);
             Assert.Contains("标题 Noto Serif SC，正文 Inter", text);
         }
+        Assert.Equal("personal-style", direction.BrandSource);
+        Assert.Equal(["#111111", "#fafafa", "#d9480f"], direction.BrandColors);
+        Assert.Equal(["Noto Serif SC", "Inter"], direction.BrandFonts);
     }
 
     [Fact]

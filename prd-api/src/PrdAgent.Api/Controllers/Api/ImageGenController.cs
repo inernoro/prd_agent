@@ -220,7 +220,8 @@ public class ImageGenController : ControllerBase
                 ModelId = model.ModelId,
                 PlatformId = model.PlatformId,
                 Priority = model.Priority,
-                HealthStatus = model.HealthStatus
+                HealthStatus = model.HealthStatus,
+                IsRecoveryProbeAvailable = model.IsRecoveryProbeAvailable
             }).ToList(),
             ResolutionType = pool.ResolutionType,
             IsDedicated = pool.IsDedicated,
@@ -1847,6 +1848,7 @@ public class ImageGenController : ControllerBase
 
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,

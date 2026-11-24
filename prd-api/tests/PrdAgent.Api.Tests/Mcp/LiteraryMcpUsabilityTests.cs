@@ -5,12 +5,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using Moq;
 using PrdAgent.Api.Controllers;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
@@ -1336,7 +1338,20 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("wm-1", detail.GetProperty("illustrationChoice").GetProperty("watermark").GetProperty("watermarkId").GetString());
 
             // 网页上重画（页面还钉着按账号默认挑的文生图模型）
-            var web = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!,
+            var gateway = new Mock<ILlmGateway>();
+            gateway.Setup(x => x.GetAvailablePoolsAsync(It.IsAny<string>(), ModelTypes.ImageGen, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string caller, string _, CancellationToken _) => new List<AvailableModelPool>
+                {
+                    new() { Code = caller == AppCallerRegistry.LiteraryAgent.Illustration.Img2Img ? "article-img2img" : "article-text2img",
+                        IsDefault = true, ResolutionType = "LogicalModel", Models = new()
+                        {
+                            new() { ImageCapabilities = new GatewayImageCapabilitiesSnapshot
+                            {
+                                SizeConstraintType = "whitelist", SizesByResolution = new() { ["1k"] = new() { "1024x1024" } },
+                            } },
+                        } },
+                });
+            var web = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), gateway.Object,
                 NullLogger<LiteraryAgentImageGenController>.Instance), "writer");
             var created = Data(await web.CreateRun(new CreateImageGenRunRequest
             {
@@ -1348,7 +1363,7 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("pink", run.InitImageAssetSha256);
             Assert.StartsWith("粉色系", run.Items[0].Prompt);
             Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, run.AppCallerCode);
-            Assert.Null(run.ModelId); // 场景翻转后不带过去另一个池的模型
+            Assert.Equal("article-img2img", run.ModelId); // 场景翻转后按正确目录钉住默认模型，不带过去另一个池的模型
 
             // 只有文字提示词、没有参考图的风格：网页重画同样要带上它（智能体那条路一直带）
             await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig { Id = "ink", AppKey = "literary-agent", CreatedByAdminId = "writer", Name = "水墨", Prompt = "水墨淡彩" });
@@ -1372,7 +1387,7 @@ public class LiteraryMcpUsabilityTests
             var helperUi = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "helper");
             Assert.Equal(403, Assert.IsType<ObjectResult>(await helperUi.SetIllustrationPrefs(id, new() { Watermark = "none" }, CancellationToken.None)).StatusCode);
             Assert.Equal(JsonValueKind.Null, Data(await helperUi.GetWorkspaceDetail(id)).GetProperty("illustrationChoice").ValueKind);
-            var helperWeb = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!,
+            var helperWeb = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), gateway.Object,
                 NullLogger<LiteraryAgentImageGenController>.Instance), "helper");
             var helperCreated = Data(await helperWeb.CreateRun(new CreateImageGenRunRequest
             {

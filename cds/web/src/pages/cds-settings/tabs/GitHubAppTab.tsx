@@ -124,6 +124,7 @@ function GitHubAppStatus({
   onToast: (message: string) => void;
   onRefresh: () => AbortController;
 }): JSX.Element {
+  const webhookInput = useRef<HTMLInputElement>(null);
   if (!app.configured) {
     return (
       <EmptyBlock
@@ -154,7 +155,10 @@ function GitHubAppStatus({
         <div className="grid gap-2">
           <div className="flex min-w-0 gap-2">
             <input
+              ref={webhookInput}
+              aria-label="完整 Webhook 地址"
               readOnly
+              onFocus={event => event.currentTarget.select()}
               value={webhookUrl || webhookMissingReason}
               className={`min-h-11 min-w-0 flex-1 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ${webhookUrl ? '' : 'text-muted-foreground'}`}
             />
@@ -162,6 +166,7 @@ function GitHubAppStatus({
               type="button"
               variant="outline"
               size="icon"
+              className="min-h-[3.25rem] min-w-[3.25rem] lg:min-h-0 lg:min-w-0"
               aria-label="复制 Webhook 地址"
               disabled={!webhookUrl}
               onClick={() => {
@@ -169,7 +174,10 @@ function GitHubAppStatus({
                   onToast(webhookMissingReason);
                   return;
                 }
-                void navigator.clipboard.writeText(webhookUrl).then(() => onToast('已复制'));
+                void (async () => {
+                  try { await navigator.clipboard.writeText(webhookUrl); onToast('已复制'); }
+                  catch { webhookInput.current?.focus(); webhookInput.current?.select(); onToast('复制失败，请在完整 Webhook 地址框内全选复制。'); }
+                })();
               }}
             >
               <Copy />

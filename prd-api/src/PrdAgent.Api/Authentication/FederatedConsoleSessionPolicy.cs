@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Authentication;
 
@@ -18,6 +19,7 @@ public static class FederatedConsoleSessionPolicy
 
     public static bool IsEligibleBrowserSession(ClaimsPrincipal user)
         => !IsSynthetic(user)
+           && !CdsSsoSessions.IsDelegated(user.FindFirst("sessionKey")?.Value)
            && string.IsNullOrWhiteSpace(user.FindFirst("authType")?.Value)
            && string.Equals(user.FindFirst("clientType")?.Value, "admin", StringComparison.Ordinal)
            && !string.IsNullOrWhiteSpace(user.FindFirst("sessionKey")?.Value);
