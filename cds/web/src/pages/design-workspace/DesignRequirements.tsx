@@ -44,8 +44,8 @@ function StartDesign({ project, requirement, workspace, command, busy, open }: {
   const scope = { designKey: requirement.designKey, expectedVersion: requirement.planVersion };
   const assigned = requirement.assignee?.id;
   return <details className="ep-new dw-brief-start dw-right" data-design-panel="brief-start" open={open || undefined}>
-    <summary className="ep-button ep-button--primary" data-action="brief-start">开始出稿</summary>
-    <div aria-label="出稿命令">
+    <summary className="ep-button ep-button--primary" data-action="start-draft">开始出稿</summary>
+    <div className="dw-start-panel" aria-label="出稿命令">
       <p>先确认所属模块、框架和未解决的问题，再沿这个接入标识发布首稿。</p>
       <code>cdscli design intake --project {project}</code>
       {!assigned && <code>cdscli design brief-claim {requirement.designKey} --expected-version {requirement.planVersion}</code>}

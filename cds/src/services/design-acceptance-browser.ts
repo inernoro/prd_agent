@@ -146,8 +146,27 @@ async function readImplementation(browser: Browser, dist: string, target: URL, p
     await page.clock.setFixedTime(date);
     await page.goto(target.href, { timeout: captureTimeout, waitUntil: 'domcontentloaded' });
     // Reuse the implementation's ordinary entry controls. The browser has no connection to a write API.
+    const entered = new URL(target);
     for (const selector of screen.entryActions ?? []) {
-      await page.locator('css=' + selector).click({ timeout: 1800 });
+      const control = page.locator('css=' + selector);
+      const transition = await control.evaluate(node => ({
+        action: node.getAttribute('data-action'),
+        nextScreen: node.closest('.dw-sp-thumbs') ? node.getAttribute('data-screen') : null,
+      }), undefined, { timeout: 1800 });
+      await control.click({ timeout: 1800 });
+      if (transition.nextScreen) {
+        entered.searchParams.set('screen', transition.nextScreen);
+        entered.searchParams.delete('comment');
+        await control.and(page.locator('[aria-current="step"]')).waitFor({ state: 'visible', timeout: captureTimeout });
+      } else if (transition.action === 'history-timeline') {
+        entered.searchParams.set('log', 'timeline');
+        await page.locator('[data-history-view="timeline"]').waitFor({ state: 'visible', timeout: captureTimeout });
+      } else if (transition.action === 'disable-method') {
+        entered.searchParams.set('panel', 'disable-method');
+        await page.locator('.dw-disable-dialog').waitFor({ state: 'visible', timeout: captureTimeout });
+      } else if (transition.action === 'show-demo' && target.searchParams.has('check')) {
+        entered.searchParams.set('demo', target.searchParams.get('check')!);
+      }
     }
     const selectedTab = target.searchParams.get('tab');
     const selectedView = selectedTab === 'accept' ? '.dw-acceptance'
@@ -168,12 +187,19 @@ async function readImplementation(browser: Browser, dist: string, target: URL, p
     await page.waitForFunction(() => document.fonts.status === 'loaded'
       && !Array.from(document.querySelectorAll('[data-content-loading],.dw-frame[data-preview-state="loading"]'))
         .some(element => element.getClientRects().length > 0), undefined, { timeout: captureTimeout });
-    if (page.url() !== target.href || await page.locator('.dw-frame[data-preview-state="failed"]').count()) return undefined;
+    entered.searchParams.sort();
+    const samePage = () => {
+      const current = new URL(page.url());
+      current.searchParams.sort();
+      return current.href === entered.href;
+    };
+    if (!samePage() || await page.locator('.dw-frame[data-preview-state="failed"]').count()) return undefined;
     const image = await takeScreenshot(page);
     const difference = await page.evaluate(designPixelDifference, {
       before: `data:image/png;base64,${reference.toString('base64')}`, after: `data:image/png;base64,${image.toString('base64')}`,
     });
-    return { observed: await measureDesignPage(page), image, pixelDifference: difference.area };
+    const observed = await measureDesignPage(page);
+    return samePage() ? { observed, image, pixelDifference: difference.area } : undefined;
   } catch {
     return undefined;
   } finally {
@@ -200,8 +226,16 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
       || project === projectId || !/^[a-z0-9-]{1,100}$/.test(project)) {
       return rejectPlanning(422, 'design_capture_invalid_scene', '设计方需提供不同于实际项目的演示场景，且与实现绑定使用同一入口。');
     }
-    const states = ['check', 'pane', 'panel', 'part', 'full'];
-    if (states.some(name => bound.searchParams.has(name) && bound.searchParams.get(name) !== target.searchParams.get(name))) {
+    const tab = (url: URL) => {
+      const value = url.searchParams.get('tab');
+      return value === 'preview' || value === null ? 'delivery' : value;
+    };
+    const overlay = (url: URL) => url.searchParams.get('full')
+      ?? (url.searchParams.get('tab') === 'delivery' && url.searchParams.has('part') ? 'delivery' : null);
+    const states = ['check', 'pane', 'panel', 'part', 'view', 'mode', 'side', 'status', 'log', 'demo'];
+    if (bound.href !== target.href && (bound.searchParams.get('project') !== projectId
+      || tab(bound) !== tab(target) || overlay(bound) !== overlay(target)
+      || states.some(name => bound.searchParams.get(name) !== target.searchParams.get(name)))) {
       return rejectPlanning(422, 'design_capture_binding_mismatch', '实现方需核对绑定的页签或面板，与稿件演示场景对齐后再运行。');
     }
     const date = new Date(version.createdAt);

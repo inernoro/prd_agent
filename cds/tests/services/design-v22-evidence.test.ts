@@ -297,13 +297,14 @@ describe('程序验收的签收门槛', () => {
     await expect(fixture.command('acceptance.sign')).rejects.toMatchObject({ status: 409 });
   });
 
-  it('同一演示和提交复验一致但还缺一项视觉核对时不给签收', async () => {
+  it('对照手段不适用时，程序签收仍要求所有声明画面的视觉证据', async () => {
     const result = observed();
-    const fixture = await setup(22, async () => ({
+    const fixture = await setup(23, async () => ({
       ...result, checks: { ...result.checks, 'V-01': { status: 'missing', evidence: '待核对页面区域。' } },
     }));
     await fixture.command('acceptance.capture', implementer, comparison);
     await fixture.command('acceptance.recheck', designer, comparison);
+    expect((await fixture.entry()).runs[0].verdict).toBe('needs_evidence');
     await expect(fixture.command('acceptance.sign')).rejects.toMatchObject({ status: 409 });
   });
 

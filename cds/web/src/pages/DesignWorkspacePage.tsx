@@ -346,7 +346,7 @@ export function DesignWorkspacePage() {
     <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
       onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
       <summary className="ep-button ep-icon-button" aria-label="更多稿件操作" title="稿件信息和更多操作" data-action="design-info"><MoreHorizontal /></summary>
-      <div className="dw-info-body">
+      <div className="dw-info-body dw-info-panel">
         <header className="dw-row"><strong>{entry.id}</strong><small>V{version.version} · {designDate(version.createdAt)}</small></header>
         <dl>
           <dt>稿件</dt><dd>{version.title}</dd>

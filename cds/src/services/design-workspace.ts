@@ -1800,12 +1800,14 @@ export class DesignWorkspaceService {
     const rules = version.acceptance.filter(rule => designRuleApplicable(version, rule, entry, run));
     run.verdict = evaluateDesignAcceptance(rules.map(rule => ({ id: rule.id, priority: rule.priority,
       cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
-    if (designMethodPlanEnabled(version)) {
+    const methodPlan = designMethodPlanEnabled(version);
+    if (methodPlan) {
       const { required, blockers } = designMethodsState(version, run, entry);
       if (blockers.some(method => method.status === 'failed')) run.verdict = 'failed';
       else if (blockers.length && run.verdict !== 'failed') run.verdict = 'needs_evidence';
       else if (!rules.length && required.length) run.verdict = 'passed';
-    } else if (designVisualRequired(version, run)) {
+    }
+    if (proof || !methodPlan && designVisualRequired(version, run)) {
       const visual = designVisualSummary(version, run);
       if (visual.failed) run.verdict = 'failed';
       else if (visual.remaining && run.verdict !== 'failed') run.verdict = 'needs_evidence';

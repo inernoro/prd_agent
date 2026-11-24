@@ -127,7 +127,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const visualOnly = comparisonSkipped === true && check === 'visual' && methodOpen;
   const showComparison = version.screens.length > 0 && (!methodData || visualOnly || check === 'compare' && (methodOpen || programRequired));
   const blockers = methodData?.blockers ?? [];
-  const requiresVisual = !methodData && designVisualRequired(version, run);
+  const requiresVisual = programRequired || !methodData && designVisualRequired(version, run);
   const visualRemaining = requiresVisual && run && !run.signed ? designVisualSummary(version, run).remaining : 0;
   const recordedState = run?.verdict ?? 'needs_evidence';
   const state = run?.signed ? recordedState
