@@ -261,7 +261,7 @@ export function HistoricalAcceptance({ entry, version, run, busy, canRegister, e
         const result = run?.regress?.[issue.id];
         const status = result?.status ?? 'missing';
         return <tr key={issue.id} data-issue={issue.id} data-status={status}>
-          <td><code>{issue.id}</code></td><th scope="row">{issue.problem}<small>{issue.screenIds.length ? issue.screenIds.map(id => version.screens.find(screen => screen.id === id)?.name ?? id).join('、') : '全稿适用'}</small></th>
+          <td><code>{issue.id}</code></td><th scope="row">{issue.problem}<small>{issue.screenIds?.length ? issue.screenIds.map(id => version.screens.find(screen => screen.id === id)?.name ?? id).join('、') : '全稿适用'}</small></th>
           <td className="dw-ac-sources">{issue.sources.map(({ kind, ref, count }) => <span key={`${kind}/${ref}`}>{sources[kind]} {ref} · {count} 次</span>)}</td>
           <td>{issue.how} · {issue.check}</td><td>{result?.evidence || '本次尚无证据'}{result && <small>{designPublisherLabel(result.by)} · {designDate(result.at)}</small>}</td>
           <td><span className="dw-ac-state" data-status={status}>{outcomes[status]}</span>

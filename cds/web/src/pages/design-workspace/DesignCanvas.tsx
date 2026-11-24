@@ -450,7 +450,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
           <figcaption>{i + 1} · {item.name}</figcaption>
           <button className="dw-gallery-open" type="button" aria-label={`查看 ${item.name}`} onClick={() => { pickScreen(item.id); showAll(false); }} />
         </figure>;
-      })}</div> : <div className="dw-single">
+      })}</div> : <div className="dw-single" data-viewport={screen?.viewport}>
         <DesignFrame projectId={entry.projectId} version={version} screen={screen} theme={visibleTheme} zoom={zoom} placing={placing}
           staticOnly={!active} referenceId={recordedVisual?.referenceImageId} pin={pin} comments={comments ? marks : undefined}
           onPin={point => { setPin(point); setPlacing(false); }} onKey={key} onComment={setComment} />
