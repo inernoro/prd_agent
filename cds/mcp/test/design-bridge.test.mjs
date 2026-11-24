@@ -22,13 +22,14 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
   let write = false;
   let responseProject = projectId;
   const writes = [];
+  const reads = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method === 'POST') {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       writes.push({ url, type: request.headers['content-type'], key: request.headers['x-ai-access-key'], bytes: Buffer.concat(chunks) });
-    }
+    } else reads.push(Object.fromEntries(url.searchParams));
     const value = request.method === 'POST' ? { projectId, reused: writes.length > 1,
       result: { type: 'package', designId: 'DSN-fixture', version: 2 } }
       : { projectId: responseProject, permissions: { write },
@@ -56,6 +57,7 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
     { demo, videos, methodSettings });
   const former = await bridge.call(read, { view: 'delivery', id: draft.designId, version: 1 });
   for (const key of ['demo', 'videos', 'methodSettings']) assert.equal(Object.hasOwn(former, key), false);
+  assert.deepEqual(reads.filter(row => row.designId), [{ designId: draft.designId, version: '2' }, { designId: draft.designId, version: '1' }]);
   await assert.rejects(bridge.call(publish, draft), /没有稿件发布权限/);
   assert.equal(writes.length, 0);
 

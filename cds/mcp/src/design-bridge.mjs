@@ -139,8 +139,8 @@ export function createDesignBridge(credentials, options = {}) {
   const client = createProjectApiClient(credentials, options);
   const projectId = credentials.projectId;
   const path = `/api/projects/${encodeURIComponent(projectId)}/design`;
-  async function workspace() {
-    const result = await client.request('GET', path);
+  async function workspace(query) {
+    const result = await client.request('GET', query ? `${path}?${query}` : path);
     if (result.projectId !== projectId || typeof result.permissions?.write !== 'boolean'
       || !Array.isArray(result.frameworks) || !Array.isArray(result.designs)
       || [...result.frameworks, ...result.designs].some(row => row?.projectId !== projectId || !Array.isArray(row.versions))) {
@@ -185,7 +185,10 @@ export function createDesignBridge(credentials, options = {}) {
           }
           return result;
         }
-        const data = await workspace();
+        const readVersion = ['design', 'delivery', 'file'].includes(args.view);
+        const query = readVersion ? new URLSearchParams({ designId: args.id,
+          ...(args.version === undefined ? {} : { version: args.version }) }) : undefined;
+        const data = await workspace(query);
         const isFramework = args.view === 'framework' || args.view === 'frameworks';
         const items = isFramework ? data.frameworks : data.designs;
         if (args.view === 'designs' || args.view === 'frameworks') {
