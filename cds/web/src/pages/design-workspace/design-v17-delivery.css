@@ -153,15 +153,21 @@
   .dw-notes-toc { display: none; }
 }
 @media (max-width: 639px) {
-  .dw-head--draft .dw-draft-bar { flex-flow: row nowrap; align-items: center; }
-  .dw-head--draft .dw-draft-actions { width: auto; }
+  .dw-head--draft .dw-draft-bar {
+    height: 66px; min-height: 66px; flex-flow: column nowrap; align-items: stretch; justify-content: flex-start; gap: 0;
+  }
+  .dw-head--draft .dw-draft-heading { min-height: 0; flex: 0 0 30px; }
+  .dw-head--draft .dw-draft-heading h1 { font-size: 1.1rem; line-height: 1.4; }
+  .dw-head--draft .dw-draft-actions { width: 100%; height: 36px; padding-block: 2px; }
+  .dw-head--draft .dw-draft-actions > select { margin-inline-end: auto; }
+  .dw-head--draft .dw-draft-actions .dw-info { margin-inline-start: 0; }
   .dw-head--draft .dw-draft-actions .dw-version-select { width: min(180px, 48vw); }
-  .dw-head--draft .dw-draft-heading { flex: 1 1 auto; }
+  .dw-head--draft :is(.dw-draft-tabbar, .dw-tablinks, .dw-tab) { min-height: 44px; height: 44px; }
   .dw-head--draft .dw-draft-tabbar { gap: 4px; }
   .dw-implementation-mark { gap: 4px; }
   .dw-implementation-mark > span { font-size: 11px; }
   .dw-implementation-mark:has(> span:nth-child(3)) > span:last-child { display: none; }
-  .dw-head--draft .dw-draft-actions .dw-info-body { position: fixed; top: 104px; left: auto; right: 12px; }
+  .dw-head--draft .dw-draft-actions .dw-info-body { position: fixed; top: 124px; left: auto; right: 12px; }
   .dw-need-items { padding: 12px; }
   .dw-need-table th, .dw-need-table td { padding: 6px 4px; }
   .dw-need-table thead th:first-child { width: 2rem; }

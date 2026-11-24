@@ -206,7 +206,7 @@ describe('V17 交付工作区', () => {
         const { titleGroup, actionGroup, headerBox, tabsBox } = await measureDraftHeader(page, boundTitle);
         return { titleGroup, actionGroup, headerBox, tabsBox };
       };
-      for (const [width, height] of desktopSizes) {
+      for (const [width, height] of infoSizes) {
         await page.setViewportSize({ width, height });
         let initial: Awaited<ReturnType<typeof layout>> | undefined;
         for (const tab of ['delivery', 'accept', 'log']) {
@@ -1211,7 +1211,15 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(metrics.touchPoints, '使用 375px 触控视口').toBeGreaterThan(0);
       expect.soft(shareRow(metrics.titleGroup), '手机标题组各项同排').toBe(true);
       expect.soft(shareRow(metrics.actionGroup), '手机动作组各项同排').toBe(true);
-      expect.soft(shareRow([...metrics.titleGroup, ...metrics.actionGroup]), '手机标题和稿件动作保持同排').toBe(true);
+      const titleBottom = Math.max(...metrics.titleGroup.map(box => box.y + box.height));
+      const actionsTop = Math.min(...metrics.actionGroup.map(box => box.y));
+      const actionsBottom = Math.max(...metrics.actionGroup.map(box => box.y + box.height));
+      expect.soft(actionsTop, '稿件动作另起一行，位于标题下方').toBeGreaterThanOrEqual(titleBottom);
+      expect.soft(metrics.tabsBox.y, '页签位于稿件动作下方').toBeGreaterThanOrEqual(actionsBottom);
+      expect.soft(metrics.titleAvailable, '手机标题完整可读').toBeGreaterThanOrEqual(metrics.titleMeasured - 1);
+      expect.soft(actionsTop - metrics.headerBox.y, '手机动作顶部与稿件参考的距离').toBeCloseTo(32, 0);
+      expect.soft(metrics.tabsBox.y - metrics.headerBox.y, '手机页签顶部与稿件参考的距离').toBeCloseTo(66, 0);
+      expect.soft(metrics.actionGroup[0].x, '版本选择位于手机动作行左侧').toBeCloseTo(metrics.headerBox.x, 0);
       expect.soft(metrics.information.x + metrics.information.width, '手机稿件信息位于动作行右侧')
         .toBeGreaterThanOrEqual(metrics.headerBox.x + metrics.headerBox.width - 6);
       expect.soft(metrics.tabOverflow, '三个页签完整可见').toBeLessThanOrEqual(1);
@@ -1219,7 +1227,7 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(await page.getByRole('button', { name: '定为实施基线', exact: true }).isVisible()).toBe(false);
       await more.click();
       expect(await page.getByRole('button', { name: '定为实施基线', exact: true }).isVisible()).toBe(true);
-    }, { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+    }, { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1, reducedMotion: 'reduce' });
   }, 15_000);
 
   it('A-02/A-23 等效缩放和手机看板左缘、整页宽度与页面动作可达', async () => {
