@@ -274,7 +274,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
                 <span className="dw-folder-art" data-count={Math.min(4, folder.entries.length)}>
                   {folder.entries.slice(0, 4).map(row => <span key={row.id}><DesignCover projectId={projectId} version={latestDesign(row)} theme={theme} thumbnail /></span>)}
                   {!folder.entries.length && <span className="dw-mini-empty"><Folder size={20} /></span>}
-                  {newVersions > 0 && <small className="dw-card-new">{newVersions} 份有新版本</small>}
+                  {newVersions > 0 && <small className="dw-card-new">{newVersions} 份新</small>}
                 </span>
                 <span className="dw-folder-title"><Folder size={15} /><strong>{folder.name}</strong><small>{folder.entries.length} 份</small></span>
                 <span className="dw-folder-meta">{waiting > 0 && <small>{waiting} 件等我处理</small>}

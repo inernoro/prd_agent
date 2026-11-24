@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Layers, Maximize, MoreHorizontal, PanelRightOpen, Terminal, Upload, X } from 'lucide-react';
+import { ChevronLeft, Layers, Maximize, MoreHorizontal, PanelRightOpen, Upload, X } from 'lucide-react';
 import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
 import { MotionLink, rememberRouteFocus } from '@/components/layout/RouteMotion';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -22,6 +22,7 @@ import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
+import { DesignSkillsMenu, SkillGuide } from './design-workspace/SkillGuide';
 import { defaultDesignScreen, designDate, designDetailPath, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -389,6 +390,7 @@ export function DesignWorkspacePage() {
           {canUnfreeze && !activeUpgrade && entry.frozen !== undefined && <button className="ep-button dw-revoke-baseline" type="button" data-action="unfreeze"
             onClick={() => setUnfreeze({ id: entry.id, version: entry.frozen! })}>撤销定稿</button>}
         </footer>
+        <SkillGuide designId={entry.id} version={version.version} />
       </div>
     </details>
   </div>;
@@ -486,12 +488,8 @@ export function DesignWorkspacePage() {
         <DesignLibrary workspace={workspace} query={query} onChange={changeLibrary} mode={mode} theme={canvasTheme}
           viewer={viewer} frameworkList={frameworkList} onFramework={selectFramework}
           onReview={openReview} onLarge={openLarge} headerActions={<>
-            <details className="ep-new" data-design-panel="cli" open={panel === 'cli' || undefined}
-              onToggle={event => { if (!event.currentTarget.open) dismissPanel('cli'); }}>
-              <summary className="ep-button" data-action="design-cli"><Terminal />接入</summary>
-              <div className="dw-cli"><button className="ep-button" type="button" onClick={() => requestAgentAccess('design-publish')}>接入 Agent</button>
-                <code>cdscli design intake</code><code>cdscli design list</code><code>cdscli design preview --dir .</code><code>cdscli design publish --dir .</code></div>
-            </details>
+            <DesignSkillsMenu linked={panel === 'cli' || panel === 'skills'}
+              dismiss={() => { if (panel === 'cli' || panel === 'skills') dismissPanel(panel); }} onAccess={() => requestAgentAccess('design-publish')} />
             {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
           </>} />
       </>}
