@@ -2772,6 +2772,7 @@ app.MapGet("/gw/logs", async (
         .Limit(ps)
         .ToListAsync();
 
+    await LogAppCallerNames.FillMissingAsync(http, docs, gatewayDatabase, mapDatabase, internalTenantId);
     var data = new LogsListData
     {
         Items = docs.Select(MapListItem).ToList(),
@@ -3052,6 +3053,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
             .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
             .Limit(5)
             .ToListAsync();
+        await LogAppCallerNames.FillMissingAsync(http, recentDocs, gatewayDatabase, mapDatabase, internalTenantId);
         recentRequests = recentDocs.Select(MapListItem).ToList();
     }
 
@@ -3303,17 +3305,22 @@ app.MapGet("/gw/logs/sessions", async (
         list.Add(d);
     }
 
-    var allItems = groups.Select(g => BuildSessionItem(g.Key, g.Value))
-        .OrderByDescending(s => s.End, StringComparer.Ordinal)
-        .ToList();
-
-    var total = allItems.Count;
-    var pageItems = allItems.Skip((p - 1) * ps).Take(ps).ToList();
+    var pageItems = groups.Select(group =>
+        {
+            var callerLog = group.Value.FirstOrDefault(log => !string.IsNullOrWhiteSpace(log.AsNullableString("AppCallerCode")));
+            return (Session: BuildSessionItem(group.Key, group.Value, callerLog?.AsNullableString("AppCallerCode")), CallerLog: callerLog);
+        })
+        .OrderByDescending(item => item.Session.End, StringComparer.Ordinal)
+        .Skip((p - 1) * ps).Take(ps).ToList();
+    await LogAppCallerNames.FillMissingAsync(http, pageItems.Select(item => item.CallerLog).OfType<BsonDocument>().ToArray(),
+        gatewayDatabase, mapDatabase, internalTenantId);
+    foreach (var (session, callerLog) in pageItems)
+        session.AppCallerCodeDisplayName = callerLog is null ? null : LogAppCallerNames.Snapshot(callerLog);
 
     var data = new SessionsData
     {
-        Items = pageItems,
-        Total = total,
+        Items = pageItems.Select(item => item.Session).ToList(),
+        Total = groups.Count,
         Page = p,
         PageSize = ps,
     };
@@ -3329,6 +3336,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
     {
         return Json(ApiEnvelope<LlmLogDetail>.Fail("NOT_FOUND", "日志不存在"), jsonOptions, statusCode: 404);
     }
+    await LogAppCallerNames.FillMissingAsync(http, [doc], gatewayDatabase, mapDatabase, internalTenantId);
     var detail = MapDetail(doc);
     var logicalRequestId = detail.LogicalRequestId;
     var relatedFilters = new List<FilterDefinition<BsonDocument>>
@@ -17653,7 +17661,7 @@ static string? NormalizeResolutionMode(string? raw, string? reason)
 }
 
 // 把一个会话内的多条日志聚合成 SessionItem。primaryModel = 出现次数最多的 Model。
-static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
+static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs, string? appCallerCode)
 {
     var models = docs
         .Select(x => x.GetStringOrEmpty("Model"))
@@ -17680,10 +17688,6 @@ static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
     }
     primaryProvider ??= docs.Select(x => x.AsNullableString("Provider")).FirstOrDefault(p => !string.IsNullOrEmpty(p));
 
-    var appCaller = docs
-        .Select(x => x.AsNullableString("AppCallerCode"))
-        .FirstOrDefault(a => !string.IsNullOrEmpty(a));
-
     var starts = docs.Select(x => x.AsNullableUtcDateTime("StartedAt")).Where(t => t is not null).Select(t => t!.Value).ToList();
     DateTime? start = starts.Count > 0 ? starts.Min() : null;
 
@@ -17698,7 +17702,7 @@ static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
         RequestCount = docs.Count,
         Start = start.ToIso(),
         End = end.ToIso(),
-        AppCallerCode = appCaller,
+        AppCallerCode = appCallerCode,
         PrimaryModel = primaryModel,
         PrimaryProvider = primaryProvider,
         SupportingModels = supporting,
