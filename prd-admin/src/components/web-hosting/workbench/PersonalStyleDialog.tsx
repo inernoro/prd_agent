@@ -33,7 +33,10 @@ import {
 
 const fieldStyle = { background: 'var(--bg-input)', border: '1px solid var(--border-default)' } as const;
 
-export type PersonalStyleDialogMode = { kind: 'create' } | { kind: 'edit'; style: PersonalStyle };
+export type PersonalStyleDialogMode =
+  | { kind: 'create' }
+  | { kind: 'edit'; style: PersonalStyle }
+  | { kind: 'reference'; onSelect: (site: { id: string; title: string }) => void };
 
 /**
  * 「做一个我的风格」：选一张自己的网页和/或写几句描述 → 系统读样式提取草稿 → 审阅、改 → 保存。
@@ -51,8 +54,9 @@ export function PersonalStyleDialog({
   open: boolean;
   mode: PersonalStyleDialogMode;
   onOpenChange: (open: boolean) => void;
-  onSaved: (style: PersonalStyle) => void;
+  onSaved?: (style: PersonalStyle) => void;
 }) {
+  const referenceMode = mode.kind === 'reference';
   const currentUserId = useAuthStore((s) => s.user?.userId);
   const [step, setStep] = useState<'source' | 'review'>(mode.kind === 'edit' ? 'review' : 'source');
   // 网页列表按页读：每页 SITE_PAGE_SIZE 条，可按标题搜、可继续往下加载。只读第一页的话，
@@ -70,13 +74,13 @@ export function PersonalStyleDialog({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || referenceMode) return;
     let active = true;
     void listDesignSystems().then((res) => {
       if (active && res.success) setCatalog(res.data.items);
     });
     return () => { active = false; };
-  }, [open]);
+  }, [open, referenceMode]);
 
   // 搜索条件一变就撤销已选网页：新列表里可能没有它，看不见的选中项不许被悄悄拿去提取。
   useEffect(() => { setSiteId(null); }, [debouncedQuery]);
@@ -87,7 +91,7 @@ export function PersonalStyleDialog({
   }, [siteQuery]);
 
   useEffect(() => {
-    if (!open || mode.kind !== 'create') return;
+    if (!open || mode.kind === 'edit') return;
     let active = true;
     setSites({ status: 'loading' });
     void listSites({ limit: SITE_PAGE_SIZE, keyword: debouncedQuery || undefined }).then((res) => {
@@ -107,7 +111,10 @@ export function PersonalStyleDialog({
   };
   const hasMoreSites = hasMoreSitePages(sites);
 
-  const blocker = deriveBlocker(siteId, note);
+  const referenceSite = sites.status === 'ready' ? sites.items.find((site) => site.id === siteId) : null;
+  const blocker = referenceMode
+    ? referenceSite ? null : '请选择一张网页'
+    : deriveBlocker(siteId, note);
   const filled = useMemo<PersonalStyleField[]>(
     () => (draft && form ? systemFilledFields(draft, form) : mode.kind === 'edit' ? mode.style.systemFilledFields : []),
     [draft, form, mode],
@@ -143,14 +150,14 @@ export function PersonalStyleDialog({
       const res = await updatePersonalStyle(mode.style.id, patch);
       setSaving(false);
       if (!res.success) { setError(res.error?.message || '保存失败，请稍后重试'); return; }
-      onSaved(res.data);
+      onSaved?.(res.data);
       return;
     }
     if (!draft) { setSaving(false); return; }
     const res = await createPersonalStyle(createInput(draft, form));
     setSaving(false);
     if (!res.success) { setError(res.error?.message || '保存失败，请稍后重试'); return; }
-    onSaved(res.data);
+    onSaved?.(res.data);
   };
 
   const patchForm = (patch: Partial<PersonalStyleForm>) => setForm((current) => (current ? { ...current, ...patch } : current));
@@ -161,7 +168,9 @@ export function PersonalStyleDialog({
   const content = step === 'source' ? (
     <div className="flex flex-col gap-4" data-personal-style-step="source">
       <p className="text-[12px] leading-relaxed text-token-muted">
-        挑一张你喜欢的、自己做过的网页，系统会读它的样式，提取配色、字体、字号、间距与版式；也可以只写几句想要的感觉。提取完先给你看，改好了再保存。
+        {referenceMode
+          ? '从你创建的 HTML 网页里挑一张，借鉴它的配色、字体和排版。新网页的内容来自这次添加的知识库文章或文件。'
+          : '挑一张你喜欢的、自己做过的网页，系统会读它的样式，提取配色、字体、字号、间距与版式；也可以只写几句想要的感觉。提取完先给你看，改好了再保存。'}
       </p>
       <section className="flex flex-col gap-2" aria-label="从我的网页提取">
         <h4 className="text-[12px] font-semibold text-token-primary">从我的网页提取</h4>
@@ -181,10 +190,11 @@ export function PersonalStyleDialog({
         {sites.status === 'ready' && sites.items.length === 0 && (
           <div className="rounded-lg px-3 py-2 text-[12px] text-token-muted" style={{ background: 'var(--bg-tertiary)' }}>
             {hasMoreSites
-              ? `已看过 ${sites.scanned} / ${sites.total} 张网页，其中还没有可以提取的（需要是自己创建的 HTML 网页）。可以继续往下找，或直接在下面写几句描述。`
+              ? `已看过 ${sites.scanned} / ${sites.total} 张网页。继续加载，查找你创建的 HTML 网页。`
               : debouncedQuery
-                ? '没有搜到可以提取的网页（需要是自己创建的 HTML 网页）。换个标题搜，或直接在下面写几句描述。'
-                : '你还没有可以提取的网页（需要是自己创建的 HTML 网页）。可以直接在下面写几句描述。'}
+                ? '没有找到你创建的 HTML 网页，可以换个标题搜。'
+                : '你还没有可以提取样式的 HTML 网页。'}
+            {!referenceMode && ' 也可以在下面写几句风格描述。'}
           </div>
         )}
         {sites.status === 'ready' && sites.items.length > 0 && (
@@ -223,7 +233,7 @@ export function PersonalStyleDialog({
           </button>
         )}
       </section>
-      <section className="flex flex-col gap-2">
+      {!referenceMode && <section className="flex flex-col gap-2">
         <label htmlFor="personal-style-note" className="text-[12px] font-semibold text-token-primary">
           想要的感觉 <span className="font-normal text-token-muted">（可选；只写这个也行）</span>
         </label>
@@ -237,7 +247,7 @@ export function PersonalStyleDialog({
           className="resize-y rounded-lg px-3 py-2 text-[12px] leading-relaxed text-token-primary outline-none"
           style={fieldStyle}
         />
-      </section>
+      </section>}
       {deriving && (
         <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-[12px] text-token-secondary" style={{ background: 'var(--bg-tertiary)' }} role="status">
           <MapSpinner size={12} />
@@ -348,7 +358,7 @@ export function PersonalStyleDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={mode.kind === 'edit' ? `编辑我的风格 · ${mode.style.name}` : '做一个我的风格'}
+      title={mode.kind === 'edit' ? `编辑我的风格 · ${mode.style.name}` : referenceMode ? '选择参考网页' : '做一个我的风格'}
       maxWidth={620}
       content={(
         <div className="flex flex-col gap-3">
@@ -360,7 +370,9 @@ export function PersonalStyleDialog({
       actions={step === 'source' ? (
         <>
           {blocker && <span className="mr-auto text-[11px] text-token-muted">{blocker}</span>}
-          {primaryButton(deriving ? '正在提取' : '提取风格', () => void derive(), blocker, deriving)}
+          {mode.kind === 'reference'
+            ? primaryButton('用作风格参考', () => { if (referenceSite) mode.onSelect(referenceSite); }, blocker, false)
+            : primaryButton(deriving ? '正在提取' : '提取风格', () => void derive(), blocker, deriving)}
         </>
       ) : (
         <>

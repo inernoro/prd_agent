@@ -1300,7 +1300,7 @@ describe('design direction, review passes and live preview', () => {
 });
 
 describe('collecting the deliverable', () => {
-  it('promotes the deliverable file OpenDesign named instead of guessing', async () => {
+  it('commits the named HTML under index.html and keeps the review edits', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
     harness.daemon.onRun = ({ workspaceDir, index }) => {
@@ -1308,15 +1308,35 @@ describe('collecting the deliverable', () => {
         fs.writeFileSync(path.join(workspaceDir, 'launch-page.html'), '<!doctype html><html><body><main>Promoted launch page</main></body></html>');
         return { status: 'succeeded', deliverableEntryFile: 'launch-page.html' };
       }
+      expect(fs.existsSync(path.join(workspaceDir, 'launch-page.html'))).toBe(false);
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Reviewed launch page</main></body></html>');
       return { status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' };
     };
-    await runToEnd(pkg);
-    // 只断言「按 OpenDesign 指名的文件搬」这一步本身。搬完之后那份 slug 文件仍留在工作区根、
-    // 会被产物预检按白名单拒收——这与 CDS 现行实现一致，是否属实要在真实引擎上确认，
-    // 记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md，这里不把它锁成期望。
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    const committedFiles = map!.commits[0].files as Array<{ path: string; contentBase64: string }>;
+    const committedIndex = committedFiles.find((file) => file.path === 'index.html')!;
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('Reviewed launch page');
+    expect(committedFiles.some((file) => file.path === 'launch-page.html')).toBe(false);
     const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
     const resolved = events.find((event: { payload: { reason?: string; promoted?: boolean } }) => event.payload.reason === 'deliverable_entry_checkpointed' && event.payload.promoted);
     expect(resolved.payload).toMatchObject({ entryFile: 'launch-page.html', promoted: true, bytes: 74 });
+  });
+
+  it.each(['failed', 'invalid'] as const)('keeps a checked first draft when review is %s', async (outcome) => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      const html = index === 1 ? '<!doctype html><html><body><main><h1>Complete first draft</h1></main></body></html>' : 'Truncated review';
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), html);
+      return { status: index === 2 && outcome === 'failed' ? 'failed' : 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(view.result.openDesignRunId).toBe('od-run-1');
+    expect(await statusReasons(pkg.runId)).toContain('open_design_review_checkpoint_restored');
+    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('Complete first draft');
   });
 
   it.each([

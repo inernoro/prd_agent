@@ -115,7 +115,7 @@ describe('生成工作台布局契约', () => {
   });
 
   it('修改阶段：先出草稿，线上版与草稿可切换对比，确认才发布；发给客户复用一键分享', () => {
-    expect(editStage).toContain("options={[{ value: 'live', label: '线上版' }, { value: 'draft', label: '草稿' }]}");
+    expect(editStage).toContain("options={[{ value: 'live', label: currentVersionLabel }, { value: 'draft', label: '草稿' }]}");
     expect(editStage).toContain('void publish(draftId)');
     expect(editStage).toContain('void reject(draftId');
     expect(editStage).toContain('<QuickSharePopover');
@@ -149,7 +149,7 @@ describe('生成完读站点的请求按会话隔离', () => {
     const openGuard = wb.indexOf('if (!open) return;', effect);
     expect(effect, '关窗时也要换会话号').toBeGreaterThan(-1);
     expect(openGuard).toBeGreaterThan(effect);
-    const handler = wb.slice(wb.indexOf('const handleGenerated'), wb.indexOf('const handleSiteChanged'));
+    const handler = wb.slice(wb.indexOf('const openSavedSite'), wb.indexOf('const handleGenerated'));
     expect(handler).toContain('const requestedIn = sessionRef.current;');
     expect(handler).toMatch(/getSite\(siteId\)\.then\(\(result\) => \{\s*if \(sessionRef\.current !== requestedIn\) return;/);
   });

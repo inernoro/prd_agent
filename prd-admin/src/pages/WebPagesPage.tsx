@@ -2258,6 +2258,11 @@ export default function WebPagesPage() {
         // 传实时值即可：工作台在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
         destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
         onClose={() => { setWorkbenchTarget(null); void load(); }}
+        onLocateSaved={(siteId) => {
+          setWorkbenchTarget(null);
+          const query = new URLSearchParams({ focusSite: siteId });
+          navigate({ pathname: location.pathname, search: query.toString() }, { state: { webPagesEntry: 'library' } });
+        }}
         onCreated={(siteId) => {
           void (async () => {
             // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。

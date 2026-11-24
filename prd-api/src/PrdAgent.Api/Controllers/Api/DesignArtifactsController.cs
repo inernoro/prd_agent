@@ -72,6 +72,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IHostedSiteService _sites;
     private readonly ILogger<DesignArtifactsController>? _logger;
     private readonly IDesignGenerationSettingsService? _generationSettings;
+    private readonly IPersonalStyleDerivationService? _styleDerivation;
 
     public DesignArtifactsController(
         MongoDbContext db,
@@ -84,7 +85,8 @@ public sealed class DesignArtifactsController : ControllerBase
         IConfiguration configuration,
         IHostedSiteService sites,
         ILogger<DesignArtifactsController>? logger = null,
-        IDesignGenerationSettingsService? generationSettings = null)
+        IDesignGenerationSettingsService? generationSettings = null,
+        IPersonalStyleDerivationService? styleDerivation = null)
     {
         _db = db;
         _events = events;
@@ -97,6 +99,7 @@ public sealed class DesignArtifactsController : ControllerBase
         _sites = sites;
         _logger = logger;
         _generationSettings = generationSettings;
+        _styleDerivation = styleDerivation;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -226,11 +229,18 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
                 _db, userId, request.AttachmentIds, CancellationToken.None);
-            if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    "风格只能选一种：预设风格、我的风格或目录里的设计系统，不能同时提交"));
-            // 预设 / 我的风格（personal:<id>，服务端按归属人取）/ 目录设计系统，判据全在 FreezeForRunAsync 一处。
-            if (_generationSettings != null)
+            if (!string.IsNullOrWhiteSpace(request.ReferenceSiteId))
+            {
+                if (!string.IsNullOrWhiteSpace(request.StyleId) || !string.IsNullOrWhiteSpace(request.DesignSystemId))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考网页和其他风格只能选一种"));
+                if (_styleDerivation == null || _generationSettings == null)
+                    return Conflict(ApiResponse<object>.Fail("REFERENCE_STYLE_UNAVAILABLE", "暂时无法读取网页样式，请稍后重试或选择另一种风格"));
+                var draft = await _styleDerivation.DeriveAsync(userId, request.ReferenceSiteId, null, CancellationToken.None);
+                designDirection = await _generationSettings.FreezeReferenceSiteAsync(draft, CancellationToken.None);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "风格只能选一种，请重新选择"));
+            else if (_generationSettings != null)
                 designDirection = await _generationSettings.FreezeForRunAsync(
                     userId, request.StyleId, request.DesignSystemId, CancellationToken.None);
         }
@@ -241,6 +251,12 @@ public sealed class DesignArtifactsController : ControllerBase
         catch (DesignGenerationSettingsException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (PersonalDesignStyleException ex)
+        {
+            // 提取异常可能包含存储诊断。只向用户返回恢复动作。
+            _logger?.LogInformation("Reference style could not be derived: {Code}", ex.Code);
+            return BadRequest(ApiResponse<object>.Fail("REFERENCE_SITE_STYLE_UNAVAILABLE", "无法提取这张网页的样式，请选择另一张你创建的 HTML 网页"));
         }
         if (references.Count == 0 && uploadedSources.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少选择一篇知识或上传一个文件作为网页内容来源"));
@@ -1178,6 +1194,8 @@ public sealed class DesignArtifactsController : ControllerBase
         styleId = run.DesignDirection?.StyleId,
         styleName = run.DesignDirection?.StyleName,
         designSystemId = run.DesignDirection?.DesignSystemId,
+        referenceSiteId = run.DesignDirection?.ReferenceSiteId,
+        referenceSiteTitle = run.DesignDirection?.ReferenceSiteTitle,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,
         reviewMode = run.DesignDirection?.ReviewMode,
         designBrief = run.DesignBrief == null ? null : new
@@ -1579,6 +1597,8 @@ public sealed class CreateDesignArtifactRunRequest
     /// 按服务端快照核对，不在目录里的编号拒绝。
     /// </summary>
     public string? DesignSystemId { get; set; }
+
+    public string? ReferenceSiteId { get; set; }
 
     /// <summary>直接上传的文件（附件编号，最多 5 个）；与知识库引用至少有一种。</summary>
     public List<string>? AttachmentIds { get; set; }

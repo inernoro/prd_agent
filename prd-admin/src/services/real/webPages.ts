@@ -239,6 +239,8 @@ export interface DesignArtifactRunSummary {
   styleId?: string | null;
   styleName?: string | null;
   designSystemId?: string | null;
+  referenceSiteId?: string | null;
+  referenceSiteTitle?: string | null;
   /** 三段提示词拼接后的指纹，用来追溯「这一轮用的是哪一版提示词」。 */
   promptFingerprint?: string | null;
   reviewMode?: DesignReviewMode | null;
@@ -1956,12 +1958,13 @@ export async function createDesignArtifactRun(input: {
   styleId?: string | null;
   /** 风格画廊「更多风格」里直接选的 OpenDesign 设计系统；与 styleId 二选一，有它就不传 styleId。 */
   designSystemId?: string | null;
+  referenceSiteId?: string | null;
   /** 直接上传的文件（POST /api/v1/attachments 返回的 id），最多 5 个。 */
   attachmentIds?: string[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
-  const { styleId, designSystemId, attachmentIds, ...rest } = input;
+  const { styleId, designSystemId, referenceSiteId, attachmentIds, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
@@ -1973,7 +1976,7 @@ export async function createDesignArtifactRun(input: {
         storeId,
         contentHash,
       })),
-      ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
+      ...(referenceSiteId ? { referenceSiteId } : designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
   });

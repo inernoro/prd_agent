@@ -78,6 +78,10 @@ public sealed class DesignArtifactDesignDirection
 
     public string StyleDescription { get; set; } = string.Empty;
 
+    public string? ReferenceSiteId { get; set; }
+
+    public string? ReferenceSiteTitle { get; set; }
+
     public string ReviewMode { get; set; } = DesignReviewModes.Light;
 
     public string GeneratePrompt { get; set; } = string.Empty;

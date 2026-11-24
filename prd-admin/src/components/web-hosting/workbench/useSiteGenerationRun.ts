@@ -99,6 +99,7 @@ export interface GenerationRequest {
   sourceSurface: 'knowledge-base' | 'web-hosting';
   knowledge: KnowledgeEntrySelection[];
   styleId: string | null;
+  referenceSiteId?: string;
   /** 风格画廊「更多风格」里直接选的设计系统；有值时服务端不看 styleId。 */
   designSystemId?: string | null;
   attachmentIds: string[];
@@ -189,7 +190,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
     setCompletedSite({ id: siteId, durationSeconds });
     setFailedRun(null);
     setProgress(100);
-    setPhase('网页已生成并保存到网页托管，只有你能看到');
+    setPhase('网页已生成并保存到网页托管');
     setGenerating(false);
     setActiveRunId(null);
     setStopRequested(false);
@@ -425,6 +426,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
       destinationTeamId: destinationTeamIdRef.current ?? null,
       knowledgeReferences,
       styleId: request.styleId,
+      referenceSiteId: request.referenceSiteId,
       designSystemId: request.designSystemId ?? null,
       attachmentIds: request.attachmentIds,
     });

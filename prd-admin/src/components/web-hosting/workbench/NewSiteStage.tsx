@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Library, Palette, Upload } from 'lucide-react';
+import { ClipboardList, Library, PanelsTopLeft, Palette, Upload } from 'lucide-react';
 import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import { toast } from '@/lib/toast';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
@@ -43,6 +43,7 @@ import {
   type WorkbenchOutputForm,
 } from './outputForm';
 import { HtmlPptHandoffPanel } from './HtmlPptHandoffPanel';
+import { PersonalStyleDialog } from './PersonalStyleDialog';
 import { DESIGN_SYSTEM_KEY_PREFIX, StyleGallery, presetSelection, selectionStyleId, type StyleGallerySelection } from './StyleGallery';
 import { StyleThumbnail } from './StyleThumbnail';
 import {
@@ -81,6 +82,7 @@ export interface GenerationIntro {
 
 const MAX_KNOWLEDGE = 3;
 const DEFAULT_REQUEST = '把这些资料做成一个清晰好读、适合发给客户看的网页';
+const REFERENCE_EXAMPLE_REQUEST = '把知识库文章做成一页给团队阅读的指南。开头用一句话说明读者能解决什么问题，正文按原文梳理步骤和常见问题，保留关键术语、数字和出处。借鉴参考网页的配色、字体和版式，在手机上也要好读。';
 
 export default function NewSiteStage({
   source,
@@ -118,6 +120,9 @@ export default function NewSiteStage({
   const [timingState, setTimingState] = useState<TimingStatsState>('loading');
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
+  const [referenceSite, setReferenceSite] = useState<{ id: string; title: string } | null>(null);
+  const [referencePickerOpen, setReferencePickerOpen] = useState(false);
+  const [showReferenceExample, setShowReferenceExample] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [sheet, setSheet] = useState<'knowledge' | 'notes' | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
@@ -232,6 +237,7 @@ export default function NewSiteStage({
   const failedMaterials = [
     ...(failedRun?.knowledgeReferences ?? []).map((entry) => `知识库 · ${entry.title}`),
     ...(failedRun?.uploadedSources ?? []).map((file) => `文件 · ${file.fileName}`),
+    ...(failedRun?.referenceSiteTitle ? [`风格参考 · ${failedRun.referenceSiteTitle}`] : []),
   ];
   const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const requestTiming = pickGenerationTiming(timingStats, REQUIRED_WEB_PAGE_RUNTIME);
@@ -352,8 +358,9 @@ export default function NewSiteStage({
       entry.storeId ? [{ ...entry, storeId: entry.storeId, storeName: entry.storeName || '知识库' }] : []));
     uploads.reset();
     uploads.restoreReady(failedRun.uploadedSources ?? []);
-    const { styleId, designSystemId, styleName: savedStyleName } = failedRun;
-    if (designSystemId) {
+    const { styleId, designSystemId, styleName: savedStyleName, referenceSiteId, referenceSiteTitle } = failedRun;
+    setReferenceSite(referenceSiteId && referenceSiteTitle ? { id: referenceSiteId, title: referenceSiteTitle } : null);
+    if (!referenceSiteId && designSystemId) {
       const name = savedStyleName || '默认风格';
       if (!styleId || styleId.startsWith(DESIGN_SYSTEM_KEY_PREFIX)) {
         setStyleSelection({ kind: 'design-system', key: `${DESIGN_SYSTEM_KEY_PREFIX}${designSystemId}`, designSystemId, name });
@@ -387,8 +394,9 @@ export default function NewSiteStage({
     const chips = [
       ...selectedKnowledge.map((entry) => `知识库 · ${entry.title}`),
       ...uploads.items.filter((item) => item.status === 'ready').map((item) => `文件 · ${item.fileName}`),
+      ...(referenceSite ? [`风格参考 · ${referenceSite.title}`] : []),
     ];
-    setSent({ text, chips, runtimeLabel: runtimeCardTitle(requestRuntime), styleName: styleSelection?.name });
+    setSent({ text, chips, runtimeLabel: runtimeCardTitle(requestRuntime), styleName: referenceSite?.title ?? styleSelection?.name });
     setGalleryOpen(false);
     handedOffRef.current = false;
     void run.start({
@@ -397,6 +405,7 @@ export default function NewSiteStage({
       sourceSurface: source ? 'knowledge-base' : 'web-hosting',
       knowledge: selectedKnowledge,
       styleId: selectionStyleId(styleSelection),
+      referenceSiteId: referenceSite?.id,
       designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,
       attachmentIds: uploads.readyIds,
     });
@@ -416,7 +425,7 @@ export default function NewSiteStage({
     conversationEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [run.generating, steps.length, run.notice, sent]);
   const styleName = styleSelection?.name ?? '默认风格';
-  const canLoadOriginalInputs = !instruction && uploads.items.length === 0
+  const canLoadOriginalInputs = !instruction && uploads.items.length === 0 && !referenceSite
     && selectedKnowledge.length === (source ? 1 : 0)
     && (!source || selectedKnowledge[0]?.entryId === source.entryId);
   const retry = () => {
@@ -454,6 +463,20 @@ export default function NewSiteStage({
               {preset.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              if (!instruction.trim()) setInstruction(REFERENCE_EXAMPLE_REQUEST);
+              setShowReferenceExample(true);
+              setGalleryOpen(false);
+              setSheet('knowledge');
+              onPaneChange('preview');
+            }}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] text-token-secondary hover-bg-soft"
+            style={{ border: '1px solid var(--border-default)' }}
+          >
+            <PanelsTopLeft size={13} />知识库文章＋网页风格示例
+          </button>
         </div>
       )}
       {!sent && run.generating && (
@@ -536,7 +559,7 @@ export default function NewSiteStage({
         <>
           <OptionChip
             label={`风格：${styleName}，点开换一个`}
-            value={styleName}
+            value={referenceSite ? '换用其他风格' : styleName}
             pressed={galleryOpen}
             onClick={() => { setSheet(null); setGalleryOpen((current) => !current); onPaneChange('preview'); }}
             disabled={run.generating}
@@ -547,6 +570,15 @@ export default function NewSiteStage({
                 {selectedStyle.swatches.slice(0, 3).map((color) => <span key={color} className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />)}
               </span>
             )}
+          </OptionChip>
+          <OptionChip
+            label={referenceSite ? `更换参考网页：${referenceSite.title}` : '添加参考网页'}
+            value={referenceSite ? '更换参考网页' : '参考网页'}
+            pressed={referencePickerOpen}
+            onClick={() => { setSheet(null); setGalleryOpen(false); setReferencePickerOpen(true); }}
+            disabled={run.generating}
+          >
+            <PanelsTopLeft size={13} />
           </OptionChip>
         </>
       )}
@@ -563,7 +595,9 @@ export default function NewSiteStage({
         disabled={run.generating}
         plusItems={plusItems}
         showAddLabel
-        chips={materialChips}
+        chips={referenceSite && !isPpt ? [...materialChips, {
+          key: 'reference-site', label: referenceSite.title, status: '风格参考', onRemove: () => setReferenceSite(null),
+        }] : materialChips}
         options={options}
         sendLabel={run.generating
           ? '正在生成…'
@@ -573,7 +607,9 @@ export default function NewSiteStage({
         onSend={send}
         hint={isPpt
           ? '打开 PPT 智能体，要求只预填、不自动发送 · 约几分钟（经验值）'
-          : [etaHint, runtimeCopy ? runtimeCopy.continuity : '进度在对话里，成品出现在预览里'].filter(Boolean).join(' · ')}
+          : showReferenceExample && !referenceSite && selectedKnowledge.length > 0 && !run.generating
+            ? '接下来点「参考网页」，选择你想借鉴的风格。'
+            : [etaHint, runtimeCopy ? runtimeCopy.continuity : '进度在对话里，成品出现在预览里'].filter(Boolean).join(' · ')}
       />
       <input
         ref={fileInputRef}
@@ -617,6 +653,17 @@ export default function NewSiteStage({
           </div>
         </ComposerSheet>
       )}
+      {referencePickerOpen && (
+        <PersonalStyleDialog
+          open
+          mode={{ kind: 'reference', onSelect: (site) => {
+            setReferenceSite(site);
+            setReferencePickerOpen(false);
+            onPaneChange('chat');
+          } }}
+          onOpenChange={setReferencePickerOpen}
+        />
+      )}
     </>
   );
 
@@ -650,6 +697,9 @@ export default function NewSiteStage({
   } else if (showFailure) {
     previewTitle = '网页预览';
     previewNote = '这次没有可查看的预览';
+  } else if (referenceSite) {
+    previewTitle = '已选参考网页';
+    previewNote = referenceSite.title;
   }
 
   const preview = (
@@ -685,8 +735,8 @@ export default function NewSiteStage({
           <StyleGallery
             selectedId={styleSelection?.key ?? null}
             title={sampleTitle}
-            onSelect={(selection) => { setStyleSelection(selection); setGalleryOpen(false); }}
-            onClearSelection={() => setStyleSelection(null)}
+            onSelect={(selection) => { setReferenceSite(null); setStyleSelection(selection); setGalleryOpen(false); }}
+            onClearSelection={() => { setReferenceSite(null); setStyleSelection(null); }}
           />
         </div>
       ) : run.previewHtml ? (
@@ -702,6 +752,8 @@ export default function NewSiteStage({
         <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-token-muted">
           重试后，生成的页面会显示在这里。
         </div>
+      ) : referenceSite && !run.generating && !run.completedSite ? (
+        <PageSkeleton caption="生成时会提取参考网页的样式，并应用到本次添加的资料。" />
       ) : run.generating || run.completedSite || !styleSelection || styleSelection.kind === 'personal' ? (
         // 我的风格没有现成样张（样张来自设计系统，而它覆盖了配色与字体），只画它自己的色块，不拿骨架样张冒充。
         <PageSkeleton

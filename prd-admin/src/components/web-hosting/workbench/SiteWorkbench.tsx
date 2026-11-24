@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Settings2, Sparkles } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Settings2, Sparkles } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { toast } from '@/lib/toast';
 import { getSite, type HostedSite } from '@/services/real/webPages';
 import NewSiteStage, { type GenerationIntro, type WorkbenchSource } from './NewSiteStage';
 import SiteEditStage from './SiteEditStage';
@@ -25,6 +24,7 @@ export default function SiteWorkbench({
   onClose,
   onCreated,
   onSiteChanged,
+  onLocateSaved,
   onOpenSettings,
   onOpenShareSettings,
 }: {
@@ -37,6 +37,7 @@ export default function SiteWorkbench({
   onCreated?: (siteId: string) => void;
   /** 发布、换回等改变了线上版本：列表页同步这条网页。 */
   onSiteChanged?: (site: HostedSite) => void;
+  onLocateSaved: (siteId: string) => void;
   onOpenSettings?: () => void;
   onOpenShareSettings?: (site: HostedSite) => void;
 }) {
@@ -44,6 +45,8 @@ export default function SiteWorkbench({
   const [site, setSite] = useState<HostedSite | null>(target.kind === 'site' ? target.site : null);
   const [intro, setIntro] = useState<GenerationIntro | null>(null);
   const [loadingSite, setLoadingSite] = useState(false);
+  const [savedSiteId, setSavedSiteId] = useState<string | null>(null);
+  const [openingFailed, setOpeningFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   /** 每次打开换一把钥匙：两个阶段都重新挂载，上一轮的状态不会漏进这一轮。 */
   const [session, setSession] = useState(0);
@@ -58,32 +61,44 @@ export default function SiteWorkbench({
     setPane('chat');
     setIntro(null);
     setLoadingSite(false);
+    setSavedSiteId(null);
+    setOpeningFailed(false);
     setSite(target.kind === 'site' ? target.site : null);
     // 只在打开那一刻快照目标；打开期间列表刷新带来的新对象由 onSiteChanged 回写。
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleGenerated = useCallback((siteId: string, generatedIntro: GenerationIntro) => {
-    onCreated?.(siteId);
-    setIntro(generatedIntro);
+  const openSavedSite = useCallback((siteId: string) => {
+    setOpeningFailed(false);
     setLoadingSite(true);
     const requestedIn = sessionRef.current;
     void getSite(siteId).then((result) => {
       if (sessionRef.current !== requestedIn) return;
       setLoadingSite(false);
       if (!result.success) {
-        toast.error('网页已生成，但没能打开修改', result.error?.message || '关掉后在网页托管列表里点「帮我修改」');
+        setOpeningFailed(true);
         return;
       }
       setSite(result.data);
+    }).catch(() => {
+      if (sessionRef.current !== requestedIn) return;
+      setLoadingSite(false);
+      setOpeningFailed(true);
     });
-  }, [onCreated]);
+  }, []);
+
+  const handleGenerated = useCallback((siteId: string, generatedIntro: GenerationIntro) => {
+    setSavedSiteId(siteId);
+    setIntro(generatedIntro);
+    onCreated?.(siteId);
+    openSavedSite(siteId);
+  }, [onCreated, openSavedSite]);
 
   const handleSiteChanged = useCallback((updated: HostedSite) => {
     setSite(updated);
     onSiteChanged?.(updated);
   }, [onSiteChanged]);
 
-  const title = site ? site.title : '生成网页';
+  const title = site?.title ?? (savedSiteId ? '网页已生成' : '生成网页');
   const subtitle = site
     ? busy ? '正在修改 · 线上不变' : '说想改哪里，先出草稿再发布'
     : busy ? '正在生成 · 可以关掉窗口，回来接着看' : '用知识、文件或纪要生成网页';
@@ -129,31 +144,51 @@ export default function SiteWorkbench({
         maxHeight: 'calc(100dvh - 16px)',
       }}
       content={(
-        <div data-testid="site-workbench" className="h-full min-h-0" style={{ minHeight: 0 }}>
-          {site ? (
-            <SiteEditStage
-              key={`${session}-${site.id}`}
-              site={site}
-              intro={intro}
-              pane={pane}
-              onPaneChange={setPane}
-              onSiteChanged={handleSiteChanged}
-              onOpenShareSettings={onOpenShareSettings}
-              onBusyChange={setBusy}
-            />
-          ) : loadingSite ? (
-            <MapSectionLoader text="网页已生成，正在打开" />
-          ) : target.kind === 'new' ? (
-            <NewSiteStage
-              key={session}
-              source={target.source}
-              destinationTeamId={destinationTeamId}
-              pane={pane}
-              onPaneChange={setPane}
-              onGenerated={handleGenerated}
-              onBusyChange={setBusy}
-            />
-          ) : null}
+        <div data-testid="site-workbench" className="flex h-full min-h-0 flex-col" style={{ minHeight: 0 }}>
+          {savedSiteId && (
+            <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg px-3 py-2" style={{ background: 'var(--bg-secondary)' }}>
+              <p role="status" className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
+                <CheckCircle2 size={16} style={{ color: 'var(--accent-primary)' }} aria-hidden />
+                已保存到网页托管
+              </p>
+              <button type="button" onClick={() => onLocateSaved(savedSiteId)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 text-[12px] font-semibold" style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}>
+                在网页托管中查看 <ExternalLink size={13} aria-hidden />
+              </button>
+            </div>
+          )}
+          <div className="min-h-0 flex-1">
+            {site ? (
+              <SiteEditStage
+                key={`${session}-${site.id}`}
+                site={site}
+                intro={intro}
+                pane={pane}
+                onPaneChange={setPane}
+                onSiteChanged={handleSiteChanged}
+                onOpenShareSettings={onOpenShareSettings}
+                onBusyChange={setBusy}
+              />
+            ) : loadingSite ? (
+              <MapSectionLoader text="网页已生成，正在打开" />
+            ) : savedSiteId && openingFailed ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+                <p role="alert" className="text-[13px] text-token-secondary">已保存的网页暂时打不开。可以重试打开预览，或到网页托管查看。</p>
+                <button type="button" onClick={() => openSavedSite(savedSiteId)} className="min-h-9 rounded-lg px-3 text-[13px] font-semibold hover-bg-soft" style={{ border: '1px solid var(--border-default)' }}>
+                  重试打开预览
+                </button>
+              </div>
+            ) : target.kind === 'new' ? (
+              <NewSiteStage
+                key={session}
+                source={target.source}
+                destinationTeamId={destinationTeamId}
+                pane={pane}
+                onPaneChange={setPane}
+                onGenerated={handleGenerated}
+                onBusyChange={setBusy}
+              />
+            ) : null}
+          </div>
         </div>
       )}
     />

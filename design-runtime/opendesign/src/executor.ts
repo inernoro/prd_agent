@@ -116,7 +116,7 @@ function preparePresentationRepairCandidate(workspaceDir: string): string | unde
  * 并在 run 状态的 `deliverableEntryFile` 里指名它；而收件一直写死读 `/workspace/index.html`。
  * 判据用它自己给的那个字段，不去猜「根目录下那个不叫 index 的 html」。
  */
-const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
+const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.html$/;
 
 // 十五分钟是产品总承诺，不是每个 OpenDesign run 各自可用的预算。最后 10% 固定留给
 // 浏览器观察取证与向 MAP 提交；终审或定向修复等单轮模型质量工作最多占 1/15，且至少要有
@@ -461,6 +461,17 @@ export class DesignTaskExecutor {
     const editingExistingPage = fs.existsSync(currentIndexPath);
     // MAP 只验证隔离交付与完整包；正文、事实和设计由原生技能自查，不触发平台修复轮。
     const checkArtifactQuality = createArtifactQualityGate('', [], '', false);
+    const checkPageEntry = (files: WorkspacePackageFile[], outcome: OpenDesignRunOutcome): string => {
+      const index = files.find((file) => file.path === 'index.html');
+      if (!index) throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
+      const outputHtml = Buffer.from(index.contentBase64, 'base64');
+      const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+      if (!outcome.deliverableValid
+          && !canAcceptUntrackedWorkspaceEdit(outcome.deliverableValidation, currentHtml, outputHtml)) {
+        throw new AgentWorkspaceRuntimeError('open_design_deliverable_invalid', outcome.deliverableValidation || 'OpenDesign rejected its final deliverable');
+      }
+      return checkArtifactQuality(outputHtml.toString('utf8'), files.map((file) => file.path));
+    };
     let activeRunId: string | undefined;
     let previewPusher: PreviewPusher | undefined;
     const browserEvidenceDir = path.join(
@@ -549,12 +560,25 @@ export class DesignTaskExecutor {
       for (let reviewPass = 0; reviewPass < reviewPasses; reviewPass += 1) {
         const stableRunId = finalRunId;
         const stableOutcome = runOutcome;
-        const stableDeliverableEntryFile = deliverableEntryFile;
-        this.promoteDeliverableEntry(stableDeliverableEntryFile, (stage, detail) => {
+        this.promoteDeliverableEntry(deliverableEntryFile, prepared, transfer.maxPublicOutputBytes, (stage, detail) => {
           onStage(stage === 'deliverable_entry_resolved' ? 'deliverable_entry_checkpointed' : stage, detail);
         });
+        // The reviewer edits index.html. Re-promote only a new explicit entry;
+        // the previous alias may still exist with the unreviewed content.
+        deliverableEntryFile = 'index.html';
         this.exportOutputs(transfer, prepared);
         const stableOutputs = this.collectOutputs(transfer);
+        let hasSafePage = false;
+        if (!isPresentation && !editingExistingPage) {
+          try {
+            checkPageEntry(stableOutputs, stableOutcome);
+            validatePublicArtifactFiles(stableOutputs, true);
+            hasSafePage = true;
+          } catch (error) {
+            if (!(error instanceof AgentWorkspaceRuntimeError)) throw error;
+            // The review may still repair an incomplete first draft.
+          }
+        }
         const remainingReviewMs = budget.finalizationDeadline - Date.now();
         const allottedReviewMs = Math.min(budget.maximumQualityPassMs, remainingReviewMs);
         if (allottedReviewMs < budget.minimumQualityPassMs) {
@@ -586,6 +610,7 @@ export class DesignTaskExecutor {
           throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
         }
         activeRunId = finalRunId;
+        const reviewRunId = finalRunId;
         onStage('open_design_reviewing', {
           runId: finalRunId,
           pass: reviewPass + 1,
@@ -594,28 +619,41 @@ export class DesignTaskExecutor {
         try {
           runOutcome = await client.waitForRun(finalRunId, reviewDeadline, signal, onStage, previewPusher.poll);
           deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+          if (hasSafePage) {
+            this.promoteDeliverableEntry(deliverableEntryFile, prepared, transfer.maxPublicOutputBytes, onStage);
+            this.exportOutputs(transfer, prepared);
+            const reviewedFiles = this.collectOutputs(transfer);
+            checkPageEntry(reviewedFiles, runOutcome);
+            validatePublicArtifactFiles(reviewedFiles, true);
+            deliverableEntryFile = 'index.html';
+          }
         } catch (error) {
-          const reviewBudgetExpired = error instanceof AgentWorkspaceRuntimeError
-            && error.code === 'open_design_run_timeout'
-            && !signal.aborted
-            && Date.now() < executionDeadline;
-          if (!reviewBudgetExpired) throw error;
+          if (!(error instanceof AgentWorkspaceRuntimeError) || signal.aborted || Date.now() >= executionDeadline) throw error;
+          const reviewBudgetExpired = error.code === 'open_design_run_timeout';
+          const reviewFailed = hasSafePage && (error.code === 'open_design_run_failed'
+            || error.code === 'workspace_output_validation_failed'
+            || error.code.startsWith('design_output_')
+            || error.code.startsWith('open_design_deliverable_'));
+          if (!reviewBudgetExpired && !reviewFailed) throw error;
           this.restoreOutputCheckpoint(transfer, stableOutputs);
           finalRunId = stableRunId;
           runOutcome = stableOutcome;
-          deliverableEntryFile = stableDeliverableEntryFile;
-          onStage('open_design_review_budget_exhausted', {
+          deliverableEntryFile = 'index.html';
+          activeRunId = undefined;
+          onStage(reviewBudgetExpired ? 'open_design_review_budget_exhausted' : 'open_design_review_checkpoint_restored', {
             completedPasses: reviewPass,
             skippedPasses: reviewPasses - reviewPass,
             allottedSeconds: Math.floor(allottedReviewMs / 1000),
             retainedRunId: stableRunId,
+            reviewRunId,
+            reasonCode: error.code,
           });
           break;
         }
       }
       onStage('workspace_collecting');
       assertExecutionDeadline(executionDeadline);
-      this.promoteDeliverableEntry(deliverableEntryFile, onStage);
+      this.promoteDeliverableEntry(deliverableEntryFile, prepared, transfer.maxPublicOutputBytes, onStage);
       this.exportOutputs(transfer, prepared);
       let collectedFiles = this.collectOutputs(transfer);
       const indexFile = collectedFiles.find((file) => file.path === 'index.html');
@@ -627,13 +665,7 @@ export class DesignTaskExecutor {
           runTranscriptDigest: await client.captureRunTranscriptDigest([runId, finalRunId], () => remainingExecutionMs(executionDeadline)),
         });
       }
-      const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
-      const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
-      if (!runOutcome.deliverableValid
-          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)) {
-        throw new AgentWorkspaceRuntimeError('open_design_deliverable_invalid', runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable');
-      }
-      const hardenedHtml = checkArtifactQuality(outputHtml.toString('utf8'), collectedFiles.map((file) => file.path));
+      const hardenedHtml = checkPageEntry(collectedFiles, runOutcome);
       // 浏览器只提供可追溯观察，分数和布局发现不得触发额外模型调用或阻断安全成品。
       fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
       fs.mkdirSync(browserEvidenceDir, { recursive: true, mode: 0o700 });
@@ -805,11 +837,15 @@ export class DesignTaskExecutor {
    * 指名了却搬不动才算故障：文件不在、不是 HTML 文档、或路径形状不对，一律当场失败，
    * 不许把种子当成产物交出去（`predicate-and-wiring-discipline.md` 形状 10）。
    *
-   * 与原实现相比多了一道判据：路径必须规范（不含 `..`）、真实路径必须仍在工作区里、
-   * 读取不跟随符号链接。原来这一步在引擎容器里执行，读不到本服务；现在同处一个容器，
-   * 一个被指成 `../../proc/1/environ` 的「交付文件」不能被搬进页面。
+   * 只移动根目录下的 HTML，保证相对资源路径不变。移动后不留重复的入口文件，
+   * 其他文件照常走产物白名单和冻结输入校验。
    */
-  private promoteDeliverableEntry(entryFile: string | undefined, onStage: StageReporter): void {
+  private promoteDeliverableEntry(
+    entryFile: string | undefined,
+    prepared: PreparedWorkspace,
+    maxBytes: number,
+    onStage: StageReporter,
+  ): void {
     if (!entryFile || entryFile === 'index.html') {
       onStage('deliverable_entry_resolved', { entryFile: entryFile || null, promoted: false });
       return;
@@ -820,26 +856,26 @@ export class DesignTaskExecutor {
     } catch {
       normalized = '';
     }
-    if (!DELIVERABLE_ENTRY_PATH.test(entryFile) || normalized !== entryFile) {
+    if (!DELIVERABLE_ENTRY_PATH.test(entryFile) || normalized !== entryFile
+        || prepared.inputFiles.some((file) => file.path === entryFile)) {
       throw new AgentWorkspaceRuntimeError(
         'open_design_deliverable_entry_invalid',
-        'OpenDesign named a deliverable entry file that is not a workspace-relative .html path',
+        'OpenDesign must name a new HTML file in the workspace root as its deliverable',
         false,
         { stage: 'deliverable_entry', entryFile },
       );
     }
     const workspaceDir = this.options.paths.workspaceDir;
-    let html: string;
+    let bytes: Buffer;
     try {
       const from = path.join(workspaceDir, ...entryFile.split('/'));
       const realRoot = fs.realpathSync(workspaceDir);
       const realFrom = fs.realpathSync(from);
       if (!realFrom.startsWith(`${realRoot}${path.sep}`)) throw new Error('deliverable entry resolves outside the workspace');
-      html = readRegularFileNoFollow(from).toString('utf8');
-      if (!/<html[\s>]/i.test(html)) throw new Error(`deliverable entry is not an HTML document: ${entryFile}`);
+      bytes = readRegularFileNoFollow(from, maxBytes);
+      if (!/<html[\s>]/i.test(bytes.toString('utf8'))) throw new Error(`deliverable entry is not an HTML document: ${entryFile}`);
       const target = path.join(workspaceDir, 'index.html');
-      if (fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink()) fs.unlinkSync(target);
-      fs.writeFileSync(target, html);
+      fs.renameSync(from, target);
       this.chownForEngine(target);
     } catch (error) {
       throw new AgentWorkspaceRuntimeError(
@@ -856,7 +892,7 @@ export class DesignTaskExecutor {
     onStage('deliverable_entry_resolved', {
       entryFile,
       promoted: true,
-      bytes: html.length,
+      bytes: bytes.length,
     });
   }
 

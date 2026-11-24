@@ -231,6 +231,26 @@ public sealed class PersonalDesignStyleTests
 
     // ───────────────────────── 确定性提取 ─────────────────────────
 
+    [Fact]
+    public void 参考网页只冻结本次运行的外观与来源()
+    {
+        var settings = DesignGenerationSettingsService.Effective(null, Catalog);
+        var draft = new PersonalStyleDraft(
+            "技术刊物风格", "正文约 16px", ["#1f2328", "#f7f5f0", "#c2410c"], ["Georgia"],
+            Catalog.All.First().Id, "设计系统", "依据色彩选择", [], "站内 CSS", "owned-site", "技术刊物", null, []);
+
+        var direction = DesignGenerationSettingsService.FreezeReferenceSite(settings, Catalog, draft);
+
+        Assert.Equal("reference-site:owned-site", direction.StyleId);
+        Assert.Equal("reference-site", direction.BrandSource);
+        Assert.Equal("owned-site", direction.ReferenceSiteId);
+        Assert.Equal("技术刊物", direction.ReferenceSiteTitle);
+        Assert.Equal(draft.Swatches, direction.BrandColors);
+        Assert.Equal(draft.Fonts, direction.BrandFonts);
+        Assert.Contains("页面标题、正文、数字、链接和品牌身份来自本次资料和用户要求", direction.GeneratePrompt);
+        Assert.Contains("正文约 16px", direction.GeneratePrompt);
+    }
+
     private const string SampleHtml = """
 <!doctype html><html><head>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600&amp;family=Inter:wght@400">

@@ -2311,6 +2311,13 @@ public sealed class DesignArtifactLifecycleServiceTests
             Error = interrupted ? HostedSiteEditRunWorker.RestartInterruptedMessage : "设计服务在整理页面产物时出错",
             Instruction = "生成产品发布页", Title = "产品发布页",
             DeploymentSlug = DeploymentScope.Current,
+            DesignDirection = new DesignArtifactDesignDirection
+            {
+                StyleId = "reference-site:owned-reference",
+                ReferenceSiteId = "owned-reference",
+                ReferenceSiteTitle = "参考刊物",
+                GeneratePrompt = "冻结的参考网页样式",
+            },
             UploadedSources =
             [
                 new DesignUploadedSource { AttachmentId = "old-upload", FileName = "产品发布.md", Content = "冻结的资料正文" },
@@ -2387,6 +2394,7 @@ public sealed class DesignArtifactLifecycleServiceTests
         var discovered = Assert.IsType<OkObjectResult>(await controller.GetActiveRun(
             DesignArtifactOperations.Generate, includeLatestFailed: true));
         Assert.Equal(source.Instruction, Data(discovered).GetProperty("retryInstruction").GetString());
+        Assert.Equal("参考刊物", Data(discovered).GetProperty("referenceSiteTitle").GetString());
         var upload = Data(discovered).GetProperty("uploadedSources")[0];
         Assert.Equal("产品发布.md", upload.GetProperty("fileName").GetString());
         Assert.False(upload.TryGetProperty("content", out _));
@@ -2402,6 +2410,8 @@ public sealed class DesignArtifactLifecycleServiceTests
         var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
         Assert.Equal(source.Id, restarted.RestartedFromRunId);
         Assert.Equal(source.Instruction, restarted.Instruction);
+        Assert.Equal("owned-reference", restarted.DesignDirection?.ReferenceSiteId);
+        Assert.Equal("冻结的参考网页样式", restarted.DesignDirection?.GeneratePrompt);
         Assert.Equal("冻结的资料正文", Assert.Single(restarted.UploadedSources!).Content);
         Assert.Null(restarted.LatestPreviewHtml);
         Assert.Equal(source.DesignBrief.Fingerprint, restarted.DesignBrief?.Fingerprint);

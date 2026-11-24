@@ -249,7 +249,7 @@ export default function SiteEditStage({
               </p>
               <p className="text-[12px] text-token-secondary">
                 {showIntro
-                  ? `${intro.runtimeLabel}${intro.styleName ? ` · 风格：${intro.styleName}` : ''}。已存进网页托管，只有你能看到；满意就点右上角「发布给客户」，不满意直接说想改哪里。`
+                  ? `${intro.runtimeLabel}${intro.styleName ? ` · 风格：${intro.styleName}` : ''}。可以直接说想改哪里，或点「发布给客户」创建分享链接。`
                   : `${outcome.text}。${revision.source === 'ai-edit' ? revisionChangeSummary(revision, null) : ''}`}
               </p>
               <p className="mt-0.5 text-[11px] text-token-muted">{formatRevisionTime(revision.publishedAt || revision.createdAt)}</p>
@@ -388,16 +388,17 @@ export default function SiteEditStage({
 
   const draftId = pendingDraft?.id ?? null;
   const pickingKnowledge = sheet === 'knowledge' && !generating;
+  const currentVersionLabel = intro && site.visibility !== 'public' && !shareLink ? '已保存版' : '线上版';
   const previewTitle = generating
     ? '正在修改'
-    : view === 'draft' ? '草稿' : previewedRevision && !previewedRevision.isCurrent ? revisionLabel(previewedRevision) : '线上版';
+    : view === 'draft' ? '草稿' : previewedRevision && !previewedRevision.isCurrent ? revisionLabel(previewedRevision) : currentVersionLabel;
   const previewNote = generating
-    ? '线上版本不变，客户看到的还是原来那版'
+    ? shareLink ? '客户仍会看到原来那版' : '修改完成后会生成一份草稿'
     : view === 'draft'
       ? '只有你能看到；发布后客户打开同一个链接就是这一版'
       : shareLink ? '客户打开分享链接看到的就是这一版' : '已存进网页托管，还没有发给客户';
   const nextHint = generating
-    ? '修改写好一段就显示一段；做好后这里可以在「线上版」「草稿」之间切换对比。'
+    ? `修改写好一段就显示一段。做好后可在「${currentVersionLabel}」和「草稿」之间切换。`
     : view === 'draft'
       ? '满意就点「发布这版」，旧版留在对话里可随时换回；不满意继续在对话里说，或点「放弃草稿」。'
       : draftId
@@ -408,13 +409,13 @@ export default function SiteEditStage({
 
   const toolbar = draftId && !generating ? (
     <Segmented
-      label="对比线上版与草稿"
+      label={`对比${currentVersionLabel}与草稿`}
       value={view}
       onChange={(next) => {
         const target = next === 'draft' ? draftId : liveRevision?.id;
         if (target) void openRevision(target);
       }}
-      options={[{ value: 'live', label: '线上版' }, { value: 'draft', label: '草稿' }]}
+      options={[{ value: 'live', label: currentVersionLabel }, { value: 'draft', label: '草稿' }]}
     />
   ) : null;
 

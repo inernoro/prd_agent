@@ -88,6 +88,8 @@ const GENERATION_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   design_output_too_large: '生成的网页文件超出大小限制。可以减少资料或缩小要求后再生成。',
   workspace_commit_invalid_response: '设计结果未能保存到网页托管。请稍后重试。',
   RUNTIME_NOT_READY: '设计服务暂时不可用，请稍后重试。',
+  REFERENCE_STYLE_UNAVAILABLE: '暂时无法读取网页样式。请稍后重试或选择另一种风格。',
+  REFERENCE_SITE_STYLE_UNAVAILABLE: '无法提取这张网页的样式。请在「参考网页」里换一张你创建的 HTML 网页。',
   PERMISSION_DENIED: '当前账号没有权限使用这份资料或目标空间，请检查权限后再试。',
   KNOWLEDGE_SOURCE_CHANGED: '知识库资料在上次生成后有了更新。请载入资料和要求后重新生成。',
   DESIGN_ARTIFACT_NOT_RESTARTABLE: '这条任务无法用原资料重试。请检查资料和要求后重新生成。',
