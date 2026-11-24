@@ -27,6 +27,8 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "SECURITY.md",
     "cds-compose.yml",
+    # 主备 CDS 公共站点目录，供技能与控制台读取，不含凭据。
+    "cds-instances.json",
     "docker-compose.dev.yml",
     "docker-compose.local.yml",
     "docker-compose.yml",
@@ -104,7 +106,7 @@ def main() -> int:
             )
         elif entry.is_file() and entry.name not in ALLOWED_ROOT_FILES:
             failures.append(
-                f"unapproved root file {entry.name!r}; place it in its owning module or update the root contract"
+                f"unapproved root file {entry.name!r}; place documents under doc/ and supporting files in their owning module"
             )
         elif entry.is_dir() and entry.name in FORBIDDEN_ROOT_DIRECTORIES:
             failures.append(
@@ -112,7 +114,7 @@ def main() -> int:
             )
         elif entry.is_dir() and entry.name not in ALLOWED_ROOT_DIRECTORIES:
             failures.append(
-                f"unapproved root directory {entry.name!r}; place it in its owning module or update the root contract"
+                f"unapproved root directory {entry.name!r}; place supporting material in its owning module"
             )
 
     if failures:

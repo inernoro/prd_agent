@@ -62,6 +62,7 @@ export function ToolboxPageShell({
   controls,
   children,
   contentClassName,
+  className,
 }: {
   pageTab: ToolboxPageTab;
   onPageTabChange: (key: ToolboxPageTab) => void;
@@ -69,9 +70,10 @@ export function ToolboxPageShell({
   controls?: ReactNode;
   children: ReactNode;
   contentClassName?: string;
+  className?: string;
 }) {
   return (
-    <div className="toolbox-page h-full min-h-0 flex flex-col">
+    <div className={cn("toolbox-page h-full min-h-0 flex flex-col", className)}>
       <TabBar
         items={TOOLBOX_PAGE_TABS}
         activeKey={pageTab}

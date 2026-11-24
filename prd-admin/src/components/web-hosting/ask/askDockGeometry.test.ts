@@ -24,7 +24,7 @@ describe('提问坞几何', () => {
   });
 
   it('对话栏不会宽过视口；手机端整屏接管', () => {
-    expect(askDockGeometry('chat', desktop).width).toBe(400);
+    expect(askDockGeometry('chat', desktop).width).toBe(480);
     expect(askDockGeometry('chat', phone)).toMatchObject({ width: 375, height: 812, right: 0, radius: '0px' });
     const chatNarrow = askDockGeometry('chat', { ...desktop, width: 420 });
     expect(chatNarrow.width).toBeLessThanOrEqual(420);

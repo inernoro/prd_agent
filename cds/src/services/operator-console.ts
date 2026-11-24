@@ -36,8 +36,10 @@ export interface OperatorOpDef {
   confirmText?: string;
   /** 估时秒数,UI 显示进度提示 */
   estimatedSeconds?: number;
+  /** 服务端解析并固定审批目标；不得信任调用方携带的目标快照。 */
+  prepareArgs?: (args?: Record<string, unknown>) => Promise<Record<string, unknown>>;
   /** 执行函数;throw 视为失败 */
-  run: (ctx: OperatorOpContext) => Promise<{ summary: string; details?: Record<string, unknown> }>;
+  run: (ctx: OperatorOpContext, args?: Record<string, unknown>) => Promise<{ summary: string; details?: Record<string, unknown> }>;
 }
 
 class OperatorOpRegistry {
@@ -55,8 +57,8 @@ class OperatorOpRegistry {
     return this.ops.get(id);
   }
 
-  list(): Array<Omit<OperatorOpDef, 'run'>> {
-    return [...this.ops.values()].map(({ run: _r, ...rest }) => rest);
+  list(): Array<Omit<OperatorOpDef, 'run' | 'prepareArgs'>> {
+    return [...this.ops.values()].map(({ run: _r, prepareArgs: _p, ...rest }) => rest);
   }
 }
 

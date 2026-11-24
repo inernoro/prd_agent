@@ -905,7 +905,7 @@ a:focus-visible {
 .lg-tenant-switcher,
 .lg-header-actions,
 .lg-header-link,
-.lg-user-menu summary,
+.lg-user-menu > summary,
 .lg-card-kicker,
 .lg-text-link,
 .lg-secondary-link,
@@ -1119,7 +1119,7 @@ a:focus-visible {
 }
 
 .lg-header-link,
-.lg-user-menu summary {
+.lg-user-menu > summary {
   height: 34px;
   gap: 7px;
   padding: 0 9px;
@@ -1131,7 +1131,7 @@ a:focus-visible {
 }
 
 .lg-header-link:hover,
-.lg-user-menu summary:hover {
+.lg-user-menu > summary:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
@@ -1140,15 +1140,15 @@ a:focus-visible {
   position: relative;
 }
 
-.lg-user-menu summary {
+.lg-user-menu > summary {
   list-style: none;
 }
 
-.lg-user-menu summary::-webkit-details-marker {
+.lg-user-menu > summary::-webkit-details-marker {
   display: none;
 }
 
-.lg-user-menu summary > span {
+.lg-user-menu > summary > span {
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -6782,7 +6782,7 @@ a:focus-visible {
 }
 
 .lg-app-caller-table-wrap {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -6902,14 +6902,14 @@ a:focus-visible {
 }
 
 .lg-app-caller-identity code {
-  max-width: 340px;
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: var(--fs-body);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--fs-secondary);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
+.lg-app-caller-identity > strong { font-size: var(--fs-body); font-weight: 600; overflow-wrap: anywhere; }
 
 .lg-app-caller-identity span,
 .lg-app-caller-stack span,
@@ -6957,9 +6957,13 @@ a:focus-visible {
 .lg-app-caller-row-actions {
   gap: 8px;
   white-space: nowrap;
+  flex-wrap: wrap;
 }
 
 .lg-app-caller-row-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   color: var(--text-secondary);
   font-size: var(--fs-secondary);
   font-weight: 500;
@@ -7978,11 +7982,16 @@ a:focus-visible {
     z-index: 50;
     transform: translateX(-102%);
     transition: transform 180ms ease;
-    box-shadow: 24px 0 60px rgba(0, 0, 0, 0.35);
+    visibility: hidden;
+    pointer-events: none;
+    box-shadow: none;
   }
 
   .lg-console-sidebar.is-open {
     transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    box-shadow: 24px 0 60px rgba(0, 0, 0, 0.35);
   }
 
   .lg-sidebar-backdrop {
@@ -8033,13 +8042,13 @@ a:focus-visible {
   }
 
   .lg-header-link span,
-  .lg-user-menu summary strong,
-  .lg-user-menu summary > svg {
+  .lg-user-menu > summary strong,
+  .lg-user-menu > summary > svg {
     display: none;
   }
 
   .lg-header-link,
-  .lg-user-menu summary {
+  .lg-user-menu > summary {
     min-width: 44px;
     min-height: 44px;
     justify-content: center;
@@ -9060,3 +9069,103 @@ a:focus-visible {
 .lg-row-actions-item.is-danger:hover:not(:disabled) {
   background: var(--err-bg);
 }
+
+/* Existing low-frequency controls share the current toolbar instead of preceding every data row. */
+.lg-upstream-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lg-upstream-navigation > :first-child { flex: 1; min-width: 0; }
+.lg-upstream-global-control, .lg-provider-bulk-control { position: relative; flex-shrink: 0; font-size: var(--fs-secondary); color: var(--text-secondary); }
+.lg-upstream-global-control > summary, .lg-provider-bulk-control > summary { cursor: pointer; min-height: 36px; align-content: center; white-space: nowrap; }
+.lg-upstream-global-panel, .lg-provider-bulk-panel { position: fixed; top: var(--toolbar-popover-top, 160px); right: var(--toolbar-popover-right, 16px); width: min(640px, calc(100vw - 48px)); max-height: min(65vh, calc(100vh - var(--toolbar-popover-top, 160px) - 16px)); overflow: auto; z-index: 25; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); box-shadow: var(--shadow-card); }
+.lg-provider-bulk-panel { display: flex; flex-wrap: wrap; gap: 12px; }
+.lg-provider-bulk-panel input[type="password"] { flex: 1 1 100%; }
+.lg-qs-step-card > button.lg-text-link { border: 0; background: transparent; color: var(--accent); padding: 8px 0; min-height: 36px; font-size: var(--fs-secondary); cursor: pointer; text-align: left; }
+@media (max-width: 680px) { .lg-upstream-navigation { gap: 4px; } .lg-upstream-global-panel, .lg-provider-bulk-panel { left: 16px; right: 16px; width: auto; } }
+@media (max-width: 680px) {
+  .lg-upstream-navigation > :first-child { flex-basis: 100%; width: 100%; }
+  .lg-upstream-global-control { margin-left: auto; }
+  .lg-collection-scroll .lg-collection-provider-table { display: block; min-width: 0; width: 100%; }
+  .lg-collection-provider-table colgroup { display: none; }
+  .lg-collection-provider-table thead { position: absolute !important; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
+  .lg-collection-provider-table tbody { display: block; width: 100%; }
+  .lg-collection-provider-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--border-subtle); }
+  .lg-collection-provider-row:last-child { border-bottom: 0; }
+  .lg-collection-provider-table .lg-collection-provider-row td { display: block; min-width: 0; height: auto; border-bottom: 0; padding: 12px !important; }
+  .lg-collection-provider-row td:nth-child(2)::before { content: '已接入模型'; }
+  .lg-collection-provider-row td:nth-child(3)::before { content: '密钥 / 来源'; }
+  .lg-collection-provider-row td:nth-child(4)::before { content: '最近真实调用'; }
+  .lg-collection-provider-row td:nth-child(2)::before,
+  .lg-collection-provider-row td:nth-child(3)::before,
+  .lg-collection-provider-row td:nth-child(4)::before { display: block; color: var(--text-muted); font-size: var(--fs-secondary); margin-bottom: 6px; }
+  .lg-collection-provider-row td:last-child { grid-column: 1 / -1; }
+  .lg-collection-provider-table .lg-collection-provider-row td:last-child button { min-height: 40px; }
+  .lg-collection-provider-row td:first-child > div > span { white-space: normal; overflow: visible; }
+  .lg-collection-provider-table tbody > tr:not(.lg-collection-provider-row), .lg-collection-provider-table tbody > tr:not(.lg-collection-provider-row) > td { display: block; width: 100%; }
+}
+
+@media (max-width: 680px) {
+  .lg-collection-owned-table td:last-child button { white-space: normal !important; overflow-wrap: anywhere; min-height: 36px; max-width: 100%; }
+  .lg-collection-owned-table td { font-size: var(--fs-secondary); }
+  .lg-collection-owned-table strong { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+}
+.lg-qs-single-team { min-height: 44px; display: flex; align-items: center; color: var(--text-primary); font-size: var(--fs-body); }
+
+/* Log-to-caller task: identity and recent evidence first; governance facts stay in one place. */
+.lg-entity-detail-app-task .lg-entity-detail-brand { display: none; }
+.lg-entity-detail-app-task .lg-entity-detail-hero { gap: 16px; }
+.lg-entity-detail-app-task .lg-entity-detail-heading code { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.lg-entity-detail-app-task .lg-entity-detail-layout { display: block; margin-top: 18px; }
+.lg-entity-detail-app-task .lg-entity-detail-description { margin-top: 10px; margin-bottom: 0; }
+.lg-entity-detail-app-observation { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-top: 14px; }
+.lg-entity-detail-app-observation .lg-entity-detail-status { margin: 0; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics { display: flex; flex-wrap: wrap; gap: 10px 24px; margin: 0; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics article { min-height: 0; padding: 0; border: 0; background: none; align-items: center; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics article > span { display: none; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics article > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics small { margin: 0; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics strong { font-size: var(--fs-body); line-height: 1.5; }
+.lg-entity-detail-app-observation .lg-entity-detail-metrics p { margin: 0; font-size: var(--fs-secondary); }
+
+/* The deterministic setup form has simple field groups rather than AI draft stages. */
+.lg-qs-form-card { gap: 20px; }
+.lg-qs-form-card .lg-qs-single-team { padding: 0; min-height: 0; }
+.lg-qs-form-card .lg-qs-own-col { gap: 8px; }
+.lg-qs-form-card .lg-qs-create-footer { padding-top: 16px; gap: 12px; }
+
+.lg-entity-detail-app-task .lg-entity-detail-hero { grid-template-columns: minmax(0, 1fr) auto; }
+@media (max-width: 700px) {
+  .lg-entity-detail-app-task .lg-entity-detail-hero { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Upstream model maintenance: keep one complete object and its action together on narrow screens. */
+@media (max-width: 860px) {
+  .lg-config-table-shell > table.lg-upstream-model-table { min-width: 0; }
+  .lg-upstream-model-table thead { display: none; }
+  .lg-upstream-model-table tbody { display: block; }
+  .lg-upstream-model-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px; gap: 12px; border-bottom: 1px solid var(--border-subtle); }
+  .lg-upstream-model-row:last-child { border-bottom: 0; }
+  .lg-upstream-model-row > td { display: block; min-width: 0; padding: 0 !important; border: 0 !important; white-space: normal !important; overflow-wrap: anywhere; }
+  .lg-upstream-model-row > td::before { content: attr(data-label); display: block; margin-bottom: 4px; color: var(--text-muted); font-size: var(--fs-secondary); }
+  .lg-upstream-model-row > td:last-child { grid-column: 1 / -1; }
+  .lg-upstream-model-row > td:last-child > span { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+  .lg-upstream-model-row button { min-height: 44px; white-space: nowrap; }
+}
+
+@media (max-width: 860px) {
+  .lg-upstream-model-row > td { background: transparent !important; }
+  .lg-upstream-model-row > td:first-child::before,
+  .lg-upstream-model-row > td:last-child::before { display: none; }
+}
+
+.lg-upstream-reference-table:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .lg-upstream-reference-table th:first-child,
+  .lg-upstream-reference-table td:first-child { position: sticky; left: 0; width: 200px; min-width: 200px; max-width: 200px; background: var(--bg-surface); }
+  .lg-upstream-reference-table th:first-child { z-index: 2; }
+  .lg-upstream-reference-table td:first-child { z-index: 1; }
+  .lg-upstream-reference-table td:first-child code { white-space: normal; overflow-wrap: anywhere; }
+}
+
+/* Global and bulk maintenance follow Provider data, preserving the per-row connection facts. */
+.lg-provider-maintenance-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; flex-shrink: 0; }
+.lg-provider-maintenance-actions > .lg-upstream-global-control { margin-left: 0; }

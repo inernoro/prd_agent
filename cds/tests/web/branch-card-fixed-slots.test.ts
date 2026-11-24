@@ -1,6 +1,8 @@
 /**
- * 分支卡片「等高固定槽位 + 构建阶段条」守卫（2026-09-29 改版，取代 2026-09-08 方案 B 的
- * branch-card-footer-progress 守卫：那一版把整条页脚背景当进度条，本版换成顶边阶段条）。
+ * 分支卡片「自然排布 + 有界复制集成员工作区 + 构建阶段条」守卫（取代旧的等高固定槽位，
+ * 加载与真实卡片的像素连续性由 scripts/list-loading-smoke.mjs 的原 1px 判据验证）。
+ * 2026-09-29 构建阶段条改版取代 2026-09-08 方案 B 的
+ * branch-card-footer-progress 守卫：那一版把整条页脚背景当进度条，改版后换成顶边阶段条。
  *
  * 事故：同一排卡片 207 / 226 / 253px 三种高度（用户截图），根因是卡片只有最低高度、
  * 网格按内容对齐，而卡里有五处「有时出现、有时不出现」的行。另一半是构建进度塞在
@@ -227,7 +229,7 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
   });
 });
 
-describe('卡片等高：固定高度 + 网格拉齐', () => {
+describe('普通卡自然排布、网格按行拉齐、复制集成员工作区有界', () => {
   const page = read('pages/BranchListPage.tsx');
   const css = read('index.css');
 
@@ -235,7 +237,7 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
     const at = source.indexOf('data-branch-card-id={branch.id}');
     expect(at).toBeGreaterThan(-1);
     const root = source.slice(at, at + 400);
-    expect(root, '卡片根必须是固定高度，只给最低高度就会被内容撑成高低不齐').toMatch(/\bh-\[15\.25rem\]/);
+    expect(root, '卡片按内容自然排布，不得重新强制15.25rem空槽').not.toMatch(/\bh-\[15\.25rem\]/);
     expect(root).not.toMatch(/min-h-\[/);
   };
   const gridStretch = (source: string) => {
@@ -243,13 +245,13 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
     expect(block).toMatch(/align-items:\s*stretch;/);
   };
 
-  it('卡片根固定高度、网格 stretch', () => {
+  it('卡片按内容排布、网格按行 stretch', () => {
     cardFixed(page);
     gridStretch(css);
   });
 
-  it('红用例：卡片根退回最低高度，守卫变红', () => {
-    expectGuardRedOnMutation(cardFixed, page, mutate(page, 'flex h-[15.25rem] cursor-pointer', 'flex min-h-[15.25rem] cursor-pointer'));
+  it('红用例：卡片退回固定空槽高度，守卫变红', () => {
+    expectGuardRedOnMutation(cardFixed, page, mutate(page, 'flex cursor-pointer flex-col', 'flex h-[15.25rem] cursor-pointer flex-col'));
   });
 
   it('红用例：网格退回 align-items: start，守卫变红', () => {
@@ -258,8 +260,33 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
     expectGuardRedOnMutation(gridStretch, css, mutated);
   });
 
-  it('骨架与复制集派生卡同高，否则加载切换那一帧、复制集那一排又会跳', () => {
-    expect(read('components/skeletons/PageSkeletons.tsx')).toContain('flex h-[15.25rem] flex-col');
+  const skeletonNatural = (source: string) => {
+    const at = source.indexOf('export function BranchListSkeleton()');
+    expect(at).toBeGreaterThan(-1);
+    const branch = source.slice(at, source.indexOf('export function ProjectListSkeleton(', at));
+    const article = /<article\b[\s\S]*?className="([^"]+)"/.exec(branch);
+    const footer = /<footer\b[^>]*className="([^"]+)"/.exec(branch);
+    expect(article).not.toBeNull();
+    expect(footer).not.toBeNull();
+    expect(article?.[1], '普通骨架不退回已证实跳位的固定卡高').not.toMatch(/\bh-\[15\.25rem\]/);
+    expect(footer?.[1], '页脚跟随自然正文，不推到空槽底部').not.toMatch(/\bmt-auto\b/);
+  };
+
+  it('普通骨架按自然正文与页脚排布，像素连续性由真实浏览器核对', () => {
+    skeletonNatural(read('components/skeletons/PageSkeletons.tsx'));
+  });
+
+  it('红用例：骨架退回旧固定卡高，守卫变红', () => {
+    const skeleton = read('components/skeletons/PageSkeletons.tsx');
+    expectGuardRedOnMutation(skeletonNatural, skeleton, mutate(skeleton, 'flex flex-col overflow-hidden rounded-md', 'flex h-[15.25rem] flex-col overflow-hidden rounded-md'));
+  });
+
+  it('红用例：骨架页脚退回自动撑空槽，守卫变红', () => {
+    const skeleton = read('components/skeletons/PageSkeletons.tsx');
+    expectGuardRedOnMutation(skeletonNatural, skeleton, mutate(skeleton, '<footer className="flex h-[3.5rem]', '<footer className="mt-auto flex h-[3.5rem]'));
+  });
+
+  it('复制集派生卡保留有界成员工作区，不借普通骨架强制等高', () => {
     expect(page).toContain('relative flex h-[15.25rem] flex-col overflow-hidden rounded-xl border-2');
   });
 
@@ -489,7 +516,7 @@ describe('构建页脚：阶段条接线', () => {
   };
 
   it('卡片动画时长钉死，不被 duration-150 截短', () => {
-    expect(page).toMatch(/flex h-\[15\.25rem\] cursor-pointer flex-col[\s\S]{0,1200}duration-150/);
+    expect(page).toMatch(/flex cursor-pointer flex-col[\s\S]{0,1200}duration-150/);
     durationsPinned(css);
   });
 

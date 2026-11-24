@@ -12,6 +12,8 @@ public class HostedSiteOptimizationSession
     public string TemporaryStorageId { get; set; } = string.Empty;
     public string OwnerUserId { get; set; } = string.Empty;
     public string? TargetSiteId { get; set; }
+    public string? EntryFile { get; set; }
+    public int? EntryIndex { get; set; }
     public string SourceFileName { get; set; } = string.Empty;
     public string SourceObjectKey { get; set; } = string.Empty;
     public string SourceSha256 { get; set; } = string.Empty;
@@ -43,6 +45,9 @@ public static class HostedSiteOptimizationStatuses
     public const string Uploading = "uploading";
     public const string Queued = "queued";
     public const string Analyzing = "analyzing";
+    // Older workers only recognize the original queue states and cannot read ZIP entry choices.
+    public const string ZipEntryQueued = "zip-entry-queued";
+    public const string ZipEntryAnalyzing = "zip-entry-analyzing";
     public const string AwaitingDecision = "awaiting-decision";
     public const string Previewing = "previewing";
     public const string PreviewReady = "preview-ready";
@@ -57,6 +62,10 @@ public class CreateHostedSiteOptimizationUploadRequest
     public string FileName { get; set; } = string.Empty;
     public long FileSize { get; set; }
     public string? TargetSiteId { get; set; }
+    /// <summary>null 自动识别，空字符串打开目录，其他值为 ZIP 内的完整原始路径。</summary>
+    public string? EntryFile { get; set; }
+    /// <summary>手动选择的 ZIP 中央目录序号，从零开始。</summary>
+    public int? EntryIndex { get; set; }
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Folder { get; set; }

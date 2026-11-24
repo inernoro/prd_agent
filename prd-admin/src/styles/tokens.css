@@ -1,4 +1,25 @@
 :root {
+  /* 网页托管 Ledger：已确认目录设计的独立双主题色板。 */
+  --hosting-bg: #0C0E12;
+  --hosting-surface: #14171D;
+  --hosting-inset: #1A1E25;
+  --hosting-border: #262B34;
+  --hosting-border-strong: #353B46;
+  --hosting-text: #E9ECF1;
+  --hosting-secondary: #B3BAC6;
+  --hosting-muted: #8A93A1;
+  --hosting-accent: #8EA0FF;
+  --hosting-accent-soft: #1E2550;
+  --hosting-on-accent: #0C0E12;
+  --hosting-warning: #E5A84B;
+  --hosting-warning-soft: #2E2414;
+  --hosting-danger: #F97066;
+  --hosting-danger-soft: #3A1A17;
+  --hosting-scrim: rgba(0, 0, 0, 0.55);
+  --hosting-ghost-border: rgba(0, 0, 0, 0);
+  --hosting-highlight: #4A3D12;
+  --hosting-font-serif: 'Noto Serif SC', 'Noto Serif CJK SC', 'Songti SC', STSong, serif;
+
   /* 让浏览器原生表单控件（select/option 等）按暗色方案渲染，避免出现“白底下拉 + 白字看不清” */
   color-scheme: dark;
 
@@ -482,6 +503,9 @@
   --media-art-wash-blend: normal;
 
   --accent-green: #7cfc00;
+  --skill-glyph-ink: #A8BEFF;
+  --skill-glyph-tile: #202C45;
+  --skill-glyph-tile-border: #35486E;
   --accent-primary: #D97757;
   --accent-primary-rgb: 217, 119, 87;
   /*
@@ -490,6 +514,7 @@
    * 够不上 4.5。凡是「实心填充 + 白字」一律走这一档，不要直接铺 --accent-primary。
    */
   --accent-primary-solid: #B0523A;
+  --accent-primary-solid-hover: #99442F;
   /*
    * 与 --accent-primary-solid 成对：铺了那个底就用这个字，两者必须一起改。
    * 故意只在 :root 定义、浅色块不双写 —— 两个主题下 solid 档都是深赤陶，
@@ -808,6 +833,27 @@
 }
 /* 浅色模式是全站 token 的唯一覆盖层。运行时只设置 data-theme，不写颜色。 */
 [data-theme="light"] {
+  /* 网页托管 Ledger：已确认目录设计的独立双主题色板。 */
+  --hosting-bg: #EEF0F3;
+  --hosting-surface: #FFFFFF;
+  --hosting-inset: #F7F8FA;
+  --hosting-border: #E2E5EA;
+  --hosting-border-strong: #CDD2DA;
+  --hosting-text: #14171C;
+  --hosting-secondary: #4A5260;
+  --hosting-muted: #646E7E;
+  --hosting-accent: #3046C5;
+  --hosting-accent-soft: #E8EBFA;
+  --hosting-on-accent: #FFFFFF;
+  --hosting-warning: #8A5200;
+  --hosting-warning-soft: #FBF0DC;
+  --hosting-danger: #B42318;
+  --hosting-danger-soft: #FDECEA;
+  --hosting-scrim: rgba(20, 23, 28, 0.32);
+  --hosting-ghost-border: rgba(0, 0, 0, 0);
+  --hosting-highlight: #FFF1B8;
+  --hosting-font-serif: 'Noto Serif SC', 'Noto Serif CJK SC', 'Songti SC', STSong, serif;
+
 
   /* ── 设计稿规格 token · 浅色档（暖纸）。与深色档同批双写，见 :root 同名注释 ── */
   --text-tertiary: rgba(15, 23, 42, 0.60);
@@ -1027,8 +1073,12 @@
   --workflow-accent-text-lightness: 30%;
 
   /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
+  --skill-glyph-ink: #345BC8;
+  --skill-glyph-tile: #EDF2FF;
+  --skill-glyph-tile-border: #D6E0FB;
   --accent-primary: #3F5D45;
   --accent-primary-rgb: 63, 93, 69;
+  --accent-primary-solid-hover: #33503A;
   --accent-primary-solid: #3F5D45;   /* 浅色档本身已够深，白字 7.33:1 */
   --accent-gold: #3F5D45;
   --accent-on-gold: #FBF8F2;   /* 浅色档按暖纸美学不用纯白（themeSystem 契约会拦纯白字面量）：暖白压深赭 gold 仍有 5.38:1 */
@@ -1293,7 +1343,7 @@
 
 /* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。
    仅用于热力图、趋势图等需要稳定暗色画布的创作型区域。 */
-.surface-tone-dark {
+:where(html:not([data-product-agent-appearance][data-theme="light"])) .surface-tone-dark {
   /* 与 :root 同批新增：岛内也要有值，否则浅色页里的暗岛会退回浅色档的描边 */
   --border-strong: rgba(255, 255, 255, 0.24);
   /* 下面这一组是「经由 CSS 类被消费」的那种漏网之鱼（Codex PR #1476 P1）。
@@ -1460,6 +1510,8 @@
   --semantic-neutral-border: rgba(148, 163, 184, 0.20);
   --semantic-neutral-soft: rgba(148, 163, 184, 0.10);
   --semantic-neutral-text: #cbd5e1;
+  --semantic-purple-border: rgba(168, 85, 247, 0.24);
+  --semantic-purple-text: #d8b4fe;
   --semantic-success-border: rgba(34, 197, 94, 0.24);
   --semantic-success-soft: rgba(34, 197, 94, 0.12);
   --semantic-success-text: #86efac;
@@ -1531,6 +1583,90 @@ html[data-perf-mode="performance"] .app-aurora {
   animation: none !important;
 }
 
+/* B 双栏审阅 · 正文之外的工具栏、讨论、页边、历史和悬浮菜单共用色板。 */
+:root,
+[data-theme="dark"] {
+  --review-b-paper: #17181b;
+  --review-b-panel: #1c1d21;
+  --review-b-field: #222429;
+  --review-b-ink: #ecedef;
+  --review-b-muted: #9296a0;
+  --review-b-line: rgb(255 255 255 / 8%);
+  --review-b-glass: rgb(23 24 27 / 72%);
+  --review-b-ui: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --review-b-popover: #212327;
+  --review-b-popover-line: #48484f;
+  --review-b-popover-ink: #f4f4f5;
+  --review-b-popover-muted: #a6a6ad;
+  --review-b-popover-hover: #37373d;
+  --review-b-avatar-ink: #fff;
+  --review-b-history-hint: #f0a421;
+  --review-b-secondary: #bec1c7;
+  --review-b-line-strong: rgb(255 255 255 / .16);
+  --review-b-action: #86a8ff;
+  --review-b-on-action: #0b1430;
+  --review-b-ring: #f4c35c;
+  --review-b-selected: #2a261b;
+  --review-b-pin: #4b3a16;
+  --review-b-on-pin: #fbde9e;
+  --review-b-note: rgb(245 185 66 / .15);
+  --review-b-success: #5cc48d;
+  --review-b-error: #ff8a7a;
+  --review-b-error-bg: rgb(255 138 122 / .10);
+  --review-b-shadow: 0 1px 2px rgb(0 0 0 / .4), 0 4px 14px rgb(0 0 0 / .32);
+  --review-b-history-line: rgb(255 255 255 / 8%);
+  --review-b-strong-line: rgb(255 255 255 / 15%);
+  --review-b-action-ink: #12182d;
+  --review-b-action-soft: rgb(134 168 255 / 14%);
+  --review-b-current-soft: rgb(92 196 141 / 14%);
+  --review-b-error-soft: rgb(255 138 122 / 12%);
+  --review-b-card: #212327;
+  --review-b-grip: rgb(255 255 255 / 16%);
+  --review-b-margin-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 14px rgb(0 0 0 / 32%);
+  --review-b-raised: 0 2px 8px rgb(0 0 0 / 45%), 0 16px 40px rgb(0 0 0 / 50%);
+}
+
+[data-theme="light"] {
+  --review-b-paper: #fff;
+  --review-b-panel: #f7f7f5;
+  --review-b-field: #fff;
+  --review-b-ink: #1b1c1f;
+  --review-b-muted: #676b73;
+  --review-b-line: rgb(24 26 31 / 9%);
+  --review-b-glass: rgb(255 255 255 / 74%);
+  --review-b-ui: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --review-b-popover: #fff;
+  --review-b-popover-line: #d9dadc;
+  --review-b-popover-ink: #18191c;
+  --review-b-popover-muted: #626871;
+  --review-b-popover-hover: #f2f2f3;
+  --review-b-avatar-ink: #fff;
+  --review-b-history-hint: #f0a421;
+  --review-b-secondary: #45484e;
+  --review-b-line-strong: rgb(24 26 31 / .17);
+  --review-b-action: #2a5bd7;
+  --review-b-on-action: #fff;
+  --review-b-ring: #a06400;
+  --review-b-selected: #fffbf1;
+  --review-b-pin: #fbe1a6;
+  --review-b-on-pin: #5a3a00;
+  --review-b-note: rgb(240 170 40 / .20);
+  --review-b-success: #1d7448;
+  --review-b-error: #b8321f;
+  --review-b-error-bg: rgb(184 50 31 / .08);
+  --review-b-shadow: 0 1px 2px rgb(20 22 26 / .06), 0 3px 12px rgb(20 22 26 / .07);
+  --review-b-history-line: rgb(0 0 0 / 8%);
+  --review-b-strong-line: rgb(0 0 0 / 15%);
+  --review-b-action-ink: #fff;
+  --review-b-action-soft: rgb(42 91 215 / 8%);
+  --review-b-current-soft: rgb(29 116 72 / 14%);
+  --review-b-error-soft: rgb(184 50 31 / 9%);
+  --review-b-card: #fff;
+  --review-b-grip: rgb(24 26 31 / 17%);
+  --review-b-margin-shadow: 0 1px 2px rgb(20 22 26 / 6%), 0 3px 12px rgb(20 22 26 / 7%);
+  --review-b-raised: 0 2px 6px rgb(20 22 26 / 8%), 0 14px 36px rgb(20 22 26 / 16%);
+}
+
 /* 生图等待态（GenDevelopLoader）的「跟随主题」档。
    上面 --gen-wait-* 一族故意恒为暗色，因为视觉创作画布舞台被钉死成暗色。
    但同一个组件也用在会翻浅色的普通页面上（文学创作的配图卡片与正文占位，
@@ -1551,4 +1687,137 @@ html[data-perf-mode="performance"] .app-aurora {
   --gen-wait-progress-halo: rgba(166, 75, 53, 0.16);
   --gen-wait-progress-over: #b45309;
   --gen-wait-head: #D97757;
+}
+
+/* 语音创作台：Figma 2:184 / 2:417 的双主题表面，限定于 speech-* 消费方。 */
+:root {
+  --speech-track: #454550;
+  --speech-header: #1e1e24;
+  --speech-panel: #19191f;
+  --speech-card: #202027;
+  --speech-input: #1e1e24;
+  --speech-border: #303039;
+  --speech-control-border: #393943;
+  --speech-text: #f7f7fb;
+  --speech-secondary: #c2c2cd;
+  --speech-muted: #a1a1af;
+  --speech-warm: #3d2b28;
+  --speech-warm-text: #edb29e;
+  --speech-accent: #d97757;
+  --speech-primary: #b0523a;
+  --speech-on-primary: #ffffff;
+  --speech-success: #9ed1b0;
+  --speech-success-bg: #294136;
+}
+:root[data-theme="light"] {
+  --speech-track: #cfc7bc;
+  --speech-header: #e9e4db;
+  --speech-panel: #f3efe8;
+  --speech-card: #f8f5ef;
+  --speech-input: #fbf8f3;
+  --speech-border: #d3ccc1;
+  --speech-control-border: #cfc7bc;
+  --speech-text: #0f172a;
+  --speech-secondary: #424a57;
+  --speech-muted: #65707c;
+  --speech-warm: #eadfd6;
+  --speech-warm-text: #8e4630;
+  --speech-accent: #b0523a;
+  --speech-primary: #b0523a;
+  --speech-on-primary: #ffffff;
+  --speech-success: #365c43;
+  --speech-success-bg: #dbe6d7;
+}
+
+/* MAP writing design v14 · source SHA-256 recorded in writing-design-spec.json. */
+:root {
+  --writing-bg: #0C0E12;
+  --writing-sf: #14171D;
+  --writing-sf2: #1A1E25;
+  --writing-ln: #262B34;
+  --writing-ln2: #353B46;
+  --writing-ink: #E9ECF1;
+  --writing-ink2: #B3BAC6;
+  --writing-ink3: #8A93A1;
+  --writing-ac: #8EA0FF;
+  --writing-acs: #1E2550;
+  --writing-am: #E5A84B;
+  --writing-ams: #2E2414;
+  --writing-dg: #F97066;
+  --writing-dgs: #3A1A17;
+  --writing-ok: #5BBF8A;
+  --writing-oks: #14281E;
+}
+[data-theme="light"] {
+  --writing-bg: #EEF0F3;
+  --writing-sf: #FFFFFF;
+  --writing-sf2: #F7F8FA;
+  --writing-ln: #E2E5EA;
+  --writing-ln2: #CDD2DA;
+  --writing-ink: #14171C;
+  --writing-ink2: #4A5260;
+  --writing-ink3: #667080;
+  --writing-ac: #3046C5;
+  --writing-acs: #E8EBFA;
+  --writing-am: #8A5200;
+  --writing-ams: #FBF0DC;
+  --writing-dg: #B42318;
+  --writing-dgs: #FDECEA;
+  --writing-ok: #1E7046;
+  --writing-oks: #E4F3EA;
+}
+
+/* Media remains a dark viewing surface in both design themes. */
+:root {
+  --writing-on-accent: #0C0E12;
+  --writing-player-bg: #0F1218;
+  --writing-media-ink: #14171C;
+  --writing-media-accent: #3046C5;
+  --writing-media-muted: #667080;
+  --writing-media-border: #CDD2DA;
+  --writing-media-line: #E2E5EA;
+  --writing-media-focus: #E5A84B;
+  --writing-player-text: #E9ECF1;
+  --writing-media-paper: #F7F8FA;
+  --writing-caption-bg: rgba(0,0,0,.78);
+  --writing-player-overlay: rgba(15,18,24,.82);
+}
+[data-theme="light"] {
+  --writing-on-accent: #fff;
+  --writing-player-bg: #0F1218;
+  --writing-media-ink: #14171C;
+  --writing-media-accent: #3046C5;
+  --writing-media-muted: #667080;
+  --writing-media-border: #CDD2DA;
+  --writing-media-line: #E2E5EA;
+  --writing-media-focus: #E5A84B;
+  --writing-player-text: #E9ECF1;
+  --writing-media-paper: #F7F8FA;
+  --writing-caption-bg: rgba(0,0,0,.78);
+  --writing-player-overlay: rgba(15,18,24,.82);
+}
+
+/* Original Threads v14 stroke channels. */
+:root{--writing-thread-rgb:142,160,255}
+[data-theme="light"]{--writing-thread-rgb:48,70,197}
+/* Measured collection v14 fields not present in the writing artboards. */
+:root{--writing-hl:#4A3D12;--writing-scrim:rgba(0,0,0,.55);--writing-link-static:#3046C5;--writing-link-hover:#1F2F8F;--writing-collection-ok:#5FD39A;--writing-collection-oks:#12291D}
+[data-theme="light"]{--writing-hl:#FFF1B8;--writing-scrim:rgba(20,23,28,.32);--writing-link-static:#3046C5;--writing-link-hover:#1F2F8F;--writing-collection-ok:#1F7A4D;--writing-collection-oks:#E3F4EA}
+
+:root{--writing-caption-ink:#fff}
+
+:root{--writing-author-scrim:rgba(12,14,18,.45);--writing-sheet-shadow:0 -8px 30px rgba(0,0,0,.18)}
+
+/* Cinematic entry media palette. These are invariant scene colors, like an
+   artwork cover: fog-white authentication reveals the same night-blue scene
+   in both app skins. The expanded workbench follows the normal theme tokens. */
+:root {
+  --cinema-paper: #eff0f1;
+  --cinema-ink: #15171b;
+  --cinema-night: #02050a;
+  --cinema-light: #f0f5ff;
+  --cinema-accent: #71dce7;
+  --cinema-amber: #ff9b3d;
+  --cinema-glass: rgba(23, 37, 54, 0.60);
+  --cinema-border: rgba(185, 218, 250, 0.26);
 }

@@ -61,9 +61,11 @@ export type GetMobileStatsContract = (args?: {
 
 // ─── Assets ───
 
+export type AssetCategory = 'image' | 'audio' | 'document' | 'attachment' | 'webpage';
+
 export interface MobileAssetItem {
   id: string;
-  type: 'image' | 'document' | 'attachment' | 'webpage';
+  type: AssetCategory;
   title: string;
   /** 内容摘要（前80字） */
   summary?: string | null;
@@ -94,7 +96,7 @@ export interface MobileAssetsResponse {
 }
 
 export type GetMobileAssetsContract = (args?: {
-  category?: 'image' | 'document' | 'attachment' | 'webpage';
+  category?: AssetCategory;
   limit?: number;
   skip?: number;
 }) => Promise<ApiResponse<MobileAssetsResponse>>;

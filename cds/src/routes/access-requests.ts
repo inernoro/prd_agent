@@ -23,7 +23,8 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
-import { resolveUserCredential } from './identity.js';
+import { inspectAccessRecovery, principalRecoveryBlock, recoveryMessage } from '../services/access-recovery.js';
+import { bootstrapTarget } from '../services/bootstrap-target.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
 
@@ -35,6 +36,8 @@ export interface AccessRequestsRouterDeps {
    * 放行;否则 approve/reject/list 会对所有人 403,本地 dev 用不了。
    */
   authMode?: 'disabled' | 'basic' | 'github';
+  /** SSO can require login even when local and GitHub login are disabled. */
+  isSsoEnabled?: () => boolean;
 }
 
 /** Audit retention: decided access requests disappear from list after 7d. */
@@ -64,8 +67,11 @@ function extractPollToken(req: import('express').Request): string {
 }
 
 /** Strip the authorization-key plaintext + poll-token hash before returning to operator UI. */
-function publicView(r: AccessRequest): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash'> {
-  const { issuedKeyPlaintext: _k, pollTokenHash: _t, ...rest } = r;
+function publicView(r: AccessRequest): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash' | 'designRecoveryKeyId'> {
+  const { issuedKeyPlaintext: _k, pollTokenHash: _t, designRecoveryKeyId: _d, ...rest } = r;
+  if (r.kind === 'bootstrap' && r.status === 'pending' && bootstrapTarget(r.requestedProject)) {
+    return { ...rest, targetBound: true };
+  }
   return rest;
 }
 
@@ -82,29 +88,23 @@ function presentedKey(req: { headers: Record<string, unknown> }): string {
   return '';
 }
 
-/** Only display a repository location: credentials, query tokens and fragments never enter the inbox. */
-function requestedProjectView(value: unknown): AccessRequest['requestedProject'] {
-  if (!value || typeof value !== 'object') return undefined;
-  const input = value as { name?: unknown; repository?: unknown };
-  if (typeof input.name !== 'string' || !input.name.trim()) return undefined;
-  let repository: string | undefined;
-  if (typeof input.repository === 'string') {
-    const raw = input.repository.trim();
-    try {
-      const url = new URL(raw);
-      if (['https:', 'http:', 'ssh:'].includes(url.protocol)) repository = `${url.host}${url.pathname}`.slice(0, 500);
-    } catch {
-      const scp = /^git@([a-zA-Z0-9.-]+):([a-zA-Z0-9_./-]+)$/.exec(raw);
-      if (scp) repository = `${scp[1]}/${scp[2]}`.slice(0, 500);
-    }
-  }
-  return { name: input.name.trim().slice(0, 100), ...(repository ? { repository } : {}) };
-}
-
 export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Router {
   const { stateService } = deps;
   const authDisabled = deps.authMode === 'disabled';
   const router = Router();
+  router.use((_req, _res, next) => {
+    stateService.expireBootstrapAccessRequests();
+    next();
+  });
+
+  router.get('/projects/:id/access-status', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    const proof = project && inspectAccessRecovery(stateService, project.id, presentedKey(req));
+    if (!proof) {
+      res.status(401).json({ error: 'recovery_credential_required', message: '无法核对原访问凭据，未改变任何授权。' }); return;
+    }
+    res.json({ projectId: project!.id, state: proof.state, message: recoveryMessage(proof.state) });
+  });
 
   // ───────────────────────────────────────────────────────────────────────
   // Agent 通道:发起 / 轮询(免密,server.ts 已把这两个路径放行为 public)
@@ -125,16 +125,44 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       return;
     }
 
-    const body = (req.body || {}) as { agentName?: string; purpose?: string };
+    const body = (req.body || {}) as { agentName?: string; purpose?: string; designAccess?: unknown };
+    const { designAccess } = body;
+    if (designAccess !== undefined && designAccess !== 'read' && designAccess !== 'feedback' && designAccess !== 'publish') {
+      res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读、实施反馈或稿件发布权限' });
+      return;
+    }
+    if (designAccess && project.mirror) {
+      res.status(409).json({ error: 'design_project_mirrored', message: '请在原 CDS 项目申请设计权限' });
+      return;
+    }
     const agentName = typeof body.agentName === 'string' && body.agentName.trim()
       ? body.agentName.trim().slice(0, 100) : 'AI Agent';
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
-      ? body.purpose.trim().slice(0, 500) : '请求项目授权密钥(全权访问)。';
+      ? body.purpose.trim().slice(0, 500) : designAccess ? '请求当前项目的设计访问权限。' : '请求项目访问权限。';
 
     // 这条路由是免鉴权的（鸡生蛋：还没凭据才来申请），所以主体身份只能在这里
-    // 顺手认一次：带了用户级凭证就记下它是谁，没带就照旧匿名。批准时据此写授权，
-    // 让「批一次，以后丢凭据自己补」真的成立。
-    const principalId = resolveUserCredential(stateService, presentedKey(req))?.principalId;
+    // 核对原身份：已知身份停用或项目撤权时只等待恢复，不能退成匿名申请。
+    // 无凭据的首次接入保持兼容；已知项目密钥也保留原主体约束。
+    const key = presentedKey(req);
+    const proof = inspectAccessRecovery(stateService, project.id, key);
+    if (!designAccess && proof?.design) {
+      res.status(403).json({ error: 'design_key_scope', message: '设计凭据只能用于申请当前项目的设计权限' });
+      return;
+    }
+    if (proof?.design?.revoked) {
+      res.status(403).json({ error: 'design_key_revoked', message: '原设计凭据已吊销，无法续用原作者身份' });
+      return;
+    }
+    if (key.startsWith('cdsu_') || key.startsWith('cdsp_')) {
+      if (!proof || (proof.kind === 'user' && proof.state === 'credential-unusable')) {
+        res.status(401).json({ error: 'recovery_credential_invalid', message: '原身份凭据已失效，不能改为匿名申请；请管理员恢复原身份。' }); return;
+      }
+      if (['account-disabled', 'project-access-revoked', 'access-update-pending'].includes(proof.state)) {
+        res.status(proof.state === 'access-update-pending' ? 409 : 403)
+          .json({ error: proof.state, message: recoveryMessage(proof.state) }); return;
+      }
+    }
+    const principalId = proof?.principalId;
 
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
@@ -147,14 +175,16 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       status: 'pending',
       createdAt: new Date().toISOString(),
       ...(principalId ? { principalId } : {}),
+      ...(designAccess ? { designAccess } : {}),
+      ...(designAccess && proof?.design ? { designRecoveryKeyId: proof.design.keyId } : {}),
     };
     stateService.addAccessRequest(item);
     cdsEventsBus.publish('access-request.created', {
-      requestId: item.id, projectId: project.id, agentName, purpose, pendingCount: pendingCount(stateService),
+      requestId: item.id, projectId: project.id, agentName, purpose, designAccess, pendingCount: pendingCount(stateService),
     });
     // 调用方允许用 slug 发起，但后续项目级操作必须使用真实 project.id。
     // 把解析结果随申请返回，避免 CLI 把别名写进 credentials.json 后 project_mismatch。
-    res.status(201).json({ requestId: item.id, pollToken, status: 'pending', projectId: project.id });
+    res.status(201).json({ requestId: item.id, pollToken, status: 'pending', projectId: project.id, designAccess });
   });
 
   // 首次接入:免密申请一把一次性「只能创建项目」授权。批准后签发 create-only
@@ -167,16 +197,23 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       });
       return;
     }
-    const body = (req.body || {}) as { agentName?: string; purpose?: string; requestedProject?: unknown };
+    const body = (req.body || {}) as { agentName?: string; purpose?: string; requestedProject?: unknown; waitSeconds?: number };
     const agentName = typeof body.agentName === 'string' && body.agentName.trim()
       ? body.agentName.trim().slice(0, 100) : 'AI Agent';
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
       ? body.purpose.trim().slice(0, 500) : '申请一次性创建新项目权限。';
+    const target = bootstrapTarget(body.requestedProject);
+    if (!target) {
+      res.status(400).json({ error: 'bootstrap_target_required', message: '请让 Agent 提供1至60字符的项目名称和完整 Git 仓库，再提交接入申请；不需要复制密钥。' });
+      return;
+    }
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
       id: newRequestId(),
       kind: 'bootstrap',
-      requestedProject: requestedProjectView(body.requestedProject),
+      expiresAt: new Date(Date.now() + Math.min(3600, Math.max(10, Number.isFinite(body.waitSeconds) ? body.waitSeconds! : 600)) * 1000).toISOString(),
+      requestedProject: target,
+      targetBound: true,
       projectId: BOOTSTRAP_PROJECT_ID,
       pollTokenHash: sha256(pollToken),
       agentName,
@@ -216,6 +253,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       return;
     }
 
+    const blocked = item.principalId && item.status !== 'rejected'
+      ? principalRecoveryBlock(stateService, item.principalId, project.id) : undefined;
+    if (blocked) {
+      res.json({ status: 'blocked', recoveryState: blocked, message: recoveryMessage(blocked) }); return;
+    }
+
     if (item.status === 'pending') {
       res.json({ status: 'pending' });
       return;
@@ -228,7 +271,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (item.issuedKeyPlaintext && !item.deliveredAt) {
       const authorizationKey = item.issuedKeyPlaintext;
       stateService.updateAccessRequest(item.id, { issuedKeyPlaintext: undefined, deliveredAt: new Date().toISOString() });
-      res.json({ status: 'approved', authorizationKey });
+      res.json({ status: 'approved', authorizationKey, designAccess: item.designAccess });
       return;
     }
     res.json({ status: 'approved', delivered: true });
@@ -246,6 +289,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       && timingSafeEqual(Buffer.from(tokenHash, 'hex'), Buffer.from(item.pollTokenHash, 'hex'));
     if (!matches) {
       res.status(403).json({ error: 'poll_token_invalid', message: '轮询票据无效。' });
+      return;
+    }
+    if (item.status === 'expired' || item.status === 'cancelled') {
+      res.json({ status: item.status, message: '申请已结束，未保留建项目权限。请重新运行接入命令。' });
       return;
     }
     if (item.status === 'pending') {
@@ -266,6 +313,33 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     res.json({ status: 'approved', delivered: true });
   });
 
+  // 发起者超时或中断时收回未使用的一次建项目权限；票据只认 header。
+  router.delete('/bootstrap-access-requests/:reqId', (req, res) => {
+    const item = stateService.getAccessRequest(req.params.reqId);
+    if (!item || item.kind !== 'bootstrap') {
+      res.status(404).json({ error: 'request_not_found' }); return;
+    }
+    const tokenHash = sha256(extractPollToken(req));
+    if (tokenHash.length !== item.pollTokenHash.length
+      || !timingSafeEqual(Buffer.from(tokenHash, 'hex'), Buffer.from(item.pollTokenHash, 'hex'))) {
+      res.status(403).json({ error: 'poll_token_invalid' }); return;
+    }
+    if (item.createdProject) {
+      res.status(409).json({ error: 'project_already_created', message: '项目已创建，未撤销项目权限。' }); return;
+    }
+    // 清理只终止仍在途的申请；原审批决定、终态时间与事件均保持。
+    if (item.status !== 'pending' && item.status !== 'approved') {
+      res.json({ cancelled: item.status === 'cancelled', status: item.status }); return;
+    }
+    if (item.issuedKeyId) stateService.revokeGlobalAgentKey(item.issuedKeyId);
+    stateService.updateAccessRequest(item.id, {
+      status: 'cancelled',
+      issuedKeyPlaintext: undefined, decidedAt: new Date().toISOString(),
+    });
+    cdsEventsBus.publish('access-request.decided', { requestId: item.id, status: 'cancelled', pendingCount: pendingCount(stateService) });
+    res.json({ cancelled: true });
+  });
+
   // ───────────────────────────────────────────────────────────────────────
   // 操作员通道:列表 / 批准 / 拒绝(走全局中间件 cookie / 全权 key 鉴权)
   // ───────────────────────────────────────────────────────────────────────
@@ -276,7 +350,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (!requireHumanOperator(req, res)) return;
     const decidedCount = stateService.listAccessRequests().filter((r) => r.status !== 'pending').length;
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
-    const list = stateService.listAccessRequests().map(publicView);
+    const list = stateService.listAccessRequests().map(item => ({
+      ...publicView(item),
+      ...(item.kind === 'bootstrap' && item.status === 'approved' && item.createdProject
+        && stateService.isProjectRemovalConfirmed(item.createdProject.id) ? { receiptArchived: true, creationReceiptEnabled: false } : {}),
+      ...(item.kind !== 'bootstrap' ? { projectName: stateService.getProject(item.projectId)?.name } : {}),
+    }));
     res.json({ requests: list, pendingCount: list.filter((r) => r.status === 'pending').length });
   });
 
@@ -314,7 +393,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     return true;
   }
 
-  // 批准:当场签发一把全权项目 AgentKey(授权密钥),明文挂记录上待发起方取走一次。
+  // 依据申请范围发放凭据，由原申请的轮询票据领取一次。
   router.post('/access-requests/:reqId/approve', (req, res) => {
     if (!requireHumanOperator(req, res)) return;
     const item = stateService.getAccessRequest(req.params.reqId);
@@ -326,9 +405,18 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(409).json({ error: 'already_decided', message: `Access request already ${item.status}.` });
       return;
     }
-    // bootstrap 申请签发一次性 create-only cdsg_；项目申请签发全权项目 cdsp_。
+    if (item.designAccess && (!authDisabled || deps.isSsoEnabled?.()) && !isHumanSystemOwner(req)) {
+      res.status(403).json({ error: 'system_owner_required', message: '设计权限申请由 CDS 系统所有者批准' });
+      return;
+    }
+    // Bootstrap requests issue a create-only key. Project requests may carry a design scope.
     const now = new Date();
     if (item.kind === 'bootstrap') {
+      const target = bootstrapTarget(item.requestedProject);
+      if (!target) {
+        res.status(409).json({ error: 'bootstrap_target_required', message: '这条旧申请未绑定仓库，请让 Agent 更新接入技能并重新申请。' });
+        return;
+      }
       const plaintext = `cdsg_${randomBytes(32).toString('base64url')}`;
       const keyId = randomBytes(4).toString('hex');
       const decidedBy = decider(req);
@@ -339,6 +427,8 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         scope: 'rw',
         access: { canCreateProjects: true, projects: [] },
         oneTime: true,
+        creationTarget: target,
+        expiresAt: new Date(now.getTime() + 300_000).toISOString(),
         createdAt: now.toISOString(),
         createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
       };
@@ -347,6 +437,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         stateService.updateAccessRequest(item.id, {
           status: 'approved',
           creationReceiptEnabled: true,
+          targetBound: true,
           decidedAt: now.toISOString(),
           decidedBy,
           issuedKeyId: keyId,
@@ -373,6 +464,26 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(404).json({ error: 'project_not_found', message: `Project '${item.projectId}' no longer exists.` });
       return;
     }
+    if (item.designAccess && project.mirror) {
+      res.status(409).json({ error: 'design_project_mirrored', message: '请在原 CDS 项目批准设计权限' });
+      return;
+    }
+    const blocked = item.principalId && principalRecoveryBlock(stateService, item.principalId, project.id);
+    if (blocked) {
+      res.status(409).json({ error: blocked, message: recoveryMessage(blocked) }); return;
+    }
+    const oldDesignKey = item.designRecoveryKeyId
+      ? stateService.getAgentKeys(project.id).find(entry => entry.id === item.designRecoveryKeyId)
+      : undefined;
+    if (item.designRecoveryKeyId && (!oldDesignKey?.designAccess || oldDesignKey.revokedAt)) {
+      const message = '原设计凭据已吊销或已不存在，请核对本次续接申请';
+      stateService.updateAccessRequest(item.id, { status: 'rejected', decidedAt: now.toISOString(), decidedBy: decider(req), rejectReason: message });
+      cdsEventsBus.publish('access-request.decided', {
+        requestId: item.id, projectId: project.id, status: 'rejected', pendingCount: pendingCount(stateService),
+      });
+      res.status(409).json({ error: 'design_key_revoked', message });
+      return;
+    }
     const slugHead = project.slug.slice(0, 12).toLowerCase();
     const suffix = randomBytes(32).toString('base64url');
     const plaintext = `cdsp_${slugHead}_${suffix}`;
@@ -383,6 +494,13 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       label: `授权密钥 (申请 ${item.id} · ${item.agentName})`,
       hash: sha256(plaintext),
       scope: 'rw',
+      ...(item.designAccess ? {
+        designAccess: item.designAccess,
+        designAccessRequestId: item.id,
+        ...(oldDesignKey ? { designPublisherKeyId: oldDesignKey.designPublisherKeyId ?? oldDesignKey.id } : {}),
+        expiresAt: new Date(now.getTime() + PROJECT_CREDENTIAL_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+        ...(item.principalId ? { principalId: item.principalId } : {}),
+      } : {}),
       createdAt: now.toISOString(),
       createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
     };
@@ -391,7 +509,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       // 批准 = 授权，不只是发一把钥匙。少了这一步，同一个主体丢了钥匙还得再申请
       // 一次，「批一次就够」只是句口号；而且 addProjectGrant 是集合语义，
       // 重复批准不会写第二行。
-      if (item.principalId) {
+      if (item.principalId && !item.designAccess) {
         stateService.addProjectGrant({
           id: `pg_${randomBytes(6).toString('hex')}`,
           projectId: project.id,

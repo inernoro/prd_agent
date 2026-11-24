@@ -18,7 +18,6 @@ import {
   DESIGN_PREVIEW_EVENT_CSP,
   designPreviewEventDocument,
   isNewerPreviewRevision,
-  runtimeFallbackNotice,
 } from './siteEditPreview';
 import {
   appendGenerationStage,
@@ -29,7 +28,7 @@ import {
   remainingEstimateText,
   runProvenanceText,
 } from './siteGenerateProgress';
-import { orderRuntimeCards, titleFromFileName } from './siteGenerateOptions';
+import { titleFromFileName } from './siteGenerateOptions';
 
 const event = (name: string, data: unknown): SseEvent => ({ event: name, data: JSON.stringify(data) } as SseEvent);
 
@@ -124,25 +123,6 @@ describe('阶段列表', () => {
   });
 });
 
-describe('执行器回落要说原因', () => {
-  const runtimes = [
-    { id: 'open-design', label: 'OpenDesign', enabled: false, reason: '会话容器未就绪' },
-    { id: 'map-gateway', label: 'MAP 直连', enabled: true },
-  ];
-  it('默认不可用、改用了别的：写明默认是谁、为什么、改用了谁', () => {
-    expect(runtimeFallbackNotice(runtimes, 'open-design', 'map-gateway'))
-      .toBe('默认的「OpenDesign」暂不可用（会话容器未就绪），本次改用「MAP 直连」。');
-  });
-  it('默认可用或已选中默认时不出这句', () => {
-    expect(runtimeFallbackNotice(runtimes, 'map-gateway', 'map-gateway')).toBe('');
-    expect(runtimeFallbackNotice([{ ...runtimes[0], enabled: true }, runtimes[1]], 'open-design', 'map-gateway')).toBe('');
-  });
-  it('卡片顺序：快速在前、精细在后，未知执行器排最后', () => {
-    expect(orderRuntimeCards([{ id: 'x' }, { id: 'open-design' }, { id: 'map-gateway' }]).map((item) => item.id))
-      .toEqual(['map-gateway', 'open-design', 'x']);
-  });
-});
-
 describe('附件上传队列', () => {
   it('按用途拒收格式、超限与空文件', () => {
     expect(validateDesignAttachment({ name: '方案.docx', size: 1024 }, 'document')).toBeNull();
@@ -168,14 +148,14 @@ describe('附件上传队列', () => {
     expect(summarizeAttachments([{ status: 'failed' }])).toBe('1 个失败，可移除后重传');
   });
 
-  it('截图只对精细设计生效（快速修改带截图后端会 400）', () => {
+  it('新任务使用统一设计服务，历史直连运行时不支持截图', () => {
     expect(screenshotRuntimeSupported('open-design')).toBe(true);
     expect(screenshotRuntimeSupported('map-gateway')).toBe(false);
     expect(screenshotRuntimeSupported(undefined)).toBe(false);
     // 接线：面板按它置灰，提交时也按它决定带不带截图。
     const panel = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
       + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
-    expect(panel).toContain('screenshotAttachmentIds: screenshotRuntimeSupported(requestRuntime.id) ? screenshots.readyIds : []');
+    expect(panel).toContain('screenshotAttachmentIds: screenshots.readyIds');
     expect(panel).toContain('disabled={generating || !screenshotsSupported}');
   });
 
@@ -208,7 +188,6 @@ describe('网页生成设置只提交改过的字段', () => {
     canEdit: true,
   };
   const draftOf = (change: Partial<GenerationSettingsDraft> = {}): GenerationSettingsDraft => ({
-    defaultRuntime: settings.defaultRuntime,
     reviewMode: settings.reviewMode,
     styles: settings.styles.map((style) => ({ ...style, swatches: [...style.swatches] })),
     prompts: { generate: '默认创作', edit: '自定义修改', review: '默认自查' },
@@ -219,9 +198,16 @@ describe('网页生成设置只提交改过的字段', () => {
     expect(buildGenerationSettingsPatch(settings, draftOf())).toEqual({});
   });
 
-  it('只改执行器与自查强度时，不带上风格与提示词', () => {
-    expect(buildGenerationSettingsPatch(settings, draftOf({ defaultRuntime: 'map-gateway', reviewMode: 'strict' })))
-      .toEqual({ defaultRuntime: 'map-gateway', reviewMode: 'strict' });
+  it('管理员设置不再暴露默认执行器，也不再提交该字段', () => {
+    const drawer = readFileSync(new URL('./GenerationSettingsDrawer.tsx', import.meta.url), 'utf8');
+    expect(drawer).not.toContain('默认执行器');
+    expect(drawer).not.toContain('defaultRuntime:');
+    expect(buildGenerationSettingsPatch(settings, draftOf({ reviewMode: 'strict' }))).not.toHaveProperty('defaultRuntime');
+  });
+
+  it('只改自查强度时，不带上风格与提示词', () => {
+    expect(buildGenerationSettingsPatch(settings, draftOf({ reviewMode: 'strict' })))
+      .toEqual({ reviewMode: 'strict' });
   });
 
   it('提示词改回默认稿时提交空串（契约里的「恢复默认」）', () => {

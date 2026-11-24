@@ -58,6 +58,7 @@ public class GatewayDoubaoStreamAsrTests
             new GatewayModelResolution
             {
                 Success = true,
+                UpstreamProxy = new global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy("custom", "http://proxy.example:8080", null, null),
                 ResolutionType = "DedicatedPool",
                 ActualModel = "doubao-asr-stream",
                 ActualPlatformId = "exchange-doubao-stream",
@@ -85,6 +86,7 @@ public class GatewayDoubaoStreamAsrTests
         fakeAsr.AccessKey.ShouldBe("access-456");
         fakeAsr.AudioBytes.ShouldBe([1, 2, 3, 4]);
         fakeAsr.RequirePublicPinnedWebSocket.ShouldBeTrue();
+        fakeAsr.UpstreamProxy!.Address.ShouldBe("http://proxy.example:8080");
 
         using var doc = JsonDocument.Parse(response.Content!);
         var root = doc.RootElement;
@@ -210,6 +212,7 @@ public class GatewayDoubaoStreamAsrTests
         public string? AccessKey { get; private set; }
         public byte[] AudioBytes { get; private set; } = [];
         public bool RequirePublicPinnedWebSocket { get; private set; }
+        public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; private set; }
 
         public Task<StreamAsrResult> TranscribeAsync(
             string wsUrl,
@@ -218,13 +221,15 @@ public class GatewayDoubaoStreamAsrTests
             byte[] audioData,
             Dictionary<string, object>? config = null,
             CancellationToken ct = default,
-            bool requirePublicPinnedWebSocket = false)
+            bool requirePublicPinnedWebSocket = false,
+            global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? upstreamProxy = null)
         {
             WsUrl = wsUrl;
             AppKey = appKey;
             AccessKey = accessKey;
             AudioBytes = audioData;
             RequirePublicPinnedWebSocket = requirePublicPinnedWebSocket;
+            UpstreamProxy = upstreamProxy;
 
             using var payload = JsonDocument.Parse("""
                 {

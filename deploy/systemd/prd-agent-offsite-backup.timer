@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily MAP full offsite backup with real restore verification
+
+[Timer]
+OnCalendar=*-*-* 04:15:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=60
+Unit=prd-agent-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

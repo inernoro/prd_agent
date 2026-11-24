@@ -22,3 +22,9 @@ it('generated nginx Compose limits json-file logging to three 50m files', () => 
   const compose = yaml.load(generated) as any;
   expect(compose.services.nginx.logging).toEqual({driver:'json-file',options:{'max-size':'50m','max-file':'3'}});
 });
+
+it('Nginx writes to the bounded Docker streams explicitly',()=>{
+ const source=fs.readFileSync(scriptPath,'utf8');
+ expect(source).toContain('access_log  /dev/stdout;');
+ expect(source).toContain('error_log   /dev/stderr warn;');
+});

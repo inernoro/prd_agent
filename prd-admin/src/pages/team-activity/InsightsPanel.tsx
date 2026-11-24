@@ -4,7 +4,7 @@
  * 操作：转为缺陷（接入 defect-agent 修复流水线）/ 标记已修复 / 忽略（指纹级持久化，不再打扰）。
  * 数据源：apirequestlogs（报错/慢端点，历史即有）+ behavior_events（路由信号，自采集上线起累积）。
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Bug, Check, CheckCircle2, ClipboardList, EyeOff as IgnoreIcon, LayoutGrid, Maximize2, Megaphone, Microscope, Network, Radar, RotateCcw, ScrollText, TrendingUp, Users, X, type LucideIcon } from 'lucide-react';
 import { GlassCard } from '@/components/design';
@@ -18,6 +18,7 @@ import {
   addDocumentEntry,
   createDocumentStore,
   getTeamActivityExperienceMap,
+  getTeamActivityExperienceTrend,
   getTeamActivityInsights,
   insightToRequirement,
   listDocumentEntries,
@@ -25,14 +26,18 @@ import {
   setTeamActivityInsightState,
   updateDocumentContent,
 } from '@/services';
-import type { BehaviorInsight, TeamActivityExperienceMapData, TeamActivityInsightsData } from '@/services/contracts/teamActivity';
+import type { BehaviorInsight } from '@/services/contracts/teamActivity';
 import { getInsightKindMeta } from './insightKinds';
 import { ExperienceMap } from './ExperienceMap';
 import { ExperienceRibbon } from './ExperienceRibbon';
-import { ExperienceDrill } from './ExperienceDrill';
+const ExperienceDrill = lazy(() => import('./ExperienceDrill').then((module) => ({ default: module.ExperienceDrill })));
 import { ExperienceTrend } from './ExperienceTrend';
-import { ExperienceSiteMap } from './ExperienceSiteMap';
+const ExperienceSiteMap = lazy(() => import('./ExperienceSiteMap').then((module) => ({ default: module.ExperienceSiteMap })));
 import { ExperienceBoard } from './ExperienceBoard';
+import { useIsDesktop } from '@/hooks/useBreakpoint';
+import { ActivitySectionState } from './ActivitySectionState';
+import { useActivityResource } from './useActivityResource';
+import type { TeamActivityRequestOptions } from '@/services/contracts/teamActivity';
 import { RequirementConvertModal, type RequirementConvertDraft } from './RequirementConvertModal';
 
 // 转需求弹窗上下文：草稿 + 回写用的 kind/target
@@ -148,10 +153,7 @@ function buildDefectContent(item: BehaviorInsight, window: string): string {
 }
 
 export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
-  const [data, setData] = useState<TeamActivityInsightsData | null>(null);
-  const [mapData, setMapData] = useState<TeamActivityExperienceMapData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const isDesktop = useIsDesktop();
   const [includeIgnored, setIncludeIgnored] = useState(false);
   // 移动端单图切换：默认体验全景热力图，可切到趋势/痛点指数/声道看板（桌面端不用此切换，走四图仪表盘）
   const [heroView, setHeroView] = useState<HeroView>('heatmap');
@@ -177,7 +179,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const [publishedTitle, setPublishedTitle] = useState<string | null>(null);
   // 收到后端显式 done 事件才算完整；流自然断开（代理掐线/超长截断）不会触发 onDone
   const [briefComplete, setBriefComplete] = useState(false);
-  const fetchIdRef = useRef(0);
+
 
   // AI 简报：SSE 流式生成（model/delta/done/error 事件由后端 insights/brief 推送）
   const brief = useSseStream({
@@ -261,29 +263,15 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     }
   }, [brief.typing, publishing, publishedTitle]);
 
-  const reload = useCallback(() => {
-    const fetchId = ++fetchIdRef.current;
-    setLoading(true);
-    void getTeamActivityInsights({ from, to, includeIgnored: includeIgnored || undefined }).then((res) => {
-      if (fetchIdRef.current !== fetchId) return;
-      if (res.success) {
-        setData(res.data);
-        setError(null);
-      } else {
-        // 失败清空旧数据（与并行的 mapData 失败清空对称），避免痛点榜/ribbon/stats 残留上个时间窗、与已清空的热力图打架
-        setData(null);
-        setError(res.error?.message ?? '加载失败，请重试');
-      }
-      setLoading(false);
-    });
-    // 体验全景热力图与痛点榜同源（apirequestlogs），并行拉取，互不阻塞
-    void getTeamActivityExperienceMap({ from, to }).then((res) => {
-      if (fetchIdRef.current !== fetchId) return;
-      // 失败时清空旧窗口数据（treemap 显示空/加载态），避免新选择下还残留上一个时间窗的热力图
-      if (res.success) setMapData(res.data);
-      else setMapData(null);
-    });
-  }, [from, to, includeIgnored]);
+  const loadInsights = useCallback((options: TeamActivityRequestOptions) =>
+    getTeamActivityInsights({ from, to, includeIgnored: includeIgnored || undefined }, options), [from, to, includeIgnored]);
+  const loadMap = useCallback((options: TeamActivityRequestOptions) =>
+    getTeamActivityExperienceMap({ from, to }, options), [from, to]);
+  const { data, loading, error, reload } = useActivityResource(loadInsights);
+  const { data: mapData, loading: mapLoading, error: mapError, reload: reloadMap } = useActivityResource(loadMap);
+  const loadTrend = useCallback((options: TeamActivityRequestOptions) =>
+    getTeamActivityExperienceTrend({ from, to }, options), [from, to]);
+  const trendResource = useActivityResource(loadTrend, isDesktop || heroView === 'trend');
 
   // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 打开右侧浮层下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
   // kind 可选：来自叶子健康（红=api-error / 琥珀=slow）或痛点榜行的 item.kind，用于转缺陷/转需求时回写正确指纹。
@@ -305,9 +293,6 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   // 各 Hero 视图空数据引导的统一出口：一键切回体验全景热力图
   const switchToHeatmap = useCallback(() => setHeroView('heatmap'), []);
 
-  useEffect(() => {
-    reload();
-  }, [reload]);
 
   // brief 对象每次渲染都是新引用（useSseStream 返回），用 ref 持有最新值，避免把它放进 ESC effect 依赖
   // 导致每帧（尤其流式 delta 时）重挂 keydown 监听。
@@ -479,16 +464,6 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     [reqModal, reload]
   );
 
-  if (loading && !data) {
-    return (
-      <GlassCard className="flex-1" style={{ minHeight: 0 }}>
-        <div className="h-full flex items-center justify-center">
-          <MapSectionLoader text="正在从行为信号中聚合洞察…" />
-        </div>
-      </GlassCard>
-    );
-  }
-
   // 热力图头部常驻「AI 用户分析」入口：仪表盘填满整屏后，底部数据行那个触发按钮会落到首屏之下，
   // 故在首屏可见的热力图卡头再放一个常驻入口（一键直达、点击才分析、不常驻空跑），底部那个保留。
   const aiAnalysisHeaderBtn = (
@@ -539,16 +514,20 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   // mobile=true（移动单图）不注入 headerExtra：AI 分析 + 子切换器已合并进单条横滚控制条（见 renderMobileSingle），
   // 地图卡头保持单行，避免手机端控制条堆叠（mobile-first-density）。
   const renderMapTile = (mobile = false) =>
-    mapMode === 'heatmap' ? (
+    mapLoading || mapError ? (
+      <GlassCard className="h-full" style={{ minHeight: 240 }}>
+        <ActivitySectionState title="体验全景热力图" loading={mapLoading} error={mapError} onRetry={reloadMap} />
+      </GlassCard>
+    ) : mapMode === 'heatmap' ? (
       <ExperienceMap
         data={mapData}
-        loading={loading}
+        loading={mapLoading}
         onSelectTarget={handleSelectTarget}
         onRequestFullscreen={() => setFullscreenOpen(true)}
         headerExtra={mobile ? undefined : mapHeaderExtra}
       />
     ) : (
-      <ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mobile ? undefined : mapHeaderExtra} />
+      <Suspense fallback={<MapSectionLoader text="正在加载站点地图…" />}><ExperienceSiteMap mapData={mapData} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} headerExtra={mobile ? undefined : mapHeaderExtra} /></Suspense>
     );
 
   // 趋势格：桌面四图仪表盘传 hideWhenEmpty（无数据直接 null，让 grid 自适应铺满剩余格 + 上报空态）；
@@ -556,8 +535,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const renderTrendTile = (forDashboard: boolean) => (
     <FullscreenTile>
       <ExperienceTrend
-        from={from}
-        to={to}
+        resource={trendResource}
         onSwitchHeatmap={switchToHeatmap}
         onEmptyChange={forDashboard ? setTrendEmpty : undefined}
         hideWhenEmpty={forDashboard}
@@ -566,7 +544,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   );
   const renderBoardTile = () => (
     <FullscreenTile>
-      <ExperienceBoard items={data?.items ?? []} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />
+      <ExperienceBoard items={data?.items ?? []} loading={loading} error={error} onRetry={reload} onSelectTarget={handleSelectTarget} onSwitchHeatmap={switchToHeatmap} from={from} to={to} />
     </FullscreenTile>
   );
 
@@ -609,17 +587,9 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           {/* 右 1/3 列（4 列 × 2 行）：趋势在上整宽，声道看板在下整宽。
               （体验痛点指数仪表盘按用户要求移除，作用不大，右下只保留声道看板。）
               趋势无数据时整块移出，声道看板吸收其高度占满右列两行。 */}
-          {trendEmpty ? (
-            <div style={span(4, 2)} className="voc-bento-tile">{renderBoardTile()}</div>
-          ) : (
-            <>
-              <div style={span(4, 1)} className="voc-bento-tile">{renderTrendTile(true)}</div>
-              <div style={span(4, 1)} className="voc-bento-tile">{renderBoardTile()}</div>
-            </>
-          )}
+          <div style={{ ...span(4, 1), ...(trendEmpty ? { display: 'none' } : {}) }} className="voc-bento-tile">{renderTrendTile(true)}</div>
+          <div style={span(4, trendEmpty ? 2 : 1)} className="voc-bento-tile">{renderBoardTile()}</div>
         </div>
-        {/* 趋势隐藏时的持续挂载点：不占布局，仅维持订阅 + 空态上报，使窗口切到有数据时本格能复现 */}
-        {trendEmpty ? <div style={{ display: 'none' }}>{renderTrendTile(true)}</div> : null}
       </div>
     );
   };
@@ -668,8 +638,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
 
   const renderHeroView = () => (
     <>
-      {renderDesktopDashboard()}
-      {renderMobileSingle()}
+      {isDesktop ? renderDesktopDashboard() : renderMobileSingle()}
     </>
   );
 
@@ -691,24 +660,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
         {/* Hero：桌面 2/3 热力图 + 1/3 仪表盘填满首屏 / 移动单图切换。切换时间窗(loading && data)叠「更新中」过渡态。 */}
         <div className="relative px-1.5 sm:px-5 lg:h-full lg:shrink-0">
             {renderHeroView()}
-            {loading && data ? (
-              <div
-                className="absolute inset-0 rounded-2xl overflow-hidden flex items-center justify-center"
-                style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(0.5px)' }}
-              >
-                {/* 顶部细横条扫光：持续变化，告知正在重聚合而非卡死 */}
-                <div className="absolute top-0 left-0 right-0 h-[2px] overflow-hidden">
-                  <div
-                    className="h-full w-1/3"
-                    style={{ background: 'linear-gradient(90deg,transparent,#5eead4,transparent)', animation: 'voc-shimmer-sweep 1.1s ease-in-out infinite' }}
-                  />
-                </div>
-                <span className="surface-popover inline-flex items-center gap-2 px-3 h-[28px] rounded-full text-[12px] text-token-primary">
-                  <MapSpinner size={13} />
-                  正在重新聚合数据…
-                </span>
-              </div>
-            ) : null}
+
           </div>
         {/* 数据源状态行：诚实告知信号从哪来、采集到什么程度 */}
         {data ? (
@@ -720,7 +672,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
             <span className="w-px h-3 bg-token-nested" />
             <span>
               路由信号 <span className="text-token-primary font-mono tabular-nums">{data.behaviorEventCount}</span> 条
-              {data.trackedSince ? `（自 ${fmtDate(data.trackedSince)} 起采集）` : '（采集器刚上线，数据从现在开始累积）'}
+              {data.trackedSince ? `（自 ${fmtDate(data.trackedSince)} 起采集）` : '（采集起点暂不可用）'}
             </span>
             <span className="w-px h-3 bg-token-nested" />
             <span>报错/等待信号来自 API 请求日志（含历史）</span>
@@ -745,11 +697,8 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
           </div>
         ) : null}
 
-        {error && !data ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <Radar size={36} className="text-token-muted" />
-            <div className="text-sm text-token-secondary">{error}</div>
-          </div>
+        {loading || error ? (
+          <ActivitySectionState title="行为洞察" loading={loading} error={error} onRetry={reload} />
         ) : !data || data.items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-2 sm:px-5">
             <Radar size={36} className="text-token-muted" />
@@ -876,6 +825,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
+                <Suspense fallback={<MapSectionLoader text="正在加载接口详情…" />}>
                 <ExperienceDrill
                   target={drillTarget.target}
                   label={drillTarget.label}
@@ -887,6 +837,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
                   onRequestRequirementModal={openRequirementModalForDrill}
                   onClose={closeDrill}
                 />
+                </Suspense>
               </div>
               <style>{`@keyframes voc-drawer-in { from { transform: translateX(36px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
             </div>,
@@ -1017,7 +968,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
               >
                 <ExperienceMap
                   data={mapData}
-                  loading={loading}
+                  loading={mapLoading}
                   onSelectTarget={(t, fb) => {
                     handleSelectTarget(t, fb);
                     setFullscreenOpen(false);

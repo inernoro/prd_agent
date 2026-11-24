@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   AlertTriangle,
@@ -1199,9 +1200,7 @@ export function SkillSourcePanel({
           </>
         )}
 
-        {state === 'loading' && (
-          <p className="px-4 py-4 text-xs text-muted-foreground">正在读取技能清单…</p>
-        )}
+        {state === 'loading' && <ContentLoading label="读取技能清单" variant="rows" />}
 
         {state === 'ok' && !source && (
           <p className="px-4 py-4 text-xs leading-5 text-muted-foreground">

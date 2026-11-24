@@ -109,6 +109,9 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
         return _inner.TryBuildUrlBySha(sha256, mime, domain, type);
     }
 
+    public Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+        => _inner.TryOpenReadByKeyAsync(key, ct);
+
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
     {
         return await _inner.TryDownloadBytesAsync(key, ct);

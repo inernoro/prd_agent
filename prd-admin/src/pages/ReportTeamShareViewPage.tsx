@@ -283,6 +283,13 @@ export default function ReportTeamShareViewPage() {
               <span style={pageStyles.statLabel}>团队人数</span>
               <span style={pageStyles.statValue}>{data.stats.totalMembers}</span>
             </div>
+            {typeof data.stats.expectedCount === 'number' && (
+              <div style={pageStyles.statCard} title="全部成员剔除免提交(负责人默认免提交)">
+                <Users size={14} color="var(--text-muted)" />
+                <span style={pageStyles.statLabel}>应交人数</span>
+                <span style={pageStyles.statValue}>{data.stats.expectedCount}</span>
+              </div>
+            )}
             <div style={pageStyles.statCard}>
               <CheckCircle2 size={14} color="rgba(34,197,94,0.8)" />
               <span style={pageStyles.statLabel}>已提交</span>
@@ -293,6 +300,13 @@ export default function ReportTeamShareViewPage() {
               <span style={pageStyles.statLabel}>待提交</span>
               <span style={{ ...pageStyles.statValue, color: 'rgba(249,115,22,0.95)' }}>{data.stats.pendingCount}</span>
             </div>
+            {typeof data.stats.overdueCount === 'number' && (
+              <div style={pageStyles.statCard} title="截止前没完成首次提交的人数,补交后仍计入">
+                <AlertCircle size={14} color="rgba(239,68,68,0.8)" />
+                <span style={pageStyles.statLabel}>超时</span>
+                <span style={{ ...pageStyles.statValue, color: data.stats.overdueCount > 0 ? 'rgba(239,68,68,0.95)' : undefined }}>{data.stats.overdueCount}</span>
+              </div>
+            )}
           </div>
 
           {/* AI Summary */}

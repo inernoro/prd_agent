@@ -1,0 +1,81 @@
+using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Services;
+
+public sealed class VisualModelPolicyProductionContractTests
+{
+    private static VisualModelPolicy Policy() => new()
+    {
+        DefaultModelId = "image1",
+        Models = [new() { ModelId = "image2", DisplayName = "GPT Image 2" }, new() { ModelId = "image1", DisplayName = "GPT Image 1" }],
+    };
+
+    private static GatewayImageModel Model(string id) => new()
+    {
+        Model = new AvailableModelPool { Id = "id-" + id, Code = id, Name = id, IsDefault = true, Models = [new PoolModelInfo { ModelId = id }] },
+    };
+
+    [Fact]
+    public void BusinessNicknamePreservesPublicIdentityAndRoutingMembers()
+    {
+        var policy = Policy();
+        policy.Models[1].DisplayName = " GPT 画师 ";
+        policy.Models[1].Description = "上传参考图修改";
+        var catalog = Model("image1");
+        var result = Assert.Single(VisualModelPolicyService.Project(policy, [catalog]), x => x.Code == "image1");
+        Assert.Equal("GPT 画师", result.Name);
+        Assert.Equal("image1", result.Code);
+        Assert.Equal("id-image1", result.Id);
+        Assert.Equal("上传参考图修改", result.Description);
+        Assert.Same(catalog.Model.Models, result.Models);
+        Assert.True(result.IsDefault);
+        Assert.Equal("image1", policy.Select(null));
+    }
+
+    [Theory]
+    [InlineData("", "目录名称")]
+    [InlineData("  ", "目录名称")]
+    [InlineData(" 自定义短名 ", "自定义短名")]
+    public void DisplayNameNormalizesWithoutChangingModelId(string name, string expected)
+    {
+        var entry = new VisualModelEntry { ModelId = "image1", DisplayName = name };
+        Assert.Equal(expected, entry.ResolveDisplayName("目录名称"));
+        Assert.Equal("image1", entry.ModelId);
+    }
+
+    [Fact]
+    public void TooLongDisplayNameIsRejected()
+    {
+        var policy = Policy();
+        policy.Models[0].DisplayName = new string('字', 81);
+        Assert.NotNull(policy.Validate());
+        policy.Models[0].DisplayName = new string('字', 80);
+        Assert.Null(policy.Validate());
+    }
+
+    [Fact]
+    public void UnavailableDefaultRemainsVisible_ButLosesExecutableDefaultFlag()
+    {
+        var result = VisualModelPolicyService.Project(Policy(), [Model("image2")]);
+        var unavailable = Assert.Single(result, x => x.Code == "image1");
+        Assert.Equal("image1", unavailable.Code);
+        Assert.Equal("GPT Image 1", unavailable.Name);
+        Assert.False(unavailable.IsDefault);
+        Assert.Empty(unavailable.Models);
+    }
+
+    [Fact]
+    public void RuntimePolicyIntersectsGatewayCatalog_WithoutInventingFallback()
+    {
+        var result = VisualModelPolicyService.ReconcileForRuntime(Policy(), [Model("image2")]);
+
+        Assert.Equal(["image2"], result.Models.Select(x => x.ModelId));
+        Assert.Equal(string.Empty, result.DefaultModelId);
+        Assert.Null(result.Select(null));
+        Assert.Equal("image2", result.Select("image2"));
+    }
+}

@@ -10,10 +10,13 @@ import type { ReleaseRunProgressLike } from '@/lib/releaseSteps';
 import type { ReleaseCommitRail, ReleaseTargetCommitPosition } from '@/lib/releaseRail';
 import type { EnvironmentGroupLike } from '@/lib/releaseEnvironments';
 
-export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'generated-static';
+export type ReleaseExecutionMode = 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
 
 export interface ReleaseStrategy {
   mode: ReleaseExecutionMode;
+  scriptFile?: string;
+  ciWorkflowFile?: string;
+  script?: string;
   command?: string;
   composeFile?: string;
   composeProject?: string;
@@ -42,11 +45,13 @@ export interface ReleaseStrategyDiscovery {
 }
 
 export interface ReleaseTarget {
+  governance?: { required: boolean; enabledAt: string; enabledBy: string };
   id: string;
   projectId: string;
   name: string;
   type: string;
   isEnabled: boolean;
+  updatedAt?: string;
   lifecycle?: 'active' | 'archived';
   archivedAt?: string;
   archivedBy?: string;
@@ -76,7 +81,13 @@ export interface ReleaseLogEntry {
 }
 
 export interface ReleaseRun {
+  forceReason?: string;
+  autoRestoreStartedAt?: string;
+  autoRestoredAt?: string;
+  governance?: import('../../../../src/domain/release-governance').ReleaseGovernanceReceipt;
   releaseId: string;
+  /** 既有后端审计关联号；不是幂等键。 */
+  requestId?: string;
   projectId: string;
   branchId: string;
   commitSha: string;
@@ -94,6 +105,7 @@ export interface ReleaseRun {
   startedAt: string;
   finishedAt?: string;
   operator?: string;
+  agentIdentity?: { threadId?: string; confidence?: string };
   previousReleaseId?: string;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
@@ -142,7 +154,18 @@ export interface ReleasePromotionCandidate {
   blockedReason?: string;
 }
 
+export interface ReleaseComparison {
+  mainSha: string; productionSha: string; baseSha?: string; comparedAt: string;
+  productionFileCount?: number; mainFileCount?: number; overlapCount?: number;
+  files: Array<{path: string; side: 'production' | 'main' | 'both'}>;
+  truncated?: boolean; reason?: string; conflictStatus: 'not-checked';
+}
+
 export interface CenterRow {
+  conflictCheck?: import('../../../../src/domain/release-governance').ReleaseConflictCheck;
+  mergeBack?: import('../../../../src/domain/release-governance').ReleaseMergeBack;
+  currentRun?: ReleaseRun;
+  comparison?: ReleaseComparison;
   target: ReleaseTarget;
   currentVersion: string;
   currentCommit: string;
@@ -244,6 +267,10 @@ export interface SiteDraft {
   deployCommand: string;
   healthcheckUrl: string;
   strategyMode: ReleaseExecutionMode;
+  originalStrategy?: ReleaseStrategy;
+  scriptFile?: string;
+  ciWorkflowFile?: string;
+  managedScript?: string;
   composeFile: string;
   composeProject: string;
   buildCommand: string;
@@ -257,6 +284,9 @@ export interface SiteDraft {
 /** 发布前检查结果。与 ReleaseService.preflight 的响应对齐。 */
 export interface ReleasePreflightResult {
   ok: boolean;
+  forceAvailable?: boolean;
+  preflightId?: string;
+  artifact?: { commitSha: string };
   checks: Array<{
     id: string;
     label: string;
@@ -272,6 +302,7 @@ export interface BranchOption {
   branch: string;
   commitSha?: string;
   githubCommitSha?: string;
+  pinnedCommit?: string;
   subject?: string;
   previewSlug?: string;
   /** CDS 后端算好的主预览地址（SSOT），发布弹窗展示与提交都以它优先。 */

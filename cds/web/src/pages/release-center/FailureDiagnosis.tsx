@@ -20,6 +20,7 @@ import {
   type ReleaseLogGroup,
 } from '@/lib/releaseDiagnosis';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { Chip, CodeText, formatClock, formatDateTime, formatDuration } from './shared';
 import type { CenterRow, ReleaseRun } from './types';
 
@@ -62,7 +63,7 @@ export function FailureDiagnosis({
             <h3 className="mt-2.5 line-clamp-2 text-[1.0625rem] font-semibold leading-snug">{diagnosis.headline}</h3>
             <p className="mt-1.5 text-xs text-muted-foreground">
               {formatDateTime(run.startedAt)}
-              {run.operator ? ` 由 ${run.operator} 触发` : ''}
+              {` · ${releaseActorLabel(run.operator)}`}
               {` · commit ${run.commitSha.slice(0, 7)}`}
               {duration ? ` · 耗时 ${duration}` : ''}
             </p>

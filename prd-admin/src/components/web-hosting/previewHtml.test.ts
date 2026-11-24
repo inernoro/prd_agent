@@ -276,3 +276,11 @@ describe('resolvePreviewSource', () => {
     }
   });
 });
+
+// LocalAssetStorage 返回站内路径；代理成功后，srcDoc 也必须能建立资源基址。
+describe('本地托管正文的预览基址', () => {
+  it('按当前页面来源解析站内地址，保留资源目录而去掉入口查询参数', () => {
+    const out = withPreviewBase('<head></head><h1>原文</h1>', '/local-assets/sites/a/index.html?v=1', 'https://admin.example');
+    expect(out).toContain('<base href="https://admin.example/local-assets/sites/a/">');
+  });
+});

@@ -903,7 +903,7 @@ public class WebFolderService : IWebFolderService
     }
 
     /// <summary>Markdig 渲染 Markdown → 安全 HTML，包一层最小 HTML 壳。关闭原始 HTML 透传防 XSS。</summary>
-    private static string RenderMarkdownToHtml(string markdown, string title)
+    internal static string RenderMarkdownToHtml(string markdown, string title)
     {
         var pipeline = new MarkdownPipelineBuilder()
             .UseAdvancedExtensions()

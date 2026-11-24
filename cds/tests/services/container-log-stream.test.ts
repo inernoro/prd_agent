@@ -1,3 +1,5 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -40,12 +42,12 @@ if(name==='fixture-fast') {
 } else { process.stdout.write('中文初始\\n');process.stderr.write('诊断输出\\n');let i=0;setInterval(()=>process.stdout.write('日志-'+i+++'\\n'),50);setTimeout(()=>process.exit(0),60000); }
 `, { mode: 0o700 });
   process.env.PATH = `${dir}:${originalPath || ''}`;
-  const streams = new ObservationStreamExecutor(2); pools.push(streams); await streams.start();
+  const streams = traceExecutor(new ObservationStreamExecutor(2), 'container-logs'); pools.push(streams); await streams.start();
   const hub = new ContainerLogStreamHub(streams); hubs.push(hub);
   const config = { repoRoot: dir, worktreeBase: dir, masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture',
     sharedEnv: {}, portStart: 10001, rootDomains: ['example.test'], previewDomain: 'example.test', jwt: { secret: 'fixture-secret', issuer: 'fixture' } } as CdsConfig;
   const shell = new MockShellExecutor();
-  const container = new ContainerService(shell, config, undefined, undefined, undefined, hub);
+  const container = new ContainerService(shell, config, undefined, undefined, undefined, hub, unitBindMountInspector);
   vi.clearAllMocks();
   const trace = async () => (await readFile(traceFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   return { dir, streams, hub, config, shell, container, trace };

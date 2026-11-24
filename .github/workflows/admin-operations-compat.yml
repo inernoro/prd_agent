@@ -1,0 +1,119 @@
+name: Admin Operations Browser Compatibility
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'cds/web/**'
+      - 'llmgw/web/**'
+      - 'e2e/package.json'
+      - 'e2e/pnpm-lock.yaml'
+      - 'e2e/tsconfig.json'
+      - 'e2e/admin-operations.config.ts'
+      - 'e2e/specs/admin-operations-compat.spec.ts'
+      - 'e2e/specs/branch-release-flow.spec.ts'
+      - 'e2e/specs/gateway-audio.spec.ts'
+      - 'e2e/specs/collection-scroll-compat.spec.ts'
+      - 'e2e/fixtures/admin-operations*'
+      - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
+      - '.github/workflows/admin-operations-compat.yml'
+  pull_request:
+    paths:
+      - 'cds/web/**'
+      - 'llmgw/web/**'
+      - 'e2e/package.json'
+      - 'e2e/pnpm-lock.yaml'
+      - 'e2e/tsconfig.json'
+      - 'e2e/admin-operations.config.ts'
+      - 'e2e/specs/admin-operations-compat.spec.ts'
+      - 'e2e/specs/branch-release-flow.spec.ts'
+      - 'e2e/specs/gateway-audio.spec.ts'
+      - 'e2e/specs/collection-scroll-compat.spec.ts'
+      - 'e2e/fixtures/admin-operations*'
+      - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
+      - '.github/workflows/admin-operations-compat.yml'
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: '验收范围'
+        type: choice
+        options: [all, audio, entry]
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  browser-operations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install frontend and browser test dependencies
+        run: |
+          pnpm -C cds/web install --frozen-lockfile
+          pnpm -C llmgw/web install --frozen-lockfile
+          pnpm -C e2e install --frozen-lockfile
+          sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
+          pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Start a real system audio output for browser acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio pulseaudio-utils
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/gateway-audio-runtime"
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          mkdir -p work/compat/audio-system
+          pulseaudio --start --exit-idle-time=-1 --log-level=info --log-target="file:$GITHUB_WORKSPACE/work/compat/audio-system/pulseaudio.log"
+          export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
+          pactl load-module module-null-sink sink_name=gateway_acceptance rate=48000 channels=2
+          pactl set-default-sink gateway_acceptance
+          pactl set-sink-mute gateway_acceptance 0
+          pactl set-sink-volume gateway_acceptance 100%
+          pactl info > work/compat/audio-system/server.txt
+          pactl list short sinks > work/compat/audio-system/sinks.txt
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "PULSE_SERVER=$PULSE_SERVER" >> "$GITHUB_ENV"
+      - name: Build the actual frontend bundles
+        env:
+          VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+          VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
+        run: |
+          pnpm -C cds/web typecheck
+          pnpm -C cds/web build
+          pnpm -C llmgw/web build
+          pnpm -C e2e typecheck
+      - name: Verify isolated management operations across browser engines
+        env:
+          BROWSER_SCENARIO: ${{ inputs.scenario }}
+          VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
+        run: |
+          if [ "$BROWSER_SCENARIO" = "audio" ]; then
+            GATEWAY_AUDIO_MONITOR=gateway_acceptance.monitor pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=1
+          elif [ "$BROWSER_SCENARIO" = "entry" ]; then
+            pnpm -C e2e exec playwright test -c admin-operations.config.ts --grep '电影式接入全流程' --repeat-each=2 --workers=2
+          else
+            pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
+          fi
+      - name: Verify natural request results and retained log scrolling
+        env:
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
+          CHECK_OUT: ${{ github.workspace }}/work/compat/log-result-height
+        run: pnpm -C llmgw/web exec node scripts/check-log-result-height.mjs
+      - name: Verify provider maintenance workspace
+        env:
+          PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
+          CHECK_OUT: ${{ github.workspace }}/work/compat/provider-workspace
+        run: pnpm -C llmgw/web exec node scripts/check-provider-workspace.mjs
+      - name: Retain browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-operations-browser-evidence
+          path: work/compat/
+          retention-days: 14

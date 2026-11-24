@@ -14,6 +14,8 @@ export const api = {
     login: () => '/api/v1/auth/login',
     ssoOptions: () => '/api/v1/auth/miduo-planet/options',
     miduoPlanetLogin: () => '/api/v1/auth/miduo-planet/login',
+    cdsStart: () => '/api/v1/auth/cds/start',
+    cdsComplete: () => '/api/v1/auth/cds/complete',
     syntheticLoginExchange: () => '/api/v1/auth/synthetic/exchange',
     register: () => '/api/v1/auth/register',
     refresh: () => '/api/v1/auth/refresh',
@@ -123,6 +125,7 @@ export const api = {
         list: () => '/api/lab/model/experiments',
         byId: (id: string) => `/api/lab/model/experiments/${id}`,
       },
+      modelOptions: (purpose: string = 'chat') => `/api/lab/model/model-options?purpose=${encodeURIComponent(purpose)}`,
       modelSets: () => '/api/lab/model/model-sets',
       labGroups: {
         list: () => '/api/lab/model/lab-groups',
@@ -319,6 +322,7 @@ export const api = {
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
+      handleBatch: () => '/api/dashboard/notifications/handle-batch',
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',
@@ -606,6 +610,7 @@ export const api = {
       adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
+        byRequest: (requestId: string) => `/api/literary-agent/image-gen/runs/by-request?requestId=${encodeURIComponent(requestId)}`,
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
         stream: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/stream`,
         cancel: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/cancel`,
@@ -862,6 +867,7 @@ export const api = {
     list: () => '/api/watermarks',
     byApp: (appKey: string) => `/api/watermarks/app/${appKey}`,
     byId: (id: string) => `/api/watermarks/${id}`,
+    preview: (id: string) => `/api/watermark/preview/${encodeURIComponent(id)}.png`,
     bind: (id: string, appKey: string) => `/api/watermarks/${id}/bind/${appKey}`,
     unbind: (id: string, appKey: string) => `/api/watermarks/${id}/unbind/${appKey}`,
     icons: () => '/api/watermark/icons',
@@ -1217,6 +1223,7 @@ export const api = {
 
   // ============ Arena 竞技场 ============
   arena: {
+    modelOptions: () => '/api/lab/arena/model-options',
     groups: {
       list: () => '/api/lab/arena/groups',
       byId: (id: string) => `/api/lab/arena/groups/${id}`,
@@ -1266,6 +1273,10 @@ export const api = {
     byId: (id: string) => `/api/web-pages/${id}`,
     content: (id: string) => `/api/web-pages/${id}/content`,
     /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
+    pdf: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/pdf`,
+    sharePdf: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/pdf`,
+    zipHomepageAsset: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/zip-homepage`,
+    shareZipHomepageAsset: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/zip-homepage`,
     offlineHtml: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/export/offline-html`,
     /** 单文件离线 HTML，经分享链接（登录 + 分享门禁：撤销 / 过期 / 可见性 / 密码） */
     shareOfflineHtml: (token: string, query: string) =>
@@ -1304,6 +1315,7 @@ export const api = {
     askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
     // 重新按正文生成开场问题（owner 明确要的那一次，同步等结果）
     askRegenerateQuestions: (siteId: string) => `/api/web-pages/${siteId}/ask/questions/regenerate`,
+    askRating: (messageId: string) => `/api/web-pages/ask/messages/${messageId}/rating`,
     askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
     askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
     // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一
@@ -1324,14 +1336,16 @@ export const api = {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
     // 最近 30 天真实耗时 P50/P95（按执行器 × 产物类型），给「预计还要多久」用
     timingStats: () => '/api/design-artifacts/timing-stats',
-    // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
+    // 网页生成设置：自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
     generationSettings: () => '/api/design-artifacts/generation-settings',
     // 「我的风格」：每人自己的风格（列表 / 新建 / 改 / 删 / 从自己的网页提取草稿）
     personalStyles: () => '/api/design-artifacts/personal-styles',
     personalStyle: (id: string) => `/api/design-artifacts/personal-styles/${encodeURIComponent(id)}`,
     personalStyleDerive: () => '/api/design-artifacts/personal-styles/derive',
     runs: () => '/api/design-artifacts/runs',
+    activeRun: () => '/api/design-artifacts/runs/active',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
+    restart: (runId: string) => `/api/design-artifacts/runs/${runId}/restart`,
     cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,
     stream: (runId: string) => `/api/design-artifacts/runs/${runId}/stream`,
   },
@@ -1382,6 +1396,10 @@ export const api = {
 
   // ============ Document Store 文档空间 ============
   documentStore: {
+    trash: {
+      list: () => '/api/document-store/stores/trash',
+      restore: (kind: 'entry' | 'store', id: string) => `/api/document-store/${kind === 'store' ? 'stores' : 'entries'}/${encodeURIComponent(id)}/restore`,
+    },
     stores: {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',
@@ -1447,6 +1465,8 @@ export const api = {
       subscribeGithubBatch: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github/batch`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      knowledgeIndex: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/knowledge-index`,
+      download: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/download`,
       creativePublish: (entryId: string) => `/api/document-store/entries/${entryId}/creative-publish`,
       // 版本控制：历史版本列表 / 取某版本正文 / 恢复某版本
       versions: (entryId: string) => `/api/document-store/entries/${entryId}/versions`,

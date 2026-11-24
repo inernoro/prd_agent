@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.ClaudeSidecar;
@@ -105,6 +107,10 @@ public class AgentToolsController : ControllerBase
             CdsLongToken = cdsToken,
         };
 
+        var continuation = await HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>().ValidateAsync(
+            Request.Headers["X-Sidecar-Token"].ToString(), req.RunId ?? "", ctx.UserId);
+        if (continuation is null) return StatusCode(403, new { error = "任务工具授权已失效，未执行工具；请查看任务状态。" });
+        using var taskExecution = TaskExecutionContext.Enter(continuation);
         var approval = await ResolveToolApprovalAsync(req.RunId, req.ToolName, req.ApprovalId, TimeSpan.Zero, ct);
         if (!approval.Allowed)
         {
@@ -231,6 +237,9 @@ public class AgentToolsController : ControllerBase
         var session = await FindSessionByRunIdAsync(runId, ct);
         if (session == null)
         {
+            // 单篇索引只在已归属的通用对话轮次内执行；基础设施只读会话仍由下方策略拒绝。
+            if (toolName == "kb_index" && await ResolveChatAgentUserIdAsync(runId, ct) != null)
+                return ToolApprovalDecision.Allow("chat_entry_index", risk);
             return risk == "readonly"
                 ? ToolApprovalDecision.Allow("auto_allowed", risk)
                 : ToolApprovalDecision.Deny("approval_context_missing", "dangerous tool requires an infra agent session approval context", risk);
@@ -475,7 +484,7 @@ public class AgentToolsController : ControllerBase
         var normalized = toolName.Trim().ToLowerInvariant();
         return normalized switch
         {
-            "kb_apply" => "write",
+            "kb_apply" or "kb_index" => "write",
             "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action"
                 or "bash" or "edit" or "write" => "dangerous",
             _ => "readonly"
@@ -491,6 +500,13 @@ public class AgentToolsController : ControllerBase
             return false;
         }
 
+        if (TaskContinuationTokens.IsTaskToken(presented))
+        {
+            var valid = HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>()
+                .ValidateTokenAsync(presented).GetAwaiter().GetResult();
+            reason = valid ? "ok" : "task continuation expired";
+            return valid;
+        }
         var configured = _options.CurrentValue.Sidecars
             .Select(s =>
                 !string.IsNullOrWhiteSpace(s.Token)

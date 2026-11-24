@@ -249,7 +249,7 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 #   `collect_week_context.py` 的 collect_prev_weekly 只返回上期标题与 entryId，
 #   唯一的水位线读取方 coverage_window.py 跑在**日报**的 store + kind 上。所以它今天的作用
 #   仅是「把这期基于哪个 SHA 算的」写进条目元数据备查，**不能**指望它让下期自动续采
-#   （Codex #1319 P2）。要真有续采能力，得先给周报侧接一个消费方，见 doc/debt.acceptance-center-cds.md。
+#   （Codex #1319 P2）。要真有续采能力，得先给周报侧接一个消费方，见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.acceptance-center-cds.md。
 # 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地文件（仅自查，不算交付）
 ```
 

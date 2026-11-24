@@ -6,6 +6,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -64,6 +66,12 @@ public class LabController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<AdminImpersonateResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> Impersonate([FromBody] AdminImpersonateRequest request)
     {
+        if (CdsSsoSessions.IsDelegated(User.FindFirst("sessionKey")?.Value))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前 CDS 登录无法使用实验室身份切换。请用 MAP 本地账号登录后重试。"));
+        }
+
         if (string.IsNullOrWhiteSpace(request.UserId))
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userId 不能为空"));
@@ -139,12 +147,15 @@ public class LabController : ControllerBase
 
         // 如果需要触发 AI 回复，需要先创建/获取一个会话
         Session? session = null;
+        TaskExecutionIdentity? taskIdentity = null;
         if (request.TriggerAiReply)
         {
             if (string.IsNullOrEmpty(group.PrdDocumentId))
             {
                 return BadRequest(ApiResponse<object>.Fail("NO_PRD_DOCUMENT", "群组尚未绑定 PRD 文档，无法触发 AI 回复"));
             }
+            taskIdentity = await HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>()
+                .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
             // 创建一个临时会话用于触发 AI 回复
             session = await _sessionService.CreateAsync(group.PrdDocumentId, group.GroupId);
         }
@@ -180,15 +191,22 @@ public class LabController : ControllerBase
         // 如果需要触发 AI 回复
         if (request.TriggerAiReply && session != null)
         {
-            // 异步触发 AI 回复（不阻塞返回）
+            var permitId = taskIdentity!.PermitId;
+            var replyRunId = userMessage.Id;
+            // 后台分支持有独立租约与服务作用域，HTTP收尾不完成这个执行代次。
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var executions = scope.ServiceProvider.GetRequiredService<ITaskExecutionCoordinator>();
+                    await using var lease = await executions.AcquireAsync(permitId, replyRunId, CancellationToken.None);
+                    using var execution = TaskExecutionContext.Enter(lease.Identity);
+                    var chat = scope.ServiceProvider.GetRequiredService<IChatService>();
                     // 注意：SendMessageAsync 会创建新的用户消息并生成 AI 回复
                     // 这里传入相同内容，会导致消息重复；但为了触发 AI，这是必要的
                     // 前端可通过 seq 去重
-                    await foreach (var _ in _chatService.SendMessageAsync(
+                    await foreach (var _ in chat.SendMessageAsync(
                         session.SessionId,
                         userMessage.Content,
                         userId: adminId,

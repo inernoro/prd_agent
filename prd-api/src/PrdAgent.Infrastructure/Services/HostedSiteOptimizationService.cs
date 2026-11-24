@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -19,9 +20,8 @@ namespace PrdAgent.Infrastructure.Services;
 public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizationService
 {
     private const int UploadChunkSize = 2 * 1024 * 1024;
-    private const long MaxSourceFileBytes = 500L * 1024 * 1024;
     private const int MaxArchiveEntries = 20_000;
-    private const long MaxUncompressedBytes = 500L * 1024 * 1024;
+    private const long MaxUncompressedBytes = HostedSiteUploadLimits.MaxPackageBytes;
     private const long MaxOptimizationBytes = 200L * 1024 * 1024;
     private const long MaxScannedTextFileBytes = 8L * 1024 * 1024;
     private const long MaxScannedTextBytes = 32L * 1024 * 1024;
@@ -72,8 +72,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     {
         if (request.FileSize <= 0)
             throw new InvalidOperationException("请选择非空 ZIP 文件");
-        if (request.FileSize > MaxSourceFileBytes)
-            throw new InvalidOperationException("ZIP 文件不能超过 500 MB");
+        if (!HostedSiteUploadLimits.IsWithinPackageLimit(request.FileSize))
+            throw new InvalidOperationException("ZIP 文件不能超过 5000 MB");
         if (!string.Equals(Path.GetExtension(request.FileName), ".zip", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("智能优化目前只支持 ZIP 文件");
         if (!string.IsNullOrWhiteSpace(request.TargetSiteId)
@@ -91,7 +91,11 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             ChunkSize = UploadChunkSize,
             TotalChunks = checked((int)((request.FileSize + UploadChunkSize - 1) / UploadChunkSize)),
             Status = HostedSiteOptimizationStatuses.Uploading,
-            Title = request.Title?.Trim(),
+            Title = string.IsNullOrWhiteSpace(request.Title) && string.IsNullOrWhiteSpace(request.TargetSiteId)
+                ? Path.GetFileNameWithoutExtension(request.FileName)
+                : request.Title?.Trim(),
+            EntryFile = request.EntryFile,
+            EntryIndex = request.EntryIndex,
             Description = request.Description?.Trim(),
             Folder = request.Folder?.Trim(),
             Tags = (request.Tags ?? new List<string>())
@@ -162,13 +166,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var session = await GetOwnedSessionAsync(sessionId, userId, ct);
         if (session.Status != HostedSiteOptimizationStatuses.Uploading)
         {
-            if (session.Status is HostedSiteOptimizationStatuses.Queued
-                or HostedSiteOptimizationStatuses.Analyzing
-                or HostedSiteOptimizationStatuses.AwaitingDecision
-                or HostedSiteOptimizationStatuses.Previewing
-                or HostedSiteOptimizationStatuses.PreviewReady
-                or HostedSiteOptimizationStatuses.Saving
-                or HostedSiteOptimizationStatuses.Saved)
+            if (IsUploadSubmitted(session.Status))
                 return;
             throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
         }
@@ -180,20 +178,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                  && x.OwnerUserId == userId
                  && x.Status == HostedSiteOptimizationStatuses.Uploading,
             Builders<HostedSiteOptimizationSession>.Update
-                .Set(x => x.Status, HostedSiteOptimizationStatuses.Queued)
+                .Set(x => x.Status, HostedSiteOptimizationStatuses.ZipEntryQueued)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow)
                 .Set(x => x.ExpiresAt, DateTime.UtcNow.Add(SessionLifetime)),
             cancellationToken: CancellationToken.None);
         if (update.ModifiedCount != 1)
         {
             var current = await GetOwnedSessionAsync(sessionId, userId, ct);
-            if (current.Status is HostedSiteOptimizationStatuses.Queued
-                or HostedSiteOptimizationStatuses.Analyzing
-                or HostedSiteOptimizationStatuses.AwaitingDecision
-                or HostedSiteOptimizationStatuses.Previewing
-                or HostedSiteOptimizationStatuses.PreviewReady
-                or HostedSiteOptimizationStatuses.Saving
-                or HostedSiteOptimizationStatuses.Saved)
+            if (IsUploadSubmitted(current.Status))
                 return;
             throw new InvalidOperationException("这个上传任务已经结束，请重新选择文件");
         }
@@ -243,11 +235,12 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             .Sum(x => x == session.TotalChunks - 1
                 ? session.SourceFileSize - (long)session.ChunkSize * (session.TotalChunks - 1)
                 : session.ChunkSize);
+        var status = GetUploadClientStatus(session.Status);
         return new HostedSiteOptimizationUploadStatusResult
         {
             SessionId = session.Id,
-            Status = session.Status,
-            Stage = StageFor(session.Status),
+            Status = status,
+            Stage = StageFor(status),
             UploadedChunks = session.UploadedChunkIndexes.Distinct().Count(),
             TotalChunks = session.TotalChunks,
             UploadedBytes = uploadedBytes,
@@ -262,47 +255,31 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var now = DateTime.UtcNow;
         await FailExpiredWorkerSavesAsync(now);
         var leaseOwner = Guid.NewGuid().ToString("N");
-        var expiredLease = Builders<HostedSiteOptimizationSession>.Filter.Or(
-            Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.LeaseExpiresAt, null),
-            Builders<HostedSiteOptimizationSession>.Filter.Lt(x => x.LeaseExpiresAt, now));
-        var filter = Builders<HostedSiteOptimizationSession>.Filter.Or(
-            Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Status, HostedSiteOptimizationStatuses.Queued),
-            Builders<HostedSiteOptimizationSession>.Filter.And(
-                Builders<HostedSiteOptimizationSession>.Filter.Eq(x => x.Status, HostedSiteOptimizationStatuses.Analyzing),
-                expiredLease));
-        var session = await _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
-            filter,
-            Builders<HostedSiteOptimizationSession>.Update
-                .Set(x => x.Status, HostedSiteOptimizationStatuses.Analyzing)
-                .Set(x => x.Error, null)
-                .Set(x => x.LeaseOwner, leaseOwner)
-                .Set(x => x.LeaseExpiresAt, now.Add(WorkerLeaseLifetime))
-                .Set(x => x.UpdatedAt, now)
-                .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
-            new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
-            {
-                ReturnDocument = ReturnDocument.After,
-                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.UpdatedAt),
-            },
-            CancellationToken.None);
+        var session = await ClaimQueuedUploadAsync(now, leaseOwner);
         if (session == null) return false;
+        var analyzingStatus = session.Status;
 
         using var leaseCancellation = new CancellationTokenSource();
         var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
         try
         {
-            var sourceBytes = await DownloadChunksAsync(session);
-            var analysis = Analyze(sourceBytes);
+            await using var sourceStream = await DownloadChunksAsync(session);
+            var analysis = BuildOptimizedPackage(sourceStream, session.EntryFile != null || session.EntryIndex != null).Analysis;
             if (analysis.Blocked)
                 throw new InvalidOperationException(analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试");
 
             if (analysis.Recommended)
             {
+                // 自动优化的执行预算仍为 200MB；只有这一档会进入整包快照与确认流程。
+                sourceStream.Position = 0;
+                using var bufferedSource = new MemoryStream();
+                await sourceStream.CopyToAsync(bufferedSource);
+                var sourceBytes = bufferedSource.ToArray();
                 session.SourceObjectKey = _storage.BuildSiteKey(StorageScope(session), "__source/source.zip");
                 session.SourceSha256 = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
                 var sourceRecorded = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id
-                         && x.Status == HostedSiteOptimizationStatuses.Analyzing
+                         && x.Status == analyzingStatus
                          && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.SourceObjectKey, session.SourceObjectKey)
@@ -319,7 +296,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     "private, no-store");
                 var transitioned = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                     x => x.Id == session.Id
-                         && x.Status == HostedSiteOptimizationStatuses.Analyzing
+                         && x.Status == analyzingStatus
                          && x.LeaseOwner == leaseOwner,
                     Builders<HostedSiteOptimizationSession>.Update
                         .Set(x => x.SourceObjectKey, session.SourceObjectKey)
@@ -338,7 +315,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
             var saveClaim = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
                 x => x.Id == session.Id
-                     && x.Status == HostedSiteOptimizationStatuses.Analyzing
+                     && x.Status == analyzingStatus
                      && x.LeaseOwner == leaseOwner,
                 Builders<HostedSiteOptimizationSession>.Update
                     .Set(x => x.Analysis, analysis)
@@ -352,23 +329,27 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             {
                 saved = await _hostedSites.CreateFromZipAsync(
                     session.OwnerUserId,
-                    sourceBytes,
+                    sourceStream,
                     session.Title,
                     session.Description,
                     session.Folder,
                     session.Tags,
                     ct: CancellationToken.None,
-                    sourceRef: session.Id);
+                    sourceRef: session.Id,
+                    entryFile: session.EntryFile,
+                    entryIndex: session.EntryIndex);
             }
             else
             {
                 saved = await _hostedSites.ReuploadAsync(
                     session.TargetSiteId,
                     session.OwnerUserId,
-                    sourceBytes,
+                    sourceStream,
                     session.SourceFileName,
                     ct: CancellationToken.None,
-                    reuploadRef: session.Id);
+                    reuploadRef: session.Id,
+                    zipEntryFile: session.EntryFile,
+                    zipEntryIndex: session.EntryIndex);
                 var metadata = await _hostedSites.UpdateAsync(
                     saved.Id,
                     session.OwnerUserId,
@@ -815,7 +796,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             .Find(x => x.Id == sessionId && x.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
         if (session == null) return;
-        if (session.Status is HostedSiteOptimizationStatuses.Analyzing
+        if (GetUploadClientStatus(session.Status) is HostedSiteOptimizationStatuses.Analyzing
             or HostedSiteOptimizationStatuses.Previewing
             or HostedSiteOptimizationStatuses.Saving)
             throw new InvalidOperationException("文件正在后台处理，请等待当前步骤完成");
@@ -830,6 +811,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                     new[]
                     {
                         HostedSiteOptimizationStatuses.Analyzing,
+                        HostedSiteOptimizationStatuses.ZipEntryAnalyzing,
                         HostedSiteOptimizationStatuses.Previewing,
                         HostedSiteOptimizationStatuses.Saving,
                     })),
@@ -851,12 +833,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     {
         var now = DateTime.UtcNow;
         var queued = await _db.HostedSiteOptimizationSessions
-            .Find(x => x.Status == HostedSiteOptimizationStatuses.Queued)
+            .Find(x => x.Status == HostedSiteOptimizationStatuses.Queued
+                       || x.Status == HostedSiteOptimizationStatuses.ZipEntryQueued)
             .SortBy(x => x.UpdatedAt)
             .Limit(QueueBacklogThreshold + 1)
             .ToListAsync(ct);
         var holders = await _db.HostedSiteOptimizationSessions
             .Find(x => x.Status == HostedSiteOptimizationStatuses.Analyzing
+                       || x.Status == HostedSiteOptimizationStatuses.ZipEntryAnalyzing
                        || x.Status == HostedSiteOptimizationStatuses.Previewing
                        || x.Status == HostedSiteOptimizationStatuses.Saving)
             .SortBy(x => x.UpdatedAt)
@@ -1062,7 +1046,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             throw new InvalidOperationException("正在生成优化预览，请稍后再试");
         if (session.Status == HostedSiteOptimizationStatuses.CleanupPending)
             throw new InvalidOperationException("这个优化任务已经结束，请刷新站点列表查看结果");
-        if (session.Status is HostedSiteOptimizationStatuses.Uploading
+        if (GetUploadClientStatus(session.Status) is HostedSiteOptimizationStatuses.Uploading
             or HostedSiteOptimizationStatuses.Queued
             or HostedSiteOptimizationStatuses.Analyzing)
             throw new InvalidOperationException("文件仍在后台分析，请稍后再试");
@@ -1314,23 +1298,38 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         return output.ToArray();
     }
 
-    private async Task<byte[]> DownloadChunksAsync(HostedSiteOptimizationSession session)
+    private async Task<FileStream> DownloadChunksAsync(HostedSiteOptimizationSession session)
     {
-        var sourceBytes = new byte[checked((int)session.SourceFileSize)];
-        var offset = 0;
-        for (var index = 0; index < session.TotalChunks; index++)
+        var temporaryDirectory = Path.GetTempPath();
+        // 分片已经在对象存储；这里只保留一份本机源包，预留少量空间供进程继续运行。
+        if (new DriveInfo(temporaryDirectory).AvailableFreeSpace < session.SourceFileSize + 64L * 1024 * 1024)
+            throw new InvalidOperationException("上传暂存空间不足，文件尚未保存，请稍后重试或缩小 ZIP 文件");
+        var stream = new FileStream(
+            Path.Combine(temporaryDirectory, $"hosted-site-{Guid.NewGuid():N}.zip"),
+            FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        try
         {
-            var chunk = await _storage.TryDownloadBytesAsync(
-                            BuildChunkKey(session, index), CancellationToken.None)
-                        ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
-            if (chunk.Length > sourceBytes.Length - offset)
+            for (var index = 0; index < session.TotalChunks; index++)
+            {
+                var chunk = await _storage.TryDownloadBytesAsync(
+                                BuildChunkKey(session, index), CancellationToken.None)
+                            ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
+                var expectedLength = Math.Min((long)session.ChunkSize, session.SourceFileSize - stream.Length);
+                if (chunk.LongLength != expectedLength)
+                    throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
+                await stream.WriteAsync(chunk);
+            }
+            if (stream.Length != session.SourceFileSize)
                 throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
-            Buffer.BlockCopy(chunk, 0, sourceBytes, offset, chunk.Length);
-            offset += chunk.Length;
+            stream.Position = 0;
+            return stream;
         }
-        if (offset != sourceBytes.Length)
-            throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
-        return sourceBytes;
+        catch
+        {
+            await stream.DisposeAsync();
+            throw;
+        }
     }
 
     private async Task<bool> CleanupSessionFilesAsync(HostedSiteOptimizationSession session)
@@ -1384,6 +1383,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                         new[]
                         {
                             HostedSiteOptimizationStatuses.Analyzing,
+                            HostedSiteOptimizationStatuses.ZipEntryAnalyzing,
                             HostedSiteOptimizationStatuses.Previewing,
                             HostedSiteOptimizationStatuses.Saving,
                         })),
@@ -1413,6 +1413,55 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 .Set(x => x.ExpiresAt, now.Add(SessionLifetime)),
             cancellationToken: CancellationToken.None);
     }
+
+    private Task<HostedSiteOptimizationSession> ClaimQueuedUploadAsync(DateTime now, string leaseOwner)
+    {
+        var filter = Builders<HostedSiteOptimizationSession>.Filter;
+        var claimable = filter.In(x => x.Status,
+                new[] { HostedSiteOptimizationStatuses.Queued, HostedSiteOptimizationStatuses.ZipEntryQueued })
+            | (filter.In(x => x.Status,
+                   new[] { HostedSiteOptimizationStatuses.Analyzing, HostedSiteOptimizationStatuses.ZipEntryAnalyzing })
+               & (filter.Eq(x => x.LeaseExpiresAt, null) | filter.Lt(x => x.LeaseExpiresAt, now)));
+        // Choose the analysis state in the same write that takes the lease, so older workers can still
+        // recognize and recover their own jobs without being able to claim jobs with newer semantics.
+        var usesZipEntryStates = new BsonDocument("$in", new BsonArray
+        {
+            $"${nameof(HostedSiteOptimizationSession.Status)}",
+            new BsonArray { HostedSiteOptimizationStatuses.ZipEntryQueued, HostedSiteOptimizationStatuses.ZipEntryAnalyzing },
+        });
+        var updates = new BsonDocument
+        {
+            { nameof(HostedSiteOptimizationSession.Status), new BsonDocument("$cond", new BsonArray
+                { usesZipEntryStates, HostedSiteOptimizationStatuses.ZipEntryAnalyzing, HostedSiteOptimizationStatuses.Analyzing }) },
+            { nameof(HostedSiteOptimizationSession.Error), BsonNull.Value },
+            { nameof(HostedSiteOptimizationSession.LeaseOwner), leaseOwner },
+            { nameof(HostedSiteOptimizationSession.LeaseExpiresAt), now.Add(WorkerLeaseLifetime) },
+            { nameof(HostedSiteOptimizationSession.UpdatedAt), now },
+            { nameof(HostedSiteOptimizationSession.ExpiresAt), now.Add(SessionLifetime) },
+        };
+        return _db.HostedSiteOptimizationSessions.FindOneAndUpdateAsync(
+            claimable,
+            Builders<HostedSiteOptimizationSession>.Update.Pipeline(new BsonDocument[] { new("$set", updates) }),
+            new FindOneAndUpdateOptions<HostedSiteOptimizationSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+                Sort = Builders<HostedSiteOptimizationSession>.Sort.Ascending(x => x.UpdatedAt),
+            },
+            CancellationToken.None);
+    }
+
+    private static string GetUploadClientStatus(string status) => status switch
+    {
+        HostedSiteOptimizationStatuses.ZipEntryQueued => HostedSiteOptimizationStatuses.Queued,
+        HostedSiteOptimizationStatuses.ZipEntryAnalyzing => HostedSiteOptimizationStatuses.Analyzing,
+        _ => status,
+    };
+
+    private static bool IsUploadSubmitted(string status) => GetUploadClientStatus(status) is
+        HostedSiteOptimizationStatuses.Queued or HostedSiteOptimizationStatuses.Analyzing
+        or HostedSiteOptimizationStatuses.AwaitingDecision or HostedSiteOptimizationStatuses.Previewing
+        or HostedSiteOptimizationStatuses.PreviewReady or HostedSiteOptimizationStatuses.Saving
+        or HostedSiteOptimizationStatuses.Saved;
 
     private static string StageFor(string status) => status switch
     {
@@ -1454,11 +1503,19 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     private OptimizedBuild BuildOptimizedPackage(byte[] zipBytes)
     {
-        var analysis = new HostedSiteOptimizationAnalysis { OriginalArchiveBytes = zipBytes.LongLength };
+        using var input = new MemoryStream(zipBytes, writable: false);
+        return BuildOptimizedPackage(input);
+    }
+
+    internal HostedSiteOptimizationAnalysis Analyze(Stream input) => BuildOptimizedPackage(input).Analysis;
+
+    private OptimizedBuild BuildOptimizedPackage(Stream input, bool preserveOriginal = false)
+    {
+        input.Position = 0;
+        var analysis = new HostedSiteOptimizationAnalysis { OriginalArchiveBytes = input.Length };
         try
         {
-            using var input = new MemoryStream(zipBytes, writable: false);
-            using var archive = new ZipArchive(input, ZipArchiveMode.Read);
+            using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: true);
             analysis.OriginalEntries = archive.Entries.Count;
             if (archive.Entries.Count > MaxArchiveEntries)
                 return Blocked(analysis, $"ZIP 文件超过 {MaxArchiveEntries} 项，请先在本地导出运行包");
@@ -1478,10 +1535,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 .Select(x => new ArchiveFile(x, StripRoot(NormalizePath(x.FullName), prefix)))
                 .ToList();
             analysis.OriginalFiles = files.Count;
+            var oversizedFile = files.FirstOrDefault(x =>
+                HostedSiteUploadLimits.ValidateSingleFileSize(x.Entry.Length) != null);
+            if (oversizedFile != null)
+                return Blocked(analysis, HostedSiteUploadLimits.ValidateSingleFileSize(oversizedFile.Entry.Length)!);
             analysis.OriginalUncompressedBytes = files.Sum(x => x.Entry.Length);
             if (analysis.OriginalUncompressedBytes > MaxUncompressedBytes)
-                return Blocked(analysis, "ZIP 解压后超过 500 MB，未进行优化");
-            if (analysis.OriginalUncompressedBytes > MaxOptimizationBytes)
+                return Blocked(analysis, "ZIP 解压后超过 5000 MB，未进行优化");
+            if (analysis.OriginalUncompressedBytes > MaxOptimizationBytes || input.Length > MaxOptimizationBytes)
             {
                 analysis.Warnings.Add("文件解压后超过 200 MB，本次跳过自动优化并按原文件保存");
                 return new OptimizedBuild { Analysis = analysis };
@@ -1491,10 +1552,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                                && x.Entry.Length / Math.Max(1d, x.Entry.CompressedLength) > 1000d))
                 return Blocked(analysis, "ZIP 中存在异常压缩比文件，未进行优化");
 
+            // 手选首页与目录模式保留原包，避免精简步骤移除用户要浏览的文件。
+            if (preserveOriginal)
+                return new OptimizedBuild { Analysis = analysis };
+
             var byPath = files.ToDictionary(x => x.LogicalPath, StringComparer.Ordinal);
             var entryFile = SelectEntry(byPath.Keys);
             if (entryFile == null)
-                return Blocked(analysis, "ZIP 缺少 HTML 入口文件，无法生成可预览站点");
+                return new OptimizedBuild { Analysis = analysis };
 
             // Files that are guaranteed to be removed must not consume the runtime scan budget.
             // Large exported prototypes commonly carry a complete node_modules tree; counting it

@@ -1,3 +1,7 @@
+import { GatewayEntryCorners, GatewayIntentStarters } from '@/components/entry/GatewayEntryActions';
+import { clearQuickstartDraft, quickstartDraftScope, saveQuickstartDraft } from '@/lib/quickstartDraft';
+import { playGatewayCue } from '@/components/entry/gatewaySound';
+import { GatewayQuickstartStage } from '@/components/entry/GatewayQuickstartStage';
 // 自助接入：选客户端 → 生成接入配置 → 自动验证。
 //
 // 按「控制台风格调性 v1.2」原则 6 / 7 迁移（详见
@@ -11,11 +15,15 @@
 //   - 四协议接入片段（cURL / 环境变量 / 技能文件 / 客户端配置）是产品内容不是
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
+import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
+import { AlertCircle, ArrowRight, ArrowUpRight, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, updateGatewayAppCaller } from '@/lib/api';
-import type { OrganizationData } from '@/lib/types';
+import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, getGatewayAppCallers, getServiceKeys, updateGatewayAppCaller } from '@/lib/api';
+import { buildLogRequestHref } from '@/lib/logNavigation';
+import { callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { CALLER_CREATE_REJECTED, KEY_CREATE_REJECTED } from '@/lib/serviceKeyIssuance';
+import { mutationOutcomeUnknown } from '@/lib/mutationOutcome';
+import type { GatewayAppCaller, OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { DetailsBlock, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
@@ -132,13 +140,6 @@ const CLIENT_PRESETS: Array<{
   { id: 'openclaw', label: 'OpenClaw', description: '生成可直接粘贴的 provider 配置。', clientCode: 'openclaw-agent' },
 ];
 
-/** 第一屏的示例句：点一下就填进去，省掉「对着空白框发呆」那几秒。 */
-const INTENT_SAMPLES = [
-  '接入小米音响，对接大模型网关指令集',
-  '桌面客户端里做售后客服问答',
-  '后端服务批量做图片理解',
-];
-
 /**
  * 产物屏三个页签：一页只讲一件事。
  *
@@ -216,6 +217,9 @@ const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 
 export function QuickstartPage() {
   const { tenant, user } = useAuth();
+  const draftScope = quickstartDraftScope(tenant?.id, user?.username);
+  const intentField = useRef<HTMLTextAreaElement>(null);
+  const chooseIntent = (text: string) => { setIntent(text); intentField.current?.focus(); };
   const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
   const { confirm } = useDialogs();
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
@@ -239,6 +243,8 @@ export function QuickstartPage() {
    * 「怎么接进去」不再问用户——它是结果的呈现形态，收进产物屏的页签。
    */
   const [stage, setStage] = useState<'intent' | 'draft' | 'owner'>('intent');
+  const [setupMethod, setSetupMethod] = useState<'form' | 'assisted'>('assisted');
+  const [plainTask, setPlainTask] = useState('');
   const [drafting, setDrafting] = useState(false);
   /** 模型边推边吐的原文：等待期屏幕上动的就是它（规则 #6，不给静止的加载中）。 */
   const [draftTrace, setDraftTrace] = useState('');
@@ -251,12 +257,17 @@ export function QuickstartPage() {
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   /** 调用类型默认跟着「要做什么」走；用户自己点过就不再自动跟。 */
   const [requestTypeTouched, setRequestTypeTouched] = useState(false);
-  const [clientCode, setClientCode] = useState('my-agent');
+  const [clientCode, setClientCode] = useState('');
   const [environment, setEnvironment] = useState('test');
   const [teamId, setTeamId] = useState('');
   const [organization, setOrganization] = useState<OrganizationData | null>(null);
   const [organizationLoading, setOrganizationLoading] = useState(true);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
+  const accessIssuing = useRef(false);
+  const [issuanceUnknown, setIssuanceUnknown] = useState(false);
+  const confirmedGovernance = useRef<{ id: string; monthly: number; hold: number } | null>(null);
+  const issuanceAttempt = useRef<{ stage: 'caller' | 'governance' | 'key'; caller: string; callerId?: string; client: string; requestType: RequestType; teamId: string; monthly: number | null; hold: number | null } | null>(null);
+  const [reconcilingIssue, setReconcilingIssue] = useState(false);
   const [creatingStage, setCreatingStage] = useState<'app-caller' | 'key' | null>(null);
   const [bundle, setBundle] = useState<AccessBundle | null>(null);
   /** 产物屏当前页签，与提示词页签下的取用方式。 */
@@ -280,7 +291,7 @@ export function QuickstartPage() {
   const intentDraftAbort = useRef<AbortController | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // code 是归因的唯一入口（serving 的 error.code），message 只做兜底展示。
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string }
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string; mode?: TestMode }
     | null>(null);
   // 一键测试用的模型候选：只列该调用类型模型池里的成员，不让人随便填一个池外的模型。
   // 成员要连**上游 id** 一起留着：钉一个成员的契约是「平台 + 模型」两个都给，
@@ -365,7 +376,10 @@ export function QuickstartPage() {
     : intentAnalysis.task;
   const facetCode = actorFacet && taskFacet ? buildAppCallerCode(actorFacet.code, taskFacet.code, requestType) : '';
   // 模型草案或手改过的码优先；都没有时才用本地两段拼出来的那条。
-  const derivedAppCallerCode = appCallerCode.trim() || facetCode;
+  const derivedAppCallerCode = setupMethod === 'form'
+    ? clientCode.trim() && plainTask ? buildAppCallerCode(clientCode.trim().toLowerCase(), plainTask, requestType) : ''
+    : appCallerCode.trim() || facetCode;
+  const formClientError = setupMethod === 'form' && clientCode.trim() && !/^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$/.test(clientCode.trim().toLowerCase()) ? '使用字母开头的英文段，可含数字、短横线和点。' : '';
   const purposeReady = isValidAppCaller(derivedAppCallerCode.trim(), requestType);
   const intentMissing = !actorFacet && !taskFacet
     ? '这句话里既没看出谁在调用，也没看出要做什么，请从下面两栏各挑一个。'
@@ -381,7 +395,7 @@ export function QuickstartPage() {
       : codeSource === 'manual'
         ? '你手动指定'
         : '';
-  const identityLocked = Boolean(bundle) || creatingStage !== null;
+  const identityLocked = Boolean(bundle) || creatingStage !== null || issuanceUnknown;
 
   const currentUsername = user?.username ?? '';
 
@@ -448,8 +462,6 @@ export function QuickstartPage() {
         && member.username && member.username === currentUsername);
       const myTeam = me?.teamIds.find((id) => activeTeamList.some((team) => team.id === id));
       if (myTeam || firstTeam) setTeamId((current) => current || myTeam || firstTeam.id);
-      const suggestedClient = normalizeClientCode(response.data.tenant?.slug || 'my-agent');
-      setClientCode((current) => current === 'my-agent' ? suggestedClient : current);
     });
     return () => { active = false; };
   }, [currentUsername]);
@@ -485,7 +497,7 @@ export function QuickstartPage() {
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
     client: clientSetupSnippet(displayBundle),
-    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment, testPrompt, testPlatformId),
+    curl: (displayBundle.key ? `LLMGW_API_KEY='${shellSingleQuoted(displayBundle.key)}'\n` : '') + exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment, testPrompt, testPlatformId),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
   }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment, testPrompt, testPlatformId]);
@@ -523,7 +535,9 @@ export function QuickstartPage() {
    */
   const submitIntent = async () => {
     const text = intent.trim();
-    if (text.length < MIN_INTENT_LENGTH) return;
+    if (!canCreateAccess || text.length < MIN_INTENT_LENGTH) return;
+    setSetupMethod('assisted');
+    saveQuickstartDraft(draftScope, text);
     /*
       与路由预检同一形状：用户点「改那句话」再提交时，上一条推导常常还在流。
       两条写的是同一批状态（trace / 两段码 / 依据 / loading），先发的那条后到，
@@ -538,6 +552,7 @@ export function QuickstartPage() {
     intentDraftAbort.current = abortController;
     const superseded = () => intentDraftSeq.current !== draftId;
     setStage('draft');
+    playGatewayCue('scan');
     setDrafting(true);
     setDraftTrace('');
     setDraftReason('');
@@ -545,7 +560,7 @@ export function QuickstartPage() {
     setDraftNotice(null);
     setCodeSource(null);
     setAppCallerCode('');
-    
+
     setActorPick(null);
     setTaskPick(null);
     setDraftStageText('正在把这句话交给网关自己的模型');
@@ -609,6 +624,7 @@ export function QuickstartPage() {
   };
 
   const createAccessBundle = async () => {
+    if (accessIssuing.current || issuanceUnknown) return;
     const normalizedCode = derivedAppCallerCode.trim();
     const normalizedClient = clientCode.trim().toLowerCase();
     const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
@@ -622,6 +638,10 @@ export function QuickstartPage() {
     }
     if (bundle && !await confirm({ title: '将签发一把新密钥', description: '现有密钥不会自动撤销。', confirmLabel: '继续签发' })) return;
 
+    if (accessIssuing.current) return;
+    accessIssuing.current = true;
+    issuanceAttempt.current = { stage: 'caller', caller: normalizedCode, client: normalizedClient, requestType, teamId, monthly: budgetPair.monthly, hold: budgetPair.hold };
+    try {
     setActionError(null);
     setTestResult(null);
     setCreatingStage('app-caller');
@@ -634,13 +654,17 @@ export function QuickstartPage() {
     });
     if (!callerResponse.success) {
       setCreatingStage(null);
-      setActionError(callerResponse.error?.message || '创建 appCaller 失败');
+      if (mutationOutcomeUnknown(callerResponse.error?.code, CALLER_CREATE_REJECTED)) {
+        setIssuanceUnknown(true);
+        setActionError('调用方登记结果未知，密钥尚未签发。请先重新核对。');
+      } else setActionError(callerResponse.error?.message || '创建 appCaller 失败');
       return;
     }
 
     // 预算与负责人挂在 appCaller 上（密钥本身没有这两个字段）。放在签密钥之前：
     // 预算被后端拒收时还没有密钥生出来，不会留下一把「没有预算约束」的孤儿 key。
-    const governance = await applyGovernance(callerResponse.data.id);
+    issuanceAttempt.current!.callerId = callerResponse.data.id;
+    const governance = await applyGovernance(callerResponse.data);
     if (governance) {
       setCreatingStage(null);
       setActionError(governance);
@@ -648,6 +672,7 @@ export function QuickstartPage() {
     }
 
     setCreatingStage('key');
+    issuanceAttempt.current!.stage = 'key';
     const keyResponse = await createServiceKey({
       name: `${normalizedClient}-quickstart`,
       sourceSystem: 'external',
@@ -663,7 +688,9 @@ export function QuickstartPage() {
     });
     setCreatingStage(null);
     if (!keyResponse.success) {
-      setActionError(`appCaller 已就绪，但密钥签发失败：${keyResponse.error?.message || '未知错误'}。请先到接入密钥页确认是否已生成，再决定是否重试。`);
+      const unknown = mutationOutcomeUnknown(keyResponse.error?.code, KEY_CREATE_REJECTED);
+      if (unknown) setIssuanceUnknown(true);
+      setActionError(unknown ? '密钥签发结果未知，请先核对已有密钥，避免重复签发。' : `密钥未签发：${keyResponse.error?.message || '请求被拒绝'}`);
       return;
     }
 
@@ -683,12 +710,45 @@ export function QuickstartPage() {
       teamId,
       clientPreset,
     };
+    clearQuickstartDraft(draftScope);
     setBundle(nextBundle);
+    playGatewayCue('reveal');
     // 产物屏默认停在「接入信息」：刚签发出来，用户第一件事是把地址、密钥、用途码复制走。
     setResultTab('access');
     void checkRealRoute(nextBundle);
     void runTest(nextBundle, 'safe');
+    } catch {
+      setCreatingStage(null);
+      setIssuanceUnknown(true);
+      setActionError(issuanceAttempt.current?.stage === 'governance' ? '预算保存结果未确认，密钥尚未签发；请先核对调用方预算。' : '创建结果未知，请先核对当前步骤，避免重复提交。');
+    } finally { accessIssuing.current = false; }
   };
+
+  async function reconcileIssuance() {
+    const attempt = issuanceAttempt.current;
+    if (!attempt || reconcilingIssue) return;
+    setReconcilingIssue(true);
+    try {
+      if (attempt.stage !== 'key') {
+        const result = await getGatewayAppCallers({ search: attempt.caller, requestType: attempt.requestType, page: 1, pageSize: 200 });
+        if (!result.success) { setActionError('调用方核对读取失败，原提交结果仍未确认；请重试读取。'); return; }
+        const found = result.success ? result.data.items.find(item => item.appCallerCode.toLowerCase() === attempt.caller.toLowerCase() && item.requestType === attempt.requestType && item.teamId === attempt.teamId && (!attempt.callerId || item.id === attempt.callerId)) : null;
+        if (attempt.stage === 'governance') {
+          if (found && found.monthlyBudgetUsd === attempt.monthly && found.budgetReservationUsd === attempt.hold && attempt.monthly !== null && attempt.hold !== null) { confirmedGovernance.current = { id: found.id, monthly: attempt.monthly, hold: attempt.hold }; setIssuanceUnknown(false); setActionError('已确认本次预算设置，密钥尚未签发，可以继续创建。'); }
+          else setActionError('尚未确认本次预算已保存，密钥尚未签发；请继续核对或在调用方治理中处理。');
+        } else if (found) { setIssuanceUnknown(false); setActionError('调用方登记已确认，密钥尚未签发，可以继续创建。'); }
+        else setActionError('暂未确认登记结果，请稍后重新核对；不会重复提交。');
+      } else {
+        const result = await getServiceKeys();
+        if (!result.success) { setActionError('密钥核对读取失败，签发结果仍未确认；请重试读取。'); return; }
+        const matches = result.success ? result.data.filter(item => item.clientCode === attempt.client && item.appCallerCodes.some(code => code.toLowerCase() === attempt.caller.toLowerCase())) : [];
+        setActionError(result.success && matches.length
+          ? `找到 ${matches.length} 把同用途密钥。明文无法重现，请到接入密钥页核对并撤销不再使用的密钥。`
+          : '暂未确认密钥签发结果，请稍后核对；不会再次签发。');
+      }
+    } catch { setActionError('核对未完成，请稍后重试；不会再次签发。'); }
+    finally { setReconcilingIssue(false); }
+  }
 
   /**
    * 把预算写到刚登记的 appCaller 上；返回 null 表示成功，否则返回要展示的错误。
@@ -700,14 +760,29 @@ export function QuickstartPage() {
    * （`ValidateBudgetConfiguration`），而库里真出现单边配置会让 serving 启动自检直接抛错。
    * 所以派生值由 `deriveBudgetPair` 统一算，且只在两个都成立时才进请求体。
    */
-  const applyGovernance = async (appCallerId: string) => {
+  const applyGovernance = async (caller: GatewayAppCaller) => {
+    const appCallerId = caller.id;
     if (budgetPair.monthly === null || budgetPair.hold === null) return null;
+    if (confirmedGovernance.current?.id === appCallerId && confirmedGovernance.current.monthly === budgetPair.monthly && confirmedGovernance.current.hold === budgetPair.hold) {
+      // 登记回执是本次服务端快照；旧确认不能遮住其他管理员的预算变更。
+      if (caller.monthlyBudgetUsd === undefined || caller.budgetReservationUsd === undefined) {
+        issuanceAttempt.current!.stage = 'governance';
+        setIssuanceUnknown(true);
+        return '调用方最新预算读取不完整，密钥尚未签发；请先重新核对预算。';
+      }
+      if (caller.monthlyBudgetUsd === budgetPair.monthly && caller.budgetReservationUsd === budgetPair.hold) return null;
+      return '调用方预算已被更改或清空，本次未签发密钥，也未覆盖现有预算；请先核对调用方治理。';
+    }
+    issuanceAttempt.current!.stage = 'governance';
     const response = await updateGatewayAppCaller(appCallerId, {
       monthlyBudgetUsd: budgetPair.monthly,
       budgetReservationUsd: budgetPair.hold,
     });
-    if (response.success) return null;
-    return `调用用途已登记，但预算没写上：${response.error?.message || '未知错误'}。密钥尚未签发，改完再点一次即可。`;
+    if (response.success) { confirmedGovernance.current = { id: appCallerId, monthly: budgetPair.monthly, hold: budgetPair.hold }; return null; }
+    // Both rejection codes precede UpdateOne; any audit/new/transport code needs a read.
+    const unknown = mutationOutcomeUnknown(response.error?.code, ['INVALID_INPUT', 'NOT_FOUND']);
+    if (unknown) setIssuanceUnknown(true);
+    return unknown ? '调用方已登记，预算保存结果未确认；密钥尚未签发，请先核对预算。' : `预算未保存：${response.error?.message || '未知错误'}。密钥尚未签发。`;
   };
 
   /*
@@ -904,23 +979,23 @@ export function QuickstartPage() {
       const actualRequestId = readRequestId(response, payload) || requestId;
       const upstreamCalled = readUpstreamCalled(response, payload);
       if (!response.ok) {
-        setTestResult({ ok: false, message: readErrorMessage(payload) || `${mode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId, code: readErrorCode(payload) || `HTTP_${response.status}` });
+        setTestResult({ mode, ok: false, message: readErrorMessage(payload) || `${mode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId, code: readErrorCode(payload) || `HTTP_${response.status}` });
       } else if (mode === 'safe' && upstreamCalled === false) {
         // 这次请求已写进记录。用 markRequestCompleted 而不是裸失效：serving 端
         // 的 LastUsedAt 是不 await 的后台写，只失效+重拉会抢在它落库之前读到旧值。
         markRequestCompleted(tenant?.id);
-        setTestResult({ ok: true, message: `${definition.label} 的 ${requestTypeLabel(target.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
+        setTestResult({ mode, ok: true, message: `${definition.label} 的 ${requestTypeLabel(target.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
       } else if (mode === 'safe') {
-        setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，本次结果不计为安全验收。', requestId: actualRequestId });
+        setTestResult({ mode, ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，无法确认安全试跑结果，请查看请求记录。', requestId: actualRequestId });
       } else {
         const actualModel = readActualModel(payload) || currentRoutePreview?.actualModel || '已解析模型';
         const provider = currentRoutePreview?.actualPlatformName || currentRoutePreview?.actualPlatformId || '已解析 Provider';
         markRequestCompleted(tenant?.id);
-        setTestResult({ ok: true, message: `真实上游已返回，Provider：${provider}，模型：${actualModel}。请用 requestId 核对实际模型、耗时和费用。`, requestId: actualRequestId });
+        setTestResult({ mode, ok: true, message: `真实上游已返回，Provider：${provider}，模型：${actualModel}。请用 requestId 核对实际模型、耗时和费用。`, requestId: actualRequestId });
       }
     } catch (error) {
       if (superseded() || (error instanceof DOMException && error.name === 'AbortError')) return;
-      setTestResult({ ok: false, message: error instanceof Error ? `无法访问 Gateway：${error.message}` : '无法访问 Gateway。' });
+      setTestResult({ mode, ok: false, message: error instanceof Error ? `无法访问 Gateway：${error.message}` : '无法访问 Gateway。' });
     } finally {
       // 收尾只由当前代次做：被顶掉的那一跑收忙态，等于替新的那一跑提前解禁按钮。
       if (!superseded()) {
@@ -1009,7 +1084,7 @@ export function QuickstartPage() {
         const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
         if (superseded()) return;
         setLiveOutput(null);
-        setTestResult({
+        setTestResult({ mode: 'real',
           ok: false,
           message: readErrorMessage(payload) || `真实调用失败，HTTP ${response.status}`,
           requestId: readRequestId(response, payload) || requestId,
@@ -1054,7 +1129,7 @@ export function QuickstartPage() {
         if (streamError) {
           // 已经吐出来的片段留着：它是「跑到一半断了」的证据，比清空更有用。
           setLiveOutput(text ? { kind: 'text', text, done: true, model: stamp() } : null);
-          setTestResult({
+          setTestResult({ mode: 'real',
             ok: false,
             message: `真实调用失败：${streamError.message}（上游在流中途报错，这次调用仍会计入用量）`,
             requestId: actualRequestId,
@@ -1064,7 +1139,7 @@ export function QuickstartPage() {
         }
         if (!sawDone) {
           setLiveOutput(text ? { kind: 'text', text, done: true, model: stamp() } : null);
-          setTestResult({
+          setTestResult({ mode: 'real',
             ok: false,
             message: '真实调用未完成：连接在收到结束标记之前就断了，已返回的内容可能是半截（这次调用仍会计入用量）。',
             requestId: actualRequestId,
@@ -1080,11 +1155,11 @@ export function QuickstartPage() {
         setLiveOutput({ ...readNonStreamOutput(payload), model: stamp() });
       }
       markRequestCompleted(tenant?.id);
-      setTestResult({ ok: true, message: `真实调用已返回，模型 ${stamp() || '由池调度（返回里没带模型名）'}；本次会计入用量与费用。`, requestId: actualRequestId });
+      setTestResult({ mode: 'real', ok: true, message: `真实调用已返回，模型 ${stamp() || '由池调度（返回里没带模型名）'}；本次会计入用量与费用。`, requestId: actualRequestId });
     } catch (error) {
       if (superseded() || (error instanceof DOMException && error.name === 'AbortError')) return;
       setLiveOutput(null);
-      setTestResult({ ok: false, message: error instanceof Error ? `真实调用失败：${error.message}` : '真实调用失败。' });
+      setTestResult({ mode: 'real', ok: false, message: error instanceof Error ? `真实调用失败：${error.message}` : '真实调用失败。' });
     } finally {
       if (!superseded()) {
         setTestElapsedMs(Date.now() - startedAt);
@@ -1137,7 +1212,8 @@ export function QuickstartPage() {
     // 新身份一签出来就显示一次「验证失败」，原因是一条它根本没被授权用的模型。
     setModelQuery('');
     // 回到那句话本身：改身份就是改「我想做什么」，不是回到某个中间表单。
-    setStage('intent');
+    setSetupMethod('form');
+    setStage('owner');
   };
 
   const changeRequestType = (next: RequestType, byUser = true) => {
@@ -1185,24 +1261,42 @@ export function QuickstartPage() {
   const chain = diagnosis ? chainState(diagnosis.brokenLink) : [];
   const blockedByTeam = !organizationLoading && !organizationError && activeTeams.length === 0;
   const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam
-    || Boolean(budgetPair.error) || !purposeReady || !teamId;
+    || Boolean(budgetPair.error) || !purposeReady || !teamId || issuanceUnknown;
   // 注：purposeReady 现在只校验「派生出来的码合不合法」，不再要求用户必须挑一个——
   // 用途只是生成 appCallerCode 的来源，一把 key 本来就可以授权多条调用用途。
   // 创建屏与产物屏互斥：没有密钥时整屏只有一张创建卡，签出来之后整屏让给产物。
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
+  const isIntentScreen = onCreateScreen && phase !== 'issuing' && stage === 'intent';
+  const flowStep = onCreateScreen ? (phase === 'issuing' ? 'issuing' : stage) : 'result';
+  const flowTitle = flowStep === 'draft' ? '确认你的接入' : flowStep === 'owner' ? '设定归属与预算' : flowStep === 'issuing' ? '正在建立连接' : '连接已就绪';
+  const flowFrameRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const body = flowFrameRef.current?.parentElement;
+    if (body) body.scrollTop = 0;
+  }, [flowStep]);
   const ribbonText = bundle
     ? `已签发 · ${bundle.appCallerCode} · 团队 ${selectedTeam?.name ?? '未指定'} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
     : '';
 
   return (
-    <PageShell>
-      <PageHeader
-        title="Quickstart"
-        subtitle={onCreateScreen ? '先说清要做什么，再签发；密钥在下一屏只显示一次。' : '密钥只显示这一次，复制走再刷新。'}
-      />
+    <GatewayQuickstartStage>
+    <PageShell className={isIntentScreen ? 'is-intent' : 'is-flow'}>
+      {isIntentScreen ? <h1 className="gateway-visually-hidden">模型网关接入</h1> : <PageHeader
+        key={flowStep}
+        title={flowTitle}
+        subtitle={onCreateScreen ? '从想法到连接，每一步都在这里继续。' : '保存密钥，然后把连接带到你的应用。'}
+      />}
+
+        {!isIntentScreen && <nav className="gateway-flow-progress" aria-label="接入进度">
+          {['描述用途', '确认接入', '团队与预算', '连接就绪'].map((label, index) => {
+            const current = flowStep === 'draft' ? 1 : flowStep === 'owner' || flowStep === 'issuing' ? 2 : 3;
+            return <span key={label} className={index === current ? 'is-current' : index < current ? 'is-complete' : ''} aria-current={index === current ? 'step' : undefined}><i aria-hidden="true">{index < current ? <Check size={11} /> : index + 1}</i><span>{label}</span></span>;
+          })}
+        </nav>}
 
       <PageBody>
+        <div className={`gateway-flow-frame is-${flowStep}`} key={flowStep} data-step={flowStep} ref={flowFrameRef}>
         {onCreateScreen ? (
           /*
             创建线是三屏一条路：说清要做什么 → 看颁发的码 → 落归属与预算。
@@ -1225,41 +1319,38 @@ export function QuickstartPage() {
                 </div>
               </Card>
             ) : stage === 'intent' ? (
-              /*
-                第一屏只有一件事：把那句话写下来。整块画布让给输入框，
-                没有第二个控件抢注意力——用户此刻唯一要做的决定就是「我想做什么」。
-              */
+              // Starters prepare editable language; only explicit submission begins inference.
               <section className="lg-qs-ask" aria-label="第一步 说清要做什么">
                 <div className="lg-qs-ask-inner">
-                  <h2 className="lg-qs-ask-title">我想做什么</h2>
-                  <p className="lg-qs-ask-sub">一句话说清：谁在调用、要做什么。</p>
-                  <textarea
-                    className="lg-qs-ask-input"
-                    aria-label="我想做什么"
-                    rows={4}
-                    autoFocus
-                    placeholder="例如：接入小米音响，对接大模型网关指令集"
-                    value={intent}
-                    maxLength={500}
-                    disabled={!canCreateAccess}
-                    onChange={(event) => setIntent(event.target.value)}
-                    onKeyDown={(event) => {
-                      // Ctrl/Cmd + Enter 直接提交：这一屏只有一个动作，不该逼人去够按钮。
-                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submitIntent();
-                    }}
-                  />
-                  <div className="lg-qs-ask-foot">
-                    <div className="lg-qs-ask-samples">
-                      {INTENT_SAMPLES.map((sample) => (
-                        <button key={sample} type="button" disabled={!canCreateAccess} onClick={() => setIntent(sample)}>{sample}</button>
-                      ))}
-                    </div>
-                    <Button
-                      variant="primary"
-                      className="lg-qs-primary"
-                      disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH}
-                      onClick={() => void submitIntent()}
-                    >准备接入</Button>
+                  <p className="gateway-intent-heading"><ArrowUpRight size={17} aria-hidden="true" /><span>从一个想法开始</span></p>
+                  <div className="gateway-intent-composer">
+                    <textarea
+                      className="lg-qs-ask-input"
+                      ref={intentField}
+                      aria-label="我想做什么"
+                      rows={1}
+                      autoFocus
+                      placeholder="你想让 AI 帮你的应用做些什么？"
+                      value={intent}
+                      maxLength={500}
+                      disabled={!canCreateAccess}
+                      onChange={(event) => setIntent(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                          event.preventDefault(); void submitIntent();
+                        }
+                      }}
+                    />
+                    <button type="button" className="gateway-intent-send" aria-label="准备接入" title="准备接入" disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH} onClick={() => void submitIntent()}>
+                      <ArrowUpRight size={21} aria-hidden="true" />
+                    </button>
+                  </div>
+                  <GatewayIntentStarters disabled={!canCreateAccess} onChoose={chooseIntent} />
+                  <div className="gateway-intent-options">
+                    <small>智能建议费用由平台承担</small>
+                    <button type="button" disabled={!canCreateAccess} onClick={() => { setSetupMethod('form'); setStage('owner'); }}>
+                      手动接入 <ArrowRight size={14} aria-hidden="true" />
+                    </button>
                   </div>
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>
@@ -1273,11 +1364,11 @@ export function QuickstartPage() {
                 <div className="lg-qs-step-head">
                   <div className="lg-qs-step-head-row">
                     <span className="lg-qs-step-no">2</span>
-                    <div><strong>颁发调用用途码</strong></div>
+                    <div><strong>接入建议</strong></div>
                     <button type="button" className="lg-text-link" onClick={() => setStage('intent')}>改那句话</button>
                   </div>
                   {/* 副标题落第二行：和右上角的「改那句话」共处一条基线时，长一点就会撞上。 */}
-                  <small className="lg-qs-step-sub">按你写的那句话推导</small>
+                  <small className="lg-qs-step-sub">根据描述建议</small>
                 </div>
                 {/* 层 1 · 你说的那句话 */}
                 <div className="lg-qs-labeled">
@@ -1374,22 +1465,23 @@ export function QuickstartPage() {
                 <div className="lg-qs-create-footer">
                   <span style={{ ...BODY_TEXT, margin: 0 }}>先确认这条码说的是你要做的事。</span>
                   <Button variant="secondary" disabled={drafting} onClick={() => void submitIntent()}>重新生成</Button>
-                  <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => setStage('owner')}>下一步</Button>
+                  <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => { playGatewayCue('verified'); setStage('owner'); }}>下一步</Button>
                 </div>
               </Card>
             ) : (
-              /* 第三屏：算谁的。只有两个字段，一屏放完。 */
-              <Card className="lg-qs-step-card">
+              /* 表单主线：身份、用途与必要治理；智能建议仍可返回修改。 */
+              <Card className={`lg-qs-step-card${setupMethod === 'form' ? ' lg-qs-form-card' : ''}`}>
                 <div className="lg-qs-step-head">
                   <div className="lg-qs-step-head-row">
-                    <span className="lg-qs-step-no">3</span>
-                    <div><strong>算谁的</strong></div>
-                    <button type="button" className="lg-text-link" onClick={() => setStage('draft')}>回上一步</button>
+                    <div><strong>创建接入凭据</strong></div>
+                    {setupMethod === 'assisted' ? <button type="button" className="lg-text-link" onClick={() => setStage('draft')}>修改建议</button> : null}
                   </div>
-                  <small className="lg-qs-step-sub">密钥与预算都记在团队名下</small>
                 </div>
-                <div className="lg-qs-issue is-ready">
-                  <div className="lg-qs-issue-code"><span>即将登记</span><code>{derivedAppCallerCode}</code></div>
+                <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: GAP.section }}>
+                  <Field label="应用标识（英文）" error={formClientError} value={clientCode} onChange={setClientCode} placeholder="例如 my-application" disabled={!canCreateAccess || identityLocked} />
+                  {setupMethod === 'form' ? <label style={labelStyle}>调用用途<select aria-label="调用用途" value={plainTask} disabled={!canCreateAccess || identityLocked} onChange={event => { const task = INTENT_TASKS.find(item => item.code === event.target.value); setPlainTask(event.target.value); if (task) changeRequestType(task.requestType); }} style={inputStyle}>
+                    <option value="">选择这把密钥的业务用途</option>{INTENT_TASKS.map(task => <option key={task.code} value={task.code}>{task.label}</option>)}
+                  </select></label> : null}
                 </div>
 
                 {organizationLoading ? <SectionLoader text="正在读取当前租户、团队和成员" /> : null}
@@ -1408,7 +1500,7 @@ export function QuickstartPage() {
                   */}
                   <div className="lg-qs-own-col">
                     <span className="lg-qs-field-title">归属团队</span>
-                    <div className="lg-qs-team-list" role="radiogroup" aria-label="归属团队">
+                    {activeTeams.length === 1 ? <div className="lg-qs-single-team">{activeTeams[0].name}</div> : <div className="lg-qs-team-list" role="radiogroup" aria-label="归属团队">
                       {activeTeams.map((team) => (
                         <button
                           key={team.id}
@@ -1423,29 +1515,30 @@ export function QuickstartPage() {
                           <strong>{team.name}</strong>
                         </button>
                       ))}
-                    </div>
+                    </div>}
                   </div>
                   <div className="lg-qs-own-col">
-                    <span className="lg-qs-field-title">月预算<small>留空即不限</small></span>
+                    <span className="lg-qs-field-title">月预算<small>留空不修改</small></span>
                     <div className="lg-qs-budget">
                       <span>USD</span>
                       <input
                         aria-label="月预算（美元）"
                         inputMode="decimal"
-                        placeholder="不限"
+                        placeholder="未设定"
                         value={budgetUsd}
-                        disabled={!canCreateAccess}
+                        disabled={!canCreateAccess || identityLocked}
                         onChange={(event) => setBudgetUsd(event.target.value.replace(/[^\d.]/g, ''))}
                       />
                       <span>/ 月</span>
                     </div>
-                    <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || budgetPair.holdNote}</small>
+                    <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || (budgetPair.monthly === null ? '留空保留已登记用途的预算；新用途不设限额。' : budgetPair.holdNote)}</small>
                   </div>
                 </div>
 
                 <DetailsBlock title="高级设置（已有默认值）">
                   <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section }}>
-                    <Field label="单次预占上限（USD，留空按月预算派生）" value={holdCapUsd} onChange={setHoldCapUsd} placeholder="自动" disabled={!canCreateAccess} />
+                    <label style={labelStyle}>调用身份（自动生成）<code>{derivedAppCallerCode || '填写应用与用途后生成'}</code></label>
+                    <Field label="单次预占上限（USD，留空按月预算派生）" value={holdCapUsd} onChange={setHoldCapUsd} placeholder="自动" disabled={!canCreateAccess || identityLocked} />
                     <label style={labelStyle}>环境
                       <select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
                         <option value="development">开发</option>
@@ -1459,20 +1552,21 @@ export function QuickstartPage() {
                   </div>
                 </DetailsBlock>
 
-                {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
+                {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}{issuanceUnknown ? <><Button size="sm" variant="ghost" disabled={reconcilingIssue} onClick={() => void reconcileIssuance()}>{reconcilingIssue ? '核对中…' : '重新核对'}</Button>{issuanceAttempt.current?.stage === 'key' ? <Link to={`/service-keys?${new URLSearchParams({ client: issuanceAttempt.current?.client || clientCode, appCaller: issuanceAttempt.current?.caller || derivedAppCallerCode })}`}>查看同用途接入密钥</Link> : <Link to={callerWorkspaceReturnHref(issuanceAttempt.current?.caller || derivedAppCallerCode, issuanceAttempt.current?.requestType || requestType, '')}>查看调用方治理</Link>}</> : null}</div> : null}
 
                 {canCreateAccess ? (
                   <div className="lg-qs-create-footer">
-                    <span style={{ ...BODY_TEXT, margin: 0 }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</span>
+                    <span style={{ ...BODY_TEXT, margin: 0 }}>只授权当前用途与四种协议，默认 60 次/分钟；创建后进行安全预检，不调用计费模型。</span>
                     <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
                       <KeyRound size={15} />创建密钥
                     </Button>
                   </div>
                 ) : null}
+                {setupMethod === 'form' && canCreateAccess ? <button type="button" className="lg-text-link" disabled={identityLocked} onClick={() => { setSetupMethod('assisted'); setStage('intent'); }}>使用智能建议（会调用模型，费用由平台承担）</button> : null}
               </Card>
             )}
 
-            <div className="lg-qs-footline">
+            {!isIntentScreen && <div className="lg-qs-footline">
               <DetailsBlock title="已经有密钥？看接入地址与现有密钥前缀">
                 <AccessSnippetBar />
               </DetailsBlock>
@@ -1489,7 +1583,7 @@ export function QuickstartPage() {
                 </dl>
                 <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
               </DetailsBlock>
-            </div>
+            </div>}
           </div>
         ) : (
           /*
@@ -1513,7 +1607,7 @@ export function QuickstartPage() {
             {phase === 'issued' && testResult?.ok ? (
               <div className="lg-test-result is-ok" role="status">
                 <CheckCircle2 size={14} />{testResult.message}
-                {testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}
+                {testResult.requestId ? <Link to={buildLogRequestHref(testResult.requestId, { view: testResult.mode === 'safe' ? 'physical' : undefined })}>打开 requestId 请求记录</Link> : null}
               </div>
             ) : null}
             {diagnosis ? (
@@ -1531,7 +1625,7 @@ export function QuickstartPage() {
                   {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void openThisCaller()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
                   {diagnosis.to && diagnosis.actionLabel ? <Link className="lg-secondary-link" to={diagnosis.to}>{diagnosis.actionLabel}</Link> : null}
                   {canCreateAccess ? <Button size="sm" variant="ghost" disabled={testing} onClick={() => void runTest()}>重试验证</Button> : null}
-                  {testResult?.requestId ? <Link className="lg-text-link" to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>{testResult.requestId}</Link> : null}
+                  {testResult?.requestId ? <Link className="lg-text-link" to={buildLogRequestHref(testResult.requestId, { view: testResult.mode === 'safe' ? 'physical' : undefined })}>{testResult.requestId}</Link> : null}
                 </div>
                 {bindNotice ? <span className="lg-qs-failure-reason">{bindNotice}</span> : null}
               </div>
@@ -1575,7 +1669,7 @@ export function QuickstartPage() {
                 </div>
 
                 {resultTab === 'access' ? (
-                  <div className="lg-qs-access-grid">
+                  <div className="lg-qs-access-grid gateway-result-panel">
                     <Card style={CARD_BODY} className="lg-qs-hero">
                       <div className="lg-qs-hero-head">
                         <strong>接入地址</strong>
@@ -1597,7 +1691,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'curl' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card gateway-result-panel">
                     {/*
                       一键测试：类型是这把 key 的调用用途本身携带的（appCallerCode 以 ::chat / ::vision
                       结尾，签发后不可改），所以这里只读展示；能选的是模型——且只列该类型模型池里的
@@ -1722,7 +1816,7 @@ export function QuickstartPage() {
                               </small>
                             ) : null}
                             {liveOutput?.done && testResult?.requestId ? (
-                              <a className="lg-qs-io-link" href={`/llmgw/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>requestId</a>
+                              <Link className="lg-qs-io-link" to={buildLogRequestHref(testResult.requestId, { view: testResult.mode === 'safe' ? 'physical' : undefined })}>requestId</Link>
                             ) : null}
                             {liveOutput ? <button type="button" className="lg-text-link" onClick={() => setLiveOutput(null)}>清除</button> : null}
                           </div>
@@ -1761,7 +1855,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'prompt' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card gateway-result-panel">
                     <div className="lg-qs-snippet-head">
                       <div className="lg-qs-type-row" role="radiogroup" aria-label="调用方式">
                         {PROMPT_WAYS.map((item) => (
@@ -1856,8 +1950,11 @@ export function QuickstartPage() {
             ) : null}
           </div>
         )}
+        </div>
       </PageBody>
     </PageShell>
+    {isIntentScreen && <GatewayEntryCorners key={draftScope} scope={draftScope} disabled={!canCreateAccess} onChoose={chooseIntent} />}
+    </GatewayQuickstartStage>
   );
 }
 
@@ -1917,11 +2014,6 @@ function resolveDefaultServingBaseUrl() {
 
 function protocolDefinition(protocol: Protocol) {
   return PROTOCOLS.find((item) => item.id === protocol) ?? PROTOCOLS[1];
-}
-
-function normalizeClientCode(value: string) {
-  const normalized = value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z]+/, '').slice(0, 72);
-  return normalized.length >= 2 ? `${normalized}-agent`.slice(0, 80) : 'my-agent';
 }
 
 function isValidAppCaller(value: string, requestType: RequestType) {
@@ -2451,7 +2543,7 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 3. 固定发送 X-Gateway-Source: external 与 X-Gateway-App-Caller: \$LLMGW_APP_CALLER。
 4. ${mode === 'safe' ? '首次接入发送 X-Gateway-Dry-Run: quickstart；只有响应明确 upstreamCalled=false 才算安全测试通过。' : '当前示例为真实模型模式，不发送 X-Gateway-Dry-Run；执行前必须确认控制台路由预览中的 Provider 和模型。'}
 5. 保存响应头 X-Request-Id，并打开控制台 /logs?requestId={requestId} 核对团队、service key、client 和 environment。
-6. ${mode === 'safe' ? '正式调用时删除 X-Gateway-Dry-Run。' : '本示例已经是正式调用形状。'}同类真实协议验收最多一次，其余使用假上游。
+6. ${mode === 'safe' ? '正式调用时删除 X-Gateway-Dry-Run。' : '本示例已经是正式调用形状。'}真实调用可能产生费用，结果未知时先按 requestId 查询记录，避免重复发送。
 
 ## 安全边界
 
@@ -2486,8 +2578,9 @@ curl "${shellDoubleQuoted(`${baseUrl}${protocolPathFor(definition, model)}`)}" \
   -d '${body}'`;
 }
 
-function Field({ label, value, onChange, placeholder, disabled = false }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; disabled?: boolean }) {
-  return <label style={labelStyle}>{label}<input value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} /></label>;
+function Field({ label, value, onChange, placeholder, disabled = false, error }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; disabled?: boolean; error?: string }) {
+  const errorId = useId();
+  return <label style={labelStyle}>{label}<input value={value} disabled={disabled} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} />{error ? <span id={errorId} role="alert" style={{ color: 'var(--error)', fontWeight: 400 }}>{error}</span> : null}</label>;
 }
 
 function RouteRow({ name, text }: { name: string; text: string }) {

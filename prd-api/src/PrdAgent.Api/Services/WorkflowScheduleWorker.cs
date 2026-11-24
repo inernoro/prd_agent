@@ -1,3 +1,5 @@
+using MongoDB.Bson;
+using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -79,7 +81,7 @@ public sealed class WorkflowScheduleWorker : BackgroundService
         {
             _logger.LogWarning("Schedule {Id} 关联的工作流 {WorkflowId} 不存在，禁用此调度", schedule.Id, schedule.WorkflowId);
             await db.WorkflowSchedules.UpdateOneAsync(
-                s => s.Id == schedule.Id,
+                s => s.Id == schedule.Id && s.NextRunAt == schedule.NextRunAt && s.IsEnabled,
                 Builders<WorkflowSchedule>.Update.Set(s => s.IsEnabled, false),
                 cancellationToken: CancellationToken.None);
             return;
@@ -96,8 +98,14 @@ public sealed class WorkflowScheduleWorker : BackgroundService
             foreach (var kv in schedule.VariableOverrides) variables[kv.Key] = kv.Value;
         }
 
+        using var admissionScope = _scopeFactory.CreateScope();
+        using var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Enter(await admissionScope.ServiceProvider
+            .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+            .AdmitScheduledTaskAsync(nameof(WorkflowScheduleWorker), $"{schedule.Id}:{schedule.NextRunAt:O}", schedule.CreatedBy, CancellationToken.None));
         var execution = new WorkflowExecution
         {
+            Id = TaskExecutionContext.Current!.PermitId,
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             WorkflowId = workflow.Id,
             WorkflowName = workflow.Name,
             TriggerType = schedule.Mode == "cron" ? WorkflowTriggerTypes.Cron : "scheduled-once",
@@ -117,7 +125,9 @@ public sealed class WorkflowScheduleWorker : BackgroundService
         };
         execution.TraceId = $"workflow-execution-{execution.Id}";
 
-        await db.WorkflowExecutions.InsertOneAsync(execution, cancellationToken: CancellationToken.None);
+        // 同一持久调度时刻只对应一个业务执行；崩溃重投复用原快照与队列身份。
+        await db.WorkflowExecutions.UpdateOneAsync(x => x.Id == execution.Id,
+            new BsonDocument("$setOnInsert", execution.ToBsonDocument()), new UpdateOptions { IsUpsert = true }, CancellationToken.None);
         await _runQueue.EnqueueAsync(RunKinds.Workflow, execution.Id, CancellationToken.None);
 
         // 更新 schedule
@@ -143,7 +153,7 @@ public sealed class WorkflowScheduleWorker : BackgroundService
         }
 
         await db.WorkflowSchedules.UpdateOneAsync(
-            s => s.Id == schedule.Id,
+            s => s.Id == schedule.Id && s.NextRunAt == schedule.NextRunAt && s.IsEnabled,
             Builders<WorkflowSchedule>.Update
                 .Set(s => s.LastTriggeredAt, DateTime.UtcNow)
                 .Set(s => s.NextRunAt, nextRunAt)

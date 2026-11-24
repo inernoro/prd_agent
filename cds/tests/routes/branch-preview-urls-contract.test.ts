@@ -6,11 +6,14 @@ const source = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/src/routes/branches.ts'),
   'utf8',
 );
+const entries = fs.readFileSync(path.resolve(process.cwd(), '../cds/src/services/branch-web-entrypoints.ts'), 'utf8');
 
 describe('分支预览地址 API 契约', () => {
   it('同时下发带用户名称的主入口和 Web 页面入口', () => {
-    expect(source).toContain("const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')");
+    expect(source).toContain('const previewHost = publicPreviewHost(config)');
     expect(source).toContain('computeBranchWebEntries(b, previewHost)');
+    expect(source).toContain('return computePublishedBranchWebEntries(stateService, entry, primaryRoot)');
+    expect(entries).toContain("config.previewDomain || config.rootDomains?.[0] || ''");
     expect(source).toContain('b.previewEntries = entries');
     expect(source).toContain('new Set(entries.map((entry) => entry.url))');
     expect(source).toContain('b.previewUrl = b.previewUrls[0]');
@@ -19,10 +22,10 @@ describe('分支预览地址 API 契约', () => {
   it('入口只读 webEntry，主 profile 不以 subdomain 重复列出', () => {
     // 「有没有一个给人看的入口」只许有一份判据（resolveWebEntry）：入口表与手动配置
     // 两处各判一次就会漂移——分支档用空名隐藏入口时，另一处照样把它列出来。
-    expect(source).toContain('const webEntry = profile ? resolveWebEntry(profile) : null');
-    expect(source).toContain('resolveWebEntry(profile) !== null');
-    expect(source).toContain('profileId === primaryProfile?.id');
-    expect(source).not.toContain('resolveServiceLandingPath(sub, profile?.readinessProbe?.path)');
+    expect(entries).toContain('const webEntry = profile ? resolveWebEntry(profile) : null');
+    expect(entries).toContain('resolveWebEntry(profile) !== null');
+    expect(entries).toContain('profileId === primaryProfile?.id');
+    expect(entries).not.toContain('resolveServiceLandingPath(sub, profile?.readinessProbe?.path)');
   });
 
   /*
@@ -36,19 +39,19 @@ describe('分支预览地址 API 契约', () => {
    */
   it('主入口按该 profile 的真实路由拼，不是一律主域名根', () => {
     // 承载 `/` 的主应用即使也声明了 subdomain，入口仍是主域名（顺序不能反）
-    expect(source).toContain('const primaryHandlesRoot = primaryProfile ? handlesRootPath(primaryProfile) : false');
-    expect(source).toContain('const primaryUsesNamedHost = !primaryHandlesRoot');
+    expect(entries).toContain('const primaryHandlesRoot = primaryProfile ? handlesRootPath(primaryProfile) : false');
+    expect(entries).toContain('const primaryUsesNamedHost = !primaryHandlesRoot');
     // 非根路由 + 有可用命名子域 → 走命名 host
-    expect(source).toContain('&& Boolean(primarySub)');
-    expect(source).toContain('isPublishableNamedLabel(primaryNamedLabel)');
-    expect(source).toContain('!occupied.has(`${primaryNamedLabel}.${primaryRoot}`.toLowerCase())');
-    expect(source).toContain('const primaryHost = primaryUsesNamedHost');
+    expect(entries).toContain('&& Boolean(primarySub)');
+    expect(entries).toContain('isPublishableNamedLabel(primaryNamedLabel)');
+    expect(entries).toContain('!occupied.has(`${primaryNamedLabel}.${primaryRoot}`.toLowerCase())');
+    expect(entries).toContain('const primaryHost = primaryUsesNamedHost');
     // 落主域名时 → 入口路径挂到该 profile 自己的挂载前缀下
-    expect(source).toContain('mainDomainEntryPath(primaryProfile, primaryPath)');
-    expect(source).toContain('const primaryHostPath = primaryUsesNamedHost || !primaryProfile');
-    expect(source).toContain('url: `https://${primaryHost}${primaryHostPath === \'/\' ? \'\' : primaryHostPath}`');
+    expect(entries).toContain('mainDomainEntryPath(primaryProfile, primaryPath)');
+    expect(entries).toContain('const primaryHostPath = primaryUsesNamedHost || !primaryProfile');
+    expect(entries).toContain('url: `https://${primaryHost}${primaryHostPath === \'/\' ? \'\' : primaryHostPath}`');
     // 主入口占掉的命名子域要预先登记，否则别的 profile 会在同一个 host 再列一条
-    expect(source).toContain('if (primaryUsesNamedHost && primarySub) seenSubdomains.add(primarySub)');
+    expect(entries).toContain('if (primaryUsesNamedHost && primarySub) seenSubdomains.add(primarySub)');
   });
 
   it('保存子域别名时也查命名服务 host（helper 建了没接线 = 白建）', () => {

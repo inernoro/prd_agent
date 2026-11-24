@@ -1,3 +1,5 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { Button } from '@/components/ui/button';
 /**
  * 分区四「健康监测」——设计稿 design_handoff_release_center §5。
  *
@@ -44,6 +46,7 @@ interface UptimeSummary {
 }
 
 export interface HealthSectionProps {
+  refreshVersion?: number;
   envs: FleetEnv[];
   /** 当前选中的环境，用于左栏探测配置那一卡。 */
   selected: FleetEnv | undefined;
@@ -63,23 +66,33 @@ function barClass(bucket: UptimeBucket): string {
   return 'bg-ok';
 }
 
-export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Element {
+export function HealthSection({ envs, selected, refreshVersion = 0 }: HealthSectionProps): JSX.Element {
   const [summary, setSummary] = useState<UptimeSummary | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError('');
     // segments=24：每根柱子一小时，正好铺满稿子要的 24 根。
     apiRequest<UptimeSummary>('/api/uptime/summary?segments=24')
-      .then(setSummary)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+      .then((value) => { if (active) setSummary(value); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [retry, refreshVersion]);
+
+  if (loading && !summary) return <ContentLoading label="读取发布健康数据" variant="panel" />;
+  if (error && !summary) return <div role="alert" className="space-y-3 rounded-xl border p-4 text-sm"><p>{error}</p><Button variant="outline" onClick={() => setRetry((value) => value + 1)}>重试</Button></div>;
 
   const byId = new Map((summary?.targets || []).map((target) => [target.id, target]));
   const selectedProbe = selected ? byId.get(uptimeIdOf(selected.id)) : undefined;
   const unmonitored = envs.filter((env) => env.health === 'unmonitored');
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-[26.25rem_minmax(0,1fr)]">
+    <div aria-busy={loading} className="grid items-start gap-4 xl:grid-cols-[26.25rem_minmax(0,1fr)]">
       <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
         <div className="border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
           <h2 className="text-sm font-bold">探测配置</h2>
@@ -90,11 +103,11 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
             {selected ? (selectedProbe?.probeUrl || '未配置健康检查地址') : '未选择环境'}
           </dd>
           <dt className="text-[0.7188rem] text-muted-foreground">探测间隔</dt>
-          <dd className="cds-ident">{summary ? `${summary.intervalSeconds} 秒` : '读取中'}</dd>
+          <dd className="cds-ident">{summary ? `${summary.intervalSeconds} 秒` : '—'}</dd>
           <dt className="text-[0.7188rem] text-muted-foreground">超时</dt>
-          <dd className="cds-ident">{summary ? `${summary.timeoutMs} 毫秒` : '读取中'}</dd>
+          <dd className="cds-ident">{summary ? `${summary.timeoutMs} 毫秒` : '—'}</dd>
           <dt className="text-[0.7188rem] text-muted-foreground">连续失败阈值</dt>
-          <dd className="cds-ident">{summary ? `${summary.failureThreshold} 次` : '读取中'}</dd>
+          <dd className="cds-ident">{summary ? `${summary.failureThreshold} 次` : '—'}</dd>
           {/* 这两行稿子没有，但它们是既有页面上真有的信息（探测的即时状态），
               删掉等于交付时悄悄少一块。数据同样来自 uptime summary 的 lastSample。 */}
           <dt className="text-[0.7188rem] text-muted-foreground">最近检查</dt>

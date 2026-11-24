@@ -1,0 +1,47 @@
+.ask-thinking {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ask-thinking > summary {
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.ask-thinking-scroll {
+  height: 104px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 0 8px 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ask-response-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--semantic-danger-text);
+}
+
+.ask-response-error button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ask-response-error button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}

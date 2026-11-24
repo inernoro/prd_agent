@@ -5,8 +5,8 @@
  * 这里钉的是 CDS 侧的纪律：拿不到锁**跳过本轮**（不排队堆积，否则几轮回收压在
  * 一起，在磁盘最紧张时制造更大的 IO 尖峰），以及漏放锁不能让回收永久停摆。
  */
-import { describe, it, expect } from 'vitest';
-import { ReclaimLock, isReclaimSkip, RECLAIM_LOCK_STALE_MS } from '../../src/services/reclaim-lock.js';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { ReclaimLock, isReclaimSkip, RECLAIM_LOCK_STALE_MS, startReclaimSchedule } from '../../src/services/reclaim-lock.js';
 
 describe('ReclaimLock', () => {
   it('空闲时正常执行并返回结果', async () => {
@@ -51,6 +51,64 @@ describe('ReclaimLock', () => {
     await lock.run('a', async () => undefined);
     const r = await lock.run('b', async () => 'second');
     expect(r).toBe('second');
+  });
+});
+
+describe('定时回收', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('定时任务同一时刻抢锁时，稍后重新取锁并在完成后计算下次运行时间', async () => {
+    vi.useFakeTimers();
+    const lock = new ReclaimLock();
+    const hold = vi.fn(() => new Promise<void>(resolve => setTimeout(resolve, 12_000)));
+    const reclaim = vi.fn(async () => undefined);
+    const stopAcceptance = startReclaimSchedule({
+      intervalMs: 60_000, run: () => lock.run('acceptance', hold), onError: vi.fn(),
+    });
+    const stopImages = startReclaimSchedule({
+      intervalMs: 60_000, run: () => lock.run('image-cache', reclaim), onError: vi.fn(),
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(hold).toHaveBeenCalledOnce();
+    expect(reclaim).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(reclaim).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reclaim).toHaveBeenCalledOnce();
+    stopAcceptance();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(reclaim).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reclaim).toHaveBeenCalledTimes(2);
+    stopImages();
+  });
+
+  it('连续遇锁时最多额外重试四次，然后回到正常周期', async () => {
+    vi.useFakeTimers();
+    const run = vi.fn(async () => ({ skipped: true, heldBy: 'janitor', heldForMs: 100 }));
+    const stop = startReclaimSchedule({ intervalMs: 60_000, firstDelayMs: 1_000, run, onError: vi.fn() });
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(run).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(run).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(run).toHaveBeenCalledTimes(6);
+    stop();
+  });
+
+  it('执行中不会启动第二轮，停机后不会续约定时器', async () => {
+    vi.useFakeTimers();
+    let finish!: () => void;
+    const run = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const stop = startReclaimSchedule({ intervalMs: 60_000, run, onError: vi.fn() });
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(run).toHaveBeenCalledOnce();
+    stop();
+    finish();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(run).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

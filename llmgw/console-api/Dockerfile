@@ -1,14 +1,23 @@
-# 多阶段构建：sdk 编译 → aspnet 运行。构建上下文为 ./llmgw/console-api
+# 多阶段构建：sdk 编译 → aspnet 运行。构建上下文为仓库根目录，共享出站传输库独立于 MAP 服务
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # 先 COPY csproj 单独 restore，最大化层缓存
-COPY prd-llmgw.csproj ./
-RUN dotnet restore prd-llmgw.csproj
+COPY llmgw/console-api/prd-llmgw.csproj llmgw/console-api/
+COPY prd-api/src/LlmGateway.Transport/LlmGateway.Transport.csproj prd-api/src/LlmGateway.Transport/
+RUN dotnet restore llmgw/console-api/prd-llmgw.csproj
 
 # 再 COPY 全部源码并发布
-COPY . ./
-RUN dotnet publish prd-llmgw.csproj -c Release -o /app/publish /p:UseAppHost=false
+COPY llmgw/console-api/ llmgw/console-api/
+COPY prd-api/src/LlmGateway.Transport/ prd-api/src/LlmGateway.Transport/
+# .git 不进入构建上下文；版本门必须读取产物内烘焙的完整提交，不能依赖运行时 ENV。
+# 开发 Compose 可不传版本；未版本化产物仍无法通过正式版本门。
+ARG GIT_COMMIT=""
+RUN if [ -n "$GIT_COMMIT" ]; then \
+        test "${#GIT_COMMIT}" -eq 40 \
+        && case "$GIT_COMMIT" in *[!0-9a-fA-F]*) echo "GIT_COMMIT must be a full hexadecimal commit" >&2; exit 1;; esac; \
+    fi \
+    && dotnet publish llmgw/console-api/prd-llmgw.csproj -c Release -o /app/publish /p:UseAppHost=false /p:SourceRevisionId="$GIT_COMMIT"
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app

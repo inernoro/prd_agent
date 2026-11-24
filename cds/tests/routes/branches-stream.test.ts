@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * Tests for GET /api/branches/stream (live UI stream, 2026-04-19).
  *
@@ -124,7 +125,7 @@ describe('GET /api/branches/stream', () => {
     stateService.addBranch(seed);
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    const containerService = new ContainerService(mock, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({

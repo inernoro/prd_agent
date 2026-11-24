@@ -1,29 +1,60 @@
 import { randomUUID } from 'node:crypto';
-import type { BranchEntry, BuildProfile, ServiceState } from '../types.js';
+import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef, OperationLogContainerSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import type { ContainerService } from './container.js';
+import { ContainerRemovalPrerequisiteError, computeProfileAliases, type ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
+import { archiveBranchContainerLogs } from './container-log-archiver.js';
+import { resolveBranchEnvLayers } from './branch-env-layers.js';
+import { deploymentPhaseBudget } from './deployment-phase-budget.js';
+
+function staticConsumerAliases(entry: BranchEntry, profileId: string, state: StateService): Set<string> {
+  const project = entry.projectId ? state.getProject(entry.projectId) : undefined;
+  return new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
+}
+function referencesStaticAlias(value: string, aliases: Set<string>): boolean {
+  for (const match of value.matchAll(/(?=(https?:\/\/(?:[^\s/"'<>?#]*@)?[^\s/"'<>?#,@]+))/gi)) {
+    try { const host = new URL(match[1]).hostname; if ([...aliases].some(alias => alias.toLowerCase() === host)) return true; }
+    catch { return true; }
+  }
+  return false;
+}
+/** Browser-only is an explicit deployment contract, never inferred from a shared network. */
+export function assertBrowserOnlyStaticConsumers(entry: BranchEntry, profileId: string, state: StateService): void {
+  const aliases = staticConsumerAliases(entry, profileId, state);
+  for (const { effective: peer, provenance, envError } of resolveBranchEnvLayers(state, entry, { jwtIssuer: '' }).profiles) {
+    if (peer.id === profileId) continue;
+    if (envError) throw new Error(`服务 ${peer.id} 的运行环境无法完整解析，请核对后再选择仅浏览器静态模式`);
+    const references = [...(peer.calls || []), ...(peer.dependsOn || [])];
+    const internalUrl = provenance.some(({ value }) => referencesStaticAlias(value, aliases));
+    if (internalUrl || references.some(target => aliases.has(target))) throw new Error(`服务 ${peer.id} 仍声明依赖该前端容器地址，请迁移依赖后再选择仅浏览器静态模式`);
+  }
+}
 
 export function reserveServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; portStart: number; operationId?: string;
+  staticProfileIds?: readonly string[];
 }): void {
   const { entry, state, profileIds } = options;
-  if (!profileIds.some(id => entry.services[id]?.servingRuntime)) return;
+  if (!profileIds.length || (profileIds.length === 1 && !entry.services[profileIds[0]]?.servingRuntime)) return;
   const generation = options.operationId || randomUUID().replaceAll('-', '');
+  const staticIds = new Set(options.staticProfileIds);
   if (entry.replacementOperationId !== generation) {
     entry.replacementOperationId = generation;
-    entry.replacementNetwork = `${branchAppNetworkName(entry.id).slice(0, 27)}-r-${randomUUID().replaceAll('-', '')}`;
-    entry.replacementNetworks = [...new Set([...(entry.replacementNetworks || []), entry.replacementNetwork])];
+    entry.replacementNetwork = profileIds.some(id => !staticIds.has(id))
+      ? `${branchAppNetworkName(entry.id).slice(0, 27)}-r-${randomUUID().replaceAll('-', '')}` : undefined;
+    if (entry.replacementNetwork) entry.replacementNetworks = [...new Set([...(entry.replacementNetworks || []), entry.replacementNetwork])];
   }
   for (const id of profileIds) {
     const service = entry.services[id];
     if (!service) continue;
-    if (!service.servingRuntime) { service.networkName = entry.replacementNetwork; continue; }
-    if (service.pendingRuntime && service.pendingRuntime.networkName === entry.replacementNetwork && !service.pendingRuntime.creationIssued) continue;
+    const isStatic = staticIds.has(id);
+    if (!service.servingRuntime) { service.networkName = isStatic ? undefined : entry.replacementNetwork; service.runtimeKind = isStatic ? 'static' : undefined; continue; }
+    if (service.pendingRuntime && (service.pendingRuntime.runtimeKind === 'static') === isStatic
+      && service.pendingRuntime.networkName === (isStatic ? undefined : entry.replacementNetwork) && !service.pendingRuntime.creationIssued) continue;
     if (service.pendingRuntime) service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(service.pendingRuntime)];
     service.pendingRuntime = { containerName: `${service.containerName.slice(0, 92)}-r-${randomUUID().replaceAll('-', '')}`,
-      hostPort: state.allocatePort(options.portStart), networkName: entry.replacementNetwork };
+      hostPort: state.allocatePort(options.portStart), networkName: isStatic ? undefined : entry.replacementNetwork, runtimeKind: isStatic ? 'static' : undefined };
   }
   state.save([{ kind: 'branches', id: entry.id }]);
 }
@@ -31,16 +62,53 @@ export function reserveServiceReplacements(options: {
 /** 容器环境解析使用本轮已预约身份，入口仍从原Entry的servingRuntime读取。 */
 export function replacementLaunchEntry(entry: BranchEntry): BranchEntry {
   return { ...entry, services: Object.fromEntries(Object.entries(entry.services).map(([id, service]) =>
-    [id, service.pendingRuntime && service.pendingRuntime.networkName === entry.replacementNetwork
+    [id, service.pendingRuntime && (service.pendingRuntime.runtimeKind === 'static' || service.pendingRuntime.networkName === entry.replacementNetwork)
       ? { ...service, ...service.pendingRuntime } : service])) };
 }
 
 /** 候选是独立对象；迟到旧操作不能借共享ServiceState改掉更新操作的容器身份。 */
 export async function prepareServiceReplacement(options: {
   entry: BranchEntry; service: ServiceState; profile: BuildProfile; state: StateService;
-  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>; portStart: number; operationId?: string; assertCurrent?: (step: string) => void;
+  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'> & Partial<Pick<ContainerService, 'stop'>>; portStart: number; operationId?: string; assertCurrent?: (step: string) => void;
 }): Promise<ServiceState> {
   const { entry, service, state, container, profile, assertCurrent } = options;
+  if (profile.staticWeb?.browserOnly) assertBrowserOnlyStaticConsumers(entry, profile.id, state);
+  if (profile.updateOrder === 'stop-first') {
+    if (profile.staticWeb) throw new Error('静态站无需先停旧实例，请使用默认更新顺序');
+    const stop = container.stop?.bind(container);
+    if (!stop) throw new Error('当前部署执行器不支持先停旧实例，未启动候选');
+    // 只停经归属核对的本服务精确 CID。停止不删除容器或卷；失败必须在新实例启动前熔断。
+    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime: runtimeRef(runtime),
+      releaseMemory: deploymentPhaseBudget.captureMemoryRelease(runtime.containerName) }));
+    for (const { runtime, releaseMemory } of runtimes) {
+      assertCurrent?.('before stop-first identity');
+      const owned = await container.inspectOwnedRuntime(entry, profile.id, runtime);
+      assertCurrent?.('after stop-first identity');
+      if (!owned) continue;
+      const servingBeforeStop = service.servingRuntime;
+      const settleStoppedRuntime = async () => {
+        const released = releaseMemory();
+        let changed = false;
+        // 物理停止已经完成；只结算仍指向原实例的字段，不覆盖后继发布的指针。
+        if (servingBeforeStop && service.servingRuntime === servingBeforeStop
+          && servingBeforeStop.containerId === owned.containerId && servingBeforeStop.containerName === owned.containerName) {
+          service.servingRuntime = undefined; changed = true;
+        }
+        if (!service.servingRuntime && service.containerId === owned.containerId
+          && service.containerName === owned.containerName && service.status === 'running') {
+          service.status = 'stopped'; changed = true;
+        }
+        if (changed) { state.save([{ kind: 'branches', id: entry.id }]); await state.flush(); }
+        return released;
+      };
+      await stop(owned.containerId!, 'replacement-stop-first', { projectId: entry.projectId,
+        branchId: entry.id, profileId: profile.id, operationId: options.operationId,
+        operation: 'replacement-stop-first', source: 'service-replacement', assertCurrent }, settleStoppedRuntime);
+      assertCurrent?.('after stop-first stop');
+      if (await container.inspectOwnedRuntime(entry, profile.id, owned)) throw new Error('旧实例停止未确认，未启动独占数据卷的候选');
+      assertCurrent?.('after stop-first confirmation');
+    }
+  }
   if (!service.servingRuntime && !service.pendingRuntime) return service;
   assertCurrent?.('before candidate prepare');
   const approved = servingRuntime(service);
@@ -53,12 +121,21 @@ export async function prepareServiceReplacement(options: {
     if (!service.pendingRuntime) return service;
   }
   service.servingRuntime = actual || undefined;
-  const reserved = service.pendingRuntime && service.pendingRuntime.networkName === entry.replacementNetwork && !service.pendingRuntime.creationIssued
+  const reserved = service.pendingRuntime && (service.pendingRuntime.runtimeKind === 'static') === Boolean(profile.staticWeb)
+    && (profile.staticWeb || service.pendingRuntime.networkName === entry.replacementNetwork) && !service.pendingRuntime.creationIssued
     ? service.pendingRuntime : undefined;
   if (!reserved && service.pendingRuntime && service.pendingRuntime.containerName !== service.containerName) {
     service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(service.pendingRuntime)];
   }
   if (!actual || service.containerName !== actual.containerName) service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(service)];
+  if (profile.staticWeb) {
+    const candidate: ServiceState = { profileId: profile.id,
+      containerName: reserved?.containerName || `${service.containerName.slice(0, 92)}-r-${randomUUID().replaceAll('-', '')}`,
+      hostPort: reserved?.hostPort ?? state.allocatePort(options.portStart), status: 'building', runtimeKind: 'static' };
+    service.pendingRuntime = runtimeRef(candidate);
+    state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+    return candidate;
+  }
   const generation = options.operationId || entry.replacementOperationId || randomUUID().replaceAll('-', '');
   const network = entry.replacementOperationId === generation && entry.replacementNetwork
     ? entry.replacementNetwork : `${branchAppNetworkName(entry.id).slice(0, 27)}-r-${randomUUID().replaceAll('-', '')}`;
@@ -92,16 +169,164 @@ export function preserveReplacementNames(entry: BranchEntry, candidate: ServiceS
     .filter(runtime => runtime.containerName !== candidate.containerName).map(runtime => runtime.containerName);
 }
 
-/** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
-export async function commitServiceReplacements(options: {
-  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
+class OldServingRuntimeUnavailable extends Error {}
+
+/** 本轮整体失败后收回未发布候选；已确认旧入口、其他轮次及已发布依赖保持。 */
+export async function abortUnpublishedServiceReplacements(options: {
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService;
+  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'removeOwnedRuntime'>;
+  operationId?: string; operationGeneration?: number;
   assertCurrent?: (step: string) => void;
 }): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
+  if (!entry.replacementNetwork && !profileIds.some(id => entry.services[id]?.runtimeKind === 'static' || entry.services[id]?.pendingRuntime?.runtimeKind === 'static')) return;
+  for (const id of profileIds) {
+    const service = entry.services[id], active = service?.servingRuntime;
+    if (!service || !active) continue;
+    const candidates = serviceRuntimeRefs(service).filter(runtime => runtime.containerName !== active.containerName
+      && ((runtime.staticWeb && (runtime === service || runtime === service.pendingRuntime))
+        || (entry.replacementNetwork && runtime.networkName === entry.replacementNetwork)) && Boolean(runtime.containerId));
+    if (!candidates.length) continue;
+    assertCurrent?.('before failed replacement old identity');
+    const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
+    assertCurrent?.('after failed replacement old identity');
+    if (!confirmedActive) continue;
+    for (const candidate of candidates) {
+      // 名称不同也可能仍携带旧CID；当前实际入口身份绝不能作为失败候选删除。
+      if (candidate.containerId && candidate.containerId === confirmedActive.containerId) continue;
+      // 同网段已有发布角色可能仍消费它；没有发布任何角色时才整体撤销候选。
+      if (candidate.networkName && Object.values(entry.services).some(peer => peer !== service
+        && servingRuntime(peer)?.networkName === candidate.networkName)) continue;
+      try {
+        await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
+          operationId: options.operationId, operationGeneration: options.operationGeneration,
+          profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
+          requiredRunningContainerId: confirmedActive.containerId,
+          beforeRemove: async () => {
+            const current = await container.inspectOwnedRuntime(entry, id, active);
+            assertCurrent?.('after failed replacement old liveness');
+            if (!current || current.containerId !== confirmedActive.containerId || service.servingRuntime !== active) {
+              throw new OldServingRuntimeUnavailable('旧入口已失效或身份变化，保留未发布候选');
+            }
+          },
+          assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
+      } catch (error) {
+        assertCurrent?.('after failed replacement cleanup guard');
+        if (error instanceof OldServingRuntimeUnavailable || error instanceof ContainerRemovalPrerequisiteError) continue;
+        throw error;
+      }
+      assertCurrent?.('after failed replacement cleanup');
+      if (service.containerName === candidate.containerName) Object.assign(service, runtimeRef(active));
+      if (service.pendingRuntime?.containerName === candidate.containerName) service.pendingRuntime = undefined;
+      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== candidate.containerName);
+      state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+      assertCurrent?.('after failed replacement cleanup persistence');
+    }
+  }
+}
+
+function publicationIdentity(entry: BranchEntry): string {
+  return JSON.stringify(Object.entries(entry.services).map(([id, service]) =>
+    [id, service.status, runtimeRef(service), service.servingRuntime, service.pendingRuntime]));
+}
+
+async function runningConsumersDoNotReference(profileId: string, published: ReadonlyMap<string, ServiceRuntimeRef | null>,
+  container: Pick<ContainerService, 'getEnv'>, aliases: Set<string>, check: (step: string) => void): Promise<boolean> {
+  for (const [id, peer] of published) {
+    if (id === profileId || peer?.staticWeb) continue;
+    if (!peer?.containerId || !/^[a-f0-9]{64}$/.test(peer.containerId)) return false;
+    let env: string;
+    check('before running consumer environment');
+    try { env = await container.getEnv(peer.containerId); }
+    catch { check('after unreadable consumer environment'); return false; }
+    check('after running consumer environment');
+    if (referencesStaticAlias(env, aliases)) return false;
+  }
+  return true;
+}
+
+/** 连接旧网络不代表仍依赖旧版本；消费者必须已能通过服务别名访问当前版本。 */
+async function retireReplacedRuntimes(options: Parameters<typeof commitServiceReplacements>[0]): Promise<void> {
+  const { entry, state, container } = options;
+  const identity = publicationIdentity(entry);
+  const check = (step: string) => {
+    options.assertCurrent?.(step);
+    if (publicationIdentity(entry) !== identity) throw new Error('当前服务身份已变化，停止回收旧版本');
+  };
+  const published = new Map<string, ServiceRuntimeRef | null>();
+  for (const [id, service] of Object.entries(entry.services)) {
+    const active = servingRuntime(service);
+    if (!active) continue;
+    // 以 Docker 的实际别名和连网为准，不能拿持久化的历史拓扑当作可达证明。
+    published.set(id, await container.inspectOwnedRuntime(entry, id, active));
+    check('after retirement serving identity');
+  }
+  const protectedRefs = [...Object.values(entry.services).flatMap(service =>
+    [service, service.servingRuntime, service.pendingRuntime]), ...published.values()]
+    .filter((ref): ref is ServiceRuntimeRef => Boolean(ref));
+  const isProtected = (runtime: ServiceRuntimeRef) => protectedRefs.some(ref =>
+    ref.containerName === runtime.containerName || Boolean(ref.containerId && ref.containerId === runtime.containerId));
+  for (const [id, service] of Object.entries(entry.services)) {
+    const active = published.get(id);
+    if (!active || (!active.staticWeb && !active.aliasNetworks?.length)) continue;
+    for (const old of [...(service.retainedRuntimes || [])]) {
+      if ((!old.staticWeb && !old.networkName) || isProtected(old)) continue;
+      const confirmed = await container.inspectOwnedRuntime(entry, id, active);
+      check('after retirement replacement liveness');
+      if (!confirmed || confirmed.containerId !== active.containerId) continue;
+      const actual = await container.inspectOwnedRuntime(entry, id, old, false);
+      check('after retirement retained identity');
+      if (actual && (isProtected(actual) || (!actual.staticWeb && !actual.aliasNetworks?.length))) continue;
+      if (confirmed.staticWeb?.browserOnly) {
+        assertBrowserOnlyStaticConsumers(entry, id, state);
+        const aliases = staticConsumerAliases(entry, id, state); aliases.add((actual || old).containerName);
+        if (!await runningConsumersDoNotReference(id, published, container, aliases, check)) continue;
+      }
+      const referenced = actual && !actual.staticWeb && !confirmed.staticWeb?.browserOnly && [...published].some(([peerId, peer]) => {
+        if (peerId === id || peer?.staticWeb) return false;
+        if (!peer) return true; // 当前消费者未确认运行时，保留其可能依赖的旧版本。
+        const networks = [peer.networkName, ...(peer.connectedNetworks || [])];
+        return networks.some(network => actual.aliasNetworks!.includes(network!))
+          && !networks.some(network => confirmed.aliasNetworks?.includes(network!));
+      });
+      if (referenced) continue;
+      check('before old runtime retirement');
+      await container.removeOwnedRuntime(entry, id, actual || old, { branchId: entry.id, projectId: entry.projectId,
+        operationId: options.operationId, operationGeneration: options.operationGeneration,
+        profileId: id, operation: 'ready-runtime-retirement', source: 'service-replacement',
+        assertCurrent: () => check('old runtime retirement command') });
+      check('after old runtime retirement');
+      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== old.containerName);
+      state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+      check('after old runtime retirement persistence');
+    }
+  }
+}
+
+/** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
+export async function commitServiceReplacements(options: {
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs' | 'getEnv'>;
+  operationId?: string; operationGeneration?: number;
+  assertCurrent?: (step: string) => void;
+  onFailureDiagnostics?: (snapshots: OperationLogContainerSnapshot[]) => void;
+}): Promise<void> {
+  const { entry, profileIds, state, container, assertCurrent } = options;
   const selected = profileIds.map(id => entry.services[id]).filter((service): service is ServiceState => Boolean(service));
-  if (selected.some(service => service.status !== 'running')) return;
+  if (selected.some(service => service.status !== 'running')) {
+    if (selected.some(service => service.status === 'error')) {
+      const archived = await archiveBranchContainerLogs({ stateService: state, containerService: container,
+        branch: entry, source: 'deploy-error', profileIds: new Set(profileIds), assertCurrent });
+      assertCurrent?.('before failed replacement archive persistence');
+      options.onFailureDiagnostics?.(archived.map(snapshot => ({ ...snapshot, source: 'deploy-error', tailLines: 500 })));
+      state.save(); await state.flush();
+      assertCurrent?.('after failed replacement archive persistence');
+      await abortUnpublishedServiceReplacements(options);
+    }
+    return;
+  }
   const changed = selected.filter(service => service.servingRuntime && service.servingRuntime.containerName !== service.containerName);
-  if (!changed.length && !selected.some(service => service.retainedRuntimes?.length)) return;
+  // 冷启动也可能预约了共同网络，成功后仍须沿用既有网络结算与归属检查。
+  if (!changed.length && !selected.some(service => service.retainedRuntimes?.length) && !entry.replacementNetwork) return;
   assertCurrent?.('before runtime cutover persistence');
   await state.flush();
   assertCurrent?.('after candidate persistence before cutover');
@@ -124,24 +349,9 @@ export async function commitServiceReplacements(options: {
   } finally {
     for (const release of pins) release();
   }
-  // 仍被未替换服务连接的旧版本保留；每个已声明网络关系都计入实际容量。
-  for (const service of Object.values(entry.services)) {
-    for (const old of [...(service.retainedRuntimes || [])]) {
-      const aliases = old.aliasNetworks || (old.networkName ? [old.networkName] : []);
-      const referenced = Object.values(entry.services).some(peer => {
-        if (peer === service) return false;
-        const active = servingRuntime(peer);
-        return active && [...(active.aliasNetworks || []), ...(active.networkName ? [active.networkName] : [])].some(network => aliases.includes(network));
-      });
-      if (referenced || !old.networkName) continue;
-      assertCurrent?.('before old runtime retirement');
-      await container.removeOwnedRuntime(entry, service.profileId, old, { branchId: entry.id, projectId: entry.projectId,
-        profileId: service.profileId, operation: 'ready-runtime-retirement', source: 'service-replacement',
-        assertCurrent: () => assertCurrent?.('old runtime retirement command') });
-      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== old.containerName);
-    }
-  }
+  await retireReplacedRuntimes(options);
   await container.cleanupUnusedReplacementNetworks(entry, { branchId: entry.id, projectId: entry.projectId,
+    operationId: options.operationId, operationGeneration: options.operationGeneration,
     assertCurrent: () => assertCurrent?.('unused replacement network cleanup') });
   entry.replacementNetwork = undefined;
   entry.replacementOperationId = undefined;

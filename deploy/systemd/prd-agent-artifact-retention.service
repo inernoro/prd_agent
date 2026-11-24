@@ -1,0 +1,13 @@
+[Unit]
+Description=Reclaim obsolete MAP production releases and images
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/prd-agent-artifact-retention --repo /root/inernoro/prd_agent --evidence-dir /root/prd-agent-release-evidence --execute --json-out /var/lib/prd-agent/artifact-retention-latest.json
+StateDirectory=prd-agent
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

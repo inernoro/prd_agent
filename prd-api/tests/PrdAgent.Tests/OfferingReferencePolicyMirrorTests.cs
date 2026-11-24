@@ -59,6 +59,7 @@ public class OfferingReferencePolicyMirrorTests
         string[] roster =
         [
             VideoGenRunStatus.Queued,
+            VideoGenRunStatus.ScopedQueued,
             VideoGenRunStatus.Scripting,
             VideoGenRunStatus.Editing,
             VideoGenRunStatus.Rendering,

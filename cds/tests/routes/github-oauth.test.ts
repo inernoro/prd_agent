@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -16,6 +17,7 @@ import { StateService } from '../../src/services/state.js';
 import { GitHubOAuthClient, type FetchLike } from '../../src/services/github-oauth-client.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { getHttpFixtureTrace, listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
 function makeFakeFetch(scripts: Array<{ match: RegExp; response: any; status?: number }>): FetchLike {
   return async function (url, init) {
     for (const script of scripts) {
@@ -40,8 +42,13 @@ async function request(
   body?: unknown,
   headers?: Record<string, string>,
 ): Promise<{ status: number; body: any }> {
+  if (!server.listening) await once(server, 'listening');
+  const trace = getHttpFixtureTrace(server);
+  const addr = server.address();
+  if (!trace || !addr || typeof addr === 'string' || addr.address !== '127.0.0.1') {
+    throw new Error('OAuth自有HTTP夹具的IPv4监听身份未确认');
+  }
   return new Promise((resolve, reject) => {
-    const addr = server.address() as { port: number };
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
     const req = http.request(
       {
@@ -49,6 +56,7 @@ async function request(
         port: addr.port,
         path: urlPath,
         method,
+        agent: false,
         headers: {
           'Content-Type': 'application/json',
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
@@ -57,8 +65,14 @@ async function request(
       },
       (res) => {
         let raw = '';
+        res.once('aborted', () => reject(new Error('OAuth自有HTTP夹具响应中断')));
+        res.once('error', reject);
         res.on('data', (c: Buffer) => (raw += c.toString()));
         res.on('end', () => {
+          if (!res.complete || res.headers['x-cds-fixture-id'] !== trace.id
+            || res.headers['x-cds-fixture-pid'] !== String(trace.pid)) {
+            reject(new Error('OAuth自有HTTP夹具响应不完整或归属不匹配')); return;
+          }
           try {
             resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null });
           } catch {
@@ -97,7 +111,7 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
       next();
     });
     app.use('/api', createGithubOAuthRouter({ stateService, githubClient }));
-    return app.listen(0);
+    return listenLoopbackFixture(app);
   }
 
   beforeEach(() => {

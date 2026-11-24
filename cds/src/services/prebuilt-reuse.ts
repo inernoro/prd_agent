@@ -16,8 +16,11 @@
  * `git diff <旧sha> <当前sha> -- <该组件的 workDir>`——没有差异就是情形 (a)，
  * 有差异或查不出来就走原来的源码编译路径。
  *
- * 本模块只做**纯判定**（可单测），真正的 git 调用与 docker 拉取由调用方注入。
+ * 本模块提供纯判定与只读Git比较适配；执行能力由调用方注入，Docker事实由准入器核验。
  */
+
+import type { IShellExecutor } from '../types.js';
+import { createReleaseGitRunner, READ_TIMEOUT_MS } from './release-git-reader.js';
 
 /** CDS/CI 给部署镜像打的 tag 形状：`sha-<40 位十六进制>`。 */
 const SHA_TAG_PATTERN = /:sha-([0-9a-f]{40})$/;
@@ -49,9 +52,31 @@ export function latestCommitImage(intendedImage: string, latestCommitSha: string
 
 /** 取镜像引用的仓库部分（去掉 `:tag`；仓库名里的 `/` 与端口号不受影响）。 */
 export function imageRepositoryOf(image: string): string {
-  const s = (image || '').trim();
+  const s = (image || '').trim().split('@')[0];
   const idx = s.lastIndexOf(':');
   return idx > s.lastIndexOf('/') ? s.slice(0, idx) : s;
+}
+
+/** 配置候选的唯一规整入口，不从目标提交猜测其他镜像。 */
+export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
+  if (!fallback) return [];
+  return [...new Set((Array.isArray(fallback) ? fallback : [fallback]).map(value => value.trim()).filter(Boolean))];
+}
+
+/** 只读可信项目仓库，不创建worktree、不fetch；缺提交或读取能力时不能证明等价。 */
+export function componentInputComparator(shell: IShellExecutor, repoRoot: string, assertCurrent: () => void = () => {}, remainingMs?: () => number) {
+  const read = createReleaseGitRunner(shell, assertCurrent);
+  return async (fromSha: string, toSha: string, scope: readonly string[]): Promise<boolean> => {
+    const paths = normalizeBuildScope(scope);
+    if (!repoRoot || !paths || !normalizeImageRevision(fromSha) || !normalizeImageRevision(toSha)) return false;
+    assertCurrent();
+    const unchanged = await Promise.resolve().then(() => {
+      if (remainingMs && remainingMs() < READ_TIMEOUT_MS) throw new Error('构建输入核验剩余时间不足');
+      return read(['-C', repoRoot, 'diff', '--no-ext-diff', '--quiet', fromSha, toSha, '--', ...paths]);
+    })
+      .then(() => true, () => false);
+    assertCurrent(); remainingMs?.(); return unchanged;
+  };
 }
 
 export interface ReuseCandidate {
@@ -163,7 +188,7 @@ export function normalizeBuildScope(scope: readonly string[] | undefined | null)
 
 /** OCI 镜像的源码 revision 标签只接受完整 commit SHA。 */
 export function normalizeImageRevision(value: string | undefined | null): string | null {
-  const normalized = (value || '').trim().toLowerCase();
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return /^[0-9a-f]{40}$/.test(normalized) ? normalized : null;
 }
 

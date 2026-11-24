@@ -596,6 +596,37 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(probe?.command).not.toContain('opencode');
   });
 
+  it.each([
+    { daemonExit: 0, reason: null },
+    { daemonExit: 1, reason: '候选镜像的 OpenDesign 服务未能启动' },
+    { daemonExit: 42, reason: '当前节点未落实工作区容器的 CPU 或内存限额' },
+  ])('checks candidate daemon and resource limits (exit $daemonExit) using its exact image', async ({ daemonExit, reason }) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-version-probe-'));
+    const candidate = `ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:${'b'.repeat(64)}`;
+    const shell = new RecordingShell();
+    const run = shell.exec.bind(shell);
+    const bootCommands: string[] = [];
+    shell.exec = async (command, options) => {
+      if (command.includes('.Config.Entrypoint')) {
+        expect(command).toContain(candidate);
+        return result(JSON.stringify([['/sbin/tini', '--'], ['node', 'apps/daemon/dist/cli.js', '--no-open']]));
+      }
+      if (command.startsWith('docker run --rm') && command.includes('OD_API_TOKEN=cds-version-probe')) {
+        bootCommands.push(command);
+        return probeContainerResult(command, result('', '', daemonExit));
+      }
+      return run(command, options);
+    };
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { rootDir, autoPullImage: false });
+    const verified = await runtime.verifyVersion(candidate);
+    expect(verified).toMatchObject({ available: daemonExit === 0, reason });
+    expect(bootCommands).toHaveLength(1);
+    for (const fragment of [candidate, 'apps/daemon/dist/cli.js', '/api/health', 'memory.max', 'cpu.max', '--network none']) {
+      expect(bootCommands[0]).toContain(fragment);
+    }
+    await runtime.closeCapabilityProbes();
+  });
+
   it('fails before starting Codex when the session model configuration cannot be installed', async () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-codex-config-test-'));
     const shell = new RecordingShell();
@@ -1009,6 +1040,12 @@ describe('AgentWorkspaceSessionRuntime', () => {
         networkPolicy: 'egress-only',
         autoCleanupMinutes: 5,
       },
+      undefined,
+      undefined,
+      async (runId) => {
+        expect(runId).toBe('map-run-1');
+        return `ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:${'b'.repeat(64)}`;
+      },
     );
 
     expect(fs.readFileSync(path.join(created.workspaceDir, 'knowledge', 'source.md'), 'utf8'))
@@ -1021,7 +1058,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(runCommand?.command).toContain('--tmpfs /tmp:rw,noexec,nosuid,size=128m,nr_inodes=2048');
     expect(runCommand?.command).toContain("--tmpfs '/app/design-templates:rw,noexec,nosuid,size=8m");
     expect(runCommand?.command).toContain('nr_inodes=512');
-    expect(runCommand?.command).toContain(OPEN_DESIGN_IMAGE);
+    expect(runCommand?.command).toContain(created.image);
+    expect(created.image).not.toBe(OPEN_DESIGN_IMAGE);
     expect(runCommand?.command).toContain('type=volume');
     expect(runCommand?.command).not.toContain('type=bind');
     expect(runCommand?.command).toContain("--label 'cds.instance=instance-a'");
@@ -1136,6 +1174,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     });
     const preflightIndex = shell.calls.findIndex((call) => call.command.includes('CDS_OUTPUT_PREFLIGHT=1'));
     const preflightCommand = shell.calls[preflightIndex]?.command || '';
+    expect(preflightCommand).toContain(created.image);
     const pauseIndex = shell.calls.findIndex((call) => call.command.startsWith('docker pause '));
     const unpauseIndex = shell.calls.findIndex((call) => call.command.startsWith('docker unpause '));
     expect(preflightIndex).toBeGreaterThan(-1);
@@ -1419,8 +1458,24 @@ describe('AgentWorkspaceSessionRuntime', () => {
       ),
     );
     expect(sessionResourceCreates.length).toBeGreaterThanOrEqual(6);
+    const logCreators = shell.calls.filter((call) => /^docker (?:run|create)\b/.test(call.command));
+    expect(logCreators.length).toBeGreaterThanOrEqual(7);
+    for (const { command } of logCreators) {
+      expect(command).toContain('--log-driver json-file');
+      expect(command.match(/--log-driver\b/g)).toHaveLength(1);
+      if (command.startsWith('docker create ')) {
+        expect(command).toContain('--log-opt max-size=20m');
+        expect(command).toContain('--log-opt max-file=2');
+        expect(command).not.toContain('max-size=50m');
+      } else {
+        expect(command).toContain('--log-opt max-size=50m');
+        expect(command).toContain('--log-opt max-file=3');
+      }
+    }
+
     for (const call of sessionResourceCreates) {
       expect(call.command).toContain('cds.instance=instance-a');
+      if (/^docker (?:create|run)/.test(call.command)) expect(call.command).toContain(created.image);
       expect(call.command).not.toContain('model-secret');
     }
     expect(shell.calls.every((call) => !call.command.includes('model-secret'))).toBe(true);
@@ -4213,7 +4268,7 @@ describe('every quality rejection must reach the repair loop', () => {
     // 显式豁免，不是「顺手放过」：这三条是资源上限类拒绝（页面大到校验不动），
     // 与「这里有个缺陷，去改」不是一类。它们早于本次改动就没有修复条目，
     // 本 PR 的单一目标不含它们，按 AGENTS.md 5.5 记 B 类，去向见
-    // doc/debt.platform.open-design.md。新增消息一律不许进这张表——那正是本守卫要防的。
+    // https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md。新增消息一律不许进这张表——那正是本守卫要防的。
     const knownTerminalLimits = [
       'index.html contains too much visible text to validate safely',
       'index.html contains too many fragment targets to validate safely',

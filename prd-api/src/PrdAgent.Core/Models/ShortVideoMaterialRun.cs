@@ -3,8 +3,12 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 短视频素材解析运行记录。
 /// </summary>
-public class ShortVideoMaterialRun
+public class ShortVideoMaterialRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -16,6 +20,22 @@ public class ShortVideoMaterialRun
     /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
     /// </summary>
     public string? OwnerInstanceId { get; set; }
+
+    /// <summary>本次处理的写回条件；不代替平台任务许可或执行代次，不向客户端暴露。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ProcessingToken { get; set; }
+
+    /// <summary>本人明确请求取消；处理中仍保留处理身份，直到后台确认停止。</summary>
+    public bool CancelRequested { get; set; }
+
+    /// <summary>清理回执未确认时禁止删除历史，避免失去产物责任记录。</summary>
+    public bool CleanupPending { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ArtifactCleanupStarted { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ShortVideoMaterialArtifactReceipt? ArtifactReceipt { get; set; }
 
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;
@@ -47,7 +67,7 @@ public class ShortVideoMaterialRun
     /// <summary>解析过程说明</summary>
     public string? ParserMessage { get; set; }
 
-    /// <summary>状态：queued / running / done / failed。默认 queued——绝不能默认 running，
+    /// <summary>状态：queued / running / done / failed / cancelled。默认 queued——绝不能默认 running，
     /// 否则任何缺省/反序列化出的 run 会被当成"处理中"却永远没人 claim/recover，变成僵尸卡死。</summary>
     public string Status { get; set; } = "queued";
 
@@ -78,6 +98,30 @@ public class ShortVideoMaterialRun
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>服务端处理代次的产物意图；对象键和处理标识不向客户端暴露。</summary>
+public sealed class ShortVideoMaterialArtifactReceipt
+{
+    public string ProcessingToken { get; set; } = string.Empty;
+    public string? PredictedKey { get; set; }
+    public string? StorageKey { get; set; }
+    public string? Url { get; set; }
+    public string PhysicalState { get; set; } = "unowned";
+    public bool PublicationStarted { get; set; }
+    public List<ShortVideoMaterialEntryReceipt> Entries { get; set; } = new();
+}
+
+public sealed class ShortVideoMaterialEntryReceipt
+{
+    public string EntryId { get; set; } = string.Empty;
+    public string StoreId { get; set; } = string.Empty;
+    public DateTime EntryCreatedAt { get; set; }
+    public string? AttachmentId { get; set; }
+    public string? DocumentId { get; set; }
+    public bool DocumentCreatedNew { get; set; }
+    public bool DocumentPublicationStarted { get; set; }
+    public bool UnconfirmedWrite { get; set; }
 }
 
 /// <summary>

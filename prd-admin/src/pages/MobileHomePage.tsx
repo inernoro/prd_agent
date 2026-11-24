@@ -1,3 +1,4 @@
+import { Badge } from '@/components/design/Badge';
 /**
  * 移动端首页（<768px）—— 「摘要」仪表盘（iOS 健康摘要风,2026-07-15 定稿）。
  *
@@ -199,12 +200,15 @@ export default function MobileHomePage() {
                   size={46}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate" style={{ ...AS_TYPE.itemTitle, color: C.label }}>
-                    {headline.title || '未命名工作'}
+                  <span className="flex items-center gap-1.5" style={{ ...AS_TYPE.itemTitle, color: C.label }}>
+                    <span className="min-w-0 truncate">{headline.title || '未命名工作'}</span>
+                    {headline.agentKey === 'web-pages' && headline.progressLabel && (
+                      <Badge size="sm" className="shrink-0">{headline.progressLabel}</Badge>
+                    )}
                   </span>
                   <span className="block truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 2 }}>
                     {recentAgentMetaFor(headline.agentKey).label}
-                    {headline.progressLabel ? ` · ${headline.progressLabel}` : ''} · {formatRelativeTime(headline.lastActiveAt)}
+                    {headline.agentKey !== 'web-pages' && headline.progressLabel ? ` · ${headline.progressLabel}` : ''} · {formatRelativeTime(headline.lastActiveAt)}
                   </span>
                   {/* 诚实进度条:仅带状态机的实体有 progress(如缺陷),没有就不画 */}
                   {headline.progress != null && (
@@ -226,13 +230,13 @@ export default function MobileHomePage() {
                   )}
                 </span>
                 {/* span 版药丸:外层整卡已是 button,内部不得再嵌 button(Codex P2,非法 DOM) */}
-                <AppStorePillLabel label="继续" />
+                <AppStorePillLabel label={headline.agentKey === 'web-pages' ? '查看' : '继续'} />
               </button>
               {restRecent.map((item) => {
                 const meta = recentAgentMetaFor(item.agentKey);
                 return (
                   <button
-                    key={`${item.route}-${item.lastActiveAt}`}
+                    key={`${item.route}-${item.lastActiveAt}-${item.progressLabel ?? ''}`}
                     type="button"
                     onClick={() => openRoute(item.route, { id: item.agentKey, agentKey: item.agentKey, name: meta.label })}
                     className="w-full flex items-center gap-2.5 text-left active:opacity-60 transition-opacity"
@@ -242,10 +246,13 @@ export default function MobileHomePage() {
                     <span className="min-w-0 flex-1 truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary }}>
                       {item.title || '未命名工作'}
                     </span>
-                    {/* 右侧只留相对时间——真实标题偏长,带上 agent 名会把标题挤没(demo 差距复盘) */}
-                    <span style={{ ...AS_TYPE.caption, color: C.labelTertiary, flex: 'none' }}>
-                      {formatRelativeTime(item.lastActiveAt)}
-                    </span>
+                    {item.agentKey === 'web-pages' && item.progressLabel ? (
+                      <Badge size="sm" className="shrink-0">{item.progressLabel}</Badge>
+                    ) : (
+                      <span style={{ ...AS_TYPE.caption, color: C.labelTertiary, flex: 'none' }}>
+                        {formatRelativeTime(item.lastActiveAt)}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -260,6 +267,8 @@ export default function MobileHomePage() {
             <AppStoreGrid items={gridItems} columns={4} />
           </div>
         </Section>
+
+
 
         {/* ── 近 7 日（健康摘要式:大数 + 真实七日迷你柱） ── */}
         <Section C={C} title="近 7 日">

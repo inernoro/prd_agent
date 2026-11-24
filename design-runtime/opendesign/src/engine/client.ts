@@ -112,6 +112,23 @@ export class OpenDesignClient {
     return body;
   }
 
+  async createConversation(projectId: string, title: string, signal: AbortSignal): Promise<string> {
+    const body = await this.odJson(`/api/projects/${encodeURIComponent(projectId)}/conversations`, {
+      method: 'POST',
+      body: { title, sessionMode: 'design' },
+      signal,
+    });
+    const conversation = body.conversation as Record<string, unknown> | undefined;
+    const conversationId = typeof conversation?.id === 'string' ? conversation.id : '';
+    if (!conversationId) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_contract_mismatch',
+        'OpenDesign conversation creation returned no conversation id',
+      );
+    }
+    return conversationId;
+  }
+
   async cancelRun(runId: string): Promise<void> {
     await this.odJson(`/api/runs/${encodeURIComponent(runId)}/cancel`, {
       method: 'POST',

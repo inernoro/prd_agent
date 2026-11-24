@@ -184,4 +184,4 @@ appCaller 阻断——两级口径各管各的：readiness 管「这台机器还
 - [LLM Gateway 统一调用](./design.platform.llm-gateway.md)
 - [AppCaller 模型池选择与池内调度](./design.platform.model-pool.md)
 - [LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)
-- [LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md)
+- [LLM 网关与模型池 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)

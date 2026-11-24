@@ -1085,7 +1085,7 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   transition:
     background 160ms ease,
@@ -1113,7 +1113,7 @@
   flex-shrink: 0;
   padding: 2px;
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--nested-block-bg);
   border: 1px solid var(--border-subtle);
 }
 
@@ -1150,12 +1150,10 @@
 .marketplace-nav-pill[data-active="true"],
 .marketplace-density-pill[data-active="true"],
 .marketplace-tag-pill[data-active="true"] {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.08) 100%);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: var(--text-primary);
-  box-shadow:
-    0 2px 8px -1px rgba(0, 0, 0, 0.30),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  background: var(--selection-bg);
+  border-color: var(--selection-border);
+  color: var(--selection-text);
+  box-shadow: none;
 }
 
 .marketplace-filter-bar {
@@ -2050,7 +2048,7 @@
   --mx: 50%;
   --my: 50%;
   --glow: transparent;
-  box-shadow: 0 8px 28px -10px var(--glow), 0 2px 8px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   transition:
     box-shadow 240ms ease,
     border-color 200ms ease;
@@ -2089,8 +2087,8 @@
 }
 
 .mkt-card:hover {
-  box-shadow: 0 16px 36px -10px var(--glow), 0 4px 10px rgba(0, 0, 0, 0.26);
-  border-color: rgba(255, 255, 255, 0.13);
+  box-shadow: var(--shadow-card-hover);
+  border-color: var(--border-hover);
 }
 
 .mkt-card:hover::before {
@@ -2213,29 +2211,15 @@
 }
 
 .mkt-card-title-type-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-[data-theme="light"] .mkt-card-title-type-icon {
-  background: rgba(15, 23, 42, 0.05);
-  border-color: rgba(15, 23, 42, 0.10);
+  display: none;
 }
 
 .mkt-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.3;
-  color: rgba(255, 255, 255, 0.99);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text-primary);
+  text-shadow: none;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -2243,104 +2227,67 @@
   white-space: nowrap;
 }
 
-.mkt-card-density-short .mkt-card-title {
-  font-size: 12px;
-  line-height: 1.25;
-}
-
-.mkt-card-density-micro .mkt-card-title {
-  font-size: 12px;
-  line-height: 1.2;
-}
-
-[data-theme="light"] .mkt-card-title {
-  color: rgba(15, 23, 42, 0.98);
-  text-shadow: none;
-}
-
 .mkt-card-official {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 5px;
-  height: 15px;
-  border-radius: 99px;
-  font-size: 9px;
+  gap: 3px;
+  padding: 0;
+  height: 18px;
+  font-size: 11px;
   font-weight: 500;
-  background: rgba(59, 130, 246, 0.22);
+  line-height: 18px;
+  background: transparent;
   color: var(--accent-fg-blue);
-  border: 1px solid rgba(59, 130, 246, 0.32);
+  border: 0;
   flex-shrink: 0;
 }
 
 .mkt-card-official-footer {
   height: 20px;
-  padding: 0 7px;
+  padding: 0;
   flex: 0 0 auto;
 }
 
-[data-theme="light"] .mkt-card-official {
-  background: rgba(59, 130, 246, 0.14);
-  color: rgba(29, 78, 216, 1);
-  border-color: rgba(59, 130, 246, 0.24);
-}
-
 .mkt-card-desc {
-  font-size: 10px;
-  line-height: 1.4;
-  color: rgba(226, 232, 240, 0.90);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
 }
 
-.mkt-card-density-short .mkt-card-desc {
-  font-size: 9px;
-  line-height: 1.25;
-}
-
-[data-theme="light"] .mkt-card-desc {
-  color: rgba(30, 41, 59, 0.88);
-}
-
 .mkt-card-tags {
   display: flex;
-  gap: 3px;
+  align-items: center;
+  gap: 10px;
   overflow: hidden;
   flex-wrap: nowrap;
-}
-
-.mkt-card-density-short .mkt-card-tags {
-  gap: 3px;
 }
 
 .mkt-card-tag {
   display: inline-flex;
   align-items: center;
-  padding: 0 5px;
-  height: 14px;
-  border-radius: 99px;
-  font-size: 9px;
-  background: rgba(255, 255, 255, 0.09);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: rgba(203, 213, 225, 0.82);
+  padding: 0;
+  height: 16px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
   flex-shrink: 0;
-  max-width: 72px;
+  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-theme="light"] .mkt-card-tag {
-  background: rgba(0, 0, 0, 0.06);
-  border-color: rgba(0, 0, 0, 0.10);
-  color: rgba(51, 65, 85, 0.82);
-}
-
 .mkt-card-tag-more {
-  font-size: 9px;
-  color: rgba(148, 163, 184, 0.60);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
   flex-shrink: 0;
   align-self: center;
 }
@@ -2440,9 +2387,9 @@
   height: 22px;
   border-radius: 99px;
   font-size: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(148, 163, 184, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
   cursor: pointer;
   transition:
     background 0.15s,
@@ -2522,6 +2469,19 @@
 .mkt-card-density-micro .mkt-card-favorite svg {
   width: 14px;
   height: 14px;
+}
+
+/* 静态计数不重复画成小灰块；hover / focus 保留明确的操作反馈。 */
+.mkt-card-action-button.button-secondary {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.mkt-card-action-button.button-secondary:hover:not(:disabled) {
+  background: var(--bg-input-hover);
+  border-color: var(--border-hover);
 }
 
 /* 半高横向卡：左侧封面/图形，右侧说明，底部独立操作栏 */
@@ -2640,28 +2600,22 @@
   padding: 7px 10px 0;
 }
 
-.mkt-card-density-short .mkt-card-title,
-.mkt-card-density-micro .mkt-card-title {
-  font-size: 12px;
-  line-height: 1.25;
-}
-
 .mkt-card-density-short .mkt-card-desc {
   padding: 2px 12px 0;
-  font-size: 10px;
-  line-height: 1.25;
+  font-size: 11px;
+  line-height: 16px;
   -webkit-line-clamp: 1;
 }
 
 .mkt-card-density-micro .mkt-card-desc {
   padding: 2px 10px 0;
-  font-size: 9px;
-  line-height: 1.25;
+  font-size: 11px;
+  line-height: 16px;
   -webkit-line-clamp: 1;
 }
 
 .mkt-card-density-short .mkt-card-tags {
-  padding: 5px 12px 0;
+  padding: 4px 12px 0;
 }
 
 .mkt-card-density-micro .mkt-card-tags {
@@ -2670,8 +2624,8 @@
 
 .mkt-card-density-short .mkt-card-tag,
 .mkt-card-density-micro .mkt-card-tag {
-  height: 14px;
-  max-width: 58px;
+  height: 16px;
+  max-width: 96px;
 }
 
 .mkt-card-density-short .mkt-card-glass-footer,
@@ -2732,13 +2686,7 @@
   max-width: 64px;
   text-align: right;
   font-size: 10px;
-  color: rgba(148, 163, 184, 0.78);
-}
-
-[data-theme="light"] .mkt-card-favorite {
-  background: rgba(0, 0, 0, 0.05);
-  color: rgba(71, 85, 105, 0.82);
-  border-color: rgba(0, 0, 0, 0.10);
+  color: var(--text-muted);
 }
 
 .mkt-card-favorite[data-active="true"] {
@@ -2948,10 +2896,11 @@
 /* QuickConnect 弹出层（从接入AI按钮下拉） */
 .mkt-lb-qc-popover {
   /* position/top/right 由 createPortal 内联样式控制，此处仅保留外观 */
-  width: 340px;
+  width: min(380px, calc(100vw - 24px));
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border-subtle);
+  box-shadow: var(--shadow-glass-dropdown);
+  border: 1px solid var(--border-default);
   animation: mkt-qc-slide-in 160ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -3137,7 +3086,7 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  background: var(--bg-elevated);
+  background: var(--overlay-panel-solid);
   border-bottom: 1px solid var(--border-subtle);
   animation: mkt-qc-slide-in 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -3168,8 +3117,7 @@
   align-items: center;
   gap: 3px;
   font-size: 11px;
-  color: var(--text-muted);
-  opacity: 0.65;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: opacity 0.15s;
   background: none;
@@ -3208,8 +3156,7 @@
 
 .mkt-qc-desc {
   font-size: 12px;
-  color: var(--text-muted);
-  opacity: 0.80;
+  color: var(--text-secondary);
   flex: 1;
   min-width: 200px;
 }
@@ -3223,17 +3170,17 @@
   border-radius: 10px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--surface-action-primary-bg, rgba(56, 189, 248, 0.18));
-  color: var(--surface-action-primary-text, rgba(186, 230, 253, 0.96));
-  border: 1px solid rgba(56, 189, 248, 0.30);
+  background: var(--accent-primary-solid);
+  color: var(--accent-on-solid);
+  border: 1px solid var(--accent-primary-solid);
   cursor: pointer;
   transition: opacity 0.15s;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.mkt-qc-create-primary:hover:not(:disabled) { opacity: 0.82; }
-.mkt-qc-create-primary:disabled { opacity: 0.55; cursor: wait; }
+.mkt-qc-create-primary:hover:not(:disabled) { background: var(--accent-primary-solid-hover); }
+.mkt-qc-create-primary:disabled { background: var(--bg-input-hover); color: var(--text-muted); border-color: var(--border-default); cursor: wait; }
 
 /* Has-existing-key state */
 .mkt-qc-existing {
@@ -3309,7 +3256,7 @@
 
 .mkt-qc-key-warning {
   font-size: 10px;
-  color: rgba(251, 191, 36, 0.85);
+  color: var(--accent-fg-amber);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -3327,18 +3274,18 @@
   transition: background 0.18s, color 0.18s;
   white-space: nowrap;
   flex-shrink: 0;
-  background: var(--surface-action-primary-bg, rgba(56, 189, 248, 0.18));
-  color: var(--surface-action-primary-text, rgba(186, 230, 253, 0.96));
-  border: 1px solid rgba(56, 189, 248, 0.30);
+  background: var(--accent-primary-solid);
+  color: var(--accent-on-solid);
+  border: 1px solid var(--accent-primary-solid);
 }
 
 .mkt-qc-copy-primary[data-copied="true"] {
-  background: rgba(34, 197, 94, 0.18);
+  background: var(--status-done-soft);
   color: var(--accent-fg-success);
-  border-color: rgba(34, 197, 94, 0.30);
+  border-color: var(--status-done-border);
 }
 
-.mkt-qc-copy-primary:hover { opacity: 0.85; }
+.mkt-qc-copy-primary:hover:not([data-copied="true"]) { background: var(--accent-primary-solid-hover); }
 
 /* ─────────────────────────────────────────────────────────────
  * marketplace card wrappers — 用 reactbits SpotlightCard / PixelCard
@@ -3364,10 +3311,9 @@
 /* ─── 技能图标区（SkillGlyph）：v6 游戏技能图标 ─────────────────────────
  * 暖彩手绘线条 + 六边技能槽框，深色卡片上一层暖色径向辉光衬底。
  * 官方与社区无封面卡共用。 */
-.mkt-card-official-glyph {
-  background:
-    radial-gradient(78% 60% at 50% 8%, var(--warm), transparent 70%),
-    var(--bg-elevated);
+.mkt-card-official-glyph,
+.mkt-card-skill-glyph {
+  background: var(--panel-solid);
 }
 .mkt-card-glyph-banner {
   position: absolute;
@@ -3395,7 +3341,7 @@
 .skill-glyph {
   display: block;
   overflow: visible;
-  filter: drop-shadow(0 0 5px var(--glyphGlow));
+  filter: none;
 }
 
 .mkt-card-density-short .skill-glyph,
@@ -3419,3 +3365,41 @@
   .mkt-card-official-glyph:hover .skill-glyph .frame,
   .mkt-card:hover .skill-glyph .frame { transform: none; }
 }
+
+/* 浅色卡片的前景统一读文字 token，避免密度变体重新覆盖为浅灰。 */
+[data-theme="light"] .mkt-card-meta,
+[data-theme="light"] .mkt-card-time,
+[data-theme="light"] .mkt-card-favorite { color: var(--text-secondary); }
+[data-theme="light"] .mkt-card-favorite[data-active="true"] { color: var(--accent-fg-error); }
+[data-theme="light"] .mkt-card-density-short .mkt-card-glass,
+[data-theme="light"] .mkt-card-density-micro .mkt-card-glass {
+  background: linear-gradient(90deg,
+    transparent calc(var(--mkt-thumb) + var(--mkt-thumb-offset) * 2),
+    var(--panel-solid) calc(var(--mkt-thumb) + var(--mkt-thumb-offset) * 2));
+}
+[data-theme="light"] .skill-glyph { filter: none; }
+[data-theme="light"] .skill-glyph .ink,
+[data-theme="light"] .skill-glyph .frame > path { opacity: 1; }
+.marketplace-tag-pill > span { opacity: 1; color: var(--text-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mkt-lb-qc-popover, .mkt-qc-panel { animation: none; }
+}
+
+.marketplace-search .prd-field::placeholder,
+.marketplace-search-mobile .prd-field::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* 技能图标使用干净的单色线条与浅底，不再叠加暖色做旧、辉光或阴影。 */
+.skill-glyph .ink { filter: none; }
+.mkt-card-density-short .mkt-card-glyph-banner,
+.mkt-card-density-micro .mkt-card-glyph-banner,
+[data-theme="light"] .mkt-card-density-short .mkt-card-glyph-banner,
+[data-theme="light"] .mkt-card-density-micro .mkt-card-glyph-banner {
+  background: var(--skill-glyph-tile);
+  border-color: var(--skill-glyph-tile-border);
+  box-shadow: none;
+}
+[data-theme="light"] .skill-glyph .ink [stroke] { stroke-width: 2.2; }

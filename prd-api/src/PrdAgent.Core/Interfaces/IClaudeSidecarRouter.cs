@@ -89,7 +89,13 @@ public sealed class SidecarEvent
 /// <summary>调用 sidecar 的运行请求；序列化时由 router 负责，业务层不直接拼 JSON。</summary>
 public sealed class SidecarRunRequest
 {
+    /// <summary>服务端业务归属；不能通过请求 JSON 设置，也不构成执行授权。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SubjectUserId { get; init; }
+
     public string RunId { get; init; } = string.Empty;
+    /// <summary>服务端任务准入签发的业务编号；与 sidecar 工具回调 RunId 独立。</summary>
+    public string? GatewayRunId { get; init; }
     public string Model { get; init; } = "claude-opus-4-5";
     public string SystemPrompt { get; init; } = string.Empty;
     public List<SidecarChatMessage> Messages { get; init; } = new();

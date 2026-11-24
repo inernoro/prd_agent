@@ -77,9 +77,12 @@ describe('生成工作台布局契约', () => {
     expect(newStage).toContain('title={sampleTitle}');
   });
 
-  it('只有一个执行器时不摆选择器；默认执行器不可用要写明原因', () => {
-    expect(newStage).toContain('enabledRuntimes.length > 1 ? (');
-    expect(newStage).toContain('runtimeFallbackNotice(capabilities, settingsDefaultRuntime, requestRuntime?.id)');
+  it('新建和修改不暴露执行器选择，OpenDesign 不可用时直接阻断', () => {
+    expect(newStage).toContain("requiredWebPageRuntime(capabilities, 'generate')");
+    expect(editStage).toContain('requestRuntime');
+    expect(newStage).not.toContain('label="生成方式"');
+    expect(editStage).not.toContain('label="修改方式"');
+    expect(run).not.toContain('runtime: request.runtimeId');
   });
 
   it('生成中：每秒更新用时、阶段来自 phase 事件、有心跳、右边是实时页面', () => {

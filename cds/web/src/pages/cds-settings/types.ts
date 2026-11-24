@@ -6,7 +6,7 @@ export type LoadState<T> =
 export interface MeResponse {
   username?: string;
   login?: string;
-  user?: string;
+  user?: string | { id?: string; username?: string | null; githubLogin?: string; name?: string };
   authMode?: string;
   authEnabled?: boolean;
   session?: {
@@ -18,6 +18,7 @@ export interface MeResponse {
 export interface AuthStatusResponse {
   mode?: 'disabled' | 'basic' | 'github' | 'sso' | string;
   enabled?: boolean;
+  hostedSiteSso?: boolean;
   activeProvider?: 'local' | 'github' | 'sso' | string | null;
   logoutEndpoint?: string | null;
   postLogoutRedirect?: string | null;

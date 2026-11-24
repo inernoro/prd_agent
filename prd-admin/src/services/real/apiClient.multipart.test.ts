@@ -71,6 +71,9 @@ describe('apiMultipartRequest', () => {
     expect(result.success).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(bodies).toHaveLength(2);
+    const originalIntent = fetchMock.mock.calls[0]?.[1]?.headers['Idempotency-Key'];
+    expect(originalIntent).toEqual(expect.any(String));
+    expect(fetchMock.mock.calls[2]?.[1]?.headers['Idempotency-Key']).toBe(originalIntent);
     expect(bodies[0]).not.toBe(bodies[1]);
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer expired-token' }),

@@ -89,10 +89,24 @@ public class LlmRequestLog
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    /// <summary>来自网关核验后的任务事实，不存储许可密钥或用户输入。</summary>
+    public string? TaskPermitId { get; set; }
+    public string? TaskLeaseRunId { get; set; }
+    public long? TaskLeaseFence { get; set; }
+    public string? ExecutionOrigin { get; set; }
+    public string? TriggerCredentialId { get; set; }
+    public string? TriggerActorUserId { get; set; }
+    public string? SourceDeployment { get; set; }
+    public string? SourceTask { get; set; }
+
     /// <summary>一次用户动作或异步任务的稳定关联 ID；同一任务的 submit/status/download 共用。</summary>
     public string? LogicalRequestId { get; set; }
     /// <summary>供应商异步任务 ID；与每次 HTTP 往返的 ProviderRequestId 分开。</summary>
     public string? ProviderTaskId { get; set; }
+    /// <summary>serving 写入实例。缺失时不能按日志年龄推断进程已经死亡。</summary>
+    public string? WriterInstanceId { get; set; }
+    public string? LifecycleReason { get; set; }
+    public DateTime? LifecycleReconciledAt { get; set; }
     public string? UserId { get; set; }
     public string? ViewRole { get; set; }
 
@@ -280,8 +294,12 @@ public class LlmRequestLog
     // usage/cache
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    /// <summary>输出 token 中的推理 token；已包含在 OutputTokens 内，不重复计费。</summary>
+    public int? ReasoningTokens { get; set; }
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
+    /// <summary>缓存创建 token 是否已包含在 InputTokens 中。</summary>
+    public bool? CacheCreationCountedInsideInput { get; set; }
 
     // 成本快照（来自 GW 模型池成员价格配置；按请求完成时的 token 用量计算）
     public decimal? InputPricePerMillion { get; set; }
@@ -314,6 +332,8 @@ public class LlmRequestLog
     public string? CostStatus { get; set; }
     /// <summary>算不出钱时的人话原因，直接给控制台显示。</summary>
     public string? CostUnpricedReason { get; set; }
+    /// <summary>金额证据性质，取值见 GatewayCostKind。</summary>
+    public string? CostKind { get; set; }
     /// <summary>请求开始时价格字段的不可逆 SHA-256 快照，用于证明 estimated 的复算口径。</summary>
     public string? PriceSnapshotHash { get; set; }
     /// <summary>供应商响应头返回的请求标识，用于关联 provider actual；不接受客户端自报。</summary>
@@ -393,6 +413,14 @@ public class LlmImageReference
 
 public class LlmProviderAttempt
 {
+    public string? AttemptId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+
     public int Order { get; set; }
     public string Stage { get; set; } = "send";
     public string? Provider { get; set; }

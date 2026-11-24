@@ -13,7 +13,7 @@
 export function eventClock(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  const hm = `${d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}.${String(d.getMilliseconds()).padStart(3, '0')}`;
   const sameDay =
     d.getFullYear() === now.getFullYear() &&
     d.getMonth() === now.getMonth() &&

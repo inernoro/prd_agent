@@ -102,10 +102,6 @@ public class EmergenceService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage }
                 },
                 ["temperature"] = 0.7,
-                // 让推理模型(qwen-thinking / deepseek-r1 等)实时回传思考内容,避免首字 50s 空白
-                // 详见 .claude/rules/llm-gateway.md OpenRouter Reasoning 章节
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
             IncludeThinking = true,
@@ -197,8 +193,6 @@ public class EmergenceService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage }
                 },
                 ["temperature"] = includeFantasy ? 0.9 : 0.7,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
             IncludeThinking = true,

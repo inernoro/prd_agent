@@ -1,0 +1,165 @@
+import { CLOSED_LID, EYE_X, smoothProgress } from './portraitTimeline';
+
+/** Original vector contours traced for our commissioned portrait; no raster edge filter. */
+export const PORTRAIT_LINES = [
+  'M1100 -20 C1056 100 1014 240 1018 345 C1018 483 1101 577 1188 610',
+  'M1150 -20 C1098 144 1071 278 1097 407 C1125 527 1249 603 1262 727 C1273 825 1236 903 1218 955',
+  'M1215 -20 C1163 111 1118 238 1138 370 C1150 445 1194 496 1248 539',
+  'M1305 -20 C1230 113 1200 230 1236 358 C1265 442 1256 517 1308 584',
+  'M1372 -20 C1338 140 1326 242 1276 355',
+  'M1405 -20 C1400 85 1398 211 1447 276',
+  'M1446 -20 C1415 133 1445 254 1500 333',
+  'M1484 -20 C1464 95 1474 213 1522 317 C1555 386 1626 416 1689 440',
+  'M1535 -20 C1512 106 1551 242 1615 304 C1645 337 1674 351 1690 352',
+  'M1586 -20 C1573 84 1609 198 1690 264',
+  'M1290 213 C1204 300 1198 371 1218 437 C1243 516 1260 559 1305 600',
+  'M1260 441 C1330 469 1485 488 1567 443',
+  'M1279 442 C1348 482 1476 496 1543 452',
+  'M1334 284 C1389 246 1449 238 1494 258',
+  'M1550 291 C1582 390 1629 467 1668 496',
+  'M1255 516 C1282 635 1382 758 1483 815',
+  'M1483 815 C1496 863 1516 904 1565 947',
+  'M1652 754 Q1664 765 1676 760',
+  'M838 -10 C824 26 833 70 863 92 C878 116 914 103 943 111',
+  'M860 3 C849 45 877 80 913 98 L927 45 L961 -8',
+  'M895 -5 C886 35 916 76 934 83',
+  'M955 -5 C972 26 981 52 978 78 L942 112',
+  'M1008 -10 L1027 52 L979 82 L968 11',
+  'M1047 -5 L1063 39 L1027 52',
+  'M941 102 C873 112 818 126 776 159 C750 182 789 231 814 262 L872 237',
+  'M776 164 C812 166 853 185 886 205',
+  'M811 257 C830 285 838 320 861 342 C894 331 920 306 944 279',
+  'M858 342 C842 387 821 424 777 456 C803 453 836 437 858 429',
+  'M998 105 C961 252 928 390 830 486 C752 555 687 585 625 590',
+  'M1037 151 C1014 316 931 468 819 539 C758 578 707 596 647 631',
+  'M1061 282 C1042 432 958 543 856 600 C758 657 712 711 681 772',
+  'M1051 386 C1013 518 945 570 875 619 C783 685 751 757 708 809',
+  'M1095 505 C1055 583 1000 633 935 685 C900 718 876 775 865 829',
+  'M1149 570 C1132 686 1073 747 1016 806 C976 849 961 917 964 951',
+  'M1170 621 C1174 741 1116 834 1095 952',
+  'M1241 682 C1211 777 1202 866 1210 953',
+  'M1245 743 C1280 835 1324 887 1340 954',
+  'M832 513 C755 551 668 562 628 609 C584 664 599 697 594 734',
+  'M891 548 C760 641 728 727 672 765 C623 798 557 798 506 829',
+  'M876 628 C818 706 784 756 726 785 C652 823 592 811 527 849',
+  'M909 693 C887 759 854 794 802 820 C758 842 695 856 641 899',
+  'M1022 760 C1012 803 980 841 940 867 C887 902 849 921 813 953',
+  'M1067 795 C1044 884 1021 909 997 949',
+  'M649 793 C572 778 509 797 448 825 C398 848 369 887 346 936',
+  'M591 814 C508 809 437 849 405 906 C473 852 550 841 625 840',
+  'M569 852 C497 864 453 902 416 947',
+  'M797 829 C716 856 632 875 562 944',
+  'M929 880 C883 889 836 917 807 952',
+  'M1434 814 L1420 851 L1441 887 L1472 880 L1478 848 L1456 824Z',
+  'M1453 865 L1465 901 L1490 924 L1517 909 L1506 881 L1480 864Z',
+  'M1486 902 L1512 941 L1549 944 L1553 924 L1520 902Z',
+];
+
+/** Projected latitude/longitude follows cheek volume instead of bending graph paper. */
+function surfacePoint(u: number, v: number, head = false) {
+  const theta = u * 1.18, phi = v * .95, yaw = .42;
+  const x = (head ? 490 : 290) * Math.sin(theta) * Math.cos(phi);
+  const y = (head ? 555 : 350) * Math.sin(phi);
+  const z = (head ? 300 : 230) * Math.cos(theta) * Math.cos(phi);
+  const worldX = x * Math.cos(yaw) + z * Math.sin(yaw);
+  const worldZ = -x * Math.sin(yaw) + z * Math.cos(yaw);
+  const perspective = 900 / (1000 - worldZ);
+  return [(head ? 1350 : 1500) + worldX * perspective, (head ? 440 : 505) + y * perspective];
+}
+function projectedPath(points: number[][]) {
+  return points.map(([x,y],i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+}
+export function buildPortraitMesh() {
+  const paths: string[] = [];
+  for (let row = 0; row < 19; row++) {
+    const v = -1 + row / 9;
+    paths.push(projectedPath(Array.from({length:49},(_,i) => surfacePoint(-1.2+i/20,v))));
+  }
+  for (let column = 0; column < 18; column++) {
+    const u = -1.15 + column * .14;
+    paths.push(projectedPath(Array.from({length:49},(_,i) => surfacePoint(u,-1.1+i/20))));
+  }
+  return paths;
+}
+export const PORTRAIT_MESH = buildPortraitMesh();
+export const PORTRAIT_HEAD_MESH = [
+  ...Array.from({length:14},(_,r) => projectedPath(Array.from({length:49},(_,i) => surfacePoint(-1.3+i/18,-1.1+r*.17,true)))),
+  ...Array.from({length:17},(_,c) => projectedPath(Array.from({length:49},(_,i) => surfacePoint(-1.2+c*.15,-1.1+i/21,true)))),
+];
+export const HEAD_CLIP = 'M830 -20 L1700 -20 L1700 950 L1480 880 C1310 825 1190 710 1140 580 C1065 520 1020 350 1075 160 L950 100 L780 270 L750 155 Z';
+export const PORTRAIT_NODES = [[4,8],[7,12],[10,5],[12,14],[9,10]].map(([c,r]) => surfacePoint(-1.15+c*.14,-1+r/9));
+export const PORTRAIT_BRACES = [[4,8,7,12],[7,12,12,14],[7,12,9,10]].map(([c1,r1,c2,r2]) => projectedPath([
+  surfacePoint(-1.15+c1*.14,-1+r1/9),surfacePoint(-1.15+c2*.14,-1+r2/9),
+]));
+/** Strokes establish the crown/fringe first, the eye next, then the long lower bundles. */
+export function portraitStrokeProgress(index: number, time: number, detail = false) {
+  let start: number, duration: number;
+  if (detail) { start = .95 + index * .012; duration = .55; }
+  else if (index >= 100) { start = 1.02 + (index-100) * .008; duration = .38; }
+  else if (index >= 18 && index <= 27) { start = .05 + (index-18)*.07; duration = .55; }
+  else if (index < 11) { start = .18 + index*.055; duration = .7; }
+  else if (index === 11 || index === 12) { start = .9; duration = .5; }
+  else if (index >= 28) { start = .55 + (index-28)*.038; duration = .7; }
+  else { start = .8 + (index-13)*.05; duration = .6; }
+  return smoothProgress(time,start,start+duration);
+}
+function cubicPoint(values: readonly number[], t: number) {
+  const s=1-t;return s*s*s*values[0]+3*s*s*t*values[1]+3*s*t*t*values[2]+t*t*t*values[3];
+}
+export const CLOSED_LASHES = Array.from({length:31},(_,i) => {
+  // Unequal roots form small crossing fans rather than a row of ticks.
+  const group=Math.floor(i/3),finger=i%3;
+  const t=.025+group*.089+[0,.017,.043][finger]+Math.sin(group*2.3)*.006;
+  const x=cubicPoint(EYE_X,t),y=cubicPoint(CLOSED_LID,t);
+  const dx=-25+49*t+[-9,5,13][finger]+Math.sin(group*1.7)*6;
+  const dy=(19+16*Math.sin(t*Math.PI))*[1,.61,.87][finger];
+  return `M${x.toFixed(1)} ${y.toFixed(1)} C${(x+dx*.05).toFixed(1)} ${(y+dy*.38).toFixed(1)} ${(x+dx*.42).toFixed(1)} ${(y+dy).toFixed(1)} ${(x+dx).toFixed(1)} ${(y+dy*.91).toFixed(1)}`;
+});
+export const FACE_CLIP = 'M1450 175 C1400 282 1330 330 1250 390 C1260 574 1330 728 1483 815 L1669 941 L1700 300 C1560 308 1510 255 1450 175Z';
+
+/** Fine strands follow separate painted hair bundles, rather than duplicating the silhouette. */
+export const PORTRAIT_DETAILS = [
+  'M1117 -5 C1081 108 1034 238 1043 349 C1053 454 1121 532 1182 570',
+  'M1131 42 C1088 170 1083 285 1107 370 C1121 424 1148 458 1174 486',
+  'M1175 -5 C1132 136 1101 242 1123 346 C1136 403 1172 451 1202 485',
+  'M1194 20 C1156 158 1141 276 1166 359 C1180 408 1206 435 1234 462',
+  'M1246 -8 C1203 99 1168 210 1185 307 C1192 361 1206 399 1229 430',
+  'M1270 -6 C1220 147 1216 263 1255 364',
+  'M1337 -4 C1307 107 1298 243 1261 333',
+  'M1353 22 C1336 148 1333 228 1305 294',
+  'M1423 -8 C1408 85 1427 180 1460 237',
+  'M1467 1 C1448 123 1480 232 1536 311',
+  'M1505 12 C1504 160 1573 307 1671 363',
+  'M1563 -4 C1550 98 1600 232 1688 295',
+  'M1615 5 C1624 102 1652 155 1689 189',
+  'M1012 119 C993 265 949 403 854 490 C783 553 713 581 662 593',
+  'M1026 229 C1002 364 956 459 872 525 C794 588 729 611 698 650',
+  'M1047 310 C1018 438 949 535 864 580 C795 617 747 666 717 726',
+  'M1066 422 C1019 544 943 581 891 630 C834 679 800 730 755 766',
+  'M1091 555 C1066 623 991 663 948 721 C913 767 909 796 898 824',
+  'M1111 611 C1096 697 1041 756 1003 795 C971 832 950 885 950 930',
+  'M1134 642 C1120 742 1082 803 1042 854 C1012 895 1009 924 1009 939',
+  'M1174 710 C1166 794 1131 852 1119 916',
+  'M1195 746 C1178 826 1164 878 1164 933',
+  'M1236 797 C1237 860 1264 912 1282 942',
+  'M1258 798 C1281 861 1326 903 1352 931',
+  'M845 551 C757 608 723 684 680 730 C639 770 584 780 547 790',
+  'M862 581 C787 652 756 718 706 753 C666 782 627 787 598 794',
+  'M899 666 C867 740 823 786 773 810 C730 830 681 845 644 869',
+  'M940 716 C919 798 879 843 818 868 C786 882 765 900 744 926',
+  'M1016 826 C995 868 961 890 924 910 C905 920 890 934 880 945',
+  'M711 820 C649 844 606 874 584 913',
+  'M615 830 C553 833 500 857 464 894',
+  'M560 891 C517 909 499 929 487 946',
+  'M1376 266 C1411 251 1442 250 1468 256',
+  'M1273 450 C1321 477 1362 482 1404 483',
+  'M1291 580 C1332 674 1402 747 1458 786',
+  'M1447 829 L1437 849 L1450 875 L1463 870 L1465 847Z',
+  'M1467 875 L1476 898 L1493 912 L1504 905 L1497 886Z',
+  'M1509 916 L1521 934 L1540 935',
+  'M856 13 C861 48 881 72 903 80',
+  'M913 7 L931 53 L946 22',
+  'M961 22 L973 51 L954 85',
+  'M795 172 C831 181 857 192 875 211',
+  'M839 289 L858 317 L888 299',
+];

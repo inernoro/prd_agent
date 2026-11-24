@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * Phase B (2026-05-04) — pin parsing of `docker stats --format` output.
  *
@@ -29,7 +30,7 @@ function makeConfig(): CdsConfig {
 describe('ContainerService.getServiceStats — docker stats parsing', () => {
   it('returns empty map when called with no container names (short-circuit)', async () => {
     const shell = new MockShellExecutor();
-    const svc = new ContainerService(shell, makeConfig());
+    const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await svc.getServiceStats([]);
     expect(result.size).toBe(0);
   });
@@ -42,7 +43,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
       stderr: '',
       exitCode: 0,
     }));
-    const svc = new ContainerService(shell, makeConfig());
+    const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await svc.getServiceStats(['cds-foo-main-api']);
     const stats = result.get('cds-foo-main-api');
     expect(stats).toBeDefined();
@@ -65,7 +66,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
       stderr: '',
       exitCode: 0,
     }));
-    const svc = new ContainerService(shell, makeConfig());
+    const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await svc.getServiceStats(['cds-foo-main-api', 'cds-foo-main-db']);
     expect(result.size).toBe(2);
     expect(result.get('cds-foo-main-api')!.cpuPercent).toBeCloseTo(5.0);
@@ -79,7 +80,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
       stderr: 'Error response from daemon: No such container',
       exitCode: 1,
     }));
-    const svc = new ContainerService(shell, makeConfig());
+    const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await svc.getServiceStats(['cds-ghost-main-api']);
     expect(result.size).toBe(0);
   });
@@ -91,7 +92,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
       stderr: '',
       exitCode: 0,
     }));
-    const svc = new ContainerService(shell, makeConfig());
+    const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await svc.getServiceStats(['cds-x']);
     const stats = result.get('cds-x')!;
     expect(stats.memUsedBytes).toBe(1 * 1024 * 1024 * 1024);
@@ -114,7 +115,7 @@ describe('ContainerService.getServiceStats — docker stats parsing', () => {
       stderr: '',
       exitCode: 0,
     }));
-    const svc = new ContainerService(shell, makeConfig());
+    const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await svc.getServiceStats(['cds-legacy']);
     const stats = result.get('cds-legacy');
     expect(stats, '少一段就整批丢弃 = 指标静默消失').toBeDefined();

@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_FLAGS } from './docker-log-policy.js';
 /**
  * cds-prebuilt-runtime — CDS 自更新「极速版」的运行层：把 CI 预构建的 ghcr 产物镜像
  * `docker pull` 下来、`docker cp` 解出 /dist 与 /web-dist 到 staging，并校验 manifest。
@@ -28,8 +29,8 @@ export interface PrebuiltFetchDeps {
   exec: (cmd: string, opts?: { timeout?: number }) => Promise<PrebuiltExecResult>;
   /** 读取 staged manifest.json 文本（不存在返回 null）。 */
   readManifest: (manifestPath: string) => Promise<string | null>;
-  /** 递归删除路径（清理 staging 残留）。 */
-  rmrf: (p: string) => void;
+  /** 递归删除路径；异步清理必须终态后才可重建 staging。 */
+  rmrf: (p: string) => void | Promise<void>;
   /** 递归建目录。 */
   mkdirp: (p: string) => void;
 }
@@ -71,7 +72,7 @@ export async function fetchCdsPrebuilt(
   const { distDir, webDistDir, manifestPath } = prebuiltStagingPaths(stagingRoot);
   const pullTimeoutMs = opts?.pullTimeoutMs ?? 120_000;
   try {
-    deps.rmrf(stagingRoot);
+    await deps.rmrf(stagingRoot);
     deps.mkdirp(distDir);
     deps.mkdirp(webDistDir);
 
@@ -81,7 +82,7 @@ export async function fetchCdsPrebuilt(
     // 必须给 `docker create` 一个显式命令：产物镜像是 `FROM scratch` 且只有 COPY，无 CMD/ENTRYPOINT，
     // 不带命令时 docker 直接报 "No command specified" 而创建失败，快路径会永远回退本机现编。
     // 该命令永不执行（我们只 create + cp + rm，从不 start/run），故用一个无害占位（镜像内确实存在的 /manifest.json）。
-    const create = await deps.exec(`docker create ${imageRef} ${DOCKER_CREATE_PLACEHOLDER_CMD}`, { timeout: 30_000 });
+    const create = await deps.exec(`docker create ${DOCKER_LOG_LIMIT_FLAGS.join(' ')} ${imageRef} ${DOCKER_CREATE_PLACEHOLDER_CMD}`, { timeout: 30_000 });
     if (create.exitCode !== 0) return { ok: false, reason: `docker create 失败: ${(create.stderr || '').slice(0, 200)}` };
     const cid = parseDockerCreateId(create.stdout);
     if (!cid) return { ok: false, reason: 'docker create 未返回有效容器 id' };

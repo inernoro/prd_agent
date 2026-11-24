@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { toProductOptions } from './comboboxOptions';
 import {
   importDefects,
   importFeatures,
@@ -238,12 +240,10 @@ export function ProductHistoryImportDialog({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {needsProductPicker && (
-            <label className="mb-4 block">
+            <div role="group" aria-label="归属产品" className="mb-4 block">
               <span className="mb-1.5 block text-xs text-token-secondary">归属产品</span>
-              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none">
-                {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-              </select>
-            </label>
+              <ItemSearchSelect value={productId} onChange={setProductId} options={toProductOptions(products)} placeholder="输入产品名称或编号搜索" countUnit="个产品" />
+            </div>
           )}
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-token-subtle p-8 text-center hover-bg-soft">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />

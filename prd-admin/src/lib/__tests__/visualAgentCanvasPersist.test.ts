@@ -21,6 +21,24 @@ import {
 
 describe('VisualAgent Canvas 持久化测试', () => {
   
+  it('欠费失败占位往返保存后仍有明确原因，不能退化为图片加载失败', () => {
+    const errorMessage = '上游 AI 服务账户欠费，本次操作未完成。请联系管理员补缴费用或切换可用线路，处理后再重试。';
+    const item = { key: 'billing-failed', createdAt: 1, prompt: 'owned fixture', src: '', status: 'error' as const,
+      kind: 'image' as const, runId: 'billing-run', errorMessage };
+    const saved = canvasToPersistedV1([item]);
+    const restored = persistedV1ToCanvas(JSON.parse(JSON.stringify(saved.state)), []);
+    expect(restored.canvas[0]).toMatchObject({ key: item.key, status: 'error', errorMessage });
+  });
+
+  it('失败占位落盘和恢复均不透传旧的上游原始诊断', () => {
+    const item = { key: 'billing-private', createdAt: 1, prompt: '', src: '', status: 'error' as const,
+      kind: 'image' as const, errorMessage: 'provider HTTP 403 SECRET https://secret.invalid/keys/value' };
+    const saved = canvasToPersistedV1([item]);
+    expect(JSON.stringify(saved.state)).not.toMatch(/SECRET|secret.invalid/);
+    const restored = persistedV1ToCanvas(JSON.parse(JSON.stringify(saved.state)), []);
+    expect(restored.canvas[0]).toHaveProperty('errorMessage', expect.stringContaining('管理员'));
+  });
+
   describe('isRemoteImageSrc', () => {
     it('应识别远程 URL', () => {
       expect(isRemoteImageSrc('https://example.com/image.png')).toBe(true);
@@ -499,6 +517,34 @@ describe('VisualAgent Canvas 持久化测试', () => {
   });
 
   describe('保存-恢复 往返测试', () => {
+    it.each(['shape', 'text'] as const)('[REG-canvas-label-roundtrip-001] %s 的派生标签经真实序列化往返仍保留', (kind) => {
+      const item: CanvasImageItem = {
+        key: `label-${kind}`, kind, createdAt: 1, src: '', status: 'done',
+        prompt: kind === 'text' ? '恢复后可以编辑并保留' : 'Shape:rect',
+        x: 32, y: 64, w: 240, h: 160, fill: '#ffffff', stroke: '#000000',
+        ...(kind === 'shape'
+          ? { shapeType: 'rect' as const }
+          : { text: '恢复后可以编辑并保留', fontSize: 26, textColor: '#111111' }),
+      };
+      const saved = JSON.parse(JSON.stringify(canvasToPersistedV1([item]).state)) as PersistedCanvasStateV1;
+      expect(saved.elements[0]).toMatchObject({ name: item.prompt });
+      const restored = persistedV1ToCanvas(saved, []);
+      const savedAgain = JSON.parse(JSON.stringify(canvasToPersistedV1(restored.canvas).state));
+      expect(savedAgain).toEqual(saved);
+      expect(restored.canvas[0].prompt).toBe(item.prompt);
+    });
+
+    it.each(['shape', 'text'] as const)('[REG-canvas-label-roundtrip-001] 旧 %s 缺 name 时不虚构标签或丢失内容', (kind) => {
+      const element = kind === 'shape'
+        ? { id: 'legacy-shape', kind: 'shape' as const, shapeType: 'rect' as const, x: 10, y: 20, w: 240, h: 160 }
+        : { id: 'legacy-text', kind: 'text' as const, text: '旧正文', fontSize: 26, x: 10, y: 20, w: 320, h: 88 };
+      const restored = persistedV1ToCanvas({ schemaVersion: 1, elements: [element] }, []);
+      expect(restored.canvas).toHaveLength(1);
+      expect(restored.canvas[0].prompt).toBe('');
+      const savedAgain = JSON.parse(JSON.stringify(canvasToPersistedV1(restored.canvas).state)) as PersistedCanvasStateV1;
+      expect(savedAgain.elements[0]).toMatchObject(element);
+      expect(savedAgain.elements[0]).not.toHaveProperty('name');
+    });
     
     it('running 状态的占位元素应能完整往返', () => {
       const originalItems: CanvasImageItem[] = [{

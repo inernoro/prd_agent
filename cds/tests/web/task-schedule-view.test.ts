@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildOverview, buildTimeline, computeHealth, countdownTo, formatClock, formatDuration,
-  groupJobs, groupKeyOf, msUntil, startOfNextDay, startOfToday,
+  groupJobs, groupKeyOf, taskHealthTone, msUntil, startOfNextDay, startOfToday,
 } from '../../web/src/lib/task-schedule-view.js';
 import type { ScheduledJob, ScheduledJobRun } from '../../web/src/types/task-schedule.js';
 
@@ -418,7 +418,7 @@ describe('任务分组', () => {
     expect(g.normal.map((x) => x.id)).toEqual(['later']);
     // 停用 / 连续失败仍然优先落「需要注意」，不被时间判据抢走
     expect(groupKeyOf(job({ id: 'off', enabled: false, nextRunAt: '2026-08-31T15:00:00.000Z' }), NOW)).toBe('attention');
-    // 没有 nextRunAt（仅手动）落「正常运行」，不许被当成过期
+    // 没有 nextRunAt（仅手动）落「其他已启用」，不许被当成过期
     expect(groupKeyOf(job({ id: 'manual', nextRunAt: undefined }), NOW)).toBe('normal');
   });
 });
@@ -485,11 +485,11 @@ describe('结论条的状态是有限枚举，不是越叠越长的条件链', (
     expect(o.tone).toBe('warn');
   });
 
-  it('部分停用时，「在跑」只数启用的那些', () => {
+  it('部分停用时，摘要只数已启用任务', () => {
     const jobs = [j('a'), j('b', { enabled: false })];
     const o = buildOverview(jobs, [], NOW);
     expect(o.state).toBe('clean');
-    expect(o.headline).toBe('1 个任务在跑，今日无失败');
+    expect(o.headline).toBe('1 个任务已启用，今日无失败');
     expect(o.detail).toContain('另有 1 个任务已停用');
   });
 
@@ -558,7 +558,7 @@ describe('结论条的状态是有限枚举，不是越叠越长的条件链', (
     // 两个数字不一致时必须当场说明差在哪，否则又是结论与支撑数据打架。
     expect(o.detail).toContain('另有 1 次失败来自已删除的任务');
     // 统计段「失败」非零时不许说「今日无失败」。
-    expect(o.headline).toBe('1 个任务在跑，现有任务今日无失败');
+    expect(o.headline).toBe('1 个任务已启用，现有任务今日无失败');
   });
 
   /*
@@ -590,4 +590,11 @@ describe('结论条的状态是有限枚举，不是越叠越长的条件链', (
     expect(o.detail).toContain('另有 1 次失败来自已删除的任务');
     expect(o.stats.find((x) => x.label === '失败')?.value).toBe('2');
   });
+});
+
+
+it('健康指示色使用定时健康，手动成功不会把漏跑标绿', () => {
+  expect(taskHealthTone(job({ id: 'missed', lastRunStatus: 'success', health: { state: 'missed', message: '漏跑', recoveryRequired: false } }))).toBe('bg-bad');
+  expect(taskHealthTone(job({ id: 'waiting', lastRunStatus: 'failed', health: { state: 'waiting', message: '未到执行时间', recoveryRequired: false } }))).toBe('bg-ok');
+  expect(taskHealthTone(job({ id: 'paused', enabled: false, lastRunStatus: 'success' }))).toBe('bg-muted-foreground');
 });

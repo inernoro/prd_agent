@@ -125,6 +125,35 @@
       ]
     },
     {
+      "id": "log-trace",
+      "routes": [
+        "/logs/trace"
+      ],
+      "pagePath": "llmgw/web/src/pages/LogTracePage.tsx",
+      "changeSources": [
+        "llmgw/web/src/pages/LogTracePage.css",
+        "llmgw/console-api/Logs/*.cs"
+      ],
+      "tutorialSourceIds": [
+        "chapter-21"
+      ],
+      "tutorialLinks": [
+        {
+          "sourceId": "chapter-21",
+          "stepIds": [
+            "operation-call-trace"
+          ],
+          "impact": [
+            "content",
+            "screenshot"
+          ],
+          "evidenceIds": [
+            "117-operation-trace"
+          ]
+        }
+      ]
+    },
+    {
       "id": "change-password",
       "routes": [
         "/change-password"
@@ -487,9 +516,9 @@
           "tutorial": "服务网关设置"
         },
         {
-          "name": "当场测一次",
-          "product": "测试连接",
-          "tutorial": "测试连接"
+          "name": "测试模型调用",
+          "product": "测试模型调用",
+          "tutorial": "测试模型调用"
         }
       ]
     },

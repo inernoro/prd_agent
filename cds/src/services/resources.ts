@@ -128,6 +128,7 @@ export function getUnifiedResourceInternalRaw(resource: UnifiedBranchResource): 
 }
 
 export function inferAppRuntime(profile?: BuildProfile, service?: ServiceState): string {
+  if (service?.staticWeb || service?.runtimeKind === 'static') return '静态文件';
   const raw = text([
     profile?.id,
     profile?.name,

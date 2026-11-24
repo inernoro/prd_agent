@@ -14,6 +14,30 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public sealed class GatewayRouteFailureTaxonomyTests
 {
+    [Theory]
+    [InlineData(GatewayRouteFailure.ModelPoolAllUnavailable, 503)]
+    [InlineData(GatewayRouteFailure.GatewayConfigUnavailable, 503)]
+    [InlineData(GatewayRouteFailure.AppCallerPoolUnbound, 409)]
+    [InlineData(GatewayRouteFailure.ProviderQuotaExceeded, 429)]
+    [InlineData(null, 404)]
+    public async Task RawRequest_PreservesResolutionFailure_WithoutCallingUpstream(string? code, int status)
+    {
+        var resolver = new Moq.Mock<IModelResolver>(Moq.MockBehavior.Strict);
+        var http = new Moq.Mock<IHttpClientFactory>(Moq.MockBehavior.Strict);
+        var gateway = new PrdAgent.Infrastructure.LlmGateway.LlmGateway(resolver.Object, http.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>.Instance);
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.VisualAgent.Image.Text2Img,
+            ModelType = PrdAgent.Core.Models.ModelTypes.ImageGen,
+        }, new GatewayModelResolution { Success = false, FailureCode = code, ErrorMessage = "路由失败" });
+        response.Success.ShouldBeFalse();
+        response.StatusCode.ShouldBe(status);
+        response.ErrorCode.ShouldBe(code ?? "MODEL_NOT_FOUND");
+        resolver.VerifyNoOtherCalls();
+        http.VerifyNoOtherCalls();
+    }
+
     /// <summary>D1：题面要求的十类原因一个都不能少。</summary>
     [Fact]
     public void AllRequiredFailureReasons_AreDefined()

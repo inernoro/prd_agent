@@ -215,11 +215,17 @@ describe('Remote hosts project instances route', () => {
     },
   );
 
-  async function startServer(routerOverrides: Partial<Parameters<typeof createRemoteHostsRouter>[0]> = {}) {
+  async function startServer(routerOverrides: Partial<Parameters<typeof createRemoteHostsRouter>[0]> = {}, permitTestOwner = false) {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-instances-route-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     const app = express();
     app.use(express.json());
+    if (permitTestOwner) app.use((req, _res, next) => {
+      if (req.headers.authorization === 'Bearer test-owner') {
+        Object.assign(req, { cdsUser: { isSystemOwner: true, authProvider: 'local' }, cdsSession: {} });
+      }
+      next();
+    });
     app.use('/api', createRemoteHostsRouter({ stateService, ...routerOverrides }));
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => resolve());
@@ -1457,6 +1463,80 @@ describe('Remote hosts project instances route', () => {
     });
   });
 
+  it('switches only new authorized MAP tasks and keeps old tasks on their recorded version', async () => {
+    const candidate = `ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:${'b'.repeat(64)}`;
+    const ready = { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+    const verifyVersion = vi.fn(async () => ready);
+    const workspaceRuntime = {
+      configuredImage: OPEN_DESIGN_IMAGE,
+      capability: async () => ready,
+      verifyVersion,
+      async create(
+        sessionId: string,
+        transfer: { inputPackageUrl: string },
+        _policy: unknown,
+        _onStage: unknown,
+        _onExpired: unknown,
+        selectImage?: (runId: string) => Promise<string>,
+      ) {
+        const runId = new URL(transfer.inputPackageUrl).pathname.split('/').at(-2)!;
+        return { containerName: sessionId, image: selectImage ? await selectImage(runId) : OPEN_DESIGN_IMAGE };
+      },
+      stop: async () => {},
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime }, true);
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const { projectId: otherId, longToken: otherToken } = authorizeSharedServiceProject({ projectId: 'unrelated-project', partnerId: 'unrelated-partner' });
+    async function allocate(runId: string, requestId: string, continuingRun?: boolean, id = projectId, token = longToken) {
+      const base = `https://map.example.test/api/design-artifacts/runtime/${runId}`;
+      const response = await request(server, 'POST', `/api/projects/${id}/agent-sessions`, token, {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: `${base}/llm/v1`,
+        clientRequestId: requestId,
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: `${base}/input`,
+          resultCommitUrl: `${base}/result`,
+          transferToken: 'transfer-secret',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision',
+          maxInputBytes: 1024,
+          maxOutputBytes: 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json'],
+          continuingRun,
+        },
+        resourcePolicy: { cpuCores: 1, memoryMb: 768, timeoutSeconds: 120, networkPolicy: 'egress-only', autoCleanupMinutes: 5 },
+      });
+      expect(response.status).toBe(202);
+      return (await waitForSessionStatus(server, id, token, response.body.item.id, 'running')).body.item;
+    }
+
+    const original = await allocate('original-run', 'original-attempt', false);
+    expect(original.runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+    const versionPath = `/api/projects/${projectId}/agent-runtime-version`;
+    const activation = { action: 'activate', image: candidate, expectedImage: OPEN_DESIGN_IMAGE };
+    expect((await request(server, 'POST', versionPath, longToken, activation)).status).toBe(403);
+    expect(verifyVersion).not.toHaveBeenCalled();
+    const switched = await request(server, 'POST', versionPath, 'test-owner', activation);
+    expect(switched.status).toBe(200);
+    expect(switched.body.activeImage).toBe(candidate);
+
+    const read = await request(server, 'GET', `/api/projects/${projectId}/agent-requests`, 'test-owner');
+    expect(read.body.workspaceVersion).toMatchObject({ activeImage: candidate, drainingCount: 1, canUpdate: true });
+    expect((await request(server, 'GET', `/api/projects/${projectId}/agent-requests`, longToken)).body.workspaceVersion.canUpdate).toBe(false);
+    expect((await allocate('new-run', 'new-attempt', false)).runtimeImage).toBe(candidate);
+    expect((await allocate('other-run', 'other-attempt', false, otherId, otherToken)).runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+    expect((await request(server, 'POST', `/api/projects/${projectId}/agent-sessions/${original.id}/stop`, longToken, {})).status).toBe(200);
+    const resumed = await allocate('original-run', 'resume-attempt', true);
+    expect(resumed.id).not.toBe(original.id);
+    expect(resumed.runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+    expect((await allocate('legacy-run', 'legacy-attempt')).runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+  });
+
   it('routes OpenDesign through the injected workspace runtime and exposes only committed result facts', async () => {
     const calls: Array<{ kind: string; value: unknown }> = [];
     let completeExecution!: () => void;
@@ -1789,8 +1869,8 @@ describe('Remote hosts project instances route', () => {
           expect(service.hostPort).toBeGreaterThanOrEqual(19000);
           onOutput?.('managed runtime container started');
         },
-        async waitForReadiness(hostPort, probe, onAttempt) {
-          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe });
+        async waitForReadiness(hostPort, probe, onAttempt, _onOutput, containerName) {
+          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe, containerName });
           expect(probe?.path).toBe('/readyz');
           onAttempt?.({ attempt: 1, max: 1, stage: 'http', ok: true });
           return true;
@@ -1830,6 +1910,7 @@ describe('Remote hosts project instances route', () => {
     });
     expect(JSON.stringify(applied.body)).not.toContain('CDS_REMOTE_HOST');
     expect(containerCalls.map(call => call.kind)).toEqual(['runService', 'waitForReadiness']);
+    expect(containerCalls[1].containerName).toBe(containerCalls[0].service.containerName);
 
     const available = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
     expect(available.status).toBe(200);

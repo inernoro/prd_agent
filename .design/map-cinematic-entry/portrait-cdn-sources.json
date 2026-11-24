@@ -1,0 +1,115 @@
+{
+  "daylight": {
+    "open.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/open-96f4d340a918f5b5.png",
+      "sha256": "96f4d340a918f5b56f81e3802fd652fac79774ce52e05a6964d8858253487b94",
+      "bytes": 2180780
+    },
+    "closed.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/closed-6ffd41cc497f494c.png",
+      "sha256": "6ffd41cc497f494cc4ecb3b2b6e69f40bfb586eac8932c4f51b320927700410d",
+      "bytes": 2130754
+    },
+    "line-etching.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/line-etching-7b207316a395b989.png",
+      "sha256": "7b207316a395b98938fad75a592cbba074116f018280b03247421b95abacb6a8",
+      "bytes": 3307014
+    },
+    "surface-reveal.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/surface-reveal-c62b54cd77397cb9.png",
+      "sha256": "c62b54cd77397cb91c2483fe018a658cfd7cb78ec7ebb07106ca69bdb3a00185",
+      "bytes": 2725696
+    },
+    "eye-quarter.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/eye-quarter-81782e3b162c31b9.png",
+      "sha256": "81782e3b162c31b9105527de57cd10ab94fbee3841eda23e5aea924806aaf42d",
+      "bytes": 2135170
+    },
+    "eye-half.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/eye-half-672c1a35d5bdca8a.png",
+      "sha256": "672c1a35d5bdca8af55d9ba20243f66f324d183ed8e7b8ee98ff1b0df189dc6b",
+      "bytes": 2157652
+    },
+    "eye-three-quarter.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/daylight/eye-three-quarter-2e7bb7410e2fcffc.png",
+      "sha256": "2e7bb7410e2fcffcf0d07058122ab8d33c4a121b21bc85b6a69e07ac2a45c86a",
+      "bytes": 2157972
+    }
+  },
+  "night": {
+    "line-etching.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/line-etching-f2c4fb77b123824a.png",
+      "sha256": "f2c4fb77b123824acdf5c0904495c8d71a4de26e3facbf4a1c08e9cff985720f",
+      "bytes": 1714857
+    },
+    "surface-reveal.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/surface-reveal-f36ef4856653a152.png",
+      "sha256": "f36ef4856653a152fcd92fd69c5de8b83fb53221a4720b132d884382da17536f",
+      "bytes": 1761710
+    },
+    "eye-quarter.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/eye-quarter-3bbdafbf114d4bfa.png",
+      "sha256": "3bbdafbf114d4bfa9330d394ae1f5e9664417e3f92592bbecc43eaf8ef687186",
+      "bytes": 1478829
+    },
+    "eye-half.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/eye-half-5685c126b4cfe9db.png",
+      "sha256": "5685c126b4cfe9dba5531f497adfeab728d8946cefa6b34b42982aeaca92bb49",
+      "bytes": 1492157
+    },
+    "eye-three-quarter.png": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/eye-three-quarter-1bc5d182fcd5a289.png",
+      "sha256": "1bc5d182fcd5a289d3d002a0ae4ecd529cbb301b5848546d419b5116dea5d679",
+      "bytes": 1500917
+    },
+    "companion-sleep.webp": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/companion-sleep-6a8da8cc2d5fd272.webp",
+      "sha256": "6a8da8cc2d5fd2722005dbf83c2f5b3795e58254a8ee962db0d556414d68dabc",
+      "bytes": 135592
+    },
+    "companion.webp": {
+      "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/companion-993c6d49f03e0854.webp",
+      "sha256": "993c6d49f03e0854ece78e6f7d35b11d2255abfe8048427c4ad14efef732d3dd",
+      "bytes": 132610
+    }
+  },
+  "nightMotion": {
+    "url": "https://cfi.miduo.org/data/web-hosting/sites/e41fd5b5a7fc417695ec4108d77f215b/night/portrait-motion-0e8698b234df-0e8698b234dfac8c.mp4",
+    "sha256": "0e8698b234dfac8cd98d46509fef107f663a79248f93d291554356ef3c7afc90",
+    "bytes": 3051336
+  },
+  "daylightAuthoring": {
+    "sourceCommit": "1b5f7acbfac11ac4a3b6f63839abd9a3cfb768d2",
+    "workflowRun": "https://github.com/inernoro/prd_agent/actions/runs/44250112710/attempts/2",
+    "method": "generated-keyframes-opencv-strokes-optical-flow",
+    "sha256": "7ff66cc3b1d4357e39d7d9fc82028b762e9771c4f87e9c2469a06ed28ba34750",
+    "encoded": {
+      "width": 1672,
+      "height": 942,
+      "r_frame_rate": "60/1",
+      "nb_read_frames": "310"
+    },
+    "eyeKeyframes": [
+      "closed",
+      "quarter",
+      "half",
+      "three-quarter",
+      "open"
+    ],
+    "eyeRegion": [
+      1203,
+      285,
+      1619,
+      636
+    ],
+    "curveCount": 1275,
+    "design": "同角色与右侧近景构图，真实暖色晨光、轨道舷窗与蓝天，深蓝发束阴影与青色虹膜。先显影浅纸细线、曲面和色彩，再以五档实际姿态睁眼。"
+  },
+  "daylightSelectedEdit": {
+    "method": "seedance-official-downloads-aligned-recut",
+    "sha256": "05c8a2d277469c57356b4e4427a4f118080e5d7729018056305c6c7cdda2a213",
+    "durationSeconds": 8.166667,
+    "openingPosterSha256": "76c92b60a1ed0aff3e596910f6e6fad044484d4a58b355278064ac4532f42db9",
+    "settledPosterSha256": "8880adf870ef34186e6bff69a914225622468672c2e49b0f9cacaf5e715d76e9"
+  }
+}

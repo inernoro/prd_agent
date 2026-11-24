@@ -1,6 +1,6 @@
 # CDS 配置树 · 技术设计 · 设计
 
-> **版本**：v1.1 | **日期**：2026-10-19 | **状态**：已落地
+> **版本**：v1.2 | **日期**：2026-10-23 | **状态**：已落地
 
 **一句话**：配置分全局、项目、分支、分支快照四层，每个值都能解释来源与被谁覆盖。
 **谁该读**：改配置体系的工程师；排查配置不生效的人。
@@ -73,6 +73,10 @@ CDS 全局默认(_global 变量层)
 
 新建派生分支时，项目默认中标记为预构建的模式优先于来源模式，防止复制旧源码例外后静默退出极速版。只有请求显式带 `inheritSourceModes: true` 才保留来源模式例外；环境、额外服务与派生指针仍深拷贝。额外服务继续计入覆盖率分母，不承诺带源码依赖的辅助服务也变成预构建；既有分支和显式重新拉取配置不自动改变。
 
+项目默认引用当前 Profile 中不存在的非空模式时，手动新建、派生、Webhook 新建及批量对齐须明确拒绝，不能跳过后使用源码基线。整批校验先于默认覆盖写入；新分支先校验再创建 worktree 或分支记录。已删除 Profile 的旧默认键忽略，显式空模式保持既有语义。导入初始化先以导入后的未来 Profile 和原项目归属规则检查初始化归属项目及所有受影响项目的默认模式，包括 Profile 迁移前后归属；无关项目不加入本次校验。失效时返回明确的 400，写入配置、首次分配存储和创建工作树均不得开始。进入后续执行阶段的其他失败仍不代表回滚此前已确认的资源。已存在分支不因项目默认失效改写自己的模式；共享读路径继续兼容历史分支配置，不能因无关旧模式使列表、路由发布或新分支地址检查失败。
+
+手动和 Webhook 新建分支均按合并后的有效服务图决定是否检出源码：非空且全部为纯镜像、没有宿主源码依赖时，只创建配置记录，不创建工作树或 fetch。源码模式、managed 构建、只读宿主依赖和空服务图仍保留原检出流程；派生分支的额外服务也必须计入判断。
+
 ### 已知边界
 
 - 派生拷贝会把来源分支覆盖里**硬编码的连接串原样带过来**(per-branch DB 名会自动按新分支后缀化,但硬编码串穿透)。检查器把这类 key 的来源显示为「分支覆盖」,用户可辨;后续可对 `PER_BRANCH_DB_ENV_KEYS` 命中的覆盖 key 加警示徽标。
@@ -138,7 +142,7 @@ CDS 全局默认(_global 变量层)
 
 - **已落地**:仓库 `cds-compose.yml` 的 `x-cds-env` 已剥离全部密钥/占位符键(仅留
   `ASSETS_PROVIDER` / `TENCENT_COS_PREFIX` 结构默认),密钥统一走 CDS env scope →
-  消除 [debt.cds.md](./debt.cds.md) D1 的 import-reject 根因(占位覆盖真实密钥);
+  消除 [debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md) D1 的 import-reject 根因(占位覆盖真实密钥);
 - **已落地**:`config-authority.classifyEnvSeed(key,value)` = seed 级判定(`repo-structural`
   vs `cds-env-scope`);`compose-drift.computeComposeDrift(repo, live)` 纯函数按权威分级
   产出漂移报告(密钥应剥离 / 结构漂移同步建议 / CDS 运行时独占不回写);
@@ -175,7 +179,7 @@ CDS 全局默认(_global 变量层)
 - [doc/design.cds.branch-local-extra-services.md](./design.cds.branch-local-extra-services.md) —— 分支临时服务的底层设计
 - [doc/design.cds.branch-network-isolation.md](./design.cds.branch-network-isolation.md) —— 分支专属网(cds-br-*)
 - [doc/spec.cds.compose-contract.md](./spec.cds.compose-contract.md) —— compose 契约(波4 的改造对象)
-- [doc/debt.cds.md](./debt.cds.md) —— D1 债务(波4 偿还)
+- [doc/debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md) —— D1 债务(波4 偿还)
 - [doc/guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md) —— per-branch DB 用法
 - `.claude/rules/cross-project-isolation.md` —— 隔离穿透审计(派生拷贝的风险对照)
 

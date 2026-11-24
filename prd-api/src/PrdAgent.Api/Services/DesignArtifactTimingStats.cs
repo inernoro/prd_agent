@@ -14,6 +14,8 @@ namespace PrdAgent.Api.Services;
 ///   按 执行器（Runtime）× 产物类型（ArtifactType）分组。plan / edit 任务耗时形态完全不同，不混进来。
 /// - 生成耗时 = CompletedAt − CreatedAt，只取 Status=Done 的任务；包含排队时间，因为那也是用户在等。
 ///   失败（Error）与取消（Cancelled）不进耗时，只报条数。
+/// - 首次预览与最大静止间隔来自 Run 已持久化的 FirstPreviewAt 和生命周期事件时间；恢复、重开、
+///   二十四小时内发布及浏览器质量摘要都复用同一 Run，不另建统计事实源。
 /// - 资料到可分享链接 = 同一用户为这次生成出来的站点（ArtifactSiteId，缺则 ProducedArtifactSiteId）
 ///   创建的**第一条**网页分享链接（web_page_share_links，share 与 visit 两种用途都算：两者都是
 ///   可发给别人打开的公开地址；已撤销的也算，看的是它被创建的时刻）的 CreatedAt − 任务 CreatedAt。
@@ -99,8 +101,18 @@ public static class DesignArtifactTimingStats
                 var eligible = 0;
                 var failed = 0;
                 var cancelled = 0;
+                var firstPreview = new List<double>();
+                var maxStaticGaps = new List<double>();
+                var restarted = 0;
+                var recovered = 0;
+                var reconnects = 0;
+                var publishedWithin24Hours = 0;
+                var quality = new List<DesignArtifactBrowserQualitySummary>();
                 foreach (var run in group)
                 {
+                    if (run.Restarted) restarted++;
+                    if (run.Recovered) recovered++;
+                    reconnects += Math.Max(0, run.StreamReconnectCount);
                     if (run.Status == RunStatuses.Error) { failed++; continue; }
                     if (run.Status == RunStatuses.Cancelled) { cancelled++; continue; }
                     if (run.Status != RunStatuses.Done || run.CompletedAt is not { } completedAt) continue;
@@ -108,6 +120,15 @@ public static class DesignArtifactTimingStats
                     // 时钟回拨或脏数据产生的负耗时不是一次真实等待，丢掉而不是截成 0。
                     if (seconds < 0) continue;
                     generation.Add(seconds);
+
+                    if (run.FirstPreviewAt is { } firstPreviewAt && firstPreviewAt >= run.CreatedAt && firstPreviewAt <= completedAt)
+                        firstPreview.Add((firstPreviewAt - run.CreatedAt).TotalSeconds);
+                    if (run.MaxStaticGapSeconds is { } staticGap && staticGap >= 0)
+                        maxStaticGaps.Add(staticGap);
+                    if (run.PublishedAt is { } publishedAt && publishedAt >= run.CreatedAt && publishedAt <= run.CreatedAt.AddHours(24))
+                        publishedWithin24Hours++;
+                    if (run.BrowserQuality is not null)
+                        quality.Add(run.BrowserQuality);
 
                     if (string.IsNullOrEmpty(run.SiteId)) continue;
                     eligible++;
@@ -123,7 +144,14 @@ public static class DesignArtifactTimingStats
                     CancelledCount: cancelled,
                     Generation: Metric(generation),
                     MaterialToShareLink: Metric(toShare),
-                    MaterialToShareLinkEligibleRuns: eligible);
+                    MaterialToShareLinkEligibleRuns: eligible,
+                    FirstPreview: Metric(firstPreview),
+                    MaxStaticGap: Metric(maxStaticGaps),
+                    RestartedCount: restarted,
+                    RecoveredCount: recovered,
+                    StreamReconnectCount: reconnects,
+                    PublishedWithin24HoursCount: publishedWithin24Hours,
+                    BrowserQuality: BrowserQualityMetric(quality));
             })
             .ToList();
 
@@ -137,6 +165,26 @@ public static class DesignArtifactTimingStats
             RunSamplesTruncated: runSamplesTruncated,
             Groups: groups);
     }
+
+    internal static DesignArtifactBrowserQualityMetric BrowserQualityMetric(
+        IReadOnlyCollection<DesignArtifactBrowserQualitySummary> samples)
+    {
+        var repaired = samples.Where(sample => sample.RepairAttempts > 0).ToArray();
+        return new DesignArtifactBrowserQualityMetric(
+            SampleCount: samples.Count,
+            FirstPassPassedCount: samples.Count(sample => sample.FirstPassPassed),
+            FirstPassRate: Ratio(samples.Count(sample => sample.FirstPassPassed), samples.Count),
+            RepairedRunCount: repaired.Length,
+            RepairSucceededCount: repaired.Count(sample => sample.RepairSucceeded),
+            RepairSuccessRate: Ratio(repaired.Count(sample => sample.RepairSucceeded), repaired.Length),
+            AverageRepairAttempts: samples.Count == 0 ? null : Math.Round(samples.Average(sample => sample.RepairAttempts), 2),
+            FinalScore: Metric(samples.Select(sample => sample.FinalScore).ToArray()),
+            RuleVersions: samples.Select(sample => sample.RuleVersion).Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray());
+    }
+
+    private static double? Ratio(int numerator, int denominator) =>
+        denominator == 0 ? null : Math.Round((double)numerator / denominator, 4);
 
     /// <summary>
     /// 统计作用域过滤。生产 = DeploymentSlug 缺失；分支预览 = 分支级作用域本身或其任一 revision。
@@ -261,6 +309,14 @@ public static class DesignArtifactTimingStats
                     x.ArtifactSiteId,
                     x.ProducedArtifactSiteId,
                     x.UserId,
+                    x.FirstPreviewAt,
+                    x.MaxStaticGapSeconds,
+                    x.RestartedFromRunId,
+                    x.RecoveryEnqueuedAt,
+                    x.RetiredRevisionAdoptedAt,
+                    x.StreamReconnectCount,
+                    x.PublishedActivityRecordedAt,
+                    x.BrowserQuality,
                 })
                 .ToListAsync(ct);
             if (groupRows.Count > RunSampleCap) runsTruncated = true;
@@ -271,7 +327,14 @@ public static class DesignArtifactTimingStats
                 row.CreatedAt,
                 row.CompletedAt,
                 row.ArtifactSiteId ?? row.ProducedArtifactSiteId,
-                row.UserId)));
+                row.UserId,
+                row.FirstPreviewAt,
+                row.MaxStaticGapSeconds,
+                !string.IsNullOrWhiteSpace(row.RestartedFromRunId),
+                row.RecoveryEnqueuedAt is not null || row.RetiredRevisionAdoptedAt is not null,
+                row.StreamReconnectCount,
+                row.PublishedActivityRecordedAt,
+                row.BrowserQuality)));
         }
 
         var sharedCandidates = runs
@@ -296,7 +359,14 @@ public sealed record DesignArtifactTimingRunSample(
     DateTime CreatedAt,
     DateTime? CompletedAt,
     string? SiteId,
-    string UserId);
+    string UserId,
+    DateTime? FirstPreviewAt = null,
+    double? MaxStaticGapSeconds = null,
+    bool Restarted = false,
+    bool Recovered = false,
+    int StreamReconnectCount = 0,
+    DateTime? PublishedAt = null,
+    DesignArtifactBrowserQualitySummary? BrowserQuality = null);
 
 public sealed record DesignArtifactTimingShareSample(
     string CreatedBy,
@@ -309,6 +379,17 @@ public sealed record DesignArtifactTimingMetric(
     double? P95Seconds,
     bool EstimateReady);
 
+public sealed record DesignArtifactBrowserQualityMetric(
+    int SampleCount,
+    int FirstPassPassedCount,
+    double? FirstPassRate,
+    int RepairedRunCount,
+    int RepairSucceededCount,
+    double? RepairSuccessRate,
+    double? AverageRepairAttempts,
+    DesignArtifactTimingMetric FinalScore,
+    IReadOnlyList<string> RuleVersions);
+
 public sealed record DesignArtifactTimingGroup(
     string Runtime,
     string ArtifactType,
@@ -317,7 +398,14 @@ public sealed record DesignArtifactTimingGroup(
     int CancelledCount,
     DesignArtifactTimingMetric Generation,
     DesignArtifactTimingMetric MaterialToShareLink,
-    int MaterialToShareLinkEligibleRuns);
+    int MaterialToShareLinkEligibleRuns,
+    DesignArtifactTimingMetric FirstPreview,
+    DesignArtifactTimingMetric MaxStaticGap,
+    int RestartedCount,
+    int RecoveredCount,
+    int StreamReconnectCount,
+    int PublishedWithin24HoursCount,
+    DesignArtifactBrowserQualityMetric BrowserQuality);
 
 public sealed record DesignArtifactTimingStatsResult(
     int WindowDays,

@@ -16,6 +16,7 @@ const INTENT_TTL_MS = 5 * 60 * 1000;
 
 export type ContainerLifecycleIntentKind =
   | 'cds-stop'
+  | 'cds-restart'
   | 'cds-remove'
   | 'cds-pre-run-replace'
   | 'cds-stale-cleanup'
@@ -35,6 +36,7 @@ export interface ContainerLifecycleIntent {
   kind: ContainerLifecycleIntentKind;
   reason: string;
   requestedAt: string;
+  completedAt?: string;
   projectId?: string | null;
   branchId?: string | null;
   profileId?: string | null;
@@ -63,11 +65,11 @@ function pruneLifecycleIntents(now = Date.now()): void {
 export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIntent, 'containerName' | 'requestedAt'> & {
   containerName: string;
   requestedAt?: string;
-}): void {
+}): ContainerLifecycleIntent | undefined {
   const containerName = normalizeContainerName(intent.containerName);
   if (!containerName) return;
   pruneLifecycleIntents();
-  lifecycleIntents.set(containerName, {
+  const recorded: ContainerLifecycleIntent = {
     containerName,
     kind: intent.kind,
     reason: intent.reason,
@@ -83,7 +85,9 @@ export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIn
     operation: intent.operation ?? null,
     source: intent.source ?? null,
     details: intent.details,
-  });
+  };
+  lifecycleIntents.set(containerName, recorded);
+  return recorded;
 }
 
 export function findRecentContainerLifecycleIntent(containerName: string | undefined | null): ContainerLifecycleIntent | undefined {
@@ -312,7 +316,16 @@ export class DockerEventMonitor {
       : {};
     if (signal?.aborted) return;
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
-    const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
+    // 原地重启用不可变 CID 执行；Docker 事件同时携带名字和完整 ID。
+    const candidateIntent = findRecentContainerLifecycleIntent(evt.Actor?.ID || evt.id)
+      || findRecentContainerLifecycleIntent(containerName);
+    // 纳秒 epoch 超过 JS 安全整数；先归一为整数微秒，避免浮点毫秒把边界后的事件舍入到窗口内。
+    const eventTimeMicros = Math.round(Number(evt.timeNano) / 1_000);
+    // 仅关联重启命令执行窗口里的事件；启动后再次崩溃不能被旧重启意图掩盖。
+    const lifecycleIntent = candidateIntent?.kind !== 'cds-restart' ? candidateIntent
+      : Number.isFinite(eventTimeMicros) && eventTimeMicros >= Date.parse(candidateIntent.requestedAt) * 1_000
+        && (!candidateIntent.completedAt || eventTimeMicros < (Date.parse(candidateIntent.completedAt) + 1) * 1_000)
+        ? candidateIntent : undefined;
     const normalizedAction = action.toLowerCase();
     const exitCode = Number.isFinite(Number(state?.exitCode ?? attrs.exitCode))
       ? Number(state?.exitCode ?? attrs.exitCode)

@@ -63,7 +63,7 @@ export interface CallGroup {
  */
 export function groupCalls(items: McpCallLogDto[]): CallGroup[] {
   // 入参是列表接口的顺序（最新在前）。按时间正序走一遍才分得清「谁是发起、谁是后续查看」。
-  const chronological = [...items].reverse();
+  const chronological = [...items].reverse().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
   const buckets: McpCallLogDto[][] = [];
   const keyOf = (item: McpCallLogDto) => {
@@ -123,10 +123,15 @@ function toGroup(chronoSteps: McpCallLogDto[]): CallGroup {
     ? `${first.keyId}|${first.artifact.kind}:${first.artifact.id}#${first.id}`
     : `row|${first.id}`;
 
-  const artifact =
+  const linkedArtifact =
     steps.find((s) => !!s.artifact?.url)?.artifact ??
     steps.find((s) => !!s.artifact?.id)?.artifact ??
     null;
+  // 音频入队就有任务历史地址。地址可取已有记录，业务状态必须取最近一次有状态的记录，
+  // 不能让旧历史地址携带的 queued 盖掉后续查询的 completed/failed。
+  const artifact = linkedArtifact?.kind === 'audio-run'
+    ? { ...linkedArtifact, status: steps.find(step => step.artifact?.status != null)?.artifact?.status ?? linkedArtifact.status }
+    : linkedArtifact;
 
   const status = outcomeOf(last, artifact);
 
@@ -171,6 +176,9 @@ export function outcomeOf(
   artifact: McpCallLogDto['artifact'] | null,
 ): CallGroup['status'] {
   if (last.status !== 'success') return last.status;
+  // audio-run 的 URL 是可立即打开的任务历史，不能用「有地址」判定语音生成成功。
+  // 状态缺失或尚未认识的状态一律保守地视为待完成，不根据 HTTP 200 猜成功。
+  if (artifact?.kind === 'audio-run') return AUDIO_RUN_OUTCOME[artifact.status ?? ''] ?? 'pending';
   // 「图还没出来」这件事与最后一步是写是读无关：入队（generate_image，写）本身就只回一个
   // runId，没有地址；客户端要是压根不来轮询，这件事会永远停在入队那一步。
   // 上一版把 isWrite 的判断放在前面，于是「只入队、还没轮询」的事件被打成绿色成功 ——
@@ -179,6 +187,16 @@ export function outcomeOf(
   if (artifact?.kind === 'image-run' && !artifact.url) return 'pending';
   return 'success';
 }
+
+const AUDIO_RUN_OUTCOME: Record<string, CallGroup['status']> = {
+  queued: 'pending',
+  preparing: 'pending',
+  generating: 'pending',
+  saving: 'pending',
+  completed: 'success',
+  failed: 'error',
+  unknown: 'error',
+};
 
 /** 按结果筛选时用：一条流水就是一件事，不折 —— 但结局仍走同一个判据。 */
 export function soloGroup(item: McpCallLogDto): CallGroup {

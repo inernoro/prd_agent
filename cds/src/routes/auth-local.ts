@@ -27,8 +27,9 @@ import {
   buildSsoLogoutCookie,
   GH_SESSION_COOKIE,
 } from './auth.js';
-import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import { toPublicUser, type CdsUser, type PublicCdsUser, type UserActivityRecord } from '../domain/auth.js';
 import type { StateService } from '../services/state.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
   markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
@@ -37,12 +38,15 @@ export interface LegacyLocalLoginResult {
   setCookie: string;
 }
 
+import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
+
 export interface AuthLocalRouterDeps {
   authService: AuthService;
   /** Production servers synchronize linked machine credentials with account status. */
   stateService?: StateService;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
+  hostSessionCookies?: boolean;
   /**
    * Whether the auth store is durable (mongo). The public first-run bootstrap
    * endpoint is only safe on a persistent store: a volatile (memory) store is
@@ -63,20 +67,15 @@ export interface AuthLocalRouterDeps {
   ) => Promise<LegacyLocalLoginResult | null> | LegacyLocalLoginResult | null;
   /** Usernames owned by external/legacy providers and unavailable for creation. */
   reservedUsernames?: string[];
+  systemPasswordActivity?: () => UserActivityRecord[];
 }
 
 interface AuthedRequest extends Request {
   cdsUser?: CdsUser;
 }
 
-function sessionToken(req: Request): string | null {
-  const match = (req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${GH_SESSION_COOKIE}=([^;]*)`));
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
+function sessionToken(req: Request, hostSessionCookies: boolean): string | null {
+  return readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies)) ?? null;
 }
 
 function clientIp(req: Request): string | null {
@@ -109,7 +108,7 @@ function localErrStatus(err: LocalAuthError): number {
 
 export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   const router = Router();
-  const { authService, cookieSecure, bootstrapAllowed, legacyLogin } = deps;
+  const { authService, cookieSecure, hostSessionCookies = false, bootstrapAllowed, legacyLogin } = deps;
   const reservedUsernames = new Set(
     (deps.reservedUsernames ?? []).map((username) => String(username).trim().toLowerCase()),
   );
@@ -149,9 +148,9 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ip: clientIp(req),
       });
       res.setHeader('Set-Cookie', [
-        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
-        buildLegacyLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure, hostSessionCookies),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
@@ -182,8 +181,8 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       if (legacy) {
         res.setHeader('Set-Cookie', [
           legacy.setCookie,
-          buildLogoutCookie(cookieSecure),
-          buildSsoLogoutCookie(cookieSecure),
+          buildLogoutCookie(cookieSecure, hostSessionCookies),
+          buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
         ]);
         res.json({ user: legacy.user });
         return;
@@ -205,9 +204,9 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ip: clientIp(req),
       });
       res.setHeader('Set-Cookie', [
-        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
-        buildLegacyLogoutCookie(cookieSecure),
-        buildSsoLogoutCookie(cookieSecure),
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure, hostSessionCookies),
+        buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+        buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
@@ -224,12 +223,12 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   // In GitHub mode the OAuth router registers the same path first; in basic
   // mode this handler owns it. Both clear the shared persisted-session cookie.
   router.post('/auth/logout', async (req: Request, res: Response) => {
-    const token = sessionToken(req);
+    const token = sessionToken(req, hostSessionCookies);
     if (token) await authService.logout(token);
     res.setHeader('Set-Cookie', [
-      buildLogoutCookie(cookieSecure),
-      buildLegacyLogoutCookie(cookieSecure),
-      buildSsoLogoutCookie(cookieSecure),
+      buildLogoutCookie(cookieSecure, hostSessionCookies),
+      buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
+      buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
     ]);
     res.json({ ok: true });
   });
@@ -453,8 +452,16 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     } else {
       userId = me.id;
     }
-    const activity = await authService.listActivity({ userId, limit });
-    res.json({ activity });
+    try {
+      const activity = await authService.listActivity({ userId, limit });
+      if (deps.systemPasswordActivity && isHumanSystemOwner(req)) {
+        activity.push(...deps.systemPasswordActivity().filter(row => !userId || row.userId === userId));
+        activity.sort((a, b) => b.at.localeCompare(a.at));
+      }
+      res.json({ activity: activity.slice(0, limit) });
+    } catch {
+      res.status(503).json({ error: '无法完整读取用户操作痕迹，请稍后重试。' });
+    }
   });
 
   return router;

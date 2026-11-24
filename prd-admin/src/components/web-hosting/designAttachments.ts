@@ -101,8 +101,8 @@ export function summarizeAttachments(items: readonly Pick<DesignAttachmentItem, 
 }
 
 /**
- * 截图参考只对精细设计（OpenDesign）生效：快速修改（map-gateway）带截图时后端返回 400
- * 「截图参考需要用精细设计（OpenDesign）执行器」。前端按同一口径置灰，不让用户白传。
+ * 截图参考只对统一设计服务生效。历史任务若使用不支持截图的执行器，
+ * 前端按同一口径置灰，不让用户白传。
  */
 export const SCREENSHOT_CAPABLE_RUNTIMES: readonly string[] = ['open-design'];
 

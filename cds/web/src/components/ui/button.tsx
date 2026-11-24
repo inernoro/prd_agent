@@ -8,8 +8,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-primary/90',
-        destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+        default: 'bg-primary text-primary-foreground hover:bg-primary-hover',
+        destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive-hover',
         outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground',
@@ -24,6 +24,12 @@ const buttonVariants = cva(
         icon: 'h-9 w-9 [&_svg]:size-5',
       },
     },
+    compoundVariants: [
+      {
+        variant: ['default', 'destructive'],
+        className: 'disabled:bg-secondary disabled:text-muted-foreground disabled:opacity-100',
+      },
+    ],
     defaultVariants: { variant: 'default', size: 'default' },
   }
 );
@@ -34,11 +40,16 @@ export interface ButtonProps
   asChild?: boolean;
 }
 
+// A dense workspace can choose its default without resizing buttons elsewhere.
+const ButtonSizeContext = React.createContext<NonNullable<ButtonProps['size']>>('default');
+export const ButtonSizeProvider = ButtonSizeContext.Provider;
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
+    const defaultSize = React.useContext(ButtonSizeContext);
     const Comp = asChild ? Slot : 'button';
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <Comp className={cn(buttonVariants({ variant, size: size ?? defaultSize, className }))} ref={ref} {...props} />
     );
   }
 );

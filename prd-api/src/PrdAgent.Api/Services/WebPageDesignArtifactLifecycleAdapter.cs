@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -14,7 +15,8 @@ public interface IWebPageDesignArtifactLifecycleAdapter
         DesignArtifactLifecycleLeaseAuthority lease,
         int progress,
         string phase,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? phaseCode = null);
 
     Task CommitManifestAsync(
         string runId,
@@ -30,6 +32,13 @@ public interface IWebPageDesignArtifactLifecycleAdapter
     Task FailAsync(
         string runId,
         string failureCode,
+        DesignArtifactLifecycleLeaseAuthority lease,
+        CancellationToken ct = default);
+
+    Task FailWithDetailsAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure runtimeFailure,
         DesignArtifactLifecycleLeaseAuthority lease,
         CancellationToken ct = default);
 
@@ -55,6 +64,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
 {
     public const string AdapterId = "open-design-remote-package";
     public const string SecurityPolicyVersion = "web-page-restricted.v1";
+    public const string HtmlPptSecurityPolicyVersion = "html-ppt-interactive.v1";
     public const string ExecutionFailureCode = "open_design_execution_failed";
     public const string InterruptedFailureCode = "design_artifact_interrupted";
 
@@ -65,7 +75,9 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         "design_output_invalid",
         "design_output_missing",
         "design_output_quality_rejected",
+        "design_browser_quality_rejected",
         "design_output_too_large",
+        "browser_quality_unavailable",
         "open_design_contract_mismatch",
         "open_design_not_ready",
         "open_design_run_cancelled",
@@ -76,6 +88,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         "workspace_egress_unavailable",
         "workspace_package_hash_mismatch",
         "workspace_package_invalid",
+        "workspace_quality_evidence_unsupported",
         "workspace_runtime_unavailable",
         "workspace_session_not_found",
         "workspace_transfer_invalid",
@@ -108,9 +121,9 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
     {
         if (run.Runtime != DesignArtifactRuntimes.OpenDesign) return;
         if (run.Status != RunStatuses.Queued
-            || run.ArtifactType != DesignArtifactTypes.WebPage
+            || run.ArtifactType is not (DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt)
             || run.Operation is not (DesignArtifactOperations.Generate or DesignArtifactOperations.Edit))
-            throw Invalid("OpenDesign 网页任务创建状态无效");
+            throw Invalid("OpenDesign 设计任务创建状态无效");
 
         var inputPackage = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml);
         var baseContentHash = string.IsNullOrWhiteSpace(currentHtml)
@@ -123,7 +136,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         run.LifecycleEventSequence = 1;
         run.WorkspaceRef = new DesignArtifactWorkspaceRef
         {
-            WorkspaceId = $"web-page-{run.Id}",
+            WorkspaceId = $"{run.ArtifactType}-{run.Id}",
             Kind = DesignArtifactWorkspaceKinds.RemotePackage,
             BaseRevision = inputPackage.BaseRevision,
             Adapter = AdapterId,
@@ -137,11 +150,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         run.Capability = new DesignArtifactCapabilitySnapshot
         {
             CapabilityId = $"{capability.Id}.remote-package.v1",
-            ArtifactType = DesignArtifactTypes.WebPage,
+            ArtifactType = run.ArtifactType,
             Runtime = run.Runtime,
             Adapter = AdapterId,
             WorkspaceKind = DesignArtifactWorkspaceKinds.RemotePackage,
-            SecurityProfile = DesignArtifactSecurityProfiles.WebPageRestricted,
+            SecurityProfile = SecurityProfile(run.ArtifactType),
             Operations = capability.Operations.Distinct(StringComparer.Ordinal).ToList(),
             SourceSurfaces = capability.SourceSurfaces.Distinct(StringComparer.Ordinal).ToList(),
         };
@@ -154,6 +167,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 Sequence = 1,
                 Type = DesignArtifactLifecycleEventTypes.Run,
                 Phase = run.Phase,
+                PhaseCode = run.PhaseCode,
                 Progress = run.Progress,
                 OccurredAt = now,
                 Authoritative = true,
@@ -161,6 +175,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         ];
         run.CreatedAt = now;
         run.UpdatedAt = now;
+        run.FirstVisibleFeedbackAt ??= now;
+        run.LastProgressAt ??= now;
     }
 
     public async Task AppendPhaseAsync(
@@ -168,7 +184,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         DesignArtifactLifecycleLeaseAuthority lease,
         int progress,
         string phase,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? phaseCode = null)
     {
         var current = await RequireCurrentAsync(runId);
         if (!IsManaged(current)) return;
@@ -179,7 +196,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 DesignArtifactLifecycleEventTypes.Phase,
                 phase,
                 progress,
-                Expected(current, lease)),
+                Expected(current, lease),
+                phaseCode),
             CancellationToken.None);
     }
 
@@ -257,10 +275,36 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         string failureCode,
         DesignArtifactLifecycleLeaseAuthority lease,
         CancellationToken ct = default)
+        => await FailCoreAsync(runId, failureCode, null, lease);
+
+    public async Task FailWithDetailsAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease,
+        CancellationToken ct = default)
+        => await FailCoreAsync(runId, failureCode, runtimeFailure, lease);
+
+    private async Task FailCoreAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure? runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease)
     {
         var current = await RequireCurrentAsync(runId);
         if (!IsManaged(current)) return;
-        if (!AllowedFailureCodes.Contains(failureCode)) failureCode = ExecutionFailureCode;
+        failureCode = NormalizeFailureCode(failureCode);
+        if (runtimeFailure != null)
+        {
+            runtimeFailure = new DesignArtifactRuntimeFailure
+            {
+                Code = failureCode,
+                IssueCodes = runtimeFailure.IssueCodes.ToList(),
+                RepairAttempts = runtimeFailure.RepairAttempts,
+                RepairBudgetExhausted = runtimeFailure.RepairBudgetExhausted,
+                BrowserQualityEvidence = runtimeFailure.BrowserQualityEvidence,
+            };
+        }
         for (var attempt = 0; attempt < 3; attempt++)
         {
             if (current.Status == RunStatuses.Error) return;
@@ -273,7 +317,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                         current.Id,
                         current.UserId,
                         Expected(current, lease),
-                        failureCode),
+                        failureCode,
+                        runtimeFailure),
                     CancellationToken.None);
                 return;
             }
@@ -285,6 +330,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         }
         throw Conflict();
     }
+
+    internal static string NormalizeFailureCode(string? failureCode) =>
+        !string.IsNullOrWhiteSpace(failureCode) && AllowedFailureCodes.Contains(failureCode)
+            ? failureCode
+            : ExecutionFailureCode;
 
     public async Task BindPublishedAsync(
         string runId,
@@ -336,7 +386,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         var now = DateTime.UtcNow;
         var candidates = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.ContractVersion == DesignArtifactContractVersions.Current
                 && run.Runtime == DesignArtifactRuntimes.OpenDesign
-                && run.ArtifactType == DesignArtifactTypes.WebPage
+                && (run.ArtifactType == DesignArtifactTypes.WebPage
+                    || run.ArtifactType == DesignArtifactTypes.HtmlPpt)
                 && (run.Status == RunStatuses.Running || run.Status == RunStatuses.Committing)
                 && (run.LeaseExpiresAt == null || run.LeaseExpiresAt <= now)))
             .SortBy(run => run.UpdatedAt)
@@ -349,6 +400,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             try
             {
                 var current = candidate;
+                // 尚未保存完整 PPT 的结果交还原 Worker：它按同一 run/受信结果包恢复，不重新调用模型。
+                if (current.ArtifactType == DesignArtifactTypes.HtmlPpt
+                    && (string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
+                        || string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId)))
+                    continue;
                 if (current.Status == RunStatuses.Running
                     && !string.IsNullOrWhiteSpace(current.WorkspaceResultAssetKey))
                 {
@@ -356,6 +412,12 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                     var recoveryLease = RecoveryLease(current);
                     await CommitManifestAsync(current.Id, files, recoveryLease, CancellationToken.None);
                     current = await RequireManagedAsync(current.Id);
+                }
+
+                if (current.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                {
+                    if (await RecoverPresentationAsync(current)) recovered++;
+                    continue;
                 }
 
                 var revision = await FindProducedRevisionAsync(current);
@@ -380,6 +442,22 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             {
                 _logger.LogWarning(ex, "OpenDesign 网页公共生命周期恢复未完成 runId={RunId}", candidate.Id);
             }
+        }
+
+        // 公共 Complete 已成功但绑定/兼容投影未成功的 PPT 仍按原完整版本收口。
+        var pendingPresentations = await (from run in _db.DesignArtifactRuns.AsQueryable()
+            join compatibility in _db.MdToPptRuns.AsQueryable() on run.Id equals compatibility.Id
+            where run.DeploymentSlug == DeploymentScope.Current
+                && run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                && run.Runtime == DesignArtifactRuntimes.OpenDesign && run.Status == RunStatuses.Done
+                && compatibility.UserId == run.UserId
+                && compatibility.Runtime == DesignArtifactRuntimes.OpenDesign && compatibility.Status == "running"
+            orderby run.UpdatedAt
+            select run).Take(Math.Clamp(limit, 1, 500)).ToListAsync(CancellationToken.None);
+        foreach (var run in pendingPresentations)
+        {
+            try { if (await RecoverPresentationAsync(run)) recovered++; }
+            catch (Exception ex) { _logger.LogWarning(ex, "OpenDesign 演示稿完成投影待恢复 runId={RunId}", run.Id); }
         }
 
         var pendingBindings = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.ContractVersion == DesignArtifactContractVersions.Current
@@ -415,6 +493,41 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         }
         return recovered;
     }
+
+    private async Task<bool> RecoverPresentationAsync(DesignArtifactRun run)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+            || string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)) return false;
+        var revision = await FindProducedRevisionAsync(run);
+        if (revision == null) return false;
+        var site = await _db.HostedSites.Find(item => item.Id == revision.SiteId && item.OwnerUserId == run.UserId)
+            .SingleOrDefaultAsync(CancellationToken.None);
+        if (site == null) return false;
+        await HostedSiteEditRunWorker.CompletePresentationRecordAsync(_db, run, RecoveryLease(run), this,
+            revision.Html, new PersistedDesignArtifact(site.Id, revision.Id, revision.Status, site.SiteUrl, site.Title),
+            CancellationToken.None);
+        return true;
+    }
+
+    internal static void ValidateSavedPresentation(DesignArtifactRun run, HostedSiteRevision revision)
+    {
+        if (revision.Status is not (HostedSiteRevisionStatuses.Draft or HostedSiteRevisionStatuses.Published)
+            || revision.VerifiedFiles.Count <= 1)
+            throw Conflict();
+        _ = HostedSitePreviewAccessService.ComputePackageFingerprint(revision.VerifiedFiles);
+        var files = revision.VerifiedFiles.Select(file => new DesignWorkspaceFile(file.Path,
+            Convert.ToBase64String(file.Content), file.Sha256, file.Content.LongLength, file.MimeType)).ToArray();
+        _ = HostedSiteEditRunWorker.BuildVerifiedHostedSiteFiles(files, revision.Html);
+        var trusted = BuildTrustedManifest(run, files);
+        EnsureManifestMatches(run, trusted.Manifest, trusted.Receipt);
+    }
+
+    internal static bool IsCompletedPresentation(DesignArtifactRun? run) =>
+        run is { ArtifactType: DesignArtifactTypes.HtmlPpt, Runtime: DesignArtifactRuntimes.OpenDesign, Status: RunStatuses.Done }
+        && !string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+        && !string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)
+        && (run.Operation == DesignArtifactOperations.Edit
+            || (run.ArtifactSiteId == run.ProducedArtifactSiteId && run.ArtifactRevisionId == run.ProducedArtifactRevisionId));
 
     private async Task<IReadOnlyList<DesignWorkspaceFile>> ReadVerifiedFilesAsync(DesignArtifactRun run)
     {
@@ -458,7 +571,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
     private static bool IsManaged(DesignArtifactRun run) =>
         run.ContractVersion == DesignArtifactContractVersions.Current
         && run.Runtime == DesignArtifactRuntimes.OpenDesign
-        && run.ArtifactType == DesignArtifactTypes.WebPage
+        && run.ArtifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
         && run.WorkspaceRef?.Kind == DesignArtifactWorkspaceKinds.RemotePackage
         && run.WorkspaceRef.Adapter == AdapterId;
 
@@ -497,9 +610,9 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         var manifest = new DesignArtifactContractManifest
         {
             SchemaVersion = DesignArtifactContractVersions.ManifestV1,
-            ArtifactType = DesignArtifactTypes.WebPage,
+            ArtifactType = run.ArtifactType,
             EntryFile = "index.html",
-            SecurityProfile = DesignArtifactSecurityProfiles.WebPageRestricted,
+            SecurityProfile = SecurityProfile(run.ArtifactType),
             Files = publicFiles,
         };
         var canonical = new StringBuilder();
@@ -514,7 +627,9 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         {
             Validator = AdapterId,
             WorkspaceId = run.WorkspaceRef?.WorkspaceId ?? throw Invalid("远程工作区引用不存在"),
-            SecurityPolicyVersion = SecurityPolicyVersion,
+            SecurityPolicyVersion = run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                ? HtmlPptSecurityPolicyVersion
+                : SecurityPolicyVersion,
             EntryContentHash = publicFiles.Single(file => file.Path == "index.html").Sha256,
             CanonicalManifestHash = Sha256Hex(Encoding.UTF8.GetBytes(canonical.ToString())),
             PackageHash = packageHash,
@@ -525,6 +640,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         };
         return new TrustedWebPageManifest(manifest, receipt);
     }
+
+    private static string SecurityProfile(string artifactType) =>
+        artifactType == DesignArtifactTypes.HtmlPpt
+            ? DesignArtifactSecurityProfiles.HtmlPptInteractive
+            : DesignArtifactSecurityProfiles.WebPageRestricted;
 
     private static void EnsureManifestMatches(
         DesignArtifactRun run,

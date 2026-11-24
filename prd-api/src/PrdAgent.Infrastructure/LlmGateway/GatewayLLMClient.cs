@@ -115,6 +115,10 @@ public class GatewayLLMClient : ILLMClient
             {
                 TenantId = scopeCtx?.TenantId,
                 TeamId = scopeCtx?.TeamId,
+                ServiceKeyId = scopeCtx?.ServiceKeyId,
+                ClientCode = scopeCtx?.ClientCode,
+                Environment = scopeCtx?.Environment,
+                ServiceKeyPrefix = scopeCtx?.ServiceKeyPrefix,
                 RequestId = scopeCtx?.RequestId,
                 SessionId = scopeCtx?.SessionId,
                 GroupId = scopeCtx?.GroupId,
@@ -122,6 +126,16 @@ public class GatewayLLMClient : ILLMClient
                 LogicalRequestId = scopeCtx?.LogicalRequestId,
                 ProviderTaskId = scopeCtx?.ProviderTaskId,
                 UserId = scopeCtx?.UserId,
+                TaskPermitId = scopeCtx?.TaskPermitId,
+                TaskLeaseRunId = scopeCtx?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = scopeCtx?.TaskLeaseOwnerHash,
+                TaskLeaseFence = scopeCtx?.TaskLeaseFence,
+                ExecutionOrigin = scopeCtx?.ExecutionOrigin,
+                TriggerCredentialId = scopeCtx?.TriggerCredentialId,
+                TriggerActorUserId = scopeCtx?.TriggerActorUserId,
+                SourceDeployment = scopeCtx?.SourceDeployment,
+                SourceTask = scopeCtx?.SourceTask,
+                SourceSystem = scopeCtx?.SourceSystem,
                 ViewRole = scopeCtx?.ViewRole,
                 DocumentChars = scopeCtx?.DocumentChars,
                 DocumentHash = scopeCtx?.DocumentHash,
@@ -147,6 +161,7 @@ public class GatewayLLMClient : ILLMClient
                     ErrorCode = chunk.ErrorCode,
                     Model = chunk.Resolution?.ActualModel,
                     Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                    BillingAlerts = chunk.Resolution?.BillingAlerts ?? [],
                 };
                 yield break;
             }
@@ -172,6 +187,7 @@ public class GatewayLLMClient : ILLMClient
                     Type = "start",
                     Model = chunk.Resolution?.ActualModel,
                     Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                    BillingAlerts = chunk.Resolution?.BillingAlerts ?? [],
                 };
             }
             else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))

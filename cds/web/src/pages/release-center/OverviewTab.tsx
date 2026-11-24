@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { describeCommitPosition, formatAgo } from '@/lib/releaseRail';
 import { formatDoraDuration } from '@/lib/releaseDora';
 import { releaseEtaText } from '@/lib/releaseEta';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { ReleaseTimeline } from './ReleaseTimeline';
 import {
   Chip,
@@ -109,7 +110,7 @@ export function OverviewTab({
           <p className="text-[0.75rem] text-muted-foreground">
             {row.currentVersion ? `${row.currentVersion} · ` : ''}
             {formatDateTime(row.lastReleasedAt)}
-            {row.lastOperator ? ` · ${row.lastOperator}` : ''}
+            {` · ${releaseActorLabel(row.lastOperator)}`}
           </p>
           <p className={`text-[0.75rem] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
             {position.text}
@@ -224,6 +225,8 @@ function StatCard({ label, children }: { label: string; children: React.ReactNod
 export function releaseMethodSummary(row: CenterRow): string {
   const strategy = row.target.strategy;
   const health = row.target.ssh?.healthcheckUrl ? ` · 健康检查 ${row.target.ssh.healthcheckUrl}` : '';
+  if (strategy?.mode === 'project-script') return `项目发布脚本（默认） · ${strategy.scriptFile || 'cds-release.sh'} · 同提交 CI 与正文哈希${health}`;
+  if (strategy?.mode === 'managed-script') return `CDS 独立脚本（备选） · 正文哈希固定${health}`;
   if (strategy?.mode === 'generated-compose') {
     return `CDS 动态 Compose 发布 · ${strategy.composeFile || 'compose.yml'} · 保留上一版本可回滚${health}`;
   }

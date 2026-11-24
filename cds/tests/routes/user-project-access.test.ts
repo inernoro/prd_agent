@@ -3,15 +3,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { createHash, createDecipheriv } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import express from 'express';
+import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
+import { readDesignSourceZip } from '../../src/services/design-package.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { humanPrincipalId, humanProjectGrantUpdateStatus, beginHumanProjectGrantUpdate } from '../../src/services/human-project-access.js';
+import * as humanProjectAccess from '../../src/services/human-project-access.js';
 import { createIdentityRouter, resolveUserCredential } from '../../src/routes/identity.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { multiPreviewUrl } from '../../web/src/lib/previewUrl.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { branchEvents } from '../../src/services/branch-events.js';
@@ -53,6 +59,7 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_USERNAME', 'owner');
     vi.stubEnv('CDS_PASSWORD', 'test-owner-password');
     vi.stubEnv('CDS_PUBLIC_BASE_URL', 'http://localhost');
+    vi.stubEnv('CDS_UPSTREAM', '');
     vi.stubEnv('CDS_SSO_ENABLED', 'false');
     vi.stubEnv('CDS_GRANT_RECONCILE_MS', '20');
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-human-grants-'));
@@ -77,6 +84,7 @@ describe('human project grants through the production server', () => {
       getLogs: async () => 'PASSWORD=fake-diagnostic-secret\nbooting\n' };
     const app = createServer({ stateService: state, worktreeService: new WorktreeService(shell, dir),
       shell, config, authStore: store, registry, bridgeService: {} as any,
+      branchOperationCoordinator: new BranchOperationCoordinator(),
       containerService: container as any,
       proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
     server = app.listen(0, '127.0.0.1');
@@ -221,6 +229,7 @@ describe('human project grants through the production server', () => {
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await grant(['project-b'])).status).toBe(200);
   });
   it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
@@ -234,6 +243,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => pending);
     try {
       expect((await grant(['project-b'])).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'interrupted-grant.json'));
       for (const failedStep of ['save', 'flush'] as const) {
@@ -314,6 +324,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     try {
       expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       const restartPath = path.join(dir, `interrupted-${status}.json`);
       fs.copyFileSync(path.join(dir, 'state.json'), restartPath);
@@ -428,6 +439,7 @@ describe('human project grants through the production server', () => {
 
   it.each(['mysql', 'mongo'] as const)('allows only existing read-only %s commands in authorized resources', async runtime => {
     const mongo = runtime === 'mongo';
+    if (!mongo) vi.spyOn(sqlConsole, 'executeSqlConsole').mockResolvedValue({ columns: ['answer'], rows: [['1']], rowCount: 1, resultSets: [{ columns: ['answer'], rows: [['1']], rowCount: 1 }], output: 'SQL 执行完成。' });
     state.addInfraService({ id: runtime, projectId: 'project-a', name: runtime, dockerImage: mongo ? 'mongo:7' : 'mysql:8',
       containerPort: mongo ? 27017 : 3306, hostPort: mongo ? 27017 : 3306, containerName: `fixture-${runtime}`, status: 'running',
       dbName: 'app', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'fake-db-password', MONGO_INITDB_DATABASE: 'app' }
@@ -499,11 +511,13 @@ describe('human project grants through the production server', () => {
     shell.addResponsePattern(/git cat-file -t /, () => ({ stdout: 'commit\n', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git checkout /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git log --oneline -1/, () => ({ stdout: 'abc1234 历史提交\n', stderr: '', exitCode: 0 }));
+    const fullSha = 'abc1234' + 'a'.repeat(33);
+    shell.addResponsePattern(/git rev-parse --verify HEAD/, () => ({ stdout: fullSha + '\n', stderr: '', exitCode: 0 }));
     for (const cookie of [member, owner]) {
       const result = await call('POST', '/api/branches/branch-project-a/checkout/' + hash, cookie);
       expect(result.status).toBe(200);
-      expect(result.body.pinnedCommit).toBe('abc1234');
-      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe('abc1234');
+      expect(result.body.pinnedCommit).toBe(fullSha);
+      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe(fullSha);
       expect(shell.commands).toContain(`git cat-file -t '${hash}'`);
       expect(shell.commands).toContain(`git checkout --detach '${hash}'`);
     }
@@ -759,6 +773,7 @@ describe('human project grants through the production server', () => {
     const remote = http.createServer((req, res) => {
       req.on('data', () => {});
       req.on('end', () => {
+        if (req.url === '/exec/deployment-owner') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' })); return; }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         res.write('event: step\ndata: {"step":"build","status":"running","title":"safe progress","detail":{"env":{"PASSWORD":"fake-remote-map-secret"}}}\n\n');
         res.write('event: log\ndata: {"profileId":"profile-project-a","chunk":"API_TOKEN=fake-remote-');
@@ -1003,6 +1018,75 @@ describe('human project grants through the production server', () => {
     }
   });
 
+  it.each(['account', 'grant'] as const)('keeps %s recovery bound to the original principal without anonymous requests or new keys', async (reason) => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const key = (await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).body.plaintext;
+    const keyCount = state.getProject('project-a')!.agentKeys!.length;
+    const requestCount = state.listAccessRequests().length;
+    if (reason === 'account') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    else await grant([]);
+    for (const proof of [userKey, key]) {
+      const status = await credentialCall('GET', '/api/projects/project-a/access-status', proof);
+      expect(status).toMatchObject({ status: 200, body: { projectId: 'project-a', state: reason === 'account' ? 'account-disabled' : 'project-access-revoked' } });
+      expect(Object.keys(status.body).sort()).toEqual(['message', 'projectId', 'state']);
+      expect((await credentialCall('POST', '/api/projects/project-a/access-requests', proof, { agentName: 'recovery' })).status).toBe(403);
+      expect((await credentialCall('POST', '/api/identity/project-credentials', proof, { projectId: 'project-a' })).status).not.toBe(201);
+    }
+    expect(state.listAccessRequests()).toHaveLength(requestCount);
+    expect(state.getProject('project-a')!.agentKeys).toHaveLength(keyCount);
+    expect((await credentialCall('GET', '/api/projects/project-b/access-status', key)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', 'cdsu_unknown')).status).toBe(401);
+    if (reason === 'account') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    else await grant(['project-a']);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('ready');
+    expect((await credentialCall('GET', '/api/projects/project-a', key)).status).toBe(200);
+    expect((await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).status).toBe(201);
+  });
+
+  it('withholds pending approval and approved plaintext while the bound account is disabled, then resumes the same ticket', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const init = await credentialCall('POST', '/api/projects/project-a/access-requests', userKey, { agentName: 'recovery' });
+    expect(init.status).toBe(201);
+    const id = init.body.requestId;
+    const poll = async () => {
+      const res = await fetch(`${base}/api/projects/project-a/access-requests/${id}`, { headers: { 'X-Poll-Token': init.body.pollToken } });
+      return res.json();
+    };
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(409);
+    expect(await poll()).toMatchObject({ status: 'blocked', recoveryState: 'account-disabled' });
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(200);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect(await poll()).not.toHaveProperty('authorizationKey');
+    expect(state.getAccessRequest(id)!.deliveredAt).toBeUndefined();
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect(await poll()).toMatchObject({ status: 'approved', authorizationKey: expect.stringMatching(/^cdsp_/) });
+    expect(await poll()).not.toHaveProperty('authorizationKey');
+  });
+
+  it('reports durable access updates without releasing the gate and never treats revoked identity as anonymous', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const issued = await call('POST', '/api/identity/user-credentials', owner, { principalId });
+    const key = issued.body.plaintext;
+    const release = beginHumanProjectGrantUpdate(state, principalId)!;
+    try {
+      expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('access-update-pending');
+      expect((await credentialCall('POST', '/api/projects/project-a/access-requests', key, {})).status).toBe(409);
+      expect(state.listAccessRequests()).toHaveLength(0);
+    } finally { release(); }
+    const credential = state.findUserCredentialByPlaintext(key)!;
+    expect((await call('POST', `/api/identity/user-credentials/${credential.id}/revoke`, owner, {})).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('credential-unusable');
+    expect((await credentialCall('POST', '/api/projects/project-a/access-requests', key, {})).status).toBe(401);
+    expect(state.listAccessRequests()).toHaveLength(0);
+  });
+
   it('disables linked user and project credentials with the account, preserving unrelated machines and restoring on enable', async () => {
     await grant(['project-a']);
     const principalId = humanPrincipalId(memberId);
@@ -1054,9 +1138,12 @@ describe('human project grants through the production server', () => {
     const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId: humanPrincipalId(memberId) })).body.plaintext;
     const derived = (await credentialCall('POST', '/api/identity/project-credentials', key, { projectId: 'project-a' })).body.plaintext;
     expect((await credentialCall('GET', '/api/build-profiles?project=project-a', derived)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', derived)).body.state).toBe('ready');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' })).status).toBe(200);
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await credentialCall('GET', '/api/build-profiles?project=project-a', derived)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', derived)).body.state).toBe('account-disabled');
+    expect((await credentialCall('POST', '/api/projects/project-a/access-requests', derived, {})).status).toBe(403);
   });
 
   it('creates a disabled principal when granting an already-disabled account for the first time', async () => {
@@ -1127,6 +1214,7 @@ describe('human project grants through the production server', () => {
     await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 2000 });
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);
   });
 
@@ -1179,27 +1267,65 @@ describe('human project grants through the production server', () => {
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(200);
   });
 
-  it('holds the gate when status save and its immediate compensation both throw', async () => {
-    await grant(['project-a']);
-    const principalId = humanPrincipalId(memberId);
-    const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
-    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
-    const fail = () => { throw new Error('fake synchronous status save failure'); };
-    vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail).mockImplementationOnce(fail);
-    expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(500);
-    expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
-    expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
-    for (let attempt = 0; attempt < 40 && humanProjectGrantUpdateStatus(state, principalId); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
-    expect(state.getPrincipal(principalId)?.status).toBe('disabled');
-    await state.flush();
-    fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'failed-status-compensated.json'));
-    const restored = new StateService(path.join(dir, 'failed-status-compensated.json'));
-    restored.load();
-    expect(resolveUserCredential(restored, key)).toBeNull();
-  });
+  it.each(['compensation', 'journal cleanup'] as const)(
+    'holds the gate when status save and its immediate compensation both throw until %s confirms', async phase => {
+      await grant(['project-a']);
+      const principalId = humanPrincipalId(memberId);
+      const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+      await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+
+      // Recovery and journal cleanup each need their own durable acknowledgement.
+      // Hold either acknowledgement explicitly instead of assuming real I/O finishes
+      // inside forty 10ms polls on every runner.
+      const flush = state.flush.bind(state);
+      let entered!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      let finish!: () => void;
+      const pending = new Promise<void>(resolve => { finish = resolve; });
+      let completed!: () => void;
+      const recovered = new Promise<void>(resolve => { completed = resolve; });
+      const begin = humanProjectAccess.beginHumanProjectGrantUpdate;
+      vi.spyOn(humanProjectAccess, 'beginHumanProjectGrantUpdate').mockImplementation((...args) => {
+        const release = begin(...args);
+        if (!release) return undefined;
+        return async () => {
+          const confirmed = await release();
+          if (confirmed) completed();
+          return confirmed;
+        };
+      });
+      let flushCount = 0;
+      const blockedFlush = phase === 'compensation' ? 1 : 2;
+      vi.spyOn(state, 'flush').mockImplementation(async () => {
+        if (++flushCount === blockedFlush) {
+          entered();
+          await pending;
+        }
+        await flush();
+      });
+      const fail = () => { throw new Error('fake synchronous status save failure'); };
+      vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail).mockImplementationOnce(fail);
+      try {
+        expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(500);
+        expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
+        await started;
+        expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
+        expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+        expect((await grant(['project-b'])).status).toBe(409);
+        expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(409);
+      } finally {
+        finish();
+        await recovered;
+      }
+      expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
+      expect(state.getPrincipal(principalId)?.status).toBe('disabled');
+      await state.flush();
+      fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'failed-status-compensated.json'));
+      const restored = new StateService(path.join(dir, 'failed-status-compensated.json'));
+      restored.load();
+      expect(resolveUserCredential(restored, key)).toBeNull();
+      expect(restored.getHumanAccessRecoveries()[principalId]).toBeUndefined();
+    });
 
   it('rejects member self-grants and preserves owner/disabled-user invariants', async () => {
     expect((await call('PUT', `/api/auth/users/${memberId}/projects`, member, { projectIds: ['project-a'] })).status).toBe(403);
@@ -1209,6 +1335,224 @@ describe('human project grants through the production server', () => {
     await grant(['project-a']);
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
     expect((await call('GET', '/api/projects', member)).status).toBe(401);
+  });
+
+  it('authenticates a passively issued design key without broadening access or bypassing revocation', async () => {
+    const principalId = 'passive-design-fixture';
+    const now = new Date().toISOString();
+    const identity = 'cdsu_synthetic_passive_design_fixture';
+    state.addPrincipal({ id: principalId, name: 'Passive design fixture', kind: 'machine', status: 'active', createdAt: now });
+    state.addUserCredential({ id: 'passive-design-identity', principalId, hash: createHash('sha256').update(identity).digest('hex'),
+      createdAt: now, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    const approval = '/api/projects/project-a/access-requests';
+    const start = await credentialCall('POST', approval, identity, { designAccess: 'publish' });
+    expect(start.status).toBe(201);
+    expect((await call('POST', `/api/access-requests/${start.body.requestId}/approve`, owner, {})).status).toBe(200);
+    const delivery = await fetch(`${base}${approval}/${start.body.requestId}`, { headers: { 'X-Poll-Token': start.body.pollToken } });
+    expect(delivery.status).toBe(200);
+    const issued = await delivery.json();
+    const key: string = issued.authorizationKey;
+    expect(typeof key === 'string' && key.startsWith('cdsp_')).toBe(true);
+    expect(state.getProjectGrants().some(grant => grant.principalId === principalId)).toBe(false);
+
+    const checkPath = '/api/credentials/self-check';
+    const identityCheck = await credentialCall('GET', checkPath, key);
+    expect(identityCheck.status).toBe(200);
+    expect(identityCheck.body.status).toBe('active');
+    const setup = '/api/agent/setup.json?target=existing&project=project-a&mission=design-publish';
+    const manifest = await credentialCall('GET', setup, key);
+    expect(manifest.status).toBe(200);
+    expect(manifest.body.designAccess).toBe('publish');
+    const intake = '/api/projects/project-a/design/intake';
+    const access = await credentialCall('GET', intake, key);
+    expect(access.status).toBe(200);
+    expect(access.body.permissions.write).toBe(true);
+
+    const deniedReads = ['/api/projects/project-a', '/api/projects/project-a/planning/capabilities', '/api/projects/project-b/design/intake'];
+    for (const denied of deniedReads) expect((await credentialCall('GET', denied, key)).status).toBe(403);
+    const otherProjectApproval = '/api/projects/project-b/access-requests';
+    expect((await credentialCall('POST', otherProjectApproval, key, { designAccess: 'publish' })).status).toBe(403);
+
+    state.addProjectGrant({ id: 'passive-design-revoke-fixture', projectId: 'project-a', principalId, origin: 'approved', grantedAt: now });
+    expect(state.revokeProjectGrant('passive-design-revoke-fixture')).toBe(true);
+    expect((await credentialCall('GET', intake, key)).status).not.toBe(200);
+    expect((await credentialCall('GET', checkPath, key)).body.status).toBe('grant-revoked');
+    expect((await credentialCall('POST', approval, identity, { designAccess: 'publish' })).status).toBe(403);
+  });
+
+  it('lets the same anonymous design publisher revise after expiry and denies name or revoked-key recovery', async () => {
+    const projectId = 'project-a';
+    const approval = `/api/projects/${projectId}/access-requests`;
+    const designs = `/api/projects/${projectId}/design`;
+    const sourcePath = 'design/fixture';
+    const repo = path.join(dir, 'design-recovery-repo');
+    const source = path.join(repo, sourcePath);
+    fs.mkdirSync(path.join(source, 'dist'), { recursive: true });
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=CDS Test',
+      '-c', 'user.email=cds-test@example.test', ...args], { encoding: 'utf8' }).trim();
+    git('init', '-q');
+    state.updateProject(projectId, { repoPath: repo });
+
+    async function designRevision(revision: number) {
+      const title = `Fixture design V${revision}`;
+      fs.writeFileSync(path.join(source, 'design.json'), JSON.stringify({ project: projectId, title,
+        screens: [{ id: 'main', name: 'Main', route: '#main', viewport: 'desktop', impl: '/fixture/' }],
+        acceptance: [{ id: 'A-1', rule: 'Main loads', how: 'human', slots: ['desktop-light'] }],
+      }));
+      fs.writeFileSync(path.join(source, '思路.md'), '# Goal\nKeep the original design journey.');
+      fs.writeFileSync(path.join(source, 'dist', 'index.html'), `<!doctype html><html><body><h1>${title}</h1></body></html>`);
+      git('add', sourcePath);
+      git('commit', '-qm', title);
+      const sourceCommit = git('rev-parse', 'HEAD');
+      const archive = await readDesignSourceZip(repo, sourceCommit, sourcePath);
+      if (!archive) throw new Error('The local design fixture was not archived');
+      return { sourceCommit, archive };
+    }
+
+    function begin(key = '', agentName = 'Fixture designer') {
+      return credentialCall('POST', approval, key, { designAccess: 'publish', agentName });
+    }
+
+    async function issue(key = '', agentName?: string) {
+      const request = await begin(key, agentName);
+      expect(request.status).toBe(201);
+      const approve = await call('POST', `/api/access-requests/${request.body.requestId}/approve`, owner, {});
+      expect(approve.status).toBe(200);
+      const reply = await fetch(`${base}${approval}/${request.body.requestId}`, { headers: { 'X-Poll-Token': request.body.pollToken } });
+      expect(reply.status).toBe(200);
+      const { authorizationKey } = await reply.json() as { authorizationKey: string };
+      const credential = state.findAgentKeyForAuth(authorizationKey);
+      expect(credential).toMatchObject({ projectId, designAccess: 'publish' });
+      return { key: authorizationKey, keyId: credential!.keyId };
+    }
+
+    function expire(keyId: string) {
+      const entry = state.getAgentKeys(projectId).find(key => key.id === keyId);
+      expect(Boolean(entry?.expiresAt)).toBe(true);
+      entry!.expiresAt = new Date(Date.now() - 1000).toISOString();
+    }
+
+    function publish(key: string, input: Awaited<ReturnType<typeof designRevision>>, requestId: string, intent: Record<string, string>) {
+      const params = new URLSearchParams({ requestId, sourceCommit: input.sourceCommit, sourcePath, ...intent });
+      return fetch(`${base}${designs}/packages?${params}`, { method: 'POST', body: new Uint8Array(input.archive),
+        headers: { 'x-ai-access-key': key, 'Content-Type': 'application/zip' } });
+    }
+
+    const initial = await issue();
+    const first = await publish(initial.key, await designRevision(1), 'design-recovery-first', { intent: 'create', designKey: 'fixture/main' });
+    expect(first.status).toBe(201);
+    const { result: { designId } } = await first.json();
+    expire(initial.keyId);
+    expect((await credentialCall('GET', '/api/credentials/self-check', initial.key)).body.status).toBe('expired');
+    expect((await credentialCall('GET', `${designs}/intake`, initial.key)).status).toBe(401);
+    const outside = await credentialCall('POST', '/api/projects/project-b/access-requests', initial.key, { designAccess: 'publish' });
+    expect([401, 403]).toContain(outside.status);
+    expect(state.countPendingAccessRequests('project-b')).toBe(0);
+
+    const second = await designRevision(2);
+    const reviseFirst = { intent: 'revise', designId, expectedVersion: '1' };
+    const unrelated = await issue();
+    expect((await publish(unrelated.key, second, 'design-recovery-same-name', reviseFirst)).status).toBe(403);
+    const recovered = await issue(initial.key, 'Renamed fixture designer');
+    const recoveredIntake = await credentialCall('GET', `${designs}/intake`, recovered.key);
+    expect.soft(recoveredIntake.body.designs[0]).toMatchObject({ designId, canRevise: true });
+    const renewed = await publish(recovered.key, second, 'design-recovery-renewed', reviseFirst);
+    expect(renewed.status).toBe(201);
+
+    expire(recovered.keyId);
+    const recoveredAgain = await issue(recovered.key);
+    const third = await publish(recoveredAgain.key, await designRevision(3), 'design-recovery-third',
+      { intent: 'revise', designId, expectedVersion: '2' });
+    expect(third.status).toBe(201);
+    const published = await credentialCall('GET', designs, recoveredAgain.key);
+    const versions = published.body.designs.find((design: { id: string }) => design.id === designId).versions;
+    expect(versions.map((version: { version: number }) => version.version)).toEqual([1, 2, 3]);
+    expect(new Set(versions.map((version: { publisher: { id: string } }) => version.publisher.id)).size).toBe(1);
+
+    expire(recoveredAgain.keyId);
+    const pending = await begin(recoveredAgain.key);
+    expect(pending.status).toBe(201);
+    expect((await call('DELETE', `/api/projects/${projectId}/agent-keys/${recoveredAgain.keyId}`, owner)).status).toBe(200);
+    expect((await call('POST', `/api/access-requests/${pending.body.requestId}/approve`, owner, {})).status).toBe(409);
+    expect((await begin(recoveredAgain.key)).status).toBe(403);
+  });
+
+  it('authorizes a design agent only for the selected project and does not issue broader keys', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    const design = '/api/projects/project-a/design';
+    expect((await call('POST', keys, owner, { designAccess: 'write-all' })).status).toBe(400);
+    expect((await call('POST', keys, owner, { designAccess: 'publish', planningAccess: 'propose' })).status).toBe(400);
+    await grant(['project-a']);
+    expect((await call('POST', keys, member, { designAccess: 'publish' })).status).toBe(403);
+    const reader = await call('POST', keys, owner, { label: 'Fixture design reader', designAccess: 'read' });
+    const publisher = await call('POST', keys, owner, { label: 'Fixture design publisher', designAccess: 'publish' });
+    expect([reader.status, publisher.status]).toEqual([201, 201]);
+    expect((await credentialCall('GET', design, reader.body.plaintext)).body.permissions).toMatchObject({ write: false, review: false, sign: false });
+    const key = publisher.body.plaintext;
+    expect((await credentialCall('GET', design, key)).body.permissions).toMatchObject({ write: true, review: false, sign: false });
+    expect((await credentialCall('POST', design + '/packages', reader.body.plaintext, {})).status).toBe(403);
+    expect((await credentialCall('POST', design + '/commands', key, {})).status).toBe(403);
+    expect((await credentialCall('POST', keys, key, { label: 'Must not mint another key' })).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-a/planning/capabilities', key)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-b/design', key)).status).toBe(403);
+    expect((await call('GET', keys, owner)).body.keys).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: reader.body.keyId, designAccess: 'read' }),
+      expect.objectContaining({ id: publisher.body.keyId, designAccess: 'publish' }),
+    ]));
+    expect((await call('DELETE', keys + '/' + publisher.body.keyId, owner)).status).toBe(200);
+    expect((await credentialCall('GET', design, key)).status).not.toBe(200);
+  });
+
+  it('limits read-only engineering planning keys to reading the assigned project', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    const scope = '/api/projects/project-a/planning';
+    const issued = await call('POST', keys, owner, { label: 'Fixture planning reader', planningAccess: 'read' });
+    expect(issued.status).toBe(201);
+    const key = issued.body.plaintext;
+    const capability = await credentialCall('GET', scope + '/capabilities', key);
+    expect(capability.status).toBe(200);
+    expect(capability.body.permissions).toEqual(['read']);
+    const command = {
+      type: 'debt.create', requestId: 'fixture-reader-debt-1', title: 'A planning reader cannot record debt',
+      source: { type: 'manual', ref: 'fixture-read-role-1' },
+    };
+    expect((await credentialCall('POST', scope + '/commands', key, command)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-b/planning/debts', key)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-a/design', key)).status).toBe(403);
+    expect((await credentialCall('POST', keys, key, { label: 'Must not mint a wider key' })).status).toBe(403);
+    expect((await call('GET', scope + '/debts')).body.items).toEqual([]);
+  });
+
+  it('lets a planning proposer open a proposal without recording or confirming debt', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    const scope = '/api/projects/project-a/planning';
+    expect((await call('POST', keys, owner, { label: 'Invalid scope', planningAccess: 'any' })).status).toBe(400);
+    const issued = await call('POST', keys, owner, { label: 'Fixture planning proposer', planningAccess: 'propose' });
+    expect(issued.status).toBe(201);
+    const key = issued.body.plaintext;
+    const capability = await credentialCall('GET', scope + '/capabilities', key);
+    expect(capability.status).toBe(200);
+    expect(capability.body.permissions).toEqual(['read', 'propose']);
+    const source = { type: 'manual', ref: 'fixture-planning-proposer-1' };
+    const draft = { title: 'An approved person must confirm this proposal' };
+    const submitted = await credentialCall('POST', scope + '/commands', key, {
+      type: 'proposal.submit', requestId: 'fixture-proposer-draft-1', kind: 'debt', source, draft,
+    });
+    expect(submitted.status).toBe(201);
+    expect(submitted.body.result.status).toBe('pending');
+    expect((await credentialCall('POST', scope + '/commands', key, {
+      type: 'debt.create', requestId: 'fixture-proposer-debt-1', source, ...draft,
+    })).status).toBe(403);
+    expect((await credentialCall('POST', scope + '/commands', key, {
+      type: 'proposal.accept', requestId: 'fixture-proposer-confirm-1', proposalId: submitted.body.result.id,
+    })).status).toBe(403);
+    expect((await credentialCall('POST', keys, key, { label: 'Must not mint a wider key' })).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects/project-b/planning/capabilities', key)).status).toBe(403);
+    expect((await call('GET', scope + '/debts')).body.items).toEqual([]);
+    const ordinary = await call('POST', keys, owner, { label: 'Legacy key' });
+    expect(ordinary.status).toBe(201);
+    expect((await credentialCall('GET', scope + '/capabilities', ordinary.body.plaintext)).body.permissions)
+      .toEqual(['read', 'propose', 'write']);
   });
 
   it('filters stream snapshot and live events, rechecking grants after subscription', async () => {
@@ -1242,4 +1586,165 @@ describe('human project grants through the production server', () => {
       expect(after).not.toContain('revoked');
     } finally { abort.abort(); await reader.cancel().catch(() => {}); }
   });
+  async function recoveryTicket() {
+    state.getProject('project-a')!.gitRepoUrl = 'https://github.com/test/original.git';
+    state.getProject('project-b')!.gitRepoUrl = 'https://github.com/test/other.git';
+    state.save();
+    const request = await call('POST', '/api/identity-connections', '', { repository: 'git@github.com:test/original.git', agentName: '原设备恢复' });
+    expect(request.status).toBe(201);
+    const { requestId, pollToken } = request.body;
+    const poll = async (suffix = '', method = 'GET') => {
+      const response = await fetch(base + `/api/identity-connections/${requestId}${suffix}`, {
+        method, headers: { 'X-Poll-Token': pollToken },
+      });
+      const body = await response.text();
+      return { status: response.status, body: response.headers.get('content-type')?.includes('application/json') ? JSON.parse(body) : body };
+    };
+    const approve = (projectId = 'project-a', userId = memberId) => call('POST', `/api/identity/connections/${requestId}/approve`, owner, { projectId, userId });
+    return { requestId, pollToken, poll, approve };
+  }
+
+  it('opens a fresh ordinary account with no project access, then hands over only its authorized original project', async () => {
+    expect((await call('GET', '/api/projects', member)).body.projects).toHaveLength(0);
+    const t = await recoveryTicket();
+    expect((await t.poll()).body).toEqual({ status: 'pending' });
+    expect((await t.approve()).status).toBe(409);
+    await grant(['project-a', 'project-b']);
+    expect((await t.approve('project-b')).status).toBe(409);
+    expect((await t.approve()).status).toBe(200);
+    const result = (await t.poll()).body;
+    expect(result).toMatchObject({ status: 'approved', projectId: 'project-a' });
+    expect((await credentialCall('GET', '/api/projects/project-a', result.authorizationKey)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-b', result.authorizationKey)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/projects', result.userCredential)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+    expect((await credentialCall('GET', '/api/identity/whoami', result.userCredential)).body.grants.map((g: any) => g.projectId)).toEqual(['project-a']);
+    expect((await credentialCall('POST', '/api/projects', result.userCredential, { name: '不应创建' })).status).toBe(403);
+    expect((await credentialCall('POST', '/api/identity/project-credentials', result.userCredential, { projectId: 'project-b' })).status).toBe(403);
+    expect((await credentialCall('POST', '/api/projects/project-b/access-requests', result.userCredential, {})).status).toBe(401);
+    const overview = await call('GET', '/api/identity/connections');
+    expect(JSON.stringify(overview.body)).not.toMatch(/pollToken|ciphertext|authorizationKey|userCredential/);
+    expect((await call('GET', '/api/identity/connections', member)).status).toBe(403);
+    expect((await credentialCall('GET', '/api/identity/connections', result.authorizationKey)).status).toBe(403);
+  });
+
+  it.each(['flush', 'save-and-compensation'] as const)('keeps approved recovery retryable and failed credentials revoked after %s fails', async failure => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    if (failure === 'flush') vi.spyOn(state, 'flush').mockRejectedValueOnce(new Error('fake delivery flush failure'));
+    else {
+      const fail = () => { throw new Error('fake delivery save failure'); };
+      vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail);
+    }
+    expect((await t.poll()).status).toBe(500);
+    const request = state.getIdentityConnections().find(r => r.id === t.requestId)!;
+    expect(request.status).toBe('approved');
+    expect(request.userCredentialId).toBeUndefined(); expect(request.projectCredentialId).toBeUndefined();
+    expect(request.envelope).toBeUndefined();
+    expect(state.getUserCredentials().every(c => Boolean(c.revokedAt))).toBe(true);
+    expect(state.getAgentKeys('project-a').every(k => Boolean(k.revokedAt))).toBe(true);
+    const retry = await t.poll();
+    expect(retry.status).toBe(200); expect(retry.body.status).toBe('approved');
+    expect(state.getUserCredentials().filter(c => !c.revokedAt)).toHaveLength(1);
+    expect(state.getAgentKeys('project-a').filter(k => !k.revokedAt)).toHaveLength(1);
+    expect((await credentialCall('GET', '/api/projects/project-a', retry.body.authorizationKey)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-b', retry.body.authorizationKey)).status).toBe(403);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getIdentityConnections().find(r => r.id === t.requestId)?.status).toBe('approved');
+    expect(restored.getUserCredentials().filter(c => !c.revokedAt)).toHaveLength(1);
+  });
+
+  it('replays only the same encrypted credential pair until acknowledgement, with no plaintext or decryption key in saved state', async () => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    const first = (await t.poll()).body; const again = (await t.poll()).body;
+    expect(again).toEqual(first);
+    const r = state.getIdentityConnections().find(r => r.id === t.requestId)!;
+    const saved = fs.readFileSync(path.join(dir, 'state.json'), 'utf8');
+    expect(saved).not.toContain(first.userCredential); expect(saved).not.toContain(first.authorizationKey); expect(saved).not.toContain(t.pollToken);
+    const e = r.envelope!;
+    const decipher = createDecipheriv('aes-256-gcm', Buffer.from(r.pollTokenHash, 'hex'), Buffer.from(e.iv, 'hex'));
+    decipher.setAAD(Buffer.from(r.id)); decipher.setAuthTag(Buffer.from(e.tag, 'hex'));
+    expect(() => Buffer.concat([decipher.update(Buffer.from(e.ciphertext, 'hex')), decipher.final()])).toThrow();
+    const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getIdentityConnections().find(r => r.id === t.requestId)?.envelope).toEqual(e);
+    expect(resolveUserCredential(restored, first.userCredential)?.principalId).toBe(humanPrincipalId(memberId));
+    expect((await t.poll('/ack', 'POST')).body.delivered).toBe(true);
+    expect((await t.poll()).body.status).toBe('delivered');
+    expect(r.envelope).toBeUndefined();
+    expect(state.getUserCredentials().filter(c => c.principalId === humanPrincipalId(memberId))).toHaveLength(1);
+  });
+
+  it('cannot resurrect the encrypted envelope or issue a second pair when ACK races a retry poll', async () => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve(); await t.poll();
+    const original = store.findUserById.bind(store);
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    vi.spyOn(store, 'findUserById').mockImplementationOnce(async id => { entered(); await gate; return original(id); });
+    const pending = t.poll(); await waiting;
+    expect((await t.poll('/ack', 'POST')).body.delivered).toBe(true);
+    release(); expect((await pending).body.status).toBe('delivered');
+    expect(state.getUserCredentials()).toHaveLength(1); expect(state.getAgentKeys('project-a')).toHaveLength(1);
+    expect(state.getIdentityConnections().find(r => r.id === t.requestId)?.envelope).toBeUndefined();
+  });
+
+  it('rechecks account and complete project withdrawal before approving and delivering a recovery', async () => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await t.poll()).body.status).toBe('blocked'); expect(state.getUserCredentials()).toHaveLength(0);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' }); await grant([]);
+    expect((await t.poll()).body.status).toBe('blocked'); expect(state.getAgentKeys('project-a')).toHaveLength(0);
+    await grant(['project-a']); const first = (await t.poll()).body;
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await t.poll()).body.status).toBe('blocked');
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect((await t.poll()).body.authorizationKey).toBe(first.authorizationKey);
+  });
+
+  it('rejects unknown poll tickets, expired requests, approval replay and approval by a member', async () => {
+    await grant(['project-a']); const t = await recoveryTicket();
+    expect((await call('GET', `/api/identity-connections/${t.requestId}`, '')).status).toBe(403);
+    expect((await call('POST', `/api/identity/connections/${t.requestId}/approve`, member, { projectId: 'project-a', userId: memberId })).status).toBe(403);
+    await t.approve(); expect((await t.approve()).status).toBe(409);
+    state.getIdentityConnections().find(r => r.id === t.requestId)!.expiresAt = new Date(0).toISOString();
+    expect((await t.poll()).status).toBe(410);
+  });
+
+  it.each(['permanent', 'finite'] as const)('preserves a claimed legacy key original %s expiry without issuing another credential', async expiry => {
+    await grant(['project-a']);
+    const plain = 'cdsp_projecta_claim-expiry';
+    const expiresAt = expiry === 'finite' ? new Date(Date.now() + 60 * 86_400_000).toISOString() : undefined;
+    const original = { id: 'legacy-expiry', hash: createHash('sha256').update(plain).digest('hex'), scope: 'rw' as const,
+      label: '原期限', createdAt: '2020-01-01T00:00:00.000Z', ...(expiresAt ? { expiresAt } : {}) };
+    state.addAgentKey('project-a', { ...original });
+    expect((await call('POST', '/api/identity/legacy-credentials/project-a/legacy-expiry/claim', owner, { userId: memberId })).status).toBe(200);
+    const claimed = state.getAgentKeys('project-a').find(k => k.id === original.id)!;
+    expect(claimed.expiresAt).toBe(expiresAt); expect(claimed).toMatchObject(original);
+    expect(state.getUserCredentials()).toHaveLength(0); expect(state.getAgentKeys('project-a')).toHaveLength(1);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getAgentKeys('project-a')[0].expiresAt).toBe(expiresAt);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 86_400_000);
+    expect(restored.findAgentKeyForAuth(plain)).toEqual({ projectId: 'project-a', keyId: original.id });
+  });
+
+  it('binds only an explicitly selected unclaimed key, preserving scope, and account/project gates follow the claimed identity', async () => {
+    await grant(['project-a']); const plain = 'cdsp_projecta_only-this-unclaimed';
+    state.addAgentKey('project-a', { id: 'legacy-one', hash: createHash('sha256').update(plain).digest('hex'), scope: 'rw', label: '仅本次测试', createdAt: new Date().toISOString() });
+    state.addAgentKey('project-a', { id: 'legacy-other', hash: createHash('sha256').update('cdsp_other-legacy').digest('hex'), scope: 'rw', label: '其他凭据', createdAt: new Date().toISOString() });
+    const claim = () => call('POST', '/api/identity/legacy-credentials/project-a/legacy-one/claim', owner, { userId: memberId });
+    expect((await call('POST', '/api/identity/legacy-credentials/project-a/legacy-one/claim', member, { userId: memberId })).status).toBe(403);
+    expect((await claim()).status).toBe(200);
+    expect(state.getAgentKeys('project-a').find(k => k.id === 'legacy-one')).toMatchObject({ principalId: humanPrincipalId(memberId), scope: 'rw', claimedBy: 'owner' });
+    expect(state.getAgentKeys('project-a').find(k => k.id === 'legacy-other')?.principalId).toBeUndefined();
+    expect((await claim()).status).toBe(409);
+    expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(200);
+    await grant([]); expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(401);
+    await grant(['project-a']); expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(200);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(401);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    state.revokeAgentKey('project-a', 'legacy-one'); expect((await claim()).status).toBe(409);
+    expect((await credentialCall('GET', '/api/projects/project-a', plain)).status).toBe(401);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getAgentKeys('project-a').find(k => k.id === 'legacy-one')?.claimedBy).toBe('owner');
+  });
+
 });

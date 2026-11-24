@@ -318,7 +318,7 @@ describe('接入申请批准 = 写授权，不只是发钥匙', () => {
     expect(source).toContain('addProjectGrant');
     expect(source).toContain("origin: 'approved'");
     // 申请阶段必须认一次主体，否则批准时无从写起
-    expect(source).toContain('resolveUserCredential');
+    expect(source).toContain('inspectAccessRecovery');
   });
 });
 

@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useSseStream, type SseStartOverrides } from '@/lib/useSseStream';
+import { useAuthStore } from '@/stores/authStore';
 
 export interface UseAiPreviewStreamOptions {
   /** SSE 端点 URL (POST) */
@@ -60,6 +61,8 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   const [model, setModel] = useState<AiPreviewModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const lastBodyRef = useRef<unknown>(undefined);
+  const openRef = useRef(false);
+  const authEpochRef = useRef<number | null>(null);
 
   const sse = useSseStream({
     url: opts.url,
@@ -82,6 +85,10 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   });
 
   const start = (override?: unknown) => {
+    // 同一轮渲染内的连续触发也只打开一个请求。
+    if (openRef.current) return;
+    authEpochRef.current = useAuthStore.getState().authSessionEpoch;
+    openRef.current = true;
     setOpen(true);
     setThinking('');
     setModel(null);
@@ -94,6 +101,9 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   };
 
   const cancel = () => {
+    openRef.current = false;
+    authEpochRef.current = null;
+    lastBodyRef.current = undefined;
     sse.abort();
     sse.reset();
     setThinking('');
@@ -103,6 +113,8 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   };
 
   const apply = () => {
+    if (authEpochRef.current !== useAuthStore.getState().authSessionEpoch) { cancel(); return; }
+    if (sse.isStreaming || error || !sse.typing.trim()) return;
     const raw = sse.typing;
     const final = opts.transform ? opts.transform(raw) : raw;
     opts.onApply(final);
@@ -110,6 +122,8 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   };
 
   const regenerate = (override?: unknown) => {
+    if (authEpochRef.current !== useAuthStore.getState().authSessionEpoch) { cancel(); return; }
+    if (sse.isStreaming) return;
     sse.abort();
     sse.reset();
     setThinking('');

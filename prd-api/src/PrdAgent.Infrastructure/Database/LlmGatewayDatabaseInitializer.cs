@@ -387,9 +387,8 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                     .Ascending(x => x.RequestId)
                     .Ascending(x => x.Operation),
                 new CreateIndexOptions { Name = "uniq_llmgw_execution_tenant_request", Unique = true }),
-            new CreateIndexModel<GatewayRequestExecutionRecord>(
-                Builders<GatewayRequestExecutionRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
-                new CreateIndexOptions { Name = "ttl_llmgw_request_executions", ExpireAfter = TimeSpan.Zero }),
+            // Execution records contain complete request bodies. They are preserved
+            // by verified offsite archiving, never by an unconditional TTL index.
         }, cancellationToken: ct);
         await DropIndexIfPresentAsync(executions, "uniq_llmgw_execution_request", ct);
 

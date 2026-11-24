@@ -34,6 +34,9 @@ public class InfraConnection
     /// <summary>MAP 为 CDS 自动签发的永久缺陷转发 Key ID；删除连接时同步撤销。</summary>
     public string MapAgentApiKeyId { get; set; } = string.Empty;
 
+    /// <summary>仅用于已绑定项目的 CDS 工作区，不参与缺陷转发或侧车发现。</summary>
+    public bool WorkspaceOnly { get; set; }
+
     /// <summary>长效 token 过期时间。系统级长期授权使用远未来时间，仅用于 UI 展示。</summary>
     public DateTime LongTokenExpiresAt { get; set; }
 

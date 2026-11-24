@@ -22,7 +22,7 @@ class DispatchTests(unittest.TestCase):
         for i in range(100): self.submit(str(i))
         self.guard.flush(29); self.assertEqual(self.calls, [])
         self.guard.flush(30); self.assertEqual(len(self.calls), 1)
-        self.assertIn('100', self.calls[0]['title'])
+        self.assertIn('100', self.calls[0]['body'])
         self.assertEqual(len(next(iter(self.state['destinations'].values()))['receipts']), 100)
         self.assertTrue(self.submit('99', 40))
     def test_new_faults_same_source_preserved_and_bounded(self):
@@ -32,8 +32,8 @@ class DispatchTests(unittest.TestCase):
         for i in range(100): self.submit('new-' + str(i), 91)
         self.guard.flush(329); self.assertEqual(len(self.calls), 2)
         self.guard.flush(330); self.assertEqual(len(self.calls), 3)
-        self.assertIn('100', self.calls[-1]['title'])
-        self.assertIn('new-0', self.calls[-1]['body'])
+        self.assertIn('100', self.calls[-1]['body'])
+        self.assertNotIn('new-0', self.calls[-1]['body'])
     def test_restart_after_send_intent_and_unknown_result_no_replay(self):
         self.submit('first'); self.guard.flush(30)
         reserved = next(s for s in self.snapshots if next(iter(s['destinations'].values()))['receipts'])
@@ -60,8 +60,8 @@ class DispatchTests(unittest.TestCase):
         relay.process(state, 62, lambda: None, dispatcher=self.guard)
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(len(state['receipts']), 100)
-        self.assertIn('故障 99', self.calls[0]['body'])
-        self.assertIn('platform-outage', self.calls[0]['body'])
+        self.assertNotIn('故障 99', self.calls[0]['body'])
+        self.assertNotIn('platform-outage', self.calls[0]['body'])
     def test_queued_platform_is_not_reported_accepted_and_persisted_before_send(self):
         state = {'incident': {'id': 'incident', 'reason': 'unreachable'}}
         config = {'bark': self.channel['bark'], 'publicUrl': 'https://status.example/'}
@@ -87,7 +87,8 @@ class DispatchTests(unittest.TestCase):
             for i in range(100): guard.submit(channel, {'title': '独立故障 ' + str(i), 'body': 'test'}, str(i), 0)
             guard.flush(30)
             self.assertEqual(len(requests), 1)
-            self.assertEqual(requests[0]['title'], '有 100 项监控变化，请查看')
+            self.assertEqual(requests[0]['title'], '环境待确认 系统待确认')
+            self.assertEqual(requests[0]['body'], '新增100项消息')
         finally:
             server.shutdown(); server.server_close(); worker.join()
 
@@ -127,6 +128,6 @@ class PriorityTests(DispatchTests):
         for t in range(0, 300, 5):
             self.urgent('new-' + str(t), t); self.guard.flush(t)
         self.assertEqual(len(self.calls), 5)
-        self.assertIn('new-0', self.calls[0]['body'])
+        self.assertEqual(self.calls[0]['body'], '新增1000项消息')
 
 if __name__ == '__main__': unittest.main()

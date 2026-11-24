@@ -78,8 +78,6 @@ export class JsonStateBackingStore implements StateBackingStore {
   private flushScheduled = false;
   /** 串行写链：一次只有一个磁盘写在飞，后来的快照排队。 */
   private writeChain: Promise<void> = Promise.resolve();
-  /** 最近一次写盘失败的错误；flush() 时抛出，避免静默吞错。 */
-  private lastWriteError: Error | null = null;
   private lastBackupAtMs = 0;
 
   private readonly storeId = randomUUID();
@@ -149,11 +147,6 @@ export class JsonStateBackingStore implements StateBackingStore {
     }
     this.flushScheduled = false;
     await this.writeChain;
-    if (this.lastWriteError) {
-      const err = this.lastWriteError;
-      this.lastWriteError = null;
-      throw err;
-    }
   }
 
   /** 序列化当前 dirty state（序列化即不可变快照）并入串行写队列。 */
@@ -162,12 +155,20 @@ export class JsonStateBackingStore implements StateBackingStore {
     const live = this.dirtyState;
     if (!live) return;
     this.dirtyState = null;
-    const serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
-    this.writeChain = enqueueTargetWrite(this.filePath, () => this.writeToDisk(serialized))
-      .catch((err) => {
-        this.lastWriteError = err as Error;
-        console.error(`[state] async state.json write failed: ${(err as Error).message}`);
-      });
+    try {
+      const serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
+      this.writeChain = enqueueTargetWrite(this.filePath, () => this.writeToDisk(serialized));
+    } catch (error) {
+      this.writeChain = Promise.reject(error);
+    }
+    // 每个 flush 等待自己捕获的同一个写入 Promise。观察者不能消费或清除别人的
+    // 失败；较新的成功写也不追认旧失败。这里只旁路记录，绝不把失败写链改成 fulfilled。
+    void this.writeChain.catch((error) => {
+      try {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[state] async state.json write failed: ${message}`);
+      } catch { /* 诊断旁路失败也不能制造未处理拒绝或改变原始写入结果。 */ }
+    });
   }
 
   private async writeToDisk(serialized: string): Promise<void> {

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { getSiteContent } from '@/services/real/webPages';
-import { canUseSrcDocPreview, hasFetchableHtml, withPreviewBase } from './previewHtml';
+import { useCallback, useEffect, useState } from 'react';
+import { getSiteContent, getShareSiteContent } from '@/services/real/webPages';
+import { canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 
 /**
  * 取回托管站点入口 HTML，备好可以直接塞进 iframe `srcDoc` 的字符串。
@@ -31,10 +31,14 @@ export interface SitePreviewHtmlSite {
   entryFile?: string;
   wrappedAssetType?: string | null;
   pdfAssetUrl?: string;
+  pdfFilePaths?: readonly string[];
+  contentShape?: 'self-contained-html' | 'multi-file';
+  requiresPreviewBridge?: boolean;
+  shareAccess?: { token: string; password?: string };
 }
 
 function cacheKey(site: SitePreviewHtmlSite) {
-  return `${site.id}::${site.siteUrl}`;
+  return `${site.shareAccess?.token ?? 'account'}::${site.shareAccess?.password ?? ''}::${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}`;
 }
 
 async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
@@ -47,7 +51,9 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
 
   const task = (async (): Promise<CacheEntry> => {
     try {
-      const res = await getSiteContent(site.id);
+      const res = site.shareAccess
+        ? await getShareSiteContent(site.shareAccess.token, site.id, site.shareAccess.password)
+        : await getSiteContent(site.id);
       if (res.success && res.data?.html) {
         const html = res.data.html;
         // 打包型 SPA（入口是外链 module 脚本）必须留在直链：srcDoc 的不透明源会让模块脚本
@@ -78,9 +84,16 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
 export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: boolean) {
   const [entry, setEntry] = useState<CacheEntry & { key: string }>({ key: '', srcDoc: null, error: null });
   const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   const key = site ? cacheKey(site) : '';
-  const fetchable = !!site && hasFetchableHtml(site);
+  const fetchable = !!site && shouldFetchPreviewHtml(site);
+  const retry = useCallback(() => {
+    if (!enabled || !fetchable) return;
+    cache.delete(key);
+    setEntry({ key: '', srcDoc: null, error: null });
+    setAttempt(value => value + 1);
+  }, [enabled, fetchable, key]);
 
   useEffect(() => {
     if (!site || !enabled || !fetchable) {
@@ -104,10 +117,16 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
     return () => { alive = false; };
     // site 是每次渲染新建的对象字面量，依赖它会无限重取；key 已经涵盖 id + siteUrl 的变化。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled, fetchable]);
+  }, [key, enabled, fetchable, attempt]);
 
   const current = entryForKey(entry, key);
-  return { srcDoc: current.srcDoc, error: current.error, loading };
+  return {
+    srcDoc: fetchable ? current.srcDoc : null,
+    error: fetchable ? current.error : null,
+    loading: fetchable && loading,
+    settled: !enabled || !fetchable || (entry.key === key && !loading),
+    retry,
+  };
 }
 
 /**

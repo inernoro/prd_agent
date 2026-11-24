@@ -19,7 +19,7 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// </summary>
 [ApiController]
 [Route("api/official-skills")]
-public class OfficialSkillsController : ControllerBase
+public partial class OfficialSkillsController : ControllerBase
 {
     private readonly IConfiguration _config;
     private readonly ILogger<OfficialSkillsController> _logger;
@@ -35,7 +35,7 @@ public class OfficialSkillsController : ControllerBase
     /// GET /api/official-skills/{skillKey}/download
     /// </summary>
     [HttpGet("{skillKey}/download")]
-    public IActionResult Download(string skillKey)
+    public IActionResult Download(string skillKey, [FromQuery] string? client = null)
     {
         var baseUrl = ResolveBaseUrl();
 
@@ -77,6 +77,15 @@ public class OfficialSkillsController : ControllerBase
         var entry = OfficialSkillCatalog.Find(skillKey);
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
+
+        if (entry.Key == MapAgentKey)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var workBuddy = string.Equals(client, "workbuddy", StringComparison.OrdinalIgnoreCase);
+            if (client != null && !workBuddy && !string.Equals(client, "codex", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "技能客户端请选择 codex 或 workbuddy"));
+            return File(PackMapAgent(entry, workBuddy), "application/zip", workBuddy ? "map-agent-workbuddy.zip" : $"{entry.Key}.zip");
+        }
 
         var entries = OfficialSkillCatalog.ExpandWithRequires([entry.Key], out var missing);
         if (missing.Count > 0)

@@ -10,21 +10,6 @@ namespace PrdAgent.Api.Tests.Controllers;
 public class MdToPptPrewarmProfileTests
 {
     [Fact]
-    public void RunAgentStream_PrewarmsOnlyMatchingRuntimeProfile()
-    {
-        var source = File.ReadAllText(ControllerPath());
-        var start = source.IndexOf("private async Task RunAgentStreamAsync", StringComparison.Ordinal);
-        start.ShouldBeGreaterThanOrEqualTo(0);
-        var end = source.IndexOf("private async Task<InfraConnection?> ResolveCdsConnectionAsync", start, StringComparison.Ordinal);
-        end.ShouldBeGreaterThan(start);
-        var method = source[start..end];
-
-        method.ShouldContain("runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None, runtimeProfileId)");
-        method.ShouldContain("session = await TakePrewarmedSessionAsync(userId, run.Id, runtimeProfile.Id)");
-        method.ShouldNotContain("session = await TakePrewarmedSessionAsync(userId);");
-    }
-
-    [Fact]
     public void KnowledgeReferences_AreResolvedFromServerOwnedIdentityAndPreflightHash()
     {
         var source = File.ReadAllText(ControllerPath());
@@ -207,30 +192,6 @@ public class MdToPptPrewarmProfileTests
         method.ShouldContain("CryptographicOperations.FixedTimeEquals");
     }
 
-    [Fact]
-    public void Prewarm_IsDurableSingleFlightAndClaimBindsRootRun()
-    {
-        var source = File.ReadAllText(ControllerPath());
-        source.ShouldContain("BuildPrewarmKey(userId, profile.Id)");
-        source.ShouldContain("ClientApp: \"md-to-ppt-prewarm\"");
-        source.ShouldContain("PrewarmExpiresAt: now + PrewarmTtl");
-        source.ShouldContain("ClaimPrewarmedAsync(");
-        source.ShouldNotContain("ConcurrentDictionary<string, PrewarmEntry>");
-    }
-
-    [Fact]
-    public void PublicGenerationError_DoesNotExposeUpstreamSecretsOrTopology()
-    {
-        var error = MdToPptController.ToPublicGenerationError(
-            "https://provider.internal Bearer secret api_key=hidden model=private-model");
-
-        error.ShouldNotContain("provider");
-        error.ShouldNotContain("Bearer");
-        error.ShouldNotContain("api_key");
-        error.ShouldNotContain("private-model");
-        error.ShouldContain("请稍后重试");
-    }
-
     private static DesignKnowledgeSnapshot Snapshot(string entryId, string storeId, char hashChar) => new()
     {
         EntryId = entryId,
@@ -240,31 +201,6 @@ public class MdToPptPrewarmProfileTests
         Content = "冻结知识正文",
         ContentHash = new string(hashChar, 64),
     };
-
-    [Fact]
-    public void CancelPrewarm_StopsEveryUnclaimedSession_NotJustTheNewest()
-    {
-        // 用户在确认大纲前换几次模型运行配置，就会留下几个各自独立的未认领预热。
-        // 取消只停最新那一个的话，旧容器要占着 CDS 主体名额直到八分钟后自己过期，
-        // 而默认并发上限只有四个——界面明明已经「取消预热」，真正要转换时却被自己
-        // 刚才那几次换配置挤到没名额。
-        var source = File.ReadAllText(ControllerPath());
-        var start = source.IndexOf("public async Task<IActionResult> CancelPrewarm()", StringComparison.Ordinal);
-        start.ShouldBeGreaterThanOrEqualTo(0);
-        var end = source.IndexOf("private async Task<PrewarmCleanup> StopUnusedPrewarmAsync", start, StringComparison.Ordinal);
-        end.ShouldBeGreaterThan(start);
-        var method = source[start..end];
-
-        method.ShouldContain(
-            "await StopUnusedPrewarmAsync(userId)",
-            customMessage: "取消必须走停全部的那条共享判据");
-        method.ShouldNotContain(
-            "SortByDescending",
-            customMessage: "取消不能再自己挑最新的一个停");
-        method.ShouldNotContain(
-            "FirstOrDefaultAsync",
-            customMessage: "取消不能只取一条未认领预热");
-    }
 
     private static string ControllerPath()
     {

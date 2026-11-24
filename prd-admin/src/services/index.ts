@@ -23,6 +23,7 @@ import type {
 import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
+  HandleBatchAdminNotificationsContract,
   HandleAllAdminNotificationsContract,
   GetAdminPushSubscriptionsContract,
   UpdateAdminPushProfileContract,
@@ -305,6 +306,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import {
+  completeCdsLoginReal,
   getSsoOptionsReal,
   loginReal,
   loginWithMiduoPlanetTokenReal,
@@ -374,6 +376,7 @@ import {
 } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
+  getModelLabModelOptionsReal,
   createModelLabExperimentReal,
   deleteModelLabExperimentReal,
   getModelLabExperimentReal,
@@ -383,6 +386,7 @@ import {
   updateModelLabExperimentReal,
   upsertModelLabModelSetReal,
 } from '@/services/real/modelLab';
+export const getModelLabModelOptions = withAuth(getModelLabModelOptionsReal);
 import {
   cancelImageGenRunReal,
   clarifyImageGenPromptReal,
@@ -526,6 +530,7 @@ import {
   getLiteraryAgentImageGenResolvedModelReal,
   getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
+  getLiteraryAgentRunByRequestReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
   listReferenceImageConfigsMarketplaceReal,
@@ -617,6 +622,7 @@ import {
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
+  handleBatchAdminNotificationsReal,
   handleAllAdminNotificationsReal,
   getAdminPushSubscriptionsReal,
   updateAdminPushProfileReal,
@@ -869,6 +875,7 @@ function withAuth<TArgs extends unknown[], TResult>(
 
 export const login: LoginContract = loginReal;
 export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
+export const completeCdsLogin = completeCdsLoginReal;
 export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
 export const loginWithSyntheticTicket: SyntheticLoginContract = loginWithSyntheticTicketReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;
@@ -1131,6 +1138,7 @@ export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = with
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
 export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
+export const getLiteraryAgentRunByRequest = withAuth(getLiteraryAgentRunByRequestReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
 // Reference Image Configs 海鲜市场
@@ -1337,6 +1345,7 @@ export const viewTeamWeekShare = viewTeamWeekShareReal;
 
 // Arena 竞技场
 import {
+  getArenaModelOptionsReal,
   listArenaGroupsReal,
   createArenaGroupReal,
   updateArenaGroupReal,
@@ -1358,6 +1367,7 @@ import {
 } from '@/services/real/arena';
 export type { ArenaAttachmentInfo } from '@/services/real/arena';
 
+export const getArenaModelOptions = withAuth(getArenaModelOptionsReal);
 export const listArenaGroups = withAuth(listArenaGroupsReal);
 export const createArenaGroup = withAuth(createArenaGroupReal);
 export const updateArenaGroup = withAuth(updateArenaGroupReal);
@@ -2428,3 +2438,5 @@ export type {
   FrontEndAgentRequest,
   FrontEndAgentTaskType,
 } from '@/services/real/frontEndAgent';
+
+export const handleBatchAdminNotifications: HandleBatchAdminNotificationsContract = withAuth(handleBatchAdminNotificationsReal);

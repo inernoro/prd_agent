@@ -13,7 +13,7 @@
  * ReleaseService，没有任何注入）+ **真 express 路由**跑完整链路，只有健康检查是
  * 本地 http 服务器。没有 sshd 时整套跳过，不拖累 CI。
  *
- * 起 sshd 的方式见 doc/debt.cds.release-system.md「尚未取得真实环境证据」一节。
+ * 起 sshd 的方式见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md「尚未取得真实环境证据」一节。
  */
 
 import fs from 'node:fs';
@@ -32,6 +32,7 @@ import type { ReleaseTarget } from '../../src/types.js';
 
 const SSH_HOST = '127.0.0.1';
 const SSH_PORT = Number(process.env.CDS_RELEASE_E2E_SSH_PORT || 2222);
+const SSH_USER = process.env.CDS_RELEASE_E2E_SSH_USER || os.userInfo().username;
 /**
  * 客户端私钥路径。默认值曾经是一个 **session 级的 scratchpad 绝对路径**——换一次
  * 会话那个目录就没了，`sshReachable()` 因 `existsSync` 失败静默返回 false，整套
@@ -88,7 +89,7 @@ function releaseTarget(healthcheckUrl: string, deployCommand: string): ReleaseTa
     ssh: {
       host: SSH_HOST,
       port: SSH_PORT,
-      user: 'root',
+      user: SSH_USER,
       privateKeyRef: 'host-e2e',
       appPath: '/tmp',
       deployCommand,
@@ -193,7 +194,7 @@ beforeAll(async () => {
     name: '本机',
     host: SSH_HOST,
     sshPort: SSH_PORT,
-    sshUser: 'root',
+    sshUser: SSH_USER,
     sshPrivateKeyEncrypted: fs.readFileSync(SSH_KEY, 'utf-8'),
     sshPrivateKeyFingerprint: 'e2e',
     tags: [],

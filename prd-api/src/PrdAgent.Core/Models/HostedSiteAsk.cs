@@ -73,5 +73,14 @@ public class HostedSiteAskMessage
     /// <summary>失败时的错误摘要（Role=assistant 且回答失败时填）</summary>
     public string? Error { get; set; }
 
+    /// <summary>提问者对这条回答的 1–5 分评价；重复提交更新同一条记录。</summary>
+    public int? Rating { get; set; }
+    public DateTime? RatedAt { get; set; }
+
+    /// <summary>仅存回执摘要，不通过任何消息序列化接口泄露评价权限。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? RatingTokenHash { get; set; }
+    public string? DeploymentSlug { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

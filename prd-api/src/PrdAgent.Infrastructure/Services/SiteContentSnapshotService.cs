@@ -17,8 +17,8 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class SiteContentSnapshotService : ISiteContentSnapshotService
 {
-    /// <summary>喂给模型的正文总预算（字符）。约 1.5-2 万 token 量级，给回答留足空间。</summary>
-    private const int TotalBudget = 24000;
+    /// <summary>正文总预算（字符）。保留长页的条件、表格和结尾，仍对匿名调用设硬上限。</summary>
+    internal const int TotalBudget = 64000;
 
     /// <summary>单个文件最多贡献多少字符，防止一个巨型文件把预算吃光、其它文件一个字进不去。</summary>
     private const int PerFileBudget = 8000;
@@ -72,7 +72,7 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         // 缓存键带内容版本：重新上传会换版本 → 自动击穿；改标题等元数据不动版本 → 继续命中。
         // 与 SiteUrl 的 ?v= 指纹同一个口径（EffectiveContentVersion），不另立标准。
         var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
-        var cacheKey = $"site-ask-snapshot:{site.Id}:{version.Ticks}";
+        var cacheKey = $"site-ask-snapshot:v2:{site.Id}:{version.Ticks}";
         if (_cache.TryGetValue<SiteContentSnapshot>(cacheKey, out var cached) && cached != null)
             return cached;
 
@@ -149,14 +149,13 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             }
             if (bytes.Length == 0) continue;
 
-            var text = ExtractText(bytes, file);
+            var (text, partial) = ExtractText(bytes, file);
+            result.Truncated |= partial;
             if (string.IsNullOrWhiteSpace(text)) continue;
 
             totalChars += text.Length;
-            // 单文件站点就是一个完整长页面，不能仍按 8000 字截断：用户问到页面后半段时，
-            // 模型虽然“读到了正文”，实际却永远看不到答案。多文件站按文件数公平分配总预算，
-            // 至少保留原有 8000 字下限，既用满上下文，又不让一个大文件吞掉其它文件。
-            var perFileBudget = picked.Count == 1
+            // 入口就是读者正在问的页面。旁边有 JSON/文本附件时也不能把入口缩到 8000 字。
+            var perFileBudget = picked.Count == 1 || IsEntryFile(site, file)
                 ? TotalBudget
                 : Math.Max(PerFileBudget, TotalBudget / picked.Count);
             if (text.Length > perFileBudget)
@@ -198,6 +197,7 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         {
             // 攒到了一部分，但有文件没读回来：内容不完整，如实标注
             result.Truncated = true;
+            result.TransientFailure = true;
         }
 
         return result;
@@ -315,20 +315,21 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         return (ordered, Math.Max(0, rest.Count - MaxFilesPerSite) + oversized);
     }
 
-    private string? ExtractText(byte[] bytes, HostedSiteFile file)
+    private (string? Text, bool Partial) ExtractText(byte[] bytes, HostedSiteFile file)
     {
         var ext = Path.GetExtension(file.Path);
 
         if (string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase))
-            return _extractor.Extract(bytes, "application/pdf", file.Path);
+            return (_extractor.Extract(bytes, "application/pdf", file.Path), false);
 
         var raw = DecodeUtf8(bytes);
-        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (string.IsNullOrWhiteSpace(raw)) return (null, false);
 
         return ext.Equals(".html", StringComparison.OrdinalIgnoreCase)
                || ext.Equals(".htm", StringComparison.OrdinalIgnoreCase)
-            ? HtmlToPlainText(raw)
-            : Collapse(raw);
+            // 脚本静态提取只能读到部分文本节点，不能声称已经读完整个动态页面。
+            ? (HtmlToPlainText(raw), IsConfirmedClientRenderedShell(raw))
+            : (Collapse(raw), false);
     }
 
     private static string DecodeUtf8(byte[] bytes)
@@ -362,10 +363,15 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     private static string ExtractStaticMarkupText(string html)
     {
         var s = StripInertMarkup(html);
-        // 块级标签转换行，保住段落感；否则整页会被压成一行，模型很难引用"某一段"
-        s = Regex.Replace(s, @"<(br|/p|/div|/li|/h[1-6]|/tr|/section|/article)\s*>", "\n",
+        // 保留标题层级、列表和表格列边界。单纯去标签会把列名、数字和条件压在一起。
+        s = Regex.Replace(s, @"<h([1-6])\b[^>]*>",
+            m => "\n" + new string('#', int.Parse(m.Groups[1].Value)) + " ", RegexOptions.IgnoreCase);
+        s = Regex.Replace(s, @"<li\b[^>]*>", "\n- ", RegexOptions.IgnoreCase);
+        s = Regex.Replace(s, @"</(?:td|th)\s*>\s*<(?:td|th)\b[^>]*>", " | ", RegexOptions.IgnoreCase);
+        s = Regex.Replace(s, @"<(?:br\b[^>]*|/(?:p|div|li|h[1-6]|tr|section|article|table|ul|ol|pre|blockquote|dl|dt|dd))\s*/?>", "\n",
             RegexOptions.IgnoreCase);
-        s = Regex.Replace(s, @"<[^>]+>", " ");
+        // 行内强调不能改变原文，例如“不<strong>支持</strong>退款”仍应连续。
+        s = Regex.Replace(s, @"<[^>]+>", string.Empty);
         s = System.Net.WebUtility.HtmlDecode(s);
         return Collapse(s);
     }

@@ -10,6 +10,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useVisualViewport } from '@/hooks/useVisualViewport';
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -41,42 +42,92 @@ export const DialogContent = React.forwardRef<
      * 底栏跟着长内容一起滚走，用户要「使劲拉下去才能看到下一步操作」）。
      */
     frame?: boolean;
+    overlayClassName?: string;
   }
->(({ className, children, style, frame, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        'fixed left-[50%] top-[50%] z-50 flex w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col border bg-card shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
-        frame && 'overflow-hidden',
-        className
-      )}
-      // 布局关键尺寸走 inline style：frontend-modal.md 明确 Tailwind arbitrary value(h-[90vh]) 在 v4 下不可靠。
-      // 高内容弹窗(如「一键部署项目」含 12 个基建预设)在此 cap 90vh + 内层滚动，杜绝内容飞出视口顶部。
-      style={{ maxHeight: '90vh', ...style }}
-      {...props}
-    >
-      {frame ? children : (
-        <div
-          className="grid gap-4 overflow-y-auto p-6"
-          // gridTemplateColumns 的 minmax(0, 1fr)：grid 轨道默认 min-content 下限，
-          // 一段不换行的长内容（日志 <pre>、整段脚本）会把轨道撑得比弹窗还宽，
-          // 右侧内容整体被裁掉——2026-07-30 用户截图里「输入框不见了」「步骤 2/4/6
-          // 消失」就是这个。钉死 minmax(0,1fr) 后轨道永不超过容器，
-          // 长内容只能在自己的滚动容器里消化。
-          style={{ minHeight: 0, overscrollBehavior: 'contain', gridTemplateColumns: 'minmax(0, 1fr)' }}
-        >
-          {children}
-        </div>
-      )}
-      <DialogPrimitive.Close className="absolute right-4 top-4 z-10 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
-        <X className="h-4 w-4" />
-        <span className="sr-only">关闭</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+>(({ className, children, style, frame, overlayClassName, ...props }, ref) => {
+  const viewport = useVisualViewport();
+  const origin = React.useRef<HTMLElement | null>(null);
+  const container = React.useRef<HTMLElement | null>(null);
+  return (
+    <DialogPortal>
+      <DialogOverlay className={overlayClassName} />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          'fixed left-[50%] top-[50%] z-50 flex w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col border border-border bg-card shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg',
+          frame && 'overflow-hidden',
+          className
+        )}
+        // 布局关键尺寸走 inline style：frontend-modal.md 明确 Tailwind arbitrary value(h-[90vh]) 在 v4 下不可靠。
+        // 高内容弹窗(如「一键部署项目」含 12 个基建预设)在此 cap 90vh + 内层滚动，杜绝内容飞出视口顶部。
+        style={{
+          ...style,
+          top: viewport.top + viewport.height / 2,
+          left: viewport.left + viewport.width / 2,
+          width: `min(${typeof style?.width === 'number' ? `${style.width}px` : style?.width || '100%'}, ${Math.max(0, viewport.width - 16)}px)`,
+          maxHeight: `min(${typeof style?.maxHeight === 'number' ? `${style.maxHeight}px` : style?.maxHeight || '90dvh'}, ${Math.max(0, viewport.height - 16)}px)`,
+        }}
+        {...props}
+        onFocusCapture={(event) => {
+          // React autoFocus 可早于 Radix 的打开回调；只记首次从弹窗外进入的来源。
+          container.current = event.currentTarget;
+          if (!origin.current && event.relatedTarget instanceof HTMLElement
+            && !event.currentTarget.contains(event.relatedTarget)) origin.current = event.relatedTarget;
+          props.onFocusCapture?.(event);
+        }}
+        onOpenAutoFocus={(event) => {
+          // 手动setOpen的受控调用没有DialogTrigger；先记录打开前的真实焦点。
+          const active = document.activeElement;
+          if (active instanceof HTMLElement && !(event.target instanceof HTMLElement && event.target.contains(active))) origin.current = active;
+          container.current = event.target instanceof HTMLElement ? event.target : null;
+          props.onOpenAutoFocus?.(event);
+        }}
+        onCloseAutoFocus={(event) => {
+          try {
+            props.onCloseAutoFocus?.(event);
+            if (event.defaultPrevented) return;
+            const focused = document.activeElement;
+            // 调用方/页面导航已放到新去向时，不把焦点抢回旧页面。
+            if (focused instanceof HTMLElement && focused !== document.body && focused !== document.documentElement
+              && focused !== origin.current && !container.current?.contains(focused)) {
+              event.preventDefault();
+              return;
+            }
+            const target = origin.current;
+            if (!target || target === document.body || target === document.documentElement || !target.isConnected
+              || target.ownerDocument !== document || target.matches(':disabled, [aria-disabled="true"]')
+              || target.closest('[inert]') || target.getClientRects().length === 0) return;
+            const style = getComputedStyle(target);
+            if (style.visibility === 'hidden' || style.opacity === '0') return;
+            event.preventDefault();
+            target.focus();
+          } finally {
+            origin.current = null;
+            container.current = null;
+          }
+        }}
+      >
+        {frame ? children : (
+          <div
+            className="grid gap-4 overflow-y-auto p-6"
+            // gridTemplateColumns 的 minmax(0, 1fr)：grid 轨道默认 min-content 下限，
+            // 一段不换行的长内容（日志 <pre>、整段脚本）会把轨道撑得比弹窗还宽，
+            // 右侧内容整体被裁掉——2026-07-30 用户截图里「输入框不见了」「步骤 2/4/6
+            // 消失」就是这个。钉死 minmax(0,1fr) 后轨道永不超过容器，
+            // 长内容只能在自己的滚动容器里消化。
+            style={{ minHeight: 0, overscrollBehavior: 'contain', gridTemplateColumns: 'minmax(0, 1fr)' }}
+          >
+            {children}
+          </div>
+        )}
+        <DialogPrimitive.Close className="absolute right-4 top-4 z-10 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+          <X className="h-4 w-4" />
+          <span className="sr-only">关闭</span>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 /** frame 布局里的滚动主体：flex-1 + min-h-0 + 自己消化纵向滚动。 */

@@ -92,6 +92,18 @@ describe('BranchDispatcher', () => {
   // ── capacity-aware selection ──
 
   describe('capacity-aware strategy', () => {
+    it('uses dynamic memory headroom and defers when every measured executor is full or unknown', async () => {
+      stateService.setExecutor(makeExecutor('exec-a'));
+      stateService.setExecutor(makeExecutor('exec-b'));
+      fetcher.responses.set('exec-a', { ...makeSnapshot(1, 25),
+        memoryCapacity: { scope: 'host', totalMB: 100, usedMB: 85, limitMB: 85 } });
+      fetcher.responses.set('exec-b', { ...makeSnapshot(26, 25),
+        memoryCapacity: { scope: 'host', totalMB: 100, usedMB: 40, limitMB: 85 } });
+      expect((await dispatcher.selectExecutorForBranch('pending')).executor?.id).toBe('exec-b');
+      fetcher.responses.set('exec-b', { ...makeSnapshot(26, 25), memoryCapacity: null });
+      expect((await dispatcher.selectExecutorForBranch('pending')).executor).toBeNull();
+    });
+
     it('picks the executor with the lowest hot/max ratio', async () => {
       // exec-a: 9/10 = 90%
       // exec-b: 3/10 = 30%  ← should win

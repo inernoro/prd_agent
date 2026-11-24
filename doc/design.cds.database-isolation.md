@@ -342,7 +342,7 @@ CDS 现在有两条彼此独立长出来的数据隔离路径：
 - [CDS 配置树](./design.cds.config-tree.md) —— 项目默认与分支覆盖两层，以及配置检查器的逐 key 溯源
 - [CDS 设置分组与数据分类](./design.cds.settings-taxonomy.md) —— 数据库隔离页签落在「数据」组；库属于「业务数据」类
 - [CDS 数据迁移设计](./design.cds.data-migration.md) —— 跨环境复制库，与本文的同实例内派生是两件事
-- [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) —— 残留库、不重部署等已知边界
+- [CDS 多分支跨分支隔离 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.branch-isolation.md) —— 残留库、不重部署等已知边界
 - 跨项目隔离规则（仓库根的架构规则，名为 cross-project-isolation）—— 共享实例的隔离穿透事故台账（通道 4、8）
 
 ## 实现来源
@@ -357,3 +357,8 @@ CDS 现在有两条彼此独立长出来的数据隔离路径：
 | 六、部署路径的合并与后缀改写 | `cds/src/services/env-provenance.ts`、`cds/src/services/container.ts` |
 | 七、项目设置入口 | `cds/src/routes/project-db-isolation.ts`、`cds/web/src/pages/project-settings/DbIsolationTab.tsx` |
 | 五、快照台账类型 | `cds/src/types.ts`（ReplicaDbSnapshot） |
+
+
+## 覆盖恢复的所有者边界（2026-10-19）
+
+本机覆盖恢复始终要求目标系统所有者，静态全局机器 Key、项目 Agent Key、AI 会话以及仅携带 peer 标记的请求均被拒绝。跨 CDS 可由目标所有者发起拉取迁移，源端只提供项目范围校验后的导出；不再把普通机器 Key 当成目标端覆盖授权。需要自动推送覆盖时，应另设绑定目标、归档摘要和时限的一次性审批能力，当前未声称支持该通道。

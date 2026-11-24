@@ -1,9 +1,158 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseVersionWorkflowImportCsv,
+  parseVersionWorkflowImportFile,
+  parseVersionWorkflowImportMatrix,
 } from './versionWorkflowImportParse';
 
+it('reads feature and original-record associations from the standard release table', () => {
+  const feature = { featureId: 'feature-1', changeType: 'added', changeNote: '恢复关联' };
+  const [row] = parseVersionWorkflowImportMatrix([
+    ['产品', '正式版本号', '产品立项方案名称', '功能清单', '记录关联', '上线日期'],
+    ['互动营销', 'V2.3.5', '测试方案', JSON.stringify([feature]), 'signed-record', '2026-11-04T10:20:30.000Z'],
+  ], 'release');
+  expect(row.featureManifest).toEqual([feature]);
+  expect(row.releaseOrigin).toBe('signed-record');
+  expect(row.plannedReleaseAt).toBe('2026-11-04T10:20:30.000Z');
+});
+
 describe('versionWorkflowImportParse', () => {
+  it('表头顺序可变，只读取可识别的列，并区分相似字段', () => {
+    const csv = [
+      '录入日期,方案地址（URL）,公告发布日期,上线公告地址（URL）,当前开放品牌,是否全域开放,应用名称,Ｖ 号,产品方案名称,上线时间,负责人备注',
+      '2026/1/1,https://example.com/plan,2026/1/4,https://example.com/announcement,拜耳,否,互动营销,V3.1.2,渠道优化,2026/1/3,不能当负责人',
+    ].join('\n');
+    const [row] = parseVersionWorkflowImportCsv(csv, 'release');
+    expect(row).toMatchObject({
+      code: 'V3.1.2',
+      appName: '互动营销',
+      planName: '渠道优化',
+      planUrl: 'https://example.com/plan',
+      announcementUrl: 'https://example.com/announcement',
+      isGlobalOpen: false,
+      openBrandScope: '拜耳',
+    });
+    expect(row.date).toBe(new Date(2026, 0, 3).toISOString());
+    expect(row.ownerName).toBeUndefined();
+  });
+
+  it('有标题说明行时仍能找到表头，缺少可选列也能识别', () => {
+    const preamble = Array.from({ length: 23 }, (_, index) => [`说明 ${index + 1}`]);
+    const rows = parseVersionWorkflowImportMatrix([
+      ...preamble,
+      ['备注以外的说明', '应用名称', 'T号'],
+      ['其他信息', '互动营销', 'T3.2.1'],
+    ], 'initiation');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ code: 'T3.2.1', appName: '互动营销', planName: 'T3.2.1' });
+    expect(rows[0].remark).toBeUndefined();
+  });
+
+  it('没有可识别表头时不猜测第一列是方案名称', () => {
+    expect(parseVersionWorkflowImportCsv('记录名称,应用,原项目负责人备注\n样例,互动营销,未知字段', 'initiation')).toEqual([]);
+  });
+
+  it('读取 Excel 另存为 GBK 的中文 CSV 表头', async () => {
+    // GBK 编码的「产品,V号\n互动营销,V3.1.2」。
+    const bytes = Uint8Array.from(Buffer.from('b2fac6b72c56bac50abba5b6afd3aacffa2c56332e312e32', 'hex'));
+    const rows = await parseVersionWorkflowImportFile(new File([bytes], '版本.csv'), 'release');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ code: 'V3.1.2', appName: '互动营销' });
+  });
+
+  it('读取手工表里的多个纯 TAPD 链接，支持与其他文本混排', () => {
+    const [row] = parseVersionWorkflowImportCsv([
+      '应用,正式版本号,TAPD 链接,无 TAPD 链接',
+      '互动营销,V3.1.2,"需求说明 https://www.tapd.cn/1；https://www.tapd.cn/2",否',
+    ].join('\n'), 'release');
+    expect(row.tapdLinks?.map(({ url }) => url)).toEqual(['https://www.tapd.cn/1', 'https://www.tapd.cn/2']);
+    expect(row.noTapdLinks).toBe(false);
+  });
+
+  it('识别实表E1空表头的唯一T列，保留T号及应用并跳过短横占位', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['平台', '系统', '应用', '项目类别', '', '版本类别', '产品立项方案名称'],
+      ['米多平台', '大数据引擎系统', '互动营销', '非定制项目', 'T3.6.1', '小版本', '互动营销T3.6.1（方案甲）'],
+      ['米多平台', '大数据引擎系统', '智能营销', '定制项目', 'T2.8.4', '小版本', '智能营销T2.8.4（方案乙）'],
+      ['米多平台', '大数据引擎系统', '互动营销', '非定制项目', '--', '小版本', '未编号方案'],
+    ], 'initiation');
+    expect(rows.map((row) => row.code)).toEqual(['T3.6.1', 'T2.8.4', undefined]);
+    expect(rows.map((row) => row.appName)).toEqual(['互动营销', '智能营销', '互动营销']);
+    expect(rows[0].planName).toBe('互动营销T3.6.1（方案甲）');
+  });
+
+  it('显式编号列优先于空表头列及方案名称，不用名称覆盖真实编号', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '', '立项号', '产品立项方案名称'],
+      ['互动营销', 'T8.8.8', 'T3.6.1', '互动营销T4.4.4（方案）'],
+    ], 'initiation');
+    expect(rows[0].code).toBe('T3.6.1');
+  });
+
+  it('无编号列只提取名称中唯一完整T号，多个编号及占位不猜号', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '', '产品立项方案名称'],
+      ['互动营销', '2026-10-16', '互动营销T3.6.1（方案）'],
+      ['互动营销', '', '互动营销R=TXXXX（待定方案）'],
+      ['互动营销', '', 'T1.2.3与T1.2.4合并方案'],
+      ['互动营销', '', 'T1.2.3.4不是标准T号'],
+    ], 'initiation');
+    expect(rows.map((row) => row.code)).toEqual(['T3.6.1', undefined, undefined, undefined]);
+  });
+
+  it('两个无表头T列无法唯一判断时忽略这两列，其他字段照常读取', () => {
+    const [row] = parseVersionWorkflowImportMatrix([
+      ['应用', '', '', '产品立项方案名称'],
+      ['互动营销', 'T3.6.1', 'T4.0.0', '方案'],
+    ], 'initiation');
+    expect(row).toMatchObject({ appName: '互动营销', planName: '方案' });
+    expect(row.code).toBeUndefined();
+  });
+
+  it('正式版本导入不套用无表头T推断或方案名T提取', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '', '正式版本号', '产品立项方案名称'],
+      ['互动营销', 'T3.6.1', 'V3.6.1', '互动营销T3.6.1（方案）'],
+    ], 'release');
+    expect(rows[0].code).toBe('V3.6.1');
+    expect(rows[0].tCode).toBeUndefined();
+  });
+  it('ignores training columns in internal history, including dates and arbitrary placeholders', () => {
+    for (const value of ['2026.10.16', '待确认', '-1', '1.5', '30']) {
+      const rows = parseVersionWorkflowImportMatrix([
+        ['应用', 'T 立项号', '产品立项方案名称', '预计培训时间', '立项时间'],
+        ['互动营销', 'T3.47.1', '渠道返利优化', value, '2026-10-16'],
+      ], 'initiation');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].code).toBe('T3.47.1');
+      expect(rows[0].appName).toBe('互动营销');
+      expect(rows[0].projectAt).toBeDefined();
+      expect(rows[0].plannedTrainingMinutes).toBeUndefined();
+    }
+  });
+
+  it('does not treat a blank Excel header as a training or other business column', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['', '应用', 'T 立项号', '产品立项方案名称', '立项时间'],
+      ['2026-10-16', '互动营销', 'T3.47.1', '渠道返利优化', '2026-10-15'],
+    ], 'initiation');
+    expect(rows[0].appName).toBe('互动营销');
+    expect(rows[0].code).toBe('T3.47.1');
+    expect(rows[0].planName).toBe('渠道返利优化');
+    expect(rows[0].plannedTrainingMinutes).toBeUndefined();
+    expect(rows[0].ownerName).toBeUndefined();
+    expect(rows[0].remark).toBeUndefined();
+  });
+
+  it('keeps release minute validation while ignoring unrelated blank columns', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['', '应用', '正式版本号', '产品立项方案名称', '预计培训时长（分钟）'],
+      ['2026-10-16', '互动营销', 'V3.47.1', '渠道返利优化', '30'],
+    ], 'release');
+    expect(rows[0].plannedTrainingMinutes).toBe(30);
+    expect(rows[0].appName).toBe('互动营销');
+  });
+
   it('parses release rows with V code and plan name', () => {
     const csv = [
       '正式版本号,内部版本号,产品立项方案名称,版本类别,上线日期',
@@ -15,6 +164,20 @@ describe('versionWorkflowImportParse', () => {
     expect(rows[0].tCode).toBe('T6.1.0');
     expect(rows[0].planName).toBe('会员积分优化');
     expect(rows[0].versionType).toBe('小版本');
+  });
+
+  it('保留临时优化方案名称，忽略该类历史行的 T/V 号，并保留普通版本的编号', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '正式版本号', '内部版本号', '版本类别', '产品立项方案名称'],
+      ['互动营销', '-', '-', '临时优化需求', '门店扫码优化'],
+      ['互动营销', 'V1.2.3', 'T1.2.3', '临时优化需求', '已有临时优化'],
+      ['互动营销', 'V1.2.4', 'T1.2.3', '小版本', '正式上线方案'],
+    ], 'release');
+    expect(rows.map(({ code, tCode, versionType, planName }) => [code, tCode, versionType, planName])).toEqual([
+      [undefined, undefined, '临时优化需求', '门店扫码优化'],
+      [undefined, undefined, '临时优化需求', '已有临时优化'],
+      ['V1.2.4', 'T1.2.3', '小版本', '正式上线方案'],
+    ]);
   });
 
   it('parses initiation rows with T code', () => {
@@ -58,5 +221,36 @@ describe('versionWorkflowImportParse', () => {
     ].join('\n');
     const rows = parseVersionWorkflowImportCsv(csv, 'initiation');
     expect(rows[0].projectType).toBe('standard');
+  });
+
+  it('reads AI POC and global-open fields used by the version registration archive', () => {
+    const csv = [
+      '正式版本号,内部版本号,产品立项方案名称,是否属于AI POC项目,是否全域开放',
+      'V2.3.4,T3.4.5,版本登记联动,是,否',
+    ].join('\n');
+    const rows = parseVersionWorkflowImportCsv(csv, 'release');
+    expect(rows[0].isAiPoc).toBe(true);
+    expect(rows[0].openBrandScope).toBeUndefined();
+    expect(rows[0].isGlobalOpen).toBe(false);
+  });
+
+  it('preserves rollout fields and reads training as minutes', () => {
+    const csv = [
+      '应用,正式版本号,产品立项方案名称,需求来源,产品负责人,项目组成员,合同签订方,预计培训时长（分钟）',
+      '互动营销,V2.3.5,上线方案,拜耳,宇凡,宇凡、火巍,客户甲,30',
+    ].join('\n');
+    const rows = parseVersionWorkflowImportCsv(csv, 'release');
+    expect(rows[0].demandSource).toBe('拜耳');
+    expect(rows[0].ownerName).toBe('宇凡');
+    expect(rows[0].projectMemberNames).toEqual(['宇凡', '火巍']);
+    expect(rows[0].contractParty).toBe('客户甲');
+    expect(rows[0].plannedTrainingMinutes).toBe(30);
+  });
+
+  it('rejects dates and fractions instead of guessing duration', () => {
+    for (const value of ['2026.09.20 14:30', '1.5', '-1']) {
+      expect(() => parseVersionWorkflowImportCsv(`应用,正式版本号,产品立项方案名称,预计培训时长\n互动营销,V2.3.5,上线方案,${value}`, 'release')).toThrow('预计培训时长');
+    }
+    expect(parseVersionWorkflowImportCsv('正式版本号,产品立项方案名称,预计培训时长\nV2.3.5,方案,0 分钟', 'release')[0].plannedTrainingMinutes).toBe(0);
   });
 });

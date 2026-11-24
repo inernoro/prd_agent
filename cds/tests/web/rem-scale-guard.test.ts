@@ -25,6 +25,7 @@ const PX = /(?<![A-Za-z0-9.])(\d*\.?\d+)px(?![A-Za-z0-9])/g;
 const ALLOW: Array<{ file: string; needle: string; why: string }> = [
   { file: 'index.css', needle: 'max(10px, 0.6875rem)', why: '左栏两字标签的可读性下限：9.5px 已糊，保底 10 物理像素' },
   { file: 'pages/StatusPage.tsx', needle: "'(max-width: 767px)'", why: '媒体查询字符串：断点读不到根字号，和 CSS 断点一样保持 px' },
+  { file: 'pages/BranchTopologyPage.tsx', needle: "'(min-width: 1280px)'", why: '媒体查询不是CSS长度：沿用原1280断点，不随界面根字号缩放' },
   { file: 'components/branch/RelationCard.tsx', needle: "'(max-width: 639px)'", why: '媒体查询字符串（手机上问题带只先放要处理的）：断点读不到根字号，与 Tailwind sm 断点同值' },
   { file: 'pages/HomePage.tsx', needle: "rootMargin: '0px 0px -40px 0px'", why: 'IntersectionObserver 的 rootMargin 是 JS API 参数不是 CSS，规范只接受 px 与 %，写 rem 会直接抛构造异常' },
   { file: 'components/BranchDetailDrawer.tsx', needle: "'-9999px'", why: '把 textarea 挪出视口以便 execCommand(copy) 的哨兵常量，不是设计尺寸，不该跟根字号缩' },
@@ -32,7 +33,7 @@ const ALLOW: Array<{ file: string; needle: string; why: string }> = [
 
 /** 整个文件按画布单位工作的组件：几何是 px 常量或量出来的容器宽度，内容也必须是同一套单位，
  *  否则「框是 px、字是 rem」在 85% 下会双重缩小。RelationGraph 由 transform 按容器整体缩放，
- *  本来就跟着尺度走；ReplicaSetPanel 的画布常量尚未随根字号走，记在 doc/debt.cds.md。 */
+ *  本来就跟着尺度走；ReplicaSetPanel 的画布常量尚未随根字号走，记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。 */
 // RelationFlowStrip 的 chip 宽度与连线几何是量出来的画布 px（连接器 SVG 的 viewBox 要和列高逐像素对齐），同 RelationGraph 一档。
 const CANVAS_FILES = ['components/branch/RelationGraph.tsx', 'components/branch/ReplicaSetPanel.tsx', 'components/branch/RelationFlowStrip.tsx'];
 

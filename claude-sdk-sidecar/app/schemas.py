@@ -22,6 +22,8 @@ class SidecarRunRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     run_id: str = Field(..., alias="runId")
+    # 已批准的网关业务编号；run_id 保持为工具回调/sidecar 会话编号。
+    gateway_run_id: Optional[str] = Field(None, alias="gatewayRunId")
     model: str = "claude-opus-4-5"
     system_prompt: str = Field("", alias="systemPrompt")
     messages: list[SidecarMessage] = Field(default_factory=list)

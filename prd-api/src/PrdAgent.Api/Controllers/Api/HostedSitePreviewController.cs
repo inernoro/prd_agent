@@ -46,10 +46,19 @@ public sealed class HostedSitePreviewAccessController : ControllerBase
             if (revision.VerifiedFiles.Count == 0)
                 return Ok(ApiResponse<object>.Ok(new { available = false }));
             var issued = _access.Issue(revision, this.GetRequiredUserId());
+            var previewUrl = $"/api/hosted-site-preview-files/bootstrap/{Uri.EscapeDataString(issued.Ticket)}";
+            // 同源 fetch 会先接收 HttpOnly cookie，再由调用方导航至完整版本入口。
+            // 只认浏览器明确给出的同源信号；其它嵌入环境继续使用原 bootstrap 流程。
+            if (string.Equals(Request.Headers["Sec-Fetch-Site"].ToString(), "same-origin", StringComparison.Ordinal)
+                && _access.TryRead(issued.Ticket, out var payload))
+            {
+                HostedSitePreviewFilesController.SetAccessCookie(HttpContext, issued.Ticket, payload, SameSiteMode.Strict);
+                previewUrl = $"/{HostedSitePreviewFilesController.RoutePrefix}/{payload.AccessId}/index.html";
+            }
             return Ok(ApiResponse<object>.Ok(new
             {
                 available = true,
-                previewUrl = $"/api/hosted-site-preview-files/bootstrap/{Uri.EscapeDataString(issued.Ticket)}",
+                previewUrl,
                 expiresAt = issued.ExpiresAt,
             }));
         }
@@ -124,15 +133,17 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
     private readonly IHostedSiteRevisionService _revisions;
     private readonly HostedSitePreviewAccessService _access;
     private readonly HostedSitePreviewEmbedOptions _embed;
+    private readonly IHostedSiteService? _sites;
 
     public HostedSitePreviewFilesController(
         IHostedSiteRevisionService revisions,
         HostedSitePreviewAccessService access,
-        HostedSitePreviewEmbedOptions? embed = null)
+        HostedSitePreviewEmbedOptions? embed = null, IHostedSiteService? sites = null)
     {
         _revisions = revisions;
         _access = access;
         _embed = embed ?? HostedSitePreviewEmbedOptions.SelfOnly;
+        _sites = sites;
     }
 
     /// <summary>同源永远允许；配置里声明过的来源额外放行。</summary>
@@ -149,8 +160,19 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
     public IActionResult Bootstrap(string ticket)
     {
         if (!_access.TryRead(ticket, out var payload)) return Missing();
-        ApplyNoStoreHeaders();
-        Response.Cookies.Append(CookieNameFor(payload.AccessId), ticket, new CookieOptions
+        SetAccessCookie(HttpContext, ticket, payload,
+            IsCrossSiteEmbed() ? SameSiteMode.None : SameSiteMode.Strict);
+        return Redirect($"../{payload.AccessId}/index.html");
+    }
+
+    internal static void SetAccessCookie(
+        HttpContext context,
+        string ticket,
+        HostedSitePreviewTicket payload,
+        SameSiteMode sameSite)
+    {
+        ApplyNoStoreHeaders(context.Response);
+        context.Response.Cookies.Append(CookieNameFor(payload.AccessId), ticket, new CookieOptions
         {
             HttpOnly = true,
             Secure = true,
@@ -158,7 +180,7 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
             // 浏览器一律不带，预览会在 CSP 放行之后照样空白——所以只在浏览器明确告知
             // Sec-Fetch-Site: cross-site 时降到 None。票据本身 HttpOnly + Secure + 短时效 +
             // 绑定单个版本，降的是嵌入范围不是校验强度；拿不到这个头就维持 Strict，不猜。
-            SameSite = IsCrossSiteEmbed() ? SameSiteMode.None : SameSiteMode.Strict,
+            SameSite = sameSite,
             IsEssential = true,
             Expires = payload.ExpiresAt,
             // 只跟着自己这条预览的资源请求走。Path="/" 时，15 分钟寿命内签发过的**每一张**
@@ -169,11 +191,10 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
             // 必须带上 PathBase：cookie 的 Path 是**浏览器看到的那条路径**，而子路径部署
             // （API 挂在 /platform 之类前缀下）时浏览器打开的是 /platform/api/...。写死
             // 从根开始就等于签了一张永远不会被带上的票，每个文件 404、预览全白——
-            // 比收窄之前更糟。下面那句 redirect 用的是相对路径，本来就是前缀安全的，
-            // 这里也必须跟它保持同一个口径（Codex P2，2026-09-16 第三十三轮）。
-            Path = $"{Request.PathBase}/{RoutePrefix}/{payload.AccessId}",
+            // 比收窄之前更糟。bootstrap 的 redirect 用相对路径，本来就是前缀安全的，
+            // Cookie 与最终预览文件地址也必须保持同一个口径（Codex P2，2026-09-16 第三十三轮）。
+            Path = $"{context.Request.PathBase}/{RoutePrefix}/{payload.AccessId}",
         });
-        return Redirect($"../{payload.AccessId}/index.html");
     }
 
     [AllowAnonymous]
@@ -188,15 +209,9 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
             return Missing();
         try
         {
-            var file = await _revisions.GetVerifiedFileAsync(
-                payload.SiteId,
-                payload.RevisionId,
-                normalizedPath,
-                payload.UserId,
-                CancellationToken.None);
-            if (file == null || !HostedSitePreviewAccessService.HasValidContentHash(file)) return Missing();
-            ApplyResponseHeaders(file.MimeType);
-            return File(file.Content, file.MimeType, enableRangeProcessing: false);
+            var file = await _revisions.GetVerifiedFileAsync(payload.SiteId, payload.RevisionId, normalizedPath,
+                payload.UserId, HttpContext.RequestAborted);
+            return VerifiedFile(file);
         }
         catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
         {
@@ -204,9 +219,39 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
         }
     }
 
+    [AllowAnonymous]
+    [HttpGet("shared/{ticket}/{**path}")]
+    public async Task<IActionResult> ReadShared(string ticket, string? path)
+    {
+        if (_sites == null || !_access.TryReadFixedShare(ticket, out var payload) || payload.FixedShare is not { } share
+            || !DesignArtifactPublicPath.TryNormalize(path, out var normalizedPath)
+            || !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(normalizedPath, includeInternalManifest: false))
+            return Missing();
+        try
+        {
+            var ct = HttpContext.RequestAborted;
+            var authorized = await _sites.ResolveFixedRevisionShareAsync(share.Token, payload.RevisionId,
+                null, string.IsNullOrEmpty(payload.UserId) ? null : payload.UserId, share.AccessProof, ct);
+            if (authorized.Site?.Id != payload.SiteId || authorized.Share?.FixedRevision?.PackageFingerprint != payload.PackageFingerprint)
+                return Missing();
+            return VerifiedFile(await _revisions.GetFixedShareFileAsync(authorized, normalizedPath, ct));
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+        {
+            return Missing();
+        }
+    }
+
+    private IActionResult VerifiedFile(HostedSiteRevisionFile? file)
+    {
+        if (file == null || !HostedSitePreviewAccessService.HasValidContentHash(file)) return Missing();
+        ApplyResponseHeaders(file.MimeType);
+        return File(file.Content, file.MimeType, enableRangeProcessing: false);
+    }
+
     private void ApplyResponseHeaders(string mimeType)
     {
-        ApplyNoStoreHeaders();
+        ApplyNoStoreHeaders(Response);
         Response.Headers.XContentTypeOptions = "nosniff";
         Response.Headers["Cross-Origin-Resource-Policy"] = "cross-origin";
         Response.Headers.AccessControlAllowOrigin = "*";
@@ -217,11 +262,11 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
         }
     }
 
-    private void ApplyNoStoreHeaders()
+    private static void ApplyNoStoreHeaders(HttpResponse response)
     {
-        Response.Headers.CacheControl = "private, no-store, max-age=0";
-        Response.Headers.Pragma = "no-cache";
-        Response.Headers["Referrer-Policy"] = "no-referrer";
+        response.Headers.CacheControl = "private, no-store, max-age=0";
+        response.Headers.Pragma = "no-cache";
+        response.Headers["Referrer-Policy"] = "no-referrer";
     }
 
     private bool IsCrossSiteEmbed()
@@ -230,9 +275,11 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
         return string.Equals(Request.Headers["Sec-Fetch-Site"], "cross-site", StringComparison.Ordinal);
     }
 
-    private NotFoundObjectResult Missing() => NotFound(ApiResponse<object>.Fail(
-        ErrorCodes.NOT_FOUND,
-        "预览已失效，请返回作品页面重新打开"));
+    private NotFoundObjectResult Missing()
+    {
+        if (ControllerContext.HttpContext is { } context) ApplyNoStoreHeaders(context.Response);
+        return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "预览已失效，请返回作品页面重新打开"));
+    }
 
     private static string CookieNameFor(string accessId) => CookieNamePrefix + accessId;
 }

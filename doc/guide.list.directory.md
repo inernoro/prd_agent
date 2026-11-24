@@ -1,8 +1,8 @@
 # MAP 平台文档索引 · 指南
 
-> **版本**：v2.1 | **日期**：2026-07-18 | **状态**：已落地
+> **版本**：v2.4 | **日期**：2026-11-09 | **状态**：已落地
 
-**一句话**：全部长期文档的清单，按七类前缀排好，用来确认「有没有这么一篇」并拿到准确文件名。
+**一句话**：全部长期文档按职责分类，架构和产品决策单独收录，用来确认有没有目标文章并拿到准确入口。
 **谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
 **读完能做什么**：找到目标文档的准确文件名。不知道该找哪一类时，先看[百科全书导读](./guide.doc.reading-map.md)。
 
@@ -12,11 +12,30 @@
 
 ## 使用方式
 
-- 产品和研发按下列七类浏览长期文档。
+- 产品和研发按下列类型浏览长期文档；每类作用见 [README 的原则入口](../README.md#documentation)。
 - 外部同步工具读取 `doc/index.yml`。
 - 标有 `grandfather 保留` 的非周报报告只因存量契约引用暂留，解除引用后回收。
 
 ## 文档列表
+
+- [日志完整保留与冷存储 · 设计](./design.platform.log-cold-storage.md) `design.platform.log-cold-storage`
+
+
+- [MAP 运营工作区改造目标 · 计划](./plan.frontend.workspace.md) `plan.frontend.workspace`
+- [CDS / LLMGW 磁盘治理与交接 · 计划](./plan.cds.disk-governance-20261113.md) `plan.cds.disk-governance-20261113`
+
+
+- [MAP 与 CDS 磁盘容量治理 · 指南](./guide.platform.capacity.md) `guide.platform.capacity`
+
+- [知识库信息高效传递与复刻验收计划](./plan.knowledge-base.information-delivery.md) `plan.knowledge-base.information-delivery`
+
+- [CDS 自动化任务健康与安全恢复 · 指南](./guide.cds.automation-health.md) `guide.cds.automation-health`
+- [官方上游迁移与管理简化 · 计划](./plan.llmgw.official-upstreams.md) `plan.llmgw.official-upstreams`
+
+- [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
+
+- [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
+- [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`
 
 ### 一、产品规格
 
@@ -39,6 +58,7 @@
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
 - [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`
 - [毒舌秘书（PA Agent）产品规格 · 规格](./spec.product-agent.pa.md) `spec.product-agent.pa`
+- [产品管理正式申领与历史追溯 · 规格](./spec.product-agent.version-claims.md) `spec.product-agent.version-claims`
 - [项目愿景与背景 · 规格](./spec.project-vision.md) `spec.project-vision`
 - [周报 Agent Phase 5 — 用户故事 · 规格](./spec.report-agent.phase5.md) `spec.report-agent.phase5`
 - [周报 Agent v2.0 产品需求 · 规格](./spec.report-agent.v2.md) `spec.report-agent.v2`
@@ -49,6 +69,11 @@
 
 ### 二、设计文档
 
+- [稳定模型标识与模型生命周期 · 设计](./design.llmgw.model-lifecycle.md) `design.llmgw.model-lifecycle`
+- [模型工作台与上游绑定 · 设计](./design.llmgw.model-workbench.md) `design.llmgw.model-workbench`
+
+- [CDS 项目检查与通知总览 · 设计](./design.cds.project-status.md) `design.cds.project-status`
+
 - [验收报告知识库 · 设计](./design.acceptance.kb.md) `design.acceptance.kb`
 - [MAP 自动化验收知识库治理 · 设计](./design.acceptance.knowledge-governance.md) `design.acceptance.knowledge-governance`
 - [功能验收体系 · 设计](./design.acceptance.system.md) `design.acceptance.system`
@@ -56,6 +81,7 @@
 - [AI 百宝箱 · 设计](./design.ai-toolbox.md) `design.ai-toolbox`
 - [AI 竞技场 · 设计](./design.arena.md) `design.arena`
 - [赋码采集关联智能体（CCAS Agent） · 设计](./design.ccas-agent.md) `design.ccas-agent`
+- [CDS 结构化产品功能验收 · 设计](./design.cds.acceptance-tasks.md) `design.cds.acceptance-tasks`
 - [CDS Agent API · 设计](./design.cds.agent.api.md) `design.cds.agent.api`
 - [CDS Agent 商业级架构与路线图 · 设计](./design.cds.agent.commercial-architecture-and-roadmap.md) `design.cds.agent.commercial-architecture-and-roadmap`
 - [CDS Agent 托管运行时事实源设计 · 设计](./design.cds.agent.managed-runtime-fact-source.md) `design.cds.agent.managed-runtime-fact-source`
@@ -71,11 +97,13 @@
 - [CDS 控制面 / 数据面分离设计(蓝绿部分已废弃) · 设计](./design.cds.control-data-split.md) `design.cds.control-data-split`
 - [CDS 数据迁移设计 · 设计](./design.cds.data-migration.md) `design.cds.data-migration`
 - [CDS 数据库隔离三档（共享库 / 分支独立库 / 隔离库）· 设计](./design.cds.database-isolation.md) `design.cds.database-isolation`
+- [CDS 工程债务 · 设计](./design.cds.debt.md) `design.cds.debt`
 - [CDS FU-02 MapAuthStore（Mongo 后端） · 设计](./design.cds.fu-02-auth-store-mongo.md) `design.cds.fu-02-auth-store-mongo`
 - [CDS 生命周期原子性 · 架构设计（对账收敛取代命令式级联） · 设计](./design.cds.lifecycle-atomicity.md) `design.cds.lifecycle-atomicity`
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
+- [MyCDS 外网通行证 · 设计](./design.cds.public.pass.md) `design.cds.public.pass`
 - [CDS 角色化 Agent 一键上手范型 · 设计](./design.cds.agent-onboarding-harness.md) `design.cds.agent-onboarding-harness`
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
@@ -136,6 +164,7 @@
 - [MAP MCP 连接器 · 设计](./design.platform.map-mcp-connector.md) `design.platform.map-mcp-connector`
 - [AppCaller 模型池选择与池内调度 · 设计](./design.platform.model-pool.md) `design.platform.model-pool`
 - [网络诊断功能 · 设计](./design.platform.network-diagnostics.md) `design.platform.network-diagnostics`
+- [通知分类与短讯报告 · 设计](./design.platform.notification.templates.md) `design.platform.notification.templates`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`
 - [RBAC 权限系统 · 设计](./design.platform.rbac-permission.md) `design.platform.rbac-permission`
@@ -147,7 +176,7 @@
 - [公共藏书阁 · 精读稿 · 设计](./design.prd-agent.bookshelf-digest.md) `design.prd-agent.bookshelf-digest`
 - [公共藏书阁 · 结业考 · 判定口径](./design.prd-agent.bookshelf.exam.md) `design.prd-agent.bookshelf.exam`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
-- [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
+- [产品管理智能体：产品结构与承重契约 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
 - [周报管理 Agent (Report Agent) · 设计](./design.report-agent.md) `design.report-agent`
 - [周报管理 Agent · 月报 · 设计](./design.report-agent.monthly.md) `design.report-agent.monthly`
@@ -174,10 +203,16 @@
 
 ### 三、指南
 
+- [CDS DeepAudit 代码审查使用与维护 · 指南](./guide.cds.code-review.md) `guide.cds.code-review`
+  > 网页、MCP、模型用量、版本边界与管理员排障入口。
+
+- [代码审查使用自己的模型 Key · 指南](./guide.cds.code-review-user-key.md) `guide.cds.code-review-user-key`
+
 - [MAP 每日自动化验收 SOP · 指南](./guide.acceptance.daily-sop.md) `guide.acceptance.daily-sop`
 - [MAP 验收报告与证据交互 · 指南](./guide.acceptance.report-evidence.md) `guide.acceptance.report-evidence`
 - [AI 百宝箱 (AI Toolbox) · 指南](./guide.ai-toolbox.ops.md) `guide.ai-toolbox.ops`
 - [AI 竞技场使用 · 指南](./guide.arena.md) `guide.arena`
+- [同批运行容器恢复 · 指南](./guide.cds.runtime-recovery.md) `guide.cds.runtime-recovery`
 - [CDS Agent 管理员 · 指南](./guide.cds.agent.admin.md) `guide.cds.agent.admin`
 - [CDS Agent 上手助手 · 指南](./guide.cds.agent-onboarding-harness.md) `guide.cds.agent-onboarding-harness`
 - [CDS Agent 代码审查上手指南 · 指南](./guide.cds.agent.code-review-quickstart.md) `guide.cds.agent.code-review-quickstart`
@@ -212,6 +247,15 @@
 - [CDS Web 迁移运行手册 · 指南](./guide.cds.web-migration-runbook.md) `guide.cds.web-migration-runbook`
 - [缺陷管理 Agent 使用 · 指南](./guide.defect-agent.md) `guide.defect-agent`
 - [基础设施 Sandbox Agent · 指南](./guide.infra-sandbox-agent.md) `guide.infra-sandbox-agent`
+- [ADR 文档原则：为未来的人留下架构选择的理由 · 指南](./guide.doc.pri.adr.md) `guide.doc.pri.adr`
+- [债务文档原则：让已知欠账有边界、有偿还条件 · 指南](./guide.doc.pri.debt.md) `guide.doc.pri.debt`
+- [设计文档原则：解释当前方案如何成立 · 指南](./guide.doc.pri.design.md) `guide.doc.pri.design`
+- [指南文档原则：帮助读者完成一件具体的事 · 指南](./guide.doc.pri.guide.md) `guide.doc.pri.guide`
+- [PDR 文档原则：产品的根、承重结构与决策记忆 · 指南](./guide.doc.pri.pdr.md) `guide.doc.pri.pdr`
+- [计划文档原则：把已知目标变成可推进的行动 · 指南](./guide.doc.pri.plan.md) `guide.doc.pri.plan`
+- [报告文档原则：说明某一时间范围实际发生了什么 · 指南](./guide.doc.pri.report.md) `guide.doc.pri.report`
+- [规则文档原则：说明当前共同遵守的约束 · 指南](./guide.doc.pri.rule.md) `guide.doc.pri.rule`
+- [规格文档原则：说明当前产品必须做到什么 · 指南](./guide.doc.pri.spec.md) `guide.doc.pri.spec`
 - [百科全书导读 —— 人类怎么读这套文档 · 指南](./guide.doc.reading-map.md) `guide.doc.reading-map`
 - [MAP 平台文档索引 · 指南](./guide.list.directory.md) `guide.list.directory`
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
@@ -219,11 +263,13 @@
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
 - [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
+- [从真实变更到决策记忆：产品试点与跨项目实操 · 指南](./guide.platform.decision-practice.md) `guide.platform.decision-practice`
+- [决策治理：项目补足与跨项目推广 · 指南](./guide.platform.decision-records.md) `guide.platform.decision-records`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
 - [LLM Gateway 故障止血与恢复 · 指南](./guide.platform.llm-gateway.incident-recovery.md) `guide.platform.llm-gateway.incident-recovery`
-- [MAP MCP 连接器接入 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
+- [MAP 智能体连接器 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
 - [MongoDB 索引维护 · 指南](./guide.platform.mongodb-indexes.md) `guide.platform.mongodb-indexes`
 - [PRD Agent 系统原则速查（命名原则索引） · 指南](./guide.platform.principles.md) `guide.platform.principles`
 - [PRD Agent 快速部署 · 指南](./guide.platform.quickstart.md) `guide.platform.quickstart`
@@ -254,7 +300,7 @@
 - [文档维护与收敛 · 规则](./rule.doc.maintenance.md) `rule.doc.maintenance`
 - [文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则](./rule.doc.readability.md) `rule.doc.readability`
 - [文档命名规则（doc/） · 规则](./rule.doc.naming.md) `rule.doc.naming`
-- [七类文档内容模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
+- [文档内容与决策记录模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
 - [默认可编辑原则 · 规则](./rule.frontend.default-editable.md) `rule.frontend.default-editable`
 - [前端组件复用 · 规则](./rule.frontend.frontend-component-reuse.md) `rule.frontend.frontend-component-reuse`
 - [前端浮层布局 · 规则](./rule.frontend.frontend-modal.md) `rule.frontend.frontend-modal`
@@ -278,15 +324,33 @@
 
 ### 五、计划
 
+- [CDS DTS 数据传输服务与主备账号同步 · 计划](./plan.cds.dts.md) `plan.cds.dts`
+- [LLMGW 与 CDS 用户心智及产品体验整改 · 计划](./plan.platform.product-experience-rework.md) `plan.platform.product-experience-rework`
+
+- [视频制作台新环境验收续接 · 计划](./plan.video-agent.acceptance.handoff.md) `plan.video-agent.acceptance.handoff`
+- [CDS 代码审查需求兑现台账 · 计划](./plan.cds.code-review-delivery.md) `plan.cds.code-review-delivery`
+  > 用户全部要求逐项对照，区分已上线、已合并和仍未完成的工作。
+
+- [平台后台任务与消费最低保护 · 阶段 0 计划](./plan.platform.background-task-safety.phase0.md) `plan.platform.background-task-safety.phase0`
+- [平台任务级准入与统一出口 · 阶段 1 计划](./plan.platform.background-task-safety.phase1.md) `plan.platform.background-task-safety.phase1`
+- [平台业务幂等、执行租约与取消撤销 · 阶段 2 计划](./plan.platform.background-task-safety.phase2.md) `plan.platform.background-task-safety.phase2`
+- [缺陷可靠性后续闭环 · 计划](./plan.defect-agent.reliability-closure.md) `plan.defect-agent.reliability-closure`
+- [缺陷提交与 AI 润色可靠性排查 · 计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
+
+- [MCP 接入与能力补齐 · 计划](./plan.platform.mcp-capability-completion.md) `plan.platform.mcp-capability-completion`
+
 - [文档说人话标准推广 · 计划](./plan.doc.readability.rollout.md) `plan.doc.readability.rollout`
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
 - [CDS 控制面卡顿治理 · 计划](./plan.cds.control-plane-lag.md) `plan.cds.control-plane-lag`
 - [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
+- [CDS 工程规划与债务交付验收 · 计划](./plan.cds.engineering-planning.md) `plan.cds.engineering-planning`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 本地多用户认证解耦 · 计划](./plan.cds.local-multi-user-auth.md) `plan.cds.local-multi-user-auth`
+- [CDS 监控订阅、环境与调查证据 · 计划](./plan.cds.monitor.subscriptions.md) `plan.cds.monitor.subscriptions`
+- [CDS 监控工作区按完整设计还原 · 计划](./plan.cds.monitor-workspace-v2.md) `plan.cds.monitor-workspace-v2`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
 - [CDS 长期性能优化与独立验收 · 计划](./plan.cds.performance.optimization.md) `plan.cds.performance.optimization`
@@ -305,7 +369,6 @@
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
 - [知识驱动设计生成体系 · 计划](./plan.platform.design-generation.md) `plan.platform.design-generation`
 - [OpenDesign 六步实施计划](./plan.platform.open-design.md) `plan.platform.open-design`
-- [OpenDesign 接入 · 债务台账](./debt.platform.open-design.md) `debt.platform.open-design`
 - [OpenDesign 内核与能力边界](./design.platform.open-design.kernel.md) `design.platform.open-design.kernel`
 - [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [关键业务监控 · 计划](./plan.platform.business-monitoring.md) `plan.platform.business-monitoring`
@@ -316,6 +379,7 @@
 - [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md) `plan.platform.llm-routing.capability-contract`
 - [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`
+- [MCP 多上游语音能力 · 计划](./plan.platform.mcp.speech.md) `plan.platform.mcp.speech`
 - [PA Agent 可执行任务升级 · 计划](./plan.product-agent.pa.competitive-improvements.md) `plan.product-agent.pa.competitive-improvements`
 - [产品管理智能体版本流程收尾 · 计划](./plan.product-agent.version-workflow.md) `plan.product-agent.version-workflow`
 - [Report Agent 模型质量治理 · 计划](./plan.report-agent.model-governance.md) `plan.report-agent.model-governance`
@@ -324,53 +388,9 @@
 - [视觉创作配图标记人工控制 · 计划](./plan.visual-agent.manual-image-marking.md) `plan.visual-agent.manual-image-marking`
 - [视觉创作 优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
 
-### 六、技术债务台账
+### 六、工程债务
 
-- [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
-- [每日验收的锚点契约 · 债务台账](./debt.acceptance.daily-anchors.md) `debt.acceptance.daily-anchors`
-- [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
-- [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
-- [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
-- [CDS Agent 工作台 · 债务台账](./debt.cds.agent.md) `debt.cds.agent`
-- [CDS Agent 验收 smoke 断言漂移 · 债务台账](./debt.cds.agent.acceptance-smoke-drift.md) `debt.cds.agent.acceptance-smoke-drift`
-- [CDS Agent SDK 执行器 · 债务台账](./debt.cds.agent.sdk-executor.md) `debt.cds.agent.sdk-executor`
-- [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) `debt.cds.branch-isolation`
-- [CDS 构建闸（build-gate） · 债务台账](./debt.cds.build-gate.md) `debt.cds.build-gate`
-- [CDS 极速版（CI 预构建） · 债务台账](./debt.cds.ci-prebuilt.md) `debt.cds.ci-prebuilt`
-- [一仓多项目与身份层的工程债务](./debt.cds.multi-project-identity.md) `debt.cds.multi-project-identity`
-- [CDS 分支详情「总览」 · 债务台账](./debt.cds.overview.md) `debt.cds.overview`
-- [CDS 构建与前端性能 · 债务台账](./debt.cds.performance.md) `debt.cds.performance`
-- [CDS 生产发布系统 · 债务台账](./debt.cds.release-system.md) `debt.cds.release-system`
-- [CDS 自更新极速版（预构建产物） · 债务台账](./debt.cds.selfupdate-prebuilt.md) `debt.cds.selfupdate-prebuilt`
-- [CDS state.json 影子存储 · 债务台账](./debt.cds.state-json.md) `debt.cds.state-json`
-- [小技巧与新手引导 · 债务台账](./debt.daily-tips.md) `debt.daily-tips`
-- [缺陷管理手机截图分享提交 · 债务台账](./debt.defect-agent.mobile-share.md) `debt.defect-agent.mobile-share`
-- [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
-- [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
-- [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
-- [活动任务清单 · 债务台账](./debt.platform.active-tasks.md) `debt.platform.active-tasks`
-- [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
-- [跨 MAP 实例数据同步 · 债务台账](./debt.platform.cross-instance-data-sync.md) `debt.platform.cross-instance-data-sync`
-- [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
-- [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
-- [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
-- [平台基础设施杂项 · 债务台账](./debt.platform.md) `debt.platform`
-- [LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md) `debt.platform.llm-gateway`
-- [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
-- [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
-- [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
-- [prd-agent 平台杂项 · 债务台账](./debt.prd-agent.md) `debt.prd-agent`
-- [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
-- [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
-- [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
-- [角色技能套装 · 债务台账](./debt.skill.role-bundle.md) `debt.skill.role-bundle`
-- [演讲智能体 · 债务台账](./debt.speech-agent.md) `debt.speech-agent`
-- [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
-- [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`
-- [视觉创作 · 债务台账](./debt.visual-agent.md) `debt.visual-agent`
-- [视觉创作 · AI 分层 · 验收债务台账](./debt.visual-agent.layering.md) `debt.visual-agent.layering`
-- [网页托管 · 债务台账](./debt.web-hosting.md) `debt.web-hosting`
-- [工作流 · 债务台账](./debt.workflow-agent.md) `debt.workflow-agent`
+从 CDS 工程规划查询项目债务。原台账资料可通过记录中的固定 Git 来源回读。 [债务指南](./guide.doc.pri.debt.md)
 
 ### 七、报告与周报
 
@@ -424,3 +444,15 @@
 - [网关测试矩阵全量报告（grandfather 保留） · 报告](./report.gw-test-matrix.md) `report.gw-test-matrix`
 - [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md) `report.platform.llm-gateway.resilience-acceptance`
 - [「向我提问」形变坞 · 交接清单](./report.web-hosting.ask-dock-handoff.md) `report.web-hosting.ask-dock-handoff`
+
+### 八、架构决策
+
+- [ADR-DOC-001 文档原则与决策记录分层 · 架构决策](./adr.doc.001.document-roles.md) `adr.doc.001.document-roles`
+- [ADR-DOC-002 原则指南遵守统一文档位置与授权边界 · 架构决策](./adr.doc.002.principle-location.md) `adr.doc.002.principle-location`
+- [ADR-PLATFORM-001 大模型调用统一归口 · 架构决策](./adr.platform.001.llm-boundary.md) `adr.platform.001.llm-boundary`
+
+### 九、产品决策
+
+- [PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策](./pdr.platform.001.product-foundation.md) `pdr.platform.001.product-foundation`
+- [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
+- [PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策](./pdr.product-agent.002.version-claim-boundary.md) `pdr.product-agent.002.version-claim-boundary`

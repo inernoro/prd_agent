@@ -97,5 +97,47 @@ export function isReclaimSkip(v: unknown): v is ReclaimSkip {
   return !!v && typeof v === 'object' && (v as ReclaimSkip).skipped === true;
 }
 
+const RECLAIM_RETRY_DELAY_MS = 15_000;
+const RECLAIM_MAX_RETRIES = 4;
+
+/** Periodic passes can collide at the same offset after every restart. Retry a
+ * busy lock with a bounded delay and schedule from completion so passes never overlap. */
+export function startReclaimSchedule(options: {
+  intervalMs: number;
+  firstDelayMs?: number;
+  run: () => Promise<unknown>;
+  onError: (error: unknown) => void;
+}): () => void {
+  let stopped = false;
+  let retries = 0;
+  let timer: NodeJS.Timeout;
+  const schedule = (delayMs: number) => {
+    timer = setTimeout(run, delayMs);
+    timer.unref();
+  };
+  const run = async () => {
+    let delayMs = options.intervalMs;
+    try {
+      const report = await options.run();
+      if (isReclaimSkip(report) && retries < RECLAIM_MAX_RETRIES) {
+        retries++;
+        delayMs = RECLAIM_RETRY_DELAY_MS;
+      } else {
+        retries = 0;
+      }
+    } catch (error) {
+      retries = 0;
+      options.onError(error);
+    } finally {
+      if (!stopped) schedule(delayMs);
+    }
+  };
+  schedule(options.firstDelayMs ?? options.intervalMs);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+}
+
 /** 进程内共享的回收锁：所有 CDS 侧回收路径都走它。 */
 export const reclaimLock = new ReclaimLock();

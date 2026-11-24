@@ -1,11 +1,15 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { LoadingBlock } from '@/pages/cds-settings/components';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
+import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
+import { lazy, Suspense, useContext, useEffect, useState } from 'react';
+import { SettingsLoadingContext, SettingsPageSkeleton, SystemSettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
+import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { ButtonSizeProvider } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiRequest, fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
+import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
@@ -267,10 +271,12 @@ function getInitialTab(): TabValue {
   return 'maintenance';
 }
 
-function SettingsTabFallback(): JSX.Element {
-  // 页签 chunk 未到时画的骨架，与页签自己等数据时的 LoadingBlock 是同一副横条：
-  // 之前这里是居中的品牌 logo，页签挂上后再换成横条——两段等待两副骨架（2026-09-17 用户反馈）。
-  return <LoadingBlock label="加载设置" />;
+function SettingsTabFallback({ tab = 'auth' }: { tab?: TabValue }): JSX.Element {
+  return <SystemSettingsContentSkeleton tab={tab} />;
+}
+
+export function settingsTitleForViewer(status: ShellAuthStatus | null): string {
+  return status?.user && !canManageSystemSettings(status) ? '个人痕迹' : '系统设置';
 }
 
 export function settingsTabForViewer(requested: TabValue, canManageSettings: boolean): TabValue {
@@ -279,9 +285,10 @@ export function settingsTabForViewer(requested: TabValue, canManageSettings: boo
 
 export function CdsSettingsPage(): JSX.Element {
   const [requestedTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
-  const [viewerStatus, setViewerStatus] = useState<ShellAuthStatus | null>(null);
+  const { status: viewerStatus, pending: viewerPending, retry: retryViewer } = useContext(ConsoleAuthContext);
   const canManageSettings = canManageSystemSettings(viewerStatus);
   const activeTab = settingsTabForViewer(requestedTab, canManageSettings);
+  const tabsListRef = useSettingsTabVisibility(activeTab);
   const [toast, setToast] = useState('');
   // null = 探测中;'probe-failed' = 没问出来。**探测失败不等于「认证未启用」**:
   // 把失败当成 disabled，会让一台其实跑在 GitHub 模式的实例被告知「认证没开、去改
@@ -300,11 +307,9 @@ export function CdsSettingsPage(): JSX.Element {
     // 是判定当前模式的权威且安全入口。
     setAuthMode(null);
     setAuthCapabilities(null);
-    setViewerStatus(null);
-    Promise.all([fetchAuthPublicStatus(), apiRequest<ShellAuthStatus>('/api/auth/status')])
-      .then(([status, viewer]) => {
+    fetchAuthPublicStatus()
+      .then((status) => {
         if (alive) {
-          setViewerStatus(viewer);
           setAuthMode(status.mode);
           setAuthCapabilities(status.capabilities);
           setAuthProbeError('');
@@ -325,7 +330,7 @@ export function CdsSettingsPage(): JSX.Element {
 
   useEffect(() => {
     if (!viewerStatus) return;
-    window.history.replaceState(null, '', `#${activeTab}`);
+    window.history.replaceState(window.history.state, '', `#${activeTab}`);
   }, [activeTab, viewerStatus]);
 
   useEffect(() => {
@@ -349,7 +354,7 @@ export function CdsSettingsPage(): JSX.Element {
             <Crumb
               items={[
                 { label: 'CDS', href: '/project-list' },
-                { label: canManageSettings ? '系统设置' : '个人痕迹' },
+                { label: settingsTitleForViewer(viewerStatus) },
               ]}
             />
           }
@@ -362,14 +367,21 @@ export function CdsSettingsPage(): JSX.Element {
         {authMode === 'probe-failed' ? (
           <AuthModeGatedNotice feature="设置页面" mode="probe-failed" probeError={authProbeError}
             onRetryProbe={() => setAuthProbeSeq(n => n + 1)} onGoToAuth={() => setActiveTab('auth')} />
-        ) : !viewerStatus || !authCapabilities ? <SettingsTabFallback /> : (
+        ) : !viewerPending && !viewerStatus ? (
+          <section role="alert" className="space-y-3 p-6 text-sm">
+            <p>登录状态暂时无法确认，请重试。</p>
+            <button type="button" className="text-primary underline" onClick={retryViewer}>重新检查登录状态</button>
+          </section>
+        ) : viewerPending || !viewerStatus || !authCapabilities ? <SettingsPageSkeleton personal={!!viewerStatus && !canManageSettings} systemTab={activeTab} /> : (
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as TabValue)}
           className="cds-settings-shell"
         >
           <div className="cds-settings-layout">
-            <TabsList aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
+            <SettingsDirectory groups={visibleTabGroups} value={activeTab} label="CDS 系统设置目录" onChange={value => setActiveTab(value as TabValue)} />
+              <div className="cds-settings-desktop-directory">
+              <TabsList ref={tabsListRef} aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
               <div className="cds-settings-rail-head">
                 <div className="text-sm font-semibold">{canManageSettings ? 'CDS 系统设置' : '个人痕迹'}</div>
                 <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{canManageSettings ? 'system' : 'account'}</div>
@@ -391,10 +403,13 @@ export function CdsSettingsPage(): JSX.Element {
                 </div>
               ))}
             </TabsList>
+              </div>
 
             <div className="cds-settings-content min-w-0">
+              <ButtonSizeProvider value="sm">
               <div className="cds-settings-section-body">
-              <Suspense fallback={<SettingsTabFallback />}>
+              <SettingsLoadingContext.Provider value={true}>
+              <Suspense fallback={<SettingsTabFallback tab={activeTab} />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
                 </TabsContent>
@@ -419,7 +434,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="activity">
                   {activeTab !== 'activity' ? null : activityVisible ? (
-                    <ActivityTab />
+                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings} />
                   ) : !canManageSettings ? (
                     <p className="text-sm text-muted-foreground">当前认证方式不提供个人操作记录，请联系系统所有者。</p>
                   ) : (
@@ -476,7 +491,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="maintenance">
                   {activeTab === 'maintenance' ? (
-                    <div className="space-y-5">
+                    <div className="space-y-3">
                       <MaintenanceTab onToast={setToast} />
                       <DisclosurePanel title="镜像与外观" subtitle="镜像加速和浏览器标签设置">
                         <MirrorTab />
@@ -494,7 +509,9 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
+              </SettingsLoadingContext.Provider>
               </div>
+              </ButtonSizeProvider>
             </div>
           </div>
         </Tabs>

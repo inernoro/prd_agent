@@ -53,6 +53,19 @@ public class ChangelogLinkedDefectsTests
                 shaIndex));
     }
 
+    [Theory]
+    [InlineData("ABCDEF1234567890ABCDEF1234567890ABCDEF12", "abcdef1234567890abcdef1234567890abcdef12", "published")]
+    [InlineData("older-hotfix", "newer-hotfix", "unknown")]
+    [InlineData("hotfix", null, "unknown")]
+    public void ResolvePublishStatus_HotfixOutsideMainHistoryRequiresExactDeployedCommit(
+        string commitSha, string? deployedSha, string expected)
+    {
+        var status = ChangelogController.ResolvePublishStatus(
+            new DefectResolutionTrace { CommitSha = commitSha }, deployedSha, -1,
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(expected, status);
+    }
+
     [Fact]
     public void ResolvePublishStatus_KeepsPersistedPublishedStatus()
     {

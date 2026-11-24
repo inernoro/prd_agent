@@ -1,15 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-/**
- * 「must be forced」镜像的受控强删（2026-07-27 生产实测）。
- *
- * 实测每轮固定有 1 个 admin 镜像卡在
- * `conflict: unable to delete ... (must be forced)`——该镜像 ID 还挂着别的 tag
- * 或子引用。不处理就是永远失败下去的噪音，且那部分空间永远收不回。
- *
- * 但直接 -f 是危险的：停止容器依赖的镜像被强删后，那个容器再也起不来。
- * 所以只在「此刻确认没有任何容器引用它」之后才重试，且检查失败一律不强删。
- */
+/** Legacy tag removal cannot authorize force-deleting another alias of the same image ID. */
 const execCalls: string[][] = [];
 let execResults: Record<string, string> = {};
 
@@ -31,14 +22,14 @@ const { defaultImageDocker, IMAGE_HELD_PREFIX } = await import('../../src/servic
 describe('镜像强删的安全边界', () => {
   beforeEach(() => { execCalls.length = 0; execResults = {}; });
 
-  it('无容器引用时，must-be-forced 的镜像会被受控强删', async () => {
+  it('无容器引用仍需保留未知别名，不能用强删绕过镜像ID对账', async () => {
     execResults = {
       'rmi -f img:tag': 'Deleted: sha256:x',
       'rmi img:tag': 'ERR:conflict: unable to delete img:tag (must be forced) - image is referenced in multiple repositories',
       'ps -a --filter ancestor=img:tag': '',
     };
-    expect(await defaultImageDocker.removeImage('img:tag')).toBeNull();
-    expect(execCalls.some((a) => a.includes('-f'))).toBe(true);
+    expect(await defaultImageDocker.removeImage('img:tag')).toContain('镜像ID对账');
+    expect(execCalls.some((a) => a.includes('-f'))).toBe(false);
   });
 
   it('有容器引用时绝不强删——停止容器依赖的镜像删了就起不来', async () => {
@@ -101,5 +92,26 @@ describe('held 与 failed 必须分开（2026-07-28 生产实测）', () => {
     const r = await defaultImageDocker.removeImage('img:tag');
     expect(r).toBe('some other docker failure');
     expect(r!.startsWith(IMAGE_HELD_PREFIX)).toBe(false);
+  });
+});
+
+
+describe('任何删除前都重新核对原生镜像身份引用', () => {
+  beforeEach(() => { execCalls.length=0;execResults={}; });
+  it('别名或 image ID 容器引用命中 ancestor 时，连普通 rmi 也不发出', async () => {
+    execResults={'ps -a --filter ancestor=img:tag':'exact-stopped-cid','rmi img:tag':'Untagged: img:tag'};
+    const r=await defaultImageDocker.removeImage('img:tag');
+    expect(r?.startsWith(IMAGE_HELD_PREFIX)).toBe(true);
+    expect(execCalls.some(a=>a[0]==='rmi')).toBe(false);
+  });
+  it('原生引用查询失败时不发普通 rmi', async () => {
+    execResults={'ps -a --filter ancestor=img:tag':'ERR:inspect unavailable','rmi img:tag':'Untagged: img:tag'};
+    expect((await defaultImageDocker.removeImage('img:tag'))?.startsWith(IMAGE_HELD_PREFIX)).toBe(true);
+    expect(execCalls.some(a=>a[0]==='rmi')).toBe(false);
+  });
+  it('先确认没有引用，才尝试非强制删除', async () => {
+    expect(await defaultImageDocker.removeImage('img:tag')).toBeNull();
+    expect(execCalls[0]).toEqual(['ps','-a','--filter','ancestor=img:tag','-q']);
+    expect(execCalls[1]).toEqual(['rmi','img:tag']);
   });
 });

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, Eye, ExternalLink, Loader2, Rocket } from 'lucide-react';
-import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
+import { ChevronDown, Eye, Loader2, Rocket } from 'lucide-react';
 import { ConfirmAction } from '@/components/ui/confirm-action';
+import { DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 
 type PreviewActionSplitButtonProps = {
   disabled?: boolean;
@@ -35,36 +35,19 @@ export function PreviewActionSplitButton({
   onPreview,
   onRelease,
   releaseDisabled = false,
-  releaseLabel = '发布到目标',
+  releaseLabel = '发布到',
   className = '',
   icon,
   fill = false,
 }: PreviewActionSplitButtonProps): JSX.Element {
   const mainClassName = [
-    'inline-flex h-9 items-center justify-center rounded-l-md border border-ok/35 bg-ok-soft text-ok transition-colors',
-    fill ? 'min-w-0 flex-1 gap-2 px-3 text-sm font-medium' : 'w-10',
+    'inline-flex h-9 items-center justify-center rounded-md border border-ok/35 bg-ok-soft text-ok transition-colors',
+    onRelease ? 'rounded-r-none border-r-0' : '',
+    fill ? 'min-w-max flex-1 gap-2 px-3 text-sm font-medium' : 'w-10',
     'hover:border-ok/50 hover:bg-ok-soft hover:text-ok',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35',
     disabled ? 'pointer-events-none opacity-50' : '',
   ].join(' ');
-  const menuTrigger = (
-    <button
-      type="button"
-      className={[
-        'inline-flex h-9 items-center justify-center rounded-r-md border border-l-0 border-ok/35 bg-ok-soft text-ok transition-colors',
-        fill ? 'w-10' : 'w-7',
-        'hover:border-ok/50 hover:bg-ok-soft hover:text-ok',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35',
-        disabled ? 'pointer-events-none opacity-50' : '',
-      ].join(' ')}
-      disabled={disabled}
-      title="更多预览操作"
-      aria-label="更多预览操作"
-    >
-      <ChevronDown className="h-3.5 w-3.5" />
-    </button>
-  );
-
   const mainIcon = loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon || <Eye className="h-4 w-4" />;
 
   const mainButton = previewHref && !disabled ? (
@@ -78,7 +61,7 @@ export function PreviewActionSplitButton({
       onClick={(event) => event.stopPropagation()}
     >
       {mainIcon}
-      {previewLabel ? <span className="truncate">{previewLabel}</span> : null}
+      {previewLabel ? <span className="whitespace-nowrap">{previewLabel}</span> : null}
     </a>
   ) : (
     <button
@@ -93,7 +76,7 @@ export function PreviewActionSplitButton({
       }}
     >
       {mainIcon}
-      {previewLabel ? <span className="truncate">{previewLabel}</span> : null}
+      {previewLabel ? <span className="whitespace-nowrap">{previewLabel}</span> : null}
     </button>
   );
 
@@ -111,25 +94,18 @@ export function PreviewActionSplitButton({
   return (
     <span className={`${fill ? 'flex min-w-0' : 'inline-flex'} items-center ${className}`}>
       {mainAction}
-      <DropdownMenu trigger={menuTrigger} width={210}>
-        <DropdownLabel>预览操作</DropdownLabel>
-        {previewHref ? (
-          <DropdownItem onSelect={() => window.open(previewHref, '_blank', 'noopener,noreferrer')}>
-            <ExternalLink className="h-4 w-4" />
-            打开预览
+      {onRelease ? (
+        <DropdownMenu trigger={
+          <button type="button" disabled={disabled} aria-label="预览更多操作" title="预览更多操作" aria-haspopup="menu"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-r-md border border-ok/35 bg-ok-soft text-ok transition-colors hover:border-ok/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35 disabled:opacity-50">
+            <ChevronDown className="h-5 w-5" />
+          </button>
+        }>
+          <DropdownItem disabled={disabled || releaseDisabled} onSelect={onRelease}>
+            <Rocket className="h-4 w-4" /><span>{releaseLabel}<span className="mt-0.5 block text-xs text-muted-foreground">当前分支 · 逐目标发布</span></span>
           </DropdownItem>
-        ) : (
-          <DropdownItem onSelect={onPreview} disabled={disabled || !onPreview}>
-            <Eye className="h-4 w-4" />
-            打开预览
-          </DropdownItem>
-        )}
-        <DropdownDivider />
-        <DropdownItem onSelect={onRelease} disabled={disabled || releaseDisabled || !onRelease}>
-          <Rocket className="h-4 w-4" />
-          {releaseLabel}
-        </DropdownItem>
-      </DropdownMenu>
+        </DropdownMenu>
+      ) : null}
     </span>
   );
 }

@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
 /// 首页「继续上次」聚合端点。
-/// 唯一数据源是每用户「最近打开」台账（home_recent_opens）。
+/// 本人最近打开的工作以及成功交付给本人的 MCP 网页。
 /// 埋点位置（打开详情即打点）：视觉/文学工作区、工作流、缺陷、周报、产品评审、知识库。
 /// 禁止退回实体全局时间戳（UpdatedAt / LastOpenedAt / LastExecutedAt）作为排序依据：
 /// 那些字段任何共享成员编辑、定时工作流自跑都会变，会把"别人/机器的活跃"顶进
@@ -28,12 +28,15 @@ public sealed class HomeRecentWorkController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ITeamService _teams;
     private readonly IAdminPermissionService _permissions;
+    private readonly IHostedSiteService _hostedSites;
 
-    public HomeRecentWorkController(MongoDbContext db, ITeamService teams, IAdminPermissionService permissions)
+    public HomeRecentWorkController(MongoDbContext db, ITeamService teams, IAdminPermissionService permissions,
+        IHostedSiteService hostedSites)
     {
         _db = db;
         _teams = teams;
         _permissions = permissions;
+        _hostedSites = hostedSites;
     }
 
     public record RecentWorkItem(
@@ -133,11 +136,20 @@ public sealed class HomeRecentWorkController : ControllerBase
     /// <summary>当前用户最近打开的工作实体（最多 limit 条，按本人打开时间倒序）。</summary>
     [HttpGet("recent-work")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> RecentWork([FromQuery] int limit = 8, CancellationToken ct = default)
+    public async Task<IActionResult> RecentWork([FromQuery] int limit = 8, CancellationToken ct = default,
+        [FromQuery] bool webDeliveriesOnly = false)
     {
         // 上限 30：首页默认收起一行，「浏览全部脚印」展开后允许翻看更长的足迹
         limit = Math.Clamp(limit, 1, 30);
         var userId = this.GetRequiredUserId();
+        var perms = await LoadEffectivePermissionsAsync(userId, ct);
+        var hasAccess = perms.Contains(AdminPermissionCatalog.Super) || perms.Contains(AdminPermissionCatalog.Access);
+        bool Has(string permission) => hasAccess
+            && (perms.Contains(AdminPermissionCatalog.Super) || perms.Contains(permission));
+        var webDeliveries = Has(AdminPermissionCatalog.WebPagesRead)
+            ? await LoadWebDeliveriesAsync(userId, limit, ct) : [];
+        if (webDeliveriesOnly)
+            return Ok(ApiResponse<object>.Ok(new { items = webDeliveries }));
 
         // 台账多取一些冗余：富化阶段会丢弃已删除/已失去权限的实体
         var rawOpens = await _db.UserRecentOpens
@@ -147,7 +159,7 @@ public sealed class HomeRecentWorkController : ControllerBase
             .ToListAsync(ct);
 
         if (rawOpens.Count == 0)
-            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
+            return Ok(ApiResponse<object>.Ok(new { items = webDeliveries }));
 
         // 工作区先按实体场景归一化应用身份，再做模块门禁。不能先相信历史 AgentKey，
         // 否则一条写错的 visual-agent 脚印会绕过 literary-agent 的权限判断。
@@ -175,16 +187,10 @@ public sealed class HomeRecentWorkController : ControllerBase
 
         var opens = NormalizeRecentOpens(rawOpens, workspaceMetadata).ToList();
 
-        // 权限口径与 AdminPermissionMiddleware 一致：先过 access 总闸，再看 Super / 具体权限
-        var perms = await LoadEffectivePermissionsAsync(userId, ct);
-        var hasAccess = perms.Contains(AdminPermissionCatalog.Super) || perms.Contains(AdminPermissionCatalog.Access);
-        bool Has(string permission) => hasAccess
-            && (perms.Contains(AdminPermissionCatalog.Super) || perms.Contains(permission));
-
         // 模块门禁：详情路由已 403 的模块，脚印（标题 + 深链）整体不返回
         opens = opens.Where(o => ModuleGate.TryGetValue(o.AgentKey, out var gate) && Has(gate)).ToList();
         if (opens.Count == 0)
-            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
+            return Ok(ApiResponse<object>.Ok(new { items = webDeliveries }));
 
         var wfIds = opens.Where(o => o.AgentKey == "workflow-agent").Select(o => o.EntityId).Distinct().ToList();
         var defectIds = opens.Where(o => o.AgentKey == "defect-agent").Select(o => o.EntityId).Distinct().ToList();
@@ -368,6 +374,58 @@ public sealed class HomeRecentWorkController : ControllerBase
             if (items.Count >= limit) break;
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = items.Concat(webDeliveries).OrderByDescending(item => item.LastActiveAt).Take(limit).ToList(),
+        }));
     }
+
+    private async Task<List<RecentWorkItem>> LoadWebDeliveriesAsync(string userId, int limit, CancellationToken ct)
+    {
+        var since = DateTime.UtcNow.AddDays(-30);
+        var scope = DeploymentScope.CurrentDurable;
+        var deliveries = await _db.McpCallLogs.Aggregate()
+            .Match(log => log.OwnerUserId == userId && log.DeploymentSlug == scope && log.CreatedAt >= since
+                && log.Status == "success" && log.Deduplicated != true && log.ArtifactKind == "site" && log.ArtifactId != null
+                && (log.ToolName == "map_web_publish_page" || (log.ToolName == "map_web_update_page"
+                    && log.ArgumentsPreview != null && log.ArgumentsPreview.StartsWith("直连 POST "))))
+            // 一次新增和最近一次更新各有一条，同一站点的连续更新只保留最新一条。
+            .Group(log => new { log.ArtifactId, log.ToolName }, group => new
+            {
+                group.Key.ArtifactId,
+                group.Key.ToolName,
+                CreatedAt = group.Max(log => log.CreatedAt),
+            })
+            .SortByDescending(log => log.CreatedAt)
+            .Limit(limit * 4)
+            .ToListAsync(ct);
+        if (deliveries.Count == 0) return [];
+
+        var ids = deliveries.Select(log => log.ArtifactId!).Distinct().ToList();
+        var sites = await _db.HostedSites.Find(site => ids.Contains(site.Id))
+            .Project(site => new { site.Id, site.Title, site.OwnerUserId, site.SharedTeamIds, site.GroupId })
+            .ToListAsync(ct);
+        var teamRoles = sites.Any(site => site.OwnerUserId != userId && site.SharedTeamIds.Count > 0)
+            ? await _teams.GetMyWebHostingTeamRolesAsync(userId, ct) : null;
+        var visibleSites = sites.Where(site => CanSeeWebDelivery(userId, site.OwnerUserId, site.SharedTeamIds, teamRoles))
+            .ToDictionary(site => site.Id);
+        var items = new List<RecentWorkItem>();
+        foreach (var log in deliveries)
+        {
+            if (!visibleSites.TryGetValue(log.ArtifactId!, out var site)) continue;
+            if (site.OwnerUserId != userId && !string.IsNullOrWhiteSpace(site.GroupId)
+                && await _hostedSites.GetByIdAsync(site.Id, userId, ct) == null) continue;
+            var id = Uri.EscapeDataString(site.Id);
+            var version = new DateTimeOffset(DateTime.SpecifyKind(log.CreatedAt, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+            items.Add(new RecentWorkItem($"/web-pages?focusSite={id}&mcpDelivery={version}", "web-pages",
+                string.IsNullOrWhiteSpace(site.Title) ? "未命名网页" : site.Title, log.CreatedAt,
+                ProgressLabel: log.ToolName == "map_web_publish_page" ? "新增" : "更新"));
+            if (items.Count >= limit) break;
+        }
+        return items;
+    }
+
+    internal static bool CanSeeWebDelivery(string userId, string ownerUserId, IEnumerable<string> sharedTeamIds,
+        IReadOnlyDictionary<string, string>? teamRoles)
+        => ownerUserId == userId || (teamRoles != null && sharedTeamIds.Any(teamRoles.ContainsKey));
 }

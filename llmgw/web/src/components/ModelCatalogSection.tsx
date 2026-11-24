@@ -11,7 +11,7 @@
 //
 // 与生图契约那份的区别：那份跨进程（console-api 写、prd-api 读）只能轮询、最长 60 秒生效；
 // 这份只有 console-api 自己读，端点每次请求现查，所以**改完立刻生效**，界面上就这么写。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createCatalogEntry, deleteCatalogEntry, getCatalogEntries, updateCatalogEntry } from '@/lib/api';
 import type { CatalogEntriesData, CatalogEntryItem, UpsertCatalogEntryRequest } from '@/lib/types';
 import { Button, Chip, HelpTip, InlineAlert, SectionLoader } from '@/components/ui';
@@ -86,6 +86,7 @@ export function CatalogEntryEditor({
   onSave,
   onCancel,
   idPrefix = 'catalog',
+  containerRef,
   lockCanonicalId = false,
 }: {
   draft: CatalogDraft;
@@ -95,6 +96,7 @@ export function CatalogEntryEditor({
   onSave: () => void;
   onCancel: () => void;
   idPrefix?: string;
+  containerRef?: React.Ref<HTMLDivElement>;
   lockCanonicalId?: boolean;
 }) {
   const caps = new Set(draft.capabilities ?? []);
@@ -106,7 +108,7 @@ export function CatalogEntryEditor({
   };
 
   return (
-    <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div ref={containerRef} style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '1 1 240px' }}>
           <span style={FIELD_LABEL}>模型标识</span>
@@ -239,6 +241,20 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
   const [data, setData] = useState<CatalogEntriesData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; draft: CatalogDraft } | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorOrigin = useRef<HTMLElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const [editorEntry, setEditorEntry] = useState(0);
+  function openEditor(next: { id: string | null; draft: CatalogDraft }, origin?: HTMLElement | null) {
+    editorOrigin.current = origin || document.activeElement as HTMLElement;
+    setEditing(next); setEditorEntry(value => value + 1);
+  }
+  useEffect(() => {
+    if (!editorEntry) return;
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({ preventScroll: true }); }
+    else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
+    else document.querySelector<HTMLButtonElement>('[data-catalog-create]')?.focus();
+  }, [editorEntry, editing !== null]);
   const [busy, setBusy] = useState(false);
   const [showBuiltin, setShowBuiltin] = useState(false);
 
@@ -265,7 +281,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
   const remove = async (item: CatalogEntryItem) => {
     const ok = await confirm({
       title: '删掉这条补登？',
-      description: `${item.canonicalId} 删掉之后回落到代码内置那张表；内置表里也没有的话，它的用途就重新变成按模型名猜的。`,
+      description: `删除 ${item.canonicalId} 的自定义项后，优先采用匹配的内置配置；无匹配时按名称自动识别用途，结果可能变化。`,
       confirmLabel: '删除',
       tone: 'danger',
     });
@@ -311,7 +327,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
             {showBuiltin ? '查看补登名录' : `查看内置名录（${data.builtinCount}）`}
           </Button>
           {canWrite ? (
-            <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(null) })}>
+            <Button variant="primary" size="sm" data-catalog-create onClick={() => openEditor({ id: null, draft: draftFromEntry(null) })}>
               补登模型
             </Button>
           ) : null}
@@ -328,8 +344,8 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {!showBuiltin ? (
-        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-testid="model-catalog-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="模型名录字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               <th style={TABLE_HEAD_CELL}>模型标识</th>
@@ -348,7 +364,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                 </td>
               </tr>
             ) : data.items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.id} ref={row => { if (!item.id) return; if (row) rowRefs.current.set(item.id, row); else rowRefs.current.delete(item.id); }}>
                 <td style={TABLE_CELL}>
                   <code>{item.canonicalId}</code>
                   {item.enabled === false ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
@@ -372,7 +388,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                   {canWrite ? (
                     <RowActions
                       actions={[
-                        { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id ?? null, draft: draftFromEntry(item) }) },
+                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id ?? null, draft: draftFromEntry(item) }, item.id ? rowRefs.current.get(item.id)?.querySelector<HTMLButtonElement>('.lg-row-actions-trigger') : null) },
                         { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
                       ]}
                     />
@@ -386,8 +402,8 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
       ) : null}
 
       {showBuiltin ? (
-        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div data-testid="model-catalog-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="模型名录字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 <th style={TABLE_HEAD_CELL}>模型标识</th>
@@ -406,7 +422,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                   <td style={TABLE_CELL}>{item.requiresImageInput ? '必须给图' : item.acceptsImageInput ? '能吃图' : '—'}</td>
                   <td style={TABLE_CELL}>
                     {canWrite ? (
-                      <Button variant="ghost" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(item) })}>
+                      <Button variant="ghost" size="sm" onClick={() => openEditor({ id: null, draft: draftFromEntry(item) })}>
                         补登这条
                       </Button>
                     ) : null}
@@ -420,6 +436,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
 
       {editing ? (
         <CatalogEntryEditor
+          containerRef={editorRef}
           draft={editing.draft}
           onChange={(draft) => setEditing({ ...editing, draft })}
           knownCapabilities={data.knownCapabilities}

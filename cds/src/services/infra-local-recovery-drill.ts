@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_ARGS } from './docker-log-policy.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -303,7 +304,7 @@ export async function runLocalInfraRecoveryDrill(opts: {
 
     if (runtime === 'mongodb') {
       const start = await runner('docker', [
-        'run', '-d', '--name', drillContainer, '--network', 'none',
+        'run', '-d', ...DOCKER_LOG_LIMIT_ARGS, '--name', drillContainer, '--network', 'none',
         '--mount', `type=bind,src=${localFile},dst=/recovery/backup.archive.gz,readonly`,
         '--mount', `type=bind,src=${dataDir},dst=/data/db`,
         opts.mongoImage || 'mongo:7', '--bind_ip', '127.0.0.1',
@@ -338,7 +339,7 @@ export async function runLocalInfraRecoveryDrill(opts: {
 
     await fs.promises.copyFile(localFile, path.join(dataDir, 'dump.rdb'));
     const start = await runner('docker', [
-      'run', '-d', '--name', drillContainer, '--network', 'none',
+      'run', '-d', ...DOCKER_LOG_LIMIT_ARGS, '--name', drillContainer, '--network', 'none',
       '--mount', `type=bind,src=${dataDir},dst=/data`,
       opts.redisImage || 'redis:7', 'redis-server', '--appendonly', 'no', '--protected-mode', 'no',
     ]);

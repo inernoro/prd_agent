@@ -1,3 +1,4 @@
+using PrdAgent.GatewayTransport;
 namespace PrdAgent.LlmGw.Models;
 
 // 统一响应信封：{ success, data, error }。JSON 输出走 camelCase（见 Program.cs 配置）。
@@ -179,11 +180,13 @@ public sealed class LlmLogListItem
     public int? StatusCode { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? ReasoningTokens { get; set; }
     public string? TokenUsageSource { get; set; }
     public int? ImageSuccessCount { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? CostKind { get; set; }
     public string? PriceSnapshotHash { get; set; }
     public string? ProviderRequestId { get; set; }
     public decimal? ProviderReportedCost { get; set; }
@@ -256,6 +259,10 @@ public sealed class LlmLogDetail
     public int? ToolCallCount { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? ReasoningTokens { get; set; }
+    public int? CacheCreationInputTokens { get; set; }
+    public int? CacheReadInputTokens { get; set; }
+    public bool? CacheCreationCountedInsideInput { get; set; }
     public int? ImageSuccessCount { get; set; }
     public List<LogImageDto> OutputImages { get; set; } = new();
     public string? OutputImageCaptureStatus { get; set; }
@@ -286,6 +293,8 @@ public sealed class LlmLogDetail
     public string? CostStatus { get; set; }
     /// <summary>算不出钱时的人话原因，直接给用户看。</summary>
     public string? CostUnpricedReason { get; set; }
+    /// <summary>金额证据性质：供应商实算、官方基准估算、供应商策略估算、未计价或无用量。</summary>
+    public string? CostKind { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
     public string? PriceSnapshotHash { get; set; }
     public string? ProviderRequestId { get; set; }
@@ -363,6 +372,14 @@ public sealed class RouterTraceDto
 
 public sealed class ProviderAttemptDto
 {
+    public string? AttemptId { get; set; }
+    public string? ProviderRequestId { get; set; }
+    public string? ProviderTaskId { get; set; }
+    public int? InputTokens { get; set; }
+    public int? OutputTokens { get; set; }
+    public decimal? ProviderReportedCost { get; set; }
+    public string? ProviderCostCurrency { get; set; }
+
     public int Order { get; set; }
     public string Stage { get; set; } = "send";
     public string? Provider { get; set; }
@@ -518,8 +535,14 @@ public sealed class CostReconciliationSummary
     public List<CostReconciliationItem> Items { get; set; } = new();
 }
 
+public sealed class ServiceKeyClientCutoverRequest
+{
+    public string? ExpectedSuccessorKeyId { get; set; }
+}
+
 public sealed class LegacyKeyCutoverUpdateRequest
 {
+    public long? ExpectedPolicyRevision { get; set; }
     public string? Status { get; set; }
     public DateTime? DeadlineAt { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
@@ -634,6 +657,7 @@ public sealed class SessionItem
     public string? Start { get; set; }
     public string? End { get; set; }
     public string? AppCallerCode { get; set; }
+    public string? AppCallerCodeDisplayName { get; set; }
     public string? PrimaryModel { get; set; }
     public string? PrimaryProvider { get; set; }
     public List<string> SupportingModels { get; set; } = new();
@@ -967,6 +991,10 @@ public sealed class PoolModelItem
 public sealed class PlatformsData { public List<PlatformItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class PlatformItem
 {
+    /// <summary>配置更新后最近一次真实调用的观测，不能当作实时余额。</summary>
+    public string? RecentCallStatus { get; set; }
+    public string? RecentCallAt { get; set; }
+    public UpstreamProxyView? Proxy { get; set; }
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string PlatformType { get; set; } = "";
     public string? ProviderId { get; set; } public string? ApiUrl { get; set; } public bool Enabled { get; set; }
     public int MaxConcurrency { get; set; } public string? Remark { get; set; } public bool HasKey { get; set; }
@@ -1073,6 +1101,7 @@ public sealed class AppCallerDeleteResult
 /// <summary>编辑上游：只改这几项；密钥走独立的轮换端点，不混在这里。</summary>
 public sealed class UpdatePlatformRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public string? PlatformType { get; set; }
     public string? ApiUrl { get; set; }
@@ -1082,6 +1111,7 @@ public sealed class UpdatePlatformRequest
 
 public sealed class CreatePlatformRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public string? PlatformType { get; set; }
     public string? ProviderId { get; set; }
@@ -1353,6 +1383,8 @@ public sealed class LogicalModelItem
 {
     public string Id { get; set; } = "";
     public string PublicId { get; set; } = "";
+    public string IdentityKind { get; set; } = "fixed";
+    public List<string> Aliases { get; set; } = new();
     public string Name { get; set; } = "";
     public string ModelType { get; set; } = "";
     public List<string> Capabilities { get; set; } = new();
@@ -1572,6 +1604,8 @@ public sealed class CallTraceLedger
 public sealed class CreateLogicalModelRequest
 {
     public string? PublicId { get; set; }
+    public string IdentityKind { get; set; } = "fixed";
+    public List<string> Aliases { get; set; } = new();
     public string? Name { get; set; }
     public string? ModelType { get; set; }
     public List<string> Capabilities { get; set; } = new();
@@ -1586,6 +1620,7 @@ public sealed class CreateLogicalModelRequest
 public sealed class UpdateLogicalModelRequest
 {
     public string? Name { get; set; }
+    public List<string>? Aliases { get; set; }
     public List<string>? Capabilities { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
     /// <summary>「对这些调用方而言我是默认」；不传表示不改。</summary>
@@ -1647,9 +1682,11 @@ public sealed class ParameterCapabilityTemplateItem
 public sealed class ExchangesData { public List<ExchangeItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class ExchangeItem
 {
+    public UpstreamProxyView? Proxy { get; set; }
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string ModelAlias { get; set; } = "";
     public List<string> ModelAliases { get; set; } = new(); public List<ExchangeModelItem> Models { get; set; } = new();
     public string TargetUrl { get; set; } = ""; public string TargetAuthScheme { get; set; } = ""; public string TransformerType { get; set; } = "";
+    public string? ResourceId { get; set; }
     public bool Enabled { get; set; } public string? Description { get; set; } public bool HasKey { get; set; }
     public string SourceCollection { get; set; } = "model_exchanges"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
@@ -1683,24 +1720,34 @@ public sealed class ExchangeModelWriteRequest
 }
 public sealed class CreateExchangeRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public List<ExchangeModelWriteRequest> Models { get; set; } = new();
     public string? TargetUrl { get; set; }
     public string? ApiKey { get; set; }
     public string? TargetAuthScheme { get; set; }
     public string? TransformerType { get; set; }
+    public string? ResourceId { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
 }
 public sealed class UpdateExchangeRequest
 {
+    public UpstreamProxyWrite? Proxy { get; set; }
     public string? Name { get; set; }
     public List<ExchangeModelWriteRequest> Models { get; set; } = new();
     public string? TargetUrl { get; set; }
     public string? TargetAuthScheme { get; set; }
     public string? TransformerType { get; set; }
+    public string? ResourceId { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
+    public long? Version { get; set; }
+}
+
+public sealed class UpdateExchangeProxyRequest
+{
+    public UpstreamProxyWrite? Proxy { get; set; }
     public long? Version { get; set; }
 }
 
@@ -2430,6 +2477,7 @@ public sealed class UpsertImageGenConfigRequest
 
 public sealed class CatalogEntriesData
 {
+    public IReadOnlyDictionary<string, string> LegacyCapabilityAliases { get; set; } = new Dictionary<string, string>();
     public List<CatalogEntryItem> Items { get; set; } = new();
     public int Total { get; set; }
 

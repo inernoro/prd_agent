@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { operatorOpRegistry } from '../../src/services/operator-console.js';
 import { OperatorApprovalService } from '../../src/services/operator-approval.js';
 import type { IShellExecutor } from '../../src/types.js';
 import type { StateService } from '../../src/services/state.js';
@@ -20,6 +21,37 @@ describe('OperatorApprovalService — session args binding', () => {
   let svc: OperatorApprovalService;
   beforeEach(() => {
     svc = new OperatorApprovalService();
+  });
+
+  it('session hashes the server-resolved identity, replacing caller snapshots and requiring reapproval after replacement', async () => {
+    let target = 'instance-a';
+    operatorOpRegistry.register({ id: 'test.bound-target', name: 'bound target', description: 'fixture', danger: 'destructive',
+      prepareArgs: async args => ({ ...args, databaseTarget: { identity: target } }),
+      run: async () => ({ summary: 'done' }),
+    });
+    const common = { opId: 'test.bound-target', actor: 'ai', callerKey: 'resolved-target', args: { sql: 'UPDATE fixture', databaseTarget: { identity: 'forged' } } };
+    const first = await svc.submitRequest(common);
+    expect(first.args?.databaseTarget).toEqual({ identity: 'instance-a' });
+    svc.approve({ requestId: first.id, scope: 'session', approver: 'owner' });
+    expect((await svc.submitRequest(common)).approvedScope).toBe('session');
+    target = 'instance-b';
+    const replaced = await svc.submitRequest(common);
+    expect(replaced.status).toBe('pending');
+    expect(replaced.approvedScope).toBeUndefined();
+  });
+
+  it('嵌套 Mongo 参数必须完整绑定，键顺序等价但更换动作或文档必须重新批准', async () => {
+    const common = { opId: 'shell.run', actor: 'ai', callerKey: 'nested-mongo' };
+    const args = { command: 'echo fixture', projectId: 'p1', write: { database: 'qa', collection: 'items', action: 'insertOne', document: { n: 1, tags: ['a', 'b'] } } };
+    const first = await svc.submitRequest({ ...common, args });
+    svc.approve({ requestId: first.id, scope: 'session', approver: 'owner' });
+    const equivalent = await svc.submitRequest({ ...common, args: { ...args, write: { document: { tags: ['a', 'b'], n: 1 }, action: 'insertOne', collection: 'items', database: 'qa' } } });
+    expect(equivalent.approvedScope).toBe('session');
+    for (const write of [{ ...args.write, action: 'dropCollection' }, { ...args.write, database: 'other' }, { ...args.write, document: { n: 2, tags: ['a', 'b'] } }, { ...args.write, document: { n: 1, tags: ['b', 'a'] } }]) {
+      const changed = await svc.submitRequest({ ...common, args: { ...args, write } });
+      expect(changed.status).toBe('pending');
+      expect(changed.approvedScope).toBeUndefined();
+    }
   });
 
   it('相同 args 命中 session,直接通过', async () => {

@@ -217,7 +217,7 @@ $ python3 cdscli.py scan ./mdimp
 - PR description 用 `Fixes #N` 关键字关 issue
 - 合并后立刻改 label（参见第 5 节）
 - 提供具体复测命令（不只是"已修复，请验证"）
-- 已知 debt 写到 `doc/debt.{module}.md`，不是只写在 commit message
+- 用 CDS 工程规划技能登记确认暂缓的问题，附模块、原始证据和偿还标准。交付时引用实际债务或提案编号。
 
 **复测方义务**：
 - 必须用最新版本 / 包（带时间戳证据）

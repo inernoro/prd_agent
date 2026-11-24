@@ -17,6 +17,7 @@
  */
 
 import { isReleaseFailed, isReleaseTerminal, type CenterRow } from '@/pages/release-center/types';
+import { releaseActorLabel } from './releaseProvenance';
 
 export type FleetHealth = 'healthy' | 'failed' | 'unmonitored';
 export type FleetType = 'production' | 'staging' | 'other';
@@ -154,7 +155,7 @@ export function toFleetEnv(row: CenterRow): FleetEnv {
   const lastRelease: FleetLastRelease | null = Number.isFinite(lastAtMs)
     ? {
       atMs: lastAtMs,
-      by: run?.operator || row.lastOperator || '-',
+      by: releaseActorLabel(run ? run.operator : row.lastOperator),
       durationSec: Number.isFinite(startedMs) && Number.isFinite(finishedMs)
         ? Math.max(0, Math.round((finishedMs - startedMs) / 1000))
         : null,

@@ -24,6 +24,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly string _internalTenantId;
+    private readonly LlmLogOwner? _owner;
 
     /// <summary>JSON 中字符串值超过此长度时，上传 COS 存储引用</summary>
     private const int CosTextThreshold = 1024;
@@ -35,13 +36,15 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         IAppSettingsService settingsService,
         IAssetStorage assetStorage,
         IConfiguration configuration,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        LlmLogOwner? owner = null)
     {
         _db = db;
         _logger = logger;
         _settingsService = settingsService;
         _assetStorage = assetStorage;
         _httpContextAccessor = httpContextAccessor;
+        _owner = owner;
         _internalTenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
@@ -79,7 +82,16 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 GroupId = start.GroupId,
                 SessionId = start.SessionId,
                 LogicalRequestId = start.LogicalRequestId,
+                TaskPermitId = start.TaskPermitId,
+                TaskLeaseRunId = start.TaskLeaseRunId,
+                TaskLeaseFence = start.TaskLeaseFence,
+                ExecutionOrigin = start.ExecutionOrigin,
+                TriggerCredentialId = start.TriggerCredentialId,
+                TriggerActorUserId= start.TriggerActorUserId,
+                SourceDeployment = start.SourceDeployment,
+                SourceTask = start.SourceTask,
                 ProviderTaskId = start.ProviderTaskId,
+                WriterInstanceId = _owner?.InstanceId,
                 UserId = start.UserId,
                 ViewRole = start.ViewRole,
                 RequestType = start.RequestType,
@@ -206,6 +218,14 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                     GroupId = start.GroupId,
                     SessionId = start.SessionId,
                     LogicalRequestId = start.LogicalRequestId,
+                TaskPermitId = start.TaskPermitId,
+                TaskLeaseRunId = start.TaskLeaseRunId,
+                TaskLeaseFence = start.TaskLeaseFence,
+                ExecutionOrigin = start.ExecutionOrigin,
+                TriggerCredentialId = start.TriggerCredentialId,
+                TriggerActorUserId= start.TriggerActorUserId,
+                SourceDeployment = start.SourceDeployment,
+                SourceTask = start.SourceTask,
                     ProviderTaskId = start.ProviderTaskId,
                     RunId = string.IsNullOrWhiteSpace(start.RunId) ? null : start.RunId.Trim(),
                     UserId = start.UserId,

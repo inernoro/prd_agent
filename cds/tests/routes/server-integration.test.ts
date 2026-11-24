@@ -12,6 +12,8 @@ const AUTH_ENV_KEYS = [
   'CDS_PUBLIC_BASE_URL',
   'CDS_GITHUB_CLIENT_ID',
   'CDS_GITHUB_CLIENT_SECRET',
+  'CDS_PASSKEYS_ENABLED',
+  'CDS_SYSTEM_PASSWORD_APPROVER_IDS',
   'CDS_SSO_ENABLED',
   'CDS_SSO_AUTHORIZATION_URL',
   'CDS_SSO_TOKEN_URL',
@@ -50,6 +52,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import type { ActiveHttpRequestRecord, HttpActiveRequestFilter, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
+import { loadCdsEnvFile } from '../../src/load-env.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -644,6 +647,7 @@ describe('Server route ordering (regression)', () => {
         isSystemOwner: true,
       });
 
+      expect(cookie).toMatch(/^cds_token=/);
       const humanToken = cookie.slice('cds_token='.length);
       const machineToken = crypto.createHash('sha256').update('cds:operator:secret').digest('hex');
       expect(humanToken).not.toBe(machineToken);
@@ -711,6 +715,8 @@ describe('Server route ordering (regression)', () => {
         expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
+      expect(JSON.parse((await request(server, '/api/auth/status', { Cookie: memberCookie })).body).approvalCapabilities)
+        .toEqual({ operator: false, accessRequests: false });
       const memberMe = await request(server, '/api/me', { Cookie: memberCookie });
       expect(memberMe.status).toBe(200);
       expect(JSON.parse(memberMe.body).user).toMatchObject({
@@ -793,6 +799,27 @@ describe('Server route ordering (regression)', () => {
       if (prevPublicBaseUrl === undefined) delete process.env.CDS_PUBLIC_BASE_URL;
       else process.env.CDS_PUBLIC_BASE_URL = prevPublicBaseUrl;
     }
+  });
+
+  it('通行证复制响应的密码不进入HTTP日志，审计路径保持原资源范围',async()=>{
+    const logs:HttpLogRecord[]=[];
+    const app=buildRealServerWithHttpLogs(logs,[],undefined,true);
+    const route='/api/branches/qa/resources/infra%3Apostgres/database-passes/0123456789abcdefabcd/credentials';
+    const canary='temporary-pass-password-canary';
+    app.get(route,(_req,res)=>res.json({username:'cdsp_test',password:canary,tlsCa:'public-test-ca'}));
+    // 只替换业务响应，保留真实服务器在分支 Router 前安装的认证和日志中间件。
+    const stack=(app as any)._router.stack;
+    const responseLayer=stack.pop();
+    const branchRouterIndex=stack.findIndex((layer:any)=>layer.handle?.stack?.some((nested:any)=>
+      nested.route?.path==='/branches/:id/resources/:resourceId/database-passes/:passId/credentials'));
+    expect(branchRouterIndex).toBeGreaterThan(-1);
+    stack.splice(branchRouterIndex,0,responseLayer);
+    server=await startServer(app);
+    const response=await request(server,route+'?unused='+canary,{'User-Agent':canary});
+    expect(response.status).toBe(200);expect(JSON.parse(response.body).password).toBe(canary);
+    const log=logs.find(row=>row.path===route);
+    expect(log).toBeDefined();expect(JSON.stringify(log)).not.toContain(canary);
+    expect(log?.response?.bodyPreview||'').not.toContain('public-test-ca');
   });
 
   it('密封存储全部 Express 路径变体在解析和认证前抑制请求材料', async () => {
@@ -943,6 +970,268 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
+  describe('environment owner password rotation', () => {
+    const owner = 'fixture-environment-owner';
+    const oldPassword = 'Synthetic-before-Q8a61yR!';
+    const newPassword = 'Synthetic-after-X4c73kD!';
+    const unrelatedPassword = 'Synthetic-stale-Z9u65pL!';
+    const member = 'fixture-local-member';
+    const memberPassword = 'Synthetic-member-V7r32gW!';
+    const nextMemberPassword = 'Synthetic-member-next-P6j17nK!';
+    const agentKey = 'cdsp_rotation_synthetic_project_key';
+    const projectId = 'rotation-fixture-project';
+    const rotatePath = '/api/auth/change-password';
+    const agentHeaders = { 'X-AI-Access-Key': agentKey };
+    const authority = 'https://cds-rotation.example.org';
+    const trustedBrowser = { Host: new URL(authority).host, Origin: authority };
+    const passkeyId = Buffer.from('approved-fixture-device').toString('base64url');
+    const approverName = 'named-admin';
+    let passkeysEnabled = false;
+
+    beforeEach(() => {
+      for (const name of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, name).mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    function configure(enableApproval = false) {
+      passkeysEnabled = enableApproval;
+      const envFile = path.join(tmpDir, 'selected-auth.env');
+      const decoy = path.join(tmpDir, '.cds.env');
+      const content = (password: string) => [
+        '# Synthetic owner configuration',
+        `export CDS_USERNAME="${owner}"`,
+        '',
+        `CDS_PASSWORD='${password}'`,
+        '# Adjacent values retain exact bytes',
+        "export CDS_MODE='standalone'",
+        '',
+      ].join('\n');
+      fs.writeFileSync(envFile, content(oldPassword), { mode: 0o600 });
+      fs.writeFileSync(decoy, content(unrelatedPassword), { mode: 0o600 });
+      vi.stubEnv('CDS_ENV_FILE', envFile);
+      vi.stubEnv('CDS_AUTH_MODE', 'basic');
+      vi.stubEnv('CDS_USERNAME', undefined);
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_MODE', 'standalone');
+      vi.stubEnv('CDS_SSO_ENABLED', 'false');
+      vi.stubEnv('CDS_PASSKEYS_ENABLED', enableApproval ? '1' : undefined);
+      vi.stubEnv('CDS_SYSTEM_PASSWORD_APPROVER_IDS', enableApproval ? passkeyId : undefined);
+      vi.stubEnv('CDS_PUBLIC_BASE_URL', enableApproval ? authority : undefined);
+      loadCdsEnvFile();
+      return { envFile, decoy, content };
+    }
+
+    function createFixtureServer(authStore?: MemoryAuthStore) {
+      return startServer(buildRealServerWithEvents([], state => {
+        if (state.getProject(projectId)) return;
+        const now = new Date().toISOString();
+        state.addProject({ id: projectId, slug: projectId, name: 'Synthetic project', kind: 'git', createdAt: now, updatedAt: now });
+        state.addAgentKey(projectId, { id: 'rotation-fixture-key', label: 'synthetic', scope: 'rw',
+          hash: crypto.createHash('sha256').update(agentKey).digest('hex'), createdAt: now });
+      }, authStore));
+    }
+
+    function login(password: string, username = owner, endpoint = '/api/auth/login') {
+      return requestJson(server!, 'POST', endpoint, { username, password }, passkeysEnabled ? trustedBrowser : {});
+    }
+
+    function browserCookie(loginResponse: HttpResponse, name = 'cds_token') {
+      expect(loginResponse.status).toBe(200);
+      const cookieName = passkeysEnabled ? `__Host-${name}` : name;
+      const cookie = loginResponse.headers['set-cookie']?.find(value => value.startsWith(`${cookieName}=`))?.split(';')[0];
+      expect(Boolean(cookie), 'expected an authenticated browser cookie').toBe(true);
+      return { Cookie: cookie!, ...(passkeysEnabled ? trustedBrowser : {}) };
+    }
+
+    function rotate(before: string, after: string, headers: http.OutgoingHttpHeaders = {}, approval?: unknown) {
+      return requestJson(server!, 'POST', rotatePath, { oldPassword: before, newPassword: after, approval }, headers);
+    }
+
+    async function approvalFixture() {
+      const memory = new MemoryAuthStore();
+      const approver = await memory.createLocalUser({
+        username: approverName, passwordHash: 'unused', passwordSalt: 'unused', isSystemOwner: true,
+      });
+      const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const { x, y } = publicKey.export({ format: 'jwk' });
+      const coseKey = Buffer.concat([
+        Buffer.from('a5010203262001215820', 'hex'), Buffer.from(x!, 'base64url'),
+        Buffer.from('225820', 'hex'), Buffer.from(y!, 'base64url'),
+      ]);
+      const key = { id: passkeyId, counter: 0, userId: approver.id, publicKey: coseKey.toString('base64url'), createdAt: new Date().toISOString() };
+      const authStore = Object.assign(memory, { passkeys: {
+        find: async (id: string) => id === key.id ? { ...key } : null,
+        list: async (id: string) => id === key.userId ? [{ ...key }] : [],
+        insert: async () => {},
+        advanceCounter: async (id: string, previous: number, next: number) => {
+          if (id !== key.id || previous !== key.counter || next <= previous) return false;
+          key.counter = next;
+          return true;
+        },
+      } });
+      server = await createFixtureServer(authStore);
+      const approve = async (browser: ReturnType<typeof browserCookie>, verified = true) => {
+        const response = await requestJson(server!, 'POST', rotatePath + '/approval',
+          { oldPassword, newPassword }, browser);
+        expect(response.status).toBe(200);
+        const { challenge, allowCredentials, userVerification } = JSON.parse(response.body);
+        expect(allowCredentials).toEqual([{ id: passkeyId, type: 'public-key' }]);
+        expect(userVerification).toBe('required');
+        const ticket = response.headers['set-cookie']?.find(value => value.startsWith('__Host-cds-system-password-approval='))?.split(';')[0];
+        expect(Boolean(ticket)).toBe(true);
+        const authenticatorData = Buffer.alloc(37);
+        crypto.createHash('sha256').update(new URL(authority).hostname).digest().copy(authenticatorData);
+        authenticatorData[32] = verified ? 5 : 1;
+        authenticatorData.writeUInt32BE(key.counter + 1, 33);
+        const clientData = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge, origin: authority }));
+        const signedData = Buffer.concat([authenticatorData, crypto.createHash('sha256').update(clientData).digest()]);
+        const signature = crypto.sign('sha256', signedData, privateKey);
+        const assertion = {
+          id: passkeyId, rawId: passkeyId, type: 'public-key', clientExtensionResults: {},
+          response: { authenticatorData: authenticatorData.toString('base64url'), clientDataJSON: clientData.toString('base64url'), signature: signature.toString('base64url') },
+        };
+        return { headers: { ...browser, Cookie: `${browser.Cookie}; ${ticket}` }, assertion };
+      };
+      return { authStore, approver, approve };
+    }
+
+    function machineCredential(password: string) {
+      return { 'X-CDS-Token': crypto.createHash('sha256').update(`cds:${owner}:${password}`).digest('hex') };
+    }
+
+    function checkUnmodified(filename: string, expected: string) {
+      expect(fs.readFileSync(filename, 'utf8') === expected, 'configuration bytes were preserved').toBe(true);
+    }
+
+    function errorCode(response: HttpResponse): unknown {
+      try { return JSON.parse(response.body).code; } catch { return undefined; }
+    }
+
+    it('requires one explicit approval for the exact password and audits the administrator across restart', async () => {
+      const { envFile, decoy, content } = configure(true);
+      const { authStore, approver, approve } = await approvalFixture();
+      const oldBrowser = browserCookie(await login(oldPassword));
+      const oldLegacyLogin = browserCookie(await login(oldPassword, owner, '/api/login'));
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      const localUser = await requestJson(server, 'POST', '/api/auth/users', { username: member, password: memberPassword }, oldBrowser);
+      expect(localUser.status).toBe(201);
+      const memberBrowser = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+
+      expect((await rotate(oldPassword, newPassword, oldBrowser)).status).toBe(403);
+      checkUnmodified(envFile, content(oldPassword));
+      const mismatched = await approve(oldBrowser);
+      expect((await rotate(oldPassword, unrelatedPassword, mismatched.headers, mismatched.assertion)).status).toBe(403);
+      expect((await rotate(oldPassword, newPassword, mismatched.headers, mismatched.assertion)).status).toBe(403);
+      const unverified = await approve(oldBrowser, false);
+      expect((await rotate(oldPassword, newPassword, unverified.headers, unverified.assertion)).status).toBe(403);
+      const rejected = await approve(oldBrowser);
+      expect((await rotate(oldPassword, newPassword, rejected.headers, { ...rejected.assertion, id: 'unlisted-device' })).status).toBe(403);
+      const approved = await approve(oldBrowser);
+      expect((await rotate(oldPassword, newPassword, { ...approved.headers, ...agentHeaders }, approved.assertion)).status).toBe(403);
+      expect((await rotate(oldPassword, newPassword, approved.headers, approved.assertion)).status).toBe(200);
+      const updated = fs.readFileSync(envFile, 'utf8');
+      const passwordAssignment = /^\s*(?:export\s+)?CDS_PASSWORD=/;
+      const withoutRotation = (text: string) => text.split('\n')
+        .filter(line => !passwordAssignment.test(line) && !line.startsWith('# CDS_SYSTEM_PASSWORD_ROTATION ')).join('\n');
+      expect(withoutRotation(updated) === withoutRotation(content(oldPassword)), 'unrelated settings are preserved').toBe(true);
+      expect(updated.split('\n').filter(line => passwordAssignment.test(line)).length).toBe(1);
+      expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
+      checkUnmodified(decoy, content(unrelatedPassword));
+      for (const prior of [oldBrowser, oldLegacyLogin]) expect((await request(server, '/api/me', prior)).status).toBe(401);
+      for (const route of ['/api/auth/login', '/api/login']) {
+        expect((await login(oldPassword, owner, route)).status).toBe(401);
+        expect((await request(server, '/api/me', browserCookie(await login(newPassword, owner, route)))).status).toBe(200);
+      }
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(401);
+      expect((await request(server, '/api/projects', machineCredential(newPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+      const activity = JSON.parse((await request(server, '/api/auth/activity', browserCookie(await login(newPassword)))).body).activity;
+      expect(activity.filter((event: any) => event.action === 'system-password.rotate')).toEqual([
+        expect.objectContaining({ userId: approver.id, userLogin: approverName, at: expect.any(String) }),
+      ]);
+      expect(JSON.stringify(activity)).not.toContain(newPassword);
+      const memberAudit = JSON.parse((await request(server, '/api/auth/activity', memberBrowser)).body).activity;
+      expect(memberAudit.some((event: any) => event.action === 'system-password.rotate')).toBe(false);
+
+      await flushAllJsonStateStores();
+      const previousServer = server;
+      await new Promise<void>(resolve => previousServer.close(() => resolve()));
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      loadCdsEnvFile();
+      server = await createFixtureServer(authStore);
+      expect((await login(oldPassword)).status).toBe(401);
+      expect((await request(server, '/api/me', browserCookie(await login(newPassword)))).status).toBe(200);
+      expect((await request(server, '/api/me', oldBrowser)).status).toBe(401);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+      const afterRestart = JSON.parse((await request(server, '/api/auth/activity', browserCookie(await login(newPassword)))).body).activity;
+      expect(afterRestart.filter((event: any) => event.action === 'system-password.rotate')).toHaveLength(1);
+    });
+
+    it('rejects anonymous, scoped-key, machine, incorrect and weak attempts and preserves local-account password changes', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      for (const headers of [{}, agentHeaders, machineCredential(oldPassword)]) {
+        expect([401, 403]).toContain((await rotate(oldPassword, newPassword, headers)).status);
+        checkUnmodified(envFile, content(oldPassword));
+      }
+      const unavailable = await rotate(oldPassword, newPassword, cookie);
+      expect(unavailable.status).toBe(409);
+      expect(errorCode(unavailable)).toBe('system_password_approval_unavailable');
+      checkUnmodified(envFile, content(oldPassword));
+
+      expect((await requestJson(server, 'POST', '/api/auth/users', {
+        username: member, password: memberPassword, isSystemOwner: true,
+      }, cookie)).status).toBe(201);
+      const local = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+      expect((await request(server, '/api/auth/users', local)).status).toBe(200);
+      expect((await rotate(oldPassword, newPassword, local)).status).toBe(400);
+      expect((await rotate(memberPassword, nextMemberPassword, local)).status).toBe(200);
+      expect((await request(server, '/api/me', local)).status).toBe(401);
+      expect((await login(memberPassword, member)).status).toBe(401);
+      expect((await login(nextMemberPassword, member)).status).toBe(200);
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      checkUnmodified(envFile, content(oldPassword));
+    });
+
+    it('leaves the externally replaced authority and active sessions intact when the file disagrees', async () => {
+      const { envFile, decoy, content } = configure(true);
+      const { approve } = await approvalFixture();
+      const cookie = browserCookie(await login(oldPassword));
+      const approved = await approve(cookie);
+      fs.writeFileSync(envFile, content(unrelatedPassword));
+      const denied = await rotate(oldPassword, newPassword, approved.headers, approved.assertion);
+      expect(denied.status).toBe(409);
+      expect(errorCode(denied) === 'system_password_source_mismatch').toBe(true);
+      checkUnmodified(envFile, content(unrelatedPassword));
+      checkUnmodified(decoy, content(unrelatedPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      expect((await login(oldPassword)).status).toBe(200);
+      expect((await login(newPassword)).status).toBe(401);
+    });
+
+    it('rejects a concurrent writer lock without taking over the selected file', async () => {
+      const { envFile, content } = configure(true);
+      const { approve } = await approvalFixture();
+      const cookie = browserCookie(await login(oldPassword));
+      const approved = await approve(cookie);
+      const lock = `${envFile}.write.lock`;
+      fs.mkdirSync(lock, { mode: 0o700 });
+      fs.writeFileSync(path.join(lock, 'owner'), `${process.pid}\nsynthetic-owner\n`, { mode: 0o600 });
+      expect((await rotate(oldPassword, newPassword, approved.headers, approved.assertion)).status).toBe(409);
+      expect(fs.existsSync(path.join(lock, 'owner'))).toBe(true);
+      checkUnmodified(envFile, content(oldPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+    });
+  });
+
   it('real createServer gates protected routes when SSO is the only login method', async () => {
     try {
       process.env.CDS_SSO_ENABLED = '1';
@@ -982,6 +1271,43 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
+  it('reports human approval capabilities separately from project-key authentication', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'basic'); vi.stubEnv('CDS_USERNAME', 'operator'); vi.stubEnv('CDS_PASSWORD', 'secret'); vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    try {
+      const key = 'cdsp_approval_fixture-project-key';
+      const app = buildRealServerWithEvents([], state => {
+        state.addProject({ id: 'approval-project', slug: 'approval-project', name: 'Approval Project', kind: 'git', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        state.addAgentKey('approval-project', { id: 'approval-key', label: 'fixture', scope: 'rw', hash: crypto.createHash('sha256').update(key).digest('hex'), createdAt: new Date().toISOString() });
+      });
+      server = await startServer(app);
+      const machine = { 'X-AI-Access-Key': key };
+      const machineStatus = await request(server, '/api/auth/status', machine);
+      expect(machineStatus.status).toBe(200);
+      expect(JSON.parse(machineStatus.body).approvalCapabilities).toEqual({ operator: false, accessRequests: false });
+      expect((await request(server, '/api/cds-system/operator/requests', machine)).status).toBe(403);
+      expect((await request(server, '/api/access-requests', machine)).status).toBe(403);
+      const login = await requestJson(server, 'POST', '/api/login', { username: 'operator', password: 'secret' });
+      expect(login.status).toBe(200);
+      const raw = login.headers['set-cookie']; const cookie = (Array.isArray(raw) ? raw[0] : String(raw)).split(';')[0];
+      const human = { Cookie: cookie };
+      expect(JSON.parse((await request(server, '/api/auth/status', human)).body).approvalCapabilities)
+        .toEqual({ operator: true, accessRequests: true });
+      expect((await request(server, '/api/cds-system/operator/requests', human)).status).toBe(200);
+      expect((await request(server, '/api/access-requests', human)).status).toBe(200);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('keeps disabled-mode access requests available without claiming human operator permission', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'disabled'); vi.stubEnv('CDS_USERNAME', ''); vi.stubEnv('CDS_PASSWORD', ''); vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    try {
+      server = await startServer(buildRealServerWithEvents([]));
+      expect(JSON.parse((await request(server, '/api/auth/status')).body).approvalCapabilities)
+        .toEqual({ operator: false, accessRequests: true });
+      expect((await request(server, '/api/cds-system/operator/requests')).status).toBe(403);
+      expect((await request(server, '/api/access-requests')).status).toBe(200);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it.each(['basic', 'sso-only'] as const)('keeps %s Ticket SSO project access without granting system ownership', async (mode) => {
     const previousUser = process.env.CDS_USERNAME;
     const previousPassword = process.env.CDS_PASSWORD;
@@ -1015,6 +1341,7 @@ describe('Server route ordering (regression)', () => {
       const headers = { Cookie: rawCookie.split(';')[0] };
       const status = await request(server, '/api/auth/status', headers);
       expect(JSON.parse(status.body).user).toMatchObject({ authProvider: 'ticket-sso', isSystemOwner: false });
+      expect(JSON.parse(status.body).approvalCapabilities).toEqual({ operator: false, accessRequests: mode === 'sso-only' });
       const projects = await request(server, '/api/projects', headers);
       expect(projects.status).toBe(200);
       expect(JSON.parse(projects.body).projects.map((project: { id: string }) => project.id)).toContain('sso-compat-project');
@@ -1147,11 +1474,12 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
-  it('invalidates the persisted GitHub session when the unified SSO logout route is used', async () => {
+  it('preserves and invalidates the existing HTTPS GitHub session when passkeys are disabled', async () => {
     try {
       process.env.CDS_AUTH_MODE = 'github';
       process.env.CDS_GITHUB_CLIENT_ID = 'test-client';
       process.env.CDS_GITHUB_CLIENT_SECRET = 'test-secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
       const authStore = new MemoryAuthStore();
       const user = await authStore.upsertUser({
         githubId: 42,
@@ -1170,6 +1498,13 @@ describe('Server route ordering (regression)', () => {
       const app = buildRealServerWithEvents([], undefined, authStore);
       server = await startServer(app);
 
+      const existing = await request(server, '/api/me', { Cookie: `cds_gh_session=${session.token}` });
+      expect(existing.status).toBe(200);
+      expect(JSON.parse(existing.body).user.id).toBe(user.id);
+      const siteStatus = await request(server, '/api/hosted-sso/panel/status');
+      expect(siteStatus.status).toBe(200);
+      expect(JSON.parse(siteStatus.body)).toEqual({ enabled: false });
+
       const response = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, {
         Cookie: `cds_gh_session=${session.token}; cds_token=legacy-basic-token`,
       });
@@ -1178,14 +1513,78 @@ describe('Server route ordering (regression)', () => {
       expect(await authStore.findSessionByToken(session.token)).toBeNull();
       const cleared = response.headers['set-cookie'] as string[];
       expect(cleared).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0.*; Secure/),
       ]));
     } finally {
       delete process.env.CDS_AUTH_MODE;
       delete process.env.CDS_GITHUB_CLIENT_ID;
       delete process.env.CDS_GITHUB_CLIENT_SECRET;
+      delete process.env.CDS_PUBLIC_BASE_URL;
+    }
+  });
+
+  it('requires recent Passkey verification for release, project grants and secret reads on the CDS authority', async () => {
+    const authority = 'https://cds.example.org';
+    vi.stubEnv('CDS_AUTH_MODE', 'github');
+    vi.stubEnv('CDS_GITHUB_CLIENT_ID', 'test-client');
+    vi.stubEnv('CDS_GITHUB_CLIENT_SECRET', 'test-secret');
+    vi.stubEnv('CDS_PUBLIC_BASE_URL', authority);
+    vi.stubEnv('CDS_PASSKEYS_ENABLED', '1');
+    try {
+      const authStore = Object.assign(new MemoryAuthStore(), {
+        passkeys: {
+          find: async () => null,
+          list: async () => [],
+          insert: async () => {},
+          advanceCounter: async () => false,
+        },
+      });
+      const user = await authStore.upsertUser({
+        githubId: 42, githubLogin: 'verification-user', email: null, name: 'Verification User', avatarUrl: null, orgs: [],
+      });
+      const session = { userId: user.id, ttlMs: 3600_000, userAgent: 'integration-test', ipAddress: '127.0.0.1' };
+      const password = await authStore.createSession(session);
+      const verified = { ...session, passkeyAuthenticated: true as const };
+      const stale = await authStore.createSession(verified, new Date(Date.now() - 360_000));
+      const fresh = await authStore.createSession(verified);
+      const listener = await startServer(buildRealServerWithEvents([], undefined, authStore));
+      server = listener;
+      const authorityHeaders = { Host: new URL(authority).host, Origin: authority };
+      const oldCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `cds_gh_session=${fresh.token}` });
+      expect(oldCookie.status).toBe(401);
+      const verifiedCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` });
+      expect(verifiedCookie.status).toBe(200);
+      const browserSession = { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` };
+      expect((await request(listener, '/_cds/api/me', browserSession)).status).toBe(200);
+      const sibling = await request(listener, '/_cds/api/me', {
+        ...browserSession, Origin: 'https://preview.example.org', 'Sec-Fetch-Site': 'same-site',
+      });
+      expect(sibling.status).toBe(403);
+      expect(JSON.parse(sibling.body).code).toBe('cds_browser_origin_required');
+      for (const [method, route] of [
+        ['POST', '/api/releases/branches/fixture-missing/runs'],
+        ['PUT', '/api/auth/users/fixture-missing/projects'],
+        ['GET', '/api/branches/fixture-missing/effective-env/reveal'],
+      ] as const) {
+        for (const { token } of [password, stale, fresh]) {
+          const headers = {
+            Host: new URL(authority).host,
+            Origin: authority,
+            Cookie: `__Host-cds_gh_session=${token}`,
+          };
+          const response = method === 'GET' ? await request(listener, route, headers) : await requestJson(listener, method, route, {}, headers);
+          if (token === fresh.token) {
+            expect(response.body).not.toContain('passkey_verification_required');
+          } else {
+            expect(response.status).toBe(403);
+            expect(JSON.parse(response.body).code).toBe('passkey_verification_required');
+          }
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
@@ -1736,6 +2135,29 @@ describe('Server route ordering (regression)', () => {
     expect(unknown.body).not.toContain('DASHBOARD');
   });
 
+  it('react mount: forbids framing every shell entry while preserving report raw embedding policy', async () => {
+    const app = buildApp();
+    const reactDist = path.join(tmpDir, 'react-dist');
+    fs.mkdirSync(reactDist, { recursive: true });
+    fs.writeFileSync(path.join(reactDist, 'index.html'), '<html><head></head><body>CONTROL_PLANE</body></html>');
+    app.get('/api/reports/fixture/raw', (_req, res) => {
+      res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
+      res.type('html').send('<p>REPORT_CONTENT</p>');
+    });
+    installSpaFallback(app, webDir, reactDist);
+    server = await startServer(app);
+    for (const route of ['/', '/project-list', '/branch-list', '/release-center', '/reports', '/unknown-entry']) {
+      const page = await request(server, route);
+      expect(page.status).toBe(200);
+      expect(page.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+      expect(page.headers['x-frame-options']).toBe('DENY');
+    }
+    const raw = await request(server, '/api/reports/fixture/raw');
+    expect(raw.body).toContain('REPORT_CONTENT');
+    expect(raw.headers['content-security-policy']).toBe('sandbox allow-scripts');
+    expect(raw.headers['x-frame-options']).toBeUndefined();
+  });
+
   it('react mount: serves a missing hashed asset from the previous web generation', async () => {
     const app = buildApp();
     const reactDist = path.join(tmpDir, 'react-dist');
@@ -1756,6 +2178,9 @@ describe('Server route ordering (regression)', () => {
     expect(asset.contentType).toContain('application/javascript');
     expect(asset.body).toContain('generation = "previous"');
     expect(asset.headers['cache-control']).toContain('immutable');
+    const missing = await request(server, '/assets/ProjectListPage-not-retained.js');
+    expect(missing.status).toBe(404);
+    expect(missing.body).not.toContain('CURRENT');
   });
 
   it('react mount: serves the previous index during the directory switch gap', async () => {

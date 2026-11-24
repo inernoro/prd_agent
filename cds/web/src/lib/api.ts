@@ -58,8 +58,13 @@ export function isChildPreviewCdsInstance(): boolean {
     (window as { __CDS_PREVIEW_INSTANCE__?: boolean }).__CDS_PREVIEW_INSTANCE__ === true;
 }
 
+function usesOwnDashboardApi(): boolean {
+  return isChildPreviewCdsInstance() || (typeof window !== 'undefined' &&
+    (window as { __CDS_SAME_ORIGIN_API__?: boolean }).__CDS_SAME_ORIGIN_API__ === true);
+}
+
 export function shouldPreferCdsPassthrough(hostname = currentHostname()): boolean {
-  if (isChildPreviewCdsInstance()) return false;
+  if (usesOwnDashboardApi()) return false;
   if (!hostname) return false;
   const normalized = hostname.toLowerCase();
   return !['localhost', '127.0.0.1', '::1'].includes(normalized);
@@ -127,7 +132,7 @@ function alternateApiUrl(rawUrl: string, primaryUrl: string): string | null {
   if (!rawUrl.startsWith('/api/')) return null;
   // 子 CDS 预览实例（Codex P2）：transient 兜底重试也不许切 /_cds——那会被
   // forwarder 送回父实例，把父数据当成子实例数据渲染。子实例只有同源一条路。
-  if (isChildPreviewCdsInstance()) return null;
+  if (usesOwnDashboardApi()) return null;
   if (shouldPreferCdsPassthrough() && primaryUrl.startsWith('/_cds/api/')) return null;
   if (primaryUrl.startsWith('/_cds/api/')) return rawUrl;
   if (primaryUrl.startsWith('/api/')) return `/_cds${primaryUrl}`;
@@ -194,6 +199,10 @@ export type ReportFormat = 'html' | 'md';
 export type ReportVerdict = 'pass' | 'conditional' | 'fail';
 
 export interface AcceptanceReport {
+  classification?: import('../../../src/shared/notification-templates').ReportClassification;
+  monitorEvent?: import('../../../src/shared/notification-templates').ReportMonitorEvent;
+  reportType?: 'acceptance' | 'code-review';
+  reviewTaskId?: string;
   id: string;
   title: string;
   format: ReportFormat;
@@ -648,12 +657,14 @@ export interface CdsUserActivity {
 }
 
 export interface CdsAuthPublicStatus {
+  preview?: { project?: string; branch?: string; pullRequest?: number; policyUrl?: string };
   mode: 'disabled' | 'basic' | 'github' | 'sso';
   enabled: boolean;
   loginMethods: {
     github: boolean;
     local: boolean;
     sso: boolean;
+    passkey?: boolean;
   };
   capabilities: {
     userManagement: boolean;

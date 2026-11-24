@@ -1,5 +1,6 @@
 import { branchVersionFacts } from '../../src/services/running-version.js';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { configureImageCacheGovernance, ImageCacheGovernance, ImageCacheBudgetError } from '../../src/services/image-cache-governance.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts } from '../../src/services/artifact-admission.js';
 import type { BuildProfile } from '../../src/types.js';
@@ -10,6 +11,7 @@ const id = `sha256:${'c'.repeat(64)}`;
 const digest = `ghcr.io/owned/worker@${id}`;
 const profile = (role: string): BuildProfile => ({ id: role, name: role, dockerImage: image, workDir: '.', command: '',
   containerPort: 3000, prebuiltImage: true });
+afterEach(() => configureImageCacheGovernance(undefined));
 function fixture() {
   const shell = new MockShellExecutor();
   shell.addResponsePattern(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
@@ -20,6 +22,67 @@ function fixture() {
 }
 
 describe('完整预构建产物准入', () => {
+  it('数字失败状态没有原生完成回执时保留拉取预留，避免把超时当作完成', async () => {
+    const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
+    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});
+    vi.spyOn(cache,'executePull').mockResolvedValue({outcome:'verification-unavailable',recorded:false});
+    const settle=vi.spyOn(cache,'settlePulls');configureImageCacheGovernance(cache);
+    expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
+    expect(settle).not.toHaveBeenCalled();
+  });
+  it('只有匹配本轮原生完成回执的失败才结清拉取预留', async () => {
+    const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
+    vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});
+    vi.spyOn(cache,'executePull').mockResolvedValue({outcome:'missing',recorded:true});
+    const settle=vi.spyOn(cache,'settlePulls').mockResolvedValue([]);configureImageCacheGovernance(cache);
+    expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
+    expect(settle).toHaveBeenCalledWith('owned-pin');
+  });
+  it.each([0, 1])('原生拉取已完成时，即使全轮校验到期也结清预留（退出码 %i）', async exitCode => {
+    const shell = fixture();
+    const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'pull-deadline', budgetBytes: 1, protectedReferences: () => [] });
+    vi.spyOn(cache, 'prepare').mockResolvedValue({ token: 'owned-pin' });
+    const outcome = exitCode === 0 ? 'success' : 'missing';
+    const settle = vi.spyOn(cache, 'settlePulls').mockResolvedValue([{ identity: 'pull:fixture', outcome, source: 'caller', reservedBytesEstimate: 0 }]);
+    configureImageCacheGovernance(cache);
+    let expired = false;
+    vi.spyOn(cache, 'executePull').mockImplementation(async () => {
+      expired = true;
+      return { outcome, recorded: true };
+    });
+    const options = { remainingMs: () => {
+      if (expired) throw new Error('inspection deadline');
+      return 1_000;
+    } };
+    expect(await inspectDeploymentArtifacts(shell, [profile('api')], target, () => {}, options))
+      .toMatchObject({ state: 'waiting', reason: 'verification-unavailable', artifacts: [] });
+    expect(settle).toHaveBeenCalledTimes(1);
+    expect(settle).toHaveBeenCalledWith('owned-pin');
+    expect(shell.commands.some(command => command.startsWith('docker image inspect'))).toBe(false);
+  });
+  it('本地已有可变标签仍在拉取前预留新内容，预算不足时不执行pull', async () => {
+    const shell = fixture();const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'tag-budget', budgetBytes: 1, protectedReferences: () => [] });
+    const prepare = vi.spyOn(cache, 'prepare').mockImplementation(async (_image, _current, _present, forceNew) => {
+      if (forceNew) throw new ImageCacheBudgetError('new content would exceed budget');return { token: 'cached-tag-pin' };
+    });
+    vi.spyOn(cache, 'confirm').mockResolvedValue({});configureImageCacheGovernance(cache);
+    expect(await inspectDeploymentArtifacts(shell, [profile('api')], target)).toMatchObject({ state: 'waiting', reason: 'cache-budget' });
+    expect(prepare).toHaveBeenCalledWith(image, expect.any(Function), false, true, true);
+    expect(shell.commands.filter(command => command.startsWith('docker pull '))).toEqual([]);
+  });
+  it('已缓存固定digest和纯本地产物保持原有复用，不预留不存在的新内容', async () => {
+    const shell = fixture();const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'immutable-budget', budgetBytes: 1, protectedReferences: () => [] });
+    const prepare = vi.spyOn(cache, 'prepare').mockResolvedValue({ token: 'immutable-pin' });
+    vi.spyOn(cache, 'confirm').mockResolvedValue({});
+    vi.spyOn(cache, 'executePull').mockResolvedValue({outcome:'success',recorded:true});
+    vi.spyOn(cache, 'settlePulls').mockResolvedValue([{identity:'pull:fixture',outcome:'success',source:'caller',reservedBytesEstimate:0}]);
+    configureImageCacheGovernance(cache);
+    expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), dockerImage: digest }], target)).state).toBe('ready');
+    expect(prepare).toHaveBeenLastCalledWith(digest, expect.any(Function), false, false, true);
+    expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), localArtifact: true }], target, () => {}, { inspectLocalArtifacts: true })).state).toBe('ready');
+    expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false, false);
+  });
+
   it('共用镜像的四个逻辑角色只核验一次，并以固定内容启动而不保留源码回退', async () => {
     const shell = fixture(); const roles = ['generation', 'code-return', 'product-batch', 'common'];
     const result = await inspectDeploymentArtifacts(shell, roles.map(profile), target);

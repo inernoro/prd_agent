@@ -121,9 +121,9 @@ export type ApiRequestLog = {
   targetHost: string | null;
 };
 
-export type GetApiLogsContract = (params?: ApiLogsListParams) => Promise<ApiResponse<ApiLogsListData>>;
+export type GetApiLogsContract = (params?: ApiLogsListParams, signal?: AbortSignal) => Promise<ApiResponse<ApiLogsListData>>;
 
 export type GetApiLogDetailContract = (id: string) => Promise<ApiResponse<ApiRequestLog>>;
 
-export type GetApiLogsMetaContract = () => Promise<ApiResponse<ApiLogsMetaData>>;
+export type GetApiLogsMetaContract = (signal?: AbortSignal) => Promise<ApiResponse<ApiLogsMetaData>>;
 

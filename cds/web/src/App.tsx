@@ -1,12 +1,17 @@
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 // ConsoleLayout 故意走静态 import:外壳(侧栏/命令面板/全局徽章)进入口 chunk,
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
 import { ConsoleLayout, OwnerConsoleRoute } from '@/components/layout/AppShell';
 import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
+// 首页首屏与开场帷幕随入口一起就绪，避免先显示通用骨架再播放开场动画。
+// HomePage 内的 3D 叙事场景仍在首次滚动时按需加载。
+import { HomePage } from '@/pages/HomePage';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
@@ -16,28 +21,37 @@ const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then(
 const BranchRelationsPage = lazy(() => import('@/pages/BranchRelationsPage').then((m) => ({ default: m.BranchRelationsPage })));
 const OverviewPage = lazy(() => import('@/pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
 const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) => ({ default: m.CdsSettingsPage })));
+const PersonalSettingsPage = lazy(() => import('@/pages/PersonalSettingsPage').then((m) => ({ default: m.PersonalSettingsPage })));
 const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
-const HomePage = lazy(() => import('@/pages/HomePage').then((m) => ({ default: m.HomePage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const TicketSsoPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.TicketSsoPage })));
+const PreviewAccessPage = lazy(() => import('@/pages/PreviewAccessPage').then(m => ({ default: m.PreviewAccessPage })));
 const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const PublicStatusPage = lazy(() => import('@/pages/PublicStatusPage').then((m) => ({ default: m.PublicStatusPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
+const ReleaseApprovalPage = lazy(() => import('@/pages/release-center/ReleaseApprovalPage').then(m => ({ default: m.ReleaseApprovalPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const DtsPage = lazy(() => import('@/pages/DtsPage').then(m => ({ default: m.DtsPage })));
+const CodeReviewsPage = lazy(() => import('@/pages/CodeReviewsPage').then((m) => ({ default: m.CodeReviewsPage })));
+const DesignWorkspacePage = lazy(() => import('@/pages/DesignWorkspacePage').then(m => ({ default: m.DesignWorkspacePage })));
+const EngineeringPlanningPage = lazy(() => import('@/pages/EngineeringPlanningPage').then(m => ({ default: m.EngineeringPlanningPage })));
+const ProjectStatusPage = lazy(() => import('@/pages/ProjectStatusPage').then((m) => ({ default: m.ProjectStatusPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
 const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) => ({ default: m.TaskSchedulePage })));
 
 /**
- * 路由切换时 Suspense fallback。用品牌 logo + 加载文案,跟 CDS 视觉调性一致。
+ * 独立页面代码尚未到达时，使用共享内容骨架。
  * 2026-05-28 用户反馈:之前是裸 <div>加载中...</div> 一行小字,丑爆。
  */
 function RouteFallback(): JSX.Element {
+  const { pathname } = useLocation();
+  if (loadingSceneForPath(pathname)?.scope === 'standalone') return pageSkeletonForPath(pathname);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <CdsLogoLoader size="xl" inline={false} label={<span className="text-sm text-muted-foreground">加载中…</span>} />
+      <ContentLoading label="加载页面" variant="panel" className="max-w-5xl p-6" />
     </div>
   );
 }
@@ -263,6 +277,7 @@ export function App(): JSX.Element {
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/preview-access" element={<PreviewAccessPage />} />
             <Route path="/auth/sso" element={<TicketSsoPage />} />
             <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
             <Route path="/hello" element={<HelloPage />} />
@@ -273,12 +288,18 @@ export function App(): JSX.Element {
                 侧栏/命令面板/全局浮层永不卸载 —— 布局归一 + 切页流畅的架构保证。 */}
             <Route element={<ConsoleLayout />}>
               <Route path="/cds-settings" element={<CdsSettingsPage />} />
+              <Route path="/personal-settings" element={<PersonalSettingsPage />} />
               <Route path="/project-list" element={<ProjectListPage />} />
               <Route path="/branches/:projectId" element={<BranchListPage />} />
               <Route path="/branch-list" element={<BranchListPage />} />
               <Route path="/branch-panel" element={<BranchDetailPage />} />
               <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
               <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
+              <Route path="/dts" element={<DtsPage />} />
+              <Route path="/code-reviews" element={<CodeReviewsPage />} />
+              <Route path="/engineering-planning" element={<EngineeringPlanningPage />} />
+              <Route path="/design" element={<DesignWorkspacePage />} />
+              <Route path="/release-center/approval/:authorizationId?" element={<ReleaseApprovalPage />} />
               <Route element={<OwnerConsoleRoute />}>
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/overview" element={<OverviewPage />} />
@@ -286,6 +307,7 @@ export function App(): JSX.Element {
               <Route path="/release-console" element={<ReleaseConsolePage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/status" element={<StatusPage />} />
+              <Route path="/status/:projectId" element={<ProjectStatusPage />} />
               <Route path="/task-schedule" element={<TaskSchedulePage />} />
               <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
               <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />

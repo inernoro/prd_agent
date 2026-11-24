@@ -15,6 +15,8 @@
 
 import type {
   AccountProfile,
+  ConsumptionAlert,
+  ConsumptionAlertAction,
   ApiResponse,
   SystemGatewaySettings,
   SystemGatewayTestResult,
@@ -34,6 +36,7 @@ import type {
   TimeseriesData,
   SessionsData,
   LlmLogDetail,
+  LogTraceData,
   PoolsData,
   PlatformsData,
   ModelsData,
@@ -82,7 +85,6 @@ import type {
   ConfigAuthorityReportData,
   BulkClaimConfigAuthorityRequest,
   BulkClaimConfigAuthorityResult,
-  RuntimeGatesData,
   ServiceKeyItem,
   CreateServiceKeyRequest,
   CreatedServiceKey,
@@ -459,7 +461,13 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 
 
   let payload: unknown = null;
-  const text = await res.text();
+  let text = '';
+  try { text = await res.text(); }
+  catch (error) {
+    // 响应头不证明业务写入结果；正文中断与 fetch 失败遵守同一返回契约。
+    // 已知 401 仍由下方唯一会话失效路径处理，不因正文不可读留下旧会话。
+    if (res.status !== 401) return { success: false, data: null, error: { code: 'NETWORK_ERROR', message: error instanceof Error ? error.message : '响应读取中断，请核对结果' } };
+  }
   if (text) {
     try {
       payload = JSON.parse(text);
@@ -528,6 +536,17 @@ export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListDat
   return apiRequest<LogsListData>('/logs', { query: { ...params } });
 }
 
+export function getConsumptionAlerts(): Promise<ApiResponse<{ items: ConsumptionAlert[] }>> {
+  return apiRequest<{ items: ConsumptionAlert[] }>('/logs/consumption-alerts', { query: { limit: 10 } });
+}
+
+export function resolveConsumptionAlert(id: string, action: ConsumptionAlertAction): Promise<ApiResponse<{ updated: boolean }>> {
+  return apiRequest<{ updated: boolean }>(`/logs/consumption-alerts/${encodeURIComponent(id)}/resolution`, {
+    method: 'POST',
+    body: action,
+  });
+}
+
 type HealthData = {
   status: string;
   commit?: string | null;
@@ -571,6 +590,12 @@ export function getLogsSessions(params: LogsListParams): Promise<ApiResponse<Ses
   return apiRequest<SessionsData>('/logs/sessions', { query: { ...params } });
 }
 
+export function getLogTrace(reference: string, anchorId?: string, page = 1): Promise<ApiResponse<LogTraceData>> {
+  const query = new URLSearchParams({ reference, page: String(page) });
+  if (anchorId) query.set('anchorId', anchorId);
+  return apiRequest<LogTraceData>(`/logs/trace?${query}`);
+}
+
 export function getLogDetail(id: string): Promise<ApiResponse<LlmLogDetail>> {
   return apiRequest<LlmLogDetail>(`/logs/${encodeURIComponent(id)}`);
 }
@@ -594,8 +619,8 @@ export function testPlatformConnection(id: string): Promise<ApiResponse<Platform
 export function getUpstreamModels(id: string): Promise<ApiResponse<UpstreamModelsData>> {
   return apiRequest<UpstreamModelsData>(`/platforms/${id}/upstream-models`);
 }
-export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[]): Promise<ApiResponse<ImportUpstreamModelsResult>> {
-  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models } });
+export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[], options?: { publishToWhitelist?: boolean }): Promise<ApiResponse<ImportUpstreamModelsResult>> {
+  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models, ...options } });
 }
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
@@ -649,6 +674,12 @@ export function updateModelOffering(logicalModelId: string, offeringId: string, 
     { method: 'PUT', body: req },
   );
 }
+export function deleteModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ logicalModelId: string; offeringId: string; removed: boolean }>> {
+  return apiRequest<{ logicalModelId: string; offeringId: string; removed: boolean }>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}`,
+    { method: 'DELETE' },
+  );
+}
 export function setLogicalModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<LogicalModelItem>> {
   return apiRequest<LogicalModelItem>(`/logical-models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
 }
@@ -694,13 +725,11 @@ export function getKeyHealth(): Promise<ApiResponse<KeyHealthData>> {
 export function getConfigAuthorityReport(): Promise<ApiResponse<ConfigAuthorityReportData>> {
   return apiRequest<ConfigAuthorityReportData>('/config-authority/report');
 }
-export function getRuntimeGates(): Promise<ApiResponse<RuntimeGatesData>> {
-  return apiRequest<RuntimeGatesData>('/runtime-gates');
-}
 export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): Promise<ApiResponse<BulkClaimConfigAuthorityResult>> {
   return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
 }
 export function getGatewayAppCallers(params?: {
+  id?: string;
   page?: number;
   pageSize?: number;
   status?: string;
@@ -713,6 +742,7 @@ export function getGatewayAppCallers(params?: {
 }): Promise<ApiResponse<GatewayAppCallersData>> {
   return apiRequest<GatewayAppCallersData>('/app-callers', {
     query: {
+      id: params?.id,
       page: params?.page,
       pageSize: params?.pageSize,
       status: params?.status,
@@ -809,8 +839,8 @@ export function createServiceKey(req: CreateServiceKeyRequest): Promise<ApiRespo
 export function revokeServiceKey(id: string): Promise<ApiResponse<{ id: string; revoked: boolean }>> {
   return apiRequest<{ id: string; revoked: boolean }>(`/service-keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
-export function confirmServiceKeyClientCutover(id: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
-  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST' });
+export function confirmServiceKeyClientCutover(id: string, expectedSuccessorKeyId: string): Promise<ApiResponse<{ id: string; successorKeyId: string; rotationState: string }>> {
+  return apiRequest<{ id: string; successorKeyId: string; rotationState: string }>(`/service-keys/${encodeURIComponent(id)}/rotation/client-cutover`, { method: 'POST', body: { expectedSuccessorKeyId } });
 }
 export function getCostReconciliations(params?: { from?: string; to?: string }): Promise<ApiResponse<CostReconciliationSummary>> {
   return apiRequest<CostReconciliationSummary>('/cost-reconciliations', { query: params });
@@ -828,12 +858,13 @@ export function getLegacyKeyCutover(): Promise<ApiResponse<LegacyKeyCutoverData>
   return apiRequest<LegacyKeyCutoverData>('/legacy-key-cutover');
 }
 export function updateLegacyKeyCutover(req: {
+  expectedPolicyRevision: number;
   status: 'observing' | 'ready' | 'revoked';
   deadlineAt: string;
   allowedAppCallerCodes: string[];
   successorServiceKeyIds: string[];
   requiredSuccessorObservations: number;
-}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number }>> {
+}): Promise<ApiResponse<{ id: string; status: string; deadlineAt: string; observed: number; required: number; policyRevision: number }>> {
   return apiRequest('/legacy-key-cutover', { method: 'PUT', body: req });
 }
 export function getOrganization(): Promise<ApiResponse<OrganizationData>> {
@@ -955,8 +986,8 @@ export function deleteModel(id: string): Promise<ApiResponse<ModelDeleteBlockers
  * 删除整条上游。被引用时后端返回 409 + PLATFORM_IN_USE，
  * data 里带占用清单（哪些模型、哪些池还挂着），照着摘干净才能删。
  */
-export function deletePlatform(id: string): Promise<ApiResponse<PlatformDeleteBlockers>> {
-  return apiRequest<PlatformDeleteBlockers>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export function deletePlatform(id: string, cleanupUnusedModels = true): Promise<ApiResponse<PlatformDeleteBlockers>> {
+  return apiRequest<PlatformDeleteBlockers>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE', query: { cleanupUnusedModels: String(cleanupUnusedModels) } });
 }
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
@@ -984,6 +1015,9 @@ export function createExchange(req: CreateExchangeRequest): Promise<ApiResponse<
 }
 export function updateExchange(id: string, req: UpdateExchangeRequest): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function updateExchangeProxy(id: string, req: import('./types').UpdateExchangeProxyRequest): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/proxy`, { method: 'PUT', body: req });
 }
 export function rotateExchangeApiKey(id: string, apiKey: string): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });
@@ -1040,4 +1074,37 @@ export function updateImageGenConfig(id: string, req: UpsertImageGenConfigReques
 }
 export function deleteImageGenConfig(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
   return apiRequest<{ deleted: boolean }>(`/imagegen-configs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function getUpstreamProxy(): Promise<ApiResponse<import('./types').UpstreamProxyView>> {
+  return apiRequest('/upstream-proxy');
+}
+export function saveUpstreamProxy(body: import('./types').UpstreamProxyDraft): Promise<ApiResponse<import('./types').UpstreamProxyView>> {
+  return apiRequest('/upstream-proxy', { method: 'PUT', body });
+}
+export function testUpstreamNetwork(kind: 'platform' | 'exchange', id: string, samples = 3): Promise<ApiResponse<import('./types').UpstreamNetworkTestResult>> {
+  return apiRequest(`/upstreams/${kind}/${encodeURIComponent(id)}/network-test`, { method: 'POST', body: { samples } });
+}
+
+// 稳定模型升级：动作返回服务端最新状态；检查和验证只由用户显式提交，轮询只读详情。
+export function getModelUpgrade(logicalModelId: string): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
+  return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}`);
+}
+export function saveModelUpgradePolicy(logicalModelId: string, body: import('./types').UpdateModelUpgradePolicyRequest): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
+  return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}`, { method: 'PUT', body });
+}
+export function runModelUpgradeAction(logicalModelId: string, action: import('./types').ModelUpgradeAction, body: import('./types').ModelUpgradeActionRequest): Promise<ApiResponse<import('./types').ModelUpgradeView>> {
+  return apiRequest<import('./types').ModelUpgradeView>(`/model-upgrades/${encodeURIComponent(logicalModelId)}/${action}`, { method: 'POST', body });
+}
+
+export function checkLogicalModelDeletion(id: string): Promise<ApiResponse<{ canDelete: boolean; reasons: string[]; offerings: number }>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(id)}/delete-check`);
+}
+
+export type ModelBindingProbeView = { requestId: string; status: string; message: string; offeringId?: string; upstreamModelId?: string; outputUrl?: string | null; httpStatus?: number | null; failureKind?: string | null; updatedAt?: string | null };
+export function getModelBindingProbe(logicalId: string, offeringId: string, requestId?: string): Promise<ApiResponse<ModelBindingProbeView>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(logicalId)}/offerings/${encodeURIComponent(offeringId)}/test${requestId ? `/${encodeURIComponent(requestId)}` : ''}`);
+}
+export function startModelBindingProbe(logicalId: string, offeringId: string, body: { clientRequestId: string; appCallerCode: string; maxCostUsd: number }): Promise<ApiResponse<ModelBindingProbeView>> {
+  return apiRequest(`/logical-models/${encodeURIComponent(logicalId)}/offerings/${encodeURIComponent(offeringId)}/test`, { method: 'POST', body });
 }

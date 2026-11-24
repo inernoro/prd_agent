@@ -13,7 +13,7 @@
 - **解决的问题**：此前把 GitHub 目录接进知识库，用户得自己去 GitHub 找到目录、复制 `tree/分支/路径` 形式的地址、粘回订阅框，一次只能加一个目录；而且同步是**匿名**请求 GitHub，私有仓根本拉不到，公开仓也共用 60 次/小时的匿名额度。
 - **核心方案**：复用已有的「每个用户连自己的 GitHub 账号」能力，把它抽成一处**共用的连接入口**（连接状态、仓库、分支、目录扫描），任何应用都能用；知识库在它之上提供四步向导与一次开启多个目录的订阅；后台同步按条目上盖的连接身份带用户 token 请求 GitHub。
 - **默认口径**：递归扫出仓库里**所有** doc / docs 目录（不是只认根目录），默认勾选；用户可自由改。
-- **已知边界**：见 §6，均已记入 [debt.knowledge-base.md](./debt.knowledge-base.md)。
+- **已知边界**：见 §6，均已记入 [debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)。
 
 ## 2. 背景与现状
 
@@ -167,7 +167,7 @@ token 失效、密文解不开），**悄悄退回匿名请求**再试一次。
 - 同步仍只认 `.md` / 单层目录，未做递归同步；要覆盖子目录就把子目录也勾上。
 - 远端删掉文档时，同步只删条目与它的历史版本；知识库里正式的删除入口清得更干净（评论、双链、
   浏览记录、正文与附件等）。这是既有差异，整目录删除会把它放大（见 debt 的 K-20）。
-- `github_directory` 父条目的 `IsFolder` / 子条目 `ParentId` 结构问题是历史债务（见 [debt.knowledge-base.md](./debt.knowledge-base.md)），本次未动，新旧条目形状保持一致。
+- `github_directory` 父条目的 `IsFolder` / 子条目 `ParentId` 结构问题是历史债务（见 [debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)），本次未动，新旧条目形状保持一致。
 - 老的三处 Device Flow 端点（pr-review / project-route-agent / tech-doc-format-agent）仍在，前端未迁；它们与新连接中心读写同一张表，连一次处处可用。
 - 申请的授权范围是「仓库」那一整档。按 GitHub 的定义它包含私有仓代码的**读写**，比"读文档目录"
   需要的大得多，而传统 OAuth 应用无法再细分（只读公开仓的那一档读不了私有仓）。要真正做到最小权限，
@@ -194,4 +194,4 @@ token 失效、密文解不开），**悄悄退回匿名请求**再试一次。
 
 - [design.knowledge-base.store.md](./design.knowledge-base.store.md)：文档空间主设计
 - [design.knowledge-base.store-sync.md](./design.knowledge-base.store-sync.md)：知识库跨环境同步（另一件事：库与库之间）
-- [debt.knowledge-base.md](./debt.knowledge-base.md)：债务台账
+- [debt.knowledge-base.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md)：债务台账

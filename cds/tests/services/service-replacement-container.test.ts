@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -6,7 +7,7 @@ import { branchAppNetworkName } from '../../src/services/branch-network.js';
 
 function fixture() {
   const shell = new MockShellExecutor();
-  const container = new ContainerService(shell, { dockerNetwork: 'shared', sharedEnv: {}, repoRoot: '/tmp' } as CdsConfig);
+  const container = new ContainerService(shell, { dockerNetwork: 'shared', sharedEnv: {}, repoRoot: '/tmp' } as CdsConfig, undefined, undefined, undefined, undefined, unitBindMountInspector);
   const entry = { id: 'branch', projectId: 'project' } as BranchEntry;
   const runtime = { containerName: 'old-api', containerId: 'a'.repeat(64), hostPort: 10001, networkName: 'old-network' };
   const identity = { id: runtime.containerId, running: true, branch: entry.id, project: entry.projectId,
@@ -17,6 +18,38 @@ function fixture() {
 }
 
 describe('替换运行身份与回收证明', () => {
+  it('恢复阶段保留旧入口需要的分支网络，不对数据库发出断开命令', async () => {
+    const f = fixture(); const prefix = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-`;
+    const previous = prefix + 'c'.repeat(32), network = prefix + 'd'.repeat(32);
+    f.entry.replacementNetworks = [network]; f.runtime.networkName = previous;
+    f.identity.networks = { [previous]: { Aliases: ['api'] }, [network]: { Aliases: ['api'] } } as any;
+    f.shell.addResponsePattern(/docker network inspect/, () => ({ stdout: JSON.stringify({ 'cds.branch.id': 'branch', 'cds.project.id': 'project' }), stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/docker network disconnect/, () => { delete (f.identity.networks as any)[previous]; return { stdout: '', stderr: '', exitCode: 0 }; });
+    const service = { ...f.runtime, profileId: 'api', status: 'running' as const };
+    await f.container.isolateReplacementPeer(f.entry, service, network, () => {}, [previous]);
+    expect(f.shell.commands.filter(command => command.startsWith('docker network disconnect'))).toEqual([]);
+    expect(service.networkName).toBe(network);
+  });
+
+  it.each(['owned', 'foreign'] as const)('恢复网络只摘除当前容器的本分支旧网，保留共享网与其他项目（%s）', async mode => {
+    const f = fixture(); const prefix = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-`;
+    const old = prefix + 'c'.repeat(32), network = prefix + 'd'.repeat(32);
+    f.entry.replacementNetworks = [network]; f.runtime.networkName = old;
+    f.identity.networks = { [old]: { Aliases: ['api'] }, [network]: { Aliases: ['api'] }, shared: { Aliases: [] } } as any;
+    f.shell.addResponsePattern(/docker network inspect/, () => ({ stdout: JSON.stringify({ 'cds.branch.id': mode === 'owned' ? 'branch' : 'foreign', 'cds.project.id': 'project' }), stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/docker network disconnect/, () => { delete (f.identity.networks as any)[old]; return { stdout: '', stderr: '', exitCode: 0 }; });
+    const service = { ...f.runtime, profileId: 'api', status: 'running' as const };
+    if (mode === 'foreign') await expect(f.container.isolateReplacementPeer(f.entry, service, network, () => {})).rejects.toThrow('其他分支');
+    else {
+      await f.container.isolateReplacementPeer(f.entry, service, network, () => {});
+      expect(service.networkName).toBe(network);
+    }
+    const mutations = f.shell.commands.filter(command => command.startsWith('docker network disconnect'));
+    expect(mutations).toHaveLength(mode === 'owned' ? 1 : 0);
+    expect(mutations.every(command => command.includes(old) && command.includes(f.runtime.containerId))).toBe(true);
+    expect(f.shell.commands.some(command => command.includes('docker network disconnect') && command.includes('shared'))).toBe(false);
+  });
+
   it.each(['absent', 'foreign', 'unknown', 'owned'] as const)('预约未创建网络及归属核验：%s', async mode => {
     const f = fixture();
     const network = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-${'b'.repeat(32)}`;

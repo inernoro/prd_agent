@@ -129,6 +129,8 @@ describe('普通操作独立执行真实进程', () => {
     const cancelled = expect(e.exec(`sleep 30 & echo $! > ${quote(pidFile)}; wait`, { signal: ac.signal })).rejects.toMatchObject({ code: 'cancelled' });
     await waitFor(async () => { try { return !!(await readFile(pidFile, 'utf8')).trim(); } catch { return false; } });
     const pid = Number((await readFile(pidFile, 'utf8')).trim()); ac.abort(); await cancelled;
+    const beforeNext = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);
+    expect(beforeNext.stdout.trim()).toMatch(/^(Z.*)?$/);
     const check = vi.fn(() => expect(e.getStats().actors.some(a => a.pid !== original && a.heapLimit)).toBe(true));
     expect((await e.exec('echo after-cleanup', { beforeStart: check })).stdout.trim()).toBe('after-cleanup');
     const state = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);

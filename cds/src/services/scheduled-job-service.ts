@@ -20,6 +20,7 @@ import { buildPreviewUrlForProject } from './comment-template.js';
 import { isReleaseRunTerminal, isSuccessfulReleaseRun } from './release-retention.js';
 import { isTimerDrivenSchedule, selectPushRuleJobs, type PushRuleContext } from './release-push-rules.js';
 import type { ReleasePreflightResult, ReleaseStartInput, ReleaseTargetBusyState } from './release-service.js';
+import { observeScheduledJobs, scheduleGraceMs, scheduledJobHealth, validateJobReports } from './scheduled-job-health.js';
 import { workloadCgroupArgv } from './workload-cgroup.js';
 
 /**
@@ -78,6 +79,7 @@ export interface ScheduledJobTargetCheckResult {
 interface ScheduledJobExecutionContext {
   mode: 'run' | 'check';
   jobId?: string;
+  runId?: string;
   /**
    * 事件驱动规则（schedule.type = 'push'）本次真正被推的那个分支。
    *
@@ -127,12 +129,15 @@ export function scheduledReleaseOperator(jobId: string): string {
 export class ScheduledJobService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = new Set<string>();
+  private pending = new Map<string, Promise<ScheduledJobRun>>();
 
   constructor(private readonly deps: ScheduledJobServiceDeps) {}
 
   start(): void {
     if (this.timer) return;
     this.reconcileNextRunAt();
+    // createServer 此时尚未监听；启动只核实中断记录，执行仍走原调度轮次。
+    void this.reconcileInterruptedRuns().catch(err => console.error('[scheduled-jobs] startup:', err));
     this.timer = setInterval(() => {
       this.tick().catch((err) => {
         console.error('[scheduled-jobs] tick failed:', (err as Error).message);
@@ -191,7 +196,7 @@ export class ScheduledJobService {
       try {
         await this.runJob(job.id, 'push', {
           overrideBranchId: branch.id,
-          ...(eventCommit ? { overrideCommitSha: eventCommit } : {}),
+          ...(eventCommit ? { overrideCommitSha: eventCommit, requestKey: `push:${branch.id}:${eventCommit}` } : {}),
         });
         started += 1;
       } catch (err) {
@@ -201,27 +206,114 @@ export class ScheduledJobService {
     return started;
   }
 
-  async tick(now = new Date()): Promise<void> {
+  health(job: ScheduledJob, now = new Date()) {
+    return scheduledJobHealth(job, this.deps.stateService.listScheduledJobRuns({ jobId: job.id, limit: 500 }), now);
+  }
+
+  async tick(now?: Date): Promise<void> {
+    const observedAt = now || new Date();
+    await this.reconcileInterruptedRuns();
     const due = this.deps.stateService.listScheduledJobs()
-      .filter((job) => job.enabled && isTimerDrivenSchedule(job.schedule))
-      .filter((job) => isJobDue(job, now));
-    for (const job of due) {
+      .filter(job => job.enabled && isTimerDrivenSchedule(job.schedule) && !job.recoveryRequiredRunId && isJobDue(job, observedAt));
+    // 不同任务先各自认领，再等待完成；不能把其他长任务的排队时间算成漏跑。
+    await Promise.all(due.map(async job => {
       try {
-        if (!this.claimScheduledOccurrence(job, now)) continue;
-        await this.runJob(job.id, 'schedule');
-      } catch (err) {
-        console.error('[scheduled-jobs] job tick failed:', job.id, (err as Error).message);
+        const latest = this.deps.stateService.getScheduledJob(job.id);
+        const attemptAt = now || new Date();
+        if (!latest?.enabled || latest.recoveryRequiredRunId || latest.nextRunAt !== job.nextRunAt || !isJobDue(latest, attemptAt)) return;
+        await this.runJob(job.id, 'schedule', { scheduledFor: job.nextRunAt!, now: attemptAt });
+      } catch (err) { console.error('[scheduled-jobs] job tick failed:', job.id, (err as Error).message); }
+    }));
+  }
+
+  /** 重启后只标记未知结果，绝不重放可能已发生的外部副作用。 */
+  private async reconcileInterruptedRuns(): Promise<void> {
+    let changed = false;
+    for (const job of this.deps.stateService.listScheduledJobs()) {
+      if (this.running.has(job.id)) continue;
+      const rows = this.deps.stateService.listScheduledJobRuns({ jobId: job.id, limit: 500 });
+      const runs = [...new Map([job.lastScheduledRun, job.lastManualRequest, job.lastPushRun, ...rows].filter((r): r is ScheduledJobRun => Boolean(r)).map(r => [r.id, r])).values()];
+      for (const run of runs.filter(r => r.status === 'running' || r.status === 'queued')) {
+        run.status = 'failed'; run.failureKind = 'interrupted';
+        run.error = '进程重启，外部执行结果未知；仅允许核实已有产物，禁止自动重放。';
+        run.finishedAt = new Date().toISOString();
+        this.deps.stateService.upsertScheduledJobRun(run);
+        this.patchJobAfterRun(job, run);
+        this.deps.stateService.upsertScheduledJob({ ...this.deps.stateService.getScheduledJob(job.id)!, recoveryRequiredRunId: run.id });
+        changed = true;
       }
+    }
+    // 所有门先同步建立，再等待存储；首个慢写不能暴露后续任务的人工/事件执行窗口。
+    if (changed) {
+      await this.deps.stateService.flush();
+      this.publishHealthEvent();
     }
   }
 
-  async runJob(
+  /** 安全恢复只验证已归档报告或已关联发布，不再次执行动作。 */
+  async recoverRun(jobId: string, runId: string): Promise<ScheduledJobRun> {
+    const job = this.deps.stateService.getScheduledJob(jobId);
+    const run = this.deps.stateService.listScheduledJobRuns({ jobId, limit: 500 }).find(r => r.id === runId)
+      || [job?.lastScheduledRun, job?.lastManualRequest, job?.lastPushRun].find(r => r?.id === runId);
+    if (!job || !run || this.running.has(jobId) || run.status !== 'failed') throw new Error('运行不存在、未失败或仍在执行');
+    if (run.failureKind === 'missed') throw new Error('漏跑批次没有执行，不能通过补报告标记为定时成功');
+    this.running.add(jobId);
+    try {
+      if (run.phase !== 'validating' && (run.actionCount || 1) > 1) throw new Error('多动作任务尚未确认全部执行完成，不能只凭部分产物宣告恢复成功');
+      if (run.completion) run.artifacts = await withTaskDeadline(validateJobReports(this.deps.stateService, run), Math.max(1, job.timeoutSeconds) * 1000);
+      else if (!run.releaseId || !this.deps.release.getRun(run.releaseId) || !isSuccessfulReleaseRun(this.deps.release.getRun(run.releaseId)!)) throw new Error('没有可验证的产物或成功发布；不会自动重放');
+      const verifiedAt = new Date().toISOString();
+      run.recovery = { failureKind: run.failureKind, error: run.error, failedAt: run.finishedAt, verifiedAt };
+      run.status = 'success'; run.failureKind = undefined; run.error = undefined;
+      run.finishedAt = verifiedAt;
+      run.durationMs = Math.max(0, Date.parse(verifiedAt) - Date.parse(run.startedAt || run.queuedAt));
+      this.deps.stateService.upsertScheduledJobRun(run);
+      this.patchJobAfterRun(job, run);
+      const latest = this.deps.stateService.getScheduledJob(jobId);
+      if (latest?.recoveryRequiredRunId === runId) this.deps.stateService.upsertScheduledJob({ ...latest, recoveryRequiredRunId: undefined });
+      await this.deps.stateService.flush();
+      return run;
+    } finally { this.running.delete(jobId); }
+  }
+
+  runJob(jobId: string, trigger: ScheduledJobRun['trigger'], options: {
+    overrideBranchId?: string; overrideCommitSha?: string; scheduledFor?: string; now?: Date; requestKey?: string;
+  } = {}): Promise<ScheduledJobRun> {
+    const key = options.requestKey || (trigger === 'schedule' ? `schedule:${options.scheduledFor || this.deps.stateService.getScheduledJob(jobId)?.nextRunAt}` : undefined);
+    const pendingKey = `${jobId}:${key}`;
+    if (key && this.pending.has(pendingKey)) return this.pending.get(pendingKey)!;
+    const pending = this.executeJob(jobId, trigger, { ...options, requestKey: key });
+    if (key) {
+      this.pending.set(pendingKey, pending);
+      void pending.finally(() => this.pending.delete(pendingKey)).catch(() => {});
+    }
+    return pending;
+  }
+
+  private async executeJob(
     jobId: string,
     trigger: ScheduledJobRun['trigger'],
-    options: { overrideBranchId?: string; overrideCommitSha?: string } = {},
+    options: { overrideBranchId?: string; overrideCommitSha?: string; scheduledFor?: string; now?: Date; requestKey?: string } = {},
   ): Promise<ScheduledJobRun> {
     const job = this.deps.stateService.getScheduledJob(jobId);
     if (!job) throw new Error('任务不存在');
+    if (trigger === 'manual' && options.requestKey) {
+      const stamp = Number(options.requestKey.split(':')[0]);
+      if (!/^\d{13}:[a-zA-Z0-9_.-]{8,100}$/.test(options.requestKey) || stamp > Date.now() + 60_000) throw new Error('手动幂等键必须为毫秒时间戳:随机标识');
+      const last = job.lastManualRequest;
+      if (last?.requestKey === options.requestKey) return last;
+      if (last?.requestKey && stamp <= Number(last.requestKey.split(':')[0])) throw new Error('过期的幂等请求，禁止重放');
+    }
+    if (trigger === 'schedule' && options.requestKey && job.lastScheduledRun?.requestKey === options.requestKey) return job.lastScheduledRun;
+    const previous = options.requestKey && this.deps.stateService.listScheduledJobRuns({ jobId, limit: 500 }).find(r => r.requestKey === options.requestKey);
+    if (previous) return previous;
+    if (trigger === 'push' && options.overrideBranchId && options.overrideCommitSha
+      && job.lastPushCommits?.[options.overrideBranchId] === options.overrideCommitSha) {
+      const duplicate = this.createRun(job, trigger, 'skipped');
+      duplicate.log = '该分支版本已认领，重复事件不重放。'; duplicate.finishedAt = duplicate.queuedAt;
+      this.deps.stateService.upsertScheduledJobRun(duplicate); return duplicate;
+    }
+    if (job.recoveryRequiredRunId) throw new Error('存在结果未知的运行，请先核实已有产物；禁止自动重放');
 
     if (trigger === 'schedule' && !job.enabled) {
       const skipped = this.createRun(job, trigger, 'skipped');
@@ -237,23 +329,62 @@ export class ScheduledJobService {
       skipped.finishedAt = skipped.queuedAt;
       skipped.durationMs = 0;
       skipped.log = '上一次执行仍在运行，本次按并发策略跳过。';
-      this.deps.stateService.upsertScheduledJobRun(skipped);
+      skipped.requestKey = options.requestKey;
+      if (trigger === 'schedule') {
+        this.claimScheduledOccurrence(job, skipped, options.scheduledFor, options.now || new Date());
+        await this.deps.stateService.flush();
+      } else {
+        this.deps.stateService.upsertScheduledJobRun(skipped);
+        if (trigger === 'manual' && options.requestKey) {
+          this.deps.stateService.upsertScheduledJob({ ...job, lastManualRequest: { ...skipped } });
+          await this.deps.stateService.flush();
+        }
+      }
       return skipped;
     }
 
+    if (trigger === 'push' && options.overrideBranchId && !job.lastPushCommits?.[options.overrideBranchId] && Object.keys(job.lastPushCommits || {}).length >= 256) throw new Error('push 批次凭据已达上限，请人工归档来源分支后处理');
     const run = this.createRun(job, trigger, 'running');
+    run.requestKey = options.requestKey;
+    run.completion = job.completion ? structuredClone(job.completion) : undefined;
+    run.phase = 'executing';
+    run.actionCount = normalizeActions(job.actions, job.target).length;
+    run.deadlineAt = new Date(Date.now() + Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000).toISOString();
+    if (trigger === 'schedule') {
+      const now = options.now || new Date();
+      const scheduledFor = this.claimScheduledOccurrence(job, run, options.scheduledFor, now);
+      if (now.getTime() > Date.parse(scheduledFor) + scheduleGraceMs(job)) {
+        run.status = 'failed'; run.failureKind = 'missed';
+        run.error = '超过调度宽限时间，已记录漏跑；为避免重复副作用，不自动补跑。';
+        run.finishedAt = now.toISOString();
+        this.deps.stateService.upsertScheduledJobRun(run); this.patchJobAfterRun(job, run);
+        await this.deps.stateService.flush(); this.publishHealthEvent();
+        return run;
+      }
+    }
     run.startedAt = new Date().toISOString();
     this.deps.stateService.upsertScheduledJobRun(run);
     this.running.add(job.id);
+    if (trigger === 'manual' && options.requestKey) this.deps.stateService.upsertScheduledJob({ ...job, lastManualRequest: { ...run } });
+    if (trigger === 'push') {
+      const receipts = { ...job.lastPushCommits };
+      if (options.overrideBranchId && options.overrideCommitSha) receipts[options.overrideBranchId] = options.overrideCommitSha;
+      this.deps.stateService.upsertScheduledJob({ ...job, lastPushRun: { ...run }, lastPushCommits: receipts });
+    }
 
     try {
-      const timeoutMs = Math.max(1, job.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000;
+      // 外部动作之前的持久化屏障；失败时绝不调用上游。
+      await this.deps.stateService.flush();
+      const current = this.deps.stateService.getScheduledJob(job.id);
+      if (!current) throw new Error('任务已删除，停止执行');
+      if (trigger !== 'manual' && !current.enabled) { run.status = 'skipped'; run.log = '持久化期间任务已暂停，停止执行。'; return run; }
       const result = await this.executeActions(
         job,
-        Date.now() + timeoutMs,
+        Date.parse(run.deadlineAt!),
         Math.max(0, Math.floor(job.retryCount || 0)),
         options.overrideBranchId,
         options.overrideCommitSha,
+        run.id,
       );
       run.exitCode = result.exitCode;
       run.httpStatus = result.httpStatus;
@@ -264,9 +395,33 @@ export class ScheduledJobService {
       // skipped 不是 failed：目标忙 / 版本没变 / 等人确认，都是「本次不该跑」，
       // 记成失败会把连续失败计数推向自动停用，等于用噪声关掉一条好规则。
       run.status = result.skipped ? 'skipped' : result.ok ? 'success' : 'failed';
-      if (run.status === 'failed') run.error = result.error || `执行失败，退出码 ${result.exitCode ?? 'unknown'}`;
+      if (run.status === 'failed') {
+        run.error = result.error || `执行失败，退出码 ${result.exitCode ?? 'unknown'}`;
+        run.failureKind = Date.now() >= Date.parse(run.deadlineAt!) ? 'timeout' : 'execution';
+      }
+      if (run.status === 'success' && run.completion) {
+        run.phase = 'validating';
+        // 验证完成前不允许把执行成功持久化为任务成功。
+        run.status = 'running'; this.deps.stateService.upsertScheduledJobRun(run);
+        await this.deps.stateService.flush();
+        let error: unknown;
+        do {
+          try {
+            const remaining = Date.parse(run.deadlineAt!) - Date.now();
+            if (remaining <= 0) throw new Error('产物验证超过任务期限');
+            run.artifacts = await withTaskDeadline(validateJobReports(this.deps.stateService, run), remaining); error = undefined; break;
+          }
+          catch (err) { error = err; }
+          const remaining = Date.parse(run.deadlineAt!) - Date.now();
+          if (remaining <= 0) break;
+          await (this.deps.sleep || ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))))(Math.min(1000, remaining));
+        } while (Date.now() < Date.parse(run.deadlineAt!));
+        run.status = error ? 'failed' : 'success';
+        if (error) { run.failureKind = 'artifact-invalid'; run.error = (error as Error).message; }
+      }
     } catch (err) {
       run.status = 'failed';
+      run.failureKind = Date.now() >= Date.parse(run.deadlineAt!) ? 'timeout' : 'execution';
       run.error = (err as Error).message;
       run.log = truncateLog((err as Error).stack || (err as Error).message);
     } finally {
@@ -275,6 +430,14 @@ export class ScheduledJobService {
       run.durationMs = run.startedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : 0;
       this.deps.stateService.upsertScheduledJobRun(run);
       this.patchJobAfterRun(job, run);
+      const uncertainWriteFailure = run.failureKind === 'execution' && normalizeActions(job.actions, job.target)
+        .some(action => action.type === 'command' || (action.type === 'http' && action.method !== 'GET'));
+      if (run.failureKind === 'timeout' || run.failureKind === 'artifact-invalid' || uncertainWriteFailure) {
+        const latest = this.deps.stateService.getScheduledJob(job.id);
+        if (latest) this.deps.stateService.upsertScheduledJob({ ...latest, recoveryRequiredRunId: run.id });
+      }
+      await this.deps.stateService.flush();
+      if (run.status === 'failed') this.publishHealthEvent();
     }
 
     return run;
@@ -362,7 +525,7 @@ export class ScheduledJobService {
 
   normalizeJob(job: ScheduledJob, options: NormalizeScheduledJobOptions = {}): ScheduledJob {
     const now = new Date().toISOString();
-    const shouldPreserveNext = options.preserveNextRunAt && Boolean(job.nextRunAt || !isTimerDrivenSchedule(job.schedule));
+    const shouldPreserveNext = options.preserveNextRunAt;
     const next = !job.enabled
       ? null
       : shouldPreserveNext
@@ -386,7 +549,8 @@ export class ScheduledJobService {
       if (!job.enabled || !isTimerDrivenSchedule(job.schedule)) continue;
       if (parseTimestamp(job.nextRunAt) !== null) continue;
       try {
-        const nextRunAt = this.computeNextRunAt(job.schedule);
+        const createdAt = parseTimestamp(job.createdAt);
+        const nextRunAt = this.computeNextRunAt(job.schedule, createdAt === null ? new Date() : new Date(createdAt));
         if (!nextRunAt) continue;
         this.deps.stateService.upsertScheduledJob({ ...job, nextRunAt });
       } catch (err) {
@@ -406,24 +570,11 @@ export class ScheduledJobService {
     };
   }
 
-  private claimScheduledOccurrence(job: ScheduledJob, now: Date): boolean {
-    if (!isTimerDrivenSchedule(job.schedule)) return false;
-    const latest = this.deps.stateService.getScheduledJob(job.id);
-    if (!latest || !latest.enabled) return false;
-    if (!isJobDue(latest, now)) return false;
-    const nextRunAt = this.computeNextRunAt(latest.schedule, now);
-    if (!nextRunAt) return false;
-    this.deps.stateService.upsertScheduledJob({
-      ...latest,
-      nextRunAt,
-      updatedAt: new Date().toISOString(),
-    });
-    return true;
-  }
-
   private patchJobAfterRun(job: ScheduledJob, run: ScheduledJobRun): void {
     const latest = this.deps.stateService.getScheduledJob(job.id);
     if (!latest) return;
+    const latestPush = latest.lastPushRun || (run.trigger === 'push'
+      ? this.deps.stateService.listScheduledJobRuns({ jobId: job.id, limit: 500 }).find(row => row.trigger === 'push') : undefined);
     // 连续失败棘轮：只对含 release 动作的任务生效，成功或跳过即清零。
     const guardsRelease = normalizeActions(latest.actions, latest.target).some((action) => action.type === 'release');
     const failures = run.status === 'failed'
@@ -433,6 +584,11 @@ export class ScheduledJobService {
     const reason = `连续 ${failures} 次发布失败，已自动停用，请人工排查后重新启用`;
     const patched: ScheduledJob = {
       ...latest,
+      ...(latest.lastManualRequest?.id === run.id ? { lastManualRequest: { ...run, log: undefined, steps: undefined } } : {}),
+      ...(run.trigger === 'schedule' && (!latest.lastScheduledRun?.scheduledFor || !run.scheduledFor || run.scheduledFor >= latest.lastScheduledRun.scheduledFor)
+        ? { lastScheduledRun: { ...run, log: undefined, steps: undefined } } : {}),
+      ...(run.trigger === 'push' && (!latestPush || latestPush.id === run.id)
+        ? { lastPushRun: { ...run, log: undefined, steps: undefined } } : {}),
       lastRunAt: run.finishedAt || run.startedAt || run.queuedAt,
       lastRunStatus: run.status,
       lastRunId: run.id,
@@ -444,7 +600,9 @@ export class ScheduledJobService {
     };
     // nextRunAt 必须在 enabled 落定之后算：先算再停用会留下一个「已停用却还排着队」的
     // 时间点，下一轮 tick 的 isJobDue 照样命中，自动停用等于没停。
-    patched.nextRunAt = this.resolveNextRunAtAfterRun(patched);
+    patched.nextRunAt = run.trigger === 'manual' && patched.enabled && isTimerDrivenSchedule(patched.schedule)
+      ? latest.nextRunAt
+      : this.resolveNextRunAtAfterRun(patched);
     this.deps.stateService.upsertScheduledJob(patched);
     if (!shouldAutoDisable) return;
     this.publishReleaseGovernanceEvent('release.schedule.disabled', latest, reason);
@@ -491,6 +649,22 @@ export class ScheduledJobService {
     }
   }
 
+  private publishHealthEvent(): void {
+    try {
+      if (this.deps.publishEvent) observeScheduledJobs(this.deps.stateService, this.deps.publishEvent);
+    } catch (err) { console.warn('[scheduled-jobs] health event failed:', (err as Error).message); }
+  }
+
+  private claimScheduledOccurrence(job: ScheduledJob, run: ScheduledJobRun, scheduledFor: string | undefined, now: Date): string {
+    run.scheduledFor = scheduledFor || job.nextRunAt || undefined;
+    if (!run.scheduledFor || run.scheduledFor !== job.nextRunAt || !isJobDue(job, now)) throw new Error('调度批次已认领或尚未到期');
+    // 跳过也终结本批次，但不能用它覆盖仍在执行的结果及其后续失败。
+    this.deps.stateService.upsertScheduledJobRun(run);
+    this.deps.stateService.upsertScheduledJob({ ...job, nextRunAt: this.computeNextRunAt(job.schedule, now),
+      ...(run.status !== 'skipped' ? { lastScheduledRun: { ...run } } : {}) });
+    return run.scheduledFor;
+  }
+
   private resolveNextRunAtAfterRun(job: ScheduledJob): string | null {
     if (!job.enabled || !isTimerDrivenSchedule(job.schedule)) return null;
     if (parseTimestamp(job.nextRunAt) !== null) return job.nextRunAt || null;
@@ -503,6 +677,7 @@ export class ScheduledJobService {
     retryCount: number,
     overrideBranchId?: string,
     overrideCommitSha?: string,
+    runId?: string,
   ): Promise<ScheduledJobTargetCheckResult> {
     const actions = normalizeActions(job.actions, job.target);
     if (actions.length === 0) {
@@ -539,6 +714,7 @@ export class ScheduledJobService {
           {
             mode: 'run',
             jobId: job.id,
+            runId,
             ...(overrideBranchId ? { overrideBranchId } : {}),
             ...(overrideCommitSha ? { overrideCommitSha } : {}),
           },
@@ -605,9 +781,8 @@ export class ScheduledJobService {
     requestedRetryCount: number,
     context: ScheduledJobExecutionContext,
   ): Promise<ScheduledJobTargetCheckResult> {
-    // release 强制 0 重试：一次生产部署失败自动重放是危险动作，而且第二次必然撞上
-    // isTargetBusy / assertTargetFree 变成噪声。恢复手段是 rollbackOnFailure，不是 retry。
-    const retryCount = target.type === 'release' ? 0 : requestedRetryCount;
+    // 只自动重试只读 GET；命令、写请求与发布可能已经产生副作用，不能盲目重放。
+    const retryCount = target.type === 'http' && target.method === 'GET' ? requestedRetryCount : 0;
     const logs: string[] = [];
     let last: ScheduledJobTargetCheckResult | null = null;
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
@@ -617,7 +792,7 @@ export class ScheduledJobService {
         break;
       }
       const attemptSandboxKey = retryCount === 0 ? sandboxKey : `${sandboxKey}-try-${attempt + 1}`;
-      const result = await this.executeTarget(target, remainingMs, attemptSandboxKey, context);
+      const result = await withTaskDeadline(this.executeTarget(target, remainingMs, attemptSandboxKey, context), remainingMs);
       last = result;
       if (retryCount > 0) logs.push(`尝试 ${attempt + 1}/${retryCount + 1}`);
       if (result.log) logs.push(result.log);
@@ -648,6 +823,7 @@ export class ScheduledJobService {
       const sandbox = resolveCommandSandbox(this.deps.config.repoRoot, sandboxKey || 'manual', target.cwd);
       const result = await this.deps.shell.exec(buildDockerSandboxCommand({
         command: target.command,
+        runId: context.runId,
         containerCwd: sandbox.containerCwd,
         dockerNetwork: this.deps.config.dockerNetwork,
         hostSandboxRoot: sandbox.hostSandboxRoot,
@@ -668,6 +844,11 @@ export class ScheduledJobService {
     try {
       const url = normalizeTargetUrl(target.url, this.deps.config.masterPort);
       const headers = { ...(target.headers || {}) };
+      if (context.runId) {
+        for (const key of Object.keys(headers)) if (['x-cds-job-run-id', 'idempotency-key'].includes(key.toLowerCase())) delete headers[key];
+        headers['X-CDS-Job-Run-Id'] = context.runId;
+        headers['Idempotency-Key'] = `${context.runId}:${sandboxKey}`;
+      }
       const init: RequestInit = { method: target.method || 'POST', headers, signal: ctrl.signal };
       if (target.body && target.method !== 'GET') {
         init.body = target.body;
@@ -784,6 +965,10 @@ export class ScheduledJobService {
     } catch (err) {
       return fail(`发起发布失败：${(err as Error).message}`);
     }
+    if (context.runId) {
+      const jobRun = this.deps.stateService.listScheduledJobRuns({ jobId: context.jobId, limit: 500 }).find(r => r.id === context.runId);
+      if (jobRun) { jobRun.releaseId = run.releaseId; this.deps.stateService.upsertScheduledJobRun(jobRun); await this.deps.stateService.flush(); }
+    }
     logs.push(`已发起发布 ${run.releaseId}（commit ${run.commitSha}）。`);
 
     const settled = await this.waitForReleaseTerminal(run.releaseId, deadlineMs);
@@ -806,7 +991,7 @@ export class ScheduledJobService {
 
     // h) 失败自动回滚。autoRestoredAt 有值 = 健康检查失败时发布侧已经把上一版恢复过了，
     //    再回滚一次等于在生产上多打一次 SSH 部署。
-    if (target.rollbackOnFailure && !settled.autoRestoredAt) {
+    if (target.rollbackOnFailure && !settled.autoRestoredAt && Date.now() < deadlineMs) {
       logs.push(await this.autoRollback(settled.releaseId, operator, deadlineMs));
     } else if (target.rollbackOnFailure && settled.autoRestoredAt) {
       logs.push(`发布失败时已自动恢复上一版本（${settled.autoRestoredAt}），跳过重复回滚。`);
@@ -1029,6 +1214,7 @@ function resolveCommandSandbox(repoRoot: string, sandboxKey: string, requestedCw
 
 function buildDockerSandboxCommand(input: {
   command: string;
+  runId?: string;
   containerCwd: string;
   dockerNetwork?: string;
   hostSandboxRoot: string;
@@ -1045,6 +1231,7 @@ function buildDockerSandboxCommand(input: {
     `${input.hostSandboxRoot}:/workspace:rw`,
     '-w',
     input.containerCwd,
+    ...(input.runId ? ['-e', `CDS_JOB_RUN_ID=${input.runId}`] : []),
     resolveCommandSandboxImage(),
     'sh',
     '-lc',
@@ -1130,4 +1317,14 @@ function zonedLocalToUtc(year: number, month: number, day: number, hour: number,
 function addDays(year: number, month: number, day: number, days: number): { year: number; month: number; day: number } {
   const d = new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0));
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
+/** 外层硬期限覆盖不遵守超时选项的执行器；未知副作用由恢复闸门隔离。 */
+async function withTaskDeadline<T>(pending: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('任务执行超时，外部结果待核实')), Math.max(1, Math.ceil(timeoutMs)));
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
 }

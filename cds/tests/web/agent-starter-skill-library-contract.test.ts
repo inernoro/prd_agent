@@ -69,7 +69,7 @@ describe('Agent 上手助手技能库契约', () => {
      * 的是这条否定断言，外加下面几条渲染断言。
      *
      * 彻底的做法是渲染向导、真的点一遍——本仓库 cds 侧还没有 DOM 测试环境
-     * （无 jsdom / testing-library），已记入 doc/debt.cds.md。
+     * （无 jsdom / testing-library），已记入 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。
      *
      * 2026-09-03 补：这条源码守卫拦不住的那一半，已经由真浏览器判据补上——
      * scripts/agent-starter-mobile-probe.mjs 在四档窄屏下量每一步主操作的

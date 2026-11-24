@@ -1,0 +1,661 @@
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import CommentsSection from './CommentsSection';
+import type { HostedAnnotations } from './useHostedAnnotations';
+import type { HostedReview } from './useHostedReview';
+
+const { auth, list, login, select, add, resolveComment, removeComment } = vi.hoisted(() => ({
+  auth: { isAuthenticated: false, token: '', user: undefined as { userId: string } | undefined },
+  list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(), resolveComment: vi.fn(), removeComment: vi.fn(),
+}));
+vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector: (state: typeof auth) => unknown) => selector(auth), { getState: () => auth }) }));
+vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
+  addShareComment: add, addSiteComment: add, deleteSiteComment: removeComment, setSiteCommentResolved: resolveComment, commentAttachmentLimit: 2 * 1024 * 1024, maxCommentAttachments: 3 }));
+vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text?: string }) => <p>{text ?? '正在加载讨论…'}</p> }));
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+let root: Root, container: HTMLDivElement;
+const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, connectionChecked: true, displayMode: 'bubble', setDisplayMode: vi.fn(),
+  preview: null, previews: [], allPreviewsHidden: false, hasHiddenPreviews: false, hideAllPreviews: vi.fn(), showAllPreviews: vi.fn(), dismissPreview: vi.fn(), openThread: vi.fn(),
+  draftAnchor: null, activeId: null, missingIds: [], threads: [], select, clearDraft: vi.fn(), focus: vi.fn(),
+  notifyFrame: vi.fn(), setThreads: vi.fn(), setEnabled: vi.fn(), setActiveId: vi.fn() });
+async function mount(options: { ready?: boolean; review?: HostedReview; threadKind?: 'annotation' | 'discussion'; activeId?: string; versionOnly?: boolean; readerLayout?: boolean; siteId?: string } = {}) {
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+  await act(async () => root.render(<CommentsSection mode="share" token="share" onLogin={login} threadKind={options.threadKind}
+    readerLayout={options.readerLayout} splitLayout={options.readerLayout} siteId={options.siteId}
+    annotations={{ ...annotations(), ready: options.ready ?? true, activeId: options.activeId ?? null }} review={options.review} versionOnly={options.versionOnly} />));
+}
+function button(text: string) {
+  const match = [...container.querySelectorAll('button')].find(element => (element.getAttribute('aria-label') ?? element.textContent) === text);
+  expect(match, `button ${text}`).toBeTruthy();
+  return match!;
+}
+beforeEach(() => {
+  vi.clearAllMocks(); auth.isAuthenticated = false; auth.token = ''; auth.user = undefined;
+  sessionStorage.clear();
+  list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } });
+});
+afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
+
+describe('review discussion', () => {
+  const original = { id: 'topic', siteId: 'site', content: '原来的意见', authorName: '作者', createdAt: '2026-11-16T09:00:00Z' };
+  const response = (comments: typeof original[]) => ({ success: true, data: { comments, commentsEnabled: true, canComment: true } });
+  async function enterDraft(text: string) {
+    const field = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, text);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    return field;
+  }
+
+  beforeEach(() => { auth.isAuthenticated = true; auth.token = 'session'; });
+
+  it('opens the discussion at the newest root, with anchored and page comments ordered by time', async () => {
+    const height = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(1200);
+    try {
+      const newest = { ...original, id: 'latest', content: '最新评论', createdAt: '2026-11-16T11:00:00Z' };
+      const anchored = { ...original, id: 'anchored', content: '定位批注', createdAt: '2026-11-16T10:00:00Z', anchor: { kind: 'text', text: '正文' } };
+      list.mockResolvedValue(response([newest, anchored, original]));
+      await mount({ readerLayout: true });
+      expect([...container.querySelectorAll('.review-thread > .review-message .review-message-body')].map(row => row.textContent))
+        .toEqual(['原来的意见', '定位批注', '最新评论']);
+      expect(container.querySelector('.review-thread-scroll')?.scrollTop).toBe(1200);
+    } finally { height.mockRestore(); }
+  });
+
+  it('主阅读区显示接口已授权的旧整页评论，保留真实批注和历史小窗的版本边界', async () => {
+    const legacy = { ...original, content: '未标版本的整页意见', contentVersion: null, revisionId: null, anchor: null };
+    const anchor = { kind: 'text', text: '正文' };
+    const current = { ...original, id: 'current', content: '本版的定位批注', contentVersion: 'current', anchor };
+    const old = { ...original, id: 'other', content: '其他版本的意见', contentVersion: 'old' };
+    const unverifiedPin = { ...legacy, id: 'unverified', content: '无版本号的原文标记', anchor };
+    list.mockResolvedValue(response([legacy, current, old, unverifiedPin]));
+    const review = { loading: false, versions: [], selected: { id: 'v1', isCurrent: true, contentVersionKey: 'current' } } as unknown as HostedReview;
+    const host = annotations(), counts = vi.fn();
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (versionOnly = false) => root.render(<CommentsSection mode="share" token="share"
+      readerLayout splitLayout review={review} annotations={host} versionOnly={versionOnly} onThreadCountsChange={counts} />);
+    await act(async () => render());
+    expect(container.querySelector('.review-thread-scroll')?.textContent).toContain(legacy.content);
+    expect(container.querySelectorAll('.review-origin-version')).toHaveLength(1);
+    expect(container.querySelectorAll('.review-anchor-quote')).toHaveLength(1);
+    expect(container.textContent).not.toContain(old.content);
+    expect(container.textContent).not.toContain(unverifiedPin.content);
+    expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 1 });
+    expect(host.setThreads).toHaveBeenLastCalledWith([legacy, current]);
+
+    await act(async () => render(true));
+    expect(container.textContent).not.toContain(legacy.content);
+    expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 0 });
+  });
+
+  it('sends on plain Enter after IME composition and includes selected attachments', async () => {
+    const file = new File(['content'], '材料.txt', { type: 'text/plain' });
+    const message = { ...original, id: 'sent', content: '两行\n评论', attachments: [{ index: 0, name: file.name, length: file.size }] };
+    list.mockResolvedValueOnce(response([])).mockResolvedValue(response([message]));
+    add.mockResolvedValue({ success: true, data: message });
+    await mount({ readerLayout: true });
+    const input = await enterDraft(message.content);
+    const files = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(files, 'files', { value: [file] });
+    await act(async () => files.dispatchEvent(new Event('change', { bubbles: true })));
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+    });
+    expect(add).not.toHaveBeenCalled();
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+    expect(add).toHaveBeenCalledWith('share', message.content, undefined, expect.objectContaining({ files: [file] }));
+    expect(container.querySelector('[aria-label="待发送附件"]')).toBeNull();
+    expect(button(file.name)).toBeTruthy();
+  });
+
+  it('keeps the failed reply in the fixed composer and retries once with the same identifier', async () => {
+    const reply = { ...original, id: 'submitted', parentId: original.id, content: '待发送的回复', isMine: true };
+    list.mockResolvedValueOnce(response([original])).mockResolvedValue(response([original, reply]));
+    add.mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR' } }).mockResolvedValueOnce({ success: true, data: reply });
+    await mount({ readerLayout: true });
+    await act(async () => button('回复').click());
+    const input = await enterDraft(reply.content);
+    await act(async () => button('发送回复').click());
+    expect(container.querySelector('.review-composer [role="alert"]')?.textContent).toContain('发送失败，网络连接中断');
+    expect(input.value).toBe(reply.content);
+    const first = add.mock.calls[0];
+    expect(first[3]).toMatchObject({ parentId: original.id, clientId: expect.any(String) });
+    await act(async () => button('重试').click());
+    expect(add.mock.calls).toEqual([first, first]);
+    expect(container.querySelector('.review-composer [role="alert"]')).toBeNull();
+    expect(container.querySelector('.review-composer textarea')?.getAttribute('placeholder')).toBe('写整页评论…');
+    expect(container.querySelectorAll('.review-replies .review-message-body')).toHaveLength(1);
+    expect(container.querySelector('.review-talk-toast')?.textContent).toBe('回复已发送');
+  });
+
+  it('shows unread changes from focus sync while preserving the draft, focus and discussion position', async () => {
+    const newTopic = { ...original, id: 'new-topic', content: '另一条意见' };
+    const newReply = { ...original, id: 'new-reply', parentId: original.id, content: '另一位读者的回复' };
+    const ownReply = { ...original, id: 'own-reply', parentId: original.id, content: '自己的回复', isMine: true };
+    list.mockResolvedValueOnce(response([original]));
+    await mount({ readerLayout: true });
+    const input = await enterDraft('尚未发表的整页意见');
+    const listElement = container.querySelector('.review-thread-scroll')!;
+    input.focus();
+    listElement.scrollTop = 180;
+    list.mockResolvedValue(response([newTopic, original, newReply, ownReply]));
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('.review-talk-new')?.textContent).toContain('2 条讨论有新内容');
+    expect(container.querySelectorAll('.review-talk-unread')).toHaveLength(3);
+    expect(input.value).toBe('尚未发表的整页意见');
+    expect(document.activeElement).toBe(input);
+    expect(listElement.scrollTop).toBe(180);
+    await act(async () => (container.querySelector('.review-thread') as HTMLElement).click());
+    expect(container.querySelector('.review-talk-new')?.textContent).toContain('1 条讨论有新内容');
+  });
+
+  it.each([false, true])('合并超过字数上限时，两份草稿仍能分别取回和发表，已尝试发送原回复=%s', async attemptedReply => {
+    const pageDraft = '整页草稿'.repeat(450);
+    const replyDraft = '回复草稿'.repeat(75);
+    list.mockResolvedValueOnce(response([original])).mockResolvedValue(response([]));
+    auth.user = { userId: 'reviewer' };
+    const layout = { readerLayout: true, siteId: 'site' };
+    await mount(layout);
+    await enterDraft(pageDraft);
+    await act(async () => button('回复').click());
+    await enterDraft(replyDraft);
+    if (attemptedReply) {
+      add.mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR' } });
+      await act(async () => button('发送回复').click());
+    }
+    const originalId = add.mock.calls[0]?.[3].clientId;
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    expect(container.querySelector('.review-composer [role="alert"]')?.textContent).toContain('原讨论已删除');
+    await act(async () => button('改为整页评论').click());
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+    await act(async () => root.unmount());
+    container.remove();
+    await mount(layout);
+    await act(async () => button('打开回复草稿').click());
+    expect(container.querySelector('textarea')?.value).toBe(replyDraft);
+    await act(async () => button('绑定页面元素 / 选中文字').click());
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+    await act(async () => button('打开回复草稿').click());
+    await act(async () => button('返回原整页草稿').click());
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+    await act(async () => button('打开回复草稿').click());
+    add.mockResolvedValueOnce({ success: false, error: { code: 'NETWORK_ERROR' } })
+      .mockResolvedValueOnce({ success: true, data: { ...original, id: 'recovered', content: replyDraft } });
+    await act(async () => button('发送批注').click());
+    const standalone = add.mock.calls.at(-1)!;
+    expect(standalone).toEqual(['share', replyDraft, undefined, expect.objectContaining({ clientId: expect.any(String) })]);
+    expect(standalone[3]).not.toHaveProperty('parentId');
+    expect(standalone[3].clientId).not.toBe(originalId);
+    expect(container.querySelector('textarea')?.value).toBe(replyDraft);
+    await act(async () => button('重试').click());
+    expect(add.mock.calls.at(-1)).toEqual(standalone);
+    expect(container.querySelector('textarea')?.value).toBe(pageDraft);
+  });
+
+  it('自己删除原讨论时可把未发回复转为整页评论', async () => {
+    const deletable = { ...original, canDelete: true };
+    list.mockResolvedValue(response([deletable]));
+    removeComment.mockResolvedValue({ success: true });
+    await mount({ readerLayout: true });
+    await act(async () => button('回复').click());
+    await enterDraft('尚未发表的回复');
+    await act(async () => button('删除评论').click());
+    await act(async () => button('确认删除讨论及回复').click());
+    expect(container.querySelector('.review-composer [role="alert"]')?.textContent).toContain('原讨论已删除');
+    await act(async () => button('改为整页评论').click());
+    expect(container.querySelector('textarea')?.value).toBe('尚未发表的回复');
+  });
+});
+
+describe('annotation entry availability', () => {
+  it('其他版本批注打开独立小窗，不改主页面的版本', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'old-note', content: '旧版意见', contentVersion: 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    const selectVersion = vi.fn(), setVersionPreview = vi.fn();
+    await mount({ review: { loading: false, selected: { id: 'v2', contentVersionKey: 'current' },
+      versions: [{ id: 'v1', contentVersionKey: 'old', versionLabel: 'V1', canPreview: true }], selectVersion, setVersionPreview } as unknown as HostedReview });
+    await act(async () => button('预览 V1').click());
+    expect(setVersionPreview).toHaveBeenCalledWith({ id: 'v1', commentId: 'old-note' });
+    expect(selectVersion).not.toHaveBeenCalled();
+  });
+  it('小窗只显示预览版本的批注，不能自动混入其他版本意见', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'old-note', content: '不属于预览版本的意见', contentVersion: 'other', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    await mount({ versionOnly: true, review: { loading: false, selected: { id: 'v1', contentVersionKey: 'preview' }, versions: [] } as unknown as HostedReview });
+    expect(container.textContent).not.toContain('其他版本');
+    expect(container.querySelector('.review-thread')).toBeNull();
+  });
+  it('等版本归属确认后首次展示仅存于历史版本的已解决批注，并保留手动页签选择', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'historical', siteId: 'site', content: '旧版保留的意见', contentVersion: 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
+    ] } });
+    const count = vi.fn();
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} onCountChange={count} />);
+    await act(async () => render({ loading: true, selected: undefined, versions: [] } as unknown as HostedReview));
+    expect(count).not.toHaveBeenCalled();
+    const known = { loading: false, selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: 'current' }, versions: [] } as unknown as HostedReview;
+    await act(async () => render(known));
+    expect(count).toHaveBeenLastCalledWith(1);
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('其他版本');
+    expect(container.querySelector('.review-thread')?.textContent).toContain('旧版保留的意见');
+    expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+    await act(async () => button('本版 0').click());
+    await act(async () => render({ ...known }));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('.review-thread')).toBeNull();
+  });
+  it.each([false, true])('版本信息恢复后保留故障期间手动选择的页签，当前版有意见=%s', async hasCurrentComment => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'existing', siteId: 'site', content: '已保存的意见', contentVersion: hasCurrentComment ? 'current' : 'old', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} />);
+    await act(async () => render({ loading: false, error: '版本暂不可用', selected: undefined, versions: [] } as unknown as HostedReview));
+    const chosen = hasCurrentComment ? '其他版本' : '本版';
+    await act(async () => button(hasCurrentComment ? '其他版本 1' : '本版 0').click());
+    await act(async () => render({ loading: false, selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: 'current' }, versions: [] } as unknown as HostedReview));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain(chosen);
+  });
+  it('未手动选择页签时，版本恢复后默认展示已确认属于当前版的意见', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'existing', siteId: 'site', content: '当前版已有意见', contentVersion: 'current', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} />);
+    await act(async () => render({ loading: false, error: '版本暂不可用', selected: undefined, versions: [] } as unknown as HostedReview));
+    await act(async () => render({ loading: false, selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: 'current' }, versions: [] } as unknown as HostedReview));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('.review-thread')?.textContent).toContain('当前版已有意见');
+  });
+  it.each(['share', 'site'] as const)('发布新版本后保留本版输入，不被历史意见默认页签覆盖：%s', async mode => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: true, comments: [
+      { id: 'existing', siteId: 'site', content: '此前版本的意见', contentVersion: 'previous', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (versionKey: string) => {
+      const review = { loading: false, selected: { id: versionKey, contentVersionKey: versionKey }, versions: [] } as unknown as HostedReview;
+      const source = mode === 'share' ? { mode, token: 'share' } : { mode, siteId: 'site' };
+      root.render(<CommentsSection {...source} review={review} annotations={annotations()} />);
+    };
+    await act(async () => render('previous'));
+    const input = container.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '旧草稿');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => render('restored'));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('textarea')?.value).toBe('');
+    expect(container.querySelector('textarea')?.disabled).toBe(false);
+    await act(async () => button('其他版本 1').click());
+    await act(async () => render('uploaded'));
+    expect(container.querySelector('[aria-label="批注版本范围"] [aria-selected="true"]')?.textContent).toContain('本版');
+    expect(container.querySelector('textarea')?.disabled).toBe(false);
+  });
+  it('首次打开默认展示已解决和未解决批注，不因默认筛选隐藏已有意见', async () => {
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+      { id: 'resolved', siteId: 'site', content: '已经解决的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
+      { id: 'open', siteId: 'site', content: '等待处理的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: false },
+    ] } });
+    await mount();
+    expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
+    expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+  });
+  it.each([false, true])('版本信息失败仍显示已有意见和计数，且不开放无法归属的写入，loading=%s', async loading => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: true, comments: [
+      { id: 'existing', siteId: 'site', content: '版本服务失败仍能阅读的意见', contentVersion: 'saved', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' },
+    ] } });
+    const count = vi.fn();
+    const review = { loading, error: '无法加载版本，请重试', selected: undefined, versions: [] } as unknown as HostedReview;
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<CommentsSection mode="share" token="share" review={review} onCountChange={count} annotations={annotations()} />));
+    expect(count).toHaveBeenLastCalledWith(1);
+    expect(container.querySelector('.review-thread')?.textContent).toContain('版本服务失败仍能阅读的意见');
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(button('绑定页面元素 / 选中文字').disabled).toBe(true);
+  });
+  it('合集批注和讨论按真实锚点分开，计数排除回复和其他版本', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    const anchor = { kind: 'text' as const, pagePath: '/', selector: 'p', tagName: 'p', text: '原文', elementText: '原文', prefix: '', suffix: '', contentVersion: 'current' };
+    const common = { siteId: 'member', authorName: '作者', createdAt: '2026-11-12T00:00:00Z', canDelete: false };
+    list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: true, comments: [
+      { ...common, id: 'note', content: '当前版批注', contentVersion: 'current', anchor },
+      { ...common, id: 'talk', content: '当前版讨论', contentVersion: 'current' },
+      { ...common, id: 'reply', content: '回复内容', contentVersion: 'current', parentId: 'note' },
+      { ...common, id: 'old', content: '旧版批注', contentVersion: 'old', anchor },
+    ] } });
+    const counts = vi.fn();
+    const legacyCount = vi.fn();
+    const review = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: 'current' }, loading: false, versions: [] } as unknown as HostedReview;
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (threadKind?: 'annotation' | 'discussion') => root.render(<CommentsSection mode="share" token="collection" siteId="member" threadKind={threadKind} onCountChange={legacyCount} onThreadCountsChange={counts} review={review} annotations={annotations()} />);
+    await act(async () => render('annotation'));
+    expect(container.querySelectorAll('.review-thread')).toHaveLength(1);
+    expect(container.querySelector('.review-thread')?.textContent).toContain('当前版批注');
+    expect(counts).toHaveBeenLastCalledWith({ annotations: 1, discussions: 1 });
+    expect(legacyCount).toHaveBeenLastCalledWith(2);
+    await act(async () => button('回复 1').click());
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('回复内容');
+    await act(async () => render('discussion'));
+    expect(container.querySelectorAll('.review-thread')).toHaveLength(1);
+    expect(container.querySelector('.review-thread')?.textContent).toContain('当前版讨论');
+    expect(container.querySelector('textarea')?.getAttribute('aria-label')).toBe('讨论内容');
+    expect(container.querySelector('[aria-label="绑定页面元素 / 选中文字"]')).toBeNull();
+    expect(legacyCount).toHaveBeenLastCalledWith(1);
+    await act(async () => render());
+    expect(legacyCount).toHaveBeenLastCalledWith(3);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+  it('整页讨论不会带入其他批注尚未提交的位置', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    const pending = { ...annotations(), draftAnchor: { kind: 'text' as const, pagePath: '/', selector: 'p', tagName: 'p', text: '位置', elementText: '位置', prefix: '', suffix: '', contentVersion: 'current' } };
+    add.mockResolvedValue({ success: true, data: { id: 'talk', siteId: 'member', content: '整页看法', authorName: '作者', createdAt: '2026-11-12T00:00:00Z' } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<CommentsSection mode="share" token="collection" password="original-password" siteId="member" threadKind="discussion" annotations={pending} />));
+    await act(async () => { const field = container.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '整页看法'); field.dispatchEvent(new Event('input', { bubbles: true })); });
+    await act(async () => button('发送讨论').click());
+    expect(add).toHaveBeenCalledWith('collection', '整页看法', 'original-password', expect.objectContaining({ siteId: 'member', anchor: undefined }));
+    expect(pending.clearDraft).not.toHaveBeenCalled();
+  });
+  it('合集第二份文档解决和重新打开讨论都携带当前文档及密码', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    const comment = { id: 'thread-b', siteId: 'document-b', authorName: '作者', content: '第二份讨论',
+      createdAt: new Date().toISOString(), canResolve: true, isResolved: false };
+    list.mockResolvedValue({ success: true, data: { comments: [comment], commentsEnabled: true, canComment: true } });
+    resolveComment.mockResolvedValueOnce({ success: true, data: { ...comment, isResolved: true } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<CommentsSection mode="share" token="collection" password="pw" siteId="document-b" />));
+    await act(async () => button('标记解决').click());
+    expect(resolveComment).toHaveBeenNthCalledWith(1, { token: 'collection', password: 'pw', siteId: 'document-b' }, 'thread-b', true);
+    await act(async () => button('已解决 1').click());
+    resolveComment.mockResolvedValueOnce({ success: true, data: comment });
+    await act(async () => button('重新打开').click());
+    expect(resolveComment).toHaveBeenNthCalledWith(2, { token: 'collection', password: 'pw', siteId: 'document-b' }, 'thread-b', false);
+  });
+  it.each(['10000', '20000'])('waits for version metadata and preserves drafts only for the same publication, next=%s', async next => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    const known = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: '10000' }, loading: false } as HostedReview;
+    const pending = { selected: undefined, loading: true } as HostedReview;
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} annotations={annotations()} />);
+    await act(async () => render(known));
+    await act(async () => {
+      const input = container.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '不能丢失的草稿');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => render(pending));
+    expect(container.querySelector('.review-thread-scroll')?.textContent).toContain('正在确认网页版本');
+    expect(container.textContent).not.toContain('无法确认网页版本');
+    expect(container.textContent).not.toContain('让意见留在对应的位置');
+    expect(button('绑定页面元素 / 选中文字').disabled).toBe(true);
+    expect(container.querySelector('[aria-label="批注版本范围"]')?.textContent).toContain('—');
+    await act(async () => render({ ...known, selected: { ...known.selected!, contentVersionKey: next } }));
+    expect(container.querySelector('textarea')?.value).toBe(next === '10000' ? '不能丢失的草稿' : '');
+  });
+  it('offers an actionable login entry to guests even before the annotation layer connects', async () => {
+    await mount({ ready: false });
+    const entry = button('登录后批注');
+    expect(entry.disabled).toBe(false);
+    expect(container.textContent).toContain('登录后可选择网页元素或文字留下批注');
+    await act(async () => entry.click());
+    expect(login).toHaveBeenCalledOnce();
+    expect(select).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')).toBeNull();
+  });
+  it('explains when the site has closed comments instead of asking the guest to log in', async () => {
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: false, canComment: false } });
+    await mount();
+    const entry = button('绑定页面元素 / 选中文字');
+    expect(entry.disabled).toBe(true);
+    expect(entry.title).toBe('该站点已关闭评论与批注。');
+    expect(container.textContent).not.toContain('先在网页上选择位置');
+    await act(async () => entry.click());
+    expect(login).not.toHaveBeenCalled();
+  });
+  it('starts element selection for an authenticated reviewer with a connected page', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    await mount();
+    const entry = button('绑定页面元素 / 选中文字');
+    expect(entry.disabled).toBe(false);
+    await act(async () => entry.click());
+    expect(select).toHaveBeenCalledOnce();
+    expect(login).not.toHaveBeenCalled();
+    expect(container.querySelector('textarea')).not.toBeNull();
+  });
+  it('provides a new login action when a persisted login is no longer accepted by the server', async () => {
+    auth.isAuthenticated = true; auth.token = 'expired-session';
+    await mount();
+    const entry = button('重新登录后批注');
+    expect(entry.disabled).toBe(false);
+    expect(entry.title).toContain('当前登录状态无法批注');
+    await act(async () => entry.click());
+    expect(login).toHaveBeenCalledOnce();
+    expect(select).not.toHaveBeenCalled();
+  });
+  it('explains an unavailable annotation layer while keeping whole-page comments available', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    await mount({ ready: false });
+    const entry = button('绑定页面元素 / 选中文字');
+    expect(entry.disabled).toBe(true);
+    expect(entry.title).toContain('暂未连接批注层');
+    expect(container.querySelector('textarea')).not.toBeNull();
+    expect(container.textContent).not.toContain('先在网页上选择位置');
+  });
+  it('distinguishes missing version metadata from a disconnected annotation layer', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    await mount({ review: { selected: undefined, loading: false } as HostedReview });
+    expect(button('绑定页面元素 / 选中文字').title).toContain('无法确认网页版本');
+  });  it.each(['same', 'other', 'return'])('preserves a newer draft after an earlier submit completes, move=%s', async move => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    let finish!: (value: unknown) => void;
+    add.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const firstReview = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: '10000' }, loading: false } as HostedReview;
+    const secondReview = { selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: '20000' }, loading: false } as HostedReview;
+    const firstAnnotations = annotations();
+    const nextAnnotations = { ...annotations(), draftAnchor: { kind: 'element' as const, pagePath: '/', selector: '#new', tagName: 'P',
+      text: '新版位置', elementText: '新版位置', prefix: '', suffix: '', contentVersion: move === 'other' ? '20000' : '10000' } };
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview, anchor: HostedAnnotations) => root.render(<CommentsSection mode="share" token="share" review={review} annotations={anchor} />);
+    await act(async () => render(firstReview, firstAnnotations));
+    const write = async (text: string) => { await act(async () => {
+      const input = container.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }); };
+    await write('旧版提交');
+    await act(async () => button('发送批注').click());
+    expect(add).toHaveBeenCalledOnce();
+    await act(async () => render(move === 'same' ? firstReview : secondReview, nextAnnotations));
+    if (move === 'return') await act(async () => render(firstReview, nextAnnotations));
+    await write('新的未发送草稿');
+    await act(async () => finish({ success: true, data: { id: 'saved-old', content: '旧版提交', contentVersion: '10000', authorName: '作者' } }));
+    expect(container.querySelector('textarea')?.value).toBe('新的未发送草稿');
+    expect(nextAnnotations.clearDraft).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('新版位置');
+    expect(button('发送批注').disabled).toBe(false);
+  });
+  it('submits an unrecorded current publication through its expected version rather than an empty revision ID', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    add.mockResolvedValue({ success: true, data: { id: 'saved-current', contentVersion: '20000', content: 'current' } });
+    await mount({ review: { selected: { id: '', contentVersionKey: '20000', versionLabel: 'V1' }, historical: false, loading: false } as HostedReview });
+    await act(async () => {
+      const input = container.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'current');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('发送批注').click());
+    expect(add).toHaveBeenCalledWith('share', 'current', undefined, expect.objectContaining({ revisionId: undefined, expectedContentVersion: '20000' }));
+  });
+
+});
+
+
+describe('collection annotation and discussion tabs', () => {
+  it.each(['annotation', 'discussion'] as const)('only renders %s roots while retaining annotation markers', async kind => {
+    const annotation = { id: 'note', siteId: 'site', authorName: '作者', content: '正文定位批注', anchor: { kind: 'element', selector: 'p', quote: '正文' }, createdAt: new Date().toISOString(), isResolved: false };
+    const discussion = { ...annotation, id: 'discussion', content: '整篇讨论意见', anchor: null };
+    list.mockResolvedValue({ success: true, data: { comments: [annotation, discussion], commentsEnabled: true, canComment: false } });
+    await mount({ threadKind: kind });
+    expect(container.textContent).toContain(kind === 'annotation' ? '正文定位批注' : '整篇讨论意见');
+    expect(container.textContent).not.toContain(kind === 'annotation' ? '整篇讨论意见' : '正文定位批注');
+  });
+});
+
+
+it('发表新意见后仍展示全部状态，不把已有已解决意见藏起来', async () => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const resolved = { id: 'done', siteId: 'site', content: '保留的已解决意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true };
+  const created = { ...resolved, id: 'new', content: '新的意见', isResolved: false };
+  let comments = [resolved];
+  list.mockImplementation(async () => ({ success: true, data: { comments, commentsEnabled: true, canComment: true } }));
+  add.mockImplementation(async () => { comments = [created, resolved]; return { success: true, data: created }; });
+  await mount();
+  await act(async () => { const field = container.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '新的意见'); field.dispatchEvent(new Event('input', { bubbles: true })); });
+  await act(async () => button('发送批注').click());
+  expect(add).toHaveBeenCalled();
+  expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+  expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
+  expect(container.textContent).toContain('保留的已解决意见');
+});
+
+it('从全部状态点击原文编号定位意见时仍保留其他状态的意见', async () => {
+  list.mockResolvedValue({ success: true, data: { commentsEnabled: true, canComment: false, comments: [
+    { id: 'done', siteId: 'site', content: '保留的已解决意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: true },
+    { id: 'focus', siteId: 'site', content: '定位的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z', isResolved: false },
+  ] } });
+  await mount({ activeId: 'focus' });
+  expect(container.querySelector('[aria-label="讨论状态"] [aria-selected="true"]')?.textContent).toContain('全部');
+  expect(container.querySelectorAll('.review-thread')).toHaveLength(2);
+});
+
+it('收到其他阅读面板的变更通知后刷新意见与数量，保留正在写的草稿', async () => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const original = { id: 'old', siteId: 'site', canResolve: true, content: '已经删除的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' };
+  list.mockResolvedValue({ success: true, data: { comments: [original], commentsEnabled: true, canComment: true } });
+  await mount();
+  await act(async () => { const field = container.querySelector('textarea')!; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, '保留我的草稿'); field.dispatchEvent(new Event('input', { bubbles: true })); });
+  list.mockResolvedValue({ success: true, data: { comments: [{ ...original, id: 'new', content: '小窗新增的意见', isResolved: true }], commentsEnabled: true, canComment: true } });
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  expect(container.textContent).not.toContain('已经删除的意见');
+  expect(container.textContent).toContain('小窗新增的意见');
+  expect(button('重新打开')).toBeTruthy();
+  expect(container.querySelector('textarea')?.value).toBe('保留我的草稿');
+});
+it('初次读取未完成时收到变更通知，较新读取完成后结束加载并拒绝旧结果', async () => {
+  let finish!: (result: unknown) => void;
+  list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await mount();
+  list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } });
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  expect(container.textContent).not.toContain('正在加载');
+  await act(async () => finish({ success: true, data: { comments: [{ id: 'stale', content: '已过期的结果' }], commentsEnabled: true, canComment: false } }));
+  expect(container.textContent).not.toContain('已过期的结果');
+});
+
+it('解决状态变更通知其他面板，自身不重复发起读取', async () => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const comment = { id: 'note', canResolve: true, content: '需要同步状态', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' };
+  list.mockResolvedValue({ success: true, data: { comments: [comment], commentsEnabled: true, canComment: true } });
+  resolveComment.mockResolvedValue({ success: true, data: { ...comment, isResolved: true } });
+  await mount();
+  const changed = vi.fn(); window.addEventListener('hosted-comments-changed', changed);
+  try {
+    await act(async () => button('标记解决').click());
+    expect(changed).toHaveBeenCalledOnce(); expect(list).toHaveBeenCalledOnce();
+    expect(button('重新打开')).toBeTruthy();
+  } finally { window.removeEventListener('hosted-comments-changed', changed); }
+});
+
+it('父子阅读面板的同一历史意见具有独立DOM标识，定位只滚动本面板', async () => {
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'shared-note', content: '父子都展示的历史意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+  const render = (activeId: string | null) => root.render(<>
+    <div data-parent-panel><CommentsSection mode="share" token="share" annotations={annotations()} /></div>
+    <div data-child-panel><CommentsSection mode="share" token="share" annotations={{ ...annotations(), activeId }} /></div>
+  </>);
+  const oldScroll = HTMLElement.prototype.scrollIntoView, scroll = vi.fn(); HTMLElement.prototype.scrollIntoView = scroll;
+  try {
+    await act(async () => render(null));
+    const threads = [...container.querySelectorAll('.review-thread')];
+    expect(threads).toHaveLength(2); expect(new Set(threads.map(el => el.id)).size).toBe(2);
+    await act(async () => render('shared-note'));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    expect(scroll.mock.contexts).toEqual([container.querySelector('[data-child-panel] .review-thread')]);
+  } finally { HTMLElement.prototype.scrollIntoView = oldScroll; }
+});
+
+it.each(['resolve', 'delete'])('外部刷新不能覆盖之后成功的本地修改：%s', async operation => {
+  auth.isAuthenticated = true; auth.token = 'session';
+  const comment = { id: 'note', content: '正在修改的意见', canResolve: true, canDelete: true, authorName: '作者', createdAt: '2026-11-16T00:00:00Z' };
+  const response = { success: true, data: { comments: [comment], commentsEnabled: true, canComment: true } };
+  list.mockResolvedValue(response); await mount();
+  let finish!: (value: unknown) => void;
+  list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  if (operation === 'resolve') {
+    resolveComment.mockResolvedValue({ success: true, data: { ...comment, isResolved: true } });
+    await act(async () => button('标记解决').click());
+  } else {
+    removeComment.mockResolvedValue({ success: true });
+    await act(async () => button('删除评论').click());
+    await act(async () => button('确认删除讨论及回复').click());
+  }
+  await act(async () => finish(response));
+  if (operation === 'resolve') expect(button('重新打开')).toBeTruthy();
+  else expect(container.textContent).not.toContain('正在修改的意见');
+});
+it.each([false, true])('初次读取期间的更新失败明确可重试，网络异常=%s', async network => {
+  let finish!: (value: unknown) => void;
+  list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await mount();
+  if (network) list.mockRejectedValueOnce(new Error('network'));
+  else list.mockResolvedValueOnce({ success: false, error: { message: '读取更新失败' } });
+  await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  await act(async () => finish({ success: true, data: { comments: [], commentsEnabled: true, canComment: false } }));
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'recovered', content: '重试后意见可见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  await act(async () => button('重新加载').click());
+  expect(container.textContent).toContain('重试后意见可见');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it('面板隐藏时不消费滚动，同一已选意见打开面板后仍能定位', async () => {
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'selected', content: '已选中的意见', authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+  const selected = { ...annotations(), activeId: 'selected' };
+  const render = (visible: boolean) => root.render(<CommentsSection mode="share" token="share" annotations={selected} visible={visible} />);
+  const oldScroll = HTMLElement.prototype.scrollIntoView, scroll = vi.fn(); HTMLElement.prototype.scrollIntoView = scroll;
+  try {
+    await act(async () => render(false));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    expect(scroll).not.toHaveBeenCalled();
+    await act(async () => render(true));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
+    expect(scroll.mock.contexts).toEqual([container.querySelector('.review-thread')]);
+  } finally { HTMLElement.prototype.scrollIntoView = oldScroll; }
+});
+
+it('长意见默认只渲染有界摘要，用户可展开及收起完整内容', async () => {
+  const content = '长文内容'.repeat(10000);
+  list.mockResolvedValue({ success: true, data: { comments: [{ id: 'long', content, authorName: '作者', createdAt: '2026-11-16T00:00:00Z' }], commentsEnabled: true, canComment: false } });
+  await mount(); expect(container.querySelector('.review-message-body')!.textContent!.length).toBeLessThanOrEqual(281);
+  await act(async () => button('展开全文').click()); expect(container.querySelector('.review-message-body')!.textContent).toBe(content);
+  await act(async () => button('收起全文').click()); expect(container.querySelector('.review-message-body')!.textContent!.length).toBeLessThanOrEqual(281);
+});

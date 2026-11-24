@@ -1,5 +1,4 @@
 @AGENTS.md
-
 <!--
 正文在 AGENTS.md，本文件只做导入 + Claude Code 专属差异。
 原因：两个根文件曾经是 95% 相同的手工副本且没有同步脚本，必然漂移——AGENTS.md 知道
@@ -9,7 +8,6 @@ llmgw 模块，CLAUDE.md 一个字都没提，导致 llmgw 的必跑校验命令
 新增共用规则写进 AGENTS.md，不要写在这里。
 守卫：scripts/tests/test_claude_memory_contract.py
 -->
-
 ## Claude Code 专属
 
 - **规则按需加载**：`.claude/rules/` 的 frontmatter 用 `paths:`（不是 `globs:`——那个键不被识别，会退化成每 session 全量加载）。39 条按 `paths` 命中当前文件时才载入，19 条跨切面行为规则常驻。新增规则时 glob 必须命中真实文件，死 glob 会让规则永不加载。
