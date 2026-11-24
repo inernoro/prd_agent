@@ -1,6 +1,6 @@
 import { useEntrySkinStore } from '@/stores/entrySkinStore';
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,8 +21,7 @@ vi.mock('@/stores/authStore', async () => {
     logout: () => set({ isAuthenticated: false }),
   })) };
 });
-vi.mock('@/components/effects/entryMotion', () => ({ prepareEntryScene: () => Promise.resolve(), profileEntryMotion: vi.fn(), enterWorkspace: (commit: () => void) => commit() }));
-vi.mock('@/pages/home/components/Reveal', () => ({ Reveal: ({ children }: { children: ReactNode }) => children }));
+vi.mock('@/components/effects/entryMotion', () => ({ prepareEntryScene: () => new Promise(() => {}), profileEntryMotion: vi.fn() }));
 let host: HTMLDivElement;
 let root: Root;
 async function mount() { await act(async () => { root.render(<MemoryRouter><LoginPage /></MemoryRouter>); }); }
@@ -43,7 +42,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); document.documentElement.removeAttribute('data-theme'); });
 
-describe('电影式登录真实表单交互', () => {
+describe('登录表单与快速入场', () => {
   it('未开启皮肤时没有角色扫描，鉴权通过直接导航', async () => {
     useEntrySkinStore.setState({ skin: 'standard' });
     api.login.mockResolvedValue({ success: true, data: { user: { username: 'admin' }, accessToken: 'test-token', refreshToken: '', sessionKey: '' } });
@@ -69,7 +68,7 @@ describe('电影式登录真实表单交互', () => {
     expect(password.type).toBe('text'); expect(password.value).toBe('sample-secret');
     expect(host.querySelector('[aria-label="隐藏密码"]')).not.toBeNull();
   });
-  it('提交期间扫描对应实际请求状态，失败恢复按钮并播报错误', async () => {
+  it('提交期间显示真实请求状态，失败恢复按钮并播报错误', async () => {
     let rejectLogin!: (value: unknown) => void;
     api.login.mockImplementation(() => new Promise(resolve => { rejectLogin = resolve; }));
     await mount();
@@ -89,7 +88,7 @@ describe('电影式登录真实表单交互', () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('请联系管理员恢复登录服务');
     expect(host.textContent).not.toContain('MAP_PASSWORD');
   });
-  it('登录令牌先落库也不提前跳转；权限通过后先显示核验结果再进入', async () => {
+  it('权限返回前保留原表单，权限通过后直接进入且无需等素材', async () => {
     let authorize!: (value: unknown) => void;
     api.login.mockResolvedValue({ success: true, data: { user: { username: 'admin' }, accessToken: 'test-token', refreshToken: '', sessionKey: '' } });
     api.getAdminAuthzMe.mockImplementation(() => new Promise(resolve => { authorize = resolve; }));
@@ -98,10 +97,11 @@ describe('电影式登录真实表单交互', () => {
     await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '开始身份确认')!.click());
     expect(useAuthStore.getState().isAuthenticated).toBe(true);
     expect(navigation.navigate).not.toHaveBeenCalled();
+    const password = host.querySelector('input[autocomplete="current-password"]');
     await act(async () => authorize({ success: true, data: { effectivePermissions: ['admin.access'] } }));
-    expect(host.textContent).toContain('核验通过');
-    expect(navigation.navigate).not.toHaveBeenCalled();
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1700)); });
+    expect(host.querySelector('input[autocomplete="current-password"]')).toBe(password);
+    expect(host.querySelector('.cinema-identity-result')).toBeNull();
+    expect(navigation.navigate).toHaveBeenCalledTimes(1);
     expect(navigation.navigate).toHaveBeenCalledWith('/', { replace: true });
   });
 

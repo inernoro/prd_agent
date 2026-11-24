@@ -8,15 +8,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { completeCdsLogin, getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
 import { api } from '@/services/api';
 import type { SsoLoginOption } from '@/services/contracts/auth';
-import { ConsciousnessHud, ConsciousnessScene, IdentityScanner, markConsciousnessArrival, type IdentityPhase } from '@/components/effects/ConsciousnessScene';
-import { enterWorkspace, prepareEntryScene, profileEntryMotion } from '@/components/effects/entryMotion';
-import { prefersReducedMotion } from '@/lib/themeApplier';
+import { ConsciousnessScene, markConsciousnessArrival } from '@/components/effects/ConsciousnessScene';
+import { prepareEntryScene, profileEntryMotion } from '@/components/effects/entryMotion';
 import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
-import { Reveal } from '@/pages/home/components/Reveal';
-
-/** Cinematic entry follows the reference film: fog, identity scan, contour, character.
- * Authentication, SSO return fragments and first-login password reset retain their existing flow.
- */
 
 const passwordRules: Array<{ key: string; label: string; test: (pwd: string) => boolean }> = [
   { key: 'len', label: '长度 8-128 位', test: (pwd) => pwd.length >= 8 && pwd.length <= 128 },
@@ -118,7 +112,6 @@ export default function LoginPage() {
   }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
   useEffect(() => { if (cinematic) void prepareEntryScene(); }, [cinematic]);
-  const [gatePhase, setGatePhase] = useState<IdentityPhase>('idle');
   const completingLogin = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -337,7 +330,6 @@ export default function LoginPage() {
       // 若无 admin.access 权限，后端会 403，这里直接回到登录态
       logout();
       completingLogin.current = false;
-      setGatePhase('idle');
       setError(authz.error?.message || '无权限进入管理后台');
       return;
     }
@@ -359,23 +351,12 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
-    if (useEntrySkinStore.getState().skin !== 'companion') {
-      navigate(resolveReturnUrl(), { replace: true }); return;
-    }
-    // Preparation must not keep a verified user waiting on a failed resource.
-    if (!prefersReducedMotion()) await Promise.race([prepareEntryScene(), new Promise(resolve => window.setTimeout(resolve, 1000))]);
-    if (!mounted.current) return;
-    setGatePhase('authorized');
-    if (!prefersReducedMotion()) {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 760));
-      if (!mounted.current) return;
-      setGatePhase('entering');
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 820));
-    }
     if (!mounted.current) return;
     const destination = resolveReturnUrl();
-    if (['/', '/agent-launcher'].includes(destination.split(/[?#]/)[0])) markConsciousnessArrival();
-    enterWorkspace(() => navigate(destination, { replace: true }));
+    if (useEntrySkinStore.getState().skin === 'companion' && ['/', '/agent-launcher'].includes(destination.split(/[?#]/)[0])) {
+      markConsciousnessArrival();
+    }
+    navigate(destination, { replace: true });
   };
 
   const onResetPassword = async () => {
@@ -429,52 +410,45 @@ export default function LoginPage() {
   };
 
   const busy = loading || ssoLoading || resetLoading;
-  const phase: IdentityPhase = gatePhase === 'idle' && busy ? 'verifying' : gatePhase;
-  const authorized = phase === 'authorized' || phase === 'entering';
   return (
-    <div className={`cinema-login${cinematic ? '' : ' is-standard'}`} data-busy={busy} data-phase={phase}>
-      {cinematic && <><ConsciousnessScene fog /><ConsciousnessHud login /><IdentityScanner phase={phase} /></>}
+    <div className={`cinema-login ${cinematic ? 'is-companion' : 'is-standard'}`} data-busy={busy} data-phase={busy ? 'verifying' : 'idle'}>
+      {cinematic && <ConsciousnessScene stillLogin />}
       <main className="cinema-login-center" aria-label={showResetPassword ? '设置新密码' : '登录 MAP'}>
-        {authorized ? <div className="cinema-identity-result" role="status"><div className="cinema-verified-copy"><p>读取完毕 · 核验通过</p><small>READ COMPLETE / VERIFIED</small></div><div className="cinema-welcome-copy"><p>WELCOME TO</p><small>YOUR INTELLIGENCE WORKSPACE</small><strong>MAP</strong></div></div> : <>
-          {!showResetPassword ? (
-            <LoginCard
-              username={username}
-              password={password}
-              error={error}
-              loading={loading}
-              canSubmit={canSubmit}
-              rememberUsername={rememberUsername}
-              ssoOptions={ssoOptions}
-              cdsEnabled={cdsEnabled}
-              ssoLoading={ssoLoading}
-              passwordLoginDisabled={passwordLoginDisabled}
-              // 给 SSO 的必须是带 fragRef 的那份：它会被拼进外部地址。
-              returnUrl={returnUrlWithRef}
-              onError={setError}
-              onUsernameChange={setUsername}
-              onPasswordChange={setPassword}
-              onRememberChange={setRememberUsername}
-              onSubmit={onSubmit}
-            />
-          ) : (
-            <ResetCard
-              newPassword={newPassword}
-              confirmPassword={confirmPassword}
-              error={resetError}
-              loading={resetLoading}
-              canSubmit={canResetSubmit}
-              onNewPasswordChange={setNewPassword}
-              onConfirmPasswordChange={setConfirmPassword}
-              onSubmit={onResetPassword}
-              onBack={onBackToLogin}
-            />
-          )}
-        </>}
+        {!showResetPassword ? (
+          <LoginCard
+            username={username}
+            password={password}
+            error={error}
+            loading={loading}
+            canSubmit={canSubmit}
+            rememberUsername={rememberUsername}
+            ssoOptions={ssoOptions}
+            cdsEnabled={cdsEnabled}
+            ssoLoading={ssoLoading}
+            passwordLoginDisabled={passwordLoginDisabled}
+            // 给 SSO 的必须是带 fragRef 的那份：它会被拼进外部地址。
+            returnUrl={returnUrlWithRef}
+            onError={setError}
+            onUsernameChange={setUsername}
+            onPasswordChange={setPassword}
+            onRememberChange={setRememberUsername}
+            onSubmit={onSubmit}
+          />
+        ) : (
+          <ResetCard
+            newPassword={newPassword}
+            confirmPassword={confirmPassword}
+            error={resetError}
+            loading={resetLoading}
+            canSubmit={canResetSubmit}
+            onNewPasswordChange={setNewPassword}
+            onConfirmPasswordChange={setConfirmPassword}
+            onSubmit={onResetPassword}
+            onBack={onBackToLogin}
+          />
+        )}
+        <p className="map-login-progress" role="status">{busy ? '正在验证账号与访问权限…' : ''}</p>
       </main>
-      <div className="cinema-login-status" role={phase === 'verifying' ? 'status' : undefined}>
-        {authorized ? '身份已确认，正在进入工作空间' : busy ? '正在读取身份与访问权限' : '身份资料确认 · 等待你的指令'}
-        <small>{authorized ? 'IDENTITY VERIFIED / ENTERING WORKSPACE' : busy ? 'READING IDENTITY / PLEASE WAIT' : 'IDENTITY AWAITING / READY TO CONNECT'}</small>
-      </div>
     </div>
   );
 }
@@ -699,15 +673,14 @@ function LoginCard({
   };
   return (
     <GlassCard>
-      <Reveal delay={0}><div className="cinema-form-index"><span />身份资料确认</div></Reveal>
-      <Reveal delay={60}><h2 className="cinema-form-heading">连接你的工作空间</h2></Reveal>
-      <Reveal delay={120}><p className="cinema-form-description">{passwordLoginDisabled ? '使用企业单点登录，连接你的工作。' : '以你的身份，连接无限可能。'}</p></Reveal>
+      <h1 className="cinema-form-heading">登录 MAP</h1>
+      {passwordLoginDisabled && <p className="cinema-form-description">使用企业单点登录</p>}
 
       {/* Form */}
       <div className="mt-7 grid gap-4">
         {!passwordLoginDisabled && (
           <>
-            <Reveal delay={240}>
+            <div>
               <Field
                 label="用户名"
                 value={username}
@@ -716,9 +689,9 @@ function LoginCard({
                 autoComplete="username"
                 Icon={UserIcon}
               />
-            </Reveal>
+            </div>
 
-            <Reveal delay={300}>
+            <div>
               <label className="block">
                 <span
                   className="mb-2 flex items-center justify-between text-[11px] uppercase text-token-secondary"
@@ -778,9 +751,9 @@ function LoginCard({
                   </button>
                 </div>
               </label>
-            </Reveal>
+            </div>
 
-            <Reveal delay={340}>
+            <div>
               <label className="flex items-center gap-2 cursor-pointer select-none text-[12.5px] text-token-secondary hover:text-token-secondary transition-colors">
                 <input
                   type="checkbox"
@@ -790,28 +763,28 @@ function LoginCard({
                 />
                 <span style={{ fontFamily: 'var(--font-body)' }}>记住用户名</span>
               </label>
-            </Reveal>
+            </div>
           </>
         )}
 
         {error && (
-          <Reveal delay={0}>
+          <div>
             <ErrorBar>{error}</ErrorBar>
-          </Reveal>
+          </div>
         )}
 
         {!passwordLoginDisabled && (
-          <Reveal delay={360}>
+          <div>
             <div className="mt-2">
               <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
                 {loading ? '正在确认身份…' : '开始身份确认'}
               </PrimaryPill>
             </div>
-          </Reveal>
+          </div>
         )}
 
         {hasSso && (
-          <Reveal delay={400}>
+          <div>
             <div className="grid gap-2">
               <div
                 className="flex items-center gap-3 text-[11px] uppercase text-token-secondary"
@@ -855,17 +828,17 @@ function LoginCard({
                 );
               })}
             </div>
-          </Reveal>
+          </div>
         )}
 
         {passwordLoginDisabled && !hasSso && (
-          <Reveal delay={420}>
+          <div>
             <ErrorBar>暂时没有可用的登录方式，请联系管理员恢复登录服务。</ErrorBar>
-          </Reveal>
+          </div>
         )}
 
         {!passwordLoginDisabled && (
-          <Reveal delay={hasSso ? 480 : 440}>
+          <div>
             <div
               className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-token-secondary"
               style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
@@ -877,7 +850,7 @@ function LoginCard({
               <summary className="cursor-pointer">首次管理员登录帮助</summary>
               <p className="mt-2 leading-relaxed">首位管理员密码由部署环境安全注入，请向部署负责人获取；首次登录后设置自己的密码。</p>
             </details>
-          </Reveal>
+          </div>
         )}
       </div>
     </GlassCard>
@@ -912,7 +885,7 @@ function ResetCard({
 }: ResetCardProps) {
   return (
     <GlassCard>
-      <Reveal delay={0}>
+      <div>
         <div className="flex items-center gap-4 mb-6">
           <MapMark className="w-14 h-14 rounded-[16px]" />
           <div className="min-w-0">
@@ -930,16 +903,16 @@ function ResetCard({
             </div>
           </div>
         </div>
-      </Reveal>
+      </div>
 
-      <Reveal delay={60}>
+      <div>
         <div className="mb-5">
           <div className="cinema-form-index">首次登录 / 设置密码</div>
         </div>
-      </Reveal>
+      </div>
 
       <div className="mt-2 grid gap-4">
-        <Reveal delay={120}>
+        <div>
           <Field
             label="NEW PASSWORD"
             value={newPassword}
@@ -949,9 +922,9 @@ function ResetCard({
             autoComplete="new-password"
             Icon={Lock}
           />
-        </Reveal>
+        </div>
 
-        <Reveal delay={180}>
+        <div>
           <Field
             label="CONFIRM PASSWORD"
             value={confirmPassword}
@@ -962,10 +935,10 @@ function ResetCard({
             autoComplete="new-password"
             Icon={Lock}
           />
-        </Reveal>
+        </div>
 
         {/* 密码强度 checklist */}
-        <Reveal delay={240}>
+        <div>
           <div
             className="rounded-xl px-4 py-3 grid gap-1.5"
             style={{
@@ -995,23 +968,23 @@ function ResetCard({
               );
             })}
           </div>
-        </Reveal>
+        </div>
 
         {error && (
-          <Reveal delay={0}>
+          <div>
             <ErrorBar>{error}</ErrorBar>
-          </Reveal>
+          </div>
         )}
 
-        <Reveal delay={300}>
+        <div>
           <div className="mt-1">
             <PrimaryPill onClick={onSubmit} disabled={!canSubmit || loading} loading={loading}>
               {loading ? '设置中…' : '确认设置'}
             </PrimaryPill>
           </div>
-        </Reveal>
+        </div>
 
-        <Reveal delay={380}>
+        <div>
           <button
             type="button"
             onClick={onBack}
@@ -1020,7 +993,7 @@ function ResetCard({
           >
             ← BACK TO LOGIN
           </button>
-        </Reveal>
+        </div>
       </div>
     </GlassCard>
   );

@@ -3,6 +3,7 @@ import { observeNativeAudio, nativeAudioEvidence } from '../fixtures/admin-opera
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
   installOperationsFixtures,
+  installEntryMediaFixture,
   target,
   targetName,
   run,
@@ -11,6 +12,9 @@ import {
 const gatewayPortraitAssets = JSON.parse(
   readFileSync(new URL('../fixtures/media/gateway-portrait-cdn.json', import.meta.url), 'utf8'),
 ) as typeof import('../fixtures/media/gateway-portrait-cdn.json');
+const shortEntryAssets = JSON.parse(
+  readFileSync(new URL('../fixtures/media/entry-short-motion.json', import.meta.url), 'utf8'),
+) as typeof import('../fixtures/media/entry-short-motion.json');
 
 test.beforeEach(async ({ browser, page }, testInfo) => {
   page.on("pageerror", (error) =>
@@ -333,13 +337,12 @@ async function loginGateway(page: Page) {
   const loginArtwork = page.locator(".consciousness-art");
   const theme = await scene.getAttribute("data-portrait-theme");
   expect(["light", "dark"]).toContain(theme);
-  const portrait = theme === "light" ? gatewayPortraitAssets.light.opening : gatewayPortraitAssets.dark.closed;
+  const portrait = theme === "light" ? gatewayPortraitAssets.light.closed : gatewayPortraitAssets.dark.closed;
   await expect(loginArtwork).toHaveAttribute("src", portrait.url);
   await expect.poll(() => loginArtwork.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
   await page.locator("#llmgw-username").fill("demo");
   await page.locator("#llmgw-password").fill("demo");
   await page.locator("button[type=submit]").click();
-  await expect(page.locator(".gateway-entry")).toHaveAttribute("data-phase", "authorized");
   await expect(page).toHaveURL(/\/llmgw\/quickstart$/);
   await expect(page.getByRole("textbox", { name: "我想做什么", exact: true })).toBeEditable();
   await expect(page.getByRole("button", { name: "进入控制台", exact: true })).toHaveCount(0);
@@ -759,44 +762,97 @@ test('网关对话在临界宽度保持首项可点并可折叠侧栏', async ({
   await expect(page.getByRole('button', { name: '打开导航', exact: true })).toHaveAttribute('aria-expanded', 'false');
 });
 
-test('慢加载日景超过首屏保护时限后仍按电影收尾', async ({ page }) => {
+test('登录请求期间保留表单，日景素材慢加载也能直接使用对话', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
   await installOperationsFixtures(page, { quickstart: true });
+  let releaseLogin!: () => void;
+  let loginRequested = false;
+  const loginGate = new Promise<void>(resolve => { releaseLogin = resolve; });
+  await page.route(/\/gw\/auth\/login$/, async route => {
+    loginRequested = true;
+    await loginGate;
+    await route.fallback();
+  });
   let releaseMedia!: () => void;
+  let portraitRequested = false;
   const mediaGate = new Promise<void>(resolve => { releaseMedia = resolve; });
-  await page.route(gatewayPortraitAssets.light.motion.url, async route => {
+  await page.route(gatewayPortraitAssets.light.open.url, async route => {
+    portraitRequested = true;
     await mediaGate;
     await route.continue();
   });
   try {
     await page.goto('http://127.0.0.1:8200/llmgw/login', { waitUntil: 'domcontentloaded' });
     await page.locator('#llmgw-username').fill('demo');
-    await page.locator('#llmgw-password').fill('demo');
-    await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
-    await expect(page).toHaveURL(/\/quickstart$/);
-    const arrivingAt = Date.now();
-    const movie = page.locator('video.portrait-motion');
-    await expect(movie).toHaveJSProperty('currentTime', 0);
-    await page.waitForTimeout(3450);
+    const password = page.locator('#llmgw-password');
+    await password.fill('demo');
+    await password.press('Enter');
+    await expect.poll(() => loginRequested).toBe(true);
+    await expect(page.getByRole('heading', { name: '登录模型网关' })).toBeVisible();
+    await expect(password).toBeFocused();
+    await expect(page.getByRole('button', { name: '正在验证账号…', exact: true })).toBeDisabled();
+    await expect(page.locator('.identity-scanner')).toHaveCount(0);
+    releaseLogin();
+    await expect(page).toHaveURL(/\/quickstart$/, { timeout: 1200 });
+    await expect.poll(() => portraitRequested).toBe(true);
+    await expect(page.locator('.gateway-quickstart-stage .consciousness-art')).toHaveJSProperty('complete', false);
+    const input = page.getByRole('textbox', { name: '我想做什么', exact: true });
+    await input.fill('接入知识库');
+    await expect(input).toHaveValue('接入知识库');
+    await page.getByLabel('打开用户菜单', { exact: true }).click();
+    await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open', '');
+    await expect(page.getByRole('complementary', { name: '主导航', exact: true })).toBeVisible();
+    await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving', '');
+    await expect(page.locator('video.portrait-motion')).toHaveCount(0);
     releaseMedia();
-    await page.waitForFunction(() => {
-      const video = document.querySelector<HTMLVideoElement>('video.portrait-motion');
-      return video && video.currentTime >= 7.15 && !video.ended;
-    });
-    expect(Date.now() - arrivingAt).toBeGreaterThan(10000);
-    const root = page.locator('html');
-    await expect(root).toHaveAttribute('data-entry-arriving', '');
-    const header = page.locator('.lg-console-header');
-    const sidebar = page.locator('.lg-console-sidebar');
-    await expect(header).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
-    await expect(sidebar).toHaveCSS('visibility', 'hidden', { timeout: 1000 });
-    await expect(movie).toHaveJSProperty('ended', true);
-    await expect(root).not.toHaveAttribute('data-entry-arriving', '');
-    await expect(header).toHaveCSS('opacity', '1');
-    await expect(sidebar).toHaveCSS('opacity', '1');
+    await expect(page.locator('.gateway-quickstart-stage .consciousness-art')).toHaveJSProperty('complete', true);
+    await expect(input).toHaveValue('接入知识库');
   } finally {
+    releaseLogin();
     releaseMedia();
   }
+});
+
+test('短片在背景播放时仍可输入和打开账号菜单，片尾不打断操作', async ({ page }) => {
+  const origin = process.env.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN?.trim();
+  if (!origin) return test.skip(true, '短片 CDN 未配置');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await installOperationsFixtures(page, { quickstart: true });
+  await installEntryMediaFixture(page, new URL(shortEntryAssets.light.path, origin).href, shortEntryAssets.light);
+  await page.goto('http://127.0.0.1:8200/llmgw/login');
+  await page.locator('#llmgw-username').fill('demo');
+  await page.locator('#llmgw-password').fill('demo');
+  const start = await page.evaluateHandle(() => {
+    const state = { started: false, ended: false, duration: 0 };
+    document.addEventListener('playing', event => {
+      if (!(event.target instanceof HTMLVideoElement) || !event.target.matches('.portrait-arrival')) return;
+      state.started = true;
+      state.duration = event.target.duration;
+    }, true);
+    document.addEventListener('ended', event => {
+      if (event.target instanceof HTMLVideoElement && event.target.matches('.portrait-arrival')) state.ended = true;
+    }, true);
+    return state;
+  });
+  await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
+  await expect(page).toHaveURL(/\/quickstart$/);
+  const movie = page.locator('video.portrait-arrival');
+  await expect(movie).toHaveAttribute('data-playback', 'playing', { timeout: 2100 });
+  const input = page.getByRole('textbox', { name: '我想做什么', exact: true });
+  await input.fill('接入知识库');
+  await page.getByLabel('打开用户菜单', { exact: true }).click();
+  await expect(movie).toHaveAttribute('data-playback', 'playing');
+  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open', '');
+  await expect(page.getByRole('complementary', { name: '主导航', exact: true })).toBeVisible();
+  await expect(page.locator('html')).not.toHaveAttribute('data-entry-arriving', '');
+  await expect(movie).toHaveCount(0, { timeout: 2500 });
+  const playback = await start.evaluate(state => state);
+  expect(playback.started && playback.ended).toBe(true);
+  expect(playback.duration).toBeCloseTo(1.6, 1);
+  await expect(input).toHaveValue('接入知识库');
+  await expect(page.locator('details.lg-user-menu')).toHaveAttribute('open', '');
 });
 
 for (const width of [390, 1440])

@@ -6,6 +6,7 @@ import { captureSpeaker, observeNativeAudio, nativeAudioEvidence } from '../fixt
 test('网关原生音频：点击激活、静音、扫描与确认提示音', async ({ page, browser }, testInfo) => {
   await observeNativeAudio(page);
   await installOperationsFixtures(page, { quickstart: true });
+  const ended = (duration: number) => page.evaluate(d => Reflect.get(window, 'gatewayNativeAudio').filter((entry: { event: string; duration: number; elapsed: number }) => entry.event === 'ended' && Math.abs(entry.duration - d) < .01 && entry.elapsed >= d - .08).length, duration);
   try {
     await page.goto('http://127.0.0.1:8200/llmgw/login');
     await page.locator('#llmgw-username').fill('demo');
@@ -14,11 +15,11 @@ test('网关原生音频：点击激活、静音、扫描与确认提示音', as
       await page.getByRole('button', { name: '开始身份确认', exact: true }).click();
       await expect(page).toHaveURL(/\/quickstart$/);
       await expect(page.locator('.lg-console-header')).toBeVisible({ timeout: 12000 });
+      await expect.poll(() => ended(1.8)).toBeGreaterThan(0);
     });
     await page.reload();
     const sound = page.locator('.gateway-chrome-sound');
     await expect(sound).toHaveAttribute('data-audio-status', 'pending');
-    const ended = (duration: number) => page.evaluate(d => Reflect.get(window, 'gatewayNativeAudio').filter((entry: { event: string; duration: number; elapsed: number }) => entry.event === 'ended' && Math.abs(entry.duration - d) < .01 && entry.elapsed >= d - .08).length, duration);
     await captureSpeaker(testInfo, 'entry-reveal', true, async () => {
       await sound.click();
       await expect(sound).toHaveAttribute('data-audio-status', 'ready');

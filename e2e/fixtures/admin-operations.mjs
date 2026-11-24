@@ -1,5 +1,29 @@
 // 浏览器内隔离写入：不执行真实发布，不改真实模型配置。
 import { resolveFixture } from "../../cds/scripts/fixtures/mobile-layout-fixtures.mjs";
+import { createHash } from "node:crypto";
+
+/** Give native video decoding the verified CDN bytes with a warm cache. */
+export async function installEntryMediaFixture(page, url, asset) {
+  const response = await page.request.get(url, { timeout: 15000 });
+  if (!response.ok()) throw new Error(`Short entry CDN returned ${response.status()}`);
+  const body = await response.body();
+  if (body.length !== asset.bytes || createHash('sha256').update(body).digest('hex') !== asset.sha256) {
+    throw new Error('Short entry CDN bytes do not match the manifest');
+  }
+  await page.route(url, async route => {
+    const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? '');
+    if (!range) return route.fulfill({ status: 200, contentType: 'video/mp4', body });
+    const start = Number(range[1]);
+    const end = Math.min(range[2] ? Number(range[2]) : body.length - 1, body.length - 1);
+    return route.fulfill({
+      status: 206,
+      contentType: 'video/mp4',
+      headers: { 'accept-ranges': 'bytes', 'content-range': `bytes ${start}-${end}/${body.length}` },
+      body: body.subarray(start, end + 1),
+    });
+  });
+}
+
 export const targetName = "隔离验收环境-" + "long-target-".repeat(8);
 const sha = "a".repeat(40);
 export const target = {

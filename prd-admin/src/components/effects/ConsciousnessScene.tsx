@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import './consciousness-entry.css';
 import { ConsciousnessPortrait } from './ConsciousnessPortrait';
-import { beginEntryArrival } from './entryArrival';
+import { PORTRAIT_ASSETS } from './portraitMotionAsset';
+import { ArrivalVideo, prepareArrivalVideo } from './ArrivalVideo';
 import { prefersReducedMotion } from '@/lib/themeApplier';
 
 export type IdentityPhase = 'idle' | 'verifying' | 'authorized' | 'entering';
@@ -10,15 +11,24 @@ let arrivalUntil = 0;
 /** Visual handoff only; authentication remains server-authoritative. */
 export function markConsciousnessArrival() {
   if (prefersReducedMotion()) { arrivalUntil = 0; return; }
-  arrivalUntil = Date.now() + 10000; beginEntryArrival();
+  arrivalUntil = Date.now() + 10000;
 }
 export function clearConsciousnessArrival() { arrivalUntil = 0; }
 export function isConsciousnessArrival() { return Date.now() < arrivalUntil; }
 
-export function ConsciousnessScene({ fog = false, arriving = false, frameTime }: { fog?: boolean; arriving?: boolean; frameTime?: number }) {
+export function ConsciousnessScene({ fog = false, stillLogin = false, arriving = false, shortArrival = false, frameTime }: { fog?: boolean; stillLogin?: boolean; arriving?: boolean; shortArrival?: boolean; frameTime?: number }) {
+  useEffect(() => {
+    if (stillLogin) return prepareArrivalVideo(PORTRAIT_ASSETS.shortMotion);
+  }, [stillLogin]);
+  if (stillLogin) return <div className="consciousness-scene map-login-backdrop" aria-hidden="true">
+    <img className="consciousness-art" src={PORTRAIT_ASSETS.closed} alt="" fetchPriority="high" />
+  </div>;
   return (
     <div className={`consciousness-scene${fog ? ' has-fog' : ''}${arriving || frameTime !== undefined ? ' is-arriving' : ''}`} aria-hidden="true">
-      <div className="consciousness-camera"><ConsciousnessPortrait fog={fog} arriving={arriving} frameTime={frameTime} /></div>
+      <div className="consciousness-camera">
+        <ConsciousnessPortrait fog={fog} arriving={arriving} frameTime={frameTime} />
+        {shortArrival && PORTRAIT_ASSETS.shortMotion && <ArrivalVideo src={PORTRAIT_ASSETS.shortMotion} />}
+      </div>
       <div className="consciousness-mist" />
       <div className="consciousness-ghost"><span data-word="MAP">MAP</span><i /><small>欢迎来到智能体工作空间</small></div>
       <div className="consciousness-grain" />

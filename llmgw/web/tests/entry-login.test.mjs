@@ -71,10 +71,8 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     assert.equal(document.querySelector('.gateway-entry').dataset.sound,'off');
     await fill('#llmgw-username','tenant-user'); await fill('#llmgw-password','fixture-only');
     await act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
-    assert.equal(document.querySelector('.gateway-entry').dataset.phase,'authorized');
-    assert.equal(globalThis.__gatewayRoutes.length,0);
-    await act(async () => { await new Promise(resolve => setTimeout(resolve,800)); });
-    await act(async () => { await new Promise(resolve => setTimeout(resolve,850)); });
+    assert.equal(document.querySelector('.gateway-entry').dataset.phase,'idle');
+    assert.equal(document.querySelector('.cinema-identity-result'),null);
     assert.equal(document.querySelector('.gateway-arrival-copy'),null);
     assert.deepEqual(globalThis.__gatewayRoutes,[['/quickstart',{replace:true}]]);
     assert.equal(gatewayLoginDestination(null), '/');
@@ -82,19 +80,20 @@ test('电影式网关登录保持失败恢复、首登改密和静音偏好', as
     for (const candidate of [null, '/', '//outside.test', '/login']) assert.equal(gatewayLoginDestination(candidate, {role:'billing'}), '/');
     assert.equal(gatewayLoginDestination('/usage', {role:'billing'}), '/usage');
     assert.equal(hasQuickstartArrival(),true);
-    assert.ok(document.documentElement.hasAttribute('data-entry-arriving'));
+    assert.equal(document.documentElement.hasAttribute('data-entry-arriving'),false);
     await act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(GatewayQuickstartStage,null,React.createElement('textarea',{'aria-label':'真实接入输入',defaultValue:'我想做客服问答'}))));
     assert.equal(hasQuickstartArrival(),false);
-    assert.ok(document.querySelector('.gateway-quickstart-stage.is-arriving'));
+    assert.ok(document.querySelector('.gateway-quickstart-stage.is-entering'));
+    assert.equal(document.querySelector('video.portrait-motion'),null);
     assert.equal(document.querySelector('textarea').disabled,false);
     assert.equal(document.querySelector('textarea').value,'我想做客服问答');
     assert.equal(document.querySelector('.gateway-arrival-copy'),null);
     await act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
     await act(async () => root.render(React.createElement(GatewayQuickstartStage,null,'真实接入表单')));
-    assert.equal(document.querySelector('.is-arriving'),null);
+    assert.equal(document.querySelector('.is-entering'),null);
 
 
   } finally {
