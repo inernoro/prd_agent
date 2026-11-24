@@ -83,7 +83,7 @@ import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
-import type { ProjectAgentKeyIssuer, ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
+import { isAgentKeyExpiryDays, type ProjectAgentKeyIssuer, type ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
@@ -342,7 +342,8 @@ function mintProjectAgentKey(
   issuer: ProjectAgentKeyIssuer,
   createdBy?: string,
   permissions: ProjectAgentKeyPermissions = {},
-): { keyId: string; plaintext: string; preview: string } {
+  expiresAt?: string,
+): { keyId: string; plaintext: string; preview: string; expiresAt?: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
   const plaintext = `cdsp_${slugHead}_${suffix}`;
@@ -354,20 +355,39 @@ function mintProjectAgentKey(
     hash,
     scope: 'rw',
     ...permissions,
+    ...(expiresAt ? { expiresAt, expiryMode: 'fixed' } : {}),
     createdAt: new Date().toISOString(),
     issuer,
     createdBy: createdBy || undefined,
   };
   stateService.addAgentKey(project.id, entry);
-  return { keyId, plaintext, preview: formatKeyPreview(plaintext) };
+  return { keyId, plaintext, preview: formatKeyPreview(plaintext), expiresAt };
 }
 
-function projectAgentKeyIssuer(key: AgentKey): ProjectAgentKeyIssuer {
+function agentKeyIssuer(key: Pick<AgentKey, 'issuer' | 'createdBy' | 'issuedByCredentialId'>): ProjectAgentKeyIssuer {
   if (key.issuer) return key.issuer;
   if (key.issuedByCredentialId) return 'agent';
   // Older direct sign / approval routes recorded the authenticated account when known.
   const account = key.createdBy?.trim().toLowerCase();
   return account && !['anonymous', 'cookie', 'operator'].includes(account) ? 'user' : 'unknown';
+}
+
+function agentKeySigner(req: import('express').Request): { issuer: ProjectAgentKeyIssuer; createdBy?: string } {
+  const actor = req as typeof req & HumanAuthContext & {
+    cdsProjectKey?: unknown; cdsAccess?: unknown; cdsPrincipal?: unknown; _aiSession?: unknown; cdsLegacyMachineAuth?: true;
+  };
+  const machine = actor.cdsProjectKey || actor.cdsAccess || actor.cdsPrincipal || actor._aiSession || actor.cdsLegacyMachineAuth;
+  const account = !machine && isAuthenticatedHuman(req) ? actor.cdsUser : undefined;
+  return { issuer: machine ? 'agent' : account ? 'user' : 'unknown', createdBy: account?.githubLogin || account?.login || account?.username };
+}
+
+function newestAgentKeys<T extends { createdAt: string }>(entries: T[]): T[] {
+  return [...entries].reverse().sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+}
+
+function agentKeyExpiry(value: unknown, now: Date): string | undefined | null {
+  if (value == null) return undefined;
+  return isAgentKeyExpiryDays(value) ? new Date(now.getTime() + value * 86_400_000).toISOString() : null;
 }
 
 /**
@@ -3424,6 +3444,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             newProject,
             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
             'agent',
+            undefined,
+            {},
+            creationKey?.oneTime ? undefined : creationKey?.expiresAt,
           );
         } catch {
           // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
@@ -4554,7 +4577,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: unknown; projectAccess?: unknown; planningAccess?: unknown; designAccess?: unknown };
+    const body = (req.body || {}) as { label?: unknown; projectAccess?: unknown; planningAccess?: unknown; designAccess?: unknown; expiresInDays?: unknown };
     if (body.projectAccess !== undefined && body.projectAccess !== 'rw' && body.projectAccess !== 'admin') {
       return res.status(400).json({ error: 'invalid_project_access', message: '请选择项目读写或项目管理员权限。' });
     }
@@ -4568,6 +4591,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return res.status(403).json({ error: 'owner_required', message: '请由登录 CDS 的系统所有者签发所选权限的项目密钥。' });
     }
     const now = new Date();
+    const requestedExpiry = agentKeyExpiry(body.expiresInDays, now);
+    if (requestedExpiry === null) {
+      return res.status(400).json({ error: 'invalid_key_expiry', message: '请选择永久、1 天、7 天、30 天或 90 天。' });
+    }
     // Label: auto-generate from timestamp when the user didn't supply one.
     const defaultLabel =
       '签发于 ' +
@@ -4576,18 +4603,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    const actor = req as typeof req & HumanAuthContext & {
-      cdsProjectKey?: unknown; cdsAccess?: unknown; cdsPrincipal?: unknown; _aiSession?: unknown; cdsLegacyMachineAuth?: true;
+    const actor = req as typeof req & {
+      cdsAccess?: { keyId: string };
+      cdsProjectKey?: { keyId: string };
     };
-    const machine = actor.cdsProjectKey || actor.cdsAccess || actor.cdsPrincipal || actor._aiSession || actor.cdsLegacyMachineAuth;
-    const account = !machine && isAuthenticatedHuman(req) ? actor.cdsUser : undefined;
-    const issuer = machine ? 'agent' : account ? 'user' : 'unknown';
+    const projectParent = actor.cdsProjectKey && stateService.getAgentKeys(project.id).find(key => key.id === actor.cdsProjectKey?.keyId);
+    const globalParent = actor.cdsAccess && stateService.getGlobalAgentKeys().find(key => key.id === actor.cdsAccess?.keyId);
+    const parentExpiry = globalParent?.expiresAt ?? (projectParent?.expiryMode === 'fixed' ? projectParent.expiresAt : undefined);
+    const expiresAt = parentExpiry && (!requestedExpiry || parentExpiry < requestedExpiry) ? parentExpiry : requestedExpiry;
+    const { issuer, createdBy } = agentKeySigner(req);
 
-    let minted: { keyId: string; plaintext: string; preview: string };
+    let minted: ReturnType<typeof mintProjectAgentKey>;
     try {
-      minted = mintProjectAgentKey(stateService, project, label, issuer, account?.githubLogin || account?.login || account?.username, {
+      minted = mintProjectAgentKey(stateService, project, label, issuer, createdBy, {
         projectAccess: body.projectAccess, planningAccess: body.planningAccess, designAccess: body.designAccess,
-      });
+      }, expiresAt);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -4596,7 +4626,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json(minted);
+    res.status(201).set('Cache-Control', 'private, no-store').json(minted);
   });
 
   router.get('/projects/:id/agent-keys', (req, res) => {
@@ -4608,8 +4638,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const entries = [...stateService.getAgentKeys(project.id)].reverse()
-      .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+    const entries = newestAgentKeys(stateService.getAgentKeys(project.id));
     res.json({
       canIssueRestrictedPermissions: isHumanSystemOwner(req),
       keys: entries.map((e) => ({
@@ -4621,9 +4650,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         designAccess: e.designAccess,
         createdAt: e.createdAt,
         createdBy: e.createdBy,
-        issuer: projectAgentKeyIssuer(e),
+        issuer: agentKeyIssuer(e),
         lastUsedAt: e.lastUsedAt,
         expiresAt: e.expiresAt,
+        expiryMode: e.expiryMode,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',
       })),
@@ -4698,8 +4728,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const body = (req.body || {}) as {
       label?: string;
       access?: { canCreateProjects?: unknown; projects?: unknown };
+      expiresInDays?: unknown;
     };
     const now = new Date();
+    const expiresAt = agentKeyExpiry(body.expiresInDays, now);
+    if (expiresAt === null) {
+      return res.status(400).json({ error: 'invalid_key_expiry', message: '请选择永久、1 天、7 天、30 天或 90 天。' });
+    }
     const defaultLabel = 'Global 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
     const label = typeof body.label === 'string' && body.label.trim()
       ? body.label.trim().slice(0, 100)
@@ -4756,16 +4791,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const hash = createHash('sha256').update(plaintext).digest('hex');
     const keyId = randomBytes(4).toString('hex');
 
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
-
     const entry = {
       id: keyId,
       label,
       hash,
       scope: 'rw' as const,
       access,
+      expiresAt,
       createdAt: now.toISOString(),
-      createdBy: ghUser?.login || undefined,
+      ...agentKeySigner(req),
     };
     try {
       stateService.addGlobalAgentKey(entry);
@@ -4777,17 +4811,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json({
+    res.status(201).set('Cache-Control', 'private, no-store').json({
       keyId,
       plaintext,
       preview: formatKeyPreview(plaintext),
       access,
+      expiresAt,
     });
   });
 
   router.get('/global-agent-keys', (_req, res) => {
-    const entries = stateService.getGlobalAgentKeys();
+    const entries = newestAgentKeys(stateService.getGlobalAgentKeys());
     res.json({
+      canIssueRestrictedPermissions: isHumanSystemOwner(_req),
       keys: entries.map((e) => ({
         id: e.id,
         label: e.label,
@@ -4796,6 +4832,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         access: StateService.resolveGlobalAgentKeyAccess(e),
         createdAt: e.createdAt,
         createdBy: e.createdBy,
+        issuer: agentKeyIssuer(e),
+        expiresAt: e.expiresAt,
         lastUsedAt: e.lastUsedAt,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',

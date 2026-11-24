@@ -3,7 +3,7 @@ import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
 import { ContentLoading } from './ContentLoading';
 import { useState } from 'react';
 import { readProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
-import { FolderGit2, LayoutGrid, List, Plus, Search } from 'lucide-react';
+import { FolderGit2, KeyRound, LayoutGrid, List, Plus, Search } from 'lucide-react';
 import { PROJECT_STATUS_FILTERS, ProjectInventoryLayout } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
 import { AuthPageSkeleton } from './AuthPageSkeleton';
@@ -123,6 +123,7 @@ export function ProjectListSkeleton({ canManageProjects = false }: { canManagePr
       <div aria-hidden>
         <ProjectInventoryLayout canManageProjects={canManageProjects} count={<ProjectInventoryCountSkeleton />}
           actions={<>
+            <Button disabled variant="outline" size="sm" className="cds-loading-skeleton-panel"><KeyRound className="invisible" /><span className="invisible hidden sm:inline">Agent Key</span></Button>
             <Button disabled variant="outline" size="sm" className="cds-loading-skeleton-panel"><FolderGit2 className="invisible" /><span className="invisible">导入仓库</span></Button>
             <Button disabled size="sm" className="cds-loading-skeleton-panel"><Plus className="invisible" /><span className="invisible">新建项目</span></Button>
           </>}

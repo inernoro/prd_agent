@@ -4383,16 +4383,21 @@ export function createServer(deps: ServerDeps): express.Express {
   // middleware above already does this when enabled; this fallback
   // ensures the enforcement hook (assertProjectAccess in
   // routes/projects.ts) sees the scope even when cookie auth is
-  // disabled. Cheap no-op when the header is absent or the key is
-  // malformed.
+  // disabled. Explicit keys still have to be valid on protected APIs.
   app.use((req, _res, next) => {
     const h = trustedClusterIdentity(req) ? undefined : presentedAiAccessKey(req);
+    const rejectInvalidAgentKey = () => authMode === 'disabled' && req.path.startsWith('/api/')
+      && !isPublicAccessRequestRoute(req.method, req.path) && !isAuthenticatedHuman(req)
+      && resolveAiSession(req, deps.stateService)?.id !== 'static';
     if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
       const match = deps.stateService.findAgentKeyForAuth(h);
       if (match && projectKeyAllowsRequest(req, match, deps.stateService)) {
         deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
         (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
           .cdsProjectKey = match;
+      } else if (!match && rejectInvalidAgentKey()) {
+        _res.status(401).json({ error: 'invalid_agent_key', message: '密钥无效或已到期，请核对后重试。' });
+        return;
       }
     }
     // 用户级凭证（cdsu_）的同款兜底 —— stamp req.cdsPrincipal。
@@ -4422,6 +4427,9 @@ export function createServer(deps: ServerDeps): express.Express {
         (req as unknown as { cdsAccess?: { keyId: string; access: AgentKeyAccess } })
           .cdsAccess = { keyId: gmatch.keyId, access: gmatch.access };
         stampSingleProjectScope(req, gmatch);
+      } else if (rejectInvalidAgentKey()) {
+        _res.status(401).json({ error: 'invalid_agent_key', message: '密钥无效或已到期，请核对后重试。' });
+        return;
       }
     }
 
