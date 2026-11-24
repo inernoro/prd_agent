@@ -88,7 +88,7 @@
   color: var(--dw-muted); border: 1px solid transparent; border-radius: 6px; white-space: nowrap; }
 .dw-segments button[aria-pressed=true] { color: var(--dw-ink); border-color: var(--dw-line); background: var(--dw-pane); font-weight: 650; }
 .dw-segments button:disabled { opacity: .45; cursor: not-allowed; }
-.dw-library-bar { padding: 4px 0; }
+.dw-library-bar { margin-block-start: .25rem; padding: 4px 0; }
 .dw-library-bar > .dw-row { flex-wrap: wrap; }
 .dw-library-bar select { min-height: 32px; max-width: 160px; }
 .dw-library-heading select { max-width: min(200px, 45vw); }
@@ -101,8 +101,12 @@
 .dw-change-list { width: 100%; padding: 4px 7px; display: flex; justify-content: space-between; align-items: center;
   gap: 8px; min-height: 32px; border-radius: 7px; border: 1px solid transparent; text-align: left; font-size: 13px; }
 .dw-change-list:hover { background: var(--dw-pane); border-color: var(--dw-line); }
-.dw-filter-chips { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 3px 0; }
-.dw-filter-chips button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--dw-line); border-radius: 20px; background: var(--dw-pane); }
+.dw-library-scope, .dw-filter-chips { min-width: 0; }
+.dw-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.dw-filter-chips button {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 8px;
+  border: 1px solid var(--dw-line); border-radius: 20px; background: var(--dw-pane); overflow-wrap: anywhere;
+}
 .dw-folder { padding: 0; text-align: start; overflow: hidden; }
 .dw-folder:hover { border-color: var(--dw-accent); }
 .dw-folder-art { position: relative; display: grid; gap: 5px; grid-template-columns: minmax(0, 1fr); aspect-ratio: 2;

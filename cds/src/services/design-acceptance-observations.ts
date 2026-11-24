@@ -52,18 +52,18 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       .filter(element => element.matches('button, a[href], [role=tab]') && dom.visible(element))
       .map(element => dom.read(element)!);
     const surface = dom.find('.dw-workspace,main');
+    const activeDialog = Array.from(document.querySelectorAll('[role="dialog"]'))
+      .filter(element => dom.visible(element) && !element.closest('[aria-hidden="true"]')).at(-1);
     const layers = [
       dom.read(head), tabControls[0] ?? null, dom.read(surface),
-      dom.read(dom.find('[role=dialog], details[open] .dw-info-panel, .dw-skills[open] > .dw-skill-guide, .dw-overlay')),
+      dom.read(activeDialog ?? dom.find('details[open] .dw-info-panel, .dw-skills[open] > .dw-skill-guide, .dw-overlay')),
       dom.read(dom.find('.dw-draft-footer, main > footer')),
     ];
     const headerRows = Array.from(document.querySelectorAll('.dw-tablinks, .dw-draft-actions, .dw-head-actions, .dw-library-bar .dw-tools'))
       .flatMap(group => dom.controlRows(group));
     const headerAlignment = headerRows.length ? Math.max(...headerRows.map(row => Math.max(dom.spread(row.map(box => box.top)),
       dom.spread(row.map(box => box.bottom)), dom.spread(row.map(box => box.height))))) : null;
-    const modal = document.body.hasAttribute('data-scroll-locked')
-      ? Array.from(document.querySelectorAll('[role="dialog"]'))
-        .find(element => dom.visible(element) && !element.closest('[aria-hidden="true"]')) : undefined;
+    const modal = document.body.hasAttribute('data-scroll-locked') ? activeDialog : undefined;
     const regions = modal ? [modal, ...modal.querySelectorAll('*')] : Array.from(document.querySelectorAll('main,main *'));
     const scrolling = regions.filter(element => {
       const style = getComputedStyle(element);

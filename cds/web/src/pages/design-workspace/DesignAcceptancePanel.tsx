@@ -459,13 +459,18 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     {methodToDisable && <Dialog open onOpenChange={open => { if (!open && !busy) setDisablePanel(false); }}>
       <DialogContent className="dw-modal dw-surface dw-disable-dialog">
         <DialogTitle>停用{methodToDisable.name}</DialogTitle>
-        <DialogDescription>停用后，该方式的 {methodToDisable.progress?.total ?? 0} 个检查条目暂不计入本版验收。已有证据会保留，重新启用时恢复计入。</DialogDescription>
+        <DialogDescription>核对停用影响并填写理由。</DialogDescription>
+        <ul className="dw-consequences" aria-label="停用影响">
+          <li>该方式的 {methodToDisable.progress?.total ?? 0} 个检查条目暂不计入本版验收。</li>
+          <li>已有证据会保留，重新启用时恢复计入。</li>
+          <li>记录停用理由、操作人和时间。</li>
+        </ul>
         <form onSubmit={async event => {
           event.preventDefault();
           const reason = disableReason.trim();
           if (reason && await send('acceptance.disable', { version: version.version, method: methodToDisable.id, reason })) setDisablePanel(false);
         }}>
-          <label>停用理由<textarea value={disableReason} onChange={event => setDisableReason(event.target.value)} required maxLength={1000} /></label>
+          <label>停用理由<textarea value={disableReason} onChange={event => setDisableReason(event.target.value)} required rows={3} maxLength={1000} /></label>
           <footer><button type="button" className="ep-button" disabled={busy} onClick={() => setDisablePanel(false)}>取消</button>
             <button type="submit" className="ep-button ep-button--primary" data-action="confirm-disable" disabled={busy || !disableReason.trim()}>确认停用</button></footer>
         </form>

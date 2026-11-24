@@ -129,7 +129,8 @@
 }
 .dw-ac-disable { margin-inline-start: auto; }
 .dw-ac-disable svg { width: 16px; height: 16px; }
-.dw-disable-dialog textarea { min-height: 6rem; }
+.dw-modal.dw-disable-dialog { padding: 0; }
+.dw-disable-dialog .dw-consequences { list-style: disc; }
 .dw-ac-hero { display: flex; align-items: baseline; flex-wrap: wrap; gap: .55rem 1rem; padding-block: .5rem; color: var(--dw-muted); }
 .dw-ac-hero strong { color: var(--dw-ink); }
 .dw-ac-goals { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }

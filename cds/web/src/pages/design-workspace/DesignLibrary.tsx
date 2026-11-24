@@ -8,7 +8,7 @@ import { latestDesignFeedbackAt } from '../../../../src/shared/design-workspace'
 import { designArtifact, designDate, designFeedbackAwaitsViewer, designPublisherLabel, designStatus, failedBaseline, isNewDesignRequirement, latestDesign, legacyRequirementGroup, newDesignLabel, openReviews, scopeKey, statusNames } from './design-ui';
 
 export const libraryStatuses = [
-  ['all', '全部状态'], ['attention', '等我处理'], ['review', statusNames.review], ['failed', statusNames.failed],
+  ['all', '全部状态'], ['attention', '等你处理'], ['review', statusNames.review], ['failed', statusNames.failed],
   ['draft', statusNames.draft], ['passed', statusNames.passed],
 ] as const;
 const legacyStatuses: Record<string, string> = { active: '原筛选 · 实现中', signed: '原筛选 · 已验收', frozen: '原筛选 · 已定稿' };
@@ -205,7 +205,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
   });
   return <>
     <div className="dw-library-bar dw-row">
-      <div className="dw-row">
+      <div className="dw-row dw-library-scope">
         <h1>{frameworkList ? '框架' : module?.name ?? (query.group ? folderTitle(query.group) : '设计')}</h1>
         {!frameworkList && (module || query.group) && <button type="button" className="ep-text-button"
           onClick={() => onChange({ group: '', module: '', view: '' })}>全部文件夹</button>}
@@ -217,6 +217,11 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
         </select>}
         {!frameworkList && visibleFrameworks.length > 0 && <button type="button" className="ep-text-button"
           onClick={() => onChange({ view: 'frameworks', framework: '', frameworkFilter: '' })}>框架 {visibleFrameworks.length} 套</button>}
+        {!frameworkList && filters.length > 0 && <div className="dw-filter-chips" aria-label="已选筛选">
+          {filters.map(([field, label]) => <button type="button" key={field} onClick={() => onChange(field === 'framework'
+            ? { framework: '', frameworkFilter: '' } : field === 'status' ? { status: '', filter: '' } : { [field!]: '' })} aria-label={'清除 ' + label}>
+            {label}<X size={12} /></button>)}
+        </div>}
       </div>
       {!frameworkList && <div className="dw-tools dw-right">
         <label className="dw-search"><Search /><input aria-label="搜索稿件" placeholder="搜稿件、文件夹或 PR" value={query.search}
@@ -232,11 +237,6 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
           <button aria-pressed={mode === 'list'} type="button" onClick={() => onChange({ mode: 'list' })} aria-label="列表"><List /></button>
         </div>
         {headerActions}
-      </div>}
-      {!frameworkList && filters.length > 0 && <div className="dw-filter-chips" aria-label="已选筛选">
-        {filters.map(([field, label]) => <button type="button" key={field} onClick={() => onChange(field === 'framework'
-          ? { framework: '', frameworkFilter: '' } : field === 'status' ? { status: '', filter: '' } : { [field!]: '' })} aria-label={'清除 ' + label}>
-          {label}<X size={12} /></button>)}
       </div>}
     </div>
     <div className="dw-gallery dw-library">
@@ -277,7 +277,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
                   {newVersions > 0 && <small className="dw-card-new">{newVersions} 份新</small>}
                 </span>
                 <span className="dw-folder-title"><Folder size={15} /><strong>{folder.name}</strong><small>{folder.entries.length} 份</small></span>
-                <span className="dw-folder-meta">{waiting > 0 && <small>{waiting} 件等我处理</small>}
+                <span className="dw-folder-meta">{waiting > 0 && <small>{waiting} 件等你处理</small>}
                   {waitingDraft > 0 && <small>{waitingDraft} 份待出稿</small>}
                   {folder.entries[0] && <small>{designDate(latestDesign(folder.entries[0]).createdAt)}更新</small>}</span>
               </button>;

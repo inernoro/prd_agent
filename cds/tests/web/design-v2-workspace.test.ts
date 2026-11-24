@@ -633,6 +633,22 @@ function checkDraftInfoBounds(metrics: Awaited<ReturnType<typeof measureDraftInf
 }
 
 describe('工程规划与设计 V2 前端回归', () => {
+  it('A-30 桌面状态筛选标签与工具同排，窄屏组合筛选可读', async () => {
+    const markup = design('&status=attention', libraryWorkspace);
+    await withLayout(markup, [...draftStyles, 'web/src/pages/design-workspace/design-skills.css'], async page => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const status = page.getByRole('combobox', { name: '状态', exact: true });
+      const chip = page.getByRole('button', { name: /^清除 等[你我]处理$/u });
+      expect(shareRow([(await status.boundingBox())!, (await chip.boundingBox())!])).toBe(true);
+    });
+    const combined = design(`&${new URLSearchParams({ status: 'review', tag, framework: frameworkId })}`, libraryWorkspace);
+    await withLayout(combined, draftStyles, async page => {
+      await page.setViewportSize({ width: 375, height: 812 });
+      expect(await page.getByRole('button', { name: /^清除/ }).count()).toBe(3);
+      expect((await measureDesignPage(page)).content).toBeLessThanOrEqual(375);
+    });
+  }, 15_000);
+
   it('库页搜索、筛选和动作在同排时保持对齐', async () => {
     await withLayout(design('', libraryWorkspace), [...draftStyles, 'web/src/pages/design-workspace/design-skills.css'], async page => {
       await page.getByRole('combobox', { name: '状态', exact: true }).waitFor();

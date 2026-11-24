@@ -51,3 +51,46 @@ describe('V-01 tab geometry', () => {
     });
   });
 });
+
+async function observeDialog({ infoOffset = 0, dialogOffset = 0 } = {}) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, offline: true, serviceWorkers: 'block' });
+  try {
+    await page.setContent(`<!doctype html><meta charset="utf-8"><style>
+      * { box-sizing: border-box; }
+      body { margin: 20px; }
+      .dw-info-panel { position: fixed; left: ${920 + infoOffset}px; top: 100px; width: 280px; height: 400px; }
+      [role=dialog] { position: fixed; z-index: 40; left: ${420 + dialogOffset}px; top: 220px; width: 440px; height: 360px; }
+    </style><body data-scroll-locked="1">
+      <main class="dw-workspace" aria-hidden="true">
+        <header class="dw-head--draft">
+          <details open><summary>稿件信息</summary><div class="dw-info-panel">稿件元数据</div></details>
+        </header>
+        <p>正文</p>
+      </main>
+      <div role="dialog" aria-modal="true" aria-label="定为实施基线" data-state="open">
+        <p class="dw-consequences">原基线的验收记录会保留</p>
+      </div>
+    </body>`);
+    return await measureDesignPage(page);
+  } finally {
+    await page.close();
+  }
+}
+
+describe('V-01 active dialog geometry', () => {
+  it('excludes geometry of an underlying open info panel', async () => {
+    const reference = await observeDialog();
+    const implementation = await observeDialog({ infoOffset: 30 });
+    expect(compareDesignObservations(reference, implementation, 0)['V-01']).toMatchObject({
+      status: 'passed', evidence: expect.stringContaining('浮层偏差 0 px'),
+    });
+  });
+
+  it('detects a shifted active confirmation above the same info panel', async () => {
+    const reference = await observeDialog();
+    const implementation = await observeDialog({ dialogOffset: 8 });
+    expect(compareDesignObservations(reference, implementation, 0)['V-01']).toMatchObject({
+      status: 'failed', evidence: expect.stringContaining('浮层偏差 8 px'),
+    });
+  });
+});
