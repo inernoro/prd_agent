@@ -21,10 +21,12 @@ interface TabBarProps {
   onChange?: (key: string) => void;
   /** 右侧操作按钮 */
   actions?: React.ReactNode;
+  /** 操作按钮在窄屏也能完整排下时，关闭右侧滚动和渐隐。 */
+  actionsFit?: boolean;
   variant?: 'default' | 'gold' | 'plain';
 }
 
-export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
+export function TabBar({ title, icon, items, activeKey, onChange, actions, actionsFit, variant = 'default' }: TabBarProps) {
   const isMobile = useIsMobile();
   const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
@@ -143,7 +145,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
         {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。
             移动端隐藏教程 pill（用户要求；教程仍可从「我的 → 学习中心」进入），让出顶部空间给操作。 */}
         {(actions || (!isMobile && (title || (items && items.length > 0)))) && (
-          <div className="surface-nav-actions">
+          <div className="surface-nav-actions" data-fit={actionsFit || undefined}>
             {!isMobile && (title || (items && items.length > 0)) && <TipsEntryButton compact />}
             {actions}
           </div>

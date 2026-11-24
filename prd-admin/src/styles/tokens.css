@@ -1390,6 +1390,7 @@
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.80);
   --text-muted: rgba(247, 247, 251, 0.68);
+  --text-disabled: rgba(247, 247, 251, 0.45);
   --text-on-media: #f7f7fb;
   --text-on-media-muted: rgba(247, 247, 251, 0.72);
   --workflow-accent-text-lightness: 65%;

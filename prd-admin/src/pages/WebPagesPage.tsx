@@ -1351,15 +1351,13 @@ export default function WebPagesPage() {
       </div>
       <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
-                <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
+                <div className="surface-choice-group" role="group" aria-label="工作区">
                   <button
                     type="button"
                     data-tour-id="webpages-tab-library"
                     onClick={() => setWorkspaceTab('library')}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
-                    style={workspaceTab === 'library'
-                      ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-                      : { color: 'var(--text-muted)' }}
+                    aria-pressed={workspaceTab === 'library'}
+                    className="surface-choice inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px]"
                   >
                     <FolderOpen size={13} /> 资产库
                   </button>
@@ -1367,10 +1365,8 @@ export default function WebPagesPage() {
                     type="button"
                     data-tour-id="webpages-tab-shares"
                     onClick={() => setWorkspaceTab('shares')}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
-                    style={workspaceTab === 'shares'
-                      ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-                      : { color: 'var(--text-muted)' }}
+                    aria-pressed={workspaceTab === 'shares'}
+                    className="surface-choice inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px]"
                   >
                     <Link2 size={13} /> 分享
                     {/* 设计稿写的是「分享 有效 7」：数字要说清是哪一档，否则用户不知道过期的算不算 */}
@@ -1428,7 +1424,7 @@ export default function WebPagesPage() {
                 </div>
 
                 <div className="web-hosting-toolbar-browse">
-                  <div data-tour-id="webpages-group-pills" className="web-hosting-toolbar-switch" role="group" aria-label="组织方式">
+                  <div data-tour-id="webpages-group-pills" className="surface-choice-group" role="group" aria-label="组织方式">
                     {ALL_GROUP_MODES.map((m) => {
                       const avail = groupModeAvailability(m, currentSpace.kind);
                       return (
@@ -1439,7 +1435,7 @@ export default function WebPagesPage() {
                           title={avail.reason}
                           aria-pressed={groupMode === m}
                           onClick={() => setGroupMode(m)}
-                          className="web-hosting-toolbar-group-choice"
+                          className="surface-choice web-hosting-toolbar-group-choice"
                         >
                           {GROUP_MODE_LABELS[m]}
                         </button>
@@ -1480,14 +1476,14 @@ export default function WebPagesPage() {
                     </ListDisplayOptions>
                   </ToolbarPopover>
 
-                  <div data-tour-id="webpages-view-toggle" className="web-hosting-toolbar-switch" role="group" aria-label="视图">
+                  <div data-tour-id="webpages-view-toggle" className="surface-choice-group" role="group" aria-label="视图">
                     <button
                       type="button"
                       onClick={() => setViewMode('grid')}
                       title="网格视图"
                       aria-label="网格视图"
                       aria-pressed={viewMode === 'grid'}
-                      className="web-hosting-toolbar-view-choice"
+                      className="surface-choice web-hosting-toolbar-view-choice"
                     >
                       <Grid3X3 size={14} />
                     </button>
@@ -1497,7 +1493,7 @@ export default function WebPagesPage() {
                       title="列表视图"
                       aria-label="列表视图"
                       aria-pressed={viewMode === 'list'}
-                      className="web-hosting-toolbar-view-choice"
+                      className="surface-choice web-hosting-toolbar-view-choice"
                     >
                       <List size={14} />
                     </button>
