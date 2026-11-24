@@ -56,7 +56,7 @@ import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
-import { isLegacyProjectAgentKey, type ProjectAgentKeyPermissions } from '../../../src/shared/project-agent-key';
+import { ProjectAgentKeyPanel } from '@/components/project/ProjectAgentKeyPanel';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -314,7 +314,7 @@ function defaultOnboardingServices(): AppServiceDraft[] {
   ];
 }
 
-interface AgentKeySummary extends ProjectAgentKeyPermissions {
+interface AgentKeySummary {
   id: string;
   label?: string;
   access?: AgentKeyScope;
@@ -325,13 +325,8 @@ interface AgentKeySummary extends ProjectAgentKeyPermissions {
   status?: 'active' | 'revoked';
 }
 
-const agentProjectAccessLabels = { rw: '项目读写', admin: '项目管理员' } as const;
-const agentPlanningAccessLabels = { read: '工程规划只读', propose: '工程规划提案' } as const;
-const agentDesignAccessLabels = { read: '设计只读', feedback: '设计实施反馈', publish: '设计稿件发布' } as const;
-
 interface AgentKeysResponse {
   keys: AgentKeySummary[];
-  canIssueRestrictedPermissions?: boolean;
 }
 
 interface AgentKeySignResponse {
@@ -1076,13 +1071,10 @@ export function ProjectListPage(): JSX.Element {
             navigate(`/branches/${encodeURIComponent(projectId)}`);
           }}
         />
-        <AgentKeyManagerDialog
-          project={agentKeyProject}
-          onOpenChange={(open) => {
-            if (!open) setAgentKeyProject(null);
-          }}
-          onToast={setToast}
-        />
+        {agentKeyProject && (
+          <ProjectAgentKeyPanel key={agentKeyProject.id} projectId={agentKeyProject.id}
+            projectName={displayName(agentKeyProject)} onClose={() => setAgentKeyProject(null)} onToast={setToast} />
+        )}
         <GlobalAgentKeyManagerDialog
           open={globalAgentKeyOpen}
           onOpenChange={setGlobalAgentKeyOpen}
@@ -2286,134 +2278,6 @@ function CloneProgressDialog({
   );
 }
 
-function AgentKeyManagerDialog({
-  project,
-  onOpenChange,
-  onToast,
-}: {
-  project: ProjectSummary | null;
-  onOpenChange: (open: boolean) => void;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [state, setState] = useState<
-    | { status: 'idle' }
-    | { status: 'loading' }
-    | { status: 'error'; message: string }
-    | { status: 'ok'; keys: AgentKeySummary[]; canIssueRestrictedPermissions: boolean }
-  >({ status: 'idle' });
-  const [signOpen, setSignOpen] = useState(false);
-  const [revokeTarget, setRevokeTarget] = useState<AgentKeySummary | null>(null);
-
-  const loadKeys = useCallback(async () => {
-    if (!project) return;
-    setState({ status: 'loading' });
-    try {
-      const data = await apiRequest<AgentKeysResponse>(`/api/projects/${encodeURIComponent(project.id)}/agent-keys`);
-      setState({ status: 'ok', keys: data.keys || [], canIssueRestrictedPermissions: data.canIssueRestrictedPermissions === true });
-    } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }, [project]);
-
-  useEffect(() => {
-    if (project) void loadKeys();
-    else setState({ status: 'idle' });
-  }, [loadKeys, project]);
-
-  return (
-    <>
-      <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Agent Key 管理</DialogTitle>
-            <DialogDescription>
-              {project ? `${displayName(project)} · 项目级 key 只能操作当前项目。` : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" disabled={state.status !== 'ok'} onClick={() => setSignOpen(true)}>
-              <KeyRound />
-              签发新 Key
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void loadKeys()}>
-              <RefreshCw />
-              刷新
-            </Button>
-          </div>
-
-          {state.status === 'loading' ? <LoadingBlock label="加载 Agent Keys" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
-          {state.status === 'ok' && state.keys.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              还没有项目级 Agent Key。
-            </div>
-          ) : null}
-          {state.status === 'ok' && state.keys.length > 0 ? (
-            <div className="space-y-2">
-              {state.keys.map((key) => (
-                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium">{key.label || key.id}</span>
-                        <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        {key.projectAccess ? <CodePill>{agentProjectAccessLabels[key.projectAccess]}</CodePill>
-                          : isLegacyProjectAgentKey(key) ? <CodePill>项目读写</CodePill> : null}
-                        {key.planningAccess && <CodePill>{agentPlanningAccessLabels[key.planningAccess]}</CodePill>}
-                        {key.designAccess && <CodePill>{agentDesignAccessLabels[key.designAccess]}</CodePill>}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        <span>签发：{formatDate(key.createdAt)}</span>
-                        <span>最近使用：{formatDate(key.lastUsedAt)}</span>
-                        {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
-                      </div>
-                    </div>
-                    {!key.revokedAt ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => setRevokeTarget(key)}>
-                        <Trash2 />
-                        吊销
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AgentKeySignDialog
-        project={project}
-        canIssueRestrictedPermissions={state.status === 'ok' && state.canIssueRestrictedPermissions}
-        open={signOpen}
-        onOpenChange={setSignOpen}
-        onSigned={async () => {
-          await loadKeys();
-        }}
-        onToast={onToast}
-      />
-      <AgentKeyRevokeDialog
-        project={project}
-        target={revokeTarget}
-        onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null);
-        }}
-        onRevoked={async () => {
-          setRevokeTarget(null);
-          await loadKeys();
-        }}
-        onToast={onToast}
-      />
-    </>
-  );
-}
 function GlobalAgentKeyManagerDialog({
   open,
   onOpenChange,
@@ -2699,228 +2563,6 @@ function GlobalAgentKeyRevokeDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>吊销全局 Agent Key</DialogTitle>
-          <DialogDescription>
-            吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button type="button" variant="destructive" onClick={() => void revoke()} disabled={revoking}>
-            {revoking ? <Loader2 className="animate-spin" /> : <Trash2 />}
-            确认吊销
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AgentKeyPermissionGroup<Level extends string>({ name, title, levels, value, onChange, disabled, ownerOnly }: {
-  name: string;
-  title: string;
-  levels: Record<Level, string>;
-  value: Level | undefined;
-  onChange: (value: Level | undefined) => void;
-  disabled: boolean;
-  ownerOnly?: readonly Level[];
-}): JSX.Element {
-  const choices = [undefined, ...Object.keys(levels) as Level[]];
-  return (
-    <fieldset className="min-w-0 rounded-md border border-border px-3 pb-2">
-      <legend className="px-1 text-sm font-medium">{title}</legend>
-      <div className="flex flex-wrap gap-x-4">
-        {choices.map(level => (
-          <label key={level ?? ''} className="flex min-h-9 items-center gap-2 text-sm has-[:disabled]:text-muted-foreground">
-            <input type="radio" name={name} className="accent-primary" checked={value === level}
-              disabled={disabled && level !== undefined && ownerOnly?.includes(level)}
-              onChange={() => onChange(level)} />
-            {level === undefined ? '不授权' : levels[level]}
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
-
-function AgentKeySignDialog({
-  project,
-  canIssueRestrictedPermissions,
-  open,
-  onOpenChange,
-  onSigned,
-  onToast,
-}: {
-  project: ProjectSummary | null;
-  canIssueRestrictedPermissions: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSigned: () => Promise<void>;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [label, setLabel] = useState('');
-  const [projectAccess, setProjectAccess] = useState<AgentKeySummary['projectAccess']>('rw');
-  const [planningAccess, setPlanningAccess] = useState<AgentKeySummary['planningAccess']>();
-  const [designAccess, setDesignAccess] = useState<AgentKeySummary['designAccess']>();
-  const [signing, setSigning] = useState(false);
-  const [error, setError] = useState('');
-  const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setLabel('');
-      setProjectAccess('rw');
-      setPlanningAccess(undefined);
-      setDesignAccess(undefined);
-      setError('');
-      setSigned(null);
-      setSigning(false);
-    }
-  }, [open]);
-
-  async function sign(): Promise<void> {
-    if (!project || !(projectAccess || planningAccess || designAccess)) return;
-    setSigning(true);
-    setError('');
-    try {
-      const data = await apiRequest<AgentKeySignResponse>(
-        `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
-        {
-          method: 'POST',
-          body: { label: label.trim() || undefined, projectAccess, planningAccess, designAccess },
-        },
-      );
-      setSigned(data);
-      await onSigned();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setSigning(false);
-    }
-  }
-
-  const codeText =
-    project && signed
-      ? [`CDS_HOST=${window.location.origin}`, `CDS_PROJECT_ID=${project.id}`, `CDS_PROJECT_KEY=${signed.plaintext}`].join('\n')
-      : '';
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{signed ? 'Agent Key 已签发' : '签发项目级 Agent Key'}</DialogTitle>
-          <DialogDescription>
-            {signed
-              ? '明文只显示一次。关闭后 CDS 只保留 sha256 摘要，无法再次查看。'
-              : '这会创建一把新的项目级访问密钥，持有者可操作当前项目。'}
-          </DialogDescription>
-        </DialogHeader>
-
-        {signed ? (
-          <div className="space-y-4">
-            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
-              {codeText}
-            </pre>
-            <Button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(codeText).then(() => onToast('Agent Key 已复制'));
-              }}
-            >
-              <Copy />
-              复制全部
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">标签</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={label}
-                onChange={(event) => setLabel(event.target.value)}
-                maxLength={100}
-                placeholder="例如 Codex 本地调试"
-              />
-            </label>
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">可同时授权多个类别。每类选择一个级别。</p>
-              <AgentKeyPermissionGroup name="project-access" title="项目" levels={agentProjectAccessLabels}
-                value={projectAccess} onChange={setProjectAccess} disabled={!canIssueRestrictedPermissions} ownerOnly={['admin']} />
-              <AgentKeyPermissionGroup name="planning-access" title="工程规划" levels={agentPlanningAccessLabels}
-                value={planningAccess} onChange={setPlanningAccess} disabled={!canIssueRestrictedPermissions} ownerOnly={['read', 'propose']} />
-              <AgentKeyPermissionGroup name="design-access" title="设计" levels={agentDesignAccessLabels}
-                value={designAccess} onChange={setDesignAccess} disabled={!canIssueRestrictedPermissions} ownerOnly={['read', 'feedback', 'publish']} />
-              {!canIssueRestrictedPermissions && <p className="text-xs text-muted-foreground">项目管理员、工程规划和设计权限由登录 CDS 的系统所有者签发。</p>}
-              {projectAccess === 'admin' && <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
-                项目管理员可读写和删除当前项目，并查看、吊销项目密钥。
-              </p>}
-            </div>
-            <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
-              签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。
-            </div>
-            {error ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
-          </div>
-        )}
-
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            {signed ? '关闭' : '取消'}
-          </Button>
-          {!signed ? (
-            <Button type="button" onClick={() => void sign()} disabled={signing || !(projectAccess || planningAccess || designAccess)}>
-              {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
-              确认签发
-            </Button>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function AgentKeyRevokeDialog({
-  project,
-  target,
-  onOpenChange,
-  onRevoked,
-  onToast,
-}: {
-  project: ProjectSummary | null;
-  target: AgentKeySummary | null;
-  onOpenChange: (open: boolean) => void;
-  onRevoked: () => Promise<void>;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const [revoking, setRevoking] = useState(false);
-
-  async function revoke(): Promise<void> {
-    if (!project || !target) return;
-    setRevoking(true);
-    try {
-      await apiRequest(
-        `/api/projects/${encodeURIComponent(project.id)}/agent-keys/${encodeURIComponent(target.id)}`,
-        { method: 'DELETE' },
-      );
-      onToast('Agent Key 已吊销');
-      await onRevoked();
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setRevoking(false);
-    }
-  }
-
-  return (
-    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>吊销 Agent Key</DialogTitle>
           <DialogDescription>
             吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
           </DialogDescription>

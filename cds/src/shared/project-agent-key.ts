@@ -1,3 +1,5 @@
+export type ProjectAgentKeyIssuer = 'user' | 'agent' | 'unknown';
+
 /** Independent grants for one project. Higher levels include lower levels in the same workspace. */
 export interface ProjectAgentKeyPermissions {
   projectAccess?: 'rw' | 'admin';

@@ -1,6 +1,6 @@
 import type { EnvAuditFact } from './shared/engineering-planning.js';
 import type { ProjectInspection } from './shared/project-inspections.js';
-import type { ProjectAgentKeyPermissions } from './shared/project-agent-key.js';
+import type { ProjectAgentKeyIssuer, ProjectAgentKeyPermissions } from './shared/project-agent-key.js';
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
@@ -4616,6 +4616,8 @@ export interface AgentKey extends ProjectAgentKeyPermissions {
   designPublisherKeyId?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
+  /** Verified source at issuance. Older rows may lack this metadata. */
+  issuer?: ProjectAgentKeyIssuer;
   /** Verified account that issued the key, when present. */
   createdBy?: string;
   /** ISO timestamp updated (best-effort) each time the key authenticates. */
