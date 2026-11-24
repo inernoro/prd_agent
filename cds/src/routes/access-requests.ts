@@ -547,6 +547,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         ...(item.principalId ? { principalId: item.principalId } : {}),
       } : {}),
       createdAt: now.toISOString(),
+      issuer: isAuthenticatedHuman(req) ? 'user' : 'unknown',
       createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
       issuedByAccountId: approvedByAccountId ?? null,
     };

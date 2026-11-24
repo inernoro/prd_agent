@@ -251,6 +251,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       hash: sha256(plaintext),
       scope: 'rw',
       createdAt: new Date().toISOString(),
+      issuer: 'agent',
       principalId: principalId.principalId,
       issuedByCredentialId: principalId.credentialId,
       issuedByAccountId: sourceCredential?.issuedByAccountId ?? null,

@@ -4027,6 +4027,8 @@ export function createServer(deps: ServerDeps): express.Express {
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
           (req as any).cdsUser = legacyAuthUser(cdsUser!, 'basic');
+        } else {
+          (req as express.Request & { cdsLegacyMachineAuth?: true }).cdsLegacyMachineAuth = true;
         }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-

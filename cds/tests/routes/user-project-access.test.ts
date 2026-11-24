@@ -1594,6 +1594,35 @@ describe('human project grants through the production server', () => {
       .toEqual([expect.objectContaining({ id: issued.body.keyId, ...permissions })]);
   });
 
+  it('lists keys newest first and separates verified user, agent, and unconfirmed sources', async () => {
+    const keys = '/api/projects/project-a/agent-keys';
+    // The historical label can be arbitrary. Linked machine credentials take
+    // precedence over the account that approved the original connection.
+    const fixtures = [
+      { id: 'old-user', createdAt: '2026-01-02T00:00:00Z', createdBy: 'owner' },
+      { id: 'old-unknown', createdAt: '2026-01-04T00:00:00Z' },
+      { id: 'old-agent', createdAt: '2026-01-03T00:00:00Z', createdBy: 'owner', issuedByCredentialId: 'original-user-key' },
+    ];
+    for (const fixture of fixtures) {
+      state.addAgentKey('project-a', { hash: createHash('sha256').update(fixture.id).digest('hex'),
+        scope: 'rw', label: 'AI Agent', ...fixture });
+    }
+    const user = await call('POST', keys, owner, { label: 'AI Agent', issuer: 'agent' });
+    expect(user.status).toBe(201);
+    const agent = await credentialCall('POST', keys, user.body.plaintext, { label: 'owner', issuer: 'user' });
+    expect(agent.status).toBe(201);
+    const listed = (await call('GET', keys)).body.keys;
+    expect(listed.map(({ id, issuer }: { id: string; issuer: string }) => [id, issuer])).toEqual([
+      [agent.body.keyId, 'agent'], [user.body.keyId, 'user'], ['old-unknown', 'unknown'], ['old-agent', 'agent'], ['old-user', 'user'],
+    ]);
+    expect(listed[0]).not.toHaveProperty('createdBy');
+    expect(listed[1]).toMatchObject({ createdBy: 'owner' });
+    expect(listed.every((entry: { hash?: string; plaintext?: string }) => !entry.hash && !entry.plaintext)).toBe(true);
+    expect((await call('DELETE', keys + '/' + 'old-agent')).status).toBe(200);
+    expect((await call('GET', keys)).body.keys.find((entry: { id: string }) => entry.id === 'old-agent'))
+      .toMatchObject({ issuer: 'agent', status: 'revoked' });
+  });
+
   it('allows only the signed-in system owner to issue project administrator grants', async () => {
     const project = '/api/projects/project-a';
     const keys = project + '/agent-keys';

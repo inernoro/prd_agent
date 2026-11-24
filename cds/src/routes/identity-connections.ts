@@ -93,7 +93,7 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
             ...(r.accountProposals ? { accountProposals: true } : {}),
             expiresAt: daysFromNow(USER_CREDENTIAL_TTL_DAYS), issuedCount: 1 };
           const key: AgentKey = { id: id(''), principalId, hash: hash(projectPlain), scope: 'rw', label: `设备接入 ${r.agentName}`,
-            createdAt: new Date().toISOString(), createdBy: r.decidedBy, issuedByAccountId: r.approvedByAccountId ?? null,
+            createdAt: new Date().toISOString(), issuer: 'agent', createdBy: r.decidedBy, issuedByAccountId: r.approvedByAccountId ?? null,
             expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id };
           const envelope = encrypt({ userCredential: userPlain, authorizationKey: projectPlain,
             projectId: project.id, projectName: project.aliasName || project.name, projectSlug: project.slug }, token, r.id);

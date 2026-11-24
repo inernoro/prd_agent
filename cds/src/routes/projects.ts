@@ -83,7 +83,7 @@ import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
-import type { ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
+import type { ProjectAgentKeyIssuer, ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId, type HumanAuthContext } from '../services/human-auth.js';
@@ -339,6 +339,7 @@ function mintProjectAgentKey(
   stateService: StateService,
   project: Project,
   label: string,
+  issuer: ProjectAgentKeyIssuer,
   createdBy?: string,
   permissions: ProjectAgentKeyPermissions & Pick<AgentKey, 'issuedByAccountId'> = {},
 ): { keyId: string; plaintext: string; preview: string } {
@@ -355,10 +356,19 @@ function mintProjectAgentKey(
     ...permissions,
     issuedByAccountId: permissions.issuedByAccountId ?? null,
     createdAt: new Date().toISOString(),
+    issuer,
     createdBy: createdBy || undefined,
   };
   stateService.addAgentKey(project.id, entry);
   return { keyId, plaintext, preview: formatKeyPreview(plaintext) };
+}
+
+function projectAgentKeyIssuer(key: AgentKey): ProjectAgentKeyIssuer {
+  if (key.issuer) return key.issuer;
+  if (key.issuedByCredentialId) return 'agent';
+  // Older direct sign / approval routes recorded the authenticated account when known.
+  const account = key.createdBy?.trim().toLowerCase();
+  return account && !['anonymous', 'cookie', 'operator'].includes(account) ? 'user' : 'unknown';
 }
 
 /**
@@ -3414,6 +3424,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             stateService,
             newProject,
             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
+            'agent',
             (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
             { issuedByAccountId: verifiedHumanAccountId(req) ?? creationKey?.issuedByAccountId ?? null },
           );
@@ -4568,11 +4579,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    const account = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
+    const actor = req as typeof req & HumanAuthContext & {
+      cdsProjectKey?: unknown; cdsAccess?: unknown; cdsPrincipal?: unknown; _aiSession?: unknown; cdsLegacyMachineAuth?: true;
+    };
+    const machine = actor.cdsProjectKey || actor.cdsAccess || actor.cdsPrincipal || actor._aiSession || actor.cdsLegacyMachineAuth;
+    const account = !machine && isAuthenticatedHuman(req) ? actor.cdsUser : undefined;
+    const issuer = machine ? 'agent' : account ? 'user' : 'unknown';
 
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
+      minted = mintProjectAgentKey(stateService, project, label, issuer, account?.githubLogin || account?.login || account?.username, {
         projectAccess: body.projectAccess, planningAccess: body.planningAccess, designAccess: body.designAccess,
         issuedByAccountId: verifiedHumanAccountId(req) ?? null,
       });
@@ -4596,7 +4612,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const entries = stateService.getAgentKeys(project.id);
+    const entries = [...stateService.getAgentKeys(project.id)].reverse()
+      .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
     res.json({
       canIssueRestrictedPermissions: isHumanSystemOwner(req),
       keys: entries.map((e) => ({
@@ -4609,7 +4626,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         issuedByAccountId: e.issuedByAccountId,
+        issuer: projectAgentKeyIssuer(e),
         lastUsedAt: e.lastUsedAt,
+        expiresAt: e.expiresAt,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',
       })),
