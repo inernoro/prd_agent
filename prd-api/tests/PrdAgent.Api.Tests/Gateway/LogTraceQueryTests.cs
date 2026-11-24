@@ -83,11 +83,18 @@ public class LogTraceQueryTests
             native["_id"] = "native"; native["IngressProtocol"] = "gw-native";
             rows.Add(native);
             rows[0]["ProviderRequestId"] = "final-receipt";
+            rows[0]["AppCallerCode"] = "example.summary::chat";
+            rows[0]["RequestType"] = "chat";
             rows[0]["ProviderAttempts"] = new BsonArray { new BsonDocument {
                 { "AttemptId", "physical-attempt-a" }, { "ProviderRequestId", "failed-provider-receipt-a" },
                 { "ProviderTaskId", "intermediate-provider-job-a" }
             } };
             await logs.InsertManyAsync(rows);
+            await db.GetCollection<BsonDocument>("llmgw_app_callers").InsertManyAsync(new[]
+            {
+                new BsonDocument { { "TenantId", "tenant-a" }, { "TeamId", "team-a" }, { "AppCallerCode", "Example.Summary::chat" }, { "RequestType", "chat" }, { "Title", "业务摘要" } },
+                new BsonDocument { { "TenantId", "Tenant-A" }, { "TeamId", "team-a" }, { "AppCallerCode", "example.summary::chat" }, { "RequestType", "chat" }, { "Title", "其他租户名称" } },
+            });
             Assert.Equal("summary", (await logs.Find(LogTraceQuery.LegacySummary).SingleAsync())["_id"].AsString);
             Assert.True(LogTraceQuery.IsLegacySummary(summary));
             Assert.False(LogTraceQuery.IsLegacySummary(native));
@@ -102,7 +109,8 @@ public class LogTraceQueryTests
             });
             app.UseAuthorization();
             app.MapLogTraceEndpoints(logs, db,
-                doc => new LlmLogListItem { Id = doc["_id"].AsString, RequestId = LogTraceQuery.Text(doc, "RequestId") ?? "", Status = LogTraceQuery.Text(doc, "Status") ?? "" },
+                doc => new LlmLogListItem { Id = doc["_id"].AsString, RequestId = LogTraceQuery.Text(doc, "RequestId") ?? "", Status = LogTraceQuery.Text(doc, "Status") ?? "",
+                    AppCallerCodeDisplayName = LogTraceQuery.Text(doc, "AppCallerCodeDisplayName") },
                 _ => new(), new JsonSerializerOptions(JsonSerializerDefaults.Web), "internal");
             await app.StartAsync();
             var client = app.GetTestClient();
@@ -114,6 +122,8 @@ public class LogTraceQueryTests
             Assert.DoesNotContain("private prompt", first);
             Assert.DoesNotContain("foreign-", first);
             Assert.DoesNotContain("job-collision", first);
+            Assert.DoesNotContain("其他租户名称", first);
+            Assert.Equal("业务摘要", data.GetProperty("items")[0].GetProperty("log").GetProperty("appCallerCodeDisplayName").GetString());
             Assert.Equal(JsonValueKind.Null, data.GetProperty("items")[0].GetProperty("log").GetProperty("providerReportedCost").ValueKind);
             using var second = JsonDocument.Parse(await client.GetStringAsync("/gw/logs/trace?reference=run-a&page=2"));
             Assert.Equal(5, second.RootElement.GetProperty("data").GetProperty("items").GetArrayLength());

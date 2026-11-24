@@ -3542,7 +3542,6 @@ public class GatewayDataDomainGuardTests
         // 断言随之改为「唯一实现存在 + 两个消费方确实接上了它」。
         var logsHelpers = ReadRepoFile("llmgw/web/src/lib/logsHelpers.ts");
         Assert.Contains("export function appDisplayName(item: {", logsHelpers);
-        Assert.Contains("const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim()", logsHelpers);
         Assert.Contains("appDisplayName(detail)", drawer);
         Assert.Contains("appDisplayName(it)", logs);
         // 同批去掉了纯展示层的 `G-` 前缀：后端 appCallerCode 里没有它，appDetailsHref 也用原始
