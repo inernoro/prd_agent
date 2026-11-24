@@ -271,11 +271,10 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const [zoom, setZoom] = useState<number | null>(null);
   useEffect(() => {
     if (!cornerTools) return;
-    const mobile = window.matchMedia('(max-width: 899px)');
-    const fit = () => { if (mobile.matches) setZoom(null); };
+    const fit = () => { if (window.innerWidth < 900) setZoom(null); };
     fit();
-    mobile.addEventListener('change', fit);
-    return () => mobile.removeEventListener('change', fit);
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
   }, [cornerTools]);
   const [selected, select] = useState(initialScreenId ?? version.demo?.[0]?.screen ?? version.screens[0]?.id);
   const pickScreen = (id: string) => { select(id); onSelectScreen?.(id); };
