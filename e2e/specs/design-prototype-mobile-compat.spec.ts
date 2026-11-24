@@ -10,12 +10,13 @@ const screen = {
   id: 'phone', name: '手机原型就绪', route: '#/phone', viewport: 'phone', themes: ['light', 'dark'],
   entryReadySelector: `[${ready}]`, entryTimeoutMs: 1000, impl: null,
 };
+const detail = { ...screen, id: 'phone-next', name: '同路由的第二个画面', entryReadySelector: '[data-fixture-detail-ready]' };
 const screenshot = { id: 'fixture-shot', sha256: 'a'.repeat(64) };
 const version = {
   version: 20, title: '手机原型合成验收', sourceCommit: 'a'.repeat(40), sha256: 'a'.repeat(64),
   prototypeId: 'fixture-mobile-prototype', createdAt: '2026-11-25T00:00:00Z',
   publisher: { id: 'fixture-author', label: '合成稿件作者' },
-  screens: [screen, { ...screen, id: 'phone-next', name: '第二个合成画面', route: '#/phone-next' }],
+  screens: [screen, detail],
   demo: [{ screen: screen.id, title: '手机原型就绪' }], acceptance: [], tags: [], decisionIds: [],
   renders: { [screen.id]: { light: screenshot, dark: screenshot } },
 };
@@ -57,11 +58,13 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
       return route.fulfill({
         contentType: 'text/html',
         headers: { 'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'self'" },
-        body: `<!doctype html><html><head><meta charset="utf-8"></head><body><main ${ready}>合成原型已打开</main><script>
+        body: `<!doctype html><html><head><meta charset="utf-8"></head><body><main ${ready}>合成原型已打开</main><div data-fixture-detail-ready>同路由详情就绪</div><script>
           document.documentElement.dataset.theme = new URLSearchParams(location.search).get('theme');
           addEventListener('message', event => {
             if (event.source !== parent || event.data?.type !== 'cds-design-entry') return;
-            parent.postMessage({ type: 'cds-design-entry-result', requestId: event.data.requestId, reached: true }, '*');
+            const reached = !event.data.legacyLabel && !!document.querySelector(event.data.ready);
+            parent.postMessage({ type: 'cds-design-entry-result', requestId: event.data.requestId,
+              reached, ...(reached ? {} : { reason: 'control-unavailable' }) }, '*');
           });
         </script></body></html>`,
       });
@@ -77,6 +80,16 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
       await expect(frame.contentFrame().locator(`[${ready}]`)).toBeVisible();
       await expect(page).toHaveURL(url);
     };
+    await expectReady();
+    const picker = canvas.getByRole('combobox', { name: '选择画面', exact: true });
+    const detailUrl = new URL(url);
+    detailUrl.searchParams.set('screen', detail.id);
+    await picker.selectOption(detail.id);
+    await expect(page).toHaveURL(detailUrl.href);
+    await expect(frame).toHaveAttribute('title', `${detail.name} · V${version.version}`);
+    await expect(canvas.locator('[data-preview-state="ready"]')).toHaveCount(1);
+    await expect(frame.contentFrame().locator(detail.entryReadySelector)).toBeVisible();
+    await picker.selectOption(screen.id);
     await expectReady();
     expect(await page.evaluate(() => window.innerWidth)).toBe(375);
     // Linux WebKit reports zero hardware touch points even when Playwright emulates taps.

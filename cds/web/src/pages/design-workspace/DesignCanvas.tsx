@@ -135,7 +135,7 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
   const errors = (check?.report?.runtime ?? 0) + (check?.report?.console ?? 0);
   const blocked = check?.report?.blocked ?? 0;
   const peers = screen && version?.screens.filter(row => row.route === screen.route && row.viewport === screen.viewport);
-  const legacyLabel = peers && peers.length > 1 && peers[0].id !== screen?.id ? screen?.name : undefined;
+  const legacyLabel = !screen?.entryReadySelector && peers && peers.length > 1 && peers[0].id !== screen?.id ? screen?.name : undefined;
   const needsEntry = Boolean(screen?.entryActions?.length || screen?.entryReadySelector || legacyLabel);
   const [space, setSpace] = useState({ width: 0, height: 0 });
   const { width, height } = designViewports[screen?.viewport ?? 'desktop'];
