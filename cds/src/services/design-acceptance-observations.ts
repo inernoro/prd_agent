@@ -68,7 +68,28 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
     });
     const width = document.documentElement.clientWidth;
     const content = document.documentElement.scrollWidth;
-    const body = surface instanceof HTMLElement ? surface.innerText.slice(0, 90_000) : '';
+    const raw = { markdown: 0, html: 0, json: 0, credential: 0 };
+    const readerBlocks = new Map<Element, { all: string; prose: string }>();
+    const textNodes = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let scanned = 0;
+    for (let node = textNodes.nextNode(); node && scanned < 90_000; node = textNodes.nextNode()) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest('script, style, template, option, svg, .sr-only') || !dom.visible(parent)
+        || parent.checkVisibility && !parent.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+      const bookend = parent.closest('p, li, td, th, div, pre, summary, h1, h2, h3, h4, h5, h6') ?? parent;
+      const block = readerBlocks.get(bookend) ?? { all: '', prose: '' };
+      const text = (node.nodeValue ?? '').slice(0, 90_000 - scanned);
+      scanned += text.length;
+      block.all += text;
+      block.prose += parent.closest('pre, code, kbd, samp') ? ' ' : text;
+      readerBlocks.set(bookend, block);
+    }
+    for (const { all, prose } of readerBlocks.values()) {
+      raw.markdown += Number(/^(?: {0,3}#{1,6}[ \t]| {0,3}[\x60~]{3}|\s*[-*+] \[[ xX]\])|\[[^\]\n]+\]\([^\n)]+\)|\*\*[^*\n]+\*\*|__[^_\n]+__|[\x60][^\x60\n]+[\x60]/m.test(prose));
+      raw.html += Number(/<\/?[a-z][\w-]*(?:\s+[^<>\n]*)?\s*\/?>/i.test(prose));
+      raw.json += Number(/[\[{]\s*(?:\{\s*)?"[^"\n]+"\s*:/.test(prose));
+      raw.credential += Number(/\bBearer[ \t]+\S{20,}|-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----|\b(?:gh[pousr]_[A-Za-z0-9]{24,}|github_pat_[\w]{24,})\b/.test(all));
+    }
     const textControls = Array.from((surface ?? document).querySelectorAll('button, summary, [role=tab]'))
       .filter(element => dom.visible(element) && !element.closest('[aria-hidden=true]'));
     const clippedControls = textControls.filter(element => {
@@ -164,7 +185,7 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       layers, headerAlignment, width, content, vertical: scrolling.length + Number(!modal && document.documentElement.scrollHeight > innerHeight + 1),
       clippedControls, textControls: textControls.length, height: innerHeight,
       scrollHeight: Math.max(document.documentElement.scrollHeight, ...scrolling.map(element => element.scrollHeight)),
-      raw: body.split('\n').filter(line => /^\s*(?:#{1,6}\s+|\{\s*"\w+"\s*:|Bearer\s+\S{20,})/.test(line)).length,
+      raw,
       frame: dom.read(dom.find('.dw-frame')), title: dom.read(dom.find('.dw-crumb-draft strong,.dw-crumb-title strong')),
       currentStep: Boolean(currentScreen && selectedStep === currentScreen),
       stepNumber,
@@ -202,6 +223,11 @@ export function compareDesignObservations(expected: Observation, actual: Observa
   });
   const positions = regions.map((region, index) => actual.layers[index] === null && expected.layers[index] === null
     ? `${region}在两侧均未定位` : `${region}${deltas[index] === null ? '只在一侧显示' : `偏差 ${deltas[index]} px`}`).join('，');
+  const markers = Object.entries({ markdown: '原样 Markdown', html: '转义 HTML', json: '原样 JSON', credential: '疑似凭据' } as const)
+    .flatMap(([key, label]) => {
+      const count = actual.raw[key as keyof typeof actual.raw];
+      return count ? [`${label} ${count} 处`] : [];
+    });
   return {
     'V-01': {
       status: deltas.some(delta => delta === null || delta > 1) ? 'failed' : pixelDifference === 0 ? 'passed' : 'missing',
@@ -214,8 +240,8 @@ export function compareDesignObservations(expected: Observation, actual: Observa
       { status: 'missing', evidence: `扫描 ${actual.textControls} 个可见控件，文字裁切 0 处。浮层遮挡和断词待核对。` },
     'V-04': verdict(actual.content <= actual.width && actual.vertical <= 1,
       `文档可用宽度 ${actual.width} px，内容宽 ${actual.content} px，纵向滚动区 ${actual.vertical} 个。`),
-    'V-05': actual.raw ? verdict(false, `主体扫描发现 ${actual.raw} 行疑似原样 Markdown、JSON 或凭据。`) :
-      { status: 'missing', evidence: '文本扫描未发现 Markdown、JSON 或凭据前缀。内部编号和转义内容待核对。' },
+    'V-05': markers.length ? verdict(false, `可见文本扫描发现 ${markers.join('、')}。`) :
+      { status: 'missing', evidence: '可见文本扫描未发现未渲染的标记、JSON 或疑似凭据。内部编号及嵌入内容待核对。' },
     'V-06': { status: 'missing', evidence: '同数据图已生成，名称与徽标数量的逐处一致性待核对。' },
     'V-07': darkContrastCheck(actual.darkText, useDarkCapture),
     'V-08': { status: 'missing', evidence: `已取 ${actual.width} × ${actual.height} 的图。Windows 两档缩放与手机状态待关联。` },

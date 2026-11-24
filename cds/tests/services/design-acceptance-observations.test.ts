@@ -6,7 +6,8 @@ import type { DesignRule, DesignRun, DesignScreen, DesignVersion } from '../../s
 
 const phoneLayout: Parameters<typeof observeDesignRules>[1] = {
   layers: [], headerAlignment: null, width: 375, content: 375, vertical: 1, clippedControls: 0, textControls: 5,
-  height: 812, scrollHeight: 812, raw: 0, frame: null, title: null, currentStep: false, stepNumber: 0,
+  height: 812, scrollHeight: 812, raw: { markdown: 0, html: 0, json: 0, credential: 0 },
+  frame: null, title: null, currentStep: false, stepNumber: 0,
   causes: [], hero: false, methods: 0, overviewIssues: [], compare: [], feedback: [], columns: 1, frameworkColumns: 1, clippedCards: 0,
 };
 const library: DesignRule = {
