@@ -1,11 +1,12 @@
 import { useLayoutEffect, useRef } from 'react';
 import { StreamingText } from '@/components/streaming/StreamingText';
-import { Square } from 'lucide-react';
+import { RotateCcw, Square } from 'lucide-react';
 import { askStreamingText } from './askStreamingText';
 import { AskMarkdown } from './AskMarkdown';
 import { AskAnswerFooter } from './AskAnswerFooter';
 import { AskRefusalCard, type AskRefusalKey } from './askRefusal';
 import type { AskMessage } from './askTypes';
+import './askThread.css';
 
 interface Props {
   messages: AskMessage[];
@@ -131,6 +132,7 @@ export default function AskThread({
             </div>
           ) : (
             <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+              {m.thinking && <AskThinking text={m.thinking} streaming={!!m.streaming && !m.content} />}
               <StreamingText
                 text={m.streaming ? askStreamingText(m.content) : m.content}
                 streaming={!!m.streaming}
@@ -139,7 +141,11 @@ export default function AskThread({
                 // 错误提示不能覆盖已收到的正文；中断内容仍可读，但不标成回答完成。
                 renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} streaming={!!m.streaming} />}
               />
-              {m.error && <div role="alert" style={{ color: 'var(--accent-primary)' }}>{m.error}</div>}
+              {m.error && <div className="ask-response-error">
+                <span role="alert">{m.error}</span>
+                {m === latest && m.retryable && !refusal && !isBusy &&
+                  <button type="button" onClick={onRetry}><RotateCcw size={13} aria-hidden="true" />重试回答</button>}
+              </div>}
             </div>
           )}
         </div>
@@ -158,4 +164,23 @@ export default function AskThread({
         messages={messages} openingQuestions={openingQuestions} blocked={!!refusal} onAsk={onPick} onRate={onRate} />}
     </div>
   );
+}
+
+function AskThinking({ text, streaming }: { text: string; streaming: boolean }) {
+  const windowRef = useRef<HTMLDivElement>(null);
+  const followsEnd = useRef(true);
+  useLayoutEffect(() => {
+    const element = windowRef.current;
+    if (element && followsEnd.current) element.scrollTop = element.scrollHeight;
+  }, [text]);
+
+  return <details className="ask-thinking" open>
+    <summary>模型思考</summary>
+    <div className="ask-thinking-scroll" role="region" aria-label="模型思考内容" tabIndex={0} ref={windowRef}
+      onScroll={({ currentTarget }) => {
+        followsEnd.current = currentTarget.scrollHeight - currentTarget.scrollTop - currentTarget.clientHeight < 24;
+      }}>
+      <StreamingText text={text} streaming={streaming} cursor={false} />
+    </div>
+  </details>;
 }

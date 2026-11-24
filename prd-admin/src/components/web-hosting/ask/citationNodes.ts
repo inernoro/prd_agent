@@ -31,7 +31,35 @@ export function citationReferences(node: CitationNode) {
       ? [{ href: child.properties.href, id: child.properties.id, label: excerptText(child) }] : []);
 }
 
-/** 在清洗后的语法树上索引原文，合并相邻引用；不改写回答或引用内容。 */
+const citationBlocks = new Set(['p', 'li', 'td', 'th']);
+const nestedBlocks = new Set(['p', 'ol', 'ul', 'blockquote', 'pre', 'table', 'div']);
+
+function groupBlockCitations(node: CitationNode) {
+  const children = node.children;
+  if (!children) return;
+  const references: CitationNode[] = [];
+  const collect = (items: CitationNode[]): CitationNode[] => items.filter((item) => {
+    if (citationReferences(item).length) {
+      references.push(...(item.children ?? []));
+      return false;
+    }
+    if (item.children && !nestedBlocks.has(item.tagName ?? '') && item.tagName !== 'a') {
+      item.children = collect(item.children);
+    }
+    return true;
+  });
+
+  const remainder = collect(children);
+  if (!references.length) return;
+  // 紧凑列表的正文是 li 的直接子节点；把引用放在下级列表之前，避免归错段落。
+  const nestedList = remainder.findIndex((item) => item.tagName === 'ul' || item.tagName === 'ol');
+  remainder.splice(nestedList === -1 ? remainder.length : nestedList, 0, {
+    type: 'element', tagName: 'sup', properties: {}, children: references,
+  });
+  node.children = remainder;
+}
+
+/** 对完成答案按段归并引用，原文索引和每处返回链接都保留。 */
 export function rehypeAskCitations({ notes }: { notes: Map<string, string> }) {
   return (tree: CitationNode) => {
     notes.clear();
@@ -41,25 +69,10 @@ export function rehypeAskCitations({ notes }: { notes: Map<string, string> }) {
         for (const item of list?.children ?? []) {
           if (item.tagName === 'li' && typeof item.properties?.id === 'string') notes.set(item.properties.id, excerptText(item).trim());
         }
+        return;
       }
-      const children = node.children;
-      if (!children) return;
-      for (let i = 0; i < children.length; i++) {
-        const current = children[i];
-        if (citationReferences(current).length) {
-          let next = i + 1;
-          while (next < children.length) {
-            const separator = children[next];
-            const hasSpace = separator.type === 'text' && /^\s*$/.test(separator.value ?? '');
-            const target = children[next + (hasSpace ? 1 : 0)];
-            if (!target || !citationReferences(target).length) break;
-            current.children!.push(...target.children!);
-            children.splice(next, hasSpace ? 2 : 1);
-            next = i + 1;
-          }
-        }
-        visit(current);
-      }
+      if (citationBlocks.has(node.tagName ?? '')) groupBlockCitations(node);
+      node.children?.forEach(visit);
     };
     visit(tree);
   };

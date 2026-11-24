@@ -292,6 +292,7 @@ public sealed class TaskBudgetGateway(
         return new GatewayRequest { AppCallerCode = request.AppCallerCode, ModelType = request.ModelType,
             ExpectedModel = request.ExpectedModel, PinnedPlatformId = request.PinnedPlatformId, PinnedModelId = request.PinnedModelId,
             RequestBody = body, Stream = request.Stream, IncludeThinking = request.IncludeThinking,
+            ForwardAvailableThinking = request.ForwardAvailableThinking,
             EnablePromptCache = request.EnablePromptCache, TimeoutSeconds = request.TimeoutSeconds, Context = request.Context };
     }
     private static GatewayRawRequest CopyRaw(GatewayRawRequest request, JsonObject body) => new()

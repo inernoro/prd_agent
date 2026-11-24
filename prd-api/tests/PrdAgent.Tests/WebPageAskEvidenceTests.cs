@@ -56,6 +56,17 @@ public class WebPageAskEvidenceTests
     }
 
     [Fact]
+    public void 同一段原文出现在多个片段编号时只生成一个脚注()
+    {
+        var evidence = new WebPageAskEvidence("需要审核。\n\n需要审核。\n\n例外见规则。");
+        var result = evidence.CompleteAnswer("先审核。[引用:1][引用:2] 例外。[引用:3]");
+        Assert.StartsWith("先审核。[^1][^1] 例外。[^2]", result);
+        Assert.Contains("[^1]: 需要审核。", result);
+        Assert.Contains("[^2]: 例外见规则。", result);
+        Assert.DoesNotContain("[^3]", result);
+    }
+
+    [Fact]
     public void 不允许模型伪造脚注内容或不存在的片段()
     {
         var evidence = new WebPageAskEvidence("仅未开票订单可申请退款。");

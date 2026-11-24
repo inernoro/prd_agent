@@ -1200,8 +1200,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var thinkingStarted = false; // 调试：标记思考是否已开始
             var contentStarted = false;  // 调试：标记正文是否已开始
 
-            // Intent 模型类型强制禁止思考输出，其他类型尊重请求方设置
-            var effectiveIncludeThinking = IsThinkingEffective(request.IncludeThinking, request.ModelType);
+            // 转发已返回的思考与主动要求上游输出思考独立；Intent 始终不转发。
+            var forwardThinking = IsThinkingEffective(
+                request.IncludeThinking || request.ForwardAvailableThinking, request.ModelType);
 
             // 6.1 手工迭代 SSE 读取器，把 MoveNextAsync 的传输层异常（上游中途断连、读超时等）
             //     转成日志 MarkError + Fail chunk；否则异常冒泡出 StreamAsync，日志保持 running，
@@ -1321,9 +1322,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     continue;
                 }
 
-                // Thinking 类型（来自 reasoning_content 字段）
-                // Gateway 根据 IncludeThinking 决定是否透传给调用方
-                // Intent 模型类型强制禁止思考输出（无论 IncludeThinking 设置如何）
+                // Thinking 类型来自上游单独返回的推理字段。
                 if (chunk.Type == GatewayChunkType.Thinking)
                 {
                     if (!thinkingStarted)
@@ -1335,8 +1334,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     {
                         thinkingBuilder.Append(chunk.Content); // 日志始终记录，无论是否透传
                     }
-                    // 仅在 IncludeThinking=true 且非 Intent 模型类型时透传
-                    if (effectiveIncludeThinking)
+                    if (forwardThinking)
                     {
                         yield return chunk;
                     }
@@ -1353,12 +1351,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     // 通过 ThinkTagStripper 过滤 <think>...</think> 标签
                     var stripped = thinkTagStripper.Process(chunk.Content);
 
-                    // <think> 标签内容：日志始终记录，仅在 effectiveIncludeThinking 时透传
+                    // <think> 标签内容：日志始终记录，按请求转发
                     var capturedThink = thinkTagStripper.PopCapturedThinking();
                     if (!string.IsNullOrEmpty(capturedThink))
                     {
                         thinkingBuilder.Append(capturedThink);
-                        if (effectiveIncludeThinking)
+                        if (forwardThinking)
                         {
                             yield return GatewayStreamChunk.Thinking(capturedThink);
                         }

@@ -78,7 +78,7 @@ export default function AskDock({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const {
     messages, status, phaseMessage, elapsedSeconds, model, gateError,
-    clearGateError, isBusy, ask, cancel, rate,
+    clearGateError, isBusy, ask, retry, cancel, rate,
   } = useAskStream(source);
 
   const [chatWidth, setChatWidth] = useAskWidth();
@@ -616,11 +616,7 @@ export default function AskDock({
               // 访客本来是冲着「登录完接着在这一页问」来的，落到首页等于让他自己找回来。
               window.location.href = `/login?returnUrl=${back}`;
             }}
-            onRetry={() => {
-              // 读不到正文时后端会 RefundAsync 把额度退回来，所以重试是安全的、不烧额度
-              const lastAsked = [...messages].reverse().find((m) => m.role === 'user');
-              if (lastAsked) void ask(lastAsked.content);
-            }}
+            onRetry={retry}
             isBusy={isBusy}
             phaseMessage={phaseMessage}
             elapsedSeconds={elapsedSeconds}

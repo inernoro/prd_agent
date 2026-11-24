@@ -25,8 +25,7 @@ export function AskCitationBadge({ references, notes, sourceTitle }: {
     <a ref={anchor} id={references[0].id} href={references[0].href} className="ask-citation-badge"
       aria-label={`查看「${label}」的 ${sources.length} 处引用`} aria-haspopup="dialog" aria-expanded={open}
       title={`来自当前网页：${label}`} onClick={(event) => { event.preventDefault(); setOpen((value) => !value); }}>
-      <FileText size={11} aria-hidden="true" /><span className="ask-citation-badge-label">{label}</span>
-      {sources.length > 1 && <span className="ask-citation-badge-count">+{sources.length - 1}</span>}
+      {sources[0].label}{sources.length > 1 && <span className="ask-citation-badge-count">+{sources.length - 1}</span>}
     </a>
     {references.slice(1).map((ref) => <span key={ref.id} id={ref.id} hidden />)}
     <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align="right" minWidth={240}

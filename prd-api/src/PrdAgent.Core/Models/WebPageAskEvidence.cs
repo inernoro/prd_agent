@@ -55,7 +55,8 @@ public sealed class WebPageAskEvidence
     {
         // 模型不得自行定义 Markdown 脚注；先转成字面文本，再生成受控脚注。
         var body = MarkdownFootnote.Replace(answer, m => "\\" + m.Value);
-        var used = new List<int>();
+        var used = new List<string>();
+        var excerptNumbers = new Dictionary<string, int>(StringComparer.Ordinal);
         var invalid = false;
         body = Citation.Replace(body, m =>
         {
@@ -64,9 +65,14 @@ public sealed class WebPageAskEvidence
                 invalid = true;
                 return "";
             }
-            var index = used.IndexOf(source);
-            if (index < 0) { index = used.Count; used.Add(source); }
-            return $"[^{index + 1}]";
+            var excerpt = Excerpts[source - 1];
+            if (!excerptNumbers.TryGetValue(excerpt, out var number))
+            {
+                number = used.Count + 1;
+                used.Add(excerpt);
+                excerptNumbers.Add(excerpt, number);
+            }
+            return $"[^{number}]";
         });
 
         var result = new StringBuilder(body.TrimEnd());
@@ -75,7 +81,7 @@ public sealed class WebPageAskEvidence
             result.AppendLine().AppendLine();
             for (var i = 0; i < used.Count; i++)
             {
-                var excerpt = EscapeMarkdown(Excerpts[used[i] - 1]);
+                var excerpt = EscapeMarkdown(used[i]);
                 result.AppendLine($"[^{i + 1}]: {excerpt.Replace("\n", "\n    ")}");
             }
         }
