@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public, map, trim, playback, map-playback, cdn, apple-playback, live-playback, release-test, release-prod]
+        options: [visual, public, map, trim, playback, map-playback, cdn, apple-playback, live-playback, release-test, release-prod, audio-deadline]
         default: visual
       candidate:
         required: true
@@ -885,3 +885,32 @@ jobs:
         with:
           name: release-surface-evidence
           path: evidence
+  verify-audio-deadline:
+    if: inputs.phase == 'audio-deadline'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+          fetch-depth: 2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.28.2'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reproduce the old cutoff and confirm the fixed cue gets its full playback window
+        run: |
+          pnpm -C llmgw/web install --frozen-lockfile
+          scene_path=llmgw/web/src/components/entry/quickstartArrival.ts
+          git show HEAD^:"$scene_path" > "$scene_path"
+          set +e
+          pnpm -C llmgw/web exec node --experimental-strip-types --test --test-name-pattern='设备稍晚恢复' tests/entry-login.test.mjs >/tmp/entry-audio-old.log 2>&1
+          old_status=$?
+          set -e
+          cat /tmp/entry-audio-old.log
+          test "$old_status" -eq 1
+          rg 'The startup deadline cannot interrupt a playing cue' /tmp/entry-audio-old.log
+          git restore -- "$scene_path"
+          pnpm -C llmgw/web exec node --experimental-strip-types --test --test-concurrency=1 tests/entry-login.test.mjs
