@@ -105,11 +105,19 @@ public class ModelUpgradeReconciliationTests
             return hasProof ? new[] { new BsonDocument("_id", "execution") } : [];
         });
 
-        var reconcile = typeof(ModelUpgradeService).GetMethod("ConfirmUnsentBudgetRejectionAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var released = await (Task<bool>)reconcile.Invoke(store.Service, new object[] { store.State, job, "original-request" })!;
-
-        Assert.Equal(hasProof, released);
+        if (hasProof)
+        {
+            store.Actor(true);
+            await store.Service.TickAsync(CancellationToken.None);
+            Assert.Equal("not-run", store.State.ValidationStatus);
+            Assert.Equal("", store.State.PendingAction);
+        }
+        else
+        {
+            var reconcile = typeof(ModelUpgradeService).GetMethod("ConfirmUnsentBudgetRejectionAsync",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            Assert.False(await (Task<bool>)reconcile.Invoke(store.Service, new object[] { store.State, job, "original-request" })!);
+        }
         Assert.Equal(!hasProof, store.State.OutcomeUnknown);
         Assert.Equal(hasProof ? 0 : .05m, store.State.ReservedCostUsd);
         Assert.Equal("original-request", store.State.Candidate!.ValidationRequestId);

@@ -277,7 +277,7 @@ public sealed partial class ModelUpgradeService
         var job = await ValidationRuns.Find(Scope(s.TenantId, F.Eq("_id", id))).FirstOrDefaultAsync(CancellationToken.None);
         var status = job?.GetStringOrEmpty("Status");
         if (job is not null && status == "unknown" && await ConfirmUnsentBudgetRejectionAsync(s, job, id))
-            throw new ModelUpgradeException("CANARY_BUDGET_REJECTED_UNSENT", "网关预算预占拒绝，已确认未发送上游请求并释放内部预占。请核对测试预算后再发起新验收。");
+            throw new ModelUpgradeException("CANARY_EXPIRED_UNSENT", "网关预算预占拒绝，已确认未发送上游请求并释放内部预占。请核对测试预算后再发起新验收。");
         if (job is not null && (status == "pending" && job.AsNullableUtcDateTime("ExpiresAt") < DateTime.UtcNow
             || status == "failed" && (job.GetValue("ExpiredUnsent", false) == true || job.GetValue("UnsentConfirmed", false) == true)))
         {
