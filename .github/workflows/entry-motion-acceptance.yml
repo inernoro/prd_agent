@@ -4,7 +4,7 @@ on:
     inputs:
       phase:
         type: choice
-        options: [visual, public, map, trim, playback, map-playback, cdn, apple-playback, live-playback]
+        options: [visual, public, map, trim, playback, map-playback, cdn, apple-playback, live-playback, release-test, release-prod]
         default: visual
       candidate:
         required: true
@@ -790,4 +790,95 @@ jobs:
         if: always()
         with:
           name: short-entry-published
+          path: evidence
+  published-release-surfaces:
+    if: inputs.phase == 'release-test' || inputs.phase == 'release-prod'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      RELEASE_ENVIRONMENT: ${{ inputs.phase }}
+      RELEASE_COMMIT: ${{ inputs.candidate }}
+      VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate }}
+      - name: Verify public release surfaces and the immutable media bytes
+        run: |
+          mkdir -p evidence
+          if [ "$RELEASE_ENVIRONMENT" = release-prod ]; then
+            python3 scripts/prd-agent-public-surface-smoke.py --base 'https://map.ebcone.net' \
+              --expect-commit "$RELEASE_COMMIT" --attempts 3 --timeout 12 --json-out evidence/production.json
+          fi
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          import urllib.parse, urllib.request
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          def fetch(url):
+              req = urllib.request.Request(url, headers={'Cache-Control': 'no-cache'})
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  return response.headers.get_content_type(), response.read()
+
+          class Entry(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.assets = []
+              def handle_starttag(self, tag, attrs):
+                  fields = dict(attrs)
+                  if tag == 'script' and fields.get('src', '').startswith('/'):
+                      self.assets.append((fields['src'], 'script'))
+                  if tag == 'link' and fields.get('rel') == 'stylesheet' and fields.get('href', '').startswith('/'):
+                      self.assets.append((fields['href'], 'css'))
+
+          def version(response):
+              data = json.loads(response)
+              for item in (data, data.get('data') or {}, data.get('version') or {}):
+                  if isinstance(item,dict) and item.get('commit'):
+                      return item['commit'].removeprefix('sha-')
+
+          target = os.environ['RELEASE_COMMIT']
+          assert re.fullmatch(r'[0-9a-f]{40}', target)
+          if os.environ['RELEASE_ENVIRONMENT']=='release-test':
+              map_origin='https://main-prd-agent.miduo.org'
+              gateway_origin='https://main-prd-agent-llmgw.miduo.org'
+          else:
+              map_origin='https://map.ebcone.net'
+              gateway_origin=map_origin+'/llmgw'
+          checks=[]
+          for surface, root, version_path in [
+              ('MAP',map_origin,'/api/version'),
+              ('Gateway',gateway_origin,'/gw/v1/healthz'),
+          ]:
+              page_url=root+'/login'
+              mime, html=fetch(page_url)
+              assert mime=='text/html', (surface,mime)
+              entry=Entry()
+              entry.feed(html.decode('utf-8',errors='replace'))
+              types={kind for _,kind in entry.assets}
+              assert types=={'script','css'}, (surface,types)
+              for path,kind in entry.assets:
+                  resource=urllib.parse.urljoin(page_url, path)
+                  asset_type, raw=fetch(resource)
+                  assert raw and (asset_type=='text/css' if kind=='css' else 'javascript' in asset_type), (surface,kind,asset_type)
+                  checks.append({'surface':surface,'asset':resource,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()})
+              mime, identity=fetch(root+version_path)
+              actual=version(identity)
+              assert mime=='application/json' and actual==target, (surface,target,actual)
+              checks.append({'surface':surface,'loginUrl':page_url,'runtimeCommit':actual})
+          media_file=Path('e2e/fixtures/media/entry-short-motion.json')
+          if media_file.is_file():
+              for theme, data in json.loads(media_file.read_text()).items():
+                  url=os.environ['VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN'].rstrip('/')+data['path']
+                  mime, raw=fetch(url)
+                  assert mime=='video/mp4' and len(raw)==data['bytes'] and hashlib.sha256(raw).hexdigest()==data['sha256']
+                  checks.append({'media':theme,'bytes':len(raw),'sha256':data['sha256'],'duration':data['durationSeconds']})
+          Path('evidence/surfaces.json').write_text(json.dumps(checks,indent=2))
+          print(json.dumps(checks,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-surface-evidence
           path: evidence
