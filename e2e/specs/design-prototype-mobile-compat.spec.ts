@@ -89,6 +89,9 @@ test('手机设计原型连续刷新、慢加载、失败重试和截图图库',
     }
     expect(topFrameUrls).toEqual(Array.from({ length: 5 }, () => url));
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    const tools = canvas.locator('.dw-canvas-corner .dw-tools');
+    expect(await tools.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+    await expect(canvas.getByLabel('缩放', { exact: true })).toBeHidden();
 
     await canvas.getByRole('button', { name: '切换为深色', exact: true }).tap();
     await expectReady();

@@ -96,7 +96,8 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
             return <li key={step.screen.id}><button type="button" aria-current={step.screen.id === screenId ? 'step' : undefined}
               onClick={() => onScreen(step.screen.id)} title={step.title}>
               <span className="dw-sp-thumb">{image ? <img src={designArtifact(entry.projectId, image)} alt="" loading="lazy" />
-                : <small>{step.screen.viewport === 'phone' ? '手机' : '桌面'}</small>}</span>
+                : <small>{step.screen.viewport === 'phone' ? '手机' : '桌面'}</small>}
+                <b aria-hidden>{steps.indexOf(step) + 1}</b></span>
               <span className="dw-sp-ttitle">{step.title}</span>
             </button></li>;
           })}</ol>

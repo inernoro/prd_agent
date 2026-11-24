@@ -61,6 +61,8 @@
 @media (max-width: 899px) {
   .dw-workspace--canvas > .dw-deliver[data-guided=true] { grid-template-columns: minmax(0, 1fr); }
   .dw-sp, .dw-sp-body { overflow: visible; }
+  .dw-canvas-corner > .dw-canvas-tools > .dw-tools { flex-wrap: wrap; overflow: visible; }
+  .dw-canvas-corner .dw-canvas-zoom { display: none; }
 }
 .dw-sp-group { min-width: 0; margin-block: 9px; }
 .dw-sp-group h4 { margin: 0 0 5px; color: var(--dw-muted); font-size: .8rem; }
@@ -69,10 +71,12 @@
 .dw-sp-thumbs li { min-width: 0; }
 .dw-sp-thumbs button { width: 100%; height: 100%; display: grid; align-content: start; gap: 4px; padding: 3px; text-align: left; color: var(--dw-ink); border: 1px solid var(--dw-line); border-radius: 7px; background: var(--dw-pane); }
 .dw-sp-thumbs button[aria-current=step] { border-color: var(--dw-accent); box-shadow: 0 0 0 1px var(--dw-accent); }
-.dw-sp-thumb { aspect-ratio: 16 / 10; min-width: 0; display: grid; place-items: center; background: var(--dw-sunken); border-radius: 4px; overflow: hidden; }
+.dw-sp-thumb { position: relative; aspect-ratio: 16 / 10; min-width: 0; display: grid; place-items: center; background: var(--dw-sunken); border-radius: 4px; overflow: hidden; }
 .dw-sp-thumb img { width: 100%; height: 100%; object-fit: contain; }
-.dw-sp-ttitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; }
-@media (max-width: 639px) {
-  .dw-sp-thumbs { display: flex; overflow-x: auto; padding: 2px 2px 5px; }
-  .dw-sp-thumbs li { flex: 0 0 108px; }
+.dw-sp-thumb > b { position: absolute; inset: 4px auto auto 4px; min-width: 18px; padding-inline: 4px; border-radius: 9px; text-align: center; background: rgb(0 0 0 / .66); color: white; font-size: 11px; }
+.dw-sp-thumbs button[aria-current=step] .dw-sp-thumb > b { background: var(--dw-accent); color: hsl(var(--primary-foreground)); }
+.dw-sp-ttitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: .8rem; line-height: 1.35; }
+@media (max-width: 899px) {
+  .dw-sp-thumbs { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; padding: 2px 2px 5px; }
+  .dw-sp-thumbs li { flex: 0 0 42%; scroll-snap-align: start; }
 }

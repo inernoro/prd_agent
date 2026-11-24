@@ -269,6 +269,14 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
   const [zoom, setZoom] = useState<number | null>(null);
+  useEffect(() => {
+    if (!cornerTools) return;
+    const mobile = window.matchMedia('(max-width: 899px)');
+    const fit = () => { if (mobile.matches) setZoom(null); };
+    fit();
+    mobile.addEventListener('change', fit);
+    return () => mobile.removeEventListener('change', fit);
+  }, [cornerTools]);
   const [selected, select] = useState(initialScreenId ?? version.demo?.[0]?.screen ?? version.screens[0]?.id);
   const pickScreen = (id: string) => { select(id); onSelectScreen?.(id); };
   const [left, setLeft] = useState(() => entry.versions.find(row => row.version === initialComparisonVersion && row.version !== version.version)?.version
