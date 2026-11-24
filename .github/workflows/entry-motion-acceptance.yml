@@ -12,6 +12,7 @@ permissions:
   contents: read
 env:
   VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+  VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
 concurrency:
   group: entry-motion-${{ github.ref }}-${{ inputs.phase }}
   cancel-in-progress: true

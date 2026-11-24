@@ -1,0 +1,14 @@
+{
+  "dark": {
+    "path": "/data/web-hosting/sites/e630448968ef4057b9e9e9e7145a88da/dark-arrival-v1.mp4",
+    "durationSeconds": 1.6,
+    "bytes": 443708,
+    "sha256": "bdc37c6b1f3bd5f75046fb6531aae87447195188c289d06a653663f37199b60f"
+  },
+  "light": {
+    "path": "/data/web-hosting/sites/e630448968ef4057b9e9e9e7145a88da/light-arrival-v1.mp4",
+    "durationSeconds": 1.6,
+    "bytes": 685919,
+    "sha256": "330fe8c35e47f371158bfb159ee3f2abd52341e207be7274d9d8afaa9bf91ea3"
+  }
+}

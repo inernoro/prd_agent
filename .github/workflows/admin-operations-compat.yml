@@ -82,6 +82,7 @@ jobs:
       - name: Build the actual frontend bundles
         env:
           VITE_ENTRY_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+          VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
         run: |
           pnpm -C cds/web typecheck
           pnpm -C cds/web build
@@ -90,6 +91,7 @@ jobs:
       - name: Verify isolated management operations across browser engines
         env:
           BROWSER_SCENARIO: ${{ inputs.scenario }}
+          VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN: ${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
         run: |
           if [ "$BROWSER_SCENARIO" = "audio" ]; then
             GATEWAY_AUDIO_MONITOR=gateway_acceptance.monitor pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=1

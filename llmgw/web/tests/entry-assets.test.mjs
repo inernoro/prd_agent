@@ -44,6 +44,12 @@ test('日夜各用自己的 CDN 海报与视频，夜景仍与 MAP 入场素材�
   assert.equal(runtime.dark.motion.sha256, night.sha256);
   assert.equal(runtime.dark.open.sha256, night.sourceImages['companion.webp']);
   assert.equal(runtime.dark.closed.sha256, night.sourceImages['companion-sleep.webp']);
+  const shortMedia = readJson('../../../e2e/fixtures/media/entry-short-motion.json');
+  const shortAssets = createPortraitAssets(origin, alternateOrigin);
+  for (const theme of ['dark', 'light']) {
+    assert.equal(shortAssets[theme].shortMotion, alternateOrigin + shortMedia[theme].path);
+  }
+  assert.equal(createMapPortraitAssets(origin, alternateOrigin).shortMotion, shortAssets.dark.shortMotion);
   const geometry = file => readFileSync(new URL(file, import.meta.url));
   assert.deepEqual(geometry('../src/components/entry/portraitGeometry.ts'), geometry('../../../prd-admin/src/components/effects/portraitGeometry.ts'));
 });
