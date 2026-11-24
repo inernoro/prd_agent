@@ -77,6 +77,7 @@ public static class LogTraceEndpoints
             var docs = await logs.Find(related).Project(projection)
                 .Sort(Builders<BsonDocument>.Sort.Ascending("StartedAt").Ascending("_id"))
                 .Skip((p - 1) * size).Limit(size).ToListAsync(http.RequestAborted);
+            await LogAppCallerNames.FillMissingAsync(http, docs, logs.Database, mapDatabase, internalTenantId);
             object? business = null;
             var access = TenantAccess.GetRequired(http);
             if (access.TenantId == internalTenantId && LogTraceQuery.Text(anchor, "RunId") is { Length: > 0 } runId)

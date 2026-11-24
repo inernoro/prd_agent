@@ -5,7 +5,7 @@ import { getLogTrace } from '@/lib/api';
 import type { LogTraceData } from '@/lib/types';
 import { DetailsBlock } from '@/components/PageShell';
 import { Button, Card, Spinner } from '@/components/ui';
-import { fmtCost, fmtDate } from '@/lib/logsHelpers';
+import { appDisplayName, fmtCost, fmtDate } from '@/lib/logsHelpers';
 import './LogTracePage.css';
 
 const operations: Record<string, string> = { invoke: '调用', submit: '提交作业', status: '查询作业', download: '下载产物', cancel: '取消作业', probe: '探测' };
@@ -74,7 +74,7 @@ export function LogTracePage() {
         const log = item.log;
         return <article key={log.id} className="lg-trace-record">
           <h2>{operations[log.operation || 'invoke'] || log.operation} · {item.evidenceGap ? '结果待核实（历史 running）' : statuses[log.status] || log.status} <Link to={buildLogDetailHref(log.id, { ...context, traceReference: reference, traceAnchor: anchorId, tracePage: String(page) })}>查看详情</Link></h2>
-          <p>{fmtDate(log.startedAt)} · {log.appCallerCodeDisplayName || log.appCallerCode || '调用用途未知'} · {log.model}</p>
+          <p title={log.appCallerCode || undefined}>{fmtDate(log.startedAt)} · {appDisplayName(log)} · {log.model}</p>
           {log.error ? <p className="lg-trace-failure">失败原因：{log.error}</p> : null}
           {item.evidenceGap ? <p className="lg-trace-failure">{item.evidenceGap}</p> : null}
           {item.lifecycleReason ? <p>收口依据：{item.lifecycleReason}</p> : null}

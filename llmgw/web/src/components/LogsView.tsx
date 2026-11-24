@@ -924,25 +924,26 @@ export function LogsView() {
         );
       }
       case 'app': {
-        const title = `应用：${appDisplayName(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
         const code = it.appCallerCode?.trim();
+        const name = appDisplayName(it);
+        const title = [name, code, it.clientCode && `调用身份：${it.clientCode}`, it.environment].filter(Boolean).join(' · ');
         if (!code) {
-          return <span className="lg-log-entity" title={title}><AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{appDisplayName(it)}</span></span>;
+          return <span className="lg-log-entity" title={title}><AppEntityIcon app={name} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{name}</span></span>;
         }
         return (
           <LogEntityHoverCard
             href={appDetailsHref(code, it.requestType, { ...listContext, selectedLogId: it.id })}
-            label={appDisplayName(it)}
+            label={name}
             subtitle={[code, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
             description={it.clientCode
               ? `调用身份 ${it.clientCode}。进入详情可查看模型路由、预算、速率治理与最近请求。`
               : '进入详情可查看调用身份、模型路由、预算、速率治理与最近请求。'}
             actionLabel="查看 App"
-            icon={<AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} size="lg" />}
+            icon={<AppEntityIcon app={name} sourceSystem={it.sourceSystem} size="lg" />}
           >
             <span className="lg-log-entity" title={title}>
-              <AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} />
-              <span className="lg-truncate">{appDisplayName(it)}</span>
+              <AppEntityIcon app={name} sourceSystem={it.sourceSystem} />
+              <span className="lg-truncate">{name}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -1091,19 +1092,21 @@ export function LogsView() {
             {it.sessionId || DASH}
           </span>
         );
-      case 'app':
+      case 'app': {
+        const name = appDisplayName(it);
         return it.appCallerCode ? (
           <LogEntityHoverCard
             href={appDetailsHref(it.appCallerCode, undefined, listContext)}
-            label={it.appCallerCode}
-            subtitle="会话调用 App"
+            label={name}
+            subtitle={it.appCallerCode}
             description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"
             actionLabel="查看 App"
-            icon={<AppEntityIcon app={it.appCallerCode} size="lg" />}
+            icon={<AppEntityIcon app={name} size="lg" />}
           >
-            <span className="lg-log-entity"><AppEntityIcon app={it.appCallerCode} /><span className="lg-truncate">{it.appCallerCode}</span></span>
+            <span className="lg-log-entity" title={it.appCallerCode}><AppEntityIcon app={name} /><span className="lg-truncate">{name}</span></span>
           </LogEntityHoverCard>
         ) : <span className="lg-log-app-label">{DASH}</span>;
+      }
       case 'primaryModel':
         return it.primaryModel ? (
           <LogEntityHoverCard

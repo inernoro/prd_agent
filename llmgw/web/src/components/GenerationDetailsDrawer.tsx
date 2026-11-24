@@ -748,7 +748,7 @@ export function GenerationDetailsDrawer({
                   <section>
                     <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>身份与时间</div>
                     <Row k="appCallerCode" v={detail.appCallerCode} mono />
-                    <Row k="业务标题" v={detail.appCallerTitle || detail.appCallerCodeDisplayName} />
+                    <Row k="调用方名称" v={appDisplayName(detail)} />
                     <Row k="团队" v={detail.teamId} mono />
                     <Row k="Client code" v={detail.clientCode} mono />
                     <Row k="环境" v={detail.environment} />

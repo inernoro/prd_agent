@@ -657,6 +657,7 @@ public sealed class SessionItem
     public string? Start { get; set; }
     public string? End { get; set; }
     public string? AppCallerCode { get; set; }
+    public string? AppCallerCodeDisplayName { get; set; }
     public string? PrimaryModel { get; set; }
     public string? PrimaryProvider { get; set; }
     public List<string> SupportingModels { get; set; } = new();
