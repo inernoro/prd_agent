@@ -48,6 +48,7 @@ export async function verifyEngineeringPlanningApproval(browser, base) {
       } });
       if (pathname === boardPath && request.method() === 'GET') return route.fulfill({ json: {
         ...resolveFixture(boardPath), permissions: ['read', 'write', 'approve'],
+        timeline: { debts: [], debtEvents: [] },
         proposals: [accepted ? acceptedProposal : proposal], plans: accepted ? [plan, finishedPlan] : [finishedPlan],
       } });
       if (pathname === commandPath && request.method() === 'POST') {
@@ -66,6 +67,7 @@ export async function verifyEngineeringPlanningApproval(browser, base) {
     page.setDefaultTimeout(10000);
     await page.goto(`${origin}/project-list`);
     await page.getByRole('link', { name: '工程规划', exact: true }).click();
+    await page.getByRole('navigation', { name: '决策视图', exact: true }).getByRole('button', { name: /^推进/ }).click();
     const pending = page.getByRole('region', { name: '待你确认', exact: true });
     const heading = pending.getByRole('heading', { name: draft.title, exact: true });
     await heading.waitFor();

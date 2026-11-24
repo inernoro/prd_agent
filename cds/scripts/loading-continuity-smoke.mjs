@@ -12,7 +12,7 @@ import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup
 import { verifyEngineeringPlanningRefresh } from './engineering-planning-refresh-smoke.mjs';
 import { verifyEngineeringPlanningDetail } from './engineering-planning-detail-smoke.mjs';
 import { verifyEngineeringPlanningApproval } from './engineering-planning-approval-smoke.mjs';
-import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
+import { FIXTURE_PROJECT_ID, resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const base = process.argv.find(a => /^http/.test(a)) ?? 'http://127.0.0.1:8870';
@@ -49,7 +49,8 @@ try {
     const chunk = path.basename(scene.page, '.tsx');
     await context.route(`**/assets/${chunk}-*.js`, async route => { await code.promise; await route.continue(); });
     await context.route('**/api/**', async route => {
-      const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
+      const requestUrl = new URL(route.request().url());
+      const p = requestUrl.pathname.replace(/^\/_cds/, '');
       if (isEventStream(p) || p === '/api/activity-stream') return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
       if (p === '/api/auth/status') {
         authRequests++;
@@ -58,6 +59,9 @@ try {
       }
       if (!p.startsWith('/api/auth/')) { requests.push(p); await data.promise; }
       let payload = resolveFixture(p) ?? {};
+      if (p === `/api/projects/${FIXTURE_PROJECT_ID}/planning` && requestUrl.searchParams.get('timeline') === '1') {
+        payload = { ...payload, timeline: { debts: [], debtEvents: [] } };
+      }
       if (scene.kind === 'release-center' && p === '/api/releases/center') payload = { ...payload, rows: [] };
       if (p === '/api/auth/sso/config') payload = { enabled: false, providerId: 'fixture', label: '使用 SSO 登录', authorizationUrl: '', tokenUrl: '', clientId: '', defaultRedirect: '/project-list', hasClientSecret: false };
       if (p === '/api/reports/overview') payload = {overview:{window:{from:'2026-10-01',to:'2026-11-01',days:30,previousFrom:'2026-09-01'},headline:{status:'untested',statusLabel:'尚无记录',sentence:'合成空结果',supports:[]},releaseGate:{state:'unknown',reason:'尚无记录',latest:null,lastPass:null},totals:{archived:0,folded:0,counted:0,pass:0,conditional:0,fail:0,undetermined:0,previous:{counted:0,pass:0,conditional:0,fail:0,undetermined:0}},passRate:{kind:'acceptance',numerator:0,denominator:0,rate:null,previous:{numerator:0,denominator:0,rate:null}},kinds:[],clusters:[],daily:[],mergeCoverage:{items:[],counts:{verified:0,conditional:0,failed:0,unverified:0}},reports:[],supersededReports:[]}};
@@ -150,6 +154,12 @@ try {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();
       }
       if (!before && scene.kind === 'engineering-planning') {
+        await page.getByRole('region', { name: '工程规划时间线', exact: true }).waitFor();
+        const views = page.getByRole('navigation', { name: '决策视图', exact: true });
+        const timeline = views.getByRole('button', { name: '时间线', exact: true });
+        assert.equal(await timeline.getAttribute('aria-pressed'), 'true');
+        assert.equal(await views.getByRole('button').first().textContent(), await timeline.textContent());
+        await views.getByRole('button', { name: /^推进/ }).click();
         await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
         await page.getByRole('button', { name: /债务分支\s*未还 0 笔/ }).waitFor();
         result.debtMutationRefresh = await verifyEngineeringPlanningRefresh(browser, base, out);
