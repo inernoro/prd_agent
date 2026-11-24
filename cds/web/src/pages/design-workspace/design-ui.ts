@@ -43,14 +43,14 @@ export function designFailureGroups(version: DesignVersion) {
 export function designStatus(entry: DesignEntry): keyof typeof statusNames {
   if (entry.reviewRequested) return 'review';
   const run = currentDesignRun(entry);
-  if (run?.signed && (entry.currentSignoffRunId === undefined || entry.currentSignoffRunId === run.id)) return 'passed';
+  if (run?.signed && run.version === latestDesign(entry).version
+    && (entry.currentSignoffRunId === undefined || entry.currentSignoffRunId === run.id)) return 'passed';
   if (failedBaseline(entry) !== undefined) return 'failed';
   return 'draft';
 }
 
 export function failedBaseline(entry: DesignEntry): number | undefined {
-  if (entry.frozen === undefined || !entry.pullRequest) return;
-  const run = entry.runs.filter(row => row.version === entry.frozen && row.pullRequest === entry.pullRequest).at(-1);
+  const run = currentDesignRun(entry);
   return run?.verdict === 'failed' ? run.version : undefined;
 }
 

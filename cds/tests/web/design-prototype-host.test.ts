@@ -45,7 +45,8 @@ type Message = { origin: string; data: Envelope };
 type HostWindow = Window & { prototypeHostMessages: Message[] };
 
 const scenes: DesignScreen[] = (['security', 'slow', 'details', ...recoveryCases] as const).map(id => ({
-  id, name: id, route: `#${id}`, viewport: 'desktop', themes: ['light', 'dark'], impl: null,
+  id, name: id, route: `#/${id}`, viewport: 'desktop', themes: ['light', 'dark'], impl: null,
+  entryReadySelector: 'h1',
   ...(id === 'security' ? {} : {
     entryActions: [id === 'details' ? '#fixture-first-summary'
       : id === 'control-unavailable' ? '#missing-fixture-entry' : '#open-fixture-entry'],
@@ -64,7 +65,7 @@ const prototype = `<!doctype html><html><head><meta charset="utf-8"></head><body
   </details>
   <summary id="fixture-orphan-summary">Unrelated heading</summary>
   <script>
-    const scene = location.hash.slice(1);
+    const scene = location.hash.slice(location.hash.startsWith('#/') ? 2 : 1);
     for (const summary of document.querySelectorAll('summary')) {
       summary.addEventListener('click', () => {
         summary.dataset.clicks = String(Number(summary.dataset.clicks || 0) + 1);
@@ -180,8 +181,14 @@ describe('prototype host in Chromium', () => {
     if (!address || typeof address === 'string') throw new Error('Missing loopback prototype host');
     origin = `http://127.0.0.1:${address.port}`;
     const archive = buildZip([
-      { name: 'design.json', data: JSON.stringify({ project: projectId, title: 'Synthetic prototype host', screens: scenes }) },
-      { name: '思路.md', data: 'Exercise the embedded prototype with synthetic data.' },
+      { name: 'design.json', data: JSON.stringify({ project: projectId, title: 'Synthetic prototype host', screens: scenes,
+        prototypeVersion: 1, date: '2026-01-01', notes: '', rationale: '思路.md', prototype: 'dist/index.html',
+        checks: 'checks/result.json', docs: [], acceptance: [] }) },
+      { name: '思路.md', data: '# Synthetic prototype host（V1）\n\nExercise the embedded prototype with synthetic data.' },
+      { name: '交付说明.md', data: '# Synthetic prototype host（V1）\n\nOpen each scene in the isolated prototype host.' },
+      { name: 'checks/result.json', data: JSON.stringify({ total: 0, passed: 0, items: [] }) },
+      { name: 'versions.json', data: JSON.stringify({ versions: [] }) },
+      { name: 'changes/index.json', data: JSON.stringify({ to: 1, from: [] }) },
       { name: 'dist/index.html', data: prototype },
       { name: 'screens/prototype-error.light.png', data: fixtureScreenshot() },
     ]);

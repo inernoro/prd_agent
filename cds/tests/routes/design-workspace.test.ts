@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
 import path from 'node:path';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
@@ -17,6 +17,12 @@ import { StateService } from '../../src/services/state.js';
 import { feedbackSummary } from '../../src/shared/design-feedback.js';
 import type { DesignFrameworkMeasurement } from '../../src/shared/design-workspace.js';
 import { buildZip, crc32 } from '../../src/utils/zip.js';
+
+// Keep the original archive bytes in compatibility fixtures. The publication gate suite exercises the actual strict service and HTTP route.
+vi.mock('../../src/services/design-publication-gate.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../src/services/design-publication-gate.js')>(),
+  validateDesignPublicationGate: () => undefined,
+}));
 
 const projectId = 'fixture-design-a';
 const otherProjectId = 'fixture-design-b';
@@ -95,6 +101,8 @@ describe('private CDS design workspace', () => {
   let base: string;
   let activeCommit: string;
   let activePreviewUrl: string;
+  let installedCommit: string;
+  let installedUrl: string;
   let clock: string;
   let approvedPlanVersion: number;
   let service: DesignWorkspaceService;
@@ -112,7 +120,7 @@ describe('private CDS design workspace', () => {
     return { sourceCommit, sourcePath };
   }
 
-  function openWorkspace(planning?: EngineeringPlanningService) {
+  function openWorkspace(planning?: EngineeringPlanningService, storeDirectory = directory) {
     const dependencies = {
       now: () => new Date(clock),
       approvedPlanFor: async (project: string, plan: string) => project === projectId && plan === 'PLN-approved'
@@ -120,6 +128,8 @@ describe('private CDS design workspace', () => {
       frameworkProbe: async () => frameworkMeasurements,
       resolvePreview: async (project: string, pr: number, commit?: string) => project === projectId && [7, 8].includes(pr) && (!commit || commit === activeCommit)
         ? { commit: activeCommit, url: pr === 7 ? activePreviewUrl : 'https://preview.fixture.test/other/' } : undefined,
+      resolveInstalled: async (project: string, commit?: string) => project === projectId && (!commit || commit === installedCommit)
+        ? { commit: installedCommit, url: installedUrl } : undefined,
       sourcePackage: async (project: string, sha: string, sourcePath: string) => {
         sourceLookups++;
         return sources.get(sourceKey(project, sha, sourcePath))
@@ -132,7 +142,7 @@ describe('private CDS design workspace', () => {
         }
       },
     };
-    return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(directory), {
+    return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(storeDirectory), {
       ...dependencies,
       ...(planning ? {
         findDebt: async (project, debtId, sourceRef) => await planning.designAcceptanceDebt(project, debtId, sourceRef) === debtId,
@@ -180,6 +190,8 @@ describe('private CDS design workspace', () => {
     directory = await mkdtemp(path.join(tmpdir(), 'cds-design-test-'));
     activeCommit = previewCommit;
     activePreviewUrl = previewUrl;
+    installedCommit = 'c'.repeat(40);
+    installedUrl = 'https://cds.fixture.test/';
     clock = '2026-11-21T09:05:00.000Z';
     approvedPlanVersion = 2;
     revokedReviewers = new Set();
@@ -1150,7 +1162,7 @@ describe('private CDS design workspace', () => {
     expect(commits).toHaveLength(2);
   });
 
-  it('only lets an assigned human reviewer freeze the latest version and inherits reviewers on publish', async () => {
+  it('only lets an assigned human reviewer freeze a version and inherits reviewers on publish', async () => {
     const published = await publish('assign-first', draft(), { reviewerIds: JSON.stringify(['author']) });
     expect(published.status).toBe(201);
     const { designId } = (await published.json()).result;
@@ -1175,6 +1187,253 @@ describe('private CDS design workspace', () => {
     expect((await command('design.freeze', freeze)).status).toBe(409);
     expect((await command('design.freeze', { designId, version: 2 })).status).toBe(201);
     expect(await row()).toMatchObject({ frozen: 2 });
+  });
+
+  describe('implementation version lifecycle', () => {
+    async function releaseVersion(designId: string, version: number) {
+      const result = await publish(`prepare-lifecycle-v${version}`, draft(`Fixture V${version}`), {
+        designId, sourceCommit: String(version).repeat(40),
+      });
+      expect(result.status).toBe(201);
+      expect((await result.json()).result.version).toBe(version);
+    }
+
+    async function entry() {
+      return (await (await get()).json()).designs[0];
+    }
+
+    it('moves the baseline directly across versions and requires a recorded reason for a historical target', async () => {
+      const { designId } = (await (await publish('prepare-lifecycle-v1', draft())).json()).result;
+      expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+      await releaseVersion(designId, 2);
+      await releaseVersion(designId, 3);
+
+      expect((await command('design.freeze', { designId, version: 3, expectedBaseline: 2 })).status).toBe(409);
+      expect((await entry()).frozen).toBe(1);
+      expect((await command('design.freeze', { designId, version: 3, expectedBaseline: 1 })).status).toBe(201);
+      expect((await entry()).implementedVersion).toBeUndefined();
+      const rollback = { designId, version: 2, expectedBaseline: 3 };
+      expect((await command('design.freeze', rollback)).status).toBe(409);
+      const reason = 'Restore the previous release while verifying the issue';
+      expect((await command('design.freeze', { ...rollback, reason }, 'designer')).status).toBe(403);
+      expect((await command('design.freeze', { ...rollback, reason })).status).toBe(201);
+      expect(await entry()).toMatchObject({ frozen: 2, freezes: [
+        { version: 1 }, { version: 3 }, { version: 2, by: 'Fixture reviewer', at: clock, reason },
+      ] });
+      expect((await entry()).implementedVersion).toBeUndefined();
+    });
+
+    it('lets the pinned target sign after a revision and preserves the result across restart and replay', async () => {
+      const { designId, runId } = await runWithScreenshot();
+      const initial = await entry();
+      expect(initial.implementedVersion).toBeUndefined();
+      expect(initial.upgrade).toMatchObject({ targetVersion: 1, status: 'active' });
+      await releaseVersion(designId, 2);
+      expect((await entry()).frozen).toBe(1);
+      expect((await command('acceptance.start', { designId, version: 2, pullRequest: 7 })).status).toBe(409);
+
+      const signoff = { designId, runId };
+      expect((await command('acceptance.sign', signoff, 'designer')).status).toBe(403);
+      const sign = () => command('acceptance.sign', signoff, 'author', 'lifecycle-sign-v1');
+      const concurrent = await Promise.all([sign(), sign()]);
+      expect(concurrent.map(response => response.status).sort()).toEqual([200, 201]);
+      const signed = concurrent.find(response => response.status === 201)!;
+      const receipt = await signed.json();
+      const completed = { frozen: 1, implementedVersion: 1, versionGap: { direction: 'aligned', count: 0 },
+        runs: [{ id: runId, signed: { by: 'author' } }],
+        upgrade: { id: initial.upgrade.id, targetVersion: 1, status: 'completed', signoffRunId: runId, completedAt: clock } };
+      expect(await entry()).toMatchObject(completed);
+
+      const restarted = await openApi(openWorkspace());
+      const replay = await fetch(`${restarted}${projectId}/design/commands`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-fixture-user': 'author' },
+        body: JSON.stringify({ type: 'acceptance.sign', requestId: 'lifecycle-sign-v1', ...signoff }),
+      });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toEqual({ ...receipt, reused: true });
+      const restored = await (await fetch(`${restarted}${projectId}/design`, { headers: { 'x-fixture-user': 'author' } })).json();
+      expect(restored.designs[0]).toMatchObject(completed);
+      expect((await command('acceptance.sign', signoff)).status).toBe(409);
+      expect(await entry()).toMatchObject(completed);
+      const revisions = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
+      expect(revisions.filter(revision => revision.design?.run?.signed)).toHaveLength(1);
+    });
+
+    it('locks the latest version when work starts and requires cancellation before changing the target', async () => {
+      const { designId } = (await (await publish('prepare-lifecycle-v1', draft())).json()).result;
+      expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+      await releaseVersion(designId, 2);
+      await releaseVersion(designId, 3);
+
+      expect((await command('implementation.start', { designId, expectedBaseline: 1 }, 'designer')).status).toBe(403);
+      expect((await command('implementation.start', { designId, expectedBaseline: 2 })).status).toBe(409);
+      expect((await command('implementation.start', { designId, expectedBaseline: 1 })).status).toBe(201);
+      const { upgrade } = await entry();
+      expect(typeof upgrade.id).toBe('string');
+      expect(upgrade).toMatchObject({ targetVersion: 3, status: 'active', startedAt: clock });
+      expect(upgrade.fromVersion).toBeUndefined();
+      expect(await entry()).toMatchObject({ frozen: 3, freezes: [{ version: 1 }, { version: 3 }] });
+      await releaseVersion(designId, 4);
+
+      expect((await command('implementation.start', { designId })).ok).toBe(true);
+      expect((await command('implementation.start', { designId, version: 4 })).status).toBe(409);
+      expect((await command('design.freeze', { designId, version: 4 })).status).toBe(409);
+      expect((await command('design.unfreeze', { designId, version: 3 })).status).toBe(409);
+      expect(await entry()).toMatchObject({ frozen: 3, upgrade });
+
+      const reason = 'Stop this implementation and start from the newly reviewed design';
+      const cancel = { designId, upgradeId: upgrade.id, reason };
+      expect((await command('implementation.cancel', cancel, 'designer')).status).toBe(403);
+      expect((await command('implementation.cancel', { ...cancel, reason: '' })).status).toBe(400);
+      expect((await command('implementation.cancel', cancel)).status).toBe(201);
+      expect(await entry()).toMatchObject({ frozen: 3, upgrade: { ...upgrade, status: 'cancelled', reason } });
+      expect((await command('implementation.start', { designId, expectedBaseline: 3 })).status).toBe(201);
+      const current = await entry();
+      expect(current).toMatchObject({ frozen: 4, upgrade: { status: 'active', targetVersion: 4 } });
+      expect(current.upgrade.id).not.toBe(upgrade.id);
+      expect((await command('implementation.cancel', cancel)).status).toBe(409);
+    });
+
+    it('derives version distance and preserves the last signed version through a failed sign and a rollback', async () => {
+      const { designId, runId, record } = await runWithScreenshot();
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
+      await releaseVersion(designId, 2);
+      await releaseVersion(designId, 3);
+      expect((await command('implementation.start', { designId, expectedBaseline: 1 })).status).toBe(201);
+      expect(await entry()).toMatchObject({ frozen: 3, implementedVersion: 1, versionGap: { direction: 'behind', count: 2 },
+        upgrade: { fromVersion: 1, targetVersion: 3, status: 'active' } });
+      const intake = await (await get('/intake', 'read-designer')).json();
+      expect(intake.designs[0]).toMatchObject({ latestVersion: 3, baselineVersion: 3, implementedVersion: 1,
+        versionGap: { direction: 'behind', count: 2 }, upgrade: { targetVersion: 3, status: 'active' } });
+
+      const startRun = async (version: number) => {
+        const start = await command('acceptance.start', { designId, version, pullRequest: 7 });
+        expect(start.status).toBe(201);
+        const latest = (await start.json()).result.runId;
+        expect((await command('acceptance.record', { ...record, runId: latest, commit: activeCommit })).status).toBe(201);
+        return latest;
+      };
+
+      activeCommit = 'd'.repeat(40);
+      const forwardRunId = await startRun(3);
+      activePreviewUrl = `${previewUrl}moved/`;
+      expect((await command('acceptance.sign', { designId, runId: forwardRunId })).status).toBe(409);
+      expect(await entry()).toMatchObject({ implementedVersion: 1, upgrade: { status: 'active' } });
+      activePreviewUrl = previewUrl;
+      expect((await command('acceptance.sign', { designId, runId: forwardRunId, implementedVersion: 2 })).status).toBe(400);
+      expect((await command('acceptance.sign', { designId, runId: forwardRunId })).status).toBe(201);
+      expect(await entry()).toMatchObject({ implementedVersion: 3, versionGap: { direction: 'aligned', count: 0 } });
+
+      const rollback = { designId, version: 1, expectedBaseline: 3, reason: 'Recover the signed V1 implementation' };
+      expect((await command('design.freeze', rollback)).status).toBe(201);
+      expect(await entry()).toMatchObject({ frozen: 1, implementedVersion: 3, versionGap: { direction: 'ahead', count: 2 } });
+      activeCommit = previewCommit;
+      expect((await entry()).currentSignoffRunId).toBeFalsy();
+      activeCommit = 'e'.repeat(40);
+      const rollbackRunId = await startRun(1);
+      expect((await command('acceptance.sign', { designId, runId: rollbackRunId })).status).toBe(201);
+      expect(await entry()).toMatchObject({ frozen: 1, implementedVersion: 1, versionGap: { direction: 'aligned', count: 0 },
+        upgrade: { fromVersion: 3, targetVersion: 1, status: 'completed', signoffRunId: rollbackRunId },
+        runs: [{ id: runId, signed: { by: 'author' } }, { id: forwardRunId, signed: { by: 'author' } }, { id: rollbackRunId, signed: { by: 'author' } }] });
+    });
+
+    it('keeps the baseline while cancellation invalidates the discarded run, even when restarting the same target', async () => {
+      const { designId, runId, record } = await runWithScreenshot();
+      const { upgrade } = await entry();
+      expect(upgrade).toMatchObject({ targetVersion: 1, status: 'active' });
+      expect((await command('implementation.cancel', { designId, upgradeId: upgrade.id, reason: 'Discard this attempt' })).status).toBe(201);
+      expect(await entry()).toMatchObject({ frozen: 1, upgrade: { status: 'cancelled' } });
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
+      expect((await command('implementation.start', { designId, version: 1 })).status).toBe(201);
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
+      expect((await command('acceptance.record', record)).status).toBe(409);
+      expect((await entry()).implementedVersion).toBeUndefined();
+    });
+
+    it('uses an existing signed run from legacy revisions without inventing an upgrade record', async () => {
+      const { designId, runId } = await runWithScreenshot();
+      const currentStore = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
+      const legacyDirectory = path.join(directory, 'legacy');
+      const legacyStore = new FileProjectRevisionStore<DesignWorkspaceCommit>(legacyDirectory);
+      const revisions = await currentStore.read(projectId, 0);
+      for (const revision of revisions) {
+        const oldRevision = structuredClone(revision);
+        if (oldRevision.design) {
+          Reflect.deleteProperty(oldRevision.design, 'upgrade');
+          Reflect.deleteProperty(oldRevision.design, 'implementedVersion');
+          if (oldRevision.design.run) Reflect.deleteProperty(oldRevision.design.run, 'upgradeId');
+        }
+        expect(await legacyStore.append(oldRevision)).toBe(true);
+      }
+      const { runs: [run] } = await entry();
+      Reflect.deleteProperty(run, 'upgradeId');
+      expect(await legacyStore.append({ projectId, revision: revisions.length + 1,
+        request: { key: 'legacy-signature', fingerprint: 'legacy-run', result: { type: 'acceptance.sign', designId, runId } },
+        design: { id: designId, run: { ...run, signed: { by: 'author', at: clock, verdict: 'passed' } } },
+      })).toBe(true);
+      const reopened = await openApi(openWorkspace(undefined, legacyDirectory));
+      const restored = await (await fetch(`${reopened}${projectId}/design`, { headers: { 'x-fixture-user': 'author' } })).json();
+      expect(restored.designs[0]).toMatchObject({ frozen: 1, implementedVersion: 1, versionGap: { direction: 'aligned', count: 0 },
+        currentSignoffRunId: runId, runs: [{ id: runId, signed: { by: 'author', at: clock } }] });
+      expect(restored.designs[0].upgrade).toBeUndefined();
+    });
+  });
+
+  it('compares authored manifests in either direction and ignores transient revisions and generated differences', async () => {
+    const screen = (id: string, name: string) => ({ id, name, route: `#/${id}`, viewport: 'desktop', themes: ['light'] });
+    const rule = (id: string, screenId: string, expected: string) => ({ id, rule: 'Render content', how: 'human',
+      slots: ['desktop-light'], screenId, expected });
+    const members = screen('members', 'Members');
+    const oldView = screen('old', 'Obsolete');
+    const transient = screen('transient', 'Intermediate only');
+    const baselineRule = rule('A-01', 'members', 'The prior layout renders');
+    const obsoleteRule = rule('A-02', 'old', 'The old table renders');
+    const pack = (screens: ReturnType<typeof screen>[], acceptance: ReturnType<typeof rule>[], files: Record<string, string>) =>
+      draft('Version diff fixture', { screens, acceptance, source: 'src/' }, Object.entries(files)
+        .map(([name, contents]) => ({ name: `bundle/${name}`, data: Buffer.from(contents) })));
+    const fromFiles = { 'src/update.css': 'h1 { margin: 1rem }', 'src/old.ts': '// Removed later' };
+    const toFiles = { 'src/update.css': 'h1 { margin: 2rem }', 'src/new.ts': '// Added in final draft', 'changes/v1-v3/summary.json': '{}' };
+    const first = await publish('diff-v1', pack([members, oldView], [baselineRule, obsoleteRule], fromFiles));
+    expect(first.status).toBe(201);
+    const { designId } = (await first.json()).result;
+    expect((await publish('diff-v2', pack([members, oldView, transient], [baselineRule, obsoleteRule, rule('A-03', 'transient', 'Transient')],
+      { ...fromFiles, 'src/transient.ts': '// Intermediate only' }), { designId, sourceCommit: 'c'.repeat(40) })).status).toBe(201);
+    const final = pack([{ ...members, name: 'Project members' }, screen('review', 'Review')],
+      [{ ...baselineRule, expected: 'The current layout renders' }, rule('A-04', 'review', 'The review loads')], toFiles);
+    expect((await publish('diff-v3', final, { designId, sourceCommit: 'd'.repeat(40) })).status).toBe(201);
+    expect((await command('implementation.bind', { designId, version: 3, screens: [
+      { screenId: 'members', path: '/implementation/', readySelector: 'h1' },
+    ] })).status).toBe(201);
+
+    const compare = (from: number, to: number, actor = 'read-designer', project = projectId) =>
+      get(`/diff?${new URLSearchParams({ designId, from: String(from), to: String(to) })}`, actor, project);
+    const forward = await compare(1, 3);
+    expect(forward.status).toBe(200);
+    const result = await forward.json();
+    expect(result).toMatchObject({ fromVersion: 1, toVersion: 3, direction: 'upgrade',
+      screens: { added: [{ id: 'review' }], removed: [{ id: 'old' }], changed: [
+        { id: 'members', fields: ['name'], from: { name: 'Members' }, to: { name: 'Project members' } },
+      ] },
+      acceptance: { added: [{ id: 'A-04' }], removed: [{ id: 'A-02' }], changed: [
+        { id: 'A-01', fields: ['expected'], from: { expected: 'The prior layout renders' }, to: { expected: 'The current layout renders' } },
+      ] },
+      sourcePaths: ['src/new.ts', 'src/old.ts', 'src/update.css'],
+    });
+    expect(result.files.added.map((row: { path: string }) => row.path)).toEqual(['src/new.ts']);
+    expect(result.files.removed.map((row: { path: string }) => row.path)).toEqual(['src/old.ts']);
+    const inverse = await (await compare(3, 1)).json();
+    expect(inverse).toMatchObject({ direction: 'rollback', fromVersion: 3, toVersion: 1 });
+    for (const key of ['screens', 'acceptance', 'files']) {
+      expect(inverse[key].added).toEqual(result[key].removed);
+      expect(inverse[key].removed).toEqual(result[key].added);
+      expect(inverse[key].changed).toEqual(result[key].changed.map((row: { from: unknown; to: unknown }) => ({ ...row, from: row.to, to: row.from })));
+    }
+    const same = await (await compare(3, 3)).json();
+    expect(same).toMatchObject({ direction: 'same', fromVersion: 3, toVersion: 3, sourcePaths: [] });
+    for (const key of ['screens', 'acceptance', 'files']) expect(same[key]).toEqual({ added: [], removed: [], changed: [] });
+    expect((await compare(1, 7)).status).toBe(404);
+    expect((await compare(1, 3, 'outside')).status).toBe(404);
+    expect((await compare(1, 3, 'author', otherProjectId)).status).toBe(404);
   });
 
   it('only lets publishers or stewards request review and checks the current assignment after replacement', async () => {
@@ -2144,6 +2403,70 @@ describe('private CDS design workspace', () => {
     });
   });
 
+  describe('V17 客观验收门禁', () => {
+    const notApplicable = { applicable: false, reason: '隔离夹具只覆盖验收方法的回填和签收。' };
+
+    it('accepts default coverage and requires opt-in before a flow can affect signoff', async () => {
+      const bytes = draft('客观验收夹具', { acceptanceMode: 'objective',
+        acceptancePlan: { compare: notApplicable, visual: notApplicable, human: { applicable: true } },
+        risks: ['compatibility', 'performance', 'security', 'operations', 'experience'].map(dimension => ({
+          dimension, risk: '这个夹具只检查数据能否打开。', ruleIds: [], reason: '单一合成流程不覆盖该维度。',
+        })) });
+      const { designId, runId } = await runWithScreenshot(bytes);
+      const read = async () => (await (await get()).json()).designs[0];
+      const run = { designId, runId, commit: previewCommit };
+      const flow = { id: 'open-members', title: '打开成员清单', dimension: 'correctness', role: '评审成员',
+        steps: [{ action: '打开成员清单', expected: '出现成员区', actual: '成员区已显示', status: 'passed' }] };
+      const enable = { designId, version: 1, method: 'flow' };
+      expect((await command('acceptance.flow', { ...run, flow }, 'designer')).status).toBe(409);
+      expect((await command('acceptance.enable', enable, 'designer')).status).toBe(403);
+      expect((await command('acceptance.coverage', { ...run, dimension: 'correctness', risk: '成员清单不能打开', ruleIds: ['A-1'] }, 'designer')).status).toBe(201);
+      expect((await read()).runs[0]).toMatchObject({ verdict: 'passed', coverage: { correctness: { ruleIds: ['A-1'] } } });
+      expect((await command('acceptance.enable', enable)).status).toBe(201);
+      expect(await read()).toMatchObject({ enabledMethods: { 1: ['flow'] }, runs: [{ verdict: 'needs_evidence' }] });
+      const missingFlow = await command('acceptance.sign', { designId, runId });
+      expect(missingFlow.status).toBe(409);
+      expect((await missingFlow.json()).message).toContain('流程');
+      expect((await command('acceptance.flow', { ...run, flow }, 'designer')).status).toBe(201);
+      expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
+      expect(await read()).toMatchObject({ implementedVersion: 1, runs: [{ flows: [{ id: 'open-members', status: 'passed' }], signed: { verdict: 'passed' } }] });
+    });
+
+    it('makes a recorded recurring issue mandatory and blocks unrelated or outdated evidence', async () => {
+      const bytes = draft('历史易错夹具', { acceptanceMode: 'objective', acceptancePlan: {
+        mece: notApplicable, compare: notApplicable, visual: notApplicable, regress: notApplicable, human: { applicable: true },
+      } });
+      const { designId, runId } = await runWithScreenshot(bytes);
+      const read = async () => (await (await get()).json()).designs[0];
+      expect((await read()).runs[0].verdict).toBe('passed');
+      const report = { designId, problem: '成员标签切换后被遮挡', sources: [{ kind: 'defect', ref: 'DEF-123', count: 2 }],
+        how: '逐次切换标签', check: '确认标签保留可点击区域', screenIds: ['members'] };
+      const known = await command('known.create', report, 'designer');
+      expect(known.status).toBe(201);
+      const { id: issueId } = (await known.json()).result;
+      const { id: duplicateId } = (await (await command('known.create', { ...report, sources: [{ kind: 'defect', ref: 'DEF-123', count: 1 }] }, 'designer')).json()).result;
+      expect(duplicateId).toBe(issueId);
+      expect(await read()).toMatchObject({ knownIssues: [{ id: issueId, sources: [{ ref: 'DEF-123', count: 2 }] }],
+        runs: [{ verdict: 'needs_evidence' }] });
+      const sign = () => command('acceptance.sign', { designId, runId });
+      const missing = await sign();
+      expect(missing.status).toBe(409);
+      expect((await missing.json()).message).toContain('历史易错');
+      const regression = { designId, runId, issueId, commit: previewCommit, status: 'passed', evidence: '复查三次，标签均能点击且完全可见。' };
+      expect((await command('acceptance.regress', { ...regression, issueId: 'K-missing' }, 'designer')).status).toBe(404);
+      expect((await command('acceptance.regress', { ...regression, commit: 'c'.repeat(40) }, 'designer')).status).toBe(409);
+      expect((await command('acceptance.regress', regression, 'read-designer')).status).toBe(403);
+      expect((await command('acceptance.regress', { ...regression, status: 'failed', evidence: '第一次切换即被遮挡。' }, 'designer')).status).toBe(201);
+      expect((await read()).runs[0]).toMatchObject({ verdict: 'failed', regress: { [issueId]: { status: 'failed' } } });
+      expect((await sign()).status).toBe(409);
+      expect((await read()).implementedVersion).toBeUndefined();
+      expect((await command('acceptance.regress', regression, 'designer')).status).toBe(201);
+      expect((await sign()).status).toBe(201);
+      expect(await read()).toMatchObject({ implementedVersion: 1, knownIssues: [{ id: issueId }],
+        runs: [{ regress: { [issueId]: { status: 'passed', evidence: regression.evidence } }, signed: { verdict: 'passed' } }] });
+    });
+  });
+
   it('keeps the signature as history when the linked PR deploys a different commit', async () => {
     const { designId, runId } = await runWithScreenshot();
     const listing = async () => (await (await get()).json()).designs[0];
@@ -2159,7 +2482,59 @@ describe('private CDS design workspace', () => {
     expect((await get(`/artifacts/${signed.runs[0].cells[0].imageId}`)).status).toBe(200);
   });
 
-  it('projects only the latest run of the current design version to planning', async () => {
+  it('signs the verified installed build without a PR and rejects evidence from another build or URL', async () => {
+    const commit = installedCommit;
+    const url = installedUrl;
+    const installed = await get('/installed', 'read-designer');
+    expect(installed.status).toBe(200);
+    expect(await installed.json()).toMatchObject({ commit, url });
+    expect((await get('/installed', 'outside')).status).toBe(404);
+    expect((await get('/installed', 'author', otherProjectId)).status).toBe(404);
+
+    const { designId } = (await (await publish('installed-build-design', draft())).json()).result;
+    expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
+    const target = { designId, version: 1, target: 'installed', commit };
+    expect((await command('acceptance.start', target, 'read-designer')).status).toBe(403);
+    expect((await command('acceptance.start', target, 'author', 'outside-installation', otherProjectId)).status).toBe(404);
+    expect((await command('acceptance.start', { ...target, pullRequest: 7 })).status).toBe(400);
+    expect((await command('acceptance.start', { ...target, commit: 'd'.repeat(40) })).status).toBe(409);
+    const started = await command('acceptance.start', target);
+    expect(started.status).toBe(201);
+    const { runId } = (await started.json()).result;
+    const read = async () => (await (await get()).json()).designs[0];
+    const opened = await read();
+    expect(opened.runs[0]).toMatchObject({ id: runId, version: 1, target: 'installed', commit, previewUrl: url });
+    expect(opened.runs[0].pullRequest).toBeUndefined();
+    expect(opened.pullRequest).toBeUndefined();
+    const record = { designId, runId, commit, cells: [{ itemId: 'A-1', slot: 'desktop-light', status: 'passed',
+      actual: 'Verified the installed fixture members page', image: dataUrl(png(1280, 800)),
+      measured: { width: 1280, height: 800, theme: 'light', path: '/members/' },
+    }] };
+    installedCommit = 'd'.repeat(40);
+    expect((await command('acceptance.record', record)).status).toBe(409);
+    installedCommit = commit;
+    installedUrl = `${url}moved/`;
+    expect((await command('acceptance.record', record)).status).toBe(409);
+    installedUrl = url;
+    activeCommit = 'e'.repeat(40);
+    expect((await command('acceptance.record', record)).status).toBe(201);
+    installedCommit = 'f'.repeat(40);
+    expect((await command('acceptance.sign', { designId, runId })).status).toBe(409);
+    expect((await read()).implementedVersion).toBeUndefined();
+    installedCommit = commit;
+    expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
+    expect(await read()).toMatchObject({ frozen: 1, implementedVersion: 1, currentSignoffRunId: runId,
+      upgrade: { status: 'completed', signoffRunId: runId },
+      runs: [{ id: runId, target: 'installed', commit, previewUrl: url, signed: { by: 'author', verdict: 'passed' } }],
+    });
+    expect((await read()).runs[0].pullRequest).toBeUndefined();
+    installedCommit = 'f'.repeat(40);
+    const superseded = await read();
+    expect(superseded.implementedVersion).toBe(1);
+    expect(superseded.currentSignoffRunId).toBeNull();
+  });
+
+  it('projects only the latest run of the implementation baseline to planning', async () => {
     const { designId, runId, record } = await runWithScreenshot();
     expect((await command('acceptance.sign', { designId, runId })).status).toBe(201);
     const projection = async () => (await service.planningLinks(projectId))[0];
@@ -2175,7 +2550,7 @@ describe('private CDS design workspace', () => {
 
     expect((await publish('version-two-for-planning', draft('Fixture design V2'), { designId, sourceCommit: 'c'.repeat(40) })).status).toBe(201);
     expect(await projection()).toMatchObject({ id: designId, version: 2, frozen: 1 });
-    expect((await projection()).signed).toBeUndefined();
+    expect((await projection()).signed).toMatchObject({ runId: newRunId });
     const { designs } = await (await get()).json();
     expect(designs[0].runs.map((run: { id: string; signed?: unknown }) => [run.id, Boolean(run.signed)])).toEqual([[runId, true], [newRunId, true]]);
   });

@@ -9,11 +9,24 @@ const fileLimit = 4 * 1024 * 1024;
 const id = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_.@+-]+$/);
 const positiveVersion = z.number().int().positive();
 const version = positiveVersion.optional();
+const diffRows = key => {
+  const rows = z.array(z.object({ [key]: z.string().min(1), fields: z.array(z.string()).optional() }));
+  return z.object({ added: rows, removed: rows, changed: rows });
+};
+const diffResult = z.object({
+  projectId: z.string(), designId: id, fromVersion: positiveVersion, toVersion: positiveVersion,
+  screens: diffRows('id'), acceptance: diffRows('id'), files: diffRows('path'),
+});
 const designKey = z.string().trim().max(129).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*\/[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const sourceCommit = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i);
 const scopeId = z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/).max(64);
 const moduleRef = z.object({ systemId: scopeId, moduleId: scopeId });
 const scope = moduleRef.extend({ related: z.array(moduleRef).max(12).optional() });
+function implementationState(entry) {
+  const { frozen: baselineVersion, implementedVersion, versionGap, upgrade } = entry;
+  return Object.fromEntries(Object.entries({ baselineVersion, implementedVersion, versionGap, upgrade })
+    .filter(([, value]) => value !== undefined));
+}
 const intakeResult = z.object({
   protocolVersion: z.literal(1), projectId: z.string(), permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional() }),
   designs: z.array(z.object({ designId: id, designKey: designKey.optional(), latestVersion: positiveVersion,
@@ -29,16 +42,19 @@ const slot = z.enum(['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark
 const imagePath = z.string().trim().min(1).max(1200);
 const checkId = z.string().regex(/^V-(?:0[1-9]|10)$/);
 const acceptanceBase = { ...feedbackBase, runId: id, commit: sourceCommit };
+const dimension = z.enum(['correctness', 'compatibility', 'performance', 'security', 'operations', 'experience']);
+const evidenceStatus = z.enum(['passed', 'failed', 'missing']);
 const evidenceRecord = { id, title: z.string().trim().min(1).max(180),
-  dimension: z.enum(['correctness', 'compatibility', 'performance', 'security', 'operations', 'experience']) };
+  dimension };
 const observation = { expected: z.string().trim().min(1).max(800), actual: z.string().trim().min(1).max(1200),
-  status: z.enum(['passed', 'failed', 'missing']) };
+  status: evidenceStatus };
 const schemas = {
   [readTool]: z.discriminatedUnion('view', [
     z.object({ view: z.literal('intake') }).strict(),
     z.object({ view: z.literal('designs') }).strict(),
     z.object({ view: z.literal('frameworks') }).strict(),
     z.object({ view: z.literal('design'), id, version }).strict(),
+    z.object({ view: z.literal('diff'), id, fromVersion: positiveVersion, toVersion: positiveVersion }).strict(),
     z.object({ view: z.literal('run'), id, runId: id.optional() }).strict(),
     z.object({ view: z.literal('framework'), id, version }).strict(),
     z.object({ view: z.literal('delivery'), id, version }).strict(),
@@ -74,6 +90,16 @@ const schemas = {
     z.object({ ...acceptanceBase, type: z.literal('acceptance.smoke'),
       smoke: z.object({ ...evidenceRecord, ...observation, target: z.enum(['page', 'api']),
         path: z.string().trim().min(1).max(1200).regex(/^\/(?!\/)[^\\\r\n]*$/) }).strict() }).strict(),
+    z.object({ ...acceptanceBase, type: z.literal('acceptance.coverage'), dimension, ruleIds: z.array(id).max(60),
+      risk: z.string().trim().min(1).max(1200).optional(), reason: z.string().trim().min(1).max(1200).optional() }).strict()
+      .refine(args => args.reason ? args.ruleIds.length === 0 : Boolean(args.risk) && args.ruleIds.length > 0,
+        { path: ['ruleIds'], message: '请选择记录风险和对应验收项，或写明该维度不适用' }),
+    z.object({ ...acceptanceBase, type: z.literal('acceptance.regress'), issueId: id, status: evidenceStatus,
+      evidence: z.string().trim().min(1).max(2000) }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('known.create'), problem: z.string().trim().min(1).max(250),
+      how: z.string().trim().min(1).max(250), check: z.string().trim().min(1).max(1800), screenIds: z.array(id).max(100),
+      sources: z.array(z.object({ kind: z.enum(['defect', 'ticket', 'feedback']), ref: id,
+        count: z.number().int().min(1).max(10_000) }).strict()).min(1).max(50) }).strict(),
   ]),
   [publishTool]: z.object({
     requestId: id, designId: id.optional(), zipPath: z.string().trim().min(1).max(1200),
@@ -99,9 +125,9 @@ const schemas = {
   }),
 };
 const descriptions = {
-  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。稿件发布前可用 brief.reply 在当前需求下澄清。用 run 回读指定或最新验收运行。',
+  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。用 diff 固定两个版号查询 CDS 计算的画面、验收与文件净变化，调换顺序可查回退。稿件发布前可用 brief.reply 在当前需求下澄清。用 run 回读指定或最新验收运行。',
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
-  [acceptanceTool]: '回填当前项目、当前运行的逐画面视觉、流程和冒烟证据。先用 run 回读运行和真实提交。逐画面可附工作区内的 PNG；流程按角色写逐步结果；冒烟写关键页面或接口的结果。重试沿用 requestId。',
+  [acceptanceTool]: '回填当前项目验收证据。先用 run 回读运行和提交。visual 可附工作区内的 PNG，flow 回填逐步结果，smoke 检查页面或接口，coverage 关联维度风险与验收项。known.create 登记有来源的历史易错，regress 回填本轮复查。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
@@ -150,12 +176,22 @@ export function createDesignBridge(credentials, options = {}) {
       const args = parsed.data;
       if (name === readTool) {
         if (args.view === 'intake') return intake();
+        if (args.view === 'diff') {
+          const query = new URLSearchParams({ designId: args.id, from: args.fromVersion, to: args.toVersion });
+          const result = await client.request('GET', `${path}/diff?${query}`);
+          if (!diffResult.safeParse(result).success || result.projectId !== projectId || result.designId !== args.id
+            || result.fromVersion !== args.fromVersion || result.toVersion !== args.toVersion) {
+            throw new Error('CDS 返回的净变化与当前项目、稿件或指定版本不符');
+          }
+          return result;
+        }
         const data = await workspace();
         const isFramework = args.view === 'framework' || args.view === 'frameworks';
         const items = isFramework ? data.frameworks : data.designs;
         if (args.view === 'designs' || args.view === 'frameworks') {
           return { projectId, items: items.map(item => ({ id: item.id, latest: item.versions.at(-1)?.version,
-            title: item.versions.at(-1)?.title, versions: item.versions.map(row => row.version) })) };
+            title: item.versions.at(-1)?.title, versions: item.versions.map(row => row.version),
+            ...(isFramework ? {} : implementationState(item)) })) };
         }
         const item = items.find(row => row.id === args.id);
         if (args.view === 'run') {
@@ -195,7 +231,8 @@ export function createDesignBridge(credentials, options = {}) {
           }
           return result;
         }
-        return { projectId, id: item.id, version: selected };
+        return { projectId, id: item.id, version: selected, ...(isFramework ? {} : implementationState(item)),
+          ...(args.view === 'design' && item.knownIssues ? { knownIssues: item.knownIssues } : {}) };
       }
       if (name === feedbackTool) {
         const data = await intake();
@@ -233,12 +270,13 @@ export function createDesignBridge(credentials, options = {}) {
             const { bytes } = await localFile(credentials, filename, ['.png'], 1.5 * 1024 * 1024);
             body[key] = `data:image/png;base64,${bytes.toString('base64')}`;
           }
-        } else {
-          expected.id = (args.flow ?? args.smoke).id;
-        }
+        } else if (args.type === 'acceptance.coverage') expected.id = args.dimension;
+        else if (args.type === 'acceptance.regress') expected.id = args.issueId;
+        else if (args.type !== 'known.create') expected.id = (args.flow ?? args.smoke).id;
         const receipt = await client.request('POST', path + '/commands', body);
         const result = receipt.result;
         if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean'
+          || (args.type === 'known.create' && !id.safeParse(result?.id).success)
           || Object.entries(expected).some(([key, value]) => result?.[key] !== value)) {
           throw new Error('CDS 返回的验收回执与当前运行、画面或记录不符');
         }

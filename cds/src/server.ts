@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { createBranchRouter } from './routes/branches.js';
+import { createBranchRouter, parseGitHubRepoFullName } from './routes/branches.js';
 import { SelfMaintenanceRuntime } from './services/self-maintenance-runtime.js';
 import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
@@ -1911,7 +1911,8 @@ function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnTy
     if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return true;
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(req.path);
-    return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
+    return read && (path === route || path === `${route}/intake` || path === `${route}/diff` || path === `${route}/installed`
+      || path === `${route}/artifacts/:artifactId`)
       || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST'
         && (path === `${route}/feedback` || path === `${route}/feedback/attachments`))
       || (key.designAccess === 'publish' && req.method === 'POST' && path === `${route}/packages`);
@@ -5756,6 +5757,7 @@ export function createServer(deps: ServerDeps): express.Express {
     : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
       path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
   designWorkspace = new DesignWorkspaceService(designStore, {
+    publicBaseUrl,
     approvedPlanFor: (projectId, planId) => planning.approvedDesignRequirement(projectId, planId),
     frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
     reviewer: async (projectId, id) => {
@@ -5772,6 +5774,34 @@ export function createServer(deps: ServerDeps): express.Express {
       return preview?.status === 'ready' && preview.url && preview.commit && (!commit || preview.commit === commit)
         ? { commit: preview.commit, url: preview.url } : undefined;
     },
+    resolveInstalled: async (projectId, commit) => {
+      const project = deps.stateService.getProject(projectId);
+      const projectRepo = parseGitHubRepoFullName(project?.githubRepoFullName ?? project?.gitRepoUrl);
+      if (!projectRepo || project?.mirror || isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+      const repoRoot = deps.config.repoRoot;
+      try {
+        const restartStatus = resolveRestartStatus({
+          activeSelfUpdate: deps.stateService.getActiveSelfUpdate(), restartWait: getRestartWait(),
+          lastSelfUpdate: deps.stateService.getSelfUpdateHistory(1)[0],
+          daemonReadyAt: deps.stateService.getState().daemonReadyAt ?? null,
+          pidStartedAt: (globalThis as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT ?? null,
+        });
+        if (restartStatus === 'pending' || restartStatus === 'incomplete') return undefined;
+        const dist = path.join(repoRoot, 'cds', 'web', 'dist');
+        const sha = (await fs.promises.readFile(path.join(dist, '.build-sha'), 'utf8')).trim().toLowerCase();
+        if (!/^[a-f0-9]{40}$/.test(sha) || (commit && commit !== sha) || fs.existsSync(path.join(dist, '.build-error'))) return undefined;
+        const options = { cwd: repoRoot, timeout: 3000 };
+        const [head, remote] = await Promise.all([
+          deps.shell.exec('git rev-parse --verify HEAD', options), deps.shell.exec('git remote get-url origin', options),
+        ]);
+        if (head.exitCode !== 0 || head.stdout.trim().toLowerCase() !== sha || remote.exitCode !== 0
+          || parseGitHubRepoFullName(remote.stdout)?.toLowerCase() !== projectRepo.toLowerCase()
+          || deps.stateService.getActiveSelfUpdate()) return undefined;
+        return { commit: sha, url: new URL(publicBaseUrl).origin };
+      } catch {
+        return undefined;
+      }
+    },
     findDebt: async (projectId, debtId, sourceRef) => await planning.designAcceptanceDebt(projectId, debtId, sourceRef) === debtId,
     resolveDebtProposal: (projectId, proposalId, sourceRef) => planning.designAcceptanceDebt(projectId, proposalId, sourceRef),
     createDebt: async ({ projectId, actor, sourceRef, title, actual, version, pullRequest, commit, expected, high }) => {
@@ -5779,7 +5809,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const url = new URL('/design', publicBaseUrl);
       url.search = new URLSearchParams({ project: projectId, design: designId, version: String(version), tab: 'accept', run: runId }).toString();
       const source = { type: 'test', ref: sourceRef, url: url.href };
-      const draft = { title, summary: `稿件 V${version} · PR #${pullRequest} · 提交 ${commit}\n${actual}`,
+      const draft = { title, summary: `稿件 V${version} · ${pullRequest === undefined ? '主用 CDS' : `PR #${pullRequest}`} · 提交 ${commit}\n${actual}`,
         priority: high ? 'high' : 'mid', criteria: [expected.slice(0, 400)] };
       const requestId = 'design-debt-' + crypto.createHash('sha256').update(sourceRef).digest('hex');
       const command = actor.kind === 'human' ? { type: 'debt.create', requestId, source, ...draft }

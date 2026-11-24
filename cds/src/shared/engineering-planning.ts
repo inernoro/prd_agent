@@ -171,7 +171,7 @@ export type PlanningDecisionSearch = { projectId: string; total: number; items: 
 
 export type PlanningDesignLink = {
   id: string; title: string; version: number; decisionIds: string[]; frozen?: number;
-  signed?: { runId: string; pullRequest: number; commit: string };
+  signed?: { runId: string; pullRequest?: number; commit: string; target?: 'installed' };
 };
 
 export const planningStepKinds = ['task', 'decision', 'debt', 'review', 'design'] as const;

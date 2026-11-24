@@ -389,8 +389,9 @@ export class EngineeringPlanningService {
     const pullRequests = this.projectPullRequests(projectId, state, now);
     const designById = new Map(designs?.map(design => [design.id, design]));
     const repository = this.github?.repositoryFor(projectId);
-    const hasCurrentSignature = (signature: NonNullable<PlanningDesignLink['signed']>) => Boolean(repository
-      && state.pullRequests.get(planningPullRequestKey(repository, signature.pullRequest))?.headSha === signature.commit);
+    const hasCurrentSignature = (signature: NonNullable<PlanningDesignLink['signed']>) => signature.target === 'installed'
+      || Boolean(repository && signature.pullRequest !== undefined
+        && state.pullRequests.get(planningPullRequestKey(repository, signature.pullRequest))?.headSha === signature.commit);
     const proposals = [...state.proposals.values()].sort(order);
     const match = proposals.some(row => row.kind === 'debt' && row.status === 'pending')
       ? duplicateDebtMatcher(state.debts.values()) : undefined;

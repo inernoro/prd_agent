@@ -1,31 +1,33 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Layers, Maximize, MoreHorizontal, Terminal, Upload, X } from 'lucide-react';
+import { ChevronLeft, Layers, Maximize, MoreHorizontal, PanelRightOpen, Terminal, Upload, X } from 'lucide-react';
 import { AppShell, TopBar, Workspace } from '@/components/layout/AppShell';
 import { MotionLink, rememberRouteFocus } from '@/components/layout/RouteMotion';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
-import type { DesignComment, DesignEntry, DesignMaterial, DesignReviewer, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
-import { frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignReviewer, DesignScreen, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
+import { currentDesignRun, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
+import { DesignDeliverySide, type DesignFullView } from './design-workspace/DesignDeliverySide';
 import { DesignRationale } from './design-workspace/DesignRationale';
+import { DesignNeed, needTrace } from './design-workspace/DesignNeed';
+import { DesignHistory } from './design-workspace/DesignHistory';
 import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
-import { DesignFrameworkView, DesignMaterialView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { cellNames, designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, scopePath, statusNames, verdictNames, type DesignCommand } from './design-workspace/design-ui';
-import { compareDesignMaterial, describeMaterialChange } from './design-workspace/design-structure';
+import { DesignFrameworkView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
+import { designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
+import './design-workspace/design-v17-delivery.css';
 
-const tabs = [['preview', '画面'], ['delivery', '交付'], ['accept', '验收'], ['rationale', '说明'], ['log', '记录']] as const;
-const legacyTabs = new Set(['diff', 'spec']);
-const deliveryQuery = { part: '', fb: '', file: '', about: '' };
+const tabs = [['delivery', '交付', '人和智能体'], ['accept', '验收', '人和智能体按规则执行'], ['log', '记录', '操作时自动写入']] as const;
+const deliveryQuery = { full: '', part: '', fb: '', file: '', about: '', compare: '' };
 type ReviewTarget = { entryId: string; commentId: string; version: number };
 type LargeTarget = { entryId: string; version: number };
 const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
@@ -37,33 +39,29 @@ function frameworkVersionPath(project: string, version: DesignVersion) {
 
 export function DesignWorkspacePage() {
   const [params, setParams] = useSearchParams();
-  const { key: locationKey } = useLocation();
+  const { key: locationKey, hash } = useLocation();
   const [reload, refresh] = useState(0);
   const refreshWorkspace = useCallback(() => refresh(value => value + 1), []);
   const [busy, setBusy] = useState(false);
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
   const [notice, setNotice] = useState('');
-  const [wideCanvas, setWideCanvas] = useState(false);
-  useEffect(() => {
-    const width = window.matchMedia('(min-width: 1000px)');
-    const update = () => setWideCanvas(width.matches);
-    update();
-    width.addEventListener('change', update);
-    return () => width.removeEventListener('change', update);
-  }, []);
   const [canvasTheme, setCanvasTheme] = useState<DesignTheme>(() =>
     document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [upload, setUpload] = useState(false);
   const [assignReviewers, setAssignReviewers] = useState<string>();
   const [extract, setExtract] = useState(false);
   const [freezeTarget, setFreezeTarget] = useState<{ id: string; version: number }>();
+  const [freezeReason, setFreezeReason] = useState('');
+  const [cancelUpgrade, setCancelUpgrade] = useState<{ id: string; entryId: string }>();
+  const [cancelReason, setCancelReason] = useState('');
+  const [selectedScene, setScene] = useState<{ draft: string; screen?: DesignScreen }>();
   const [unfreezeTarget, setUnfreeze] = useState<{ id: string; version: number }>();
   const [share, setShare] = useState(false);
   const [review, setReview] = useState<ReviewTarget>();
   const [large, setLarge] = useState<LargeTarget>();
   const returnFocus = useRef<HTMLElement | null>(null);
-  const deliveryReturn = useRef<{ designId: string; version: number; origin: string }>();
+  const deliveryReturn = useRef<{ designId: string; version: number; origin: string; fields: Record<string, string> }>();
   const pending = useRef<{ key: string; id: string }>();
   const mode = params.get('mode') === 'list' ? 'list' : 'cards';
   const group = params.get('group') ?? '';
@@ -89,6 +87,7 @@ export function DesignWorkspacePage() {
   const entry = workspace?.designs.find(row => row.id === params.get('design'));
   const requirementKey = params.get('brief');
   const requirement = workspace?.requirements?.find(row => row.designKey === requirementKey);
+  const draftRequirement = entry?.designKey ? workspace?.requirements?.find(row => row.designKey === entry.designKey) : undefined;
   const assignment = workspace?.designs.find(row => row.id === assignReviewers);
   const framework = !libraryFilter && !entry ? workspace?.frameworks.find(row => row.id === frameworkId) : undefined;
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
@@ -97,6 +96,8 @@ export function DesignWorkspacePage() {
   const version = entry?.versions.find(row => row.version === Number(versionParam)) ?? (entry ? latestDesign(entry) : undefined);
   const canFreeze = permissions?.review && (!entry?.reviewers?.length || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
   const canUnfreeze = permissions?.review && (permissions.steward || canFreeze);
+  const activeUpgrade = entry?.upgrade?.status === 'active' ? entry.upgrade : undefined;
+  const versionGap = entry?.versionGap;
   const panel = params.get('panel');
   const draftVisible = !requirementKey && !framework && Boolean(entry && version);
   const requestedBaseline = Number(params.get('baseline'));
@@ -108,14 +109,25 @@ export function DesignWorkspacePage() {
     && (extract || (panel === 'framework-candidates' && (!versionParam || Number(versionParam) === version?.version)));
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
-  const requestedTab = params.get('tab') ?? '';
-  const tab = requestedTab === 'delivery' && params.get('part') === 'checks' ? 'accept'
-    : requestedTab === 'notes' ? 'rationale'
-    : legacyTabs.has(requestedTab) ? requestedTab : tabs.find(([value]) => value === requestedTab)?.[0] ?? 'preview';
-  const activeTab = tab === 'diff' ? 'preview' : tab === 'spec' ? 'rationale' : tab;
+  const requestedTab = params.get('tab');
+  const tab = requestedTab === 'accept' || requestedTab === 'delivery' && params.get('part') === 'checks' ? 'accept'
+    : requestedTab === 'log' ? 'log' : 'delivery';
+  const comparing = tab === 'delivery' && (requestedTab === 'diff' || params.get('compare') === '1');
+  const requestedFull = params.get('full');
+  const fullView: DesignFullView | undefined = tab !== 'delivery' ? undefined
+    : requestedFull === 'need' || requestedFull === 'notes' || requestedFull === 'delivery' ? requestedFull
+    : requestedTab === 'need' ? 'need'
+    : requestedTab === 'rationale' || requestedTab === 'notes' || requestedTab === 'spec' ? 'notes'
+    : requestedTab === 'delivery' && (params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-')) ? 'delivery' : undefined;
+  const sideClosed = params.get('side') === 'off';
   const frameworkTab = frameworkTabs.find(value => value === params.get('tab')) ?? 'overview';
   const screenParam = params.get('screen') ?? undefined;
   const commentParam = params.get('comment') ?? undefined;
+  const sceneDraft = entry && version ? `${entry.id}/${version.version}/${screenParam ?? ''}` : '';
+  const scene = selectedScene?.draft === sceneDraft ? selectedScene.screen
+    : version?.screens.find(screen => screen.id === screenParam) ?? version?.screens[0];
+  const rememberScene = useCallback((screen?: DesignScreen) => setScene(current =>
+    current?.draft === sceneDraft && current.screen === screen ? current : { draft: sceneDraft, screen }), [sceneDraft]);
   const compareFrom = Number(params.get('compareFrom') ?? params.get('from')) || undefined;
   const currentVersion = entry ? latestDesign(entry).version : undefined;
   const activeFeedback = permissions?.feedback ? entry?.feedback?.filter(row => designFeedbackAwaitsViewer(entry, row, permissions.actorId)).length : 0;
@@ -124,7 +136,8 @@ export function DesignWorkspacePage() {
   const viewer = read?.key === readKey && read ? read.viewer : workspace?.viewer ?? emptyDesignViewer;
   const viewedVersion = draftVisible ? version?.version : undefined;
   const viewedDesign = draftVisible ? entry?.id : undefined;
-  const viewedFeedback = tab === 'delivery' && draftVisible && entry ? latestDesignFeedbackAt(entry) || undefined : undefined;
+  const viewedFeedback = fullView === 'delivery' && draftVisible && entry
+    && (params.get('part') !== 'files' && !params.has('file')) ? latestDesignFeedbackAt(entry) || undefined : undefined;
   const viewedBrief = requirement?.designKey;
   const viewedBriefAt = requirement?.sharedAt;
   const viewingLibrary = !requirementKey && !entry && !framework && !frameworkList;
@@ -159,10 +172,10 @@ export function DesignWorkspacePage() {
   const objectScope = entry?.scope ?? requirement?.scope;
   const objectSystem = workspace?.systems?.find(row => row.id === objectScope?.systemId);
   const objectModule = objectSystem?.modules.find(row => row.id === objectScope?.moduleId);
-  const canvas = !!entry && (tab === 'preview' || tab === 'diff');
+  const canvas = !!entry && tab === 'delivery';
   useEffect(() => {
     const source = deliveryReturn.current;
-    if (tab !== 'delivery' || !source || entry?.id !== source.designId || version?.version !== source.version) return;
+    if (fullView !== 'delivery' || !source || entry?.id !== source.designId || version?.version !== source.version) return;
     const frame = requestAnimationFrame(() => {
       const element = document.getElementById(source.origin);
       if (!element) return;
@@ -174,7 +187,7 @@ export function DesignWorkspacePage() {
       deliveryReturn.current = undefined;
     });
     return () => cancelAnimationFrame(frame);
-  }, [entry?.id, version?.version, tab]);
+  }, [entry?.id, version?.version, fullView]);
   const modalEntry = workspace?.designs.find(item => item.id === review?.entryId);
   const reviewComment = modalEntry?.comments.find(item => item.id === review?.commentId);
   const reviewVersion = modalEntry?.versions.find(item => item.version === review?.version);
@@ -197,9 +210,10 @@ export function DesignWorkspacePage() {
     setParams(next, { replace: true });
   };
   const closeUnfreeze = () => { setUnfreeze(undefined); dismissPanel('unfreeze'); };
+  const closeFreeze = () => { setFreezeTarget(undefined); setFreezeReason(''); dismissPanel('freeze'); };
   const selectEntry = (id: string) => {
     deliveryReturn.current = undefined;
-    onChange({ design: id, framework: '', brief: '', tab: '', version: '', view: '', screen: '', comment: '', compareFrom: '', from: '', panel: '', baseline: '', ...deliveryQuery,
+    onChange({ design: id, framework: '', brief: '', tab: '', version: '', view: '', screen: '', comment: '', compareFrom: '', from: '', panel: '', baseline: '', side: '', run: '', check: '', log: '', ...deliveryQuery,
       ...(!id && !module && !group && entry ? (entry.scope ? { system: entry.scope.systemId, module: entry.scope.moduleId }
         : { group: latestDesign(entry).group ?? '' }) : {}) });
   };
@@ -219,6 +233,15 @@ export function DesignWorkspacePage() {
   const replayFocus = () => window.requestAnimationFrame(() => returnFocus.current?.isConnected && returnFocus.current.focus());
   const closeLarge = () => { setLarge(undefined); replayFocus(); };
   const closeReview = () => { setReview(undefined); replayFocus(); };
+  const openFull = (view: DesignFullView, fields?: Record<string, string>) => {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    onChange({ ...deliveryQuery, tab: 'delivery', full: view, compare: comparing ? '1' : '',
+      screen: scene?.id ?? '', ...fields });
+  };
+  const closeFull = () => {
+    onChange({ ...deliveryQuery, tab: 'delivery', compare: comparing ? '1' : '' });
+    replayFocus();
+  };
 
   const command: DesignCommand = async (type, fields) => {
     if (writing.current) return false;
@@ -264,17 +287,20 @@ export function DesignWorkspacePage() {
   const versionRun = entry?.runs.filter(run => run.version === version?.version).at(-1);
   const failingVersion = entry && failedBaseline(entry);
   const acceptanceAlerts = (entry && failingVersion && !versionRun
-    ? entry.runs.filter(run => run.version === failingVersion && run.pullRequest === entry.pullRequest).at(-1)
-    : versionRun)?.cells.filter(cell => cell.status === 'failed') ?? [];
+    ? currentDesignRun(entry) : versionRun)?.cells.filter(cell => cell.status === 'failed') ?? [];
+  const commentTodos = permissions?.review && entry ? openReviews(entry).filter(({ comment }) =>
+    permissions.steward || comment.author.id === permissions.actorId).length : 0;
+  const requirementGaps = entry && version && draftRequirement ? needTrace(entry, version, draftRequirement).gaps : 0;
   const summaryTabLinks = entry && version && <nav className="dw-tablinks" aria-label="稿件标签">
-    {tabs.map(([value, label]) => {
-      const count = value === 'delivery' ? activeFeedback
-        : value === 'accept' ? acceptanceAlerts.length : undefined;
+    {tabs.map(([value, label, role]) => {
+      const count = value === 'delivery' ? (activeFeedback ?? 0) + commentTodos + requirementGaps
+        : value === 'accept' ? new Set(acceptanceAlerts.map(cell => cell.itemId)).size : undefined;
       const oldFailure = value === 'accept' && !versionRun && failingVersion && failingVersion !== version.version && count;
       const details = value === 'delivery' ? '条待处理' : `项不通过${oldFailure ? ` · 基线 V${failingVersion}` : ''}`;
-      return <button type="button" className="dw-tab" key={value} aria-current={activeTab === value}
+      return <button type="button" className="dw-tab" key={value} aria-current={tab === value} title={role}
         aria-label={count ? label + ' ' + count + ' ' + details : undefined} onClick={() => {
-          if (activeTab !== value) onChange({ tab: value === 'rationale' ? 'notes' : value, compareFrom: '', from: '', run: '', panel: '',
+          if (tab === value) { if (value === 'delivery' && fullView) closeFull(); return; }
+          onChange({ tab: value, compareFrom: '', from: '', run: '', panel: '', screen: value === 'delivery' ? screenParam ?? '' : scene?.id ?? '',
             ...(oldFailure ? { version: String(failingVersion) } : {}), ...deliveryQuery });
         }}>
         {label}{count ? <small className="dw-tab-todo" data-negative={value === 'accept'} title={count + ' ' + details}>{count}</small> : null}
@@ -287,18 +313,16 @@ export function DesignWorkspacePage() {
     selectedTheme: canvasTheme, onThemeChange: setCanvasTheme,
   };
   const draftActions = entry && version && <div className="dw-tools dw-draft-actions">
-    {canvas && deliveryReturn.current?.designId === entry.id && <button className="ep-button dw-delivery-back" type="button"
-      aria-label="返回交付" title="返回交付" onClick={() => onChange({ tab: 'delivery', version: String(deliveryReturn.current!.version), screen: '' })}>
-      <ChevronLeft /><span>返回交付</span>
-    </button>}
-    {!(canvas && wideCanvas && tab === 'diff') && <select className="dw-version-select" value={version.version} aria-label="稿件版本"
-      onChange={event => onChange({ version: event.target.value, compareFrom: '', from: '', run: '', panel: '', ...deliveryQuery })}>
+    <select className="dw-version-select" value={version.version} aria-label="稿件版本" disabled={comparing}
+      title={comparing ? '对比时请在画布选择左右版本' : undefined}
+      onChange={event => onChange({ version: event.target.value, screen: '', compareFrom: '', from: '', run: '', panel: '',
+        ...deliveryQuery, ...(fullView === 'need' || fullView === 'notes' ? { full: fullView } : {}) })}>
       {[...entry.versions].reverse().map(row => {
         const label = `V${row.version}${row.version === currentVersion ? ' · 最新' : ''}${entry.frozen === row.version ? ' · 实施基线'
           : row.version === version.version && entry.frozen !== undefined ? ` · 基线 V${entry.frozen}` : ''}`;
         return <option key={row.version} value={row.version}>{label}</option>;
       })}
-    </select>}
+    </select>
     <button className="ep-button ep-icon-button" type="button" aria-label="大屏" title="大屏" onClick={() => openLarge(entry, version)}><Maximize /></button>
     <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
       onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
@@ -309,8 +333,13 @@ export function DesignWorkspacePage() {
           <dt>发布</dt><dd>{designPublisherLabel(version.publisher.label)}</dd>
           <dt>来源</dt><dd><code>{version.sourceCommit.slice(0, 12)}</code> · {designSourceNames[version.sourceVerification ?? 'declared']}</dd>
           <dt>基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `实施基线 V${entry.frozen}`}。同一稿件可以继续发布新版本。</dd>
-          <dt>需求</dt><dd>{workspace?.requirements?.some(row => row.designKey === entry.designKey)
-            ? <Link className="ep-link" to={'/design?' + new URLSearchParams({ project, brief: entry.designKey! })}>查看来源需求</Link> : '无交接记录'}</dd>
+          <dt>已实现</dt><dd>{entry.implementedVersion === undefined ? '待首次签收' : `V${entry.implementedVersion}`}
+            {versionGap?.direction === 'behind' && ` · 落后 ${versionGap.count} 版`}
+            {versionGap?.direction === 'ahead' && ` · 待回退 ${versionGap.count} 版`}</dd>
+          {activeUpgrade && <><dt>升级</dt><dd>目标已锁定为 V{activeUpgrade.targetVersion}
+            {activeUpgrade.fromVersion !== undefined && ` · 自 V${activeUpgrade.fromVersion} 开始`}</dd></>}
+          <dt>需求</dt><dd>{draftRequirement
+            ? <button className="ep-link" type="button" onClick={() => openFull('need')}>查看来源需求</button> : '无交接记录'}</dd>
           <dt>框架</dt><dd>{version.framework ? <Link className="ep-link" to={frameworkVersionPath(project, version)}>
             <FrameworkBadge id={version.framework} version={version.frameworkVersion}
               latest={workspace?.frameworks.find(row => row.id === version.framework)?.versions.at(-1)?.version} />
@@ -323,35 +352,52 @@ export function DesignWorkspacePage() {
             <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>) : '未关联决策'}</dd>
         </dl>
         <footer className="dw-row">
-          {canFreeze && entry.frozen !== version.version && version.version === currentVersion
+          {canFreeze && !activeUpgrade && entry.frozen !== version.version
             && <button className="ep-button" type="button" disabled={busy} data-action="freeze" onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
+          {canFreeze && !activeUpgrade && (version.version === currentVersion || version.version === entry.frozen)
+            && version.version !== entry.implementedVersion && <button className="ep-button" type="button" disabled={busy}
+              data-action="start-upgrade" onClick={() => void command('implementation.start', {
+                designId: entry.id, version: version.version, expectedBaseline: entry.frozen ?? null,
+              })}>锁定 V{version.version} 为升级目标</button>}
+          {canFreeze && activeUpgrade && <button className="ep-button" type="button" disabled={busy}
+            data-action="cancel-upgrade" onClick={() => setCancelUpgrade({ id: activeUpgrade.id, entryId: entry.id })}>结束本次升级</button>}
           {permissions?.review && entry.frozen === version.version
             && <button className="ep-button" type="button" data-action="extract-framework" onClick={() => { setIssue(''); setExtract(true); }}><Layers />框架候选</button>}
           {canAssign && <button className="ep-button" type="button" onClick={() => setAssignReviewers(entry.id)}>设置评审人</button>}
           {canFreeze && version.sourceVerification === 'git' && (entry.frozen === version.version || entry.freezes?.some(row => row.version === version.version))
             && <button className="ep-button" type="button" onClick={() => setShare(true)}>固定版本分享</button>}
-          {canUnfreeze && entry.frozen !== undefined && <button className="ep-button dw-revoke-baseline" type="button" data-action="unfreeze"
+          {canUnfreeze && !activeUpgrade && entry.frozen !== undefined && <button className="ep-button dw-revoke-baseline" type="button" data-action="unfreeze"
             onClick={() => setUnfreeze({ id: entry.id, version: entry.frozen! })}>撤销定稿</button>}
         </footer>
       </div>
     </details>
   </div>;
-  const draftHeader = (toolbar?: ReactNode) => entry && version && <header className="dw-head dw-head--draft">
+  const draftHeader = entry && version && <header className="dw-head dw-head--draft">
     <div className="dw-draft-bar">
       <div className="dw-draft-heading">
         <h1 title={version.title}>{version.title}</h1>
         <span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
       </div>
-      {toolbar}
+      {draftActions}
     </div>
     <div className="dw-draft-tabbar">
-      {canvas && !wideCanvas && draftActions}{summaryTabLinks}{!canvas && draftActions}
+      {summaryTabLinks}
+      {(entry.implementedVersion !== undefined || entry.frozen !== undefined || activeUpgrade) &&
+        <div className="dw-implementation-mark" aria-label="实现进度">
+          {entry.implementedVersion !== undefined ? <span>已实现 V{entry.implementedVersion}</span> : <span>待首次签收</span>}
+          {versionGap?.direction === 'behind' && <span data-gap="behind">落后 {versionGap.count} 版</span>}
+          {versionGap?.direction === 'ahead' && <span data-gap="ahead">待回退 {versionGap.count} 版</span>}
+          {activeUpgrade && <span title="后续稿件不会移动此目标">目标 V{activeUpgrade.targetVersion} 已锁定</span>}
+        </div>}
     </div>
   </header>;
+  const messages = <>
+    {issue && <div className="dw-message ep-error" role="alert">{issue}</div>}
+    {notice && <p className="dw-message" role="status">{notice}</p>}
+  </>;
   return <AppShell active="design" topbar={breadcrumbs} wide>
     <Workspace fluid className={`ep-workspace dw-workspace${entry ? ' dw-workspace--detail' : ''}${canvas ? ' cds-workspace--fill dw-workspace--canvas' : ''}`}>
-      {issue && <div className="dw-message ep-error" role="alert">{issue}</div>}
-      {notice && <p className="dw-message" role="status">{notice}</p>}
+      {!draftVisible && messages}
       {!workspace ? (projects.error || source.error)
         ? <p role="alert" className="dw-placeholder">{projects.error ?? source.error} <button type="button" className="ep-button" onClick={() => refresh(value => value + 1)}>重试</button></p>
         : projects.loading || source.loading ? <ContentLoading variant="table" label="正在读取设计工作区" />
@@ -361,35 +407,58 @@ export function DesignWorkspacePage() {
         onTab={value => onChange({ tab: value })} />
       : entry && version ? <>
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
-        {canvas ? <DesignCanvas key={`${entry.id}/${version.version}/${screenParam ?? ''}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon} entry={entry} version={version} active={!large && !review}
-          comparing={tab === 'diff'} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
-          renderToolbar={draftHeader}
-          draftActions={wideCanvas ? draftActions : undefined}
-          onModeChange={(compare, screen, from) => onChange({ tab: compare ? 'diff' : 'preview', screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
-          onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
-        : <>
-          {draftHeader()}
+        {draftHeader}
+        {messages}
+        {canvas && permissions ? <div className="dw-deliver" data-side={sideClosed ? 'off' : undefined}>
+          <div className="dw-canvas-slot" aria-hidden={Boolean(fullView) || undefined}>
+            <DesignCanvas key={`${entry.id}/${version.version}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon}
+              entry={entry} version={version} active={!large && !review && !fullView}
+              comparing={comparing} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
+              cornerTools onSceneChange={rememberScene}
+              onModeChange={(compare, screen, from) => onChange({ ...deliveryQuery, tab: 'delivery', compare: compare ? '1' : '',
+                screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
+              onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
+            {!fullView && deliveryReturn.current?.designId === entry.id && <button className="ep-button dw-delivery-back" type="button"
+              aria-label="返回交付" title="返回交付" onClick={() => {
+                const prior = deliveryReturn.current!;
+                onChange({ ...deliveryQuery, ...prior.fields, tab: 'delivery', full: 'delivery', version: String(prior.version) });
+              }}><ChevronLeft /><span>返回交付</span></button>}
+          </div>
+          {sideClosed ? <button className="ep-button dw-side-open" type="button" data-action="side-open"
+            onClick={() => onChange({ side: '' })}><PanelRightOpen />打开右栏</button>
+            : <DesignDeliverySide entry={entry} version={version} screen={scene} requirement={draftRequirement} permissions={permissions}
+              onOpen={openFull} onCollapse={() => onChange({ side: 'off' })} />}
+          {fullView && <DesignFullOverlay view={fullView} onClose={closeFull}>
+            {fullView === 'need' ? <DesignNeed entry={entry} version={version} requirement={draftRequirement} />
+              : fullView === 'notes' ? <DesignRationale entry={entry} version={version} baseline={pinnedFramework} focusSpec={requestedTab === 'spec'} />
+              : <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
+                permissions={permissions} busy={busy} command={command}
+                openScreen={(selected, screen, origin) => {
+                  const fields = Object.fromEntries(['screen', 'part', 'fb', 'file', 'about']
+                    .flatMap(key => params.has(key) ? [[key, params.get(key)!]] : []));
+                  const thread = origin.startsWith('delivery-feedback-') ? origin.slice('delivery-feedback-'.length) : undefined;
+                  if (thread) Object.assign(fields, { part: 'feedback', fb: thread });
+                  deliveryReturn.current = { designId: entry.id, version: version.version, origin, fields };
+                  rememberRouteFocus(locationKey, origin);
+                  onChange({ ...deliveryQuery, version: String(selected), tab: 'delivery', screen });
+                }}
+                openVersion={selected => onChange({ version: String(selected), tab: 'delivery', full: 'delivery', screen: '',
+                  part: 'files', fb: '', file: '', about: '' })} />}
+          </DesignFullOverlay>}
+        </div> : <>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
             canWrite={Boolean(permissions?.write)} canReview={Boolean(permissions?.review)}
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))}
-            onSetBaseline={canFreeze && version.version === currentVersion ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
-            command={command} onPreviewStale={refreshWorkspace} />}
-          {tab === 'delivery' && permissions && <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
-            permissions={permissions} busy={busy} command={command}
-            openScreen={(selected, screen, origin) => {
-              deliveryReturn.current = { designId: entry.id, version: version.version, origin };
-              rememberRouteFocus(locationKey, origin);
-              const thread = origin.startsWith('delivery-feedback-') ? origin.slice('delivery-feedback-'.length) : undefined;
-              onChange({ version: String(selected), tab: 'preview', screen, ...(thread ? { part: 'feedback', fb: thread } : {}) });
+            installedAcceptance={permissions?.installedAcceptance} requirement={draftRequirement} onOpen={(view, screen) => {
+              if (view === 'need') openFull('need');
+              else onChange({ ...deliveryQuery, tab: 'delivery', screen: screen ?? '' });
             }}
-            openVersion={selected => onChange({ version: String(selected), tab: 'delivery', screen: '',
-              part: 'files', fb: '', file: '', about: '' })} />}
-          {activeTab === 'rationale' && <DesignNotes focusSpec={tab === 'spec'}
-            why={<DesignRationale entry={entry} version={version} baseline={pinnedFramework} />}
-            rules={<DesignSpec key={`${entry.id}/${version.version}`} version={version} baseline={pinnedFramework?.material} />} />}
+            onSetBaseline={canFreeze && !activeUpgrade ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
+            command={command} onPreviewStale={refreshWorkspace} />}
           {tab === 'log' && <DesignHistory entry={entry} version={version}
-            onVersion={selected => onChange({ version: String(selected), tab: 'preview', run: '' })}
-            onRun={(selected, run) => onChange({ version: String(selected), tab: 'accept', run })} />}
+            onVersion={selected => onChange({ ...deliveryQuery, version: String(selected), tab: 'delivery', run: '', screen: '' })}
+            onRun={(selected, run) => onChange({ ...deliveryQuery, version: String(selected), tab: 'accept', run })}
+            onFeedback={selected => openFull('delivery', { part: 'feedback', fb: selected })} />}
         </>}
       </> : <>
         <DesignLibrary workspace={workspace} query={query} onChange={changeLibrary} mode={mode} theme={canvasTheme}
@@ -422,10 +491,8 @@ export function DesignWorkspacePage() {
       command={command} busy={busy} onClose={closeReview} />}
     {showCandidates && entry && version && workspace && <ExtractFramework key={`${entry.id}/${version.version}`} entry={entry} version={version} workspace={workspace} command={command}
       busy={busy} issue={issue} close={() => { setIssue(''); setExtract(false); dismissPanel('framework-candidates'); }} />}
-    {draftVisible && canFreeze && entry && version && freeze?.id === entry.id && freeze.version === version.version
-      && version.version === currentVersion && entry.frozen !== version.version && <Dialog open onOpenChange={open => {
-        if (!open && !busy) { setFreezeTarget(undefined); dismissPanel('freeze'); }
-      }}>
+    {draftVisible && canFreeze && !activeUpgrade && entry && version && freeze?.id === entry.id && freeze.version === version.version
+      && entry.frozen !== version.version && <Dialog open onOpenChange={open => { if (!open && !busy) closeFreeze(); }}>
       <DialogContent className="dw-modal dw-surface" data-design-panel="freeze">
         <DialogTitle>将 V{version.version} 定为实施基线</DialogTitle>
         <DialogDescription>{entry.frozen === undefined ? '实现方将以此版本作为对照。' : `实施基线将从 V${entry.frozen} 移到 V${version.version}。`}</DialogDescription>
@@ -434,17 +501,19 @@ export function DesignWorkspacePage() {
           <li>本次定稿会记入稿件记录，保留操作者和时间。</li>
           <li>同一稿件可继续续版，续版不会移动实施基线。</li>
         </ul>
+        {version.version !== currentVersion && <label>选择历史版本的理由
+          <textarea value={freezeReason} required maxLength={1000} onChange={event => setFreezeReason(event.target.value)} />
+        </label>}
         <footer className="dw-row">
-          <button className="ep-button" type="button" disabled={busy} onClick={() => { setFreezeTarget(undefined); dismissPanel('freeze'); }}>取消</button>
-          <button className="ep-button ep-button--primary" type="button" disabled={busy} onClick={async () => {
-            if (await command('design.freeze', { designId: entry.id, version: version.version })) {
-              setFreezeTarget(undefined); dismissPanel('freeze');
-            }
+          <button className="ep-button" type="button" disabled={busy} onClick={closeFreeze}>取消</button>
+          <button className="ep-button ep-button--primary" type="button" disabled={busy || version.version !== currentVersion && !freezeReason.trim()} onClick={async () => {
+            if (await command('design.freeze', { designId: entry.id, version: version.version, expectedBaseline: entry.frozen ?? null,
+              ...(freezeReason.trim() ? { reason: freezeReason.trim() } : {}) })) closeFreeze();
           }}>确认实施基线</button>
         </footer>
       </DialogContent>
     </Dialog>}
-    {draftVisible && canUnfreeze && unfreeze && entry?.id === unfreeze.id && entry.frozen === unfreeze.version
+    {draftVisible && canUnfreeze && !activeUpgrade && unfreeze && entry?.id === unfreeze.id && entry.frozen === unfreeze.version
       && <Dialog open onOpenChange={open => { if (!open && !busy) closeUnfreeze(); }}>
       <DialogContent className="dw-modal dw-surface" data-design-panel="unfreeze">
         <DialogTitle>撤销 V{unfreeze.version} 定稿</DialogTitle>
@@ -458,121 +527,46 @@ export function DesignWorkspacePage() {
         </footer>
       </DialogContent>
     </Dialog>}
+    {draftVisible && cancelUpgrade && activeUpgrade?.id === cancelUpgrade.id && entry?.id === cancelUpgrade.entryId && canFreeze &&
+      <Dialog open onOpenChange={open => { if (!open && !busy) { setCancelUpgrade(undefined); setCancelReason(''); } }}>
+        <DialogContent className="dw-modal dw-surface">
+          <DialogTitle>结束 V{activeUpgrade.targetVersion} 升级</DialogTitle>
+          <DialogDescription>结束后可锁定新的升级目标，已记录的验收仍可回看。</DialogDescription>
+          <label>结束原因<textarea value={cancelReason} onChange={event => setCancelReason(event.target.value)} maxLength={1000} required /></label>
+          <footer className="dw-row">
+            <button className="ep-button" type="button" disabled={busy} onClick={() => { setCancelUpgrade(undefined); setCancelReason(''); }}>取消</button>
+            <button className="ep-button ep-button--primary" type="button" disabled={busy || !cancelReason.trim()} onClick={async () => {
+              if (await command('implementation.cancel', { designId: entry.id, upgradeId: activeUpgrade.id, reason: cancelReason.trim() })) {
+                setCancelUpgrade(undefined); setCancelReason('');
+              }
+            }}>确认结束升级</button>
+          </footer>
+        </DialogContent>
+      </Dialog>}
   </AppShell>;
 }
 
-const recordTime = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-type DesignHistoryRow = {
-  key: string; at: string; version: number; title: string; details: string; note?: string; action: () => void; label: string; state: string;
-};
+const fullTitles: Record<DesignFullView, string> = { need: '原始需求与验收对照', notes: '说明全文', delivery: '反馈和资料' };
 
-function DesignHistory({ entry, version: viewing, onVersion, onRun }: { entry: DesignEntry; version: DesignVersion; onVersion: (version: number) => void; onRun: (version: number, run: string) => void }) {
-  const [filter, setFilter] = useState<'all' | 'versions' | 'reviews'>('all');
-  const rows: DesignHistoryRow[] = [
-    ...entry.versions.map(version => ({ key: `v${version.version}`, at: version.createdAt, version: version.version,
-      title: version.note || '发布稿件', details: `${designPublisherLabel(version.publisher.label)} · ${version.sourceCommit.slice(0, 8)}`,
-      action: () => onVersion(version.version), label: '查看版本', state: 'release' })),
-    ...(entry.freezes ?? []).map((freeze, index) => ({ key: `freeze-${index}`, at: freeze.at, version: freeze.version, title: `定稿 V${freeze.version}`, details: freeze.by,
-      action: () => onVersion(freeze.version), label: '查看定稿', state: 'freeze' })),
-    ...(entry.unfreezes ?? []).map((event, index) => ({ key: `unfreeze-${index}`, at: event.at, version: event.version, title: `撤销 V${event.version} 定稿`, details: event.by,
-      action: () => onVersion(event.version), label: '查看版本', state: 'unfreeze' })),
-    ...entry.comments.flatMap(comment => comment.reviews.map((review, index) => ({ key: `${comment.id}/${index}`, at: review.at, version: review.version,
-      title: review.decision === 'resolved' ? `确认评论已处理 · V${review.version}` : `退回评论 · V${review.version}`,
-      details: comment.body, note: review.body, action: () => onVersion(comment.version), label: '查看原版', state: review.decision }))),
-    ...entry.runs.flatMap(run => {
-      const details = `V${run.version} · PR #${run.pullRequest} · ${run.commit.slice(0, 8)}`;
-      const action = () => onRun(run.version, run.id);
-      const started = { key: run.id, at: run.createdAt, version: run.version, title: `做法验收 · ${verdictNames[run.verdict]}`, details, action, label: '查看证据', state: run.verdict };
-      return run.signed ? [started, { key: `signed-${run.id}`, at: run.signed.at, version: run.version, title: `签收 · ${verdictNames[run.signed.verdict]}`,
-        details, action, label: '查看签收', state: 'signed' }] : [started];
-    }),
-  ].sort((a, b) => b.at.localeCompare(a.at));
-  const latest = latestDesign(entry).version;
-  const lastRun = entry.runs.at(-1);
-  const visibleRows = filter === 'all' ? rows : rows.filter(row => (row.state === 'release') === (filter === 'versions'));
-  return <section className="dw-surface dw-history-card">
-    <h2>概况</h2>
-    <dl className="dw-history-overview">
-      <div><dt>你在看</dt><dd>V{viewing.version}</dd></div>
-      <div><dt>最新</dt><dd>V{latest}</dd></div>
-      <div><dt>实施基线</dt><dd>{entry.frozen === undefined ? '尚未定稿' : `V${entry.frozen}`}</dd></div>
-      {lastRun && <div><dt>最近验收</dt><dd>V{lastRun.version} · {verdictNames[lastRun.verdict]}</dd></div>}
-    </dl>
-    <div className="dw-row dw-history-heading"><h2>时间线</h2>
-      <div className="dw-segments" role="group" aria-label="筛选记录">
-        {([['all', '全部'], ['versions', '版本'], ['reviews', '评审和验收']] as const).map(([key, title]) =>
-          <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{title}</button>)}
-      </div>
-    </div>
-    <ol className="dw-history-list">
-      {visibleRows.map(row => {
-        const sentence = row.title.split(/(?<=[。！？])|\n/, 1)[0];
-        const caption = sentence.length > 48 ? sentence.slice(0, 48) + '…' : sentence;
-        const status = row.state === 'release' && [
-          row.version === entry.frozen ? '实施基线' : '', row.version === viewing.version ? '你在看' : '',
-          row.version === latest ? '最新' : '',
-        ].filter(Boolean).join(' · ');
-        return <li key={row.key} data-result={row.state}>
-          <strong className="dw-history-version">V{row.version}</strong>
-          <div className="dw-history-content">
-            <div className="dw-history-summary"><strong>{caption}</strong>
-              <time dateTime={row.at}>{recordTime.format(new Date(row.at))}</time></div>
-            <small>{row.details}</small>{status && <small>{status}</small>}
-            {caption !== row.title && <details><summary>展开说明</summary><p>{row.title}</p></details>}
-            {row.note && <p>{row.note}</p>}
-          </div>
-          <button type="button" className="ep-text-button" onClick={row.action}>{row.label}</button>
-        </li>;
-      })}
-    </ol>
-    {!visibleRows.length && <p className="dw-muted">当前没有评审和验收记录。</p>}
-  </section>;
-}
-
-function DesignNotes({ why, rules, focusSpec }: { why: ReactNode; rules: ReactNode; focusSpec: boolean }) {
-  const spec = useRef<HTMLElement>(null);
+function DesignFullOverlay({ view, onClose, children }: { view: DesignFullView; onClose: () => void; children: ReactNode }) {
+  const close = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (focusSpec) spec.current?.scrollIntoView({ block: 'start' });
-  }, [focusSpec]);
-  return <div className="dw-notes-page">
-    <nav className="dw-notes-jump" aria-label="说明目录">
-      <a className="ep-link" href="#notes-why">为什么这样设计</a>
-      <a className="ep-link" href="#notes-spec">实现时遵守什么</a>
-    </nav>
-    <section id="notes-why" aria-labelledby="notes-why-title"><h2 id="notes-why-title">为什么这样设计</h2>{why}</section>
-    <section id="notes-spec" ref={spec} aria-labelledby="notes-spec-title"><h2 id="notes-spec-title">实现时遵守什么</h2>{rules}</section>
-  </div>;
-}
-
-function DesignSpec({ version, baseline }: { version: DesignVersion; baseline?: DesignMaterial }) {
-  const changes = compareDesignMaterial(baseline ?? {}, version.spec).flatMap(row => {
-    const details = row.kind === '移除' ? undefined : describeMaterialChange(row);
-    return details ? [{ id: row.id, kind: row.kind, ...details }] : [];
-  });
-  const frameworkCheck = version.frameworkCheck;
-  const pendingRules = frameworkCheck?.items.filter(row => row.status !== 'passed') ?? [];
-  const material = { ...baseline, ...version.spec };
-  return <ol className="dw-dl-items dw-surface">
-    <li data-item="framework-diff"><h4><b>1</b>相对框架的规范变化</h4>
-      <small>{baseline ? `${version.framework} · v${version.frameworkVersion}` : '显示稿件单独声明的规范'}</small>
-      {changes.length ? <ul className="dw-dl-plain">{changes.map(row => <li key={row.id}>
-        <strong>{row.kind} · {row.label}</strong><p>{row.detail.slice(0, 240)}</p>
-      </li>)}</ul> : <p>本版没有单独附加或修改的规范。</p>}
-    </li>
-    <li data-item="tokens"><h4><b>2</b>令牌</h4><DesignMaterialView material={material} tab="tokens" /></li>
-    <li data-item="rules"><h4><b>3</b>规则、组件和页面骨架</h4>
-      {(['rules', 'components', 'skeleton'] as const).map(key => <details key={key} className="dw-dl-rulegroup" open={key === 'rules' || undefined}>
-        <summary>{materialNames[key]}</summary><DesignMaterialView material={material} tab={key} />
-      </details>)}
-    </li>
-    {!!frameworkCheck?.items.length && <li data-item="framework-check"><h4><b>4</b>发布规则检查
-      <small>{pendingRules.length ? `${pendingRules.length} 条待核对` : '已核对'}</small></h4>
-      <small>{frameworkCheck.framework} · v{frameworkCheck.frameworkVersion}</small>
-      <ul className="dw-dl-plain">{[...pendingRules, ...frameworkCheck.items.filter(row => row.status === 'passed')].map(row => <li key={row.ruleId}>
-        <strong>{cellNames[row.status]} · {row.ruleId} {row.name}</strong><p>{row.actual}</p>
-      </li>)}</ul>
-    </li>}
-  </ol>;
+    if (!panel.current?.contains(document.activeElement)) close.current?.focus({ preventScroll: true });
+  }, [view]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('[role="dialog"]')) return;
+      onClose();
+    };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [onClose]);
+  return <section className="dw-overlay" aria-labelledby="dw-full-title" data-full-view={view} ref={panel}>
+    <header><h2 id="dw-full-title">{fullTitles[view]}</h2><button ref={close} type="button" className="ep-button" onClick={onClose}>
+      <ChevronLeft />回到画面</button></header>
+    <div className="dw-overlay-body">{children}</div>
+  </section>;
 }
 
 function DesignUpload({ project, entries, close, onPublished }: {

@@ -75,7 +75,7 @@ class CliFlags(unittest.TestCase):
         def non_utf8_default(path, data, encoding=None, errors=None, newline=None):
             return path.write_bytes(data.encode(encoding or 'cp1252', errors or 'strict'))
         with patch.object(Path, 'write_text', non_utf8_default):
-            status, body = self.command('design', 'scaffold', '--framework', 'FW-fixture', '--framework-version', '1',
+            status, body = self.command('design', 'scaffold', '--legacy-template', '--framework', 'FW-fixture', '--framework-version', '1',
                                         '--dir', 'draft', '--title', '旧版 & 页面')
         self.assertEqual(status, 0, body)
         self.assertEqual(body['data']['version'], 1)

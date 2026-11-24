@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.18
+  version: 0.26.19
 description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.18 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.19 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -422,7 +422,7 @@ $CLI debt stats
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从本地提交的稿件子目录用 `design publish --private --dir <目录>` 或 MCP 的 `sourceMode: "private"` 私有归档。项目内已同步的授权材料可沿用 Git 核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
 
-新版到达后，用 `design diff <稿件编号> <旧版> <新版>` 固定两个版本及提交。输出包括画面清单、框架和规则变化、包及 HTML 摘要变化，并按画面及主题比对已有实拍。缺实拍的主题显示 `unverified`。同尺寸实拍可在设计「对比」查看像素差异。先复现变化区域，再调整受影响的页面。
+开始升级时由有权成员锁定本轮实施目标，再用 `design diff <稿件编号> --from <实现起点> --to <目标版>` 读取 CDS 计算的画面、验收项和文件净变化。回退时调换起点和终点。按目标稿件完成验收并签收，CDS 会写回已实现版本。版本锁定、历史定稿理由和角色权限见 [实施版本与升降级](reference/design-intake.md#实施版本与升降级)。同尺寸实拍可在设计「对比」查看像素差异。
 
 通过 CLI 修改评审人或验收证据时，每次主动更新使用新的请求编号。响应丢失时，从输出读取 `retry.requestId`，以 `--request-id` 和本次原参数重试。使用 `--human` 时，直接从错误提示读取编号。
 
@@ -442,7 +442,7 @@ $CLI design comments <稿件编号> --open
 $CLI design feedback <稿件编号>
 $CLI design feedback-reply <稿件编号> --feedback-id <反馈编号> --body "核对结果"
 $CLI design preview --dir design/<目录> --screen <画面编号>
-$CLI design diff <稿件编号> 1 2
+$CLI design diff <稿件编号> --from 1 --to 2
 $CLI design accept <稿件编号> --pr <PR编号> --commit <完整提交>
 $CLI design record <稿件编号> --run <运行编号> --commit <完整提交> --file <证据.json>
 $CLI design result <稿件编号> --run <运行编号>

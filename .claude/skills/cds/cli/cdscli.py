@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.18"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.19"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4498,7 +4498,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请使用当前绑定的 CDS 项目或有权限的成员账号")
     base = "/api/projects/" + urllib.parse.quote(project, safe="") + "/design"
     identity_headers = _human_session_headers(args.as_user) if args.as_user else {}
-    human_action = args.design_action in ("freeze", "sign", "import") or (args.design_action == "extract" and args.apply)
+    human_action = args.design_action in ("freeze", "sign", "import", "start-upgrade", "cancel-upgrade") or (
+        args.design_action == "extract" and args.apply)
     if human_action and not identity_headers:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
 
@@ -4509,6 +4510,9 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         if not 200 <= status < 300:
             message = result.get("message") if isinstance(result, dict) else None
             retry = {"retry": {"requestId": retry_id}} if retry_id and (status == 0 or status >= 500) else None
+            error = result.get("error") if isinstance(result, dict) else None
+            if status in (400, 413) and isinstance(error, str) and re.fullmatch(r"G-0[1-9]", error):
+                die(f"稿件门禁 {error} 未通过。请按设计接入规则修正后重试。", code=2, extra={"gate": error})
             message = message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号"
             if retry and _HUMAN:
                 message = f"{message}\n本次请求编号 {retry_id}"
@@ -4663,6 +4667,44 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     if action == "reviewers":
         ok(request("GET", "/reviewers"))
 
+    if action == "diff":
+        named = args.from_version is not None or args.to_version is not None
+        if named:
+            if args.left is not None or args.right is not None or min(args.from_version or 0, args.to_version or 0) < 1:
+                die("请用 --from 和 --to 指定两个已有的正整数版本")
+            query = urllib.parse.urlencode({"designId": args.id, "from": args.from_version, "to": args.to_version})
+            diff = request("GET", "/diff?" + query)
+            if (diff.get("designId") != args.id or diff.get("fromVersion") != args.from_version or diff.get("toVersion") != args.to_version
+                    or any(not isinstance(diff.get(group), dict) or
+                           any(not isinstance(diff[group].get(kind), list) for kind in ("added", "removed", "changed"))
+                           for group in ("screens", "acceptance", "files"))):
+                die("CDS 返回的净变化与当前稿件或指定版本不符")
+            ok(diff)
+        if args.left is None or args.right is None:
+            die("请提供稿件存在的两个版本")
+
+    if action in ("freeze", "start-upgrade", "cancel-upgrade"):
+        command = {"designId": args.id}
+        if action == "cancel-upgrade":
+            command.update(type="implementation.cancel", upgradeId=args.upgrade, reason=args.reason)
+        else:
+            command["type"] = "design.freeze" if action == "freeze" else "implementation.start"
+            if args.version is not None:
+                command["version"] = args.version
+            if action == "freeze" and args.reason is not None:
+                command["reason"] = args.reason
+            if args.expected_baseline is not None:
+                command["expectedBaseline"] = args.expected_baseline or None
+        receipt = send(command)
+        result = receipt.get("result")
+        if (not isinstance(result, dict) or result.get("type") != command["type"] or result.get("designId") != args.id
+                or type(result.get("version")) is not int or result["version"] < 1
+                or ("version" in command and result["version"] != command["version"])
+                or (action == "start-upgrade" and (not isinstance(result.get("upgradeId"), str) or not result["upgradeId"]))
+                or (action == "cancel-upgrade" and result.get("upgradeId") != args.upgrade)):
+            die("CDS 返回的实施回执与稿件或指定版本不符")
+        ok(receipt)
+
     workspace = request("GET")
     designs = workspace["designs"]
     frameworks = workspace["frameworks"]
@@ -4704,6 +4746,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         rules = _design_framework_checks(material.get("rules") or "")
         if len(rules) > 60:
             die("框架规则超过单份稿件的 60 条上限")
+        if not args.legacy_template and (not args.title.strip() or len(args.title) > 120 or re.search(r"[\r\n]", args.title)):
+            die("首稿标题须为一行且不超过 120 个字符")
         directory.mkdir(parents=True)
         spec = directory / "spec"
         spec.mkdir()
@@ -4712,22 +4756,41 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
         manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": revision["version"],
                     "screens": [screen], "acceptance": rules}
-        (directory / "design.json").write_bytes((json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
         checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
-        (directory / "checks" / "result.json").write_bytes((json.dumps(checks, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
-        (directory / "思路.md").write_bytes("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n".encode("utf-8"))
+        rationale = "## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n"
+        documents = {}
+        if not args.legacy_template:
+            screen.update(route="#/home", entryReadySelector="body" if material.get("skeleton") else "[data-cds-design-ready]")
+            manifest.update(rationale="思路.md", prototype="dist/index.html", checks="checks/result.json", docs=["交付说明.md"],
+                            prototypeVersion=1, date=time.strftime("%Y-%m-%d"), notes="首稿脚手架，尚无自检结果", acceptance=[])
+            entries = [{**rule, "name": f"{rule['id']} {rule['rule']}", "status": "unverified", "pass": False} for rule in rules]
+            if not entries:
+                entries = [{"name": "首画面打开并出现就绪标志", "status": "unverified", "pass": False}]
+            checks = {"total": len(entries), "passed": 0, "items": entries}
+            rationale = f"# {args.title} · 设计思路（V1）\n\n{rationale}"
+            guide = (f"# {args.title} · 交付说明（V1）\n\n"
+                     "打开 `dist/index.html` 预览首画面。使用原型内能确认实际渲染完成的就绪标志。\n\n"
+                     "撰写设计思路，按画面补充适用的验收项和检查预期，再将实际自检结果写入 `checks/result.json`。\n")
+            (directory / "changes").mkdir()
+            (directory / "交付说明.md").write_bytes(guide.encode("utf-8"))
+            documents = {"versions.json": {"versions": []}, "changes/index.json": {"to": 1, "from": []}}
+        for name, data in {"design.json": manifest, "checks/result.json": checks, **documents}.items():
+            (directory / name).write_bytes((json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        (directory / "思路.md").write_bytes(rationale.encode("utf-8"))
         for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
             if material.get(field):
                 (spec / name).write_bytes(material[field].encode("utf-8"))
         if material.get("tokens"):
             (spec / "tokens.json").write_bytes((json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        ready_marker = "" if args.legacy_template else " data-cds-design-ready"
         template = material.get("skeleton") or (
             '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
-            '<main id="home"><h1>{{title}}</h1></main></html>'
+            f'<main id="home"{ready_marker}>' '<h1>{{title}}</h1></main></html>'
         )
         (directory / "dist" / "index.html").write_bytes(template.replace("{{title}}", html.escape(args.title)).encode("utf-8"))
-        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": revision["version"]})
+        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": revision["version"]},
+           note=None if args.legacy_template else "已创建 V1 脚手架。补齐设计思路、验收预期和实际自检结果后发布。")
 
     design = next((item for item in designs if item["id"] == args.id), None)
     if not design:
@@ -4770,6 +4833,30 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("此稿件没有对应验收运行")
         ok({"projectId": project, "run": run})
 
+    if action in ("coverage", "regress", "known-create"):
+        if workspace.get("permissions", {}).get("visual") is not True:
+            die("当前凭据没有验收回填权限，请使用项目写入凭据或以有权项目成员登录")
+        required, optional = {
+            "coverage": ({"dimension", "ruleIds"}, {"risk", "reason"}),
+            "regress": ({"issueId", "status", "evidence"}, set()),
+            "known-create": ({"problem", "how", "check", "sources", "screenIds"}, set()),
+        }[action]
+        record = read_input(args.file)
+        if not isinstance(record, dict) or not required <= set(record) <= required | optional:
+            die("验收 JSON 必须使用当前命令的字段，运行、提交和请求编号从命令参数填写")
+        command = {"type": "known.create" if action == "known-create" else f"acceptance.{action}",
+                   "designId": args.id, **record}
+        if action != "known-create":
+            command.update(runId=args.run, commit=args.commit)
+        receipt = send(command, use_flag=bool(args.request_id))
+        result = receipt.get("result")
+        if (not isinstance(result, dict) or not isinstance(result.get("id"), str) or not result["id"]
+                or any(result.get(field) != command.get(field) for field in ("type", "designId", "runId"))
+                or (action == "coverage" and result["id"] != record["dimension"])
+                or (action == "regress" and result["id"] != record["issueId"])):
+            die("CDS 返回的验收回执与当前运行或记录不符")
+        ok(receipt)
+
     if action in ("flow", "smoke"):
         if workspace.get("permissions", {}).get("visual") is not True:
             die("当前凭据没有验收回填权限，请使用项目写入凭据或以有权项目成员登录")
@@ -4808,18 +4895,24 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         ok(receipt)
 
     command = {"designId": args.id}
-    if action == "freeze":
-        command.update(type="design.freeze", version=args.version)
-    elif action == "request-review":
+    if action == "request-review":
         command.update(type="design.review", reviewerIds=sorted(set(args.reviewer)))
     elif action == "sign":
         command.update(type="acceptance.sign", runId=args.run)
     elif action == "accept":
-        command.update(type="acceptance.start", version=args.version or design.get("frozen"),
-                       pullRequest=args.pr or design.get("pullRequest"))
+        command.update(type="acceptance.start", version=args.version or design.get("frozen"))
+        if args.installed:
+            command["target"] = "installed"
+        else:
+            command["pullRequest"] = args.pr or design.get("pullRequest")
         if args.commit:
             command["commit"] = args.commit
         started = send(command)
+        if args.installed:
+            result = started.get("result")
+            if not isinstance(result, dict) or result.get("type") != command["type"] or result.get("designId") != args.id or not result.get("runId"):
+                die("CDS 返回的主用验收回执与当前稿件不符")
+            ok(started)
         if args.start_only:
             ok(started)
         current = next(item for item in request("GET")["designs"] if item["id"] == args.id)
@@ -4894,7 +4987,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "flow", "smoke", "result", "freeze", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4903,7 +4996,7 @@ def _register_design_parser(sub: Any) -> None:
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
             if action not in ("intake", "list", "publish", "reviewers", "scaffold"):
                 parser.add_argument("id")
-            if action in ("publish", "request-review", "accept", "record", "visual", "flow", "smoke", "freeze", "sign", "extract", "import"):
+            if action in ("publish", "request-review", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
             if action in ("brief-reply", "brief-claim", "brief-release"):
                 parser.add_argument("--request-id")
@@ -4957,19 +5050,24 @@ def _register_design_parser(sub: Any) -> None:
             if action == "comments":
                 parser.add_argument("--open", action="store_true")
             if action == "diff":
-                parser.add_argument("left", type=int)
-                parser.add_argument("right", type=int)
-            if action in ("accept", "extract"):
+                parser.add_argument("left", type=int, nargs="?", help="旧版对比起点")
+                parser.add_argument("right", type=int, nargs="?", help="旧版对比终点")
+                parser.add_argument("--from", dest="from_version", type=int, help="净变化起点")
+                parser.add_argument("--to", dest="to_version", type=int, help="净变化终点")
+            if action in ("accept", "extract", "start-upgrade"):
                 parser.add_argument("--version", type=int)
             if action == "accept":
-                parser.add_argument("--pr", type=int)
+                target = parser.add_mutually_exclusive_group()
+                target.add_argument("--pr", type=int)
+                target.add_argument("--installed", action="store_true", help="锁定当前主用 CDS 构建，只创建验收运行")
                 parser.add_argument("--commit")
                 parser.add_argument("--start-only", action="store_true", help="只创建验收运行，后续由人工补充证据")
-            if action in ("record", "visual", "flow", "smoke", "result", "sign"):
+            if action in ("record", "visual", "flow", "smoke", "coverage", "regress", "result", "sign"):
                 parser.add_argument("--run", required=action != "result")
-            if action in ("record", "visual", "flow", "smoke"):
-                parser.add_argument("--file", required=True)
+            if action in ("record", "visual", "flow", "smoke", "coverage", "regress"):
                 parser.add_argument("--commit", required=True)
+            if action in ("record", "visual", "flow", "smoke", "coverage", "regress", "known-create"):
+                parser.add_argument("--file", required=True)
             if action == "visual":
                 parser.add_argument("--screen", required=True, help="稿件画面编号")
                 parser.add_argument("--slot", required=True, choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
@@ -4978,11 +5076,18 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--reference", help="随稿缺图时补交同版本的对照 PNG")
             if action == "freeze":
                 parser.add_argument("version", type=int)
+            if action in ("freeze", "start-upgrade"):
+                parser.add_argument("--expected-baseline", type=int, help="已读到的实施基线，0 表示没有基线")
+            if action in ("freeze", "cancel-upgrade"):
+                parser.add_argument("--reason", required=action == "cancel-upgrade", help="历史版本定稿或取消升级的原因")
+            if action == "cancel-upgrade":
+                parser.add_argument("--upgrade", required=True, help="正在进行的升级编号")
             if action == "scaffold":
                 parser.add_argument("--framework", required=True)
                 parser.add_argument("--framework-version", type=int, help="固定要复用的框架版本")
                 parser.add_argument("--dir", required=True)
                 parser.add_argument("--title", required=True)
+                parser.add_argument("--legacy-template", action="store_true", help="生成供旧工具读取的历史脚手架格式")
             if action == "extract":
                 parser.add_argument("--into", required=True)
                 parser.add_argument("--apply", choices=("tokens", "rules", "components", "skeleton"), action="append")

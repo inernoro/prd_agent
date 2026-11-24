@@ -7,7 +7,7 @@ import { PlanningError, planningId, rejectPlanning } from '../services/engineeri
 import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback(?:\/attachments)?|reviewers|intake|viewed|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback(?:\/attachments)?|reviewers|intake|diff|installed|viewed|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
   if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
@@ -51,6 +51,13 @@ export function createDesignWorkspaceRouter(deps: {
 
   router.get(route, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.workspace(projectId, actor))));
   router.get(`${route}/intake`, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.intake(projectId, actor))));
+  router.get(`${route}/diff`, authorized, handle(async (req, res, projectId, actor) => {
+    const version = (value: unknown) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN;
+    res.json(await deps.service.diff(projectId, actor, designId(req.query.designId, '稿件编号'), version(req.query.from), version(req.query.to)));
+  }));
+  router.get(`${route}/installed`, authorized, handle(async (_req, res, projectId, actor) => {
+    res.json(await deps.service.installed(projectId, actor));
+  }));
   router.post(`${route}/viewed`, authorized, express.json({ limit: '2kb' }),
     handle(async (req, res, projectId, actor) => res.json(await deps.service.viewed(projectId, actor, req.body))));
   router.get(`${route}/reviewers`, authorized, handle(async (_req, res, projectId) => {
@@ -119,6 +126,9 @@ export function createDesignWorkspaceRouter(deps: {
   }));
   router.use((error: { status?: number }, req: Request, res: Response, next: NextFunction) => {
     if (!res.locals.designAccess || ![400, 413, 415].includes(error.status ?? 0)) return next(error);
+    if (error.status === 413 && normalizedDesignPath(req.originalUrl) === '/api/projects/:projectId/design/packages') {
+      return res.status(413).json({ error: 'G-09', message: 'G-09 稿件包超过压缩体积限制' });
+    }
     res.status(error.status!).json({ error: 'invalid_design', message: error.status === 413 ? '稿件或证据超过体积限制' : '请按设计接口提交有效的 ZIP 或 JSON' });
   });
   return router;

@@ -27,7 +27,7 @@ def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monke
     monkeypatch.setattr(cli, '_request', lambda *_args, **_kwargs: (
         200, {'projectId': 'fixture', 'frameworks': [framework], 'designs': []}, {}))
     destination = root / 'draft'
-    code, output = run('design', 'scaffold', '--framework', 'FW-01', '--title', 'Fixture', '--dir', str(destination))
+    code, output = run('design', 'scaffold', '--legacy-template', '--framework', 'FW-01', '--title', 'Fixture', '--dir', str(destination))
     assert code == 0, output
     manifest = json.loads((destination / 'design.json').read_text())
     assert manifest['frameworkVersion'] == 4
@@ -37,6 +37,36 @@ def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monke
     assert result['passed'] == 0
     assert [row['id'] for row in result['items']] == ['R-01', 'R-02', 'R-03']
     assert {row['status'] for row in result['items']} == {'unverified'}
+
+
+def test_scaffold_starts_with_the_v1_gate_layout_and_no_invented_results(workspace, monkeypatch):
+    root, _ = workspace
+    save('https://cds.example', 'fixture', 'cdsp_fixture')
+    material = {'rules': '# Shared\n\n## R-01 · Preserve the active navigation state\n'}
+    framework = {'id': 'FW-01', 'projectId': 'fixture', 'versions': [{'version': 4, 'material': material}]}
+    monkeypatch.setattr(cli, '_request', lambda *_args, **_kwargs: (
+        200, {'projectId': 'fixture', 'frameworks': [framework], 'designs': []}, {}))
+    destination = root / 'draft'
+    code, output = run('design', 'scaffold', '--framework', 'FW-01', '--title', '首稿', '--dir', str(destination))
+    assert code == 0, output
+    manifest = json.loads((destination / 'design.json').read_text(encoding='utf-8'))
+    assert manifest['project'] == 'fixture' and manifest['title'] == '首稿'
+    assert manifest['frameworkVersion'] == 4 and manifest['prototypeVersion'] == 1
+    assert len(manifest['date']) == 10 and isinstance(manifest['notes'], str)
+    assert manifest['acceptance'] == []
+    screen = manifest['screens'][0]
+    assert screen['route'] == '#/home' and screen['entryReadySelector'] == '[data-cds-design-ready]'
+    assert 'data-cds-design-ready' in (destination / manifest['prototype']).read_text(encoding='utf-8')
+    assert all((destination / name).is_file() for name in [manifest['rationale'], manifest['checks'], *manifest['docs']])
+    assert '（V1）' in (destination / '交付说明.md').read_text(encoding='utf-8').splitlines()[0]
+    assert '（V1）' in (destination / manifest['rationale']).read_text(encoding='utf-8').splitlines()[0]
+    assert json.loads((destination / 'versions.json').read_text()) == {'versions': []}
+    assert json.loads((destination / 'changes/index.json').read_text()) == {'to': 1, 'from': []}
+    results = json.loads((destination / manifest['checks']).read_text(encoding='utf-8'))
+    assert results['total'] == len(results['items']) == 1 and results['passed'] == 0
+    assert results['items'][0]['id'] == 'R-01'
+    assert results['items'][0]['pass'] is False and results['items'][0]['status'] == 'unverified'
+    assert not (destination / 'tools/gate-allow.json').exists()
 
 
 def test_design_accept_root_measurement_does_not_approve_a_container_rule(monkeypatch):

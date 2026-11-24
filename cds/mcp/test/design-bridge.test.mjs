@@ -111,6 +111,10 @@ async function intakeFixture(t) {
         status = 409;
         value = { error: 'design_intake_conflict', message: '本地夹具的私有上游明细' };
       }
+      if (url.searchParams.get('requestId') === 'intake-fixture-gate') {
+        status = 400;
+        value = { error: 'G-07', message: '本地夹具的私有上游明细' };
+      }
     } else {
       status = write || request.method === 'GET' ? 404 : 403;
       value = { error: 'fixture_route_error' };
@@ -191,6 +195,16 @@ test('intake conflicts direct the agent to the authoritative baseline without ec
   await assert.rejects(publisher.call('cds_design_publish', { ...base, intent: 'revise', designId: stored.designId,
     expectedVersion: 3, requestId: 'intake-fixture-conflict' }), error => {
     assert.match(error.message, /intake.*最新版本/);
+    assert.doesNotMatch(error.message, /私有上游明细/);
+    return true;
+  });
+});
+
+test('publish preserves an actionable gate code without echoing archived contents', async t => {
+  const { publisher, base, stored } = await intakeFixture(t);
+  await assert.rejects(publisher.call('cds_design_publish', { ...base, intent: 'revise', designId: stored.designId,
+    expectedVersion: stored.latestVersion, requestId: 'intake-fixture-gate' }), error => {
+    assert.match(error.message, /G-07/);
     assert.doesNotMatch(error.message, /私有上游明细/);
     return true;
   });

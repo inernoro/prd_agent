@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
-  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignViewerState, FrameworkResolutions,
+  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignUpgrade, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { currentDesignRun, designAcceptanceTarget, designFeedbackCategories, designMaterialKeys, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
-import { designEvidenceStatus, designMethodApplicable, designMethodPlanEnabled, designMethodsState,
-  type DesignEvidenceStatus } from '../shared/design-methods.js';
+import { designEvidenceStatus, designKnownIssues, designMethodApplicable, designMethodPlanEnabled, designMethodsState,
+  designObjectiveMethods, designObjectivePlanEnabled, designRuleApplicable, type DesignEvidenceStatus, type DesignKnownIssue } from '../shared/design-methods.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
+import { compareDesignVersions } from './design-version-diff.js';
 import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designScopeId, designSourcePath, invalidDesign, localDesignPath,
   parseDesignDimension, parseDesignScope, parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
@@ -24,7 +25,8 @@ export type DesignActor = PlanningActor & { steward?: boolean; feedbackSupplemen
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
-    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string; screenId?: string; slot?: DesignSlot };
+    state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string; screenId?: string; slot?: DesignSlot;
+    upgradeId?: string; implementedVersion?: number };
 };
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
@@ -33,7 +35,8 @@ export type DesignWorkspaceCommit = {
     frozen?: number; freeze?: NonNullable<DesignEntry['freezes']>[number]; unfreeze?: NonNullable<DesignEntry['unfreezes']>[number];
     pullRequest?: number; reviewRequested?: boolean;
     reviewers?: DesignReviewer[]; notifyReviewersAt?: string; sharePreparation?: DesignSharePreparation;
-    implementation?: { version: number; screens: DesignImplementation[] } };
+    implementation?: { version: number; screens: DesignImplementation[] };
+    upgrade?: DesignUpgrade; enabledMethods?: DesignEntry['enabledMethods']; knownIssue?: DesignKnownIssue };
   framework?: DesignFramework;
   system?: DesignSystem;
   viewing?: { actorId: string; state: DesignViewerState };
@@ -148,7 +151,10 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       design.implementations = { ...previous?.implementations, [version]: [...bindings.values()] };
     }
     if (update.comment) replace(design.comments, update.comment);
-    if (update.run) replace(design.runs, update.run);
+    if (update.run) {
+      replace(design.runs, update.run);
+      if (update.run.signed) design.implementedVersion = update.run.version;
+    }
     if (update.frozen !== undefined) design.frozen = update.frozen;
     if (update.freeze) design.freezes = [...(design.freezes ?? []), update.freeze];
     if (update.unfreeze) {
@@ -156,6 +162,12 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       design.unfreezes = [...(design.unfreezes ?? []), update.unfreeze];
     }
     if (update.pullRequest !== undefined) design.pullRequest = update.pullRequest;
+    if (update.upgrade) design.upgrade = update.upgrade;
+    if (update.enabledMethods) design.enabledMethods = update.enabledMethods;
+    if (update.knownIssue) {
+      design.knownIssues = [...(previous?.knownIssues ?? [])];
+      replace(design.knownIssues, update.knownIssue);
+    }
     if (update.reviewRequested !== undefined) {
       design.reviewRequested = update.reviewRequested && design.frozen !== design.versions.at(-1)?.version;
     }
@@ -233,6 +245,24 @@ function implementationVersion(entry: DesignEntry, version: DesignVersion): Desi
 function runOf(design: DesignEntry, value: unknown): DesignRun {
   const id = designId(value, '验收运行');
   return design.runs.find(row => row.id === id) ?? missing('该验收运行不存在');
+}
+
+function expectBaseline(entry: DesignEntry, value: unknown) {
+  if (value === undefined) return;
+  const expected = value === null ? null : number(value, '预期实施基线');
+  if (expected !== (entry.frozen ?? null)) conflict('实施基线已经变化，请回读再操作');
+}
+
+function newUpgrade(entry: DesignEntry, version: number, { actor, now }: Context): DesignUpgrade {
+  return { id: `UPG-${randomUUID()}`, targetVersion: version, fromVersion: entry.implementedVersion,
+    startedAt: now, startedBy: actor.id, status: 'active' };
+}
+
+function requireRunTarget(entry: DesignEntry, run: DesignRun) {
+  if (run.version !== entry.frozen || (run.target !== 'installed' && run.pullRequest !== entry.pullRequest) || run.id !== entry.runs.at(-1)?.id
+    || (entry.upgrade?.status === 'active' ? run.upgradeId !== entry.upgrade.id : Boolean(run.upgradeId))) {
+    conflict('请对当前锁定版本与 PR 的最新验收运行补证据');
+  }
 }
 
 function screenPath(version: DesignVersion, itemId: string, slot: DesignSlot) {
@@ -318,12 +348,14 @@ export class DesignWorkspaceService {
     sourcePackage?: (projectId: string, commit: string, sourcePath: string) => Promise<Buffer | undefined>;
     frameworkProbe?: DesignFrameworkProbe;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
+    resolveInstalled?: (projectId: string, commit?: string) => Promise<Preview | undefined>;
     approvedPlanFor?: (projectId: string, planId: string) => Promise<Omit<DesignRequirement, 'designKey' | 'planId' | 'sharedAt'> | undefined>;
     findDebt?: (projectId: string, debtId: string, sourceRef: string) => Promise<boolean>;
     resolveDebtProposal?: (projectId: string, proposalId: string, sourceRef: string) => Promise<string | undefined>;
     createDebt?: (context: { projectId: string; actor: DesignActor; sourceRef: string; title: string; actual: string;
-      version: number; pullRequest: number; commit: string; expected: string; high: boolean }) =>
+      version: number; pullRequest?: number; commit: string; expected: string; high: boolean }) =>
       Promise<{ id: string; pending: boolean }>;
+    publicBaseUrl?: string;
     now?: () => Date;
   } = {}) {}
 
@@ -367,15 +399,17 @@ export class DesignWorkspaceService {
   }
 
   private async currentSignoffs(projectId: string, designs: readonly DesignEntry[]) {
-    const previews = new Map<number, Promise<Preview | undefined>>();
+    const previews = new Map<number | 'installed', Promise<Preview | undefined>>();
     const signoffs = new Map<string, DesignRun | null>();
     await Promise.all(designs.map(async entry => {
       const run = currentDesignRun(entry);
-      if (!run?.signed) return;
-      let target = previews.get(run.pullRequest);
+      if (!run?.signed || run.version !== entry.implementedVersion) return;
+      const key = run.target ?? run.pullRequest;
+      if (key === undefined) return;
+      let target = previews.get(key);
       if (!target) {
-        target = this.deps.resolvePreview?.(projectId, run.pullRequest).catch(() => undefined) ?? Promise.resolve(undefined);
-        previews.set(run.pullRequest, target);
+        target = this.resolveRunPreview(projectId, run).catch(() => undefined);
+        previews.set(key, target);
       }
       const preview = await target;
       signoffs.set(entry.id, preview?.commit === run.commit && preview.url === run.previewUrl ? run : null);
@@ -388,9 +422,11 @@ export class DesignWorkspaceService {
     const state = await this.load(projectId);
     const designs = structuredClone([...state.designs.values()].sort((a, b) =>
       b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt)));
-    const signoffs = await this.currentSignoffs(projectId, designs);
+    const [signoffs, installed] = await Promise.all([this.currentSignoffs(projectId, designs),
+      this.deps.resolveInstalled?.(projectId).catch(() => undefined)]);
     for (const entry of designs) {
       entry.versions = entry.versions.map(version => implementationVersion(entry, version));
+      entry.versionGap = designVersionGap(entry.frozen, entry.implementedVersion);
       const run = signoffs.get(entry.id);
       if (run !== undefined) entry.currentSignoffRunId = run?.id ?? null;
     }
@@ -400,6 +436,7 @@ export class DesignWorkspaceService {
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), visual: !actor.gitPublishOnly && actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
+        ...(installed ? { installedAcceptance: true } : {}),
         steward: actor.steward === true, feedbackSupplement: actor.kind === 'human' && actor.feedbackSupplement === true, actorId: actor.id } };
   }
 
@@ -415,6 +452,9 @@ export class DesignWorkspaceService {
         const latest = entry.versions.at(-1)!;
         return { designId: entry.id, designKey: entry.designKey, title: latest.title, latestVersion: latest.version,
           sourceCommit: latest.sourceCommit, sourcePaths: registeredDesignPaths(entry),
+          baselineVersion: entry.frozen, implementedVersion: entry.implementedVersion, upgrade: entry.upgrade,
+          versionGap: designVersionGap(entry.frozen, entry.implementedVersion),
+          versionHistory: entry.versions.map(({ version, sourceCommit }) => ({ version, sourceCommit })),
           ...(entry.scope ? { scope: structuredClone(entry.scope) } : {}),
           canRevise: canWrite && (actor.steward === true || latest.publisher.id === actor.id),
           openFeedbackCount: entry.feedback?.filter(item => item.status !== 'closed').length ?? 0 };
@@ -510,7 +550,7 @@ export class DesignWorkspaceService {
       const latest = entry.versions.at(-1)!;
       const run = signoffs.get(entry.id);
       return { id: entry.id, title: latest.title, version: latest.version, decisionIds: [...latest.decisionIds],
-        frozen: entry.frozen, ...(run ? { signed: { runId: run.id, pullRequest: run.pullRequest, commit: run.commit } } : {}) };
+        frozen: entry.frozen, ...(run ? { signed: { runId: run.id, pullRequest: run.pullRequest, target: run.target, commit: run.commit } } : {}) };
     });
   }
 
@@ -534,6 +574,25 @@ export class DesignWorkspaceService {
     }
     return { mime: file.text ? 'text/plain; charset=utf-8' : 'application/octet-stream', bytes: content, file,
       attachment: file.path.split('/').at(-1)! };
+  }
+
+  async diff(projectId: string, actor: DesignActor, designIdValue: string, from: number, to: number) {
+    requireProjectRead(actor);
+    const state = await this.load(projectId);
+    const entry = state.designs.get(designIdValue) ?? missing('该稿件不存在');
+    return { projectId, designId: entry.id, ...compareDesignVersions(versionOf(entry, from), versionOf(entry, to)) };
+  }
+
+  async installed(projectId: string, actor: DesignActor) {
+    requireProjectRead(actor);
+    const target = await this.deps.resolveInstalled?.(projectId);
+    if (!target) return missing('当前项目没有可验收的主用 CDS 构建');
+    return { projectId, ...target };
+  }
+
+  private async resolveRunPreview(projectId: string, run: DesignRun, commit?: string): Promise<Preview | undefined> {
+    if (run.target === 'installed') return this.deps.resolveInstalled?.(projectId, commit);
+    if (run.pullRequest !== undefined) return this.deps.resolvePreview?.(projectId, run.pullRequest, commit);
   }
 
   async publish(projectId: string, actor: DesignActor, query: Record<string, unknown>, bytes: Buffer) {
@@ -608,6 +667,8 @@ export class DesignWorkspaceService {
           intakeConflict('项目已有设计稿。请先读设计接入清单，按稿件 ID 续版，或用 intent=create 和独立设计接入标识新建');
         }
         if (existing?.versions.some(version => version.sourceCommit === sourceCommit)) conflict('该稿件已经发布过此提交');
+        loaded.validatePublicationGate({ history: existing?.versions ?? [], designId: existing?.id, sourceCommit,
+          publicBaseUrl: this.deps.publicBaseUrl });
         const reviewers = reviewerIds === undefined ? existing?.reviewers : await this.reviewers(projectId, reviewerIds);
         const brief = state.requirements.get(designKey ?? existing?.designKey ?? '');
         if (!existing && brief?.assignee && brief.assignee.id !== actor.id && !actor.steward) {
@@ -663,6 +724,8 @@ export class DesignWorkspaceService {
           ...(scope ? { scope } : {}),
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
+          ...(loaded.acceptanceMode ? { acceptanceMode: loaded.acceptanceMode } : {}),
+          ...(loaded.risks ? { risks: loaded.risks } : {}),
           ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
@@ -817,8 +880,11 @@ export class DesignWorkspaceService {
       const id = designId(input.designId, '稿件编号');
       const entry = context.state.designs.get(id) ?? missing('该稿件不存在');
       if (type.startsWith('comment.')) return this.comment(type, input, context, entry);
+      if (type === 'acceptance.enable') return this.enableMethod(input, context, entry);
       if (type.startsWith('acceptance.')) return this.acceptance(type, input, context, entry);
       if (type === 'implementation.bind') return this.bindImplementation(input, context, entry);
+      if (type === 'implementation.start' || type === 'implementation.cancel') return this.upgrade(type, input, context, entry);
+      if (type === 'known.create') return this.recordKnownIssue(input, context, entry);
       if (type === 'share.prepare') return this.prepareShare(input, context, entry);
       const result = { type, designId: id };
       if (type === 'design.review') {
@@ -831,16 +897,16 @@ export class DesignWorkspaceService {
           ...(reviewRequested ? { notifyReviewersAt: context.now } : {}) } } };
       }
       if (type === 'design.freeze') {
-        designRecord(input, '定稿请求', ['type', 'requestId', 'designId', 'version']);
-        review(actor);
-        if (entry.reviewers?.length && (!entry.reviewers.some(reviewer => reviewer.id === actor.id) || !await this.deps.reviewer?.(projectId, actor.id))) {
-          forbidden('请由此稿件的指定评审人定稿');
-        }
+        designRecord(input, '定稿请求', ['type', 'requestId', 'designId', 'version', 'reason', 'expectedBaseline']);
+        await this.reviewBaseline(context, entry);
+        expectBaseline(entry, input.expectedBaseline);
         const version = versionOf(entry, input.version).version;
-        if (entry.versions.at(-1)!.version !== version) conflict('请切到最新稿件版本后定稿');
+        const reason = optionalText(input.reason, '基线变更理由', 1000);
+        if (entry.upgrade?.status === 'active' && entry.upgrade.targetVersion !== version) conflict('升级目标已锁定，请先完成签收或取消本次升级');
         if (entry.frozen === version) return { result: { ...result, version }, changes: {} };
+        if (entry.versions.at(-1)!.version !== version && !reason) conflict('选择历史版本作为基线时，请说明回退或固定版本的理由');
         return { result: { ...result, version }, changes: { design: { id, frozen: version,
-          freeze: { version, at: context.now, by: actor.label }, reviewRequested: false } } };
+          freeze: { version, at: context.now, by: actor.label, ...(reason ? { reason } : {}) }, reviewRequested: false } } };
       }
       if (type === 'design.unfreeze') {
         designRecord(input, '撤销定稿请求', ['type', 'requestId', 'designId', 'version']);
@@ -850,6 +916,7 @@ export class DesignWorkspaceService {
           || !await this.deps.reviewer?.(projectId, actor.id))) forbidden('请由此稿件的指定评审人或系统所有者撤销定稿');
         const version = versionOf(entry, input.version).version;
         if (entry.frozen !== version) conflict('当前定稿已变化，请刷新稿件后再操作');
+        if (entry.upgrade?.status === 'active') conflict('升级目标已锁定，请先完成签收或取消本次升级');
         return { result: { ...result, version }, changes: { design: { id,
           unfreeze: { version, at: context.now, by: actor.label }, reviewRequested: Boolean(entry.reviewers?.length) } } };
       }
@@ -862,6 +929,46 @@ export class DesignWorkspaceService {
       }
       return invalidDesign('不支持的设计命令');
     });
+  }
+
+  private async reviewBaseline({ actor, projectId }: Context, entry: DesignEntry) {
+    review(actor);
+    if (entry.reviewers?.length && (!entry.reviewers.some(reviewer => reviewer.id === actor.id)
+      || !await this.deps.reviewer?.(projectId, actor.id))) forbidden('请由此稿件的指定评审人定稿');
+  }
+
+  private async upgrade(type: 'implementation.start' | 'implementation.cancel', input: Record<string, unknown>, context: Context, entry: DesignEntry): Promise<Update> {
+    const { actor, now } = context;
+    const designId = entry.id;
+    if (type === 'implementation.cancel') {
+      designRecord(input, '取消实施升级', ['type', 'requestId', 'designId', 'upgradeId', 'reason']);
+      if (actor.steward) review(actor);
+      else await this.reviewBaseline(context, entry);
+      const reason = planningText(input.reason, '取消升级理由', 1000);
+      const active = entry.upgrade;
+      if (active?.status !== 'active' || active.id !== input.upgradeId) return conflict('当前没有这条锁定的升级');
+      return { result: { type, designId, version: active.targetVersion, upgradeId: active.id }, changes: {
+        design: { id: designId, upgrade: { ...active, status: 'cancelled', completedAt: now, reason } },
+      } };
+    }
+
+    designRecord(input, '开始实施升级', ['type', 'requestId', 'designId', 'version', 'expectedBaseline']);
+    await this.reviewBaseline(context, entry);
+    expectBaseline(entry, input.expectedBaseline);
+    const active = entry.upgrade?.status === 'active' ? entry.upgrade : undefined;
+    const latest = entry.versions.at(-1)!.version;
+    const version = input.version === undefined ? active?.targetVersion ?? latest : versionOf(entry, input.version).version;
+    if (active) {
+      if (version !== active.targetVersion) conflict('升级目标已锁定，请先完成签收或取消本次升级');
+      return { result: { type, designId, version, upgradeId: active.id }, changes: {} };
+    }
+    if (version !== latest && version !== entry.frozen) conflict('锁定历史目标前，请先说明理由并设为实施基线');
+    const upgrade = newUpgrade(entry, version, context);
+    return { result: { type, designId, version, upgradeId: upgrade.id }, changes: {
+      design: { id: designId, upgrade, ...(entry.frozen === version ? {} : {
+        frozen: version, freeze: { version, at: now, by: actor.label }, reviewRequested: false,
+      }) },
+    } };
   }
 
   private bindImplementation(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
@@ -1043,12 +1150,98 @@ export class DesignWorkspaceService {
 
   private async requireCurrentRun(context: Context, entry: DesignEntry, run: DesignRun, commit: unknown) {
     if (context.actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
-    if (run.id !== entry.runs.at(-1)?.id || run.pullRequest !== entry.pullRequest || run.version !== entry.frozen) {
-      conflict('请对当前实施基线与 PR 的最新验收运行补证据');
-    }
+    requireRunTarget(entry, run);
     if (designCommit(commit) !== run.commit) conflict('证据提交与验收运行不符');
-    const current = await this.deps.resolvePreview?.(context.projectId, run.pullRequest, run.commit);
+    const current = await this.resolveRunPreview(context.projectId, run, run.commit);
     if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
+  }
+
+  private enableMethod(input: Record<string, unknown>, { actor }: Context, entry: DesignEntry): Update {
+    designRecord(input, '启用验收手段', ['type', 'requestId', 'designId', 'version', 'method']);
+    review(actor);
+    const version = versionOf(entry, input.version);
+    if (entry.frozen !== version.version || !designObjectivePlanEnabled(version)) conflict('请选择使用分手段验收的当前实施基线');
+    const method = designObjectiveMethods.find(([id]) => id === input.method)?.[0] ?? invalidDesign('无法识别这个验收手段');
+    const result = { type: 'acceptance.enable', designId: entry.id, version: version.version, id: method };
+    if (designMethodApplicable(version, method, entry)) return { result, changes: {} };
+    if (version.acceptancePlan?.[method]?.applicable === false) conflict('请先更新稿件中该手段的不适用声明');
+    const currentRun = currentDesignRun(entry);
+    if (currentRun?.signed) conflict('本次运行已签收，请先为该版本开始新的验收运行');
+    const enabledMethods = { ...entry.enabledMethods, [version.version]: [...(entry.enabledMethods?.[version.version] ?? []), method] };
+    const run = currentRun && structuredClone(currentRun);
+    if (run) this.evaluateRun(version, run, { ...entry, enabledMethods });
+    return { result, changes: { design: { id: entry.id, enabledMethods, ...(run ? { run } : {}) } } };
+  }
+
+  private recordKnownIssue(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
+    designRecord(input, '登记历史易错', ['type', 'requestId', 'designId', 'problem', 'sources', 'how', 'check', 'screenIds']);
+    if (actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
+    const problem = planningText(input.problem, '历史问题', 250);
+    const how = planningText(input.how, '复查手段', 250);
+    const check = planningText(input.check, '复查方法', 1800);
+    if (!Array.isArray(input.sources) || !input.sources.length || input.sources.length > 50) return invalidDesign('请提供 1 至 50 个历史问题来源');
+    const sources = new Map<string, DesignKnownIssue['sources'][number]>();
+    const normalized = problem.toLocaleLowerCase().replace(/\s+/g, ' ');
+    const former = entry.knownIssues?.find(row => row.problem.toLocaleLowerCase().replace(/\s+/g, ' ') === normalized);
+    for (const source of former?.sources ?? []) sources.set(`${source.kind}/${source.ref}`, source);
+    for (const value of input.sources) {
+      const source = designRecord(value, '问题来源', ['kind', 'ref', 'count']);
+      const { kind } = source;
+      if (kind !== 'defect' && kind !== 'ticket' && kind !== 'feedback') return invalidDesign('请选择缺陷、工单或反馈作为来源');
+      const ref = designId(source.ref, '问题来源编号');
+      const key = `${kind}/${ref}`;
+      const count = number(source.count, '历史问题出现次数', 10_000);
+      sources.set(key, { kind, ref, count: Math.max(count, sources.get(key)?.count ?? 0) });
+    }
+    if (sources.size > 100) return invalidDesign('单条历史问题最多关联 100 个来源');
+    if (!Array.isArray(input.screenIds) || input.screenIds.length > 100) return invalidDesign('请提供适用的画面编号数组');
+    const screenIds = [...new Set(input.screenIds.map(value => designId(value, '适用画面编号')))];
+    if (screenIds.some(id => !entry.versions.some(version => version.screens.some(screen => screen.id === id)))) {
+      invalidDesign('适用画面不属于当前稿件');
+    }
+    const knownIssue: DesignKnownIssue = { id: former?.id ?? `K-${randomUUID()}`, problem: former?.problem ?? problem,
+      how: former?.how ?? how, check: former?.check ?? check, sources: [...sources.values()],
+      screenIds: !screenIds.length || former?.screenIds.length === 0 ? [] : [...new Set([...(former?.screenIds ?? []), ...screenIds])],
+      at: former?.at ?? now, by: former?.by ?? actor.id };
+    const current = currentDesignRun(entry);
+    const run = current && !current.signed ? structuredClone(current) : undefined;
+    if (run) {
+      const knownIssues = [...(entry.knownIssues ?? [])];
+      replace(knownIssues, knownIssue);
+      this.evaluateRun(versionOf(entry, run.version), run, { ...entry, knownIssues });
+    }
+    return { result: { type: 'known.create', designId: entry.id, id: knownIssue.id }, changes: { design: { id: entry.id, knownIssue, run } } };
+  }
+
+  private async recordCoverage(input: Record<string, unknown>, context: Context, entry: DesignEntry, version: DesignVersion, run: DesignRun) {
+    designRecord(input, 'MECE 覆盖回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'dimension', 'risk', 'ruleIds', 'reason']);
+    await this.requireCurrentRun(context, entry, run, input.commit);
+    if (!designObjectivePlanEnabled(version) || !designMethodApplicable(version, 'mece', entry)) conflict('请先启用当前版本的 MECE 覆盖');
+    const dimension = parseDesignDimension(input.dimension);
+    const reason = optionalText(input.reason, '该维度不适用的理由', 1200);
+    if (reason) review(context.actor);
+    if (!Array.isArray(input.ruleIds) || input.ruleIds.length > version.acceptance.length) return invalidDesign('请提供覆盖该维度风险的验收项编号');
+    const ruleIds = [...new Set(input.ruleIds.map(value => designId(value, '验收项编号')))];
+    if (ruleIds.some(id => !version.acceptance.some(rule => rule.id === id))) invalidDesign('覆盖记录引用了当前版本不存在的验收项');
+    if (Boolean(reason) === Boolean(ruleIds.length)) invalidDesign('请填写风险及验收项，或写明本维度不适用的理由');
+    if (reason && version.risks?.some(risk => risk.dimension === dimension && !risk.reason)) conflict('该维度已有稿件声明的风险，须保留对应验收项');
+    const risk = reason ? '' : planningText(input.risk, '需要覆盖的风险', 1200);
+    run.coverage = { ...run.coverage, [dimension]: { dimension, risk, ruleIds, reason, at: context.now, by: context.actor.id } };
+    return dimension;
+  }
+
+  private async recordRegression(input: Record<string, unknown>, context: Context, entry: DesignEntry, version: DesignVersion, run: DesignRun) {
+    designRecord(input, '历史易错回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'issueId', 'status', 'evidence']);
+    await this.requireCurrentRun(context, entry, run, input.commit);
+    const issueId = designId(input.issueId, '历史易错编号');
+    if (!designObjectivePlanEnabled(version) || !designKnownIssues(entry, version, run).some(issue => issue.id === issueId)) {
+      return missing('当前版本没有该历史易错项');
+    }
+    const { status } = input;
+    if (status !== 'passed' && status !== 'failed' && status !== 'missing') return invalidDesign('请选择有效的复查结果');
+    const evidence = planningText(input.evidence, '历史易错复查证据', 2000);
+    run.regress = { ...run.regress, [issueId]: { status, evidence, by: context.actor.id, at: context.now } };
+    return issueId;
   }
 
   private async recordMethod(method: 'flow' | 'smoke', input: Record<string, unknown>, context: Context, entry: DesignEntry,
@@ -1056,7 +1249,7 @@ export class DesignWorkspaceService {
     designRecord(input, '验收手段回填', ['type', 'requestId', 'designId', 'runId', 'commit', method]);
     await this.requireCurrentRun(context, entry, run, input.commit);
     if (!designMethodPlanEnabled(version)) conflict('该版本尚未采用分手段验收');
-    if (!designMethodApplicable(version, method)) conflict('这个验收手段在当前版本标为不适用');
+    if (!designMethodApplicable(version, method, entry)) conflict('请先启用当前版本的这个验收手段');
 
     const common = ['id', 'title', 'dimension'];
     const fields = ['expected', 'actual', 'status'];
@@ -1138,40 +1331,46 @@ export class DesignWorkspaceService {
     const { actor, projectId, now } = context;
     const id = entry.id;
     let run: DesignRun;
+    let upgrade: DesignUpgrade | undefined;
     const assets: ProjectRevisionAsset[] = [];
     let target: { screenId?: string; slot?: DesignSlot; version?: number; id?: string } | undefined;
     if (type === 'acceptance.start') {
-      designRecord(input, '发起验收请求', ['type', 'requestId', 'designId', 'version', 'pullRequest', 'commit']);
+      designRecord(input, '发起验收请求', ['type', 'requestId', 'designId', 'version', 'pullRequest', 'commit', 'target']);
       const version = implementationVersion(entry, versionOf(entry, input.version));
       if (entry.frozen !== version.version) conflict('请先定稿要验收的版本');
+      if (actor.gitPublishOnly) forbidden('请使用具备验收写权限的项目凭据');
       if (!version.acceptance.length && !designMethodPlanEnabled(version)) conflict('这一版尚未声明验收项');
-      const pullRequest = number(input.pullRequest ?? entry.pullRequest, '拉取请求');
+      if (input.target !== undefined && input.target !== 'installed') return invalidDesign('请选择主用 CDS 或有效的 PR 预览');
+      const installed = input.target === 'installed';
+      if (installed && input.pullRequest !== undefined) return invalidDesign('主用 CDS 与 PR 预览只能选择一个');
+      const pullRequest = installed ? undefined : number(input.pullRequest ?? entry.pullRequest, '拉取请求');
       const commit = input.commit === undefined ? undefined : designCommit(input.commit);
-      const preview = await this.deps.resolvePreview?.(projectId, pullRequest, commit);
+      const preview = pullRequest === undefined ? await this.deps.resolveInstalled?.(projectId, commit)
+        : await this.deps.resolvePreview?.(projectId, pullRequest, commit);
       if (!preview || (commit && commit !== preview.commit)) return conflict('当前预览没有部署到指定提交');
       const cells = version.acceptance.flatMap(item => item.slots.map((slot): DesignCell => {
         const hasRoute = screenPath(version, item.id, slot);
         return { itemId: item.id, slot, status: hasRoute ? 'unverified' : 'missing',
           actual: hasRoute ? '尚未执行' : '画面清单没有声明唯一匹配的实现地址' };
       }));
-      run = { id: `RUN-${randomUUID()}`, version: version.version, pullRequest, commit: preview.commit,
-        previewUrl: preview.url, createdAt: now, cells, verdict: 'needs_evidence', issues: {} };
+      upgrade = entry.upgrade?.status === 'active' ? entry.upgrade : newUpgrade(entry, version.version, context);
+      run = { id: `RUN-${randomUUID()}`, version: version.version, ...(installed ? { target: 'installed' as const } : { pullRequest }), commit: preview.commit,
+        previewUrl: preview.url, createdAt: now, cells, verdict: 'needs_evidence', issues: {}, upgradeId: upgrade.id };
     } else {
       run = structuredClone(runOf(entry, input.runId));
       const version = implementationVersion(entry, versionOf(entry, run.version));
       if (run.signed) conflict('该运行已经签收，请创建新运行');
+      requireRunTarget(entry, run);
       if (type === 'acceptance.record') {
         designRecord(input, '验收回填', ['type', 'requestId', 'designId', 'runId', 'commit', 'cells']);
-        if (run.pullRequest !== entry.pullRequest) conflict('关联 PR 已变更，请对当前 PR 重新运行。');
-        if (designCommit(input.commit) !== run.commit) conflict('验收证据的提交与冻结运行不符');
-        const current = await this.deps.resolvePreview?.(projectId, run.pullRequest, run.commit);
-        if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
+        await this.requireCurrentRun(context, entry, run, input.commit);
         if (!Array.isArray(input.cells) || input.cells.length < 1 || input.cells.length > 4) return invalidDesign('请提交 1 至 4 个验收结果');
         const seen = new Set<string>();
         for (const value of input.cells) {
           const next = designRecord(value, '验收格', ['itemId', 'slot', 'status', 'actual', 'image', 'debtId', 'measured']);
           const itemId = designId(next.itemId, '验收项编号');
           const rule = version.acceptance.find(row => row.id === itemId) ?? missing('验收项不存在');
+          if (!designRuleApplicable(version, rule, entry, run)) conflict('请先启用这条验收项对应的手段');
           const cell = run.cells.find(row => row.itemId === itemId && row.slot === next.slot) ?? missing('此验收项未声明这个视口或主题');
           const key = `${cell.itemId}/${cell.slot}`;
           if (seen.has(key)) invalidDesign('不能重复写入同一验收格');
@@ -1219,6 +1418,10 @@ export class DesignWorkspaceService {
       } else if (type === 'acceptance.flow' || type === 'acceptance.smoke') {
         const method = type === 'acceptance.flow' ? 'flow' : 'smoke';
         target = { id: await this.recordMethod(method, input, context, entry, version, run), version: run.version };
+      } else if (type === 'acceptance.coverage') {
+        target = { id: await this.recordCoverage(input, context, entry, version, run), version: run.version };
+      } else if (type === 'acceptance.regress') {
+        target = { id: await this.recordRegression(input, context, entry, version, run), version: run.version };
       } else if (type === 'acceptance.debt') {
         designRecord(input, '记债请求', ['type', 'requestId', 'designId', 'runId', 'itemId']);
         const itemId = designId(input.itemId, '验收项编号');
@@ -1242,13 +1445,10 @@ export class DesignWorkspaceService {
       } else if (type === 'acceptance.sign') {
         designRecord(input, '签收请求', ['type', 'requestId', 'designId', 'runId']);
         if (actor.kind !== 'human') forbidden('此操作需要有写权限的项目成员签收');
-        if (run.pullRequest !== entry.pullRequest || run.version !== entry.frozen || run.version !== entry.versions.at(-1)!.version || run.id !== entry.runs.at(-1)?.id) {
-          conflict('签收须对应最新已定稿版本及其最新运行');
-        }
-        const current = await this.deps.resolvePreview?.(projectId, run.pullRequest, run.commit);
-        if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览提交已经变化，请重跑后签收');
+        await this.requireCurrentRun(context, entry, run, run.commit);
+        this.evaluateRun(version, run, entry);
         if (designMethodPlanEnabled(version)) {
-          const { blockers } = designMethodsState(version, run);
+          const { blockers } = designMethodsState(version, run, entry);
           if (blockers.length) conflict(`以下验收手段尚未通过：${blockers.map(method => method.name).join('、')}`);
         } else if (designVisualRequired(version, run) && designVisualSummary(version, run).remaining) {
           conflict('还有画面缺少同条件对照图、实拍或检查证据，完成逐画面对照后再签收');
@@ -1259,24 +1459,35 @@ export class DesignWorkspaceService {
             conflict('关联的正式债务已经变化，请重新核对');
           }
         }
+        if (designObjectivePlanEnabled(version)) run.enabledMethods = [...(entry.enabledMethods?.[run.version] ?? [])];
         run.signed = { at: now, by: actor.id, verdict: run.verdict };
+        if (entry.upgrade?.status === 'active') {
+          upgrade = { ...entry.upgrade, status: 'completed', completedAt: now, signoffRunId: run.id };
+        }
       } else return invalidDesign('不支持的验收命令');
-      run.verdict = evaluateDesignAcceptance(version.acceptance.map(rule => ({ id: rule.id, priority: rule.priority,
-        cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
-      if (designMethodPlanEnabled(version)) {
-        const { required, blockers } = designMethodsState(version, run);
-        if (blockers.some(method => method.status === 'failed')) run.verdict = 'failed';
-        else if (blockers.length && run.verdict !== 'failed') run.verdict = 'needs_evidence';
-        else if (!version.acceptance.length && required.length) run.verdict = 'passed';
-      } else if (designVisualRequired(version, run)) {
-        const visual = designVisualSummary(version, run);
-        if (visual.failed) run.verdict = 'failed';
-        else if (visual.remaining && run.verdict !== 'failed') run.verdict = 'needs_evidence';
-      }
+      if (!run.signed) this.evaluateRun(version, run, entry);
     }
-    return { result: { type, designId: id, runId: run.id, ...target }, changes: {
-      assets, design: { id, run, ...(type === 'acceptance.start' ? { pullRequest: run.pullRequest } : {}) },
+    return { result: { type, designId: id, runId: run.id, ...target,
+      ...(run.signed ? { version: run.version, implementedVersion: run.version } : {}), ...(upgrade ? { upgradeId: upgrade.id } : {}) }, changes: {
+      assets, design: { id, run, ...(upgrade ? { upgrade } : {}),
+        ...(type === 'acceptance.start' && run.pullRequest !== undefined ? { pullRequest: run.pullRequest } : {}) },
     } };
+  }
+
+  private evaluateRun(version: DesignVersion, run: DesignRun, entry: DesignEntry) {
+    const rules = version.acceptance.filter(rule => designRuleApplicable(version, rule, entry, run));
+    run.verdict = evaluateDesignAcceptance(rules.map(rule => ({ id: rule.id, priority: rule.priority,
+      cells: run.cells.filter(cell => cell.itemId === rule.id).map(cell => ({ ...cell, applicable: true })) })));
+    if (designMethodPlanEnabled(version)) {
+      const { required, blockers } = designMethodsState(version, run, entry);
+      if (blockers.some(method => method.status === 'failed')) run.verdict = 'failed';
+      else if (blockers.length && run.verdict !== 'failed') run.verdict = 'needs_evidence';
+      else if (!rules.length && required.length) run.verdict = 'passed';
+    } else if (designVisualRequired(version, run)) {
+      const visual = designVisualSummary(version, run);
+      if (visual.failed) run.verdict = 'failed';
+      else if (visual.remaining && run.verdict !== 'failed') run.verdict = 'needs_evidence';
+    }
   }
 
   private async framework(type: string, input: Record<string, unknown>, { projectId, actor, state, now }: Context): Promise<Update> {

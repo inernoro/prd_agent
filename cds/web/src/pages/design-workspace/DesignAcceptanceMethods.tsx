@@ -1,27 +1,29 @@
 import type { ReactNode } from 'react';
+import { CheckSquare, Lock } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
-  designDimensions, designVisualBreakdown, type DesignMethodId, type DesignMethodStatus, type designMethodsState,
+  designDimensions, designMeasurementGap, designVisualBreakdown, type DesignMethodId, type DesignMethodStatus, type designMethodsState,
 } from '../../../../src/shared/design-methods';
 import type { DesignCell, DesignEntry, DesignRun, DesignVersion } from '../../../../src/shared/design-workspace';
-import { cellNames, designPublisherLabel, ruleModes, slotNames } from './design-ui';
+import { cellNames, designArtifact, designPublisherLabel, ruleModes, slotNames } from './design-ui';
 
 export type AcceptanceCheck = 'overview' | DesignMethodId;
-type MethodData = ReturnType<typeof designMethodsState>;
-type Method = MethodData['methods'][number];
+export type MethodData = ReturnType<typeof designMethodsState>;
+export type Method = MethodData['methods'][number];
 const names: Record<DesignMethodStatus, string> = { passed: '通过', failed: '有问题', missing: '缺证据',
-  notrun: '未运行', not_applicable: '不适用' };
+  notrun: '未运行', not_applicable: '不适用', disabled: '未启用' };
 
 function MethodStatus({ status }: { status: DesignMethodStatus }) {
   return <span className="dw-ac-state" data-status={status}>{names[status]}</span>;
 }
 
-export function AcceptanceMethodTabs({ active, methods, overall, go }: {
-  active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; go: (check: AcceptanceCheck) => void;
+export function AcceptanceMethodTabs({ active, methods, overall, objective, go }: {
+  active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; objective?: boolean; go: (check: AcceptanceCheck) => void;
 }) {
-  const tabs = [{ id: 'overview' as const, name: '总览', status: overall }, ...methods];
+  const tabs = [{ id: 'overview' as const, name: '总览', status: overall, progress: undefined }, ...methods];
   return <div className="dw-ac-methods" role="tablist" aria-label="验收手段">
-    {tabs.map(({ id, name, status }, index) => <button key={id} type="button" role="tab" data-check={id} id={`dw-ac-tab-${id}`}
+    {tabs.map(({ id, name, status, progress }, index) => <button key={id} type="button" role="tab" data-check={id} id={`dw-ac-tab-${id}`}
+      data-status={objective ? status : undefined}
       aria-controls="dw-ac-method-panel" aria-selected={active === id} tabIndex={active === id ? 0 : -1} onClick={() => go(id)}
       onKeyDown={event => {
         const destinations: Record<string, number> = { ArrowLeft: (index + tabs.length - 1) % tabs.length,
@@ -33,7 +35,11 @@ export function AcceptanceMethodTabs({ active, methods, overall, go }: {
         go(next);
         document.getElementById(`dw-ac-tab-${next}`)?.focus();
       }}>
-      {name}<span className="dw-ac-dot" data-status={status} role="img" aria-label={names[status]} />
+      {objective && status === 'disabled' ? <Lock className="dw-ac-lock" role="img" aria-label="未启用" />
+        : objective && status === 'passed' ? <CheckSquare className="dw-ac-done" role="img" aria-label="已完成" /> : null}
+      {name}{(!objective || (status !== 'disabled' && status !== 'passed')) && <span className="dw-ac-dot" data-status={status} role="img" aria-label={names[status]} />}
+      {objective && progress && progress.done > 0 && progress.done < progress.total && status !== 'disabled' && status !== 'not_applicable'
+        && <small className="dw-ac-count">{progress.done}/{progress.total}</small>}
     </button>)}
   </div>;
 }
@@ -93,7 +99,16 @@ export function AcceptanceMethodDetails({ method, data, version, run, entry, wri
         <div className="dw-ac-evidence-head"><strong>{check.id} · {check.name}</strong><small>{check.how}</small>
           <span>{check.counts.passed} 通过 · {check.counts.failed} 有问题 · {check.counts.missing} 缺证据</span></div>
         <p>{check.criterion}</p>
-        {!!check.issues.length && <ul>{check.issues.map(issue => <li key={`${issue.screenId}/${issue.slot}`}>
+        {data.objective && check.results.length > 0 ? <details className="dw-ac-visual-results"><summary>逐画面结果 · {check.results.length} 处</summary>
+          <table className="dw-ac-objective-table" aria-label={`${check.name}逐画面结果`}>
+            <thead><tr>{['画面', '视口', '证据', '结论'].map(title => <th scope="col" key={title}>{title}</th>)}</tr></thead>
+            <tbody>{check.results.map(result => <tr key={`${result.screenId}/${result.slot}`} data-status={result.status}>
+              <th scope="row">{result.screenName}</th><td>{slotNames[result.slot]}</td><td>{result.evidence || '尚无证明'}
+                {result.imageId && <small><a className="ep-link" target="_blank" rel="noreferrer" href={designArtifact(entry.projectId, result.imageId)}>打开实拍</a></small>}</td>
+              <td><MethodStatus status={result.status} /></td>
+            </tr>)}</tbody>
+          </table>
+        </details> : !!check.issues.length && <ul>{check.issues.map(issue => <li key={`${issue.screenId}/${issue.slot}`}>
           <strong>{issue.screenName}</strong> · {slotNames[issue.slot]} · {issue.evidence}
         </li>)}</ul>}
       </li>)}</ul>;
@@ -136,25 +151,26 @@ export function AcceptanceMethodDetails({ method, data, version, run, entry, wri
       break;
     case 'debt': {
       title = '测量缺口和关联债务';
-      const debt = version.acceptance.filter(rule => (rule.how === 'measure' && !rule.probe) || run?.issues[rule.id]);
+      const debt = version.acceptance.filter(rule => designMeasurementGap(version, rule) || run?.issues[rule.id]);
       body = debt.length ? <ul className="dw-ac-evidence-list">{debt.map(rule => {
         const issue = run?.issues[rule.id];
         const canRegister = !issue && writable && run?.cells.some(cell => cell.itemId === rule.id && cell.status !== 'passed');
         return <li key={rule.id}><div className="dw-ac-evidence-head"><strong>{rule.id} · {rule.rule}</strong><small>{ruleModes[rule.how]}</small></div>
-          {rule.how === 'measure' && !rule.probe && <p>尚未声明可自动执行的测量方法。</p>}
+          {designMeasurementGap(version, rule) && <p>{data.objective ? '尚未声明可重复的检查办法。' : '尚未声明可自动执行的测量方法。'}</p>}
           {issue?.pending && <p>待确认提案 {issue.id}</p>}
           {issue && !issue.pending && <Link className="ep-link" to={`/engineering-planning?${new URLSearchParams({ project: entry.projectId,
             view: 'debts', kind: 'debt', item: issue.id })}`}>查看债务 {issue.id}</Link>}
           {canRegister && <button type="button" className="ep-button" disabled={busy} onClick={() => onDebt(rule.id)}>记成债务</button>}
         </li>;
-      })}</ul> : <p className="dw-vs-muted">目前没有已登记的验收债务或自动测量缺口。</p>;
+      })}</ul> : <p className="dw-vs-muted">{data.objective ? '目前没有已登记的验收债务或检查方法缺口。' : '目前没有已登记的验收债务或自动测量缺口。'}</p>;
       break;
     }
     case 'compare':
+    case 'regress':
       return null;
   }
   return <li data-item={`${method.id}-details`}>
-    <h4><b>2</b>{title}</h4>
+    <h4><b>{data.objective ? 3 : 2}</b>{title}</h4>
     {body}
     {method.id === 'visual' && savedCompare && <button type="button" className="ep-link dw-ac-next-link" onClick={savedCompare}>打开逐画面对照</button>}
   </li>;

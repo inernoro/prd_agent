@@ -1,9 +1,9 @@
 import { useRef, useState, type FormEvent, type MouseEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designSlots, designViewports, type DesignCell, type DesignEntry, type DesignRun,
   type DesignScreen, type DesignSlot, type DesignVersion } from '../../../../src/shared/design-workspace';
-import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus } from '../../../../src/shared/design-methods';
+import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus, designObjectivePlanEnabled } from '../../../../src/shared/design-methods';
 import { concreteVisualEvidence, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRuleShot, designVisualSlots,
   designVisualStandard, designVisualStatus, visualSlotTheme, type DesignVisualChecks, type DesignVisualRow, type DesignVisualStatus } from '../../../../src/shared/design-visual';
 import { cellNames, designArtifact, designDate, designPublisherLabel, ruleModes, slotNames, type DesignCommand } from './design-ui';
@@ -39,13 +39,29 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
   entry: DesignEntry; version: DesignVersion; run?: DesignRun; busy: boolean; writable: boolean;
   command: DesignCommand; onRule: (cell: DesignCell) => void; visualOnly?: boolean;
 }) {
-  const [slot, setSlot] = useState<DesignSlot>(() => {
+  const [params, setParams] = useSearchParams();
+  const objective = designObjectivePlanEnabled(version);
+  const [preferredSlot, preferSlot] = useState<DesignSlot>(() => {
     if (typeof window === 'undefined') return 'desktop-light';
     const viewport = window.matchMedia('(max-width: 47.9375rem)').matches ? 'phone' : 'desktop';
     return `${viewport}-light`;
   });
   const [filter, setFilter] = useState<'todo' | 'all'>('todo');
-  const [opened, setOpened] = useState<string>();
+  const [selected, setSelected] = useState<string>();
+  const opened = objective ? params.get('compare-screen') : selected;
+  const selectedScreen = version.screens.find(screen => screen.id === opened);
+  const savedSlot = objective ? designSlots.find(value => value === params.get('compare-slot')) : undefined;
+  const candidateSlot = savedSlot ?? preferredSlot;
+  const matchingSlots = selectedScreen ? designVisualSlots(selectedScreen) : undefined;
+  const slot = matchingSlots?.includes(candidateSlot) ? candidateSlot : matchingSlots?.[0] ?? candidateSlot;
+  const setSlot = (next: DesignSlot) => {
+    preferSlot(next);
+    if (objective) setParams(former => {
+      const value = new URLSearchParams(former);
+      value.set('compare-slot', next);
+      return value;
+    }, { replace: true });
+  };
   const opener = useRef<HTMLButtonElement | null>(null);
   const rows = version.screens.filter(screen => designVisualSlots(screen).includes(slot)).map(screen => reviewRow(version, screen, slot, visualOnly, run));
   const pending = rows.filter(row => row.verdict !== 'passed');
@@ -54,9 +70,22 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
   const snapshot = (artifactId: string) => designArtifact(entry.projectId, artifactId);
   const open = (event: MouseEvent<HTMLButtonElement>, screenId: string) => {
     opener.current = event.currentTarget;
-    setOpened(screenId);
+    if (!objective) setSelected(screenId);
+    else setParams(former => {
+      const value = new URLSearchParams(former);
+      value.set('compare-screen', screenId);
+      value.set('compare-slot', slot);
+      return value;
+    });
   };
-  const close = () => setOpened(undefined);
+  const close = () => {
+    if (!objective) setSelected(undefined);
+    else setParams(former => {
+      const value = new URLSearchParams(former);
+      value.delete('compare-screen');
+      return value;
+    }, { replace: true });
+  };
   return <>
     <div className="dw-vs-tools">
       <div className="dw-segments" role="group" aria-label="视口和主题">
@@ -91,13 +120,15 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
         <div role="cell" className="dw-vs-verdict">
           <span className="dw-status" data-state={row.verdict}>{verdictNames[row.verdict]}</span>
           <button type="button" className="ep-text-button" data-action="visual-open" aria-label={`逐项对图 · ${row.screen.name}`}
+            aria-haspopup="dialog" aria-expanded={row.screen.id === opened}
             onClick={event => open(event, row.screen.id)}>逐项对图</button>
         </div>
       </div>)}
     </div> : <p className="dw-vs-muted">{rows.length ? '这一视口和主题的画面均已通过。' : '这一视口和主题没有画面。'}</p>}
     {row && <VisualComparison key={designVisualKey(row.screen.id, slot)} entry={entry} version={version} row={row}
       slot={slot} busy={busy} run={run} writable={writable} command={command} close={close}
-      restoreFocus={() => opener.current?.focus()} onRule={cell => { opener.current = null; close(); onRule(cell); }} />}
+      restoreFocus={() => (opener.current ?? document.querySelector<HTMLButtonElement>('.dw-vs-tools button[aria-pressed=true]'))?.focus()}
+      onRule={cell => { opener.current = null; close(); onRule(cell); }} />}
   </>;
 }
 
@@ -187,7 +218,7 @@ function VisualComparison({ entry, version, row, slot, busy, run, writable, comm
   return <Dialog open onOpenChange={open => { if (!open && !busy && !uploading) close(); }}>
     <DialogContent className="dw-modal dw-surface dw-vc" onCloseAutoFocus={event => { event.preventDefault(); restoreFocus(); }}>
       <DialogTitle>{screen.name} · {slotNames[slot]}</DialogTitle>
-      <DialogDescription>V{version.version} · {width} × {height}{run ? ` · PR #${run.pullRequest} · 提交 ${run.commit.slice(0, 8)}` : ''}
+      <DialogDescription>V{version.version} · {width} × {height}{run ? ` · ${run.target === 'installed' ? '主用 CDS' : `PR #${run.pullRequest}`} · 提交 ${run.commit.slice(0, 8)}` : ''}
         {screen.impl ? ` · ${screen.impl}` : ' · 未绑定实现地址'}。对照图和实拍须使用同视口、主题、状态和数据规模。</DialogDescription>
       <div className="dw-vc-mode">
         <div className="dw-segments" role="group" aria-label="对照方式">
@@ -198,6 +229,7 @@ function VisualComparison({ entry, version, row, slot, busy, run, writable, comm
           <input type="range" min="0" max="100" value={mix} onChange={event => setMix(Number(event.target.value))} />
         </label>}
         {!reference && <Link className="ep-link" to={previewPath}>打开稿件原型</Link>}
+        {run && screen.impl && <a className="ep-link" href={new URL(screen.impl, run.previewUrl).href} target="_blank" rel="noreferrer">打开实现画面</a>}
         {canEdit && (!publishedReference || screen.impl) && <button type="button" className="ep-button" onClick={() => openEditor('images')}>补交图片</button>}
       </div>
       {mode === 'overlay' && reference && implementation ? <div className="dw-vc-overlay">

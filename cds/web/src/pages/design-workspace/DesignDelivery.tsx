@@ -300,8 +300,8 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
   </article>;
 }
 
-function FeedbackForm({ entry, version, busy, command, draftPath, onCancel }: {
-  entry: DesignEntry; version: DesignVersion; busy: boolean; command: DesignCommand; draftPath?: string; onCancel: () => void;
+function FeedbackForm({ entry, version, busy, command, draftPath, screenId, onCancel }: {
+  entry: DesignEntry; version: DesignVersion; busy: boolean; command: DesignCommand; draftPath?: string; screenId?: string; onCancel: () => void;
 }) {
   const [error, setError] = useState('');
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -333,7 +333,7 @@ function FeedbackForm({ entry, version, busy, command, draftPath, onCancel }: {
       <div className="dw-delivery-fields">
         <label>反馈分类<select name="category" defaultValue="gap">{designFeedbackCategories.map(key =>
           <option key={key} value={key}>{feedbackNames[key]}</option>)}</select></label>
-        <label>相关画面<select name="screenId" defaultValue=""><option value="">整份 V{version.version} 稿件</option>
+        <label>相关画面<select name="screenId" defaultValue={screenId ?? ''}><option value="">整份 V{version.version} 稿件</option>
           {version.screens.map(screen => <option key={screen.id} value={screen.id}>{screen.name}</option>)}</select></label>
       </div>
       {draftPath && <p className="dw-feedback-path">关联交付文件 <code>{draftPath}</code></p>}
@@ -469,6 +469,7 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   }, [fb, fileParam, wide]);
   const row = rows.find(item => item.id === selectedFb);
   const creating = fb === 'new' && permissions.feedback;
+  const draftScreen = version.screens.find(screen => screen.id === params.get('screen'))?.id;
   const tabs: [Part, string, number][] = [['feedback', '反馈', mine.length], ['files', '资料', 0]];
   return <div className="dw-delivery-panel dw-dl">
     <div className="dw-dl-top">
@@ -484,7 +485,7 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
       {part === 'feedback' && <div id="dw-delivery-feedback" className="dw-dl-split" data-has-detail={Boolean(row || creating) || undefined}>
         <FeedbackList rows={rows} selected={creating ? undefined : selectedFb} filter={filter} setFilter={setFilter} entry={entry} permissions={permissions}
           onSelect={id => go({ part: 'feedback', fb: id, about: '' })} onCreate={() => go({ part: 'feedback', fb: 'new', about: '' })} />
-        {creating ? <FeedbackForm key={draftPath ?? 'new'} entry={entry} version={version} busy={busy} command={command} draftPath={draftPath}
+        {creating ? <FeedbackForm key={draftPath ?? 'new'} entry={entry} version={version} busy={busy} command={command} draftPath={draftPath} screenId={draftScreen}
           onCancel={() => go({ fb: '', about: '' })} />
           : row ? <FeedbackDetail key={row.id} row={row} entry={entry} version={version} permissions={permissions} busy={busy} command={command}
             openScreen={openScreen} openVersion={openVersion} onBack={() => go({ fb: '' })} />

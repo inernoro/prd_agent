@@ -127,7 +127,7 @@
 
 - `design.json.project` 等于绑定的项目 ID。保留适用的固定框架和画面编号，包含 `design.json`、`思路.md` 与清单声明的单文件 HTML。标准新建由服务器分配 ID，清单和请求均省略稿件 ID。续版可沿用清单中的同稿 ID。
 - 在工作区仅提交获授权的稿件子目录。若没有 Git 作者配置，可为本次提交指定智能体自己的作者身份。CDS 根据获授权的身份记录发布者。使用 `cdscli design publish --private --dir <稿件目录>`，按新稿或续版附上相应参数。提交保留在本地，稿件及归档摘要存入已获授权的 CDS 项目。
-- MCP 通过 `cds_design_publish` 传 `sourceMode: "private"`、`zipPath`、本地 `sourceCommit`、仓库相对 `sourcePath`、`requestId` 和意图字段。用本地提交导出稿件目录的 ZIP，放在项目工作区内，避开 `.cds` 和 `.git`，大小上限 4 MiB。HTTP 使用同一项目的 `/design/packages`，内容为 ZIP，其余字段通过查询参数传递。
+- MCP 通过 `cds_design_publish` 传 `sourceMode: "private"`、`zipPath`、本地 `sourceCommit`、仓库相对 `sourcePath`、`requestId` 和意图字段。用本地提交导出稿件目录的 ZIP，放在项目工作区内，避开 `.cds` 和 `.git`，稿件门禁上限 3.8 MiB。HTTP 使用同一项目的 `/design/packages`，内容为 ZIP，其余字段通过查询参数传递。
 - 已获授权并已存在于项目 Git 的材料可以沿用 Git 核验方式。CDS 分别显示 Git 核验证据和私有归档。
 - 在 `note` 记录原版、改动画面、原因和待核验项。发布后按回执的 `designId` 与 `version` 回读，核对项目、源提交和归档摘要。响应不确定时以原 `requestId`、来源、意图和稿件内容重试。设计接入按 ZIP 内的文件内容识别重试。接收者从同一项目回读固定的新旧版，定位差异后复拍受影响画面。缺实拍仍标待核验。
 - 私有发布的版本摘要 `sha256` 来自上传 ZIP 的原始字节。清单同时保留每个文件的 `sha256` 和原型的 `prototypeSha256`，用于分别核对交付文件和原型。
@@ -141,10 +141,35 @@
 - `cds_design_read` 的 `delivery` 读取固定版资料与验收缺项，用 `{view:"file",id,version,path}` 原文分段回读。接着传响应的 `nextOffset`，已到结尾时它为空。可以从稿件的「交付」下载原包或单个文件。继续使用历史版本的来源记录、原型、思路及验收数据。
 - 作者的原型自检负责记录原型状态。实现路径、实现分支的验收证据及真人签收继续由各自的入口独立记录。共用入口不明确、缺实拍、缺实现地址或缺探针时，在反馈中说明要补的内容和复核方法。
 
+## 实施版本与升降级
+
+1. 从稿件读取最新版本、实施基线和最近签收的已实现版本。已实现版本只由 CDS 按签收更新。历史稿还没有签收时显示未知，实际分支和提交可用于独立核对升级起点。
+2. 有权成员在开始时锁定本轮目标。CLI 用 `cdscli design start-upgrade <稿件> --version <目标> --expected-baseline <当前基线> --as-user <账号>`。`--version` 省略时，服务端锁定当时的最新版本。基线缺失时 `--expected-baseline` 传 `0`。后续发布会更新最新稿件，进行中的目标继续沿用锁定版本。
+3. 调 MCP `cds_design_read`，传 `{"view":"diff","id":"<稿件>","fromVersion":11,"toVersion":17}`，或运行 `cdscli design diff <稿件> --from 11 --to 17`。CDS 用两端清单计算画面、验收项和交付文件的新增、删除和改动。调换两端即可核对回退。稿件附源码差异时，从固定目标版读取对应目录，再在实际起点核对能否应用。
+4. 需要切到历史版本时，有权成员用 `cdscli design freeze <稿件> <历史版号> --reason "<原因>" --expected-baseline <当前基线> --as-user <账号>`。已有进行中的升级需要先完成，或凭升级编号和原因在页面取消，也可用 `design cancel-upgrade <稿件> --upgrade <编号> --reason "<原因>" --as-user <账号>`。
+5. 按锁定版绑定实际页面并完成验收。有权成员签收后回读运行和已实现版本。新版本发布后可按新的两端重复流程。
+6. 验收主用 CDS 自身代码时，`cdscli design accept <稿件> --installed --version <目标> --commit <已部署提交>` 只创建验收运行，锁定服务端实际读取到的构建。用 `design result` 回读运行、提交和入口后再取证。PR 预览沿用 `--pr`，两种入口分别选择。
+
+## 发布门禁
+
+CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 里的 `versionHistory` 核对先前版本及源提交，再补齐版本登记和差异索引。修正交付内容后沿用原稿件，以最新已发布版本作为续版的 `expectedVersion`。
+
+| 编号 | 提交条件 |
+| --- | --- |
+| G-01 | `design.json` 可解析，项目、标题、原型版本、日期与交付资料字段有效。 |
+| G-02 | 画面编号唯一，路由以 `#/` 开头，视口、主题、入口选择器与就绪选择器有效。 |
+| G-03 | 最多 60 个唯一验收项，每项关联画面并写明规则和预期。测量预期含「检查：」。 |
+| G-04 | 清单引用的思路、原型、自检和文档都在包内。 |
+| G-05 | 自检总数和通过数与条目结果一致。未通过的条目在 `tools/gate-allow.json` 写负责人和理由。 |
+| G-06 | 思路和交付说明的标题注明待发布版本，交付说明填写完整。 |
+| G-07 | `versions.json` 和 `changes/index.json` 覆盖 CDS 已存历史，索引及差异摘要与实际清单一致。 |
+| G-08 | 包中使用虚构数据，移除敏感站点、真实邮箱与凭据。 |
+| G-09 | ZIP 不超过 3.8 MiB。 |
+
 ## 双向反馈
 
 1. 实现方先读 `intake`、固定版 `delivery` 和已有 `feedback`。用 `cds_design_feedback` 的 `feedback.create` 记录复用建议、实施做法、需求缺漏、落地约束或验收建议。提供稿件、版本、分类、标题、理由、改动依据和可核对证据。对整份稿件或特定画面都可以登记。
-2. 设计方通过 `cdscli design feedback <稿件编号>`（可选择版本，仍含未关闭的旧版反馈）读同一线程，调用 `design feedback-reply` 或 MCP `feedback.reply` 回复。需要改稿时按原稿 ID 和最新基线发布，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
+2. 设计方通过 `cdscli design feedback <稿件编号>`（可选择版本，仍含未关闭的旧版反馈）读同一线程，调用 `design feedback-reply` 或 MCP `feedback.reply` 回复。需要改稿时按原稿 ID 和最新稿件版本续版，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
 3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。
 
 新反馈的 `body` 用 Markdown 的「## 诉求」和「## 怎么算解决」写清目标与完成标准，可以附「## 问题」。旧反馈由提出人或可访问项目的管理者在原线程补写这两个章节。页面选择「补写诉求和完成标准」，CLI 给 `design feedback-reply` 加 `--supplement`，MCP 的 `feedback.reply` 传 `supplement: true`。补写保留原正文、处理状态和回执。
@@ -175,9 +200,17 @@
 3. **输入与回读**。流程提供 `id`、`title`、`dimension`、`role`、`steps`，每步写 `action`、`expected`、`actual`、`status`。冒烟提供 `id`、`title`、`dimension`、`target`（`page` 或 `api`）、`path`、`expected`、`actual`、`status`。状态使用 `passed`、`failed`、`missing`。路径为预览内相对地址。用 `design result` 或 MCP 的 `run` 回读 `flows`、`smoke` 和 `visual`。
 4. **签收**。手段的结果根据这次运行回填的证据汇总，空结果按缺证据。适用手段需通过，验收债务单列。项目成员在页面确认，运行需对应当前实施基线的预览提交。
 
+客观验收还支持从同一项目回填覆盖风险和历史易错：
+
+- `design coverage <稿件> --run <运行> --commit <提交> --file <记录.json>`，对应 MCP `acceptance.coverage`。填写 `dimension`、`risk` 和 `ruleIds`，用当前版验收项覆盖具体风险。该维度不适用时，请有权成员填 `reason` 与空数组 `ruleIds`。
+- `design known-create <稿件> --file <记录.json>`，对应 MCP `known.create`。填写 `problem`、`how`、`check`、`screenIds` 和 `sources`。空 `screenIds` 作用于整份稿件。每个来源写 `kind`、`ref`、`count`，来源类别可用 `defect`、`ticket`、`feedback`。通过 MCP 的 `design` 查看登记后的 `knownIssues`。
+- `design regress <稿件> --run <运行> --commit <提交> --file <记录.json>`，对应 MCP `acceptance.regress`。填写历史易错的 `issueId`、本轮 `status` 与实际 `evidence`。`status` 使用 `passed`、`failed`、`missing`。
+
 ## 固定框架版本
 
 使用 `cdscli design scaffold --framework <框架ID> --framework-version <版本> --dir <新目录> --title <稿件名>` 复用该版规范。框架初衷可随稿件的 `spec/charter.json` 一并提交，或在框架导入时提供同样的 `charter` 对象。字段包括 `status`、`intent`、`problems`、`nonGoals`、`scope` 和 `owner`。可附示意稿 `example`、规则来源 `ruleSources` 和模块差异 `moduleDiffs`。
+
+首稿脚手架生成 V1 的清单、交付说明和空版本索引。框架的候选检查保留为未验证。出稿时在 `design.json` 按画面写入规则和预期，并用实际自检更新 `checks/result.json`。直接提交脚手架会被 G-05 驳回。已有脚本需要读取原脚手架结构时，可用 `--legacy-template` 生成历史格式。
 
 从实施基线提取时，先用 `cdscli design extract <稿件ID> --into <框架ID>` 查看候选。采用时把预览里的 `sourceVersion` 传给 `--version`，把 `expectedVersion` 传给 `--expected-version`，并指定要采用的 `--apply` 项。目标框架在用时，用 `--resolve rules=keep` 或 `--resolve tokens=adopt` 逐项确认。
 

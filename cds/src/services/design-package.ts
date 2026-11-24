@@ -5,8 +5,9 @@ import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { crc32 } from '../utils/zip.js';
 import { designSlots, designViewports, type DesignDeliveryFile, type DesignFrameworkCharter, type DesignMaterial, type DesignRule, type DesignScope, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
-import { designDimensions, designMethods, type DesignAcceptancePlan, type DesignDimension } from '../shared/design-methods.js';
-import { planningText, rejectPlanning } from './engineering-planning-input.js';
+import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
+import { rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
+import { PlanningError, planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
 export const designPackageLimit = 4 * mib;
@@ -237,16 +238,34 @@ export function parseDesignDimension(value: unknown): DesignDimension {
 }
 
 function parseAcceptancePlan(value: unknown): DesignAcceptancePlan {
-  const input = designRecord(value, '验收手段', designMethods.map(([id]) => id));
+  const input = designRecord(value, '验收手段', designObjectiveMethods.map(([id]) => id));
   const plan: DesignAcceptancePlan = {};
-  for (const [id, name] of designMethods) {
+  for (const [id, name] of designObjectiveMethods) {
     if (input[id] === undefined) continue;
-    const method = designRecord(input[id], name, ['applicable', 'reason']);
+    const method = designRecord(input[id], name, ['applicable', 'enabled', 'reason']);
     if (typeof method.applicable !== 'boolean') return invalidDesign(`${name} 须声明是否适用`);
+    if (method.enabled !== undefined && typeof method.enabled !== 'boolean') return invalidDesign(`${name} 启用状态须为布尔值`);
+    if (!method.applicable && method.enabled) return invalidDesign(`${name} 不适用时不能启用`);
     const reason = method.reason === undefined && method.applicable ? undefined : planningText(method.reason, `${name} 的适用说明`, 600);
-    plan[id] = { applicable: method.applicable, ...(reason ? { reason } : {}) };
+    plan[id] = { applicable: method.applicable, ...(method.enabled === undefined ? {} : { enabled: method.enabled }), ...(reason ? { reason } : {}) };
   }
   return plan;
+}
+
+function parseCoverage(value: unknown, acceptance: DesignRule[]): DesignCoverageRecord[] {
+  const known = new Set(acceptance.map(item => item.id));
+  const rows = list(value, '覆盖风险', 60, item => {
+    const row = designRecord(item, '覆盖风险', ['dimension', 'risk', 'ruleIds', 'reason']);
+    const dimension = parseDesignDimension(row.dimension);
+    const risk = planningText(row.risk, '风险说明', 600);
+    const ruleIds = unique(list(row.ruleIds, '覆盖规则编号', 60, value => designId(value, '覆盖规则编号'), true), id => id, '覆盖规则');
+    const reason = row.reason === undefined ? undefined : planningText(row.reason, '不适用原因', 600);
+    if (Boolean(ruleIds.length) === Boolean(reason) || ruleIds.some(id => !known.has(id))) {
+      return invalidDesign('覆盖风险须引用本稿件验收项或填写不适用原因');
+    }
+    return { dimension, risk, ruleIds, ...(reason ? { reason } : {}) };
+  });
+  return unique(rows, row => `${row.dimension}/${row.risk}`, '覆盖风险');
 }
 
 function rule(value: unknown, screens: DesignScreen[]): DesignRule {
@@ -272,7 +291,8 @@ function rule(value: unknown, screens: DesignScreen[]): DesignRule {
   }
   return { id: designId(input.id, '验收编号'), rule: planningText(input.rule, '验收规则', 600), how, priority, slots,
     screenId, probe, expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800),
-    ...(input.dimension === undefined ? {} : { dimension: parseDesignDimension(input.dimension) }) };
+    ...(input.dimension === undefined ? {} : { dimension: parseDesignDimension(input.dimension) }),
+    ...(input.requirementRef === undefined ? {} : { requirementRef: designId(input.requirementRef, '需求条款编号') }) };
 }
 
 const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg)$/i;
@@ -347,7 +367,7 @@ export async function readDesignPackage(bytes: Buffer) {
   let entries: Map<string, Buffer>;
   try { entries = await zipEntries(bytes); } catch { return invalidDesign('无法读取稿件 ZIP，检查完整性、文件类型、路径和体积'); }
   const manifests = [...entries.keys()].filter(name => name === 'design.json' || /^[^/]+\/design\.json$/.test(name));
-  if (manifests.length !== 1) invalidDesign('稿件包只能包含一份根级 design.json');
+  if (manifests.length !== 1) rejectDesignGate('G-01', '稿件包须包含一份根级 design.json');
   const manifest = manifests[0];
   const root = manifest.slice(0, -'design.json'.length);
   if (root && [...entries.keys()].some(name => !name.startsWith(root))) invalidDesign('稿件文件须位于同一目录');
@@ -363,12 +383,20 @@ export async function readDesignPackage(bytes: Buffer) {
     if (value === undefined) return undefined;
     try { return designRecord(JSON.parse(value), '稿件 JSON'); } catch { return invalidDesign('稿件包含无效的 JSON 对象'); }
   };
-  const input = json('design.json')!;
-  const rationale = planningText(utf8(input.rationale ?? '思路.md', 64 * 1024), '设计思路', 64 * 1024);
+  function gateField<T>(rule: Parameters<typeof rejectDesignGate>[0], message: string, read: () => T): T {
+    try { return read(); } catch (error) {
+      if (!(error instanceof PlanningError)) throw error;
+      return rejectDesignGate(rule, message);
+    }
+  }
+  const input = gateField('G-01', 'design.json 须为有效的 JSON 对象', () => json('design.json'))!;
+  const rationale = gateField('G-04', '请随包提供有效的 UTF-8 设计思路', () =>
+    planningText(utf8(input.rationale ?? '思路.md', 64 * 1024), '设计思路', 64 * 1024));
   const prototypeFile = input.prototype ?? 'dist/index.html';
-  const html = utf8(prototypeFile, 4 * mib);
-  if (!html || !/<(?:!doctype html|html|head|body|main|div)\b/i.test(html)) return invalidDesign('缺少可打开的单文件 HTML 原型');
-  const screens = unique(list(input.screens, '画面清单', 80, screen), row => row.id, '画面');
+  const html = gateField('G-04', '请随包提供有效的 UTF-8 原型', () => utf8(prototypeFile, 4 * mib));
+  if (!html || !/<(?:!doctype html|html|head|body|main|div)\b/i.test(html)) return rejectDesignGate('G-04', '缺少可打开的单文件 HTML 原型');
+  const screens = gateField('G-02', '画面编号、路径、视口、主题或就绪条件无效', () =>
+    unique(list(input.screens, '画面清单', 80, screen), row => row.id, '画面'));
   const renders = screens.flatMap(screen => screen.themes.flatMap(theme => {
     const content = file(`screens/${screen.id}.${theme}.png`);
     if (!content) return [];
@@ -382,7 +410,8 @@ export async function readDesignPackage(bytes: Buffer) {
   if (Buffer.byteLength(html) + renders.reduce((sum, capture) => sum + capture.content.length, 0) > 8 * mib) {
     return invalidDesign('单个稿件版本的原型和截图最多 8 MiB');
   }
-  const acceptance = unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项');
+  const acceptance = gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
+    unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项'));
   const spec: DesignMaterial = { tokens: json('spec/tokens.json'), rules: utf8('spec/rules.md', 64 * 1024),
     components: utf8('spec/components.md', 64 * 1024), skeleton: utf8('spec/skeleton.html', 64 * 1024) };
   const charter = json('spec/charter.json') ?? json('charter.json');
@@ -393,14 +422,24 @@ export async function readDesignPackage(bytes: Buffer) {
   const delivery = describeDesignDelivery(entries, root, input, relativeFile(prototypeFile),
     relativeFile(input.rationale ?? '思路.md'), relativeFile(input.checks ?? 'checks/result.json'),
     new Set(renders.map(row => `screens/${row.screenId}.${row.theme}.png`)));
+  const checks = gateField('G-05', '自检结果须为有效的 JSON 对象', () => json(input.checks ?? 'checks/result.json'));
+  const acceptanceMode = input.acceptanceMode;
+  if (acceptanceMode !== undefined && acceptanceMode !== 'objective') return invalidDesign('不支持的验收模式');
   return {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
     prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
     acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
+    acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
+    risks: input.risks === undefined ? undefined : parseCoverage(input.risks, acceptance),
     frameworkCharter: charter && parseFrameworkCharter(charter),
-    checks: json(input.checks ?? 'checks/result.json'),
+    checks,
+    validatePublicationGate(context: DesignPublicationGateContext) {
+      validateDesignPublicationGate({ manifest: input, archiveBytes: bytes.length,
+        files: new Map([...entries].map(([name, content]) => [name.slice(root.length), content])),
+        indexedFiles: delivery.index, screens, acceptance }, context);
+    },
     framework, frameworkVersion, scope: input.scope === undefined ? undefined : parseDesignScope(input.scope),
     group: input.group === undefined ? undefined : planningText(input.group, '稿件分组', 80),
     tags: unique(list(input.tags, '稿件标签', 30, tag => planningText(tag, '标签', 60), true), row => row, '标签'),
