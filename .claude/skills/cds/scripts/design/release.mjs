@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 设计稿件发布的固定流程（程序串起来，智能体不用记步骤、不用算版本号）。
 //
-//   node release.mjs check    [--dir <稿件目录>] [--full 1,11]
+//   node release.mjs check    [--dir <稿件目录>] [--full 1,11] [--baseline <实施基线>]
+//     还会生成 交接清单.md（handoff.mjs）：按目标列验收项、相对实施基线的变化、源码和回复模板。
 //     版本号 = versions.json 最后一版 + 1（没有登记过就是 V1；新稿件先写一份空的 versions.json）。
 //     先生成 changes/（每个旧版本到这一版的净变化，V1 时为空索引；--full 列出的起点附完整源码差异），再跑门禁 G-01 到 G-09。
 //     CDS 发布接口按同样的规则复核：版本登记和差异索引必须覆盖 CDS 里的全部历史，并指向这一版。
@@ -36,6 +37,9 @@ if (command === 'check') {
   }
   const full = opt('full') ?? (last ? String(registry.versions[0].version) : '');
   if (run('changes-index.mjs', ['--dir', dir, '--to', String(version), ...(full ? ['--full', full] : [])])) fail('生成版本差异失败', 1);
+  /* 交接清单：按目标生成给实现方的唯一一份清单；基线取 --baseline，没给就取 --full 的第一个起点 */
+  const baseline = Number(opt('baseline') ?? String(full).split(',')[0]);
+  if (baseline && baseline < version && run('handoff.mjs', ['--dir', dir, '--to', String(version), '--from', String(baseline)])) process.exit(1);
   if (run('gate.mjs', ['--dir', dir, '--expect', String(version)])) process.exit(1);
   const rel = path.relative(process.cwd(), dir).split(path.sep).join('/') || '.';
   console.log(last

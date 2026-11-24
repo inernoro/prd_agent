@@ -36,11 +36,11 @@
 node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> --full <实现所在版本>
 ```
 
-1. 被驳回就按规则编号修改，再重跑，直到通过。不手改 `changes/` 和 `versions.json`。
+1. 被驳回就按规则编号修改，再重跑，直到通过。不手改 `changes/`、`versions.json` 和 `交接清单.md`（按目标生成，给实现方的唯一一份清单）。
 2. 提交稿件目录，然后用 `check` 打印的命令私有发布。续版带上 `--resolves "<评论编号>=如何处理"`。
 3. 回读：`cdscli design list`，核对版本号、来源提交和文件摘要。
 4. 登记：`release.mjs register --dir design/<目录> --commit <来源提交>`。首发后第一次登记带 `--design <稿件编号>`。
-5. 回复实施反馈：MCP `cds_design_feedback {type:"feedback.reply", revision:<新版本>}`。实现方从 CDS 读到回复，不用用户转告。
+5. 回复实施反馈：MCP `cds_design_feedback {type:"feedback.reply", revision:<新版本>}`，正文指向 `交接清单.md`，请实现方按验收项编号逐条回复。实现方从 CDS 读到回复，不用用户转告。
 
 ## 五、告诉用户
 

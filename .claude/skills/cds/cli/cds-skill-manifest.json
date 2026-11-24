@@ -20,8 +20,8 @@
     "cds/reference/acceptance-reports.md": "f0467b25fe209ec5a5225c246406704782ae595631abc9221c50cb982e48002e",
     "cds/reference/api.md": "003ae9a82cd1a9536cbd27c1842166513e4f629d046ff0a513bdef5b238ac46a",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
-    "cds/reference/design-intake.md": "efdb2a76ee701e6d37eb1eb9be38aee86d4ef631bc31454dab4eb1775a233de2",
-    "cds/reference/design-loop.md": "dd8203abd2ebccf6e6a666b5616bb781bec85cfb501880688e09e8e8d0e3dd14",
+    "cds/reference/design-intake.md": "e36906589ffaa2b32339d183acbacdf5f7e763b1ac6392196c0a46e39cc6196f",
+    "cds/reference/design-loop.md": "3038b6af599434ef4c9bfc4832551ba058e5300eb942ea62837d13b0d18c2ab9",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
     "cds/reference/instance-catalog.json": "ba7e9fe58f72fc6eddd2a016ee15ff4cf09d57b588e017d7e99be2f8272fbb92",
@@ -33,7 +33,8 @@
     "cds/reference/test-loop.md": "9586672041ad02916fa5df767343972dcf63f91dbbd2c9b81f3a52994cc0e0c4",
     "cds/scripts/design/changes-index.mjs": "a368f01702398ac860cc718e63268ffa4024caa4fe73fb20bf74e6ccb1de9afd",
     "cds/scripts/design/gate.mjs": "12fbb2ab7bc7ad1a99c04ce0e4e7cf3b6591151f1db3408b29ceec07370d9517",
-    "cds/scripts/design/release.mjs": "2af3afdad92285786c2f3d0cb9c87b1cb926d09d87ee1f353072dd28aa6968c4",
+    "cds/scripts/design/handoff.mjs": "cb56a57ef2b25a2ed2aacdf1f3a5de6fba5d73b21d46d0885926ad5ec76a2db7",
+    "cds/scripts/design/release.mjs": "38a73c8578a284bd08afac70b014f13aa4d0b463a26074831f774fbcfd73afe3",
     "cds/scripts/design/version-diff.mjs": "0945f8023b3536002aaa6f574d89b60f563a0abc9528a9f125391f5b5fec55a3",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
     "cds/SKILL.md": "e7064a73652224bc9ccfc145dccbdc5365923c38daf55ddd4fbf5b0a6745e644",
@@ -81,5 +82,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-24T09:56:01.346341+00:00"
+  "generatedAt": "2026-11-24T19:23:38.794341+00:00"
 }
