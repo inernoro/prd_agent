@@ -119,9 +119,7 @@ export function observeDesignRules(rules: DesignRule[], value: Observation) {
   for (const rule of rules) {
     const { id, screenId } = rule;
     const head = value.layers[0];
-    if (rule.probe?.type === 'horizontal-overflow') {
-      put(id, value.content <= value.width + (rule.probe.tolerance ?? 0), `文档宽 ${value.width} px，内容宽 ${value.content} px。`);
-    } else if (screenId === 'dsn-preview' && id === 'A-03' && head) {
+    if (screenId === 'dsn-preview' && id === 'A-03' && head) {
       const text = `页头高 ${head[3]} px，同排控件边缘高度差 ${value.headerAlignment ?? '未测得'}，标题${value.title ? '位于' : '未出现在'}面包屑。`;
       if (head[3] > 48 || !value.title) put(id, false, text);
       else results[id] = { status: 'unverified', actual: text + '画布工具的相对位置仍待核对。' };
@@ -151,6 +149,12 @@ export function observeDesignRules(rules: DesignRule[], value: Observation) {
       const text = `原因卡 ${value.causes.length} 张，验收手段 ${value.methods} 个，${value.hero ? '有' : '缺'}总览结论。`;
       if (!valid || !value.hero || value.methods !== 8) put(id, false, text);
       else results[id] = { status: 'unverified', actual: text + '六区顺序和操作行为仍待复核。' };
+    } else if (rule.probe?.type === 'horizontal-overflow') {
+      const fits = value.content <= value.width + (rule.probe.tolerance ?? 0);
+      const text = `文档宽 ${value.width} px，内容宽 ${value.content} px。`;
+      if (fits && rule.expected?.includes('overflowCount')) {
+        results[id] = { status: 'unverified', actual: text + '容器溢出与内部布局尚待测量。' };
+      } else put(id, fits, text);
     } else {
       results[id] = { status: 'unverified', actual: id === 'A-70'
         ? '已生成浏览器图证。需在真机 iPhone Safari 运行五次刷新。'
