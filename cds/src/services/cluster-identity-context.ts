@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import type { AgentKeyAccess } from '../types.js';
 import type { CdsUser } from '../domain/auth.js';
+import type { ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 
 /** Only server-to-server validation can install this context; headers cannot. */
 export interface ClusterIdentityContext {
@@ -12,7 +13,7 @@ export interface ClusterIdentityContext {
   basicHuman?: boolean;
   session?: { createdAt: string; expiresAt: string };
   aiSession?: { id: string; agentName: string; token: string; approvedAt: string; expiresAt: string };
-  projectKey?: { projectId: string; keyId: string };
+  projectKey?: { projectId: string; keyId: string } & ProjectAgentKeyPermissions;
   access?: { keyId: string; access: AgentKeyAccess };
   principal?: { principalId: string; credentialId: string };
   principalProjects?: string[];

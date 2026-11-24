@@ -83,6 +83,7 @@ import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
+import type { ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId, type HumanAuthContext } from '../services/human-auth.js';
@@ -339,7 +340,7 @@ function mintProjectAgentKey(
   project: Project,
   label: string,
   createdBy?: string,
-  metadata: Pick<AgentKey, 'planningAccess' | 'designAccess' | 'issuedByAccountId'> = {},
+  permissions: ProjectAgentKeyPermissions & Pick<AgentKey, 'issuedByAccountId'> = {},
 ): { keyId: string; plaintext: string; preview: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
@@ -351,8 +352,8 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
-    ...metadata,
-    issuedByAccountId: metadata.issuedByAccountId ?? null,
+    ...permissions,
+    issuedByAccountId: permissions.issuedByAccountId ?? null,
     createdAt: new Date().toISOString(),
     createdBy: createdBy || undefined,
   };
@@ -4516,7 +4517,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // ── Project-scoped Agent Keys ──
   //
   // POST /api/projects/:id/agent-keys — sign a new project-bound agent key
-  //   body: { label?: string }
+  //   body: { label?: string, projectAccess?, planningAccess?, designAccess? }
   //   201 { keyId, plaintext, preview }  (plaintext shown ONCE, never stored)
   //
   // GET /api/projects/:id/agent-keys — list metadata (no plaintext, no hash)
@@ -4545,18 +4546,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown };
+    const body = (req.body || {}) as { label?: unknown; projectAccess?: unknown; planningAccess?: unknown; designAccess?: unknown };
+    if (body.projectAccess !== undefined && body.projectAccess !== 'rw' && body.projectAccess !== 'admin') {
+      return res.status(400).json({ error: 'invalid_project_access', message: '请选择项目读写或项目管理员权限。' });
+    }
     if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
       return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
     }
     if (body.designAccess !== undefined && body.designAccess !== 'read' && body.designAccess !== 'feedback' && body.designAccess !== 'publish') {
       return res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读、实施反馈或稿件发布权限' });
     }
-    if (body.planningAccess && body.designAccess) {
-      return res.status(400).json({ error: 'invalid_key_scope', message: '请为工程规划和设计分别签发凭据' });
-    }
-    if ((body.planningAccess || body.designAccess) && !isHumanSystemOwner(req)) {
-      return res.status(403).json({ error: 'owner_required', message: '仅 CDS 系统所有者可签发此类受限项目凭据' });
+    if ((body.projectAccess === 'admin' || body.planningAccess || body.designAccess) && !isHumanSystemOwner(req)) {
+      return res.status(403).json({ error: 'owner_required', message: '请由登录 CDS 的系统所有者签发所选权限的项目密钥。' });
     }
     const now = new Date();
     // Label: auto-generate from timestamp when the user didn't supply one.
@@ -4572,7 +4573,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
       minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
-        planningAccess: body.planningAccess, designAccess: body.designAccess,
+        projectAccess: body.projectAccess, planningAccess: body.planningAccess, designAccess: body.designAccess,
         issuedByAccountId: verifiedHumanAccountId(req) ?? null,
       });
     } catch (err) {
@@ -4597,10 +4598,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     const entries = stateService.getAgentKeys(project.id);
     res.json({
+      canIssueRestrictedPermissions: isHumanSystemOwner(req),
       keys: entries.map((e) => ({
         id: e.id,
         label: e.label,
         scope: e.scope,
+        projectAccess: e.projectAccess,
         planningAccess: e.planningAccess,
         designAccess: e.designAccess,
         createdAt: e.createdAt,
@@ -4629,6 +4632,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (mismatch) {
       res.status(mismatch.status).json(mismatch.body);
       return;
+    }
+    const target = stateService.getAgentKeys(project.id).find(key => key.id === req.params.keyId);
+    const callerKey = (req as typeof req & {
+      cdsProjectKey?: ProjectAgentKeyPermissions;
+    }).cdsProjectKey;
+    if (target?.projectAccess === 'admin' && !isHumanSystemOwner(req) && callerKey?.projectAccess !== 'admin') {
+      return res.status(403).json({ error: 'owner_required', message: '请联系 CDS 系统所有者或项目管理员吊销这把密钥。' });
     }
     const ok = stateService.revokeAgentKey(project.id, req.params.keyId);
     if (!ok) {

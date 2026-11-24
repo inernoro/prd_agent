@@ -229,11 +229,14 @@ describe('cluster identity through two real HTTP control planes', () => {
 
   it('issues and revokes only at the authority even through a member URL', async () => {
     const signed = await login(member);
-    const minted = await request(member, '/API/PROJECTS/local-a/AGENT-KEYS/', undefined, 'POST', { label: 'cluster-issued' }, signed.cookie);
+    const minted = await request(member, '/API/PROJECTS/local-a/AGENT-KEYS/', undefined, 'POST',
+      { label: 'cluster-issued', projectAccess: 'admin' }, signed.cookie);
     expect(minted.status).toBe(201);
     expect(member.state.getAgentKeys('local-a')).toHaveLength(0);
-    expect(primary.state.getAgentKeys('source-a')).toHaveLength(1);
+    expect(primary.state.getAgentKeys('source-a')).toEqual([expect.objectContaining({ projectAccess: 'admin' })]);
     expect((await request(member, '/api/projects/local-a', minted.json.plaintext)).status).toBe(200);
+    expect((await request(member, '/api/projects/local-a/agent-keys', minted.json.plaintext)).status).toBe(200);
+    expect((await request(member, '/api/projects/local-b/agent-keys', minted.json.plaintext)).status).toBe(403);
     const revoked = await request(member, `/api/projects/local-a/agent-keys/${minted.json.keyId}`, undefined, 'DELETE', undefined, signed.cookie);
     expect(revoked.status).toBe(200);
     expect((await request(member, '/api/projects/local-a', minted.json.plaintext)).status).toBe(401);

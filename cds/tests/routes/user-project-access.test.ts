@@ -1547,7 +1547,6 @@ describe('human project grants through the production server', () => {
     const keys = '/api/projects/project-a/agent-keys';
     const design = '/api/projects/project-a/design';
     expect((await call('POST', keys, owner, { designAccess: 'write-all' })).status).toBe(400);
-    expect((await call('POST', keys, owner, { designAccess: 'publish', planningAccess: 'propose' })).status).toBe(400);
     await grant(['project-a']);
     expect((await call('POST', keys, member, { designAccess: 'publish' })).status).toBe(403);
     const reader = await call('POST', keys, owner, { label: 'Fixture design reader', designAccess: 'read' });
@@ -1567,6 +1566,81 @@ describe('human project grants through the production server', () => {
     ]));
     expect((await call('DELETE', keys + '/' + publisher.body.keyId, owner)).status).toBe(200);
     expect((await credentialCall('GET', design, key)).status).not.toBe(200);
+  });
+
+  it('combines planning and design grants without granting general project access', async () => {
+    const project = '/api/projects/project-a';
+    const permissions = { planningAccess: 'propose', designAccess: 'read' };
+    const issued = await call('POST', project + '/agent-keys', owner, permissions);
+    expect(issued.status).toBe(201);
+    const key = issued.body.plaintext;
+    const planning = await credentialCall('GET', project + '/planning/capabilities', key);
+    expect(planning.status).toBe(200);
+    expect(planning.body.permissions).toEqual(['read', 'propose']);
+    const design = await credentialCall('GET', project + '/design', key);
+    expect(design.status).toBe(200);
+    expect(design.body.permissions).toMatchObject({ write: false, feedback: false, review: false });
+    expect((await credentialCall('POST', project + '/planning/commands', key, {
+      type: 'proposal.submit', requestId: 'combined-grants-proposal', kind: 'debt',
+      source: { type: 'manual', ref: 'combined-grants' }, draft: { title: 'Combined grants proposal' },
+    })).status).toBe(201);
+    for (const [method, route] of [
+      ['GET', project], ['GET', project + '/agent-keys'], ['POST', project + '/design/feedback'],
+      ['GET', '/api/projects/project-b/planning/capabilities'], ['GET', '/api/projects/project-b/design'],
+    ]) {
+      expect((await credentialCall(method, route, key)).status).toBe(403);
+    }
+    expect((await call('GET', project + '/agent-keys')).body.keys)
+      .toEqual([expect.objectContaining({ id: issued.body.keyId, ...permissions })]);
+  });
+
+  it('allows only the signed-in system owner to issue project administrator grants', async () => {
+    const project = '/api/projects/project-a';
+    const keys = project + '/agent-keys';
+    const permissions = { projectAccess: 'admin', planningAccess: 'read', designAccess: 'feedback' };
+    await grant(['project-a']);
+    expect((await call('POST', keys, member, permissions)).status).toBe(403);
+    expect((await call('POST', keys, owner, { projectAccess: 'system-admin' })).status).toBe(400);
+    const legacy = await call('POST', keys);
+    expect((await credentialCall('POST', keys, legacy.body.plaintext, permissions)).status).toBe(403);
+
+    const admin = await call('POST', keys, owner, permissions);
+    expect(admin.status).toBe(201);
+    const adminKey = admin.body.plaintext;
+    const rw = await call('POST', keys, owner, { projectAccess: 'rw' });
+    expect(rw.status).toBe(201);
+    const rwKey = rw.body.plaintext;
+    expect((await credentialCall('GET', project, rwKey)).status).toBe(200);
+    expect((await credentialCall('GET', keys, rwKey)).status).toBe(403);
+    expect((await credentialCall('POST', keys, rwKey, {})).status).toBe(403);
+    expect((await credentialCall('DELETE', project, rwKey)).status).toBe(403);
+    expect((await credentialCall('GET', project + '/planning/capabilities', rwKey)).status).toBe(403);
+    expect((await credentialCall('GET', project + '/design', rwKey)).status).toBe(403);
+
+    const listed = await credentialCall('GET', keys, adminKey);
+    expect(listed.status).toBe(200);
+    expect(listed.body.canIssueRestrictedPermissions).toBe(false);
+    expect(listed.body.keys).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: admin.body.keyId, ...permissions }),
+    ]));
+    expect(listed.body.keys.find((key: { id: string }) => key.id === admin.body.keyId)).not.toHaveProperty('hash');
+    expect((await credentialCall('GET', project + '/planning/capabilities', adminKey)).body.permissions).toEqual(['read']);
+    expect((await credentialCall('GET', project + '/design', adminKey)).body.permissions)
+      .toMatchObject({ feedback: true, write: false, review: false });
+    expect((await credentialCall('POST', keys, adminKey, {})).status).toBe(403);
+    expect((await credentialCall('DELETE', keys + '/' + admin.body.keyId, legacy.body.plaintext)).status).toBe(403);
+    expect((await credentialCall('DELETE', keys + '/' + rw.body.keyId, adminKey)).status).toBe(200);
+    expect((await credentialCall('GET', project, rwKey)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-b/agent-keys', adminKey)).status).toBe(403);
+    expect((await credentialCall('POST', '/api/global-agent-keys', adminKey, {})).status).toBe(403);
+    expect((await call('DELETE', keys + '/' + admin.body.keyId)).status).toBe(200);
+    expect((await credentialCall('GET', keys, adminKey)).status).toBe(401);
+
+    const otherProject = '/api/projects/project-b';
+    const otherAdmin = await call('POST', otherProject + '/agent-keys', owner, { projectAccess: 'admin' });
+    expect(otherAdmin.status).toBe(201);
+    expect((await credentialCall('DELETE', otherProject, otherAdmin.body.plaintext)).status).toBe(200);
+    expect(state.getProject('project-b')).toBeUndefined();
   });
 
   it('limits read-only engineering planning keys to reading the assigned project', async () => {
