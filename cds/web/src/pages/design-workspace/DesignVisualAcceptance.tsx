@@ -5,7 +5,7 @@ import { useTheme } from '@/lib/theme';
 import { designDemoImplementationPath, designSlots, designViewports, type DesignCell, type DesignEntry, type DesignRun,
   type DesignScreen, type DesignSlot, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus, designObjectivePlanEnabled } from '../../../../src/shared/design-methods';
-import { concreteVisualEvidence, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualRuleShot, designVisualSlots,
+import { concreteVisualEvidence, designSceneCoverage, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualRuleShot, designVisualSlots,
   designVisualStandard, designVisualStatus, visualSlotTheme, type DesignVisualChecks, type DesignVisualRow, type DesignVisualStatus } from '../../../../src/shared/design-visual';
 import { cellNames, designArtifact, designDate, designPublisherLabel, ruleModes, slotNames, type DesignCommand } from './design-ui';
 
@@ -15,8 +15,9 @@ const verdictNames: Record<DesignVisualStatus, string> = {
 const checkNames = { passed: '通过', failed: '有问题', missing: '缺证据' } as const;
 const columns = ['画面', '验收方式', '对照图', '实现图', '结论'];
 
-function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, visualOnly: boolean, run?: DesignRun) {
-  const record = designVisualRowForSlot(screen, slot, run);
+function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, visualOnly: boolean, run?: DesignRun,
+  sceneCoverage?: ReturnType<typeof designSceneCoverage>) {
+  const record = designVisualRowForSlot(screen, slot, run, sceneCoverage);
   const rules = version.acceptance.filter(rule => rule.screenId === screen.id && rule.slots.includes(slot)).map(rule => ({
     rule, cell: run?.cells.find(cell => cell.itemId === rule.id && cell.slot === slot),
   }));
@@ -27,8 +28,8 @@ function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlo
   const failed = checks.filter(check => check.status === 'failed');
   const splitMethods = designMethodPlanEnabled(version);
   const comparableRules = visualOnly ? [] : splitMethods ? rules.filter(({ rule }) => rule.how === 'screenshot') : rules;
-  let verdict = visualOnly ? designMethodVisualStatus(screen, slot, run)
-    : splitMethods ? designComparisonStatus(version, screen, slot, run) : designVisualStatus(version, screen, slot, run);
+  let verdict = visualOnly ? designMethodVisualStatus(screen, slot, run, sceneCoverage)
+    : splitMethods ? designComparisonStatus(version, screen, slot, run) : designVisualStatus(version, screen, slot, run, sceneCoverage);
   if (comparableRules.some(({ cell }) => cell?.status === 'failed')) verdict = 'failed';
   else if (verdict === 'passed' && comparableRules.some(({ cell }) => cell?.status !== 'passed')) verdict = 'missing';
   if (verdict === 'no_image' && implementation) verdict = visualOnly || reference ? 'missing' : 'no_reference';
@@ -63,7 +64,9 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
     }, { replace: true });
   };
   const opener = useRef<HTMLButtonElement | null>(null);
-  const rows = version.screens.filter(screen => designVisualSlots(screen).includes(slot)).map(screen => reviewRow(version, screen, slot, visualOnly, run));
+  const sceneCoverage = designSceneCoverage(version, run);
+  const rows = version.screens.filter(screen => designVisualSlots(screen).includes(slot))
+    .map(screen => reviewRow(version, screen, slot, visualOnly, run, sceneCoverage));
   const pending = rows.filter(row => row.verdict !== 'passed'
     || program && !run?.programEvidence?.[designVisualKey(row.screen.id, slot)]?.review?.matched);
   const shown = filter === 'todo' ? pending : rows;

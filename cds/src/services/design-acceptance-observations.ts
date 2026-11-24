@@ -147,7 +147,7 @@ export function compareDesignObservations(expected: Observation, actual: Observa
     'V-06': { status: 'missing', evidence: '同数据图已生成，名称与徽标数量的逐处一致性待核对。' },
     'V-07': darkContrastCheck(actual.darkText, useDarkCapture),
     'V-08': { status: 'missing', evidence: `已取 ${actual.width} × ${actual.height} 的图。Windows 两档缩放与手机状态待关联。` },
-    'V-09': { status: 'missing', evidence: '已进入当前声明的状态。空、加载、异常和权限场景的覆盖待核对。' },
+    'V-09': { status: 'missing', evidence: '已进入当前声明的状态。待核对本版全部声明状态的同条件图证。', useSceneCoverage: true },
     'V-10': actual.scrollHeight > actual.height * 10 ? verdict(false, `内容高 ${actual.scrollHeight} px，超过当前视口的十屏。`) :
       { status: 'missing', evidence: `内容高 ${actual.scrollHeight} px，当前视口高 ${actual.height} px，长标题与数据规模覆盖待核对。` },
   };

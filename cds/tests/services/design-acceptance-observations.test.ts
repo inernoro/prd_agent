@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { compareDesignObservations, observeDesignRules } from '../../src/services/design-acceptance-observations.js';
+import { designVisualBreakdown } from '../../src/shared/design-methods.js';
 import { designVisualRowForSlot } from '../../src/shared/design-visual.js';
-import type { DesignRule, DesignRun, DesignScreen } from '../../src/shared/design-workspace.js';
+import type { DesignRule, DesignRun, DesignScreen, DesignVersion } from '../../src/shared/design-workspace.js';
 
 const phoneLayout: Parameters<typeof observeDesignRules>[1] = {
   layers: [], headerAlignment: null, width: 375, content: 375, vertical: 1, clippedControls: 0, textControls: 5,
@@ -62,5 +63,38 @@ describe('program verification of dark text', () => {
     expect(read()).toMatchObject({ status: 'missing', useDarkCapture: true });
     delete run.programEvidence!['fixture/phone-dark'];
     expect(read()).toMatchObject({ status: 'missing', useDarkCapture: true });
+  });
+});
+
+describe('declared scene coverage', () => {
+  it('requires two real program images for every declared state in the same run and dataset', () => {
+    const commit = 'a'.repeat(40), dataset = 'b'.repeat(64), fixtureDigest = 'c'.repeat(64);
+    const screen: DesignScreen = { id: 'normal', name: '正常', route: '#normal', viewport: 'phone', themes: ['light'], impl: '/design' };
+    const empty = { ...screen, id: 'empty', name: '空状态', route: '#empty' };
+    const version = { version: 24, demoData: { files: [], sha256: dataset }, screens: [screen, empty], acceptance: [] } as unknown as DesignVersion;
+    const attribution = { capturedBy: 'cds' as const, dataset, commit };
+    const at = '2026-11-25T00:00:00Z';
+    const proof = { ...attribution, digest: 'd'.repeat(64), fixtureDigest, at, by: 'capture-actor' };
+    const row = { ...attribution, imageId: 'implementation-image', referenceImageId: 'prototype-image', by: 'CDS 程序', at,
+      measured: { width: 375, height: 812, theme: 'light' as const, path: '/design' },
+      checks: compareDesignObservations(phoneLayout, phoneLayout, 0) };
+    const run: DesignRun = { id: 'run', version: 24, commit, createdAt: at, previewUrl: '/design', verdict: 'needs_evidence',
+      cells: [], issues: {}, visual: { 'normal/phone-light': row, 'empty/phone-light': row },
+      programEvidence: { 'normal/phone-light': proof } };
+    const coverage = () => designVisualBreakdown(version, run).find(check => check.id === 'V-09')?.counts;
+    expect(coverage()).toMatchObject({ passed: 0, missing: 2 });
+    run.programEvidence!['empty/phone-light'] = { ...proof, fixtureDigest: 'e'.repeat(64) };
+    expect(coverage()).toMatchObject({ passed: 0, missing: 2 });
+    run.programEvidence!['empty/phone-light'] = proof;
+    run.visual!['empty/phone-light'] = { ...row, referenceImageId: undefined };
+    expect(coverage()).toMatchObject({ passed: 0, missing: 2 });
+    run.visual!['empty/phone-light'] = { ...row, checks: { ...row.checks, 'V-09': {
+      status: 'failed', evidence: '实际打开的是另一个状态。', useSceneCoverage: true,
+    } } };
+    expect(coverage()).toMatchObject({ passed: 0, failed: 1, missing: 1 });
+    run.visual!['empty/phone-light'] = row;
+    expect(coverage()).toMatchObject({ passed: 2, missing: 0 });
+    run.version = 23;
+    expect(coverage()).toMatchObject({ passed: 0, missing: 2 });
   });
 });

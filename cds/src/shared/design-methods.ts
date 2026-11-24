@@ -1,6 +1,6 @@
 import { designProgramEvidenceRequired, type DesignEntry, type DesignRule, type DesignRun, type DesignScreen, type DesignSlot, type DesignVersion } from './design-workspace.js';
 import {
-  designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualSlots,
+  designSceneCoverage, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualSlots,
   designVisualStandard, type DesignVisualCheckId, type DesignVisualStatus,
 } from './design-visual.js';
 
@@ -152,9 +152,10 @@ export function designComparisonStatus(version: DesignVersion, screen: DesignScr
   return conclusion;
 }
 
-export function designMethodVisualStatus(screen: DesignScreen, slot: DesignSlot, run?: DesignRun): DesignVisualStatus {
+export function designMethodVisualStatus(screen: DesignScreen, slot: DesignSlot, run?: DesignRun,
+  sceneCoverage?: ReturnType<typeof designSceneCoverage>): DesignVisualStatus {
   if (!run) return 'unverified';
-  const row = designVisualRowForSlot(screen, slot, run);
+  const row = designVisualRowForSlot(screen, slot, run, sceneCoverage);
   const result = designEvidenceStatus(designVisualStandard.map(([id]) => designVisualCheckStatus(id, row?.checks[id])));
   return result === 'failed' || row?.imageId ? result : 'no_image';
 }
@@ -203,8 +204,9 @@ export function designMethodsState(version: DesignVersion, run?: DesignRun, entr
   const states: Record<DesignMethodId, DesignMethodStatus> = { mece: missingCoverage.length ? 'missing' : 'passed',
     compare: 'notrun', visual: 'notrun', regress: 'notrun', flow: 'notrun', human: 'notrun', smoke: 'notrun', debt: 'notrun' };
   if (run && !objective) {
+    const sceneCoverage = designSceneCoverage(version, run);
     const pairs = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designComparisonStatus(version, screen, slot, run)));
-    const visual = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designMethodVisualStatus(screen, slot, run)));
+    const visual = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designMethodVisualStatus(screen, slot, run, sceneCoverage)));
     states.compare = pairs.length ? designEvidenceStatus([...pairs, ...ruleEvidence(version, run, 'screenshot')]) : 'missing';
     states.visual = designEvidenceStatus(visual);
     states.flow = designEvidenceStatus((run.flows ?? []).map(flow => flow.status));
@@ -229,8 +231,9 @@ export function designMethodsState(version: DesignVersion, run?: DesignRun, entr
 }
 
 export function designVisualBreakdown(version: DesignVersion, run?: DesignRun) {
+  const sceneCoverage = designSceneCoverage(version, run);
   const rows = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => ({
-    screen, slot, entry: designVisualRowForSlot(screen, slot, run),
+    screen, slot, entry: designVisualRowForSlot(screen, slot, run, sceneCoverage),
   })));
   return designVisualStandard.map(([id, name, how, criterion]) => {
     const counts: Record<DesignEvidenceStatus, number> = { passed: 0, failed: 0, missing: 0 };

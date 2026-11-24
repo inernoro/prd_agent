@@ -1,4 +1,4 @@
-import { designDatasetRequired, designSlots, designViewports, type DesignCaptureProvenance, type DesignCell, type DesignRun, type DesignScreen, type DesignSlot, type DesignTheme, type DesignVersion } from './design-workspace.js';
+import { designDatasetRequired, designDemoImplementationPath, designProgramEvidenceRequired, designSlots, designViewports, type DesignCaptureProvenance, type DesignCell, type DesignRun, type DesignScreen, type DesignSlot, type DesignTheme, type DesignVersion } from './design-workspace.js';
 
 export const designVisualStandard = [
   ['V-01', '位置', '对图', '逐个指出页头、标签、主体、浮层、底部。位置保持一致，有调整时引用依据。'],
@@ -13,7 +13,7 @@ export const designVisualStandard = [
   ['V-10', '数据规模', '对图', '用长标题、几十条和真实规模的数据检查裁切、溢出和页面长度。'],
 ] as const;
 export type DesignVisualCheckId = typeof designVisualStandard[number][0];
-export type DesignVisualCheck = { status: 'passed' | 'failed' | 'missing'; evidence: string; useDarkCapture?: true };
+export type DesignVisualCheck = { status: 'passed' | 'failed' | 'missing'; evidence: string; useDarkCapture?: true; useSceneCoverage?: true };
 export type DesignVisualChecks = Partial<Record<DesignVisualCheckId, DesignVisualCheck>>;
 export type DesignVisualRow = DesignCaptureProvenance & {
   imageId?: string; referenceImageId?: string; measured?: DesignCell['measured'];
@@ -61,6 +61,31 @@ export function designProgramStatus(version: DesignVersion, run?: DesignRun) {
   return { total: keys.length, captured: proofs.length, reviewed, invalid, invalidProvenance: Boolean(invalidProvenance) };
 }
 
+export function designSceneCoverage(version: DesignVersion, run?: DesignRun): DesignVisualCheck | undefined {
+  if (!run || run.version !== version.version || !designProgramEvidenceRequired(version)) return undefined;
+  const { invalid, total } = designProgramStatus(version, run);
+  if (!total) return undefined;
+  if (invalid) return { status: 'missing', evidence: '本次程序取证的提交、演示数据或复验结果不一致。' };
+  let covered = 0;
+  for (const screen of version.screens) {
+    const { width, height } = designViewports[screen.viewport];
+    const path = screen.impl ?? designDemoImplementationPath(screen);
+    for (const slot of designVisualSlots(screen)) {
+      const key = designVisualKey(screen.id, slot);
+      const proof = run.programEvidence?.[key];
+      const row = run.visual?.[key];
+      const check = row?.checks['V-09'];
+      if (proof?.capturedBy === 'cds' && row?.capturedBy === 'cds' && check?.status === 'missing' && check.useSceneCoverage
+        && proof.commit === run.commit && row.commit === run.commit && row.dataset === proof.dataset
+        && row.imageId && row.referenceImageId && path && row.measured?.path === path
+        && row.measured.width === width && row.measured.height === height && row.measured.theme === visualSlotTheme(slot)) covered++;
+    }
+  }
+  const count = `声明状态已有 ${covered}/${total} 对同提交、同演示数据的程序图证。`;
+  return covered === total ? { status: 'passed', evidence: count }
+    : { status: 'missing', evidence: count + '未取证的画面及视口继续保留待补证。' };
+}
+
 export function designVisualRuleShot(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, run?: DesignRun) {
   if (!run || !screen.impl) return undefined;
   const { width, height } = designViewports[screen.viewport];
@@ -82,9 +107,12 @@ export function designVisualCheckStatus(id: DesignVisualCheckId, check?: DesignV
   return check.status;
 }
 
-export function designVisualRowForSlot(screen: DesignScreen, slot: DesignSlot, run?: DesignRun) {
+export function designVisualRowForSlot(screen: DesignScreen, slot: DesignSlot, run?: DesignRun, sceneCoverage?: DesignVisualCheck) {
   const key = designVisualKey(screen.id, slot);
-  const row = run?.visual?.[key];
+  const captured = run?.visual?.[key];
+  const check = captured?.checks['V-09'];
+  const row = captured && check?.status === 'missing' && check.useSceneCoverage && sceneCoverage
+    ? { ...captured, checks: { ...captured.checks, 'V-09': sceneCoverage } } : captured;
   if (!row?.checks['V-07']?.useDarkCapture || visualSlotTheme(slot) !== 'light' || !screen.themes.includes('dark')) return row;
   const darkKey = designVisualKey(screen.id, `${screen.viewport}-dark`);
   const darkRow = run?.visual?.[darkKey];
@@ -98,9 +126,10 @@ export function designVisualRowForSlot(screen: DesignScreen, slot: DesignSlot, r
   return { ...row, checks: { ...row.checks, 'V-07': { ...darkCheck, evidence: `同画面深色实拍。${darkCheck.evidence}` } } };
 }
 
-export function designVisualStatus(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, run?: DesignRun): DesignVisualStatus {
+export function designVisualStatus(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, run?: DesignRun,
+  sceneCoverage = designSceneCoverage(version, run)): DesignVisualStatus {
   if (!run) return 'unverified';
-  const row = designVisualRowForSlot(screen, slot, run);
+  const row = designVisualRowForSlot(screen, slot, run, sceneCoverage);
   const statuses = designVisualStandard.map(([id]) => designVisualCheckStatus(id, row?.checks[id]));
   if (statuses.includes('failed')) return 'failed';
   if (!row?.imageId) return 'no_image';
@@ -109,7 +138,8 @@ export function designVisualStatus(version: DesignVersion, screen: DesignScreen,
 }
 
 export function designVisualSummary(version: DesignVersion, run?: DesignRun) {
-  const statuses = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designVisualStatus(version, screen, slot, run)));
+  const coverage = designSceneCoverage(version, run);
+  const statuses = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designVisualStatus(version, screen, slot, run, coverage)));
   return { total: statuses.length, failed: statuses.filter(status => status === 'failed').length,
     remaining: statuses.filter(status => status !== 'passed').length };
 }
