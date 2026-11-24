@@ -4403,13 +4403,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             foreach (var field in UnsupportedOSeriesParameters(resolution.ActualModel))
                 requestBody.Remove(field);
 
-        // GPT-6.1 Sol 不支持 none，不能沿用 GPT-5.6 的默认推理设置。
+        // 这些 GPT-6 型号不接受 Chat Completions 采样参数，也不支持 none 推理设置。
         // https://developers.openai.com/api/docs/guides/latest-model
-        if (IsGpt61SolModel(resolution.ActualModel) && !IsStrictParameterPolicy(context))
-            foreach (var field in Gpt61SolUnsupportedSamplingParameters)
+        if (UsesGpt6ChatContract(resolution.ActualModel) && !IsStrictParameterPolicy(context))
+            foreach (var field in Gpt6UnsupportedChatSamplingParameters)
                 requestBody.Remove(field);
 
-        // GPT-5、已确认的 GPT-6.1 Sol 与 o 系列使用 max_completion_tokens。
+        // GPT-5、已确认的 GPT-6 型号与 o 系列使用 max_completion_tokens。
         // 走共用的那一份，别在这里再写一遍（两份必然漂移，而漂移的表现是上游 400）。
         NormalizeOpenAiChatTokenField(requestBody, resolution);
     }
@@ -4444,11 +4444,20 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private static bool IsGpt61SolModel(string? model)
         => NormalizeModelLeaf(model) == "gpt-6.1-sol";
 
-    private static readonly string[] Gpt61SolUnsupportedSamplingParameters =
+    private static bool IsGpt62Model(string? model)
+        => NormalizeModelLeaf(model) is "gpt-6.2-sol" or "gpt-6.2-astra";
+
+    private static bool UsesGpt6ChatContract(string? model)
+        => IsGpt61SolModel(model) || IsGpt62Model(model);
+
+    private static string Gpt6ChatToolsErrorCode(string? model)
+        => IsGpt62Model(model) ? "GPT62_TOOLS_REQUIRE_RESPONSES" : "GPT61_TOOLS_REQUIRE_RESPONSES";
+
+    private static readonly string[] Gpt6UnsupportedChatSamplingParameters =
         ["temperature", "top_p", "logprobs", "top_logprobs"];
 
     private static bool UsesCompletionTokenBudget(string? model)
-        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model) || IsGpt61SolModel(model);
+        => IsGpt5FamilyModel(model) || IsKnownOSeriesModel(model) || UsesGpt6ChatContract(model);
 
     // 仅描述已确认型号的预算与采样规则，不承诺旧型号的 role/stream 等完整协议兼容。
     // 仅接受原名与合法日期快照，不能凭 o 前缀猜未来协议。
@@ -4530,9 +4539,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+        if (UsesOpenAiProtocol(resolution) && UsesGpt6ChatContract(resolution.ActualModel) && RequestHasTools(requestBody))
         {
-            error = GatewayResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+            error = GatewayResponse.Fail(Gpt6ChatToolsErrorCode(resolution.ActualModel),
                 "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
@@ -4643,9 +4652,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         if (IsChatCompletionsEndpoint(request.EndpointPath) && requestBody is not null
-            && UsesOpenAiProtocol(resolution) && IsGpt61SolModel(resolution.ActualModel) && RequestHasTools(requestBody))
+            && UsesOpenAiProtocol(resolution) && UsesGpt6ChatContract(resolution.ActualModel) && RequestHasTools(requestBody))
         {
-            error = GatewayRawResponse.Fail("GPT61_TOOLS_REQUIRE_RESPONSES",
+            error = GatewayRawResponse.Fail(Gpt6ChatToolsErrorCode(resolution.ActualModel),
                 "所选模型需要通过 Responses API 使用工具，请切换已配置的 Responses 线路。", 400);
             return true;
         }
@@ -4824,9 +4833,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return false;
 
         var strict = IsStrictParameterPolicy(context);
-        if (UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray && IsGpt61SolModel(resolution.ActualModel))
+        if (UsesOpenAiProtocol(resolution) && requestBody["messages"] is JsonArray && UsesGpt6ChatContract(resolution.ActualModel))
         {
-            var rejected = strict ? Gpt61SolUnsupportedSamplingParameters.FirstOrDefault(key => IsRequestedJsonParameter(requestBody, key)) : null;
+            var rejected = strict ? Gpt6UnsupportedChatSamplingParameters.FirstOrDefault(key => IsRequestedJsonParameter(requestBody, key)) : null;
             if (rejected is not null || requestBody["reasoning_effort"] is JsonValue effort
                 && effort.TryGetValue<string>(out var effortText) && string.Equals(effortText, "none", StringComparison.OrdinalIgnoreCase))
             {

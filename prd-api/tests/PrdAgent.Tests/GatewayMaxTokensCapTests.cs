@@ -108,7 +108,9 @@ public class GatewayMaxTokensCapTests
     [Theory]
     [InlineData("gpt-6.1-sol")]
     [InlineData("openai/gpt-6.1-sol")]
-    public void ConfirmedGpt61SolBudgetKeepsSmallestCapAndRemovesLegacyFields(string model)
+    [InlineData("gpt-6.2-sol")]
+    [InlineData("openai/gpt-6.2-astra")]
+    public void ConfirmedGpt6BudgetKeepsSmallestCapAndRemovesLegacyFields(string model)
     {
         var body = new JsonObject { ["messages"] = new JsonArray(), ["max_tokens"] = 500,
             ["max_completion_tokens"] = 300, ["max_output_tokens"] = 100 };
@@ -124,6 +126,7 @@ public class GatewayMaxTokensCapTests
     [InlineData("gpt-4.1-mini")]
     [InlineData("gpt-50-imaginary")]
     [InlineData("gpt-6.1-sol-future")]
+    [InlineData("gpt-6.2-sol-future")]
     [InlineData("anthropic/claude-opus-5")]
     public void ApplyResolvedMaxTokensCap_KeepsMaxTokens_ForNonGpt5Models(string model)
     {

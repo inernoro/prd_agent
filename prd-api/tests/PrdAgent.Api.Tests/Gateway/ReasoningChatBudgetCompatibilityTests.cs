@@ -176,11 +176,15 @@ public sealed class ReasoningChatBudgetCompatibilityTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Gpt61Sol_RawAndOrdinaryChatNormalizeWithoutInjectingNone(bool raw)
+    [InlineData("gpt-6.1-sol", false)]
+    [InlineData("gpt-6.1-sol", true)]
+    [InlineData("gpt-6.2-sol", false)]
+    [InlineData("gpt-6.2-sol", true)]
+    [InlineData("gpt-6.2-astra", false)]
+    [InlineData("gpt-6.2-astra", true)]
+    public async Task Gpt6_RawAndOrdinaryChatNormalizeWithoutInjectingNone(string model, bool raw)
     {
-        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, "gpt-6.1-sol");
+        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, model);
         var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"max_tokens\":64,\"temperature\":0.2,\"top_p\":0.8,\"logprobs\":true,\"top_logprobs\":2}")!.AsObject();
         var original = body.ToJsonString();
         if (raw)
@@ -188,7 +192,7 @@ public sealed class ReasoningChatBudgetCompatibilityTests
             var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
             { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
                 HttpMethod = "POST", EndpointPath = "/v1/chat/completions", RequestBody = body },
-                new GatewayModelResolution { Success = true, ActualModel = "gpt-6.1-sol", ActualPlatformId = "synthetic-platform",
+                new GatewayModelResolution { Success = true, ActualModel = model, ActualPlatformId = "synthetic-platform",
                     ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", PlatformType = "openai", Protocol = "openai", MaxTokens = 1024 });
             Assert.True(response.Success, response.ErrorMessage);
         }
@@ -205,44 +209,50 @@ public sealed class ReasoningChatBudgetCompatibilityTests
     }
 
     [Theory]
-    [InlineData("temperature", true)]
-    [InlineData("top_p", true)]
-    [InlineData("logprobs", true)]
-    [InlineData("top_logprobs", true)]
-    [InlineData("reasoning_effort", true)]
-    [InlineData("reasoning_effort", false)]
-    public async Task Gpt61Sol_ExplicitUnsupportedIntentIsRejectedWithoutProviderCall(string parameter, bool strict)
+    [InlineData("gpt-6.1-sol", "temperature", true)]
+    [InlineData("gpt-6.1-sol", "top_p", true)]
+    [InlineData("gpt-6.1-sol", "logprobs", true)]
+    [InlineData("gpt-6.1-sol", "top_logprobs", true)]
+    [InlineData("gpt-6.1-sol", "reasoning_effort", true)]
+    [InlineData("gpt-6.1-sol", "reasoning_effort", false)]
+    [InlineData("gpt-6.2-sol", "temperature", true)]
+    [InlineData("gpt-6.2-astra", "reasoning_effort", false)]
+    public async Task Gpt6_ExplicitUnsupportedIntentIsRejectedWithoutProviderCall(string model, string parameter, bool strict)
     {
         var transport = new StrictReasoningUpstream();
         var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"max_tokens\":64}")!.AsObject();
         body[parameter] = parameter == "reasoning_effort" ? JsonValue.Create("none") : parameter == "logprobs" ? JsonValue.Create(true) : JsonValue.Create(0.2);
-        var response = await Gateway(transport, "gpt-6.1-sol").SendAsync(new GatewayRequest
+        var response = await Gateway(transport, model).SendAsync(new GatewayRequest
         { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
             Context = new GatewayRequestContext { ParameterPolicy = strict ? "strict-require" : null }, RequestBody = body });
         Assert.False(response.Success); Assert.Equal("PARAMETER_UNSUPPORTED", response.ErrorCode); Assert.Equal(0, transport.Calls);
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Gpt61Sol_ChatToolsRequireResponsesEvenWhenCapabilityMetadataClaimsSupport(bool raw)
+    [InlineData("gpt-6.1-sol", false)]
+    [InlineData("gpt-6.1-sol", true)]
+    [InlineData("gpt-6.2-sol", false)]
+    [InlineData("gpt-6.2-sol", true)]
+    [InlineData("gpt-6.2-astra", false)]
+    [InlineData("gpt-6.2-astra", true)]
+    public async Task Gpt6_ChatToolsRequireResponsesEvenWhenCapabilityMetadataClaimsSupport(string model, bool raw)
     {
-        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, "gpt-6.1-sol");
+        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, model);
         var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"test\"}}]}")!.AsObject();
         if (raw)
         {
             var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
             { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
                 HttpMethod = "POST", EndpointPath = "/v1/chat/completions", RequestBody = body },
-                new GatewayModelResolution { Success = true, ActualModel = "gpt-6.1-sol", ActualPlatformId = "synthetic-platform",
+                new GatewayModelResolution { Success = true, ActualModel = model, ActualPlatformId = "synthetic-platform",
                     ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", PlatformType = "openai", Protocol = "openai", SupportsFunctionCalling = true });
-            Assert.False(response.Success); Assert.Equal("GPT61_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
+            Assert.False(response.Success); Assert.Equal(model == "gpt-6.1-sol" ? "GPT61_TOOLS_REQUIRE_RESPONSES" : "GPT62_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
         }
         else
         {
             var response = await gateway.SendAsync(new GatewayRequest { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat,
                 ModelType = ModelTypes.Chat, RequestBody = body });
-            Assert.False(response.Success); Assert.Equal("GPT61_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
+            Assert.False(response.Success); Assert.Equal(model == "gpt-6.1-sol" ? "GPT61_TOOLS_REQUIRE_RESPONSES" : "GPT62_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
         }
         Assert.Equal(0, transport.Calls);
     }
