@@ -8,7 +8,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
 import type { DesignComment, DesignEntry, DesignReviewer, DesignScreen, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
-import { currentDesignRun, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
+import { currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
@@ -128,7 +128,12 @@ export function DesignWorkspacePage() {
   const sideClosed = params.get('side') === 'off';
   const pane = params.get('pane');
   const sideTab: SideTab = pane === 'comments' || pane === 'deliver' ? pane : 'demo';
-  const guidedDelivery = Boolean(version?.screens.length);
+  const availablePanes = new Set(version?.screens.flatMap(({ route }) => route.startsWith('#/design?')
+    ? new URLSearchParams(route.slice('#/design?'.length)).getAll('pane') : []));
+  const guidedDelivery = Boolean(version?.screens.length && (
+    version.demo?.length || version.goals?.length || designProgramEvidenceRequired(version)
+    || (availablePanes.has('comments') && availablePanes.has('deliver'))
+  ));
   const frameworkTab = frameworkTabs.find(value => value === params.get('tab')) ?? 'overview';
   const screenParam = params.get('screen') ?? undefined;
   const commentParam = params.get('comment') ?? undefined;
@@ -404,6 +409,12 @@ export function DesignWorkspacePage() {
     </div>
     <div className="dw-draft-tabbar">
       {summaryTabLinks}
+      {!guidedDelivery && entry.implementedVersion !== undefined &&
+        <div className="dw-implementation-mark" aria-label="实现进度">
+          <span>已实现 V{entry.implementedVersion}</span>
+          {versionGap?.direction === 'behind' && <span data-gap="behind">落后 {versionGap.count} 版</span>}
+          {versionGap?.direction === 'ahead' && <span data-gap="ahead">待回退 {versionGap.count} 版</span>}
+        </div>}
     </div>
   </header>;
   const messages = <>
