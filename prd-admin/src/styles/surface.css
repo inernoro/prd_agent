@@ -419,6 +419,30 @@
   }
 }
 
+.surface-search-field {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+}
+
+.surface-search-field:hover {
+  border-color: var(--border-hover);
+}
+
+.surface-search-field:focus-within {
+  border-color: var(--border-focus);
+  background: var(--panel-solid);
+  box-shadow: 0 0 0 2px var(--selection-bg);
+}
+
+.surface-search-icon {
+  color: var(--text-secondary);
+}
+
+.surface-search-field:focus-within .surface-search-icon {
+  color: var(--text-primary);
+}
+
 .surface-nav-bar {
   min-height: 46px;
   padding: 0 16px;
@@ -465,6 +489,11 @@
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+.surface-nav-tabs.surface-choice-group {
+  gap: 2px;
+  min-width: 0;
 }
 
 .surface-nav-tabs::-webkit-scrollbar {

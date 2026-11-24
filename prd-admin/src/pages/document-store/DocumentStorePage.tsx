@@ -4325,6 +4325,7 @@ export function DocumentStorePage() {
             dataTourId: t.dataTourId,
           }))}
           activeKey={tab}
+          tabGroupLabel="知识库分区"
           onChange={(k) => {
             const next = k as StoreTab;
             if (next === tab) return;
@@ -4351,8 +4352,7 @@ export function DocumentStorePage() {
           data-tour-id="library-toolbar"
           className={isMobile
             ? 'px-5 flex flex-col gap-2 pb-1'
-            : 'surface-nav-bar flex items-center gap-2 flex-wrap'}
-          style={isMobile ? { scrollbarWidth: 'none' } : { overflow: 'visible' }}
+            : 'flex min-h-[46px] flex-wrap items-center gap-2 rounded-xl border border-token-subtle bg-token-nested px-4'}
         >
           {tab === 'team' && !isMobile && (
             <TeamScopeBar
@@ -4373,24 +4373,25 @@ export function DocumentStorePage() {
 
           {/* 搜索 */}
           <div className={isMobile ? 'flex items-center gap-2' : 'contents'}>
-          <div className={isMobile ? 'relative min-w-0 flex-1' : 'relative flex-none'}>
-            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+          <div className={isMobile ? 'surface-search-field relative min-w-0 flex-1' : 'surface-search-field relative w-[200px] flex-none'}>
+            <Search size={12} className="surface-search-icon absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden />
             <input
               data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Escape') setSearch(''); }}
+              aria-label="按名称或标签筛选知识库"
               placeholder="按名称或标签筛选…"
               className={isMobile
-                ? 'h-10 pl-8 pr-8 rounded-[12px] text-[14px] outline-none w-full'
-                : 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all'}
-              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+                ? 'h-[38px] w-full bg-transparent pl-8 pr-8 text-[14px] text-token-primary outline-none'
+                : 'h-[30px] w-full bg-transparent pl-7 pr-7 text-[12px] text-token-primary outline-none'}
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch('')}
                 className="hover-bg-soft absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full flex items-center justify-center transition-colors"
+                aria-label="清除搜索"
                 title="清除搜索"
                 style={{ color: 'var(--text-muted)' }}
               >
@@ -4439,6 +4440,7 @@ export function DocumentStorePage() {
               type="button"
               data-tour-id="library-tag-filter"
               onClick={() => setTagOpen(o => !o)}
+              aria-expanded={tagOpen}
               disabled={tagStats.length === 0}
               className={`h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${tagFilter.length > 0 ? 'hover:brightness-110' : 'hover-bg-soft'}`}
               style={tagFilter.length > 0
