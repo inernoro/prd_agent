@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveSiteForm, siteFormBadge } from './siteFormRegistry';
+import { resolveSiteForm, siteFormBadge, SITE_FORM_REGISTRY } from './siteFormRegistry';
 
 const file = (path: string) => ({
   path,
@@ -9,6 +9,13 @@ const file = (path: string) => ({
 });
 
 describe('site form content shape', () => {
+  it('图片包装站优先识别为图片，不能被两文件壳子误分为 ZIP', () => {
+    const site = { wrappedAssetType: 'image', contentShape: 'multi-file' as const, files: [file('index.html'), file('photo.png')] };
+    expect(resolveSiteForm(site)).toBe('image');
+    expect(SITE_FORM_REGISTRY[resolveSiteForm(site)].label).toBe('图片');
+    expect(siteFormBadge(site)).toBeNull();
+  });
+
   it('shows a generated six-file system package as a normal HTML page', () => {
     const site = {
       contentShape: 'self-contained-html' as const,

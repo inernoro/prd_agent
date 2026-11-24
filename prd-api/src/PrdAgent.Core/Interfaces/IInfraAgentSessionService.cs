@@ -113,7 +113,11 @@ public sealed record InfraAgentRuntimeJob(
     string MessageId,
     string Content,
     DateTime EnqueuedAt
-);
+)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; init; }
+}
 
 /// <summary>注入到 agent 工作区的单个文本文件。Path 为相对路径（如 input.md）。</summary>
 public sealed record InfraAgentWorkspaceFileInput(string Path, string Content);
@@ -164,7 +168,11 @@ public sealed record InfraAgentWorkspaceTransferRequest(
     [property: JsonPropertyName("baseRevision")] string BaseRevision,
     [property: JsonPropertyName("maxInputBytes")] long MaxInputBytes,
     [property: JsonPropertyName("maxOutputBytes")] long MaxOutputBytes,
-    [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths
+    [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths,
+    [property: JsonPropertyName("maxPublicOutputBytes")] long? MaxPublicOutputBytes = null,
+    [property: JsonPropertyName("continuingRun")] bool ContinuingRun = false,
+    [property: JsonPropertyName("previousImageDigest"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? PreviousImageDigest = null
 );
 
 public record SendInfraAgentMessageRequest(

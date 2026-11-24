@@ -1,21 +1,31 @@
 ---
 name: create-visual-test-to-kb
-description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名结构固定，**每次归档强制输出可达地址**：CDS 直达深链 /reports，匿名对外用 /r/token）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；离线只能生成本地诊断草稿，不得作为验收报告交付。触发词："视觉验收"、"验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
+description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名结构固定，**每次归档强制输出可达地址**：CDS 直达深链 /reports，匿名对外用 /r/token）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；离线只能生成本地诊断草稿，不得作为验收报告交付。触发词："视觉验收"、"验收"、"页面验收"、"功能交付收尾"、"回归验收"、"验收报告"、"报告不符合技能"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
 metadata:
-  version: 1.0.1
+  version: 1.0.3
 ---
 
 # 验收归档 v2 — 工业级功能验收全流水线
 
-> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/验收`、`/视觉验收`、"视觉验收"、"验收"、"视觉测试"、"验收归档"、"create visual test"
+> **版本**：v1.0.3 | **状态**：已落地 | **触发**：`/验收`、`/视觉验收`、"视觉验收"、"验收"、"视觉测试"、"验收归档"、"create visual test"
 
 > 一条不可分的流水线:**标准定义测什么/怎么截/怎么命名 → 模拟人类浏览器取证 → 证据落 CDS 验收中心出直达深链**。
 > 主纲在此,完整规则按需加载(见下"按需文件")。规则 SSOT 先读仓库 `doc/`,外部技能包才读 `references/rules/`;`reference/standard-v2.md` 是执行协议和准入下限,同样必读。
+
+## 操作入口与 MECE 覆盖（2026-10-15 更新）
+
+每份报告必须有「操作入口」：从登录后首页开始，逐步列出导航、按钮、对象选择、最终面板及预期可见状态，配入口截图；有简版时该章节必须默认可见，不能藏在完整版或只给深链。
+
+数据库、连接或权限类验收按通道 × 数据库类型 × 操作类型建立覆盖账本，再覆盖角色/审批、生命周期/异常、隔离/清理、明暗主题。通道至少区分 UI、CLI/技能和原生工具；操作区分 CRUD、批量、事务、克隆/恢复/迁移和引擎特性。全组合只是候选集，按真实能力标记已通过、失败、未支持、按设计拒绝、未执行，不把不适用或只读拒写算成功能已实现。对未执行项列补跑入口和关闭条件。
+
+技能发布到市场后，必须读回条目的 version/updatedAt，并重新下载安装包核对 CLI 与文档版本；上传成功不能代替消费端校验。
 
 ## 何时用
 
 - 一个功能/PR 开发完成,需要可查收、可追溯、结构化的验收报告(替代塞 PR 评论 / 塞 HTML 进 doc/)。
 - AI 自测完(CLAUDE #8.1)后,以**真人路径**复验并归档结论 + 证据。
+- 用户自然语言要求「页面验收」「回归验收」「验收报告」，或开发交付需要验收结论时自动触发，不以显式 `/验收` 为前提。宿主未注入本技能时按仓库 `AGENTS.md` 的链接读取，不能因此省略。
+- 从 CDS、`human-verify`、`acceptance-checklist` 或交接流程进入时，本技能仍负责正式报告。上游测试记录是输入；自行生成 HTML、直接 `report create` 上传和自行抽查图片均不能替代标准生成、准入校验与 `verify-open`。复杂场景沿用下文规定的设计与编排前置。
 
 ## 前置依赖（接入即查,缺一不可)
 
@@ -32,8 +42,8 @@ metadata:
 本地诊断沿用下文正式归档命令的全部必填参数,但配置必须为 `report.mode=local`,并额外添加:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
   --local-diagnostic \
   --config "$SKILLS_ROOT/create-visual-test-to-kb/acceptance.config.json" \
@@ -87,9 +97,9 @@ python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
 每日/昨日自动验收必须先跑机器盘点:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
 # 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
   --date <YYYY-MM-DD> \
   --json-out /tmp/daily-scope.json \
@@ -205,7 +215,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 - 任何通知和交付都禁止使用 `/tmp`、`file://` 或本机 HTML/Markdown 作为报告入口。报告必须发布到 CDS 验收中心；MAP 等系统只通过开放协议消费 CDS 报告，不作为交付回退。
 - 通知里出现的报告链接、raw 链接和页面链接必须同源且可由接收者打开。raw 内容验证通过不等于页面验证通过。
-- 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片，并全量校验交互报告内部链接、真实点击当前视口可见链接后目标是否进入可视区。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
+- 归档后必须跑 `scripts/verify-open.mjs`，默认最多尝试三次。脚本等待标题、正文和图片，核对全部内部链接并实点可见跳转。对标准交互报告逐张点开证据卡片，核对报告自身的地址片段、正文锚点与可解码的对应图片，再逐张返回证据列表。标准报告的最低图数按正文证据图计算。三次均失败判验收链路失败。若第二或第三次通过，记录首试失败和实际通过次数。
 - 如果 CDS 归档或线上打开校验失败,本轮必须判定「验收链路失败」并保持未完成；本地路径只能进入内部排障日志，不得出现在面向验收人的报告入口或交付摘要中。
 - Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、P0/P1/P2/P3 数量、非零严重级的一句话问题概述、未覆盖数量、归档结果、打开验证结果。不能只给缺陷总数；详细证据放报告,不要塞进 automation prompt。
 - Slack 必须增加一句 Verdict 性质说明。例如：`综合结论 conditional：已测范围未发现缺陷，但目标日冻结版本有 4 项无法确认`。禁止发送 `FAIL + 缺陷 0 + 未覆盖 N` 而不解释失败对象。
@@ -327,7 +337,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **v1.0 双主题**:先 `detectThemeSupport(page,cfg)` 探测本页是否真支持 light(标准 §5.4);`supportsLight=true` 才双主题各一张,dark-only 页单图 + 注明不计 fail。别交两张一模一样的暗图。
    - **v1.0 机读产物**:`writeManifest` 同时写 `result.json`(verdict/autoFindings/themeSupport/timing),供下游 Agent 直接消费。
    - **v2.14 移动端元数据**:`shot()` 自动记录 `viewport`、`touchPoints`、`isMobile`;归档脚本只把宽度不大于 480、触控点不少于 1 且 `isMobile=true` 的截图计为真实移动端证据。报告必须有「移动端验收」章节，写清视口、路径、触控、滚动、溢出、遮挡/裁切和结果。
-   - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-agent.md「Visual Agent 验收技能」`)。
+   - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 [「Visual Agent 验收技能」历史记录](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.visual-agent.md))。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
    - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」「改动断言表」「影响面矩阵」「融合测试设计」「证明力矩阵」「覆盖缺口」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 改动断言表 → 影响面矩阵 → 融合测试设计 → 证明力矩阵 → 覆盖缺口 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
@@ -354,9 +364,9 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 `scripts/example-driver.mjs` 是可直接改的取证脚本骨架。完整一轮:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
 # 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 SKILL="$SKILLS_ROOT/create-visual-test-to-kb"
 export PWPATH=$(npm root -g)/playwright
 export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>' AI_ACCESS_KEY='<access-key>'
@@ -403,7 +413,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
 | `scripts/archive_report.py` | 配置驱动归档(默认 cds:Markdown 写作源 → 交互 HTML → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 仅排障草稿;doc-store 向后兼容) | 归档时 |
-| `scripts/verify-open.mjs` | 归档后自查:headless 断言标题、正文、截图和全部内部锚点，真实点击可见链接核对滚动结果；任一失败 exit 2 | 归档后(强制) |
+| `scripts/verify-open.mjs` | 打开报告并核对可见链接。标准报告逐张检查证据卡片、地址、正文图片和返回列表 | 归档后(强制) |
 | `../cds/reference/acceptance-reports.md` | CDS 验收中心:报告/文件夹 API、cdscli report 命令、取证管线、深链格式、10MB/份压图注意 | 归档到 CDS 时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/CDS 项目与文件夹/截图);跨仓库改这个 | 接新仓库时 |
 

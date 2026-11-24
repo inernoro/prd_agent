@@ -22,9 +22,12 @@
  * 命名规范：路径走 `/api/cds-system/*` 前缀（系统级），符合
  * .claude/rules/scope-naming.md §3。
  */
-import { Router } from 'express';
+import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
+import { Router, type Request } from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
@@ -43,6 +46,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
+import { trustedClusterIdentity } from '../services/cluster-identity-context.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import {
@@ -58,20 +62,25 @@ import {
 import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
+  OPEN_DESIGN_IMAGE,
   normalizeAgentWorkspaceModelBaseUrl,
   normalizeWorkspaceTransfer,
   type WorkspaceTransferRequest,
 } from '../services/agent-workspace-session-runtime.js';
+import { OpenDesignWorkspaceVersions } from '../services/open-design-workspace-versions.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 const AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS = [0, 250, 750] as const;
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs' | 'getEnv'>;
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
+  refreshMapConnectionOrigin?: (req: Request, projectId: string) => Promise<string | null>;
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   serverEventLogStore?: ServerEventLogSink | null;
 }
 
@@ -95,9 +104,29 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell, {
       // systemd PrivateTmp 下的 /tmp 只对 CDS 可见，不能作为宿主 Docker 的 bind 源。
       // 复用构建缓存所在的数据根，保持宿主路径一致且不依赖启动工作目录。
+      serverEventLogStore: deps.serverEventLogStore,
       rootDir: process.env.CDS_AGENT_WORKSPACE_ROOT
         || path.join(path.dirname(deps.stateService.getCacheBase()), 'agent-workspaces'),
     }) : undefined);
+  const workspaceVersions = agentWorkspaceSessionRuntime
+    ? new OpenDesignWorkspaceVersions(
+        deps.stateService,
+        agentWorkspaceSessionRuntime.configuredImage ?? OPEN_DESIGN_IMAGE,
+        (image) => agentWorkspaceSessionRuntime.verifyVersion(image),
+      )
+    : null;
+  function pairedMapOrigin(req: Request, projectId: string): string | null {
+    const cluster = trustedClusterIdentity(req);
+    if (cluster) return cluster.mapConnectionOrigin?.projectId === projectId ? cluster.mapConnectionOrigin.origin : null;
+    const origins = new Set(deps.stateService.getActiveCdsConnections()
+      .filter(connection => connection.projectId === projectId && connection.partnerKind === 'map')
+      .map(connection => safeOrigin(connection.partnerBaseUrl))
+      .filter((origin): origin is string => origin !== null));
+    return origins.size === 1 ? origins.values().next().value ?? null : null;
+  }
+  if (agentWorkspaceSessionRuntime && typeof agentWorkspaceSessionRuntime.closeCapabilityProbes === 'function') {
+    deps.registerResourceShutdown?.(() => agentWorkspaceSessionRuntime.closeCapabilityProbes());
+  }
   const persistedRecoverableReservations = deps.stateService.listAgentSessionReservations()
     .filter((reservation) => reservation.item.resourceCleanupPending === true
       || (reservation.item.status !== 'stopped' && reservation.item.status !== 'failed'));
@@ -177,6 +206,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         clientUser: session.clientUser,
         clientApp: session.clientApp,
         runtime: session.runtime,
+        runtimeImage: session.runtimeImage ?? null,
         model: session.model,
         status: session.status,
         createdAt: session.createdAt,
@@ -732,6 +762,41 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
   });
 
+  router.post('/projects/:id/agent-runtime-version', async (req, res) => {
+    if (!isHumanSystemOwner(req)) {
+      res.status(403).json({ error: { code: 'scope_denied', message: 'CDS 系统所有者才能切换工作区版本' } });
+      return;
+    }
+    const project = deps.stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'CDS 项目不存在' } });
+      return;
+    }
+    const origin = pairedMapOrigin(req, project.id);
+    if (!workspaceVersions || !origin || project.mirror) {
+      res.status(409).json({ error: { code: 'workspace_version_unavailable', message: '当前项目没有可单独切换版本的 MAP 工作区连接' } });
+      return;
+    }
+    const { action, expectedImage, image } = req.body ?? {};
+    if (typeof expectedImage !== 'string' || (action !== 'rollback' && (action !== 'activate' || typeof image !== 'string'))) {
+      res.status(400).json({ error: { code: 'workspace_version_request_invalid', message: '请刷新项目状态并提供候选镜像摘要' } });
+      return;
+    }
+    try {
+      const change = action === 'rollback' ? { action, expectedImage } : { action, expectedImage, image };
+      res.json(await workspaceVersions.change(project.id, origin, change, async () => {
+        const currentOrigin = trustedClusterIdentity(req)
+          ? await deps.refreshMapConnectionOrigin?.(req, project.id)
+          : pairedMapOrigin(req, project.id);
+        return currentOrigin === origin && !deps.stateService.getProject(project.id)?.mirror;
+      }));
+    } catch (error) {
+      const failure = sanitizeAgentWorkspaceRuntimeError(error, []);
+      const status = failure.code === 'workspace_version_image_invalid' ? 422 : failure.retryable ? 503 : 409;
+      res.status(status).json({ error: failure });
+    }
+  });
+
   router.get('/projects/:id/agent-runtime-providers', async (req, res) => {
     const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
     if (!auth.ok) {
@@ -745,8 +810,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
+    const origin = safeOrigin(auth.partnerBaseUrl) ?? pairedMapOrigin(req, project.id);
+    const activeImage = origin ? workspaceVersions?.view(project.id, origin).activeImage : undefined;
     const workspaceCapability = agentWorkspaceSessionRuntime
-      ? await agentWorkspaceSessionRuntime.capability()
+      ? await agentWorkspaceSessionRuntime.capability(false, activeImage)
       : {
           available: false,
           resourcePolicyEnforcedPerSession: false,
@@ -975,6 +1042,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const hasModelApiKey = Boolean(modelApiKey);
     const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
     let workspaceTransfer: WorkspaceTransferRequest | null = null;
+    let workspaceOrigin: string | null = null;
     if (runtime === 'open-design') {
       try {
         workspaceTransfer = normalizeWorkspaceTransfer(req.body?.workspaceTransfer);
@@ -1048,7 +1116,18 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         });
         return;
       }
+      workspaceOrigin = partnerOrigin;
     }
+    const continuingRun = workspaceTransfer?.continuingRun;
+    const previousImageDigest = workspaceTransfer?.previousImageDigest;
+    const admittedImage = workspaceOrigin ? workspaceVersions?.view(project.id, workspaceOrigin).activeImage : undefined;
+    const selectImage = workspaceVersions && workspaceOrigin && typeof continuingRun === 'boolean'
+      ? (mapRunId: string) => workspaceVersions.pin(project.id, workspaceOrigin, mapRunId, {
+          continuing: continuingRun,
+          admittedImage,
+          previousImageDigest,
+        })
+      : undefined;
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
     const workerId = runtime === 'fake'
       ? `fake-worker-${req.params.id}`
@@ -1084,6 +1163,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       clientUser: typeof req.body?.clientUser === 'string' ? req.body.clientUser.slice(0, 120) : null,
       clientApp: typeof req.body?.clientApp === 'string' ? req.body.clientApp.slice(0, 120) : null,
       runtime,
+      workspaceOrigin,
       providerId: provider.id,
       workloadKind,
       isolationMode,
@@ -1242,7 +1322,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
     let workspaceCapability: Awaited<ReturnType<AgentWorkspaceSessionRuntime['capability']>> | null = null;
     try {
-      workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime
+      workspaceCapability = runtime === 'open-design' && agentWorkspaceSessionRuntime && !selectImage
         ? await agentWorkspaceSessionRuntime.capability()
         : null;
     } catch {
@@ -1263,8 +1343,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const resourcePolicyEnforcedPerSession = runtime === 'open-design'
       ? Boolean(
           agentWorkspaceSessionRuntime
-          && workspaceCapability?.available
-          && workspaceCapability.resourcePolicyEnforcedPerSession
+          && (selectImage || (workspaceCapability?.available && workspaceCapability.resourcePolicyEnforcedPerSession))
           && AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION,
         )
       : AGENT_RESOURCE_POLICY_ENFORCED_PER_SESSION;
@@ -1303,6 +1382,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
             persistAgentSession(settledSession);
             recordAgentRequestHistory(settledSession);
           }),
+          selectImage,
         );
         if (creationWasCancelled()) {
           await finishCancelledCreation();
@@ -1310,6 +1390,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         }
         containerName = allocated.containerName;
         session.containerName = allocated.containerName;
+        session.runtimeImage = allocated.image;
         session.workspaceRoot = '/workspace';
         session.updatedAt = new Date().toISOString();
       } catch (error) {
@@ -2242,7 +2323,20 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const all = [...liveSummaries, ...history];
     const users = Array.from(new Set(all.map(x => x.clientUser).filter(Boolean))) as string[];
     const apps = Array.from(new Set(all.map(x => x.clientApp).filter(Boolean))) as string[];
-    res.json({ items, users, apps, liveCount: liveSummaries.length, historyCount: history.length });
+    const origin = pairedMapOrigin(req, req.params.id);
+    const version = origin ? workspaceVersions?.view(req.params.id, origin) : undefined;
+    const workspaceVersion = version ? {
+      ...version,
+      canUpdate: version.canUpdate && isHumanSystemOwner(req) && !deps.stateService.getProject(req.params.id)?.mirror,
+      drainingCount: [...cdsAgentSessions.values()].filter(session =>
+        session.routerInstanceId === agentSessionRouterInstanceId
+        && session.projectId === req.params.id
+        && session.workspaceOrigin === origin
+        && session.runtimeImage && session.runtimeImage !== version.activeImage
+        && (session.resourceCleanupPending || (session.status !== 'stopped' && session.status !== 'failed')),
+      ).length,
+    } : null;
+    res.json({ items, users, apps, liveCount: liveSummaries.length, historyCount: history.length, workspaceVersion });
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/logs', (req, res) => {
@@ -2325,7 +2419,7 @@ interface CdsManagedRuntimeReconcileOptions {
   force?: boolean;
   hostPort?: number;
   now: string;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs' | 'getEnv'>;
   portStart?: number;
 }
 
@@ -2475,13 +2569,15 @@ async function reconcileCdsManagedRuntimeCapacity(
 
   const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
   const existingService = branch?.services?.[profileId];
+  if (options.liveApply && existingService) preserveServingRuntime(existingService);
   const hostPort = options.hostPort
     || existingService?.hostPort
     || (options.liveApply && options.portStart ? stateService.allocatePort(options.portStart) : 0);
   const hostPortReady = !options.liveApply && hostPort ? await probeCdsManagedRuntimeHostPort(hostPort) : false;
   const initialServiceStatus = hostPortReady ? 'running' : 'starting';
-  const initialBranchStatus = hostPortReady ? 'running' : 'idle';
+  const initialBranchStatus = existingService?.servingRuntime && options.liveApply ? 'building' : hostPortReady ? 'running' : 'idle';
   const serviceState: ServiceState = {
+    ...existingService,
     profileId,
     containerName,
     hostPort,
@@ -2489,34 +2585,36 @@ async function reconcileCdsManagedRuntimeCapacity(
   };
   let branchChange: 'created' | 'updated' = 'created';
   let serviceChange: 'created' | 'updated' = 'created';
-  let managedBranch: BranchEntry;
-  if (branch) {
-    branch.services = branch.services || {};
-    serviceChange = branch.services[profileId] ? 'updated' : 'created';
-    branch.services[profileId] = serviceState;
-    branch.status = initialBranchStatus;
-    branch.worktreePath = worktreePath;
-    branch.lastAccessedAt = options.now;
-    branch.lastDeployAt = options.now;
-    branchChange = 'updated';
-    managedBranch = branch;
-  } else {
-    managedBranch = {
-      id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
-      projectId: project.id,
-      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
-      worktreePath,
-      status: initialBranchStatus,
-      services: {
-        [profileId]: serviceState,
-      },
-      createdAt: options.now,
-      lastAccessedAt: options.now,
-      lastDeployAt: options.now,
-      githubCommitSha: 'cds-managed-runtime',
-    };
-    stateService.addBranch(managedBranch);
-  }
+  const managedBranch = await worktreePathActivity.withClaim([worktreePath, ...(branch?.worktreePath ? [branch.worktreePath] : [])], async () => {
+    if (branch) {
+      branch.services = branch.services || {};
+      serviceChange = branch.services[profileId] ? 'updated' : 'created';
+      branch.services[profileId] = serviceState;
+      branch.status = initialBranchStatus;
+      stateService.setBranchWorktreePath(branch.id, worktreePath);
+      branch.lastAccessedAt = options.now;
+      branch.lastDeployAt = options.now;
+      branchChange = 'updated';
+      return branch;
+    } else {
+      const managedBranch: BranchEntry = {
+        id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
+        projectId: project.id,
+        branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+        worktreePath,
+        status: initialBranchStatus,
+        services: {
+          [profileId]: serviceState,
+        },
+        createdAt: options.now,
+        lastAccessedAt: options.now,
+        lastDeployAt: options.now,
+        githubCommitSha: 'cds-managed-runtime',
+      };
+      stateService.addBranch(managedBranch);
+      return managedBranch;
+    }
+  });
   stateService.save();
 
   let liveApply: Record<string, unknown> = {
@@ -2636,22 +2734,42 @@ async function startCdsManagedRuntimeContainer(
 
   const logs: string[] = [];
   const startedAt = Date.now();
+  const isCurrent = () => stateService.getBranch(branch.id) === branch && branch.services[profile.id] === serviceState
+    && !['stopped', 'stopping'].includes(branch.status) && !['stopped', 'stopping'].includes(serviceState.status);
+  const assertCurrent = () => { if (!isCurrent()) throw new Error('服务更新已由较新的操作接管'); };
+  assertCurrent();
+  preserveServingRuntime(serviceState);
+  reserveServiceReplacements({ entry: branch, profileIds: [profile.id], state: stateService, portStart: serviceState.hostPort });
   serviceState.status = 'building';
   branch.status = 'building';
   branch.lastDeployAt = options.now;
   stateService.save();
 
   try {
+    const target = await prepareServiceReplacement({ entry: branch, service: serviceState, profile, state: stateService,
+      container: options.containerService, portStart: serviceState.hostPort, assertCurrent });
+    if (target !== serviceState) {
+      serviceState.pendingRuntime = runtimeRef(target);
+      stateService.save([{ kind: 'branches', id: branch.id }]); await stateService.flush();
+    }
     await options.containerService.runService(
-      branch,
+      replacementLaunchEntry(branch),
       profile,
-      serviceState,
+      target,
       (chunk) => {
         logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
         if (logs.length > 20) logs.splice(0, logs.length - 20);
       },
       stateService.getCustomEnv(project.id),
+      { preserveContainerNames: preserveReplacementNames(branch, target), assertCurrent,
+        onRuntimeCreated: target !== serviceState ? async runtime => {
+          assertCurrent();
+          serviceState.pendingRuntime = runtimeRef(runtime); stateService.save([{ kind: 'branches', id: branch.id }]); await stateService.flush();
+          assertCurrent();
+        } : undefined },
     );
+    assertCurrent();
+    if (target !== serviceState) { Object.assign(serviceState, target); serviceState.pendingRuntime = undefined; }
 
     serviceState.status = 'starting';
     branch.status = 'starting';
@@ -2668,8 +2786,10 @@ async function startCdsManagedRuntimeContainer(
         logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
         if (logs.length > 20) logs.splice(0, logs.length - 20);
       },
+      serviceState.containerName,
     );
 
+    assertCurrent();
     if (!ready) {
       serviceState.status = 'error';
       serviceState.errorMessage = 'CDS-managed official SDK runtime readiness probe failed';
@@ -2689,6 +2809,7 @@ async function startCdsManagedRuntimeContainer(
 
     serviceState.status = 'running';
     serviceState.errorMessage = undefined;
+    await commitServiceReplacements({ entry: branch, profileIds: [profile.id], state: stateService, container: options.containerService, assertCurrent });
     branch.status = 'running';
     branch.errorMessage = undefined;
     branch.lastAccessedAt = new Date().toISOString();
@@ -2704,6 +2825,8 @@ async function startCdsManagedRuntimeContainer(
       fallbackScope: 'operator-debug-only',
     };
   } catch (err) {
+    if (!isCurrent()) return { requested: true, attempted: true, status: 'superseded',
+      durationMs: Date.now() - startedAt, fallbackScope: 'operator-debug-only' };
     const message = (err as Error).message;
     serviceState.status = 'error';
     serviceState.errorMessage = message;
@@ -2861,6 +2984,8 @@ interface CdsAgentSession {
   clientUser: string | null;
   clientApp: string | null;
   runtime: string;
+  runtimeImage?: string;
+  workspaceOrigin: string | null;
   providerId: string;
   workloadKind: AgentWorkloadKind;
   isolationMode: AgentIsolationMode;
@@ -2995,7 +3120,9 @@ interface CdsManagedRuntimeResult {
 function authenticateProjectRequest(
   req: {
     headers: { authorization?: string | string[] | undefined };
-    _cdsCookieAuth?: boolean;
+    _cdsBasicHumanAuth?: boolean;
+    cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
+    cdsSession?: unknown;
     _aiSession?: unknown;
     cdsProjectKey?: { projectId: string; keyId: string };
   },
@@ -3003,10 +3130,9 @@ function authenticateProjectRequest(
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true; partnerBaseUrl?: string; principalKey: string } | { ok: false; status: number; code: string; message: string } {
-  // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
-  // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
-  // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
-  if (req._cdsCookieAuth === true) {
+  // [#746 obs-auth] 仪表盘系统所有者放行。原始账号 cookie 与持久化本地/GitHub
+  // 会话统一走共享 owner 判据；普通本地账号不得获得跨项目 admin 等价权限。
+  if (isHumanSystemOwner(req)) {
     return { ok: true, principalKey: 'cookie-admin' };
   }
   // server.ts also stamps scoped connection tokens as AI sessions. Preserve that
@@ -3043,7 +3169,8 @@ function authenticateProjectRequest(
   const token = isConnectionSession
     ? (typeof aiSession?.token === 'string' ? aiSession.token : undefined)
     : extractBearerToken(req.headers.authorization);
-  const connection = pairing.authenticateLongToken(token);
+  const cluster = trustedClusterIdentity(req);
+  const connection = cluster ? cluster.mapConnection : pairing.authenticateLongToken(token);
   if (!connection) {
     return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid connection token' };
   }
@@ -3397,6 +3524,7 @@ function toAgentRequestSummary(session: CdsAgentSession): Record<string, unknown
     clientUser: session.clientUser,
     clientApp: session.clientApp,
     runtime: session.runtime,
+    runtimeImage: session.runtimeImage ?? null,
     model: session.model,
     status: session.status,
     createdAt: session.createdAt,
@@ -3418,6 +3546,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     clientUser: session.clientUser,
     clientApp: session.clientApp,
     runtime: session.runtime,
+    runtimeImage: session.runtimeImage ?? null,
     providerId: session.providerId,
     workloadKind: session.workloadKind,
     isolation: {

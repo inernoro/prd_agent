@@ -5,7 +5,8 @@ namespace PrdAgent.Api.Mcp;
 /// <summary>
 /// 智能体一律不许做的动作 —— 收不回来的那些。
 ///
-/// 接入向导对用户的原话是「删除和公开发布这类收不回来的动作一律不开放给智能体」。
+/// 删除站点与未受控的公开发布仍不开放；网页托管的受控可见性与分享设置由专用开放接口
+/// 执行明确确认及私有资料核查，不借此放松其它模块的发布门。
 /// 兑现这句话需要两道门，因为一把 AgentApiKey 有两条路能打到平台：
 /// <list type="number">
 /// <item>走网关 <c>/api/mcp</c> —— 登记表里的 DELETE 在列举与调用两处都被挡；</item>
@@ -18,7 +19,7 @@ namespace PrdAgent.Api.Mcp;
 /// 判据放在这里而不是网关里，是因为**只在网关挡住等于只锁了正门**。两条路共用这一处，
 /// 不各写各的 —— 那是判据分裂的现成温床（本 PR 里已经栽过好几次）。
 ///
-/// 已知边界（与 <c>doc/debt.platform.md</c> #18 同一条）：这里认的是**方法与路径命名**，
+/// 已知边界（与 <c>https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md</c> #18 同一条）：这里认的是**方法与路径命名**，
 /// 不是语义。一个把删除做成 <c>POST /things/&#123;id&#125;/archive</c> 的接口照样过得去，
 /// 而一个只是「按 id 取消订阅」的 DELETE 会被一起关在门外。要认得准，
 /// 需要登记表补一个破坏性标记 + 一档独立 scope + 一次显式确认。
@@ -41,8 +42,7 @@ public static class McpDestructiveActions
     /// <summary>
     /// 承诺的另一半：公开发布。
     ///
-    /// 向导对用户的原话是「删除、<b>公开发布</b>这类收不回来的动作一律不给」，而上一版
-    /// 只兑现了「删除」那半句 —— 持 <c>literary:write</c> 的钥匙照样能打
+    /// 文学等模块的未受控公开发布仍被禁止：持 <c>literary:write</c> 的钥匙不应直接打
     /// <c>POST /api/literary-agent/prompts/&#123;id&#125;/publish</c> 把主人的提示词公开出去。
     /// 撤下来不难，已经被别人看见/抄走的那部分收不回来，所以它跟删除同档。
     ///
@@ -52,7 +52,7 @@ public static class McpDestructiveActions
     ///
     /// 内置工具没有一条路径落在这里：网页托管发布走的是
     /// <c>POST /api/open/web-pages/pages</c>（最后一段是 pages），分享链走 <c>/share</c>
-    /// 且按工具说明只对本人与团队可见，都不受影响。
+    /// 且其开放接口执行范围确认、对象权限和私有资料核查；它们不受这条按路径动词的闸影响。
     /// </summary>
     private static bool IsPublicPublishSegment(string last)
         => string.Equals(last, "publish", StringComparison.OrdinalIgnoreCase)
@@ -98,6 +98,15 @@ public static class McpDestructiveActions
         var cut = normalized.IndexOfAny(new[] { '?', '#' });
         if (cut >= 0) normalized = normalized[..cut];
         normalized = normalized.TrimEnd('/');
+
+        // 网页后台写接口没有独立的对外发布闸。Agent 只能走已收口的 /api/open/web-pages，
+        // 防止改用普通后台的 visibility、share 或重传接口绕过独立授权。
+        if ((normalized.Equals("/api/web-pages", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith("/api/web-pages/", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(httpMethod, "GET", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(httpMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(httpMethod, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+            return true;
 
         var slash = normalized.LastIndexOf('/');
         var last = slash >= 0 ? normalized[(slash + 1)..] : normalized;

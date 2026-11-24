@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
 
 env:
   NODE_VERSION: '20'
@@ -27,7 +28,14 @@ jobs:
           filters: |
             cds:
               - 'cds/**'
+              - 'cds-instances.json'
               - '.github/workflows/cds.yml'
+              - '.github/workflows/cds-prebuilt.yml'
+              - '.claude/skills/cds/**'
+              - '.claude/skills/cds-project-scan/**'
+              - '.claude/skills/cds-deploy-pipeline/**'
+              - '.claude/skills/cds-release/**'
+              - '.claude/skills/preview-url/**'
               # cds/tests 里有守卫在断言这份巡检工作流的接线（豁免开关挂没挂满四步、
               # 触发路径覆没覆盖登记与解析器）。不把被守文件登记进来，只改它的 PR
               # 会整个跳过测试 job——守卫从落地起就对它要防的场景不设防。
@@ -49,6 +57,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 停止演练回归读取固定历史基线，浅克隆没有该提交。
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -70,7 +81,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-bt-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml', 'cds/mcp/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-bt-
 
@@ -81,6 +92,15 @@ jobs:
       - name: Install web dependencies
         run: pnpm run install:web
 
+      - name: Install design runtime test dependencies
+        run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
+
+      - name: Install code review MCP dependencies
+        run: pnpm --dir mcp install --frozen-lockfile
+
+      - name: Code review MCP stdio integration
+        run: pnpm --dir mcp test && pnpm --dir mcp check
+
       - name: Type check
         run: pnpm build
 
@@ -89,6 +109,36 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+      - name: Fourteen-day GiB retention drill (isolated files only)
+        env:
+          CAPACITY_DRILL_PAYLOAD_BYTES: '16777216'
+          CAPACITY_DRILL_EVIDENCE: ${{ runner.temp }}/capacity-gib.json
+        run: pnpm exec vitest run --maxWorkers=1 --minWorkers=1 tests/services/capacity-growth-drill.test.ts
+
+      - name: Automatic capacity reclaim and notification drill (loopback only)
+        env:
+          CAPACITY_NATIVE_EVIDENCE: ${{ runner.temp }}/capacity-native.json
+        run: |
+          pnpm exec tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --esModuleInterop --skipLibCheck scripts/capacity-reclaim-drill.ts
+          pnpm exec tsx scripts/capacity-reclaim-drill.ts
+
+      - name: Preserve capacity protection and recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capacity-reclaim-${{ github.sha }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/capacity-gib.json
+            ${{ runner.temp }}/capacity-native.json
+          if-no-files-found: warn
+
+      - name: Scheduled jobs isolated recovery drill
+        run: pnpm drill:scheduled-jobs
+
+      - name: Agent setup CLI HTTP integration
+        run: python3 -m unittest discover -s ../.claude/skills/cds/tests -p 'test_cdscli_setup_check.py'
 
       # 上手向导的窄屏可达性只有真浏览器量得出来：源码守卫能证明主按钮写在
       # JSX 里，证明不了它在 390px 的手机上够不够得着。2026-09-03 那次
@@ -104,8 +154,27 @@ jobs:
       - name: Install Chromium for layout probes
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Verify preview asset retention across container replacement
+        run: |
+          docker pull node:20-bookworm-slim
+          node scripts/preview-compatibility-browser.mjs
+
+      - name: Task health recovery diagnostic
+        run: pnpm run smoke:task-health-recovery
+
+      - name: Preserve task health recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-health-recovery-evidence
+          path: work/task-health-recovery/
+          if-no-files-found: ignore
+
       - name: Agent starter mobile reachability
         run: pnpm run smoke:agent-starter-mobile
+
+      - name: Agent setup target and discovery recovery
+        run: pnpm run smoke:agent-setup-scope
 
       # 整页窄屏布局冒烟。它 2026-09-03 之前从未被任何 workflow 调用过——判据不弱，
       # 只是前置（真实 CDS 实例 + 项目数据 + Docker）在 CI 上凑不齐。离线模式把数据
@@ -113,6 +182,43 @@ jobs:
       # 任务调度主操作可见性。
       - name: Mobile layout smoke (offline)
         run: pnpm run smoke:mobile-layout:offline
+
+      - name: Report reading and small-data layout regression
+        env:
+          CDS_REPORTS_EVIDENCE: ${{ github.workspace }}/work/reports-workflow
+        run: pnpm run smoke:reports-workflow
+
+      - name: Preserve report reading evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-workflow-evidence
+          path: work/reports-workflow/
+          if-no-files-found: ignore
+
+      - name: Select and dropdown boundary smoke (offline)
+        run: pnpm run smoke:select-boundary
+
+      - name: Dropdown coverage inventory
+        run: node scripts/dropdown-inventory.mjs --json > "$RUNNER_TEMP/cds-dropdown-coverage.json"
+
+      - name: Shared floating boundary and keyboard smoke
+        run: pnpm run smoke:floating-boundary
+
+      - name: Preserve dropdown coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-dropdown-coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/cds-dropdown-coverage.json
+          if-no-files-found: ignore
+
+      # 关系视图视觉审计（2026-10-03）。关系图出过的问题全是几何与渲染问题：图被裁、问题卡一词一行、
+      # 线从卡片上穿过、徽标字看不清——编译、类型、单测全绿时照样会出。这一步按真人路径
+      # （分支列表 → 详情 → 关系卡 → 展开）在 5 档视口 × 双主题下量：横向溢出、截断、窄条、
+      # 重叠、对比度、悬停联动。判据清单在脚本文件头。
+      - name: Relation view visual audit (offline)
+        run: pnpm run audit:relation-visual
 
   docker-build:
     name: Docker Build Check

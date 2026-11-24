@@ -1,0 +1,76 @@
+import { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
+import { Button } from '@/components/design/Button';
+import { Dialog } from '@/components/ui/Dialog';
+import { MapSpinner } from '@/components/ui/VideoLoader';
+import { clearVersionDebugRecords, previewVersionDebugClear, type VersionDebugClearKind,
+  type VersionDebugClearPreview, type VersionDebugClearResult } from '@/services/real/productAgent';
+
+/** 临时管理员入口；用户要求移除时连同后端两条专用端点一并移除。 */
+export function VersionDebugClearButton({ kind, onChanged }: { kind: VersionDebugClearKind; onChanged: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const code = kind === 'internal' ? 'T' : 'V';
+  return <>
+    <Button size="sm" variant="danger" onClick={() => setOpen(true)}><Trash2 size={14} />调试清空{code}记录</Button>
+    {open && <VersionDebugClearDialog key={kind} kind={kind} onClose={() => setOpen(false)} onChanged={onChanged} />}
+  </>;
+}
+
+function VersionDebugClearDialog({ kind, onClose, onChanged }: {
+  kind: VersionDebugClearKind; onClose: () => void; onChanged: () => Promise<void>;
+}) {
+  const [preview, setPreview] = useState<VersionDebugClearPreview | null>(null);
+  const [phrase, setPhrase] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<VersionDebugClearResult | null>(null);
+  const submitting = useRef(false);
+  const code = kind === 'internal' ? 'T' : 'V';
+  useEffect(() => {
+    let active = true;
+    void previewVersionDebugClear(kind).then((response) => {
+      if (!active) return;
+      if (response.success && response.data.kind === kind && Number.isInteger(response.data.legacyRecordCount)) setPreview(response.data);
+      else setError(response.error?.message ?? '清理范围未确认，请关闭后重试。');
+    }).catch(() => { if (active) setError('清理范围读取失败，请关闭后重试。'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [kind]);
+
+  const clear = async () => {
+    if (submitting.current || !preview || preview.recordCount === 0 || phrase.trim() !== preview.confirmPhrase || result) return;
+    submitting.current = true; setBusy(true); setError('');
+    try {
+      const response = await clearVersionDebugRecords({ kind, token: preview.token, confirmPhrase: phrase.trim() });
+      if (!response.success) { setError(response.error?.message ?? '清理未确认，请刷新核对。'); return; }
+      setResult(response.data); setPhrase('');
+      try { await onChanged(); } catch { setError('清理已执行，但列表刷新失败，请刷新页面核对。'); }
+    } catch { setError('清理结果暂未确认，请刷新列表核对后再操作，不要重复点击。'); }
+    finally { submitting.current = false; setBusy(false); }
+  };
+  return <Dialog open onOpenChange={(value) => { if (!value && !submitting.current) onClose(); }}
+    title={`调试清空${code}记录`} tone="danger" maxWidth={560}
+    content={<div className="space-y-3 text-sm text-token-secondary" style={{ minHeight: 0, maxHeight: '65vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      <p>这是临时调试功能。清空所有产品的{code}记录，包括草稿、历史导入、已申领记录及旧独立登记。不受当前产品、人员或状态筛选影响。</p>
+      <p>保留另一类型版本、产品、需求、功能、评审、权限及已有存档。后续按所属应用剩余有效记录发号。</p>
+      {loading && <p className="flex items-center gap-2"><MapSpinner size={14} />正在核对清理范围…</p>}
+      {preview && <>
+        <p>将清理{preview.kindLabel}共 {preview.recordCount} 条，其中旧独立登记 {preview.legacyRecordCount} 条。</p>
+        <p>执行前保存备份。清理后可重新导入该类型记录。</p>
+        {!result && <label className="block"><span className="mb-2 block">输入“{preview.confirmPhrase}”以确认</span>
+          <input aria-label="清理确认语" value={phrase} disabled={busy} onChange={(event) => setPhrase(event.target.value)}
+            className="w-full rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-token-primary" autoComplete="off" /></label>}
+      </>}
+      {result && <div role="status"><p>已清理 {result.clearedCount} 条，跳过已变更记录 {result.skippedCount} 条。</p>
+        {result.remainingCount > 0 && <p>仍有 {result.remainingCount} 条记录，请关闭弹窗后重新预览。</p>}
+        {result.backupId && <p className="break-all">备份编号：{result.backupId}</p>}
+        {result.legacyBackupId && <p className="break-all">旧登记备份编号：{result.legacyBackupId}</p>}</div>}
+      {error && <p role="alert">{error}</p>}
+    </div>}
+    actions={<>
+      <Button size="sm" disabled={busy} onClick={onClose}>{result ? '关闭' : '取消'}</Button>
+      {!result && <Button size="sm" variant="danger" disabled={busy || loading || !preview || preview.recordCount === 0 || phrase.trim() !== preview.confirmPhrase}
+        onClick={() => void clear()}>{busy ? <><MapSpinner size={14} />正在备份并清理…</> : `确认清空${code}记录`}</Button>}
+    </>} />;
+}

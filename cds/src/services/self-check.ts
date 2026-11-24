@@ -29,6 +29,9 @@
  */
 import type { selfStatusCache } from './self-status-cache.js';
 import { SELF_CHECK_PATH } from './self-check-path.js';
+import type { SchedulerService, PreviewActivityStatus } from './scheduler.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
+import type { HttpLogSink } from './http-log-store.js';
 
 export { SELF_CHECK_PATH };
 
@@ -66,12 +69,13 @@ export const PROBER_STALLED_SECONDS = 9_999;
 /**
  * 进程刚起来的宽限期：自身状态缓存还没算完之前，不把「还不知道」当成「前端产物落后」。
  * 没有这个宽限，每次自更新重启都会先响一次铃再自己恢复——铃响多了就没人听了。
- * 过了宽限还不知道，那就是真的拿不到，照实 fail。
+ * 过了宽限还不知道，仍保留未知，由统一采集通道报告读数缺失。
  */
 export const SELF_STATUS_GRACE_MS = 5 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
+const PREVIEW_ACTIVITY_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /** 部署的非终态：还在往前走的那几档。 */
 const DEPLOY_IN_FLIGHT = new Set(['pending', 'queued', 'preparing', 'building', 'starting', 'verifying']);
@@ -116,12 +120,66 @@ export interface SelfCheckDeps {
   diskUsage: () => { totalBytes: number; freeBytes: number } | null;
   dockerPing: () => Promise<{ ok: boolean; ms: number; detail?: string }>;
   /** 最近一段时间主进程的请求统计。没有日志存储时返回 null。 */
-  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number } | null>;
+  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number; widgetStreamFailures?: number } | null>;
   /** 真的会响的通知通道数（与面板同一份判定）。 */
   liveAlarmChannels: () => number;
   /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
   selfStatus: () => SelfCheckRuntimeStatus | null | Promise<SelfCheckRuntimeStatus | null>;
   storeBackend: () => string;
+  previewActivity?: (sinceMs: number) => Promise<{ current: PreviewActivityStatus | undefined;
+    schedulerEnabled: boolean; recentUnknownCount: number | null }>;
+}
+
+/** 初始化未成功时真实日志类会返回空数组；必须保留未知，不能把不可读解释为零故障。 */
+export async function readHttpSelfCheckStats(store: HttpLogSink | null, initialized: boolean, sinceMs: number,
+  nowMs = Date.now()): Promise<Awaited<ReturnType<SelfCheckDeps['httpStats']>>> {
+  if (!initialized || !store?.findRecent) return null;
+  // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
+  // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
+  const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
+  // 恢复流可能给浏览器200，但原上游失败必须被常设监控读到；有限查询不扫描整个集合。
+  const streamErrors = await store.findRecent({ layer: 'forwarder', minStatus: 500,
+    pathContains: '/_cds/api/', since: new Date(nowMs - 6 * 60 * 60_000), limit: 5000, sort: 'recent' });
+  const branches = rows
+    .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
+    .map((r) => r.durationMs)
+    .filter((ms) => Number.isFinite(ms));
+  const sorted = [...branches].sort((a, b) => a - b);
+  const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
+  return {
+    requests: rows.length,
+    serverErrors: rows.filter((r) => r.status >= 500).length,
+    branchesP95Ms: p95,
+    branchesRequests: branches.length,
+    widgetStreamFailures: streamErrors.filter(r => /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(r.path)).length,
+  };
+}
+
+/** index 与回归共用原事件sink接线，不另建持久库、通知通道或探测目标。 */
+export function wireSchedulerPreviewActivitySelfCheck(scheduler: SchedulerService, events: ServerEventLogSink | null,
+  isEventStoreReadable: () => boolean): NonNullable<SelfCheckDeps['previewActivity']> {
+  scheduler.setPreviewActivityTransitionListener(event => events?.record({
+    ts: event.observedAt, category: 'system', severity: event.status === 'unknown' && event.reason !== 'historical-marker' ? 'warn' : 'info',
+    source: 'scheduler-preview-activity', action: event.reason === 'historical-marker' ? 'historical-marker' : event.status === 'unknown' ? 'unknown' : 'recovered',
+    message: event.reason === 'historical-marker' ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : event.status === 'unknown' ? '预览活跃状态无法确认，请检查转发器连接' : '预览活跃状态观察已恢复',
+    details: { status: event.status, reason: event.reason, observedAt: event.observedAt, lastUnknownAt: event.lastUnknownAt },
+  }));
+  return async sinceMs => {
+    const current = await scheduler.readPreviewActivityStatus();
+    let recentUnknownCount: number | null = null;
+    if (isEventStoreReadable() && events?.findRecent) {
+      const rows = await events.findRecent({ source: 'scheduler-preview-activity', action: 'unknown', since: new Date(sinceMs), limit: 1 });
+      if (Array.isArray(rows)) {
+        recentUnknownCount = rows.length;
+        if (recentUnknownCount === 0) {
+          const recovered = await events.findRecent({ source: 'scheduler-preview-activity', action: 'recovered', since: new Date(sinceMs), limit: 1000 });
+          recentUnknownCount = Array.isArray(recovered)
+            ? Number(recovered.some(row => Date.parse(String(row.details?.lastUnknownAt ?? '')) >= sinceMs)) : null;
+        }
+      }
+    }
+    return { current, schedulerEnabled: scheduler.isEnabled(), recentUnknownCount };
+  };
 }
 
 export type HealthStatus = 'pass' | 'warn' | 'fail';
@@ -135,8 +193,11 @@ export interface SelfCheckItem {
   status: HealthStatus;
   time: string;
   output?: string;
+  /** 面向通知接收者的简短说明，不含内部地址、提交或凭据。 */
+  publicMessage?: string;
   'cds:monitor'?: {
     name: string;
+    publicName?: string;
     op: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
     value: number | string;
     intervalSeconds: number;
@@ -196,10 +257,49 @@ export function assembleDoc(checks: SelfCheckItem[], releaseId?: string): SelfCh
   };
 }
 
+/** 慢依赖不能拖垮整份自检；无法读取的统计使用 null，不能冒充零或通过。 */
+async function boundedSelfRead<T>(read: () => T | Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([Promise.resolve().then(read).catch(() => fallback),
+      new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), 3000); })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc> {
   const now = deps.now();
   const time = new Date(now).toISOString();
   const checks: SelfCheckItem[] = [];
+  const httpRead = boundedSelfRead(() => deps.httpStats(now - HALF_HOUR_MS), null);
+  const dockerRead = boundedSelfRead(() => deps.dockerPing(), { ok: false, ms: 3000, detail: 'Docker 检查超时或读取失败' });
+  const selfRead = boundedSelfRead(() => deps.selfStatus(), null);
+  const activityRead = deps.previewActivity
+    ? boundedSelfRead(() => deps.previewActivity!(now - PREVIEW_ACTIVITY_WINDOW_MS), null) : null;
+
+  if (activityRead) {
+    const activity = await activityRead;
+    const currentUnknown = activity?.current?.status === 'unknown';
+    const recovering = currentUnknown && activity?.current?.reason === 'historical-marker' && activity.current.recoveryGraceRemainingMs > 0 && activity.recentUnknownCount === 0;
+    const lastUnknownAt = Date.parse(activity?.current?.lastUnknownAt ?? '');
+    const recentInProcessUnknown = lastUnknownAt >= now - PREVIEW_ACTIVITY_WINDOW_MS && lastUnknownAt <= now;
+    const historicalUnknown = recentInProcessUnknown || (typeof activity?.recentUnknownCount === 'number' && activity.recentUnknownCount > 0);
+    const known = activity?.current?.status === 'ready' && typeof activity.recentUnknownCount === 'number' && activity.recentUnknownCount >= 0;
+    const observed = historicalUnknown ? 1 : recovering ? null : currentUnknown ? 1 : known ? 0 : null;
+    const publicMessage = recovering && !historicalUnknown ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : currentUnknown
+      ? (activity?.schedulerEnabled ? '预览活跃状态无法确认，已暂停自动停机，请检查转发器连接'
+        : '预览活跃状态无法确认，自动停机当前未启用，请检查转发器连接')
+      : historicalUnknown ? '预览活跃状态曾无法确认，请检查转发器连接并确认恢复，异常记录保留六小时'
+        : observed === null ? '预览活跃状态或异常历史无法确认，请检查转发器连接与诊断存储'
+          : '预览活跃状态可确认，近六小时未发现异常记录';
+    checks.push({ componentId: 'scheduler.preview-activity-samples', componentType: 'self', time,
+      observedValue: recovering && !historicalUnknown ? 0 : 1, observedUnit: 'count', status: recovering && !historicalUnknown ? 'warn' : 'pass' });
+    const check = monitored({ componentId: 'scheduler.preview-activity', componentType: 'self',
+      observedValue: observed, observedUnit: 'flag', status: recovering && !historicalUnknown ? 'warn' : observed === 0 ? 'pass' : 'fail',
+      output: publicMessage, publicMessage,
+    }, { name: 'CDS · 预览活跃状态', publicName: '预览自动停机保护', op: 'eq', value: 0,
+      intervalSeconds: 21600, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'scheduler.preview-activity-samples' }, time);
+    checks.push(check);
+  }
 
   // ── 部署 ───────────────────────────────────────────────────────────
   const runs = deps.deploymentRuns();
@@ -220,7 +320,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
         ? `没有卡住的部署（在途 ${inFlight.length} 个，心跳都在）`
         : `${stuck.size} 个部署卡住：${tooOld.length} 个在途超过 45 分钟，${heartbeatDead.length} 个心跳停了超过 10 分钟（多半是 CDS 重启把它们打断了，状态没收尸）`,
     },
-    { name: 'CDS · 部署卡住', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · 部署卡住', publicName: '部署任务进度', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
@@ -240,7 +340,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       output: finished.length === 0 ? '近 24 小时没有部署结束 —— 无从判断' : `近 24 小时 ${finished.length} 次部署，${failed} 次失败`,
     },
     // 被动：没有部署的夜里不该显示成「失败率 0%，一切正常」，而是「没样本」。
-    { name: 'CDS · 部署失败率', op: 'lte', value: DEPLOY_FAILURE_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'deploy.finished-24h' },
+    { name: 'CDS · 部署失败率', publicName: '部署成功情况', op: 'lte', value: DEPLOY_FAILURE_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'deploy.finished-24h' },
     time,
   ));
 
@@ -253,7 +353,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: gate.queued <= BUILD_QUEUE_MAX ? 'pass' : 'fail',
       output: `${gate.active}/${gate.max} 在构建，${gate.queued} 个排队`,
     },
-    { name: 'CDS · 构建排队', op: 'lte', value: BUILD_QUEUE_MAX, failuresToAlarm: 2, severity: 'P1' },
+    { name: 'CDS · 构建排队', publicName: '构建排队数量', op: 'lte', value: BUILD_QUEUE_MAX, failuresToAlarm: 2, severity: 'P1' },
     time,
   ));
   const oldestWaitMin = gate.waiters.length === 0
@@ -266,12 +366,12 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: oldestWaitMin <= BUILD_WAIT_MAX_MINUTES ? 'pass' : 'fail',
       output: gate.waiters.length === 0 ? '没有人在等构建槽' : `最久的一个已等 ${oldestWaitMin} 分钟`,
     },
-    { name: 'CDS · 构建最久等待', op: 'lte', value: BUILD_WAIT_MAX_MINUTES, failuresToAlarm: 2, severity: 'P1' },
+    { name: 'CDS · 构建最久等待', publicName: '构建等待时间', op: 'lte', value: BUILD_WAIT_MAX_MINUTES, failuresToAlarm: 2, severity: 'P1' },
     time,
   ));
 
   // ── 页面（首屏）─────────────────────────────────────────────────────
-  const http = await deps.httpStats(now - HALF_HOUR_MS);
+  const http = await httpRead;
   const requests = http?.requests ?? 0;
   checks.push({
     componentId: 'api.requests-30m', componentType: 'http',
@@ -291,10 +391,23 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: p95 === null ? 'warn' : p95 <= API_P95_MAX_MS ? 'pass' : 'fail',
       output: p95 === null ? (http ? '近 30 分钟没有分支列表耗时样本' : 'HTTP 日志不可用，无法判断接口耗时') : `分支列表接口 P95 ${p95}ms —— 它是首屏最重的一次请求`,
     },
-    { name: 'CDS · 首屏接口 P95', op: 'lte', value: API_P95_MAX_MS, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'api.branches-requests-30m' },
+    { name: 'CDS · 首屏接口 P95', publicName: '项目列表响应时间', op: 'lte', value: API_P95_MAX_MS, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'api.branches-requests-30m' },
     time,
   ));
   const errorRate = !http || requests === 0 ? 0 : Math.round((http.serverErrors / requests) * 100);
+  const streamFailures = http?.widgetStreamFailures ?? null;
+  checks.push(monitored(
+    {
+      componentId: 'api.widget-stream-failures-6h', componentType: 'http',
+      observedValue: streamFailures, observedUnit: 'failure',
+      status: streamFailures === null ? 'warn' : streamFailures === 0 ? 'pass' : 'fail',
+      output: streamFailures === null ? '挂件上游失败日志不可用，不能判断切换连续性'
+        : streamFailures > 0 ? `近 6 小时采样发现 ${streamFailures} 次挂件上游失败；检查控制面切换、恢复和鉴权，重连成功不能抹去失败`
+          : '近 6 小时采样未发现挂件上游失败',
+    },
+    { name: 'CDS · 挂件流上游失败', publicName: '预览状态连接连续性', op: 'lte', value: 0, failuresToAlarm: 1, severity: 'P1', intervalSeconds: 21600 },
+    time,
+  ));
   checks.push(monitored(
     {
       componentId: 'api.error-rate-30m', componentType: 'http',
@@ -302,7 +415,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: !http ? 'warn' : errorRate <= API_ERROR_RATE_MAX_PERCENT ? 'pass' : 'fail',
       output: !http ? '读不到请求统计' : `近 30 分钟 ${requests} 个请求里 ${http.serverErrors} 个 5xx`,
     },
-    { name: 'CDS · 接口 5xx 比例', op: 'lte', value: API_ERROR_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P0', observeMode: 'passive', sampleComponentId: 'api.requests-30m' },
+    { name: 'CDS · 接口 5xx 比例', publicName: '平台请求成功情况', op: 'lte', value: API_ERROR_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P0', observeMode: 'passive', sampleComponentId: 'api.requests-30m' },
     time,
   ));
 
@@ -328,7 +441,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
           ? (cycle.stale ? '探测器起来之后一轮都没跑完 —— 停摆' : `进程刚起 ${processAgeSec ?? '?'} 秒，首轮还在跑`)
           : `上一轮 ${sinceSec} 秒前${cycle.watchdogResets > 0 ? `，看门狗复位过 ${cycle.watchdogResets} 次` : ''}`,
     },
-    { name: 'CDS · 探测器上一轮', op: 'lte', value: PROBER_STALE_AFTER_SECONDS, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · 探测器上一轮', publicName: '监控检查更新', op: 'lte', value: PROBER_STALE_AFTER_SECONDS, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
@@ -347,7 +460,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: badSig === 0 ? 'pass' : 'fail',
       output: badSig === 0 ? `${deliveryScope} webhook 签名都对` : `${badSig} 条 webhook 签名不对 —— 多半是 webhook secret 和 GitHub 那边不一致（迁移后最常坏的一条）`,
     },
-    { name: 'CDS · Webhook 签名', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · Webhook 签名', publicName: '代码推送校验', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
   checks.push({
@@ -359,10 +472,11 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   const unresolvedDispatches = deps.unresolvedWebhookDispatches();
   checks.push(monitored({
     componentId: 'webhook.dispatch-unresolved', componentType: 'github',
+    publicMessage: `${unresolvedDispatches} 项代码推送尚未触发部署，请查看部署记录后重试。`,
     observedValue: unresolvedDispatches, observedUnit: 'count', status: unresolvedDispatches ? 'fail' : 'pass',
     output: unresolvedDispatches ? `${unresolvedDispatches} 条分支部署派发尚未解决，请检查部署记录后重试` : '当前没有尚未解决的派发失败（历史失败保留供复盘）',
     },
-    { name: 'CDS · Webhook 派发', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
+    { name: 'CDS · Webhook 派发', publicName: '代码推送部署', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
     time,
   ));
 
@@ -372,15 +486,16 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push(monitored(
     {
       componentId: 'host.disk-used-percent', componentType: 'host',
+      publicMessage: `磁盘已使用 ${usedPercent ?? '未知'}%，请检查并清理无用构建产物。`,
       // 读不到就是 null + fail，不写 0：0% 会被读成一块全空的盘。
       observedValue: usedPercent, observedUnit: 'percent',
       status: usedPercent === null ? 'fail' : usedPercent < DISK_USED_MAX_PERCENT ? 'pass' : 'fail',
       output: usedPercent === null ? '读不到磁盘占用' : `磁盘已用 ${usedPercent}%${usedPercent >= DISK_USED_MAX_PERCENT ? ' —— 到这里部署会被冻结' : ''}`,
     },
-    { name: 'CDS · 磁盘占用', op: 'lt', value: DISK_USED_MAX_PERCENT, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · 磁盘占用', publicName: '部署平台磁盘空间', op: 'lt', value: DISK_USED_MAX_PERCENT, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
-  const docker = await deps.dockerPing();
+  const docker = await dockerRead;
   checks.push(monitored(
     {
       componentId: 'host.docker-ping-ms', componentType: 'host',
@@ -388,7 +503,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: docker.ok && docker.ms <= DOCKER_PING_MAX_MS ? 'pass' : 'fail',
       output: docker.ok ? `Docker ${docker.detail ?? ''} 响应 ${docker.ms}ms`.trim() : `Docker 打不通：${docker.detail ?? '未知原因'}`,
     },
-    { name: 'CDS · Docker 响应', op: 'lte', value: DOCKER_PING_MAX_MS, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · Docker 响应', publicName: '容器管理响应', op: 'lte', value: DOCKER_PING_MAX_MS, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
@@ -397,19 +512,20 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push(monitored(
     {
       componentId: 'alarm.live-channels', componentType: 'alarm',
+      publicMessage: '尚未确认手机通知能正常送达，请在通知设置中执行一次演练。',
       observedValue: live, observedUnit: 'count',
       status: live >= 1 ? 'pass' : 'fail',
       output: live >= 1
         ? `${live} 条通知通道有成功投递的记录`
         : '没有一条通知通道有成功投递的记录 —— 配了但从没发成功过的也不算；现在出问题不确定有没有人会被通知（去演练一次，成功一次就算通）',
     },
-    { name: 'CDS · 通知通道', op: 'gte', value: 1, failuresToAlarm: 1, severity: 'P1' },
+    { name: 'CDS · 通知通道', publicName: '手机通知连接', op: 'gte', value: 1, failuresToAlarm: 1, severity: 'P1' },
     time,
   ));
 
   // ── 自身 ───────────────────────────────────────────────────────────
-  const self = await deps.selfStatus();
-  // 缓存还没算过一次 + 进程还在宽限期内 → 「还不知道」，不响铃；过了宽限还不知道才算真拿不到。
+  const self = await selfRead;
+  // 缓存还没算过一次时保留未知；启动宽限仅影响解释文案，不能把未知伪造成版本落后。
   const selfWarming = Boolean(self && !self.ready && processAgeSec !== null && processAgeSec * 1000 < SELF_STATUS_GRACE_MS);
   const selfKnown = Boolean(self && self.ready);
   const updateAge = now - Date.parse(self?.updateStartedAt ?? '');
@@ -422,14 +538,15 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push(monitored(
     {
       componentId: 'self.bundle-stale', componentType: 'self',
+      publicMessage: '管理页面仍在运行旧版本，请检查最近的平台更新结果。',
       // 布尔写成 0/1：协议里期望值是字符串比较，数字最不容易被两边解读成不同的东西。
-      observedValue: !bundleObservable ? null : selfKnown ? (self!.bundleStale ? 1 : 0) : 1, observedUnit: 'flag',
-      status: !bundleObservable ? 'warn' : selfKnown ? (self!.bundleStale ? 'fail' : 'pass') : 'fail',
+      observedValue: !bundleObservable || !selfKnown ? null : (self!.bundleStale ? 1 : 0), observedUnit: 'flag',
+      status: !bundleObservable || !selfKnown ? 'warn' : (self!.bundleStale ? 'fail' : 'pass'),
       output: selfUpdating ? '自更新中，最多等待 10 分钟再检查前端产物' : selfKnown
         ? (self!.bundleStale ? `前端产物落后于代码 ${self!.headSha}（${self!.currentBranch}）—— 页面跑的是旧版` : `前端产物与 ${self!.headSha} 一致`)
         : selfWarming ? `进程刚起 ${processAgeSec} 秒，自身状态还没算完` : '拿不到自身状态',
     },
-    { name: 'CDS · 前端产物落后', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'self.bundle-samples' },
+    { name: 'CDS · 前端产物落后', publicName: '管理页面版本', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'self.bundle-samples' },
     time,
   ));
   checks.push({

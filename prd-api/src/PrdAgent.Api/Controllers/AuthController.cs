@@ -337,6 +337,9 @@ public class AuthController : ControllerBase
         }
 
         var ct = (request.ClientType ?? string.Empty).Trim().ToLowerInvariant();
+        if (CdsSsoSessions.IsDelegated(request.SessionKey))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "请通过 CDS 重新登录"));
+
         var ok = await _authSessionService.ValidateRefreshTokenAsync(
             request.UserId,
             ct,

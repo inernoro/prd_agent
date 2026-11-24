@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { ImageGenerationCancelActions } from '@/components/visual-agent/ImageGenerationCancelActions';
 import { Button } from '@/components/design/Button';
 import { glassTooltip } from '@/lib/glassStyles';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -9,6 +10,7 @@ import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader
 import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
 import { anchorRectOf, FALLBACK_ITEM_SIZE, findAlignedFreeTopLeft, occupiedRects, type PlacementRect } from '@/lib/canvasPlacement';
 import { mergeSendCanvas } from '@/lib/sendCanvasMerge'; // 发送时把「刚加、还没刷」的元素并进画布 // 新图贴着锚点共边落位
+import { parseVisualAgentHandoff } from '@/lib/visualAgentHandoff';
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -69,9 +71,11 @@ import {
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
-import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { parseVisualMessageDisplay, visualUploadNotice } from '@/lib/visualMessageDisplay';
+import { serializeImageReferenceMessage } from '@/lib/chipTokenText';
 import { glassToolbar } from '@/lib/glassStyles';
 import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
+import { CANVAS_GENERATOR_LABEL, CANVAS_SHAPE_LABEL_MAP, CANVAS_TEXT_LABEL } from '@/lib/canvasElementLabels';
 import {
   checkLayerSourcesReadable,
   createCompositePngBlob,
@@ -171,7 +175,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
-import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint, VisualModelMenuControl, VISUAL_MODEL_DESKTOP_MENU } from '@/components/visual-agent/VisualModelOptionContent';
+import { buildVisualAgentModelOptions, normalizeVisualModelOptionId, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -931,6 +936,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
+  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
+  const [booting, setBooting] = useState(true);
+  // 应用资格属于当前工作区，不是「曾经恢复过一次」。失败与切换均不能借用旧资格。
+  const canvasBootedRef = useRef<string | null>(null);
+  const workspaceIdRef = useRef(workspaceId);
+  workspaceIdRef.current = workspaceId;
+  const workspaceReady = !booting && workspace?.id === workspaceId && canvasBootedRef.current === workspaceId;
+  const workspaceReadyRef = useRef(workspaceReady);
+  workspaceReadyRef.current = workspaceReady;
+  // 回调可能跨越弹窗等待或保留旧闭包；提交时同时核对最新 readiness 和归属。
+  const canEditCanvas = useCallback(
+    () => workspaceReadyRef.current && workspaceIdRef.current === workspaceId,
+    [workspaceId],
+  );
   const { isMobile } = useBreakpoint();
   const [mobileShowChat, setMobileShowChat] = useState(false);
   // 移动端默认使用 hand 工具，以便直接拖拽画布
@@ -1007,19 +1026,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [fallbackPrompt, setFallbackPrompt] = useState<FallbackPrompt | null>(null);
   const modelPrefSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
-  const sizeSelectorRef = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭尺寸选择器
-  useEffect(() => {
-    if (!sizeSelectorOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (sizeSelectorRef.current && !sizeSelectorRef.current.contains(e.target as Node)) {
-        setSizeSelectorOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [sizeSelectorOpen]);
 
   // 水印配置
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
@@ -1127,6 +1133,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
   // 仅“尺寸语义不适用”的模型隐藏选择器；提示词传输型自适应模型仍允许用户选尺寸。
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
+  const [currentModelInpainting, setCurrentModelInpainting] = useState<boolean | null>(null);
 
   useEffect(() => {
     // 生成和尺寸查询均使用业务模型标识；adapter-info 转发网关发布的能力，
@@ -1134,6 +1141,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     let cancelled = false;
     setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
     setCurrentModelSizesNotApplicable(false);
+    setCurrentModelInpainting(null);
+    setInpaintTarget(null);
     const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
@@ -1144,6 +1153,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (cancelled) return;
+        setCurrentModelInpainting(res.success && res.data?.matched ? res.data.supportsInpainting === true : null);
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
           setSizesByResolution({
@@ -1237,9 +1247,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
-  const showUploadToast = useCallback((text: string) => {
+  const uploadToastPriorityRef = useRef<'info' | 'warning'>('info');
+  const showUploadToast = useCallback((text: string, priority: 'info' | 'warning' = 'info') => {
     const t = String(text ?? '').trim();
     if (!t) return;
+    // 批量上传仍在异步完成时，成功提示不能抹掉“部分输入未上传”的警告。
+    if (priority === 'info' && uploadToastPriorityRef.current === 'warning') return;
+    uploadToastPriorityRef.current = priority;
     setUploadToast({ text: t });
     if (uploadToastTimerRef.current != null) {
       window.clearTimeout(uploadToastTimerRef.current);
@@ -1248,7 +1262,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     uploadToastTimerRef.current = window.setTimeout(() => {
       setUploadToast(null);
       uploadToastTimerRef.current = null;
-    }, 1600);
+      uploadToastPriorityRef.current = 'info';
+    }, priority === 'warning' ? 6000 : 1600);
   }, []);
   useEffect(() => {
     return () => {
@@ -1425,6 +1440,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 使用 ref 追踪上一次的 composerSize，避免在 canvas 变化时重复触发
   const prevComposerSizeRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!canEditCanvas()) return;
     if (!composerSize) return;
     // 仅在用户手动选择尺寸时（非自动模式）才联动
     if (composerSizeAutoRef.current) return;
@@ -1453,7 +1469,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setCanvas((prev) =>
       prev.map((x) => (x.key === k ? { ...x, x: newX, y: newY, w: newW, h: newH } : x))
     );
-  }, [composerSize, selectedKeys, canvas]);
+  }, [composerSize, selectedKeys, canvas, canEditCanvas, workspaceReady]);
 
   // 注：已删除老代码的 selectedImagesForComposer 显示区域
   // TwoPhaseRichComposer 内部自己管理 chip 显示，不需要外部 padding
@@ -1668,6 +1684,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   });
 
   const applyResizeFromClient = useCallback((clientX: number, clientY: number) => {
+    if (!canEditCanvas()) return;
     const rz = resizeRef.current;
     if (!rz.active) return;
     const dx = (clientX - rz.startClientX) / zoomRef.current;
@@ -1789,7 +1806,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           : it
       )
     );
-  }, []);
+  }, [canEditCanvas]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -1844,6 +1861,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const ensureRefIdForKey = useCallback(
     (key: string) => {
+      if (!canEditCanvas()) return null;
       const it = canvas.find((x) => x.key === key) ?? null;
       if (!it) return null;
       if (typeof it.refId === 'number' && Number.isFinite(it.refId) && it.refId > 0) return it.refId;
@@ -1854,7 +1872,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, refId: id } : x)));
       return id;
     },
-    [canvas, nextRefId]
+    [canvas, nextRefId, canEditCanvas]
   );
 
   /**
@@ -1974,6 +1992,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
+      if (!canEditCanvas()) return;
       // 捏合进行中不启动 resize（第二根手指可能正好落在控制点上）
       if (e.pointerType === 'touch' && pinchActiveRef.current) return;
       if (effectiveTool === 'hand' && !isMobile) return;
@@ -2019,7 +2038,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       e.stopPropagation();
       e.preventDefault();
     },
-    [effectiveTool, isMobile]
+    [effectiveTool, isMobile, canEditCanvas]
   );
 
 
@@ -2031,13 +2050,33 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [_busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [defectFlash, setDefectFlash] = useState(false);
-  const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
-  const autoSubmitEnabledRef = useRef(true);
-  useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const autoSubmitEnabled = workspace?.id === workspaceId && !workspace.suppressAutoSubmit;
+  const autoSubmitEnabledRef = useRef(false);
+  autoSubmitEnabledRef.current = autoSubmitEnabled;
+  const [savingAutoSubmit, setSavingAutoSubmit] = useState(false);
   const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  const handleToggleAutoSubmit = useCallback(async () => {
+    if (!canEditCanvas() || savingAutoSubmit) return;
+    setSavingAutoSubmit(true);
+    try {
+      const res = await updateVisualAgentWorkspace({ id: workspaceId, suppressAutoSubmit: autoSubmitEnabled });
+      if (!res.success) {
+        toast.error(res.error?.message || '投稿设置保存失败，请重试');
+        return;
+      }
+      if (workspaceIdRef.current === workspaceId) setWorkspace(res.data.workspace);
+      toast.success(res.data.workspace.suppressAutoSubmit ? '已关闭自动投稿，并从作品广场撤回本工作区作品' : '已开启自动投稿');
+    } catch {
+      toast.error('投稿设置保存失败，请重试');
+    } finally {
+      setSavingAutoSubmit(false);
+    }
+  }, [autoSubmitEnabled, canEditCanvas, savingAutoSubmit, workspaceId]);
 
   // 手动投稿：将当前画布上所有已生成的图片一次性投稿到作品广场
   const handleManualSubmit = useCallback(async () => {
+    if (!canEditCanvas()) return;
     const assetIds = canvasRef.current
       .filter((it) => (it.kind ?? 'image') === 'image' && it.status === 'done' && it.assetId)
       .map((it) => it.assetId!);
@@ -2047,7 +2086,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     setManualSubmitting(true);
     try {
-      const res = await autoSubmitImages(assetIds);
+      const res = await autoSubmitImages(assetIds, 'manual');
       if (res.success) {
         const count = res.data.submitted;
         if (count > 0) {
@@ -2055,17 +2094,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         } else {
           toast.info('所有图片均已投稿过');
         }
+      } else {
+        toast.error(res.error?.message || '投稿失败，请重试');
       }
     } catch {
       toast.error('投稿失败，请重试');
     } finally {
       setManualSubmitting(false);
     }
-  }, []);
-
-  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
-  const [booting, setBooting] = useState(true);
-  const workspaceReady = !booting && workspace?.id === workspaceId;
+  }, [canEditCanvas]);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
   // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
@@ -2091,6 +2128,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type GenJob = {
     id: string;
     displayText: string;
+    /** 含稳定图片身份的消息快照，仅用于用户消息存储，不进入模型或重试提示词。 */
+    messageText: string;
     requestText: string;
     /** 所有引用的图片（按顺序），第一个为主图 */
     imageRefs: CanvasImageItem[];
@@ -2134,6 +2173,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const openImageFilePicker = useCallback(() => {
+    if (!canEditCanvas()) return;
     const input = fileRef.current;
     if (!input) return;
 
@@ -2171,7 +2211,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     window.addEventListener('focus', onWindowFocus, true);
     input.addEventListener('change', onInputChange);
     input.click();
-  }, []);
+  }, [canEditCanvas]);
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string; runId?: string }>({ open: false, src: '', prompt: '' });
 
@@ -2218,6 +2258,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 用自己的话说的拆法；不传就用面板里当前那句。 */
     intent?: string;
   }): Promise<Array<{ name: string; source: string }> | null> => {
+    if (!canEditCanvas()) return null;
     if (layeringRunningRef.current) {
       toast.info('分层进行中', '已经有一张图片在拆分图层，等它完成再试。');
       return null;
@@ -2597,7 +2638,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     // layerIntentPref 必须进依赖：函数体内用它兜底（input.intent ?? layerIntentPref），
     // 漏掉就会把上一次的拆法带进这次调用。调用方另有显式传参，这里是第二道保险。
-  }, [layerCountPref, layerIntentPref, layerLayoutMode, setSelectionWithoutChip, workspaceId]);
+  }, [layerCountPref, layerIntentPref, layerLayoutMode, setSelectionWithoutChip, workspaceId, canEditCanvas]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -2829,6 +2870,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 所以解完组再重新编组，它还认得出自己是同一次分层的产物。
    */
   const groupSelection = useCallback(() => {
+    if (!canEditCanvas()) return;
     const keys = selectedKeysRef.current ?? [];
     if (keys.length < 2) {
       toast.info('选中至少两个元素再编组', '选中多个元素后按 Cmd/Ctrl+G 把它们框成一个 Frame。');
@@ -2838,9 +2880,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const inGroup = new Set(keys);
     setCanvas((previous) => previous.map((item) => inGroup.has(item.key) ? { ...item, frameId } : item));
     toast.success('已编组', `${keys.length} 个元素已框成一个 Frame，Cmd/Ctrl+Shift+G 可解组。`, 4000);
-  }, []);
+  }, [canEditCanvas]);
 
   const ungroupSelection = useCallback(() => {
+    if (!canEditCanvas()) return;
     const keys = new Set(selectedKeysRef.current ?? []);
     if (keys.size === 0) return;
     const items = canvasRef.current ?? [];
@@ -2858,10 +2901,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       : item));
     setLayerPanelGroupId((current) => (current && frameIds.has(current) ? null : current));
     toast.success('已解组', `${frameIds.size} 个 Frame 已拆开，元素本身没有任何变化。`, 4000);
-  }, []);
+  }, [canEditCanvas]);
 
   /** 切换摆放方式：就地把这一组图层重新摆一遍，不重新生成。 */
   const applyLayerLayout = useCallback((groupId: string, mode: 'stacked' | 'spread') => {
+    if (!canEditCanvas()) return;
     setLayerLayoutMode(mode);
     try { localStorage.setItem('prdAdmin.visualAgent.layerLayout', mode); } catch { /* 偏好写不进去不影响功能 */ }
     const items = canvasRef.current;
@@ -2907,7 +2951,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const placement = placementByKey.get(candidate.key);
       return placement ? { ...candidate, ...placement, layerLayout: 'spread' as const, userResized: true } : candidate;
     }));
-  }, []);
+  }, [canEditCanvas]);
 
   /**
    * 画布绘制顺序。
@@ -2979,10 +3023,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [canvas]);
 
   const patchLayer = useCallback((key: string, patch: Partial<CanvasImageItem>) => {
+    if (!canEditCanvas()) return;
     setCanvas((previous) => previous.map((candidate) => candidate.key === key ? { ...candidate, ...patch } : candidate));
-  }, []);
+  }, [canEditCanvas]);
 
   const moveLayerInStack = useCallback((key: string, direction: 'up' | 'down') => {
+    if (!canEditCanvas()) return;
     const ordered = layerPanelLayers.map((layer) => layer.key);
     const index = ordered.indexOf(key);
     if (index < 0) return;
@@ -2997,7 +3043,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setCanvas((previous) => previous.map((candidate) => zByKey.has(candidate.key)
       ? { ...candidate, layerZ: zByKey.get(candidate.key) }
       : candidate));
-  }, [layerPanelLayers]);
+  }, [layerPanelLayers, canEditCanvas]);
 
   /** 面板底部三个下载出口共用：拿到原图 + 当前这份图层视图，拿不齐就明确报错。 */
   const readLayerExportInput = useCallback(() => {
@@ -3102,7 +3148,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const msgContentRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const canvasBootedRef = useRef(false);
   const canvasSaveTimerRef = useRef<number | null>(null);
   const lastSavedJsonRef = useRef<string>('');
   const lastSaveAtRef = useRef<number>(0);
@@ -3167,6 +3212,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const confirmAndDeleteSelectedKeys = useCallback(
     async (keysArg?: string[]) => {
+      if (!canEditCanvas()) return;
       const keys = Array.from(new Set((keysArg ?? selectedKeysRef.current ?? []).filter(Boolean)));
       if (keys.length === 0) return;
 
@@ -3177,7 +3223,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         confirmText: '删除',
         cancelText: '取消',
       });
-      if (!ok) return;
+      if (!ok || !canEditCanvas()) return;
 
       const set = new Set(keys);
       const snapshot = (canvasRef.current ?? []).filter((it) => set.has(it.key));
@@ -3230,7 +3276,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       lastSavedJsonRef.current = json;
       lastSaveAtRef.current = Date.now();
     },
-    [reloadWorkspace, workspaceId, clearSelectionWithChips]
+    [reloadWorkspace, workspaceId, clearSelectionWithChips, canEditCanvas]
   );
 
   // 只刷新模型目录，不触发上游探活或生成请求。失败时保留旧目录，避免一次网关抖动把当前页面锁死。
@@ -3353,6 +3399,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!workspaceId) return;
     if (initWorkspaceRef.current.workspaceId === workspaceId && initWorkspaceRef.current.started) return;
     initWorkspaceRef.current = { workspaceId, started: true };
+    canvasBootedRef.current = null;
+    workspaceReadyRef.current = false;
 
     // 重置视口 hydration：避免进入页面时用默认值覆写服务器保存的 viewport
     viewportHydratedRef.current = false;
@@ -3366,7 +3414,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         if (!cancelled) setError(detail.error?.message || '加载 Workspace 失败');
         return;
       }
-      if (cancelled) return;
+      if (cancelled || workspaceIdRef.current !== workspaceId) return;
       setWorkspace(detail.data.workspace);
       setHasMoreMessages(!!detail.data.hasMoreMessages);
       // 从 workspace 恢复风格统一提示词
@@ -3405,7 +3453,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         if (maxRef > 0) {
           setNextRefId(maxRef + 1);
         }
-        canvasBootedRef.current = true;
+        canvasBootedRef.current = workspaceId;
         // 修复：初始化时不自动选中第一张图片，而是清空选中
         clearSelectionWithChips();
 
@@ -3514,15 +3562,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       void saveVisualAgentWorkspaceCanvas({ id: workspaceId, schemaVersion: PERSIST_SCHEMA_VERSION, payloadJson: json, idempotencyKey: `boot_${Date.now()}` });
     })()
       .catch((e) => {
-        if (cancelled) return;
+        if (cancelled || workspaceIdRef.current !== workspaceId) return;
+        canvasBootedRef.current = null;
         setError(e instanceof Error ? e.message : '加载 Workspace 失败');
       })
       .finally(() => {
-        if (!cancelled) setBooting(false);
+        if (!cancelled && workspaceIdRef.current === workspaceId) setBooting(false);
       });
 
     return () => {
       cancelled = true;
+      workspaceReadyRef.current = false;
       // React 18 StrictMode(dev) 会在 mount 后立刻执行一次 cleanup 再执行 effect 第二次。
       // 这里如果不重置 started，第二次 effect 会被守卫跳过，导致 workspace 永远不落地（表现为空白页）。
       if (initWorkspaceRef.current.workspaceId === workspaceId) {
@@ -3530,10 +3580,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     };
   }, [focusStage, focusComposer, pushMsg, setViewport, workspaceId]);
-
-  // 当前 workspaceId 的最新值引用：供异步回调判断是否已切换 workspace（防串台）
-  const workspaceIdRef = useRef(workspaceId);
-  workspaceIdRef.current = workspaceId;
 
   // 拿到 runId 后立即把含 runId 的画布落盘（不等 debounce）：避免用户在 debounce 刷盘前关页/切走，
   // 导致占位落库缺 runId。三条生图路径（主生成 / 快捷操作 / 草图）统一复用，避免只在主路径补 runId。
@@ -3668,7 +3714,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 自动保存画布（debounce）
   useEffect(() => {
     if (!workspaceId) return;
-    if (!canvasBootedRef.current) return;
+    if (!canEditCanvas()) return;
 
     if (canvasSaveTimerRef.current != null) {
       window.clearTimeout(canvasSaveTimerRef.current);
@@ -3677,6 +3723,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
     const runSave = () => {
       canvasSaveTimerRef.current = null;
+      if (!canEditCanvas()) return;
       const built = canvasToPersistedV1(canvasRef.current ?? []);
       const json = JSON.stringify(built.state);
       if (json === lastSavedJsonRef.current) return;
@@ -3722,7 +3769,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         canvasSaveTimerRef.current = null;
       }
     };
-  }, [canvas, pushMsg, workspaceId]);
+  }, [canvas, pushMsg, workspaceId, workspaceReady, canEditCanvas]);
 
   // 初始化右侧宽度：sessionStorage 优先，否则默认 20%
   useEffect(() => {
@@ -4037,6 +4084,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 方向键：微调（Figma-ish）
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (!canEditCanvas()) return;
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
@@ -4049,7 +4097,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips]);
+  }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips, canEditCanvas]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     cancelViewportAnimation(cameraAnimRef);
@@ -4165,6 +4213,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const placeAtPointer = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (!placing) return false;
+      if (!canEditCanvas()) return false;
       stageRef.current?.focus();
       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
       const sx = e.clientX - rect.left;
@@ -4182,7 +4231,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           kind: 'shape',
           shapeType: st,
           createdAt: Date.now(),
-          prompt: `Shape:${st}`,
+          prompt: CANVAS_SHAPE_LABEL_MAP[st],
           src: '',
           status: 'done',
           x: Math.round(wx - w / 2),
@@ -4204,14 +4253,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         key,
         kind: 'text',
         createdAt: Date.now(),
-        prompt: 'Text',
+        prompt: CANVAS_TEXT_LABEL,
         src: '',
         status: 'done',
         x: Math.round(wx - w / 2),
         y: Math.round(wy - h / 2),
         w,
         h,
-        text: 'Text',
+        text: CANVAS_TEXT_LABEL,
         fontSize: 26,
         textColor: 'rgba(11,11,15,0.92)',
         fill: 'rgba(255,255,255,0.90)',
@@ -4220,10 +4269,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setCanvas((prev) => [next, ...prev].slice(0, 120));
       setSelectionWithoutChip([key]); // 文字不需要 chip
       setPlacing(null);
-      setTextEdit({ open: true, key, value: next.text || 'Text' });
+      setTextEdit({ open: true, key, value: next.text || CANVAS_TEXT_LABEL });
       return true;
     },
-    [placing]
+    [placing, canEditCanvas]
   );
 
   const animateCameraToWorldCenter = useCallback(
@@ -4549,8 +4598,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestText: string,
     imageRefs: CanvasImageItem[],
     seedSelectedKey?: string,
-    sizeOverride?: string | null
+    sizeOverride?: string | null,
+    messageText?: string
   ) => {
+    if (!canEditCanvas()) return;
     const display = String(displayText ?? '').trim();
     // 直连模式：解析 @model(...) 只用于"强制选模型"，不应当把标记本身发给生图 prompt
     const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -4589,6 +4640,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
       // 'keep' → 保留原选择继续
     }
+    if (!canEditCanvas()) return;
 
     setError('');
     const seedKey = String(seedSelectedKey ?? '').trim();
@@ -4611,6 +4663,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 展示/存储的用户消息绝不回退到 reqText 原文（含【引用图片】文字块 + 文件名，模型层专用）。
     // display 为空时用"@imgN 引用标记 + 清洗后的正文"兜底：引用由渲染层还原为视觉 chip。
     const displayForMsg =
+      String(messageText ?? '').trim() ||
       display ||
       [
         imageRefs
@@ -4693,6 +4746,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 用户要求移除右侧“本次使用模型/直连模式/参考图...”类提示，不再 push 该类 Assistant 消息
 
     // 画板占位
+    if (!canEditCanvas()) return;
     const near = stageCenterWorld();
     const selectedFirstKey = seedKey;
     const selectedIsGenerator = selectedFirstKey
@@ -4966,9 +5020,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 手机端那条上一轮已经改成失败即停，桌面端这条是它的兄弟，当时没一起改——
       // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现过好几次。
       //
-      // 判据用「有没有参考图掉光了」而不是「是不是从首页交接过来的」：
+      // 判据用「参考图是否完整」而不是「是不是从首页交接过来的」：
       // 后者要知道来路，前者直接说的就是要防的那件事，编辑器内选图重绘同样成立。
-      if (unifiedImageRefs.length > 0 && imageRefsForBackend.length === 0) {
+      if (unifiedImageRefs.length !== imageRefsForBackend.length) {
         const msg = '参考图没能带上来，这次没有生成';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
         pushMsg('Assistant', `${msg}。提示词留着了，重试一次；或者去掉参考图，改成纯文字生成——那是另一件事，得你自己定。`);
@@ -4992,6 +5046,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           responseFormat: 'url',
           // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
+          expectedImageRefCount: unifiedImageRefs.length,
           userMessageContent: userMsgForBackend,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
@@ -5173,6 +5228,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // ── 快捷操作执行（写入消息列表以便追溯） ──
   const executeQuickAction = useCallback(
     async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string, maskBase64?: string, actionLabel?: string) => {
+      if (!canEditCanvas()) return;
       if (!prompt.trim()) return;
       const pickedModel = effectiveModel;
       if (!pickedModel) {
@@ -5328,6 +5384,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 label: '原图',
               },
             ],
+            expectedImageRefCount: 1,
             maskBase64: maskBase64 || undefined,
             userMessageContent: qaMsgForBackend,
           },
@@ -5447,7 +5504,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
       }
     },
-    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg, persistRunIdImmediately],
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg, persistRunIdImmediately, canEditCanvas],
   );
 
   /** 快捷操作栏：点击内置/DIY 操作 */
@@ -5531,28 +5588,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     try {
       const stored = sessionStorage.getItem(sessionKey);
       if (!stored) return;
-      const data = JSON.parse(stored);
+      const handoff = parseVisualAgentHandoff(stored);
       // 读取后立即删除，避免重复执行
       sessionStorage.removeItem(sessionKey);
+      if (!handoff) return;
       // assetId 是首页那张参考图在本 workspace 里的身份。首页一直在传，这里第一次读。
-      initialAssetIdRef.current = String(data.assetId || '').trim() || null;
+      initialAssetIdRef.current = handoff.assetId;
       // 首页明确选过的模型：优先级高于服务端偏好。
       // 偏好写失败时只返回 { success:false }（不 reject），此时服务端存的还是上一次的值；
       // 若编辑器照读，用户在首页选了 A、这里却用 B 跑了一次要花钱的生成（Codex PR #1476 P1）。
       // 这个 effect 在挂载时同步跑完，而偏好 effect 的赋值在 await 之后，所以标记一定先立起来。
-      const handedModelId = String(data.modelId || '').trim();
+      const handedModelId = normalizeVisualModelOptionId(handoff.modelId);
       if (handedModelId) {
         handedModelIdRef.current = handedModelId;
         setModelPrefAuto(false);
         setModelPrefModelId(handedModelId);
       }
-      const sz = data.imageSize;
-      initialImageSizeRef.current =
-        sz && Number(sz.w) > 0 && Number(sz.h) > 0 ? { w: Number(sz.w), h: Number(sz.h) } : null;
-      const messageText = String(data.messageText || '').trim();
-      if (messageText) {
-        setInitialPrompt(parseInlinePrompt(messageText));
-      }
+      initialImageSizeRef.current = handoff.imageSize;
+      if (handoff.prompt.text) setInitialPrompt(handoff.prompt);
     } catch {
       // ignore
     }
@@ -5564,13 +5617,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (initialPromptHandledRef.current) return;
     if (!workspace) return;
     if (modelsLoading) return;
-    if (!canvasBootedRef.current) return;
+    if (!canEditCanvas()) return;
 
     // 标记已处理，避免重复执行
     initialPromptHandledRef.current = true;
 
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
+      if (!canEditCanvas()) return;
       const inline = initialPrompt.inlineImage;
       // 这一拍刚加进画布 / 刚选中的东西。setCanvas 与 setSelectedKeys 都要到下一次渲染
       // 才生效，所以必须原样递给 sendText，否则解析器在旧画布里找不到它。
@@ -5587,7 +5641,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
          *   1. 首页跳转前已经 uploadVisualAgentWorkspaceAsset 把它传进这个 workspace；
          *      新 workspace 没有画布快照，boot 走「回退到资产列表重建画布」，
          *      把 workspace 的全部 asset 铺上画布 —— 这是第一张。
-         *   2. 这里再把 messageText 里的 [IMAGE src=...] 当成新图加一遍 —— 第二张。
+         *   2. 这里再把交接包的 inlineImage 当成新图加一遍 —— 第二张。
          *
          * 注意这**不违反**「同图允许上传、传几次就几张」：那条说的是用户按几次就有几张。
          * 这里用户只按了一次，是系统落了两次，属于系统重复，不是用户重复。
@@ -5684,7 +5738,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }, 500);
 
     return () => window.clearTimeout(timer);
-  }, [initialPrompt, workspace, modelsLoading]);
+  }, [initialPrompt, workspace, modelsLoading, workspaceReady, canEditCanvas]);
 
   const insertAtCursor = (text: string) => {
     const ta = inputRef.current;
@@ -5711,7 +5765,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       void (async () => {
         try {
-          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride);
+          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride, job.messageText);
         } finally {
           runningCountRef.current = Math.max(0, runningCountRef.current - 1);
           setRunningCount(runningCountRef.current);
@@ -5747,6 +5801,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 同上：刚设置、还没刷出来的选中键。 */
     selectedKeysOverride?: string[];
   }) => {
+    if (!canEditCanvas()) return;
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
     const now = Date.now();
@@ -5779,6 +5834,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       inlineImage: opts?.inlineImage,
       canvas: contractCanvas,
     });
+    if (!resolveResult.ok) {
+      toast.error('这次没有生成', resolveResult.errors.join(' '));
+      return false;
+    }
 
     // 使用新的 buildRequestText
     const { requestText } = buildRequestText(
@@ -5797,7 +5856,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      displayText: cleanDisplay,
+      displayText: resolveResult.cleanText,
+      messageText: serializeImageReferenceMessage(resolveResult.cleanText, resolveResult.refs),
       requestText,
       imageRefs,
       seedSelectedKey,
@@ -5819,6 +5879,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }).catch(() => { /* ignore */ });
       }
     }
+    return true;
   };
 
   // ── Keep retryRef in sync with latest sendText + canvas ──────────
@@ -5834,14 +5895,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const foundItems = shas
       .map((sha) => canvasSnapshot.find((c) => c.sha256 === sha || c.originalSha256 === sha))
       .filter((c): c is NonNullable<typeof c> => !!c && !!c.src);
-    if (foundItems.length > 0) {
+    if (foundItems.length === shas.length) {
       const chipRefs = foundItems.map((c, idx) => ({
         refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
         canvasKey: c.key,
       }));
       void sendText(prompt, { chipRefs });
     } else {
-      void sendText(prompt);
+      toast.error('参考图已失效，这次没有生成', '请重新选择原参考图后再试。');
     }
   };
 
@@ -5868,6 +5929,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 富文本编辑器发送（入口1）
   // 注意：TwoPhaseRichComposer 的 onSubmit 回调会自动确认 pending chips
   const onSendRich = async () => {
+    if (!canEditCanvas()) return;
     const composer = richComposerRef.current;
     if (!composer) return;
 
@@ -5880,36 +5942,37 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const clean = String(extractSizeToken(text).cleanText ?? '').trim();
     if (!clean) return;
 
+    // 引用校验通过后再清空，失效图片的恢复操作需要保留原输入。
+    if (!await sendText(text, { chipRefs: imageRefs })) return;
     composer.clear();
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
 
-    // 传递 chipRefs 给统一守门员
-    await sendText(text, { chipRefs: imageRefs });
   };
 
   const onSendQuick = async () => {
+    if (!canEditCanvas()) return;
     const raw = quickInput.trim();
     if (!raw) return;
     const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
     if (!clean) return;
+    if (!await sendText(raw)) return;
     setQuickInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(raw);
   };
 
   const onUploadImages = async (files: File[]) => {
     // 工作区初始画布仍在回放时接收上传，会被稍后返回的服务器快照覆盖：界面提示
     // “已加入”但图片随即消失。入口和处理函数双重门禁，覆盖文件选择、拖放与粘贴路径。
-    if (!workspaceReady) {
+    if (!canEditCanvas()) {
       showUploadToast('画板正在恢复，请稍后再上传图片');
       return;
     }
     const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (imageFiles.length > 20) {
-      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加', 'warning');
     }
     // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
     // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
@@ -5920,6 +5983,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 压缩（解码 + canvas 重编码）也必须放在锁内：否则并发上传会同时解码多张大图，
     // 重新引发 20 张封顶本想避免的内存峰值 / 标签页冻结。
     const run = async () => {
+    if (!canEditCanvas()) return;
     // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
     // 已达标的图原样放行（幂等，不重复劣化）；解码失败放行原图由后端兜底。详见 lib/imageCompress.ts。
     // 串行（非 Promise.all）逐张压缩：并发解码 + canvas 重编码多达 20 张大图会瞬时爆内存，
@@ -5936,6 +6000,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     }
     if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
+    if (!canEditCanvas()) return;
     const added: CanvasImageItem[] = [];
     const now = Date.now();
 
@@ -5971,7 +6036,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       )
     );
 
-    if (added.length === 0) return;
+    if (added.length === 0 || !canEditCanvas()) return;
     // 保持顺序：用户选中的文件顺序
     added.sort((a, b) => a.createdAt - b.createdAt);
     // 首张是否真的贴着选中图落位（不是「有没有选中」——四个方向被占满时会退回最近空位，
@@ -6048,9 +6113,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (placedAlongsideSelection) showUploadToast(`已在选中图旁新增 ${added.length} 张，原图保留`);
     pushMsg(
       'Assistant',
-      placedAlongsideSelection
-        ? `已在选中图旁新增 ${added.length} 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
-        : `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+      visualUploadNotice(added.length, placedAlongsideSelection)
     );
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）
@@ -6238,6 +6301,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /** 自动排列：紧凑网格布局（最大化利用空间） */
   const arrangeGrid = useCallback(() => {
+    if (!canEditCanvas()) return;
     const items = canvasRef.current.filter(
       (it) =>
         (it.kind ?? 'image') === 'image' ||
@@ -6342,44 +6406,48 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestAnimationFrame(() => {
       fitItemsToViewport(updatedItems);
     });
-  }, [fitItemsToViewport, stageSize.w, stageSize.h]);
+  }, [fitItemsToViewport, stageSize.w, stageSize.h, canEditCanvas]);
 
   // 图层操作回调
   const layerMoveUp = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = moveUp(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   const layerMoveDown = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = moveDown(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   const layerBringToFront = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = bringToFront(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   const layerSendToBack = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = sendToBack(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   // Figma 风格快捷键（仅在画布区域操作时生效）
   // - Shift+1: 适配全部内容 (Zoom to Fit)
@@ -6414,6 +6482,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
       const isG = e.key === 'g' || e.key === 'G' || e.code === 'KeyG';
       const isA = e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+      const isH = e.key === 'h' || e.key === 'H' || e.code === 'KeyH';
+      const isV = e.key === 'v' || e.key === 'V' || e.code === 'KeyV';
+
+      // 工具菜单已经把 H / V 展示给用户，因此这里必须实现同一份快捷键合同。
+      // 只在画板获得焦点或鼠标位于画板内时响应，避免抢占页面其它区域。
+      if (!isMod && !e.altKey && isH) {
+        e.preventDefault();
+        setPlacing(null);
+        setActiveTool('hand');
+        return;
+      }
+
+      if (!isMod && !e.altKey && isV) {
+        e.preventDefault();
+        setPlacing(null);
+        setActiveTool('select');
+        return;
+      }
 
       // Cmd/Ctrl+A: 全选画布元素（Figma 同款；没有它就没法「选几个一起编组/导出」）
       if (isMod && !e.shiftKey && !e.altKey && isA) {
@@ -6520,7 +6606,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     <div ref={containerRef} data-tour-id="visual-editor-root" className="h-full min-h-0 bg-token-nested">
       {uploadToast ? (
         <div
-          className="fixed left-1/2 z-9999"
+          className="fixed left-1/2 z-9999 w-max max-w-[calc(100vw-24px)]"
           style={{
             top: 18,
             transform: 'translateX(-50%)',
@@ -6529,9 +6615,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           aria-live="polite"
           aria-atomic="true"
         >
-          <div className="surface-popover text-token-primary inline-flex h-10 items-center gap-2 rounded-full px-4 text-[13px] font-semibold">
-            <Check size={16} />
-            <span className="truncate max-w-[520px]">{uploadToast.text}</span>
+          <div className="surface-popover text-token-primary inline-flex min-h-10 max-w-full items-center gap-2 rounded-2xl px-4 py-2 text-[13px] font-semibold">
+            <Check size={16} className="shrink-0" />
+            <span className="min-w-0 max-w-[520px] whitespace-normal break-words">{uploadToast.text}</span>
           </div>
         </div>
       ) : null}
@@ -6545,10 +6631,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <div
             ref={stageRef}
             data-tour-id="visual-editor-canvas"
+            aria-busy={booting}
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
-              backgroundColor: '#1e1e1e',
-              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)',
+              backgroundColor: 'var(--bg-base)',
+              backgroundImage: 'radial-gradient(circle, var(--border-subtle) 1px, transparent 1px)',
               backgroundSize: '48px 48px',
               backgroundPosition: '0px 0px',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
@@ -6672,6 +6759,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               // dragging selected items
               const drag = dragItemsRef.current;
               if (drag.active && drag.pointerId === e.pointerId) {
+                if (!canEditCanvas()) return;
                 const rawDx = e.clientX - drag.startClientX;
                 const rawDy = e.clientY - drag.startClientY;
                 // 移动端拖拽死区：触摸需超过 10px 屏幕像素才开始拖拽，防止点选时误触
@@ -6838,6 +6926,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               // 方向键微调（Figma-ish）
               if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                if (!canEditCanvas()) return;
                 if (selectedKeys.length === 0) return;
                 e.preventDefault();
                 const step = e.shiftKey ? 10 : 1;
@@ -6985,6 +7074,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       if (effectiveTool !== 'hand' || isMobile) e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
+                      if (!canEditCanvas()) return;
                       // 捏合进行中：不启动元素选择/拖拽（第二根手指落在图片上时让位给捏合）
                       if (e.pointerType === 'touch' && pinchActiveRef.current) {
                         e.stopPropagation();
@@ -7120,7 +7210,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       // 其他类型（shape/text 等）：仅选中
                       setSelectionWithoutChip([it.key]);
                     }}
-                    title={it.prompt}
+                    title={(it.kind ?? 'image') === 'image' ? cleanDisplayTitle(it.prompt, 300) : it.prompt}
                   >
                     {/* 多选 checkbox（开放世界也保留） */}
                     {/* 已移除：左上角“+选择引用”按钮（用户反馈不需要） */}
@@ -7138,9 +7228,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div
                             className="absolute left-3 top-3 text-[11px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center"
                             style={{
-                              background: 'rgba(168, 85, 247, 0.16)',
-                              border: '1px solid rgba(168, 85, 247, 0.30)',
-                              color: 'rgba(255,255,255,0.92)',
+                              background: 'color-mix(in srgb, var(--semantic-purple-text) 12%, var(--bg-elevated))',
+                              border: '1px solid var(--semantic-purple-border)',
+                              color: 'var(--semantic-purple-text)',
                             }}
                             title={
                               it.ratioAdjusted
@@ -7170,7 +7260,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
                             >
-                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'var(--text-primary)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
                                 {it.errorMessage || '生成失败'}
                               </div>
                             </div>
@@ -7180,7 +7270,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <img
                               data-testid="canvas-image"
                               src={it.src}
-                              alt={it.prompt}
+                              alt={cleanDisplayTitle(it.prompt, 300) || '画板图片'}
                               className="w-full h-full block"
                               style={{ objectFit: 'contain', borderRadius: 14 }}
                               onLoad={(e) => {
@@ -7267,7 +7357,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               : 'none',
                           }}
                         >
-                          {String(it.text ?? 'Text')}
+                          {String(it.text ?? CANVAS_TEXT_LABEL)}
                         </div>
                       </div>
                     ) : (
@@ -7289,7 +7379,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
                             >
-                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'var(--text-primary)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
                                 {it.errorMessage || '图片加载失败'}
                               </div>
                             </div>
@@ -7329,7 +7419,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <img
                               data-testid="canvas-image"
                               src={it.src}
-                              alt={it.prompt}
+                              alt={cleanDisplayTitle(it.prompt, 300) || '画板图片'}
                               className="w-full h-full block"
                               style={{
                                 objectFit: 'contain',
@@ -7637,6 +7727,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       title="拖这里可以整组移动"
                       onPointerDown={(event) => {
                         event.stopPropagation();
+                        if (!canEditCanvas()) return;
                         const keys = frame.layerKeys;
                         if (keys.length === 0) return;
                         setSelectionWithoutChip(keys);
@@ -7733,7 +7824,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             textShadow: '0 2px 10px rgba(0,0,0,0.55)',
                           }}
                         >
-                          Image Generator
+                          {CANVAS_GENERATOR_LABEL}
                         </div>
                         <div
                           className="absolute text-[11px] font-semibold"
@@ -7977,6 +8068,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     toast.error('请先选中一张已完成的图片');
                                     return;
                                   }
+                                  if (currentModelInpainting !== true) {
+                                    toast.warning(currentModelInpainting === false
+                                      ? '当前模型不支持局部重绘，请在“模型偏好”选择支持蒙版的模型。'
+                                      : '正在确认模型的局部重绘能力，请稍后重试。');
+                                    return;
+                                  }
                                   setInpaintTarget(it);
                                 }}
                               />
@@ -8007,7 +8104,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </div>
 
             {/* 图层面板（组装台）：画布 Frame 管单层编辑，这里管叠放、显隐与导出 */}
-            {layerPanelGroupId && layerPanelModel.length > 0 ? (
+            {workspaceReady && layerPanelGroupId && layerPanelModel.length > 0 ? (
               <SemanticLayerPanel
                 // 方案 B：从画布右缘推出，让开右侧的对话浮层——两个浮层不再抢同一片区域。
                 // 手机端对话是覆盖全屏、可开关的（mobileShowChat），没有「常驻占位」可让，
@@ -8293,12 +8390,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={tier}
                                     type="button"
-                                    className="flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
-                                    style={{
-                                      background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                    }}
+                                    className={`flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                    style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                     onClick={() => {
                                       const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                       const targetOpt = ratiosByResolution[tier].get(currentAspect);
@@ -8345,12 +8438,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={ratio}
                                     type="button"
-                                    className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
-                                    style={{
-                                      background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                    }}
+                                    className={`flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                    style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                     onClick={() => {
                                       setComposerSizeManual(opt.size);
                                       setQuickSizeOpen(false);
@@ -8382,7 +8471,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           title="切换绘图模型"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <Sparkles size={10} className="shrink-0" />
+                          <VisualModelIcon model={effectiveModel} size={14} />
                           <span className="truncate max-w-[140px]">
                             {effectiveModel?.name || effectiveModel?.modelName || '选择模型'}
                           </span>
@@ -8393,13 +8482,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <DropdownMenu.Content
                           side="top"
                           align="start"
-                          sideOffset={10}
-                          className="surface-popover z-50 min-w-[320px] rounded-[18px] p-3"
+                          sideOffset={6}
+                          className="surface-popover z-50 rounded-[16px] p-1.5"
+                          style={{ width: isMobile ? 360 : VISUAL_MODEL_DESKTOP_MENU.width, padding: isMobile ? 6 : 0, maxWidth: 'calc(100vw - 16px)', maxHeight: isMobile ? 'var(--radix-dropdown-menu-content-available-height)' : `min(${VISUAL_MODEL_DESKTOP_MENU.maxHeight}px, var(--radix-dropdown-menu-content-available-height))`, display: 'flex', flexDirection: 'column' }}
                         >
-                          <div className="px-2 py-1 text-[11px] font-semibold text-token-muted">
-                            绘图模型
-                          </div>
+                          <VisualModelMenuHeading compact={!isMobile} count={allImageGenModels.length} />
 
+                          {isMobile ? (<>
                           {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
                           <div className="surface-inset mx-1 mb-1 flex items-center justify-between gap-2 rounded-[10px] px-2 py-1.5">
                             <div className="min-w-0 flex-1">
@@ -8438,7 +8527,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               />
                             </button>
                           </div>
-                          <div className="max-h-[320px] overflow-auto p-1">
+                          </>) : null}
+                          <div className="overflow-auto p-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                               {allImageGenModels.length === 0 ? (
                                 <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
                                   {modelsError ? (
@@ -8469,15 +8559,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               .map((m) => {
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
-                                const sourceLabel = disabled ? '暂不可用' : m.isDefault ? '默认模型' : '业务模型';
                                 return (
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[12px] px-3 py-2 hover-bg-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+                                    disabled={disabled}
+                                    aria-pressed={using}
                                     style={{
-                                      border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                                      background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
+                                      padding: isMobile ? undefined : VISUAL_MODEL_DESKTOP_MENU.rowPadding,
+                                      border: using ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                                      background: using ? 'var(--report-accent-soft)' : 'transparent',
                                     }}
                                     onClick={() => {
                                       setModelPrefAuto(false);
@@ -8485,40 +8577,38 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       setQuickModelOpen(false);
                                     }}
                                   >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5">
-                                          <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary, rgba(255,255,255,0.92))' }}>
-                                            {m.name || m.modelName}
-                                          </div>
-                                          {m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'var(--accent-fg-violet)' }}>
-                                              专属
-                                            </span>
-                                          )}
-                                          {m.isDefault && !m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'var(--accent-fg-success)' }}>
-                                              默认
-                                            </span>
-                                          )}
-                                          {m.isLegacy && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'var(--accent-fg-amber)' }}>
-                                              传统
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="mt-0.5 truncate text-[11px] text-token-muted">
-                                          {m.subtitle || (disabled ? '当前不建议使用，可继续选择' : sourceLabel)}
-                                        </div>
-                                      </div>
-                                      <div className="ml-auto shrink-0">
-                                        {using ? <Check size={16} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
-                                      </div>
-                                    </div>
+                                    <VisualModelOptionContent compact={!isMobile} model={m} selected={using} />
                                   </button>
                                 );
                               })}
                           </div>
+                          {!isMobile && <VisualModelMenuControl label="智能切换" description={smartModelFallback ? '发送前若当前模型不可用，会询问是否切换到其他可用模型' : '严格模式：直接使用你选的模型，不做任何切换'}>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={smartModelFallback}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSmartModelFallback(!smartModelFallback);
+                              }}
+                              className="shrink-0 relative inline-flex items-center rounded-full transition-colors"
+                              style={{
+                                width: 32,
+                                height: 18,
+                                background: smartModelFallback ? 'rgba(129, 140, 248, 0.7)' : 'rgba(255,255,255,0.15)',
+                              }}
+                              title={smartModelFallback ? '关闭后进入严格模式' : '打开后遇到不可用模型会询问切换'}
+                            >
+                              <span
+                                className="absolute top-0.5 rounded-full bg-white transition-transform"
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  transform: smartModelFallback ? 'translateX(15px)' : 'translateX(2px)',
+                                }}
+                              />
+                            </button>                          </VisualModelMenuControl>}
+                          <VisualModelMenuHint compact={!isMobile} />
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
@@ -8613,7 +8703,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     type="button"
                     className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover-bg-soft shrink-0"
                     onClick={arrangeGrid}
-                    disabled={canvas.length === 0}
+                    disabled={!workspaceReady || canvas.length === 0}
                     title="自动排列（网格布局）"
                     aria-label="自动排列"
                   >
@@ -8748,7 +8838,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               <button
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:cursor-wait disabled:opacity-50"
-                title={workspaceReady ? '上传图片' : '画板正在恢复'}
+                title={workspaceReady ? '上传图片' : booting ? '画板正在恢复' : '恢复失败，请重新打开画板'}
                 aria-label="上传图片"
                 disabled={!workspaceReady}
                 onClick={() => openImageFilePicker()}
@@ -8763,7 +8853,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     window.clearTimeout(shapeMenuCloseTimerRef.current);
                     shapeMenuCloseTimerRef.current = null;
                   }
-                  setShapeMenuOpen(true);
+                  if (canEditCanvas()) setShapeMenuOpen(true);
                 }}
                 onPointerLeave={() => {
                   if (shapeMenuCloseTimerRef.current != null) window.clearTimeout(shapeMenuCloseTimerRef.current);
@@ -8786,6 +8876,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                       title="形状"
                       aria-label="形状"
+                      disabled={!workspaceReady}
                     >
                       <Square size={18} />
                     </button>
@@ -8825,8 +8916,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button
                           type="button"
                           className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
-                          title="矩形"
-                          aria-label="矩形"
+                          title={CANVAS_SHAPE_LABEL_MAP.rect}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.rect}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8837,8 +8928,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button
                           type="button"
                           className="surface-inset h-12 rounded-full border border-token-subtle hover:opacity-90"
-                          title="圆形"
-                          aria-label="圆形"
+                          title={CANVAS_SHAPE_LABEL_MAP.circle}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.circle}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8850,8 +8941,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           type="button"
                           className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }}
-                          title="三角形"
-                          aria-label="三角形"
+                          title={CANVAS_SHAPE_LABEL_MAP.triangle}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.triangle}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8863,8 +8954,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           type="button"
                           className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }}
-                          title="星形"
-                          aria-label="星形"
+                          title={CANVAS_SHAPE_LABEL_MAP.star}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.star}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8884,7 +8975,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="文字（T）"
                 aria-label="文字"
+                disabled={!workspaceReady}
                 onClick={() => {
+                  if (!canEditCanvas()) return;
                   setActiveTool('select');
                   setPlacing({ kind: 'text' });
                   stageRef.current?.focus();
@@ -8902,7 +8995,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="图像生成器（A）"
                 aria-label="图像生成器"
+                disabled={!workspaceReady}
                 onClick={() => {
+                  if (!canEditCanvas()) return;
                   // 允许创建多个"生成器区域"：每次点击都新建一个（不覆盖旧的）
                   const w = 1024;
                   const h = 1024;
@@ -8915,7 +9010,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       key,
                       kind: 'generator',
                       createdAt: Date.now(),
-                      prompt: 'Image Generator',
+                      prompt: CANVAS_GENERATOR_LABEL,
                       src: '',
                       status: 'done',
                       x: pos.x,
@@ -8959,7 +9054,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => void confirmAndDeleteSelectedKeys([...selectedKeys])}
-                disabled={selectedKeys.length === 0}
+                disabled={!workspaceReady || selectedKeys.length === 0}
                 title="删除选中"
                 aria-label="删除选中"
               >
@@ -9014,6 +9109,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 onClick={() => openImageFilePicker()}
                 className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full text-token-muted"
                 aria-label="上传图片"
+                disabled={!workspaceReady}
               >
                 <ImagePlus size={18} />
               </button>
@@ -9042,7 +9138,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
             ref={chatPanelRef}
-            className={`${isMobile ? 'absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
+            className={`${isMobile ? 'surface-tone-dark absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
             style={{
               // right / width 走同一组常量：图层面板要按它们算让位量，抄成两份必漂。
               right: isMobile ? undefined : CHAT_PANEL_INSET,
@@ -9100,17 +9196,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAutoSubmitEnabled((v) => !v)}
+                  onClick={() => void handleToggleAutoSubmit()}
+                  disabled={!workspaceReady || savingAutoSubmit}
                   className={`h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover-bg-soft ${autoSubmitEnabled ? 'surface-action-success' : 'text-token-muted'}`}
                   aria-label={autoSubmitEnabled ? '投稿已开启（点击关闭）' : '投稿已关闭（点击开启）'}
-                  title={autoSubmitEnabled ? '投稿已开启 — 生成的图片会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
+                  title={autoSubmitEnabled ? '关闭自动投稿，并从作品广场撤回本工作区已投稿作品' : '投稿已关闭 — 点击开启后，仅新生成的图片会自动投稿'}
                 >
                   <Send size={14} />
                 </button>
                 <button
                   type="button"
                   onClick={handleManualSubmit}
-                  disabled={manualSubmitting}
+                  disabled={!workspaceReady || manualSubmitting}
                   className="surface-action-accent h-6 shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors duration-200 hover:opacity-90 disabled:opacity-50"
                   title="将当前画布上所有已生成的图片投稿到作品广场"
                 >
@@ -9190,8 +9287,30 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
             ) : null}
 
+            <ImageGenerationCancelActions key={workspaceId || ''} items={workspaceReady ? canvas : []}
+              onCancelled={(runId) => {
+                if (workspaceIdRef.current !== workspaceId) return;
+                setCanvas((prev) => prev.map((item) => item.runId === runId && item.status === 'running'
+                  ? { ...item, status: 'error' as const, errorMessage: '已取消' } : item));
+              }} />
+
+            {!workspaceReady ? (
+              <div role="status" className={`mt-2 text-[10px] text-token-muted ${booting ? 'animate-pulse' : ''}`}>
+                {booting ? '画板正在恢复，完成后可编辑与提交；可先准备描述。' : '画板恢复未完成，请重新打开后再编辑；描述草稿仍可继续准备。'}
+              </div>
+            ) : null}
+
             <div
               ref={inputPanelRef}
+              onKeyDownCapture={(event) => {
+                if (canEditCanvas() || event.key !== 'Enter' || event.shiftKey) return;
+                const native = event.nativeEvent;
+                if (composingRef.current || native.isComposing || native.keyCode === 229) return;
+                if (!(event.target as HTMLElement).closest('[contenteditable="true"]')) return;
+                // 必须先于 TwoPhase 的 confirmPending 和 Lexical 默认换行：拒绝发送不能改变草稿或引用状态。
+                event.preventDefault();
+                event.stopPropagation();
+              }}
               className={`surface-inset relative mt-2 shrink-0 rounded-[12px] p-2 ${directPrompt ? 'border-token-subtle' : ''}`}
               style={isMobile
                 ? {
@@ -9271,7 +9390,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 }}
                 onSubmit={() => {
                   // IME 合成输入时不触发发送
-                  if (composingRef.current) return false;
+                  if (composingRef.current || !canEditCanvas()) return false;
                   void onSendRich();
                   return true;
                 }}
@@ -9326,7 +9445,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       type="button"
                                       className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover-bg-soft"
                                       onClick={() => {
-                                        replaceMentionAtCursor(`@model(${m.name || m.modelName}) `);
+                                        replaceMentionAtCursor(`@model(${m.modelName}) `);
                                       }}
                                     >
                                       <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>
@@ -9398,14 +9517,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               <div className="mt-1 flex items-center justify-between gap-1.5">
                 {/* 左侧：尺寸/比例选择器 */}
-                <div ref={sizeSelectorRef} className="relative flex items-center gap-1.5">
+                <Popover.Root open={sizeSelectorOpen && (!isMobile || mobileShowChat)} onOpenChange={setSizeSelectorOpen}>
+                  <Popover.Trigger asChild>
                   <button
                     type="button"
                     className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelSizesNotApplicable ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
                     aria-label="尺寸比例"
                     title={currentModelSizesNotApplicable ? '该模型不提供尺寸选择' : '选择分辨率和比例'}
                     disabled={currentModelSizesNotApplicable}
-                    onClick={() => { if (!currentModelSizesNotApplicable) setSizeSelectorOpen((v) => !v); }}
                   >
                     {(() => {
                       if (currentModelSizesNotApplicable) {
@@ -9424,10 +9543,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <span className="text-[9px] text-token-muted">▾</span>
                     )}
                   </button>
+                  </Popover.Trigger>
 
                   {/* 尺寸/比例 Popover */}
-                  {sizeSelectorOpen ? (
-                      <div className="surface-popover absolute bottom-full right-0 z-50 mb-2 w-[260px] rounded-[14px] p-3">
+                  <Popover.Portal>
+                      <Popover.Content
+                        side="top"
+                        align="end"
+                        sideOffset={8}
+                        collisionPadding={8}
+                        className={`${isMobile ? 'surface-tone-dark ' : ''}surface-popover z-50 rounded-[14px] p-3`}
+                        style={{
+                          width: 'min(260px, calc(100vw - 16px))',
+                          maxHeight: 'var(--radix-popover-content-available-height)',
+                          minHeight: 0,
+                          overflowY: 'auto',
+                          overscrollBehavior: 'contain',
+                        }}
+                      >
                         {/* 分辨率（档位）- 只显示模型支持的分辨率 */}
                         {(() => {
                           const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
@@ -9445,12 +9578,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     <button
                                       key={tier}
                                       type="button"
-                                      className="h-7 flex-1 rounded-[8px] text-[12px] font-semibold transition-colors"
-                                      style={{
-                                        background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                        border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                        color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                      }}
+                                      className={`h-7 flex-1 rounded-[8px] text-[12px] font-semibold transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                      style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                       onClick={() => {
                                         // 优先使用后端返回的 aspectRatio
                                         const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
@@ -9495,12 +9624,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 <button
                                   key={ratio}
                                   type="button"
-                                  className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
-                                  style={{
-                                    background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                    border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                    color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                  }}
+                                  className={`flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                  style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                   onClick={() => {
                                     setComposerSizeManual(opt.size);
                                     setSizeSelectorOpen(false);
@@ -9513,9 +9638,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             });
                           })()}
                         </div>
-                      </div>
-                  ) : null}
-                </div>
+                      </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
 
                 {/* 右侧：模型偏好 + 水印 */}
                 <div className="flex items-center gap-1.5">
@@ -9528,7 +9653,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         aria-label="模型偏好"
                         title={effectiveModel ? `${effectiveModel.name || effectiveModel.modelName || ''} - 点击切换模型` : '选择模型'}
                       >
-                        <Sparkles size={10} className="shrink-0" />
+                        <VisualModelIcon model={effectiveModel} size={14} />
                         <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
                         <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                       </button>
@@ -9537,10 +9662,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <DropdownMenu.Content
                         side="top"
                         align="end"
-                        sideOffset={10}
-                        className="surface-popover z-50 w-[360px] max-w-[92vw] rounded-[16px] p-3"
+                        sideOffset={6}
+                        className="surface-popover z-50 flex min-h-0 flex-col rounded-[16px] p-1.5"
+                        style={{ width: isMobile ? 360 : VISUAL_MODEL_DESKTOP_MENU.width, padding: isMobile ? 6 : 0, maxWidth: 'calc(100vw - 16px)', maxHeight: isMobile ? 'var(--radix-dropdown-menu-content-available-height)' : `min(${VISUAL_MODEL_DESKTOP_MENU.maxHeight}px, var(--radix-dropdown-menu-content-available-height))` }}
                       >
-                        <div className="flex items-center justify-between gap-3">
+                        {isMobile ? (<>
+                        <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-token-primary">
                               提示词模式
@@ -9563,25 +9690,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         </div>
 
-                        {/* 分割线 + 选择模型小标题 + 推荐提示 */}
-                        <div className="mt-3 mb-2 flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-token-muted">
-                            选择模型
-                          </span>
-                          {serverDefaultModel && <span
-                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              background: 'rgba(250,204,21,0.12)',
-                              border: '1px solid rgba(250,204,21,0.28)',
-                              color: 'var(--accent-fg-amber)',
-                            }}
-                          >
-                            <Sparkles size={10} />
-                            默认 {serverDefaultModel.name || serverDefaultModel.modelName}
-                          </span>}
-                        </div>
+                        </>) : null}
 
-                        <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+                        <VisualModelMenuHeading compact={!isMobile} count={allImageGenModels.length} />
+
+                        <div className="min-h-0 overflow-auto p-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                           {allImageGenModels.length === 0 ? (
                             <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
                               {modelsError ? (
@@ -9602,21 +9715,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </button>
                             </div>
                           ) : (
-                            <div className="space-y-1.5">
+                            <div className={isMobile ? "space-y-1.5" : undefined}>
                               {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
-                                  const meta = { subtitle: m.subtitle, description: m.description, recommended: m.isDefault };
                                   return (
                                     <button
                                       key={m.id}
                                       type="button"
                                       disabled={!m.enabled}
-                                      className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
+                                      aria-pressed={picked}
+                                      className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
-                                        background: picked ? 'rgba(250,204,21,0.07)' : 'var(--nested-block-bg)',
-                                        boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
-                                        opacity: m.enabled ? 1 : 0.72,
+                                        padding: isMobile ? undefined : VISUAL_MODEL_DESKTOP_MENU.rowPadding,
+                                        border: picked ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                                        background: picked ? 'var(--report-accent-soft)' : 'transparent',
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -9624,65 +9736,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         setModelPrefOpen(false);
                                       }}
                                     >
-                                      <div className="flex items-center gap-3">
-                                        {/* 选中指示：圆点/勾 */}
-                                        <span
-                                          className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
-                                          style={{
-                                            background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
-                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid var(--border-subtle)',
-                                            color: picked ? '#1a1a1a' : 'transparent',
-                                          }}
-                                          aria-label={picked ? '已选择' : '未选择'}
-                                        >
-                                          <Check size={13} strokeWidth={3} />
-                                        </span>
-
-                                        <div className="min-w-0 flex-1">
-                                          {/* 标题行：名称 + 推荐徽标 */}
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="truncate text-[14px] font-semibold text-token-primary">
-                                              {m.name || m.modelName}
-                                            </span>
-                                            {meta.recommended && (
-                                              <span
-                                                className="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold"
-                                                style={{
-                                                  background: 'rgba(250,204,21,0.16)',
-                                                  border: '1px solid rgba(250,204,21,0.3)',
-                                                  color: 'var(--accent-fg-amber)',
-                                                }}
-                                              >
-                                                <Sparkles size={9} />
-                                                默认
-                                              </span>
-                                            )}
-                                          </div>
-                                          {/* 副标题 */}
-                                          {meta.subtitle && (
-                                            <div className="mt-0.5 truncate text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                              {meta.subtitle}
-                                            </div>
-                                          )}
-                                          {/* 描述 */}
-                                          {meta.description && (
-                                            <div className="mt-1 text-[11px] leading-relaxed text-token-muted">
-                                              {meta.description}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
+                                      <VisualModelOptionContent compact={!isMobile} model={m} selected={picked} />
                                     </button>
                                   );
                                 })}
                             </div>
                           )}
-                          <div className="mt-2.5 px-1 text-[10px] leading-relaxed text-token-muted-faint">
-                            选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
-                          </div>
                         </div>
+                        {!isMobile && <VisualModelMenuControl label="优化提示词" description="开启后自动优化生图提示词；关闭后直接使用原始输入。业务模型不会静默切换，服务线路由网关管理。">
+                          <Switch checked={directPrompt} onCheckedChange={setDirectPrompt} ariaLabel="提示词模式" />
+                        </VisualModelMenuControl>}
+                        <VisualModelMenuHint compact={!isMobile} />
+                        {isMobile && <div className="shrink-0 px-3 pb-2 text-[10px] leading-relaxed text-token-muted-faint">
+                          选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
+                        </div>}
 
-                                              </DropdownMenu.Content>
+                      </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
@@ -9771,6 +9840,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   color: 'var(--accent-fg-danger)',
                                 }}
                                 onClick={() => {
+                                  if (!canEditCanvas()) return;
                                   setStylePrompt('');
                                   setStylePromptDraft('');
                                   setStylePopoverOpen(false);
@@ -9778,6 +9848,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     void updateVisualAgentWorkspace({ id: workspaceId, stylePrompt: '' });
                                   }
                                 }}
+                                disabled={!workspaceReady}
                               >
                                 清除
                               </button>
@@ -9790,8 +9861,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 border: stylePromptDraft.trim() ? '1px solid rgba(168, 85, 247, 0.65)' : '1px solid rgba(255,255,255,0.12)',
                                 color: stylePromptDraft.trim() ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255,255,255,0.35)',
                               }}
-                              disabled={!stylePromptDraft.trim()}
+                              disabled={!workspaceReady || !stylePromptDraft.trim()}
                               onClick={() => {
+                                if (!canEditCanvas()) return;
                                 const val = stylePromptDraft.trim();
                                 setStylePrompt(val);
                                 setStylePopoverOpen(false);
@@ -9839,6 +9911,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     type="button"
                     className="surface-action-accent inline-flex h-7 w-7 items-center justify-center rounded-full transition-all hover:brightness-110"
                     aria-label="发送"
+                    disabled={!workspaceReady}
                     title="发送（Enter）"
                     onClick={() => void onSendRich()}
                   >
@@ -10050,6 +10123,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerBringToFront();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10063,6 +10137,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerMoveUp();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10076,6 +10151,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerMoveDown();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10089,6 +10165,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerSendToBack();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10180,7 +10257,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="w-full h-full flex items-center justify-center">
                   <img
                     src={preview.src}
-                    alt={preview.prompt}
+                    alt={cleanDisplayTitle(preview.prompt, 300) || '图片预览'}
                     className="block"
                     style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
                   />
@@ -10293,13 +10370,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </Button>
               <Button
                 variant="primary"
+                disabled={!workspaceReady}
                 onClick={() => {
+                  if (!canEditCanvas()) return;
                   const key = textEdit.key;
                   if (!key) {
                     setTextEdit({ open: false, key: '', value: '' });
                     return;
                   }
-                  const val = String(textEdit.value ?? '').trim() || 'Text';
+                  const val = String(textEdit.value ?? '').trim() || CANVAS_TEXT_LABEL;
                   setCanvas((prev) =>
                     prev.map((it) => (it.key === key ? { ...it, kind: 'text', text: val, prompt: val } : it))
                   );
@@ -10399,6 +10478,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
           onCancel={() => setInpaintTarget(null)}
           onConfirm={async (maskDataUri) => {
+            if (!canEditCanvas()) return;
             const target = inpaintTarget;
             setInpaintTarget(null);
             // 弹出提示词输入
@@ -10407,6 +10487,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               message: '请输入重绘区域的描述',
               placeholder: '如：将这里替换为蓝色的天空',
             });
+            if (!canEditCanvas()) return;
             if (!desc?.trim()) {
               toast.error('请输入重绘描述');
               return;
@@ -10420,13 +10501,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       <DrawingBoardDialog
         open={drawingBoardOpen}
         onOpenChange={setDrawingBoardOpen}
+        canSubmit={workspaceReady}
         onConfirm={async (dataUri, chatHistory, sizeHint) => {
-          setDrawingBoardOpen(false);
-
-          // 同步手绘板 AI 对话记录到消息面板（可追溯）
-          if (chatHistory.length > 0) {
-            const chatSummary = chatHistory.map(m => `${m.role === 'user' ? '我' : 'AI'}: ${m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content}`).join('\n');
-            pushMsg('User', `[手绘板对话]\n${chatSummary}`);
+          if (!canEditCanvas()) {
+            toast.info('画板尚未恢复，草图已保留', '恢复完成后再提交；恢复失败时请重新打开画板。');
+            return;
           }
 
           // 弹出提示词输入
@@ -10435,6 +10514,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             message: '请描述你想基于这张草图生成的图片',
             placeholder: '如：一只猫坐在窗台上，水彩风格',
           });
+          if (!canEditCanvas()) return;
           if (!desc?.trim()) {
             toast.error('请输入生成描述');
             return;
@@ -10444,6 +10524,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           if (!pickedModel) {
             toast.error('暂无可用生图模型');
             return;
+          }
+          setDrawingBoardOpen(false);
+          // 提交被接受后才关闭草图并同步对话；拒绝提交不能清空用户准备的内容。
+          if (chatHistory.length > 0) {
+            const chatSummary = chatHistory.map(m => `${m.role === 'user' ? '我' : 'AI'}: ${m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content}`).join('\n');
+            pushMsg('User', `[手绘板对话]\n${chatSummary}`);
           }
           const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
           const sketchUserMsg = `[手绘板生图] ${desc.trim()}`;
@@ -10551,6 +10637,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     label: '手绘草图',
                   },
                 ],
+                expectedImageRefCount: 1,
                 userMessageContent: sketchMsgForBackend,
               },
               idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,

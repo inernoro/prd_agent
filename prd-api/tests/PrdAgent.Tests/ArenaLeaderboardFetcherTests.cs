@@ -58,6 +58,48 @@ public class ArenaLeaderboardFetcherTests
     }
 
     [Fact]
+    public async Task FetchAsync_代理返回成功状态的验证页时归为上游不可达()
+    {
+        // 2026-11-16 在 CDS main 实测：源站 403，Reader 将验证页包装成 200。
+        var handler = new RecordingHandler(
+            "<html><head><title>Just a moment...</title></head><body>Checking your browser</body></html>");
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => fetcher.FetchAsync("agent", CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.Forbidden, error.StatusCode);
+        Assert.Contains("upstream_challenge", error.Message);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task FetchAsync_代理的Markdown验证页也不能误报榜单改版()
+    {
+        var handler = new RecordingHandler("""
+Title: Just a moment...
+
+URL Source: https://arena.ai/leaderboard/agent
+
+Warning: This page maybe requiring CAPTCHA, please make sure you are authorized to access this page.
+""");
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => fetcher.FetchAsync("agent", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchAsync_真正的表格改版仍触发完整性保护()
+    {
+        var handler = new RecordingHandler("<html><head><title>Agent leaderboard</title></head><body></body></html>");
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fetcher.FetchAsync("agent", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task FetchAsync_配置快照镜像时优先从远程Cds恢复并保留抓取时间()
     {
         var parsed = Padded(ArenaLeaderboardFetcher.Parse(RealFixture));
@@ -90,6 +132,14 @@ public class ArenaLeaderboardFetcherTests
     {
         var r = ArenaLeaderboardFetcher.Parse(RealFixture);
         Assert.Equal(2, r.Entries.Count);
+    }
+
+    [Fact]
+    public void Parse_新网页命令可靠性不冒充旧命令恢复()
+    {
+        var result = ArenaLeaderboardFetcher.Parse(RealFixture.Replace("<th>Bash Recovery</th>", "<th>Bash Reliability</th>", StringComparison.Ordinal));
+        Assert.All(result.Entries, e => { Assert.NotNull(e.BashReliability); Assert.Null(e.BashRecovery); });
+        Assert.Equal(11.07, result.Entries[0].BashReliability!.Value);
     }
 
     /// <summary>
@@ -182,6 +232,32 @@ public class ArenaLeaderboardFetcherTests
     /// 照样绿，而整份快照的名次是我们自己编的，还会覆盖掉昨天的好数据。
     /// 行序不是名次的降级近似，它是另一个量。Codex 在 PR #1538 第二轮指出。
     /// </summary>
+    [Fact]
+    public void Parse_厂商格换成外层flex加内层truncate的新标记_仍能读出厂商与授权()
+    {
+        // 2026-09-30 起 agent 榜的厂商格长这样（线上抓取原样）：
+        //   <span class="text-text-secondary flex min-w-0 items-center gap-1 text-xs"><span class="truncate">Anthropic · Proprietary</span></span>
+        // 旧判据认完整类名「text-text-secondary truncate text-xs」，在新标记上 0 命中，
+        // 整榜因厂商覆盖率不足被拒收，快照停更 60 多小时。
+        var redesigned = RealFixture
+            .Replace("<span class=\"text-text-secondary truncate text-xs\">Anthropic · Proprietary</span>",
+                     "<span class=\"text-text-secondary flex min-w-0 items-center gap-1 text-xs\"><span class=\"truncate\">Anthropic · Proprietary</span></span>",
+                     StringComparison.Ordinal)
+            .Replace("<span class=\"text-text-secondary truncate text-xs\">Moonshot · Kimi K3 license · SiliconFlow</span>",
+                     "<span class=\"text-text-secondary flex min-w-0 items-center gap-1 text-xs\"><span class=\"truncate\">Moonshot · Kimi K3 license · SiliconFlow</span></span>",
+                     StringComparison.Ordinal);
+        Assert.DoesNotContain("text-text-secondary truncate text-xs", redesigned);   // 两处替换都真的命中了
+
+        var r = ArenaLeaderboardFetcher.Parse(redesigned);
+
+        Assert.Equal(2, r.Entries.Count);
+        Assert.Equal("Anthropic", r.Entries[0].Organization);
+        Assert.Equal("Proprietary", r.Entries[0].License);
+        Assert.Equal("Moonshot", r.Entries[1].Organization);
+        // 模型名那个 span 也带 truncate，但后面跟着 title 属性，不能被误当成厂商格
+        Assert.Equal("Claude Fable 5.1 (Max)", r.Entries[0].Name);
+    }
+
     [Fact]
     public void Parse_名次读不出来时整行拒绝_不退回行序()
     {
@@ -563,10 +639,12 @@ public class ArenaLeaderboardFetcherTests
     [Fact]
     public void EnsureUsable_厂商几乎全空时拒绝整份()
     {
-        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事
+        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事。
+        // 判据现在只认 truncate 这一个词，所以要把它改掉才能让厂商格失配
+        // （原先改成 text-xs-v2 在新判据下照样命中，这条用例就不再测它声称的东西了）。
         var renamed = RealFixture.Replace(
             "text-text-secondary truncate text-xs",
-            "text-text-secondary truncate text-xs-v2", StringComparison.Ordinal);
+            "text-text-secondary ellipsis text-xs", StringComparison.Ordinal);
         Assert.NotEqual(RealFixture, renamed);
 
         var parsed = ArenaLeaderboardFetcher.Parse(renamed);
@@ -783,7 +861,7 @@ public class ArenaLeaderboardFetcherTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            var returnFormat = request.Headers.TryGetValues("X-Return-Format", out var values)
+            var returnFormat = request.Headers.TryGetValues("X-Respond-With", out var values)
                 ? values.Single()
                 : null;
             Requests.Add((request.RequestUri!.ToString(), returnFormat));

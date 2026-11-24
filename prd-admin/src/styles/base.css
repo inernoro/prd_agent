@@ -10,6 +10,29 @@ html, body {
   overscroll-behavior-x: none;
 }
 
+/* 手机上点输入框，页面被局部放大、输完也不缩回去（2026-09-29 用户反馈「很多地方都有这种毛病，
+   真的非常讨厌」）。
+   外因：iOS Safari 的固定行为——聚焦一个字号小于 16px 的输入控件时自动放大页面，且失焦后不复原。
+   全站大量输入框是 13-15px，于是登录框、搜索框、评论框处处中招。
+   修法：只在 iOS 上（`-webkit-touch-callout` 只有 iOS 的 WebKit 认，安卓与电脑端不受影响）
+   把可输入控件的字号兜到至少 16px。!important 是必须的：很多输入框的字号写在 inline style 里。
+   不用 viewport 的 maximum-scale=1：那会连用户主动双指放大也禁掉，看不清字的人就没法放大了。
+   守卫：src/styles/__tests__/iosInputZoom.test.ts */
+@supports (-webkit-touch-callout: none) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']):not([type='image']),
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable='false']) {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+/* 横屏时 iOS 会自作主张把正文放大（text inflation），和上面同一类「页面自己变大」的毛病 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 /* 正文字族。index.html 早就加载了 Inter、tokens.css 也早就有 --font-body，
    但从来没有人把它落到 body 上 —— 于是全站正文一直吃 Tailwind preflight 的
    ui-sans-serif 兜底，Inter 加载了却一个字都没用上（2026-08-23 用 design-replication

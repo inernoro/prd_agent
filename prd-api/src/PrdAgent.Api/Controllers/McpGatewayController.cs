@@ -239,6 +239,9 @@ public class McpGatewayController : ControllerBase
         foreach (var p in t.Params)
         {
             var ps = new JsonObject { ["type"] = p.Type, ["description"] = p.Description };
+            // 数组参数必须带 items：不少客户端（OpenAI 系）遇到没有 items 的 array schema 会整张工具表拒收。
+            if (p.Type == "array")
+                ps["items"] = p.ItemsType == null ? new JsonObject() : new JsonObject { ["type"] = p.ItemsType };
             if (p.EnumValues is { Length: > 0 })
             {
                 var ea = new JsonArray();
@@ -248,7 +251,17 @@ public class McpGatewayController : ControllerBase
             props[p.Name] = ps;
             if (p.Required) required.Add(p.Name);
         }
+        // 准入层已读取此标识；未声明领域参数的工具也须向客户端公开入口。
+        // 保留原有工具自己的同名参数及必填规则，回环只转发 t.Params 中的领域参数。
+        if (!props.ContainsKey("clientRequestId"))
+            props["clientRequestId"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["maxLength"] = 256,
+                ["description"] = "本次逻辑操作的稳定标识；每次新操作使用新值，重试保持标识和原始请求不变。也可由客户端通过 Idempotency-Key 请求头提供。",
+            };
         var schema = new JsonObject { ["type"] = "object", ["properties"] = props };
+        if (t.RejectUnknownArguments) schema["additionalProperties"] = false;
         if (required.Count > 0) schema["required"] = required;
         return new JsonObject
         {
@@ -325,7 +338,7 @@ public class McpGatewayController : ControllerBase
             // 工具名那条至少还得先想个名字刷，这条是建一把名字几 MB 的密钥，此后每笔调用自动放大。
             KeyName = McpInputBounds.ForAudit(User.FindFirst("appName")?.Value, McpInputBounds.KeyNameChars) ?? string.Empty,
             ToolName = name!,
-            ArgumentsPreview = McpUsageService.SummarizeArguments(args),
+            ArgumentsPreview = McpUsageService.SummarizeArguments(args, name),
             CreatedAt = startedAt,
         };
 
@@ -348,7 +361,7 @@ public class McpGatewayController : ControllerBase
         {
             log.Capability = McpCapabilityCatalog.ByScope(bt.RequiredScope)?.Key;
             log.IsWrite = McpUsageService.IsWriteTool(bt);
-            log.ImageCount = bt.Name == "map_literary_generate_image" ? 1
+            log.ImageCount = bt.Name == "map_literary_generate_image" ? ReadLiteraryImageCount(args)
                 : McpUsageService.IsImageTool(bt) ? ReadRequestedImageCount(args) : 0;
 
             if (!ScopeSatisfies(scopes, bt.RequiredScope))
@@ -500,6 +513,10 @@ public class McpGatewayController : ControllerBase
         }
         else
         {
+            // 批量生图里有的是重放、有的没排上：只为真正新入队的那几张扣额度，其余按占坑那天退回
+            var unqueued = McpUsageService.UnqueuedImages(verdict, McpArtifactExtractor.QueuedImages(respBody));
+            if (unqueued > 0)
+                await _usage.ReleaseAsync(log.KeyId, verdict.ReservedKind!, unqueued, verdict.ReservedDay, ct);
             ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
         }
         await _usage.LogAsync(log, ct);
@@ -515,13 +532,14 @@ public class McpGatewayController : ControllerBase
     /// 原来去重与正常两条分支各抄一遍同样的四行赋值 —— 那是判据分裂的现成温床：
     /// 截了一处、漏了另一处，谁也看不出来。收敛成一处，两条分支都从这儿走。
     /// </summary>
-    private static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
+    internal static void ApplyArtifact(McpCallLog log, McpArtifactExtractor.Artifact artifact)
     {
         // Kind 是我方枚举（不是调用方给的），原样留着。
         log.ArtifactKind = artifact.Kind;
         log.ArtifactId = McpInputBounds.ForAudit(artifact.Id, McpInputBounds.ArtifactIdChars);
         log.ArtifactUrl = McpInputBounds.ForAudit(artifact.Url, McpInputBounds.ArtifactUrlChars);
         log.ArtifactTitle = McpInputBounds.ForAudit(artifact.Title, McpInputBounds.ArtifactTitleChars);
+        log.ArtifactStatus = McpInputBounds.ForAudit(artifact.Status, 32);
     }
 
     /// <summary>
@@ -543,8 +561,25 @@ public class McpGatewayController : ControllerBase
             new PrdAgent.Api.Controllers.Api.VisualOpenApiController.GenerateImageRequest { Count = requested });
     }
 
+    /// <summary>文学配图这次要占几格：批量按 markerIndexes 去重后的个数，与控制器同一个口径。</summary>
+    internal static int ReadLiteraryImageCount(JsonObject args)
+    {
+        var indexes = new List<int>();
+        if (args.TryGetPropertyValue("markerIndexes", out var node) && node is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is JsonValue v && v.TryGetValue<int>(out var i)) indexes.Add(i);
+                else if (item is JsonValue dv && dv.TryGetValue<double>(out var d)) indexes.Add((int)d);
+            }
+        }
+        return PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.RequestedImageCount(null, indexes);
+    }
+
     internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)
     {
+        if (t.RejectUnknownArguments && args.Any(kv => kv.Key != "clientRequestId" && !t.Params.Any(p => p.Name == kv.Key)))
+            return (t.PathTemplate, null, "包含当前工具不支持的参数，请查询能力与工具定义后重试。");
         var path = t.PathTemplate;
         var query = new List<string>();
         JsonObject? body = null;
@@ -588,7 +623,7 @@ public class McpGatewayController : ControllerBase
 
         // 自证「这一跳是网关的续跳」：下游的用量闸门与全局限流据此不再重复计一次。
         // 用进程内随机令牌而不是「对端是不是 127.0.0.1」，见 McpLoopbackSignal 的说明。
-        req.Headers.TryAddWithoutValidation(McpLoopbackSignal.HeaderName, _loopback.Token);
+        _loopback.AttachTaskContinuation(req);
 
         var auth = Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrWhiteSpace(auth))

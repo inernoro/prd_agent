@@ -19,7 +19,7 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// </summary>
 [ApiController]
 [Route("api/official-skills")]
-public class OfficialSkillsController : ControllerBase
+public partial class OfficialSkillsController : ControllerBase
 {
     private readonly IConfiguration _config;
     private readonly ILogger<OfficialSkillsController> _logger;
@@ -35,7 +35,7 @@ public class OfficialSkillsController : ControllerBase
     /// GET /api/official-skills/{skillKey}/download
     /// </summary>
     [HttpGet("{skillKey}/download")]
-    public IActionResult Download(string skillKey)
+    public IActionResult Download(string skillKey, [FromQuery] string? client = null)
     {
         var baseUrl = ResolveBaseUrl();
 
@@ -77,6 +77,15 @@ public class OfficialSkillsController : ControllerBase
         var entry = OfficialSkillCatalog.Find(skillKey);
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
+
+        if (entry.Key == MapAgentKey)
+        {
+            Response.Headers.CacheControl = "no-store";
+            var workBuddy = string.Equals(client, "workbuddy", StringComparison.OrdinalIgnoreCase);
+            if (client != null && !workBuddy && !string.Equals(client, "codex", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "技能客户端请选择 codex 或 workbuddy"));
+            return File(PackMapAgent(entry, workBuddy), "application/zip", workBuddy ? "map-agent-workbuddy.zip" : $"{entry.Key}.zip");
+        }
 
         var entries = OfficialSkillCatalog.ExpandWithRequires([entry.Key], out var missing);
         if (missing.Count > 0)
@@ -201,7 +210,7 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("装到**项目级**技能目录，不是用户主目录 —— 技能跟着项目的版本库走，团队每个人 clone 下来都有。");
         sb.AppendLine();
-        sb.AppendLine("项目里存在几个 Agent 宿主目录（`.claude` / `.cursor` / `.agents`）就装几份：");
+        sb.AppendLine("项目里存在几个 Agent 宿主目录（`.claude` / `.agents`）就装几份：");
         sb.AppendLine("只装其中一个的话，从另一个 Agent 打开这个项目会一个技能都看不见。");
         sb.AppendLine();
         sb.AppendLine("```bash");
@@ -214,8 +223,8 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine("## 下一步");
         sb.AppendLine();
         sb.AppendLine(string.IsNullOrWhiteSpace(bundle.FirstStep)
-            // 安装支持 .claude / .cursor / .agents 三个宿主，这句兜底文案就不能钉死某一个 ——
-            // 只装了 Cursor 或 Codex 的用户会被指去一个他没有的工具。
+            // 安装支持 .claude / .agents 两个宿主，这句兜底文案就不能钉死某一个 ——
+            // 只装了 Codex 的用户会被指去一个他没有的工具。
             ? "在你的 AI 编码工具里输入 `/sdd-init`。"
             : bundle.FirstStep);
         sb.AppendLine();

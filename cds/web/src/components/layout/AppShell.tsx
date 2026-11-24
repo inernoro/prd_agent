@@ -1,22 +1,39 @@
+import { ConsoleAuthContext, type ShellAuthStatus, type ShellUser } from '@/lib/consoleAuthContext';
+export { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+export type { ShellAuthStatus } from '@/lib/consoleAuthContext';
+import { AnchoredPopover, useAnchoredPosition } from '@/components/ui/anchored-popover';
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { RouteMotion, RouteMotionCommit } from './RouteMotion';
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Outlet, useLocation } from 'react-router-dom';
+import { Activity, Check, CircleAlert, Clock, Contrast, Database, Expand, FileText, Gauge, KeyRound, Layers, LayoutGrid,
+  LogOut, Menu, Monitor, Moon, MoreVertical, Plus, RefreshCw, Rocket, Scaling, Search, SearchCode, Settings, ShieldCheck,
+  Shrink, SlidersHorizontal, SquareTerminal, Sun, Target, Upload, UserRound, Waypoints, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
-import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
+import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
+import { Button } from '@/components/ui/button';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
+import { ListLoadingBoundary, ListLoadingFeedback } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
 } from '@/lib/agent-onboarding';
-import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsInstance, type PreviewMirrorSummary } from '@/lib/api';
+import { apiRequest, apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsInstance, type PreviewMirrorSummary } from '@/lib/api';
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
+import { readStatusLocation } from '@/lib/statusHome';
+import { MonitorViewNav } from './MonitorViewNav';
+import '@/pages/status/monitor-frame.css';
+import { canReadApproval } from '@/hooks/approvalPolling';
+import { registerPasskey, signInWithPasskey } from '@/lib/passkeys';
 
 /*
  * AppShell — single source of layout truth.
@@ -66,7 +83,7 @@ const MobileNavContext = createContext<{ openNav: () => void }>({ openNav: () =>
 const FOCUSABLE_SELECTOR =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void {
+export function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void {
   useEffect(() => {
     if (!active) return undefined;
     const container = ref.current;
@@ -95,7 +112,8 @@ function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void 
     return () => {
       window.clearTimeout(initial);
       document.removeEventListener('keydown', onKeyDown, true);
-      previouslyFocused?.focus?.();
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || active === document.body || !active.isConnected || container.contains(active)) previouslyFocused?.focus?.();
     };
   }, [active, ref]);
 }
@@ -112,27 +130,62 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
-type ShellAuthStatus = {
-  enabled?: boolean;
-  mode?: string;
-  activeProvider?: string | null;
-  logoutEndpoint?: string | null;
-  postLogoutRedirect?: string | null;
-  user?: ShellUser | null;
-};
+/** Unknown auth never exposes owner-only controls; disabled local mode stays compatible. */
+export function canManageSystemSettings(status: ShellAuthStatus | null): boolean {
+  return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
+}
 
-type ShellUser = {
-  username?: string | null;
-  githubLogin?: string | null;
-  name?: string | null;
-  avatarUrl?: string | null;
-  isSystemOwner?: boolean;
-};
+/** Loading contour only: verified ticket SSO manages projects without being a system owner. */
+export function canShowProjectActions(status: ShellAuthStatus | null): boolean {
+  return canManageSystemSettings(status) || status?.mode === 'sso';
+}
+
+export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
+
+/** Simple/port previews require owner routing writes; members retain multi-domain previews. */
+export function canUseConsolePreview(mode: 'simple' | 'port' | 'multi' | undefined, canManageConsole: boolean): boolean {
+  return canManageConsole || mode === 'multi';
+}
+
+/** UI affordances use the same server-authenticated owner decision as route mounting. */
+export function useCanManageConsole(): boolean {
+  return canManageSystemSettings(useContext(ConsoleAuthContext).status);
+}
+
+export function useCanShowProjectActions(): boolean {
+  return canShowProjectActions(useContext(ConsoleAuthContext).status);
+}
+
+/** Never mount owner pages (and their effects) for members or unresolved authentication. */
+export function OwnerConsoleRoute(): JSX.Element {
+  const { status, pending, retry } = useContext(ConsoleAuthContext);
+  // Keep lazy owner pages inside their own boundary. Otherwise resolving auth
+  // suspends the outer tree and leaves a hidden copy of the auth skeleton behind.
+  if (canManageSystemSettings(status)) return <Suspense fallback={<ConsoleRouteFallback />}><Outlet /></Suspense>;
+  if (pending) return <ConsoleRouteFallback />;
+  return (
+    <AppShell topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '访问范围' }]} />} />}>
+      <Workspace>
+        <section className="cds-surface-raised cds-hairline mt-6 space-y-4 rounded-lg p-6" role="alert">
+          <h1 className="text-lg font-semibold">{status ? '此页面仅系统所有者可用' : '登录状态暂时无法确认'}</h1>
+          <p className="text-sm text-muted-foreground">{status
+            ? '项目设置、服务拓扑和系统运维由系统所有者管理。你仍可在获授权项目中操作分支、查看预览和部署历史。'
+            : '未加载管理页面。请重新检查登录状态后再试。'}</p>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <Link to="/project-list" className="text-primary underline">返回项目列表</Link>
+            {!status ? <button type="button" onClick={retry} className="text-primary underline">重新检查登录状态</button> : null}
+          </div>
+        </section>
+      </Workspace>
+    </AppShell>
+  );
+}
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
-const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
+const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
+const preloadCodeReviewsPage = (): void => { void import('@/pages/CodeReviewsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
 const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
 
@@ -154,10 +207,14 @@ const ShellFrameContext = createContext(false);
 /** Map a pathname to the rail item that should light up. */
 function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/cds-settings')) return 'cds-settings';
+  if (pathname === '/personal-settings') return 'personal-settings';
   // 发布控制台与发布中心是同一件事的两个视图，共用一个导航高亮项。
   if (pathname.startsWith('/release-center') || pathname.startsWith('/release-console')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
+  if (pathname.startsWith('/code-reviews')) return 'code-reviews';
+  if (pathname.startsWith('/engineering-planning')) return 'engineering-planning';
+  if (pathname.startsWith('/design')) return 'design';
   if (pathname.startsWith('/status')) return 'status';
   if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
@@ -172,12 +229,16 @@ function activeNavKeyFor(pathname: string): AppNavKey {
  */
 export function ConsoleLayout(): JSX.Element {
   const { pathname } = useLocation();
+  const listPage = pathname === '/project-list' || pathname === '/branch-list' || pathname.startsWith('/branches/');
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
-        <Suspense fallback={<ConsoleRouteFallback />}>
-          <Outlet />
-        </Suspense>
+        <RouteMotion />
+        <ListLoadingBoundary key={pathname} enabled={listPage}>
+          <Suspense fallback={<ConsoleRouteFallback />}>
+            <Outlet />
+          </Suspense>
+        </ListLoadingBoundary>
       </ShellChrome>
     </ShellFrameContext.Provider>
   );
@@ -189,27 +250,93 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
+  const scene = loadingSceneForPath(pathname);
+  const monitoringHome = pathname === '/status' && readStatusLocation(new URLSearchParams(search)).view === 'home';
+  const workspace = monitoringHome ? 'bleed' : scene?.workspace;
+  const canManageProjects = useCanShowProjectActions();
+  const canManageSettings = useCanManageConsole();
+  const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
+  const ownerPageTopBar = scene?.route === '/release-center' || scene?.route === '/task-schedule' || scene?.route === '/reports' || scene?.route === '/status';
   return (
     <>
-      <header className="cds-topbar" aria-hidden>
-        <span className="cds-topbar-brand">
-          <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
-        </span>
-        <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
-      </header>
+      {/* 顶栏始终保留可操作的导航；页面数据未到达不影响手机端打开侧栏。 */}
+      {ownerPageTopBar ? <OwnerPageLoadingTopBar route={scene.route} search={search} canManageSettings={canManageSettings} />
+        : pathname === '/project-list' ? <ProjectListTopBar canManageProjects={canManageProjects} /> : <TopBar
+        left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
+        center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
+      />}
       <main className="cds-main">
         {/*
           骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className="cds-workspace cds-workspace--fluid" role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname)}
+        <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+          {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
+            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome, search })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects, canManageSettings, search, hash })}
+          <ListLoadingFeedback />
         </div>
       </main>
     </>
   );
+}
+
+function OwnerPageLoadingTopBar({ route, search, canManageSettings }: { route: string; search: string; canManageSettings: boolean }): JSX.Element {
+  const params = new URLSearchParams(search);
+  const monitor = route === '/status';
+  const monitorHome = monitor && readStatusLocation(params).view === 'home';
+  const release = route === '/release-center';
+  const reports = route === '/reports';
+  const reportActions = reports && (params.has('report') || !['templates', 'tasks', 'matrix'].includes(params.get('view') || ''));
+  const label = monitor ? '监控中心' : reports ? '验收中心' : '任务调度';
+  const refresh = <Button disabled variant="outline" size="sm"><RefreshCw />刷新</Button>;
+  return <TopBar
+    left={release ? <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+      <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台', href: '/release-console' }, { label: '环境管理' }]} />
+      <span className="cds-ident text-[0.7188rem] text-muted-foreground">release center · 环境生命周期</span>
+      <span className="cds-loading-skeleton-panel h-7 w-[12.75rem] max-w-full rounded-full" aria-hidden="true" />
+    </span> : <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label }]} />}
+    center={monitor ? <MonitorViewNav /> : undefined}
+    actionsPending
+    right={<>
+      {monitorHome ? <span className="cds-loading-skeleton-panel h-8 w-40 rounded-md" aria-hidden="true" /> : null}
+      <PaletteHint />
+      {!reports || reportActions ? refresh : null}
+      {monitorHome && canManageSettings ? <Button disabled variant="outline" size="sm">通知设置</Button> : null}
+      {monitor ? <Button disabled size="sm"><Plus />{monitorHome ? '接入我的服务' : '添加监控'}</Button> : null}
+      {reportActions ? <Button disabled size="sm"><Plus />新建报告</Button> : null}
+      {release ? <><Button disabled variant="outline" size="sm"><Plus />新建环境</Button><Button disabled variant="outline" size="sm"><Rocket />发布工作台</Button></> : null}
+    </>}
+  />;
+}
+
+/** The project page keeps the same breadcrumb and action slots across chunk and data loading. */
+export function ProjectListTopBar({ canManageProjects, refreshWhileLoading, children }: {
+  canManageProjects: boolean;
+  refreshWhileLoading?: ReactNode;
+  children?: ReactNode;
+}): JSX.Element {
+  const loading = children === undefined;
+  const placeholder = 'cds-loading-skeleton-panel disabled:opacity-100';
+  return <TopBar
+    left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />}
+    actionsPending={loading && !refreshWhileLoading}
+    right={<>
+      <PaletteHint />
+      {children ?? <>
+        {canManageProjects ? <>
+          <Button disabled aria-hidden variant="ghost" size="sm" className={placeholder}><Gauge className="invisible" /><span className="invisible">运维</span></Button>
+          <Button disabled aria-hidden variant="ghost" size="sm" className={placeholder}><Activity className="invisible" /><span className="invisible">资源占用</span></Button>
+        </> : null}
+        {refreshWhileLoading ?? <Button disabled aria-hidden variant="ghost" size="icon" className={placeholder}><RefreshCw className="invisible" /></Button>}
+        {canManageProjects
+          ? <Button disabled aria-hidden variant="outline" size="sm" className={placeholder}><Plus className="invisible" /><span className="invisible">项目工具</span></Button>
+          : <Button disabled aria-hidden variant="outline" size="sm" className={placeholder}><Database className="invisible" /><span className="invisible">数据同步</span></Button>}
+      </>}
+    </>}
+  />;
 }
 
 /*
@@ -224,6 +351,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
       {topbar}
       <main className={cn('cds-main cds-page-enter', wide ? 'cds-main--wide' : null)}>
         {children}
+        <RouteMotionCommit />
       </main>
     </>
   );
@@ -243,8 +371,15 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [operatorPendingCount, setOperatorPendingCount] = useState(0);
+  const [operatorOpenRequest, setOperatorOpenRequest] = useState(0);
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const [authPending, setAuthPending] = useState(true);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const canManageSettings = canManageSystemSettings(authStatus);
+  const canPollOperatorApprovals = canReadApproval(authStatus?.approvalCapabilities, 'operator');
+  const canReadAccessRequests = canReadApproval(authStatus?.approvalCapabilities, 'accessRequests');
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
   const agentContext = resolveAgentPageContext(
@@ -260,6 +395,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
   // 实例」处理，不打扰生产。
   const [previewInstance, setPreviewInstance] = useState(isChildPreviewCdsInstance());
+  const notificationIdentity = authStatus?.user?.id || authStatus?.user?.username || authStatus?.user?.githubLogin || undefined;
+  const previewAccessIdentity = !previewInstance && authStatus?.previewAccessNotices ? notificationIdentity : undefined;
+  const designReviewIdentity = !previewInstance && authStatus?.designReviewNotices ? notificationIdentity : undefined;
   const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -284,6 +422,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
     return () => { mo.disconnect(); window.clearTimeout(stop); };
   }, [previewInstance]);
   useEffect(() => {
+    if (!canManageSettings) return;
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
       if (isAccel && (event.key === 'k' || event.key === 'K')) {
@@ -298,23 +437,28 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('cds:open-palette' as keyof WindowEventMap, onCustom);
     };
-  }, []);
+  }, [canManageSettings]);
 
   useEffect(() => {
     const ctrl = new AbortController();
+    let cancelled = false;
+    const timer = window.setTimeout(() => ctrl.abort(), 15_000);
+    setAuthPending(true);
     fetch(apiUrl('/api/auth/status'), {
       credentials: 'include',
       headers: { Accept: 'application/json' },
       signal: ctrl.signal,
     })
       .then((res) => res.ok ? res.json() as Promise<ShellAuthStatus> : null)
-      .then((data) => setAuthStatus(data))
-      .catch((err: unknown) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
+      .then((data) => { if (!cancelled) { setAuthStatus(data); setAuthPending(false); } })
+      .catch(() => {
+        if (cancelled) return;
         setAuthStatus(null);
-      });
-    return () => ctrl.abort();
-  }, []);
+        setAuthPending(false);
+      })
+      .finally(() => window.clearTimeout(timer));
+    return () => { cancelled = true; window.clearTimeout(timer); ctrl.abort(); };
+  }, [authAttempt]);
 
   // 抽屉打开时锁住页面滚动,否则触屏下背景工作区仍能滚动,与模态行为冲突
   // (Bugbot #741 Medium「Drawer open background scrolls」)。关闭时还原原值。
@@ -344,6 +488,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   };
 
   return (
+    <ConsoleAuthContext.Provider value={{ status: authStatus, pending: authPending, retry: () => setAuthAttempt(value => value + 1) }}>
     <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
     <div
       className="cds-app-shell"
@@ -354,6 +499,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
+        authPending={authPending || !authStatus}
+        canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
         user={authStatus?.user}
@@ -367,6 +514,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         open={navOpen}
         onClose={() => setNavOpen(false)}
         active={active}
+        authPending={authPending || !authStatus}
+        canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
         user={authStatus?.user}
@@ -396,14 +545,18 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           </div>
         </div>
       )}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
+      {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      <OperatorApprovalModal />
+      {canPollOperatorApprovals ? <OperatorApprovalModal onCountChange={setOperatorPendingCount} openRequest={operatorOpenRequest} /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      <SiteNoticeInbox />
+      {canManageSettings || previewAccessIdentity || designReviewIdentity ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}
+        onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)}
+        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} designReviewIdentity={designReviewIdentity} /> : null}
     </div>
     </MobileNavContext.Provider>
+    </ConsoleAuthContext.Provider>
   );
 }
 
@@ -412,7 +565,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
  * keystroke chip and dispatches the open event when clicked. Pages should
  * render this as the leftmost item in their TopBar `right` slot.
  */
-export function PaletteHint(): JSX.Element {
+export function PaletteHint(): JSX.Element | null {
+  if (!useCanManageConsole()) return null;
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform);
   const open = () => window.dispatchEvent(new Event('cds:open-palette'));
   return (
@@ -434,6 +588,8 @@ export function PaletteHint(): JSX.Element {
 
 interface RailNavProps {
   active: AppNavKey;
+  authPending?: boolean;
+  canManageSettings: boolean;
   canLogout: boolean;
   authMode?: string;
   user?: ShellUser | null;
@@ -449,6 +605,8 @@ interface RailNavProps {
  */
 function RailNav({
   active,
+  authPending = false,
+  canManageSettings,
   canLogout,
   authMode,
   user,
@@ -475,7 +633,7 @@ function RailNav({
           <span className="cds-rail-full">项目列表</span>
           <span className="cds-rail-short">项目</span>
         </Link>
-        {/* 概览（plan.cds.service-relations 第四批）：全部项目的关系与体检，一眼看出配置错在哪、引用断在哪 */}
+        {canManageSettings ? <>
         <Link
           to="/overview"
           className="cds-rail-item"
@@ -488,22 +646,21 @@ function RailNav({
           <span>Overview</span>
         </Link>
         {/*
-         * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
-         * （建站向导 / 配置 / 自动发布 / 健康监测 / 证据），由控制台里的链接进入。
+         * 发布中心先展示线上版本、责任与主干差异；执行发布从中心进入发布控制台。
          * 两页共用一个高亮项，见 activeNavKeyFor。
          */}
         <Link
-          to="/release-console"
+          to="/release-center"
           className="cds-rail-item"
           data-active={active === 'release-center' ? 'true' : 'false'}
-          aria-label="发布控制台"
-          title="发布控制台（选版本 / 发布 / 实时输出 / 历史）"
+          aria-label="发布中心"
+          title="发布中心（线上版本 / 操作追溯 / 主干差异）"
           onClick={onNavigate}
-          onMouseEnter={preloadReleaseConsolePage}
-          onFocus={preloadReleaseConsolePage}
+          onMouseEnter={preloadReleaseCenterPage}
+          onFocus={preloadReleaseCenterPage}
         >
           <Upload />
-          <span className="cds-rail-full">发布控制台</span>
+          <span className="cds-rail-full">发布中心</span>
           <span className="cds-rail-short">发布</span>
         </Link>
         <Link
@@ -524,14 +681,14 @@ function RailNav({
           to="/reports"
           className="cds-rail-item"
           data-active={active === 'reports' ? 'true' : 'false'}
-          aria-label="验收报告"
-          title="验收报告（CDS 自托管 HTML / Markdown）"
+          aria-label="验收中心"
+          title="测试清单 / 执行任务 / 历史矩阵 / 验收报告"
           onClick={onNavigate}
           onMouseEnter={preloadReportsPage}
           onFocus={preloadReportsPage}
         >
           <FileText />
-          <span className="cds-rail-full">验收报告</span>
+          <span className="cds-rail-full">验收中心</span>
           <span className="cds-rail-short">报告</span>
         </Link>
         <Link
@@ -548,6 +705,33 @@ function RailNav({
           <span className="cds-rail-full">监控中心</span>
           <span className="cds-rail-short">监控</span>
         </Link>
+        </> : null}
+        <Link
+          to="/code-reviews"
+          className="cds-rail-item"
+          data-active={active === 'code-reviews' ? 'true' : 'false'}
+          aria-label="代码审查报告"
+          title="代码审查报告（上传 ZIP / GitHub 仓库审查）"
+          onClick={onNavigate}
+          onMouseEnter={preloadCodeReviewsPage}
+          onFocus={preloadCodeReviewsPage}
+        >
+          <SearchCode />
+          <span className="cds-rail-full">代码审查报告</span>
+          <span className="cds-rail-short">审查</span>
+        </Link>
+        <Link to="/engineering-planning" className="cds-rail-item" onClick={onNavigate}
+          data-active={active === 'engineering-planning' ? 'true' : 'false'} aria-label="工程规划" title="工程规划">
+          <Target />
+          <span className="cds-rail-full">工程规划</span>
+          <span className="cds-rail-short">规划</span>
+        </Link>
+        <Link to="/design" className="cds-rail-item" onClick={onNavigate}
+          data-active={active === 'design' ? 'true' : 'false'} aria-label="设计" title="设计">
+          <Layers />
+          <span className="cds-rail-full">设计</span>
+          <span className="cds-rail-short">设计</span>
+        </Link>
       </div>
       {/*
        * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。
@@ -556,6 +740,7 @@ function RailNav({
        */}
       <div className="flex-1" />
       <div className="cds-rail-tools">
+        {canManageSettings ? <>
         <button
           type="button"
           className="cds-rail-item cds-rail-action-entry cds-agent-access-entry"
@@ -600,10 +785,20 @@ function RailNav({
           <span className="cds-rail-full">系统设置</span>
           <span className="cds-rail-short">设置</span>
         </Link>
+        </> : !authPending ? (
+          <Link to="/cds-settings#activity" className="cds-rail-item"
+            data-active={active === 'cds-settings' ? 'true' : 'false'}
+            aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
+            <Activity />
+            <span className="cds-rail-full">个人操作痕迹</span>
+            <span className="cds-rail-short">痕迹</span>
+          </Link>
+        ) : null}
       </div>
       <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu
+          canManageSettings={canManageSettings}
           authMode={authMode}
           canLogout={canLogout}
           logoutState={logoutState}
@@ -660,6 +855,7 @@ function userInitials(user?: ShellUser | null): string {
 
 function UserAccountMenu({
   authMode,
+  canManageSettings,
   canLogout,
   logoutState,
   onLogout,
@@ -669,9 +865,10 @@ function UserAccountMenu({
   const { mode, setTheme } = useTheme();
   const { scale, setScale } = useUiScale();
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });
+  const { status } = useContext(ConsoleAuthContext);
+  const [passkeyAction, setPasskeyAction] = useState<'register' | 'verify' | 'logout-everywhere' | null>(null);
+  const [passkeyResult, setPasskeyResult] = useState('');
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const displayName = userDisplayName(user);
   const accountLabel = user?.githubLogin || user?.username || (authMode === 'disabled' ? '本地模式' : '已登录');
   const themes = [
@@ -680,49 +877,31 @@ function UserAccountMenu({
     { mode: 'system' as const, label: '自动', icon: Monitor },
   ];
 
-  const toggle = (): void => {
-    if (!open) {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) {
-        const menuWidth = Math.min(272, window.innerWidth - 24);
-        const desktopLeft = rect.right + 8;
-        setPosition({
-          bottom: Math.max(12, window.innerHeight - rect.bottom),
-          left: Math.max(12, Math.min(desktopLeft + menuWidth > window.innerWidth ? rect.left : desktopLeft, window.innerWidth - menuWidth - 12)),
-        });
+  const toggle = (): void => setOpen(value => !value);
+
+  async function managePasskey(action: 'register' | 'verify' | 'logout-everywhere') {
+    setPasskeyAction(action);
+    setPasskeyResult('');
+    try {
+      if (action === 'logout-everywhere') {
+        await apiRequest('/api/auth/passkeys/logout-everywhere', { method: 'POST' });
+        window.location.assign('/login');
+        return;
       }
+      if (action === 'register') await registerPasskey();
+      else await signInWithPasskey(true);
+      setPasskeyResult(action === 'register' ? '通行密钥已绑定。' : '身份已重新验证。');
+    } catch {
+      setPasskeyResult(action === 'register'
+        ? '未能绑定通行密钥。请重新登录或验证已有密钥，再重试。'
+        : action === 'verify' ? '未能验证身份。请选择当前账号的通行密钥重试。' : '未能退出所有站点，请稍后重试。');
+    } finally {
+      setPasskeyAction(null);
     }
-    setOpen((current) => !current);
-  };
+  }
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (event: PointerEvent): void => {
-      const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  const menu = open ? createPortal(
-    <div
-      ref={menuRef}
-      className="cds-account-menu"
-      style={{ bottom: position.bottom, left: position.left }}
-      role="menu"
-      aria-label="用户设置"
-    >
+  const menu = <AnchoredPopover open={open} anchorRef={triggerRef} widthRem={17} side="right" onDismiss={() => setOpen(false)} autoFocus="first"
+      className="cds-account-menu" role="menu" aria-label="用户设置">
       <div className="cds-account-menu-identity">
         <div className="cds-user-avatar cds-user-avatar--large">
           {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{userInitials(user)}</span>}
@@ -732,8 +911,17 @@ function UserAccountMenu({
           <div className="truncate text-xs text-muted-foreground">{accountLabel}</div>
         </div>
       </div>
+      {user ? (
+        <Link to="/personal-settings" className="cds-account-menu-item" role="menuitem" onClick={() => {
+          setOpen(false);
+          onNavigate?.();
+        }}>
+          <KeyRound />
+          <span>个人设置</span>
+        </Link>
+      ) : null}
       <Link
-        to="/cds-settings#auth"
+        to={canManageSettings ? '/cds-settings#auth' : '/cds-settings#activity'}
         className="cds-account-menu-item"
         role="menuitem"
         onClick={() => {
@@ -742,8 +930,26 @@ function UserAccountMenu({
         }}
       >
         <Settings />
-        <span>用户与认证</span>
+        <span>{canManageSettings ? '用户与认证' : '个人操作痕迹'}</span>
       </Link>
+      {status?.canUsePasskeys && typeof window !== 'undefined' && window.PublicKeyCredential ? <>
+        <button type="button" className="cds-account-menu-item" role="menuitem" disabled={passkeyAction !== null}
+          onClick={() => { void managePasskey('register'); }}>
+          <KeyRound />
+          <span>{passkeyAction === 'register' ? '正在绑定' : '绑定通行密钥'}</span>
+        </button>
+        <button type="button" className="cds-account-menu-item" role="menuitem" disabled={passkeyAction !== null}
+          onClick={() => { void managePasskey('verify'); }}>
+          <ShieldCheck />
+          <span>{passkeyAction === 'verify' ? '正在验证' : '用通行密钥重新验证'}</span>
+        </button>
+        <button type="button" className="cds-account-menu-item" role="menuitem" disabled={passkeyAction !== null}
+          onClick={() => { void managePasskey('logout-everywhere'); }}>
+          <LogOut />
+          <span>{passkeyAction === 'logout-everywhere' ? '正在退出各站点' : '退出当前账号的所有站点'}</span>
+        </button>
+        {passkeyResult ? <p role="status" className="px-3 py-2 text-xs text-muted-foreground">{passkeyResult}</p> : null}
+      </> : null}
       <div className="cds-account-theme" aria-label="主题">
         <div className="mb-2 text-xs font-medium text-muted-foreground">界面主题</div>
         <div className="grid grid-cols-3 gap-1">
@@ -815,9 +1021,7 @@ function UserAccountMenu({
           <span>{logoutState === 'running' ? '正在退出' : logoutState === 'error' ? '退出失败，请重试' : '退出登录'}</span>
         </button>
       ) : null}
-    </div>,
-    document.body,
-  ) : null;
+    </AnchoredPopover>;
 
   return (
     <>
@@ -842,7 +1046,7 @@ function UserAccountMenu({
   );
 }
 
-function AppRail(props: RailNavProps): JSX.Element {
+export function AppRail(props: RailNavProps): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       {/* 品牌宝石 2026-07-05 起移入横贯全宽的 topbar 左端(用户反馈"logo 放在
@@ -919,6 +1123,7 @@ export interface TopBarProps {
   centerWide?: boolean;
   /** Action buttons or stats, right-aligned. */
   right?: ReactNode;
+  actionsPending?: boolean;
 }
 
 /*
@@ -928,7 +1133,7 @@ export interface TopBarProps {
  *            user can act without the page rendering a separate "hero" card.
  *   right  = action buttons.
  */
-export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
+export function TopBar({ left, center, right, centerWide = false, actionsPending = false }: TopBarProps): JSX.Element {
   const { openNav } = useContext(MobileNavContext);
   const [actionsOpen, setActionsOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -936,17 +1141,8 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   // sheet 通过 portal 挂到 <body>(见下),所以用固定坐标定位到 ⋮ 按钮下方。
   // 不能留在 .cds-topbar 内:topbar 有 backdrop-filter,会成为 fixed 的包含块,
   // 导致全屏 backdrop 只盖住顶栏(Bugbot #741 Medium「Sheet backdrop clipped」)。
-  const [sheetPos, setSheetPos] = useState<{ top: number; right: number } | null>(null);
-  const toggleSheet = (): void => {
-    // 先算好定位再切状态:不把 setSheetPos 塞进 setActionsOpen 的 updater(reducer 里
-    // 做副作用是反模式),也保证 actionsOpen=true 时 sheetPos 必非空 —— 否则会出现
-    // 「锁了背景滚动却没渲染 sheet」(Bugbot #741 Medium「Sheet open locks background scroll」)。
-    const r = kebabRef.current?.getBoundingClientRect();
-    setSheetPos(r
-      ? { top: Math.round(r.bottom + 6), right: Math.round(Math.max(8, window.innerWidth - r.right)) }
-      : { top: 56, right: 8 });
-    setActionsOpen((o) => !o);
-  };
+  const sheetPosition = useAnchoredPosition({ open: actionsOpen, anchorRef: kebabRef, panelRef: sheetRef, widthRem: 18, align: 'end' });
+  const toggleSheet = (): void => setActionsOpen(value => !value);
   // ⋮ 动作 sheet 打开:锁背景滚动(否则触屏下背景仍可滚)+ 焦点陷阱(下方 useFocusTrap)。
   useEffect(() => {
     if (!actionsOpen) return undefined;
@@ -1016,9 +1212,10 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             ref={kebabRef}
             type="button"
             className="cds-icon-button"
-            onClick={toggleSheet}
+            onClick={actionsPending ? undefined : toggleSheet}
             aria-label="更多操作"
             aria-expanded={actionsOpen}
+            aria-disabled={actionsPending || undefined}
           >
             <MoreVertical />
           </button>
@@ -1026,7 +1223,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
               backdrop-filter 包含块,fixed backdrop 才能盖满整个视口(Bugbot #741)。
               不在容器上 auto-close:right 槽可能含嵌套 Radix 菜单(项目列表「一键部署」),
               点一下就收起会破坏二级菜单 —— 改为点 backdrop / Esc 关闭。 */}
-          {actionsOpen && sheetPos
+          {actionsOpen
             ? createPortal(
                 <>
                   <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
@@ -1034,7 +1231,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
                     ref={sheetRef}
                     className="cds-topbar-sheet"
                     role="menu"
-                    style={{ top: sheetPos.top, right: sheetPos.right }}
+                    style={sheetPosition}
                   >
                     {right}
                   </div>
@@ -1044,6 +1241,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             : null}
         </div>
       ) : null}
+      <InstanceSwitcher />
       <div id="cds-information-center-host" className="relative shrink-0" />
     </header>
   );
@@ -1080,7 +1278,9 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
         return (
           <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-1.5">
             {item.href && !isLast ? (
-              <a href={item.href} className={className}>
+              item.href.startsWith('/') && !item.href.startsWith('//') ? <Link to={item.href} className={className}>
+                {item.label}
+              </Link> : <a href={item.href} className={className}>
                 {item.label}
               </a>
             ) : (
@@ -1133,6 +1333,7 @@ export function Workspace({ wide = false, fluid = false, className, children }: 
       )}
     >
       {children}
+      <ListLoadingFeedback />
     </div>
   );
 }

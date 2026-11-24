@@ -46,6 +46,11 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('文件格式不受支持，请更换文件后重试。');
   });
 
+  it('保留损坏文件的已确认固定恢复文案，不把它泛化成重新上传', () => {
+    const backendMessage = '文件无法解析，请确认文件未损坏并重新选择';
+    expect(toUserReadableErrorMessage({ code: 'INVALID_FORMAT', message: backendMessage }, options)).toBe(backendMessage);
+  });
+
   it.each([
     ['文档标题不能为空', '文档标题不能为空，请检查文件后重新上传。'],
     ['文档标题最长 200 字符', '文档标题最长 200 字符，请检查文件后重新上传。'],
@@ -212,6 +217,10 @@ describe('toUserReadableErrorMessage', () => {
   it.each([
     ['SSO_PROVIDER_DISABLED', 'SSO 提供方尚未启用，请联系管理员启用后重试。'],
     ['SSO_DISABLED', '当前 SSO 登录已停用，请改用页面上的其他登录方式，或联系管理员处理。'],
+    ['SSO_TOKEN_INVALID', '米多星球登录凭证校验未通过，请点击米多星球重新发起登录；若持续失败，请联系米多星球管理员。'],
+    ['SSO_USER_UNAVAILABLE', '米多星球无法提供当前账号的身份信息，请联系米多星球管理员检查账号。'],
+    ['SSO_PROFILE_INCOMPLETE', '米多星球未提供有效的账号绑定信息，请联系米多星球管理员检查账号资料和授权字段。'],
+    ['SSO_PROVIDER_UNAVAILABLE', '米多星球登录校验暂时不可用，请稍后重试；若持续失败，请联系管理员检查登录服务。'],
     ['SSO_AUTHORIZE_INVALID', 'SSO 授权参数无效，请返回模型网关重新发起登录。'],
     ['SSO_ADMIN_REQUIRED', '当前账号不是管理员，无法进入外部控制台，请使用管理员账号登录后重试。'],
     ['SSO_BINDING_DUPLICATED', '米多星球账号绑定不唯一，请联系管理员处理。'],
@@ -267,7 +276,7 @@ describe('toUserReadableErrorMessage', () => {
     ['INVALID_STATE', '内容状态已发生变化，请刷新页面确认后重试。'],
     ['STALE_UPDATE', '内容已被其他操作更新，请刷新页面后重新提交。'],
     ['QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度后重试。'],
-    ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],
+    ['LLM_QUOTA_EXCEEDED', '上游 AI 服务可用额度已用尽或达到用量上限，本次操作未完成。管理员需要检查服务额度或切换可用配置，处理后再重试。'],
     ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],
     ['AVATAR_NOT_FOUND', '头像文件已失效，请重新上传或生成后再试。'],
     ['AVATAR_STORAGE_UNAVAILABLE', '头像存储暂时不可用，原头像未变更，请稍后重试。'],

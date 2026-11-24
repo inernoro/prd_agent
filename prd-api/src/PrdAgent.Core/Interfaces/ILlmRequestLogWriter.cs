@@ -59,7 +59,7 @@ public record LlmLogStart(
     /// <summary>本次请求是否流式（来自请求体 stream 字段）</summary>
     bool? IsStreaming = null,
     /// <summary>
-    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
+    /// 网关传输路径观测标记（S2）：http / direct / admin-probe。
     /// 由构建日志的位置权威标注；为 null 时写入器兜底为调用上下文的 GatewayTransport（默认 direct）。
     /// </summary>
     string? GatewayTransport = null,
@@ -108,7 +108,15 @@ public record LlmLogStart(
     string? OfferingTargetKind = null,
     string? Operation = null,
     string? LogicalRequestId = null,
-    string? ProviderTaskId = null);
+    string? ProviderTaskId = null,
+    string? TaskPermitId = null,
+    string? TaskLeaseRunId = null,
+    long? TaskLeaseFence = null,
+    string? ExecutionOrigin = null,
+    string? TriggerCredentialId = null,
+    string? TriggerActorUserId = null,
+    string? SourceDeployment = null,
+    string? SourceTask = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -161,7 +169,11 @@ public record LlmLogDone(
     string? ModelGroupName = null,
     decimal? ProviderReportedCost = null,
     string? ProviderCostCurrency = null,
-    List<LlmLogImagePayload>? OutputImagePayloads = null);
+    List<LlmLogImagePayload>? OutputImagePayloads = null,
+    int? ReasoningTokens = null,
+    bool? CacheCreationCountedInsideInput = null,
+    string? CostKind = null,
+    string? ProviderTaskId = null);
 
 public sealed record LlmLogImagePayload(
     string? Base64Data,

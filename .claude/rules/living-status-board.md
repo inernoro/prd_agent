@@ -64,5 +64,5 @@
 - `expectation-management.md`（预期管理总纲）：本规则是它在「工程级进度」切面的落地——消灭「不知道在干嘛 / 不知道还要多久」。
 - `blocked-state-circuit-breaker.md`：看板的「进度停滞 / 反复重写却无状态翻转」正是熔断触发信号；本规则提供可观测的判定面。
 - `doc-types.md` / `doc/rule.doc.naming.md`：看板归 `plan.*`，appname 优先，禁裸文件。
-- `debt.*`：blocker 中「已知边界 / 后续可补」要落对应 `debt.{module}.md`，看板只做索引，不重复台账。
+- 已知边界或后续需偿还的事项写入当前项目的 CDS 工程债务。看板引用债务编号和当前状态。
 - 本次工程的看板实例：`doc/plan.platform.llm-gateway.full-cutover.md`。

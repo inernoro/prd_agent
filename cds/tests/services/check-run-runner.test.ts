@@ -318,7 +318,7 @@ describe('CheckRunRunner.reconcileStale (周期收敛滞留 in_progress 的 chec
   it('concludeWithoutDeploy: 分支未关联 GitHub（无 repo/sha/installation）→ no-op', async () => {
     let called = 0;
     githubApp.createCheckRun = async () => { called += 1; return { id: 1, url: '' }; };
-    const unlinked = { ...branch, id: 'b2', githubRepoFullName: undefined };
+    const unlinked = { ...branch, id: 'b2', branch: 'feat/unlinked', githubRepoFullName: undefined };
     stateService.addBranch(unlinked as any);
     await runner.concludeWithoutDeploy(unlinked as any, {
       conclusion: 'failure', title: 't', summary: 's',

@@ -1,0 +1,92 @@
+/* 与 QuickSharePopover 共用色彩与密度：10px 分组、36px 设置行、品牌色主按钮。 */
+.site-settings-group {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+.site-settings-row + .site-settings-row {
+  border-top: 1px solid var(--border-subtle);
+}
+.site-settings-row-summary,
+.site-settings-toggle-row {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+}
+.site-settings-row-summary {
+  cursor: pointer;
+  list-style: none;
+}
+.site-settings-row-summary::-webkit-details-marker { display: none; }
+.site-settings-row-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.site-settings-row-icon,
+.site-settings-row-chevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.site-settings-row-label {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.site-settings-row-value {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.site-settings-row[open] > summary .site-settings-row-chevron { transform: rotate(90deg); }
+.site-settings-row-editor {
+  padding: 2px 10px 10px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.site-settings-row-editor > label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+.site-settings-tabs {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.site-settings-tabs button {
+  min-height: 36px;
+  padding: 6px 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.site-settings-tabs button[aria-pressed='true'] {
+  border-bottom-color: var(--accent-primary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.site-settings-footer {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+.site-settings-footer button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.site-settings-footer button:last-child {
+  background: var(--accent-primary);
+  color: var(--accent-on-solid);
+}

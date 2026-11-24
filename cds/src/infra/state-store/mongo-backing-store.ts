@@ -91,6 +91,7 @@ import type {
 } from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
 import { pruneWebhookDeliveries } from '../../services/webhook-delivery-retention.js';
+import { timeMainThreadSection } from '../../services/main-thread-diagnostics.js';
 
 /**
  * Minimal MongoDB collection surface we need. Keeping the interface
@@ -668,7 +669,7 @@ export class MongoStateBackingStore implements StateBackingStore {
     // Deep clone to protect the cache from subsequent in-place
     // mutations by the caller (StateService tends to mutate state
     // members then call save()).
-    this.cache = sanitizeStateForPersistence(state);
+    this.cache = timeMainThreadSection('state.snapshot.sanitize', () => sanitizeStateForPersistence(state));
     this.pendingSnapshot = this.cache;
     this.pendingGeneration = ++this.writeGeneration;
     this.drainWrites();

@@ -508,10 +508,19 @@ public sealed class DesignKnowledgeOriginalWorkspaceTests
             await Db.DesignArtifactRuns.InsertOneAsync(run);
             return run;
         }
-        internal DesignArtifactWorkspaceBroker Broker(bool includeResolver = true) => ActivatorUtilities.CreateInstance<DesignArtifactWorkspaceBroker>(
-            (includeResolver ? new ServiceCollection().AddSingleton<IDesignKnowledgeSnapshotResolver>(Resolver) : new ServiceCollection()).BuildServiceProvider(),
-            Db, Storage.Object, new EphemeralDataProtectionProvider(),
-            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["DesignArtifactRuntime:PublicBaseUrl"] = "https://map.example.test" }).Build());
+        internal DesignArtifactWorkspaceBroker Broker(bool includeResolver = true)
+        {
+            var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+            grants.Setup(service => service.IssueAsync(It.IsAny<DesignArtifactRun>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((DesignArtifactRun run, DateTime expiresAt, CancellationToken _) => new DesignArtifactGatewayGrant(
+                    $"synthetic-grant-{run.Id}", "https://gateway.example.test/gw/v1", "synthetic-test-grant",
+                    "default-chat-curated", AppCallerRegistry.Admin.WebHosting.GenerateHtml, expiresAt));
+            var services = new ServiceCollection().AddSingleton(grants.Object);
+            if (includeResolver) services.AddSingleton<IDesignKnowledgeSnapshotResolver>(Resolver);
+            return ActivatorUtilities.CreateInstance<DesignArtifactWorkspaceBroker>(
+                services.BuildServiceProvider(), Db, Storage.Object, new EphemeralDataProtectionProvider(),
+                new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["DesignArtifactRuntime:PublicBaseUrl"] = "https://map.example.test" }).Build());
+        }
         internal async Task<DesignWorkspacePackage> PackageAsync(DesignArtifactRun run) => JsonSerializer.Deserialize<DesignWorkspacePackage>(
             (await Local.TryDownloadBytesAsync(run.WorkspaceInputAssetKey!, default))!, DesignArtifactWorkspaceContract.JsonOptions)!;
         internal async Task AssertUnpreparedAsync(DesignArtifactRun run)

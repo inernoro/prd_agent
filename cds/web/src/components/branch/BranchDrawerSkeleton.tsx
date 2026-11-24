@@ -46,19 +46,19 @@ export function BranchDrawerSkeleton({ status }: { /** 父组件经 SSE 透传�
       </nav>
 
       <div className="flex flex-col gap-3 p-5">
-        {/* 1. 六块指标砖：与 KpiTile 同一副外壳（标签 / 大数 / 副标题 + 走势位） */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {KPI_LABELS.map((label, i) => (
-            <section key={label} className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-4">
-              <span className="text-[0.8125rem] font-bold uppercase tracking-[0.1em] text-muted-foreground">{label}</span>
-              <div className="cds-loading-skeleton-line h-[2.2rem] w-2/3" style={{ animationDelay: `${i * 0.08}s` }} />
-              <div className="flex min-h-[2.5rem] items-end"><div className="cds-loading-skeleton-line h-3.5 w-3/4" style={{ animationDelay: `${i * 0.08 + 0.1}s` }} /></div>
-            </section>
-          ))}
+        {/* 与就绪总览同一轮廓：状态与版本、入口、一行运行事实。 */}
+        <div className="space-y-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
+          <div className="flex flex-wrap justify-between gap-3">
+            <div className="min-w-0 flex-[1_1_18rem] space-y-2"><span className="text-sm text-muted-foreground">状态</span><div className="cds-loading-skeleton-line h-5 w-2/3" /><div className="cds-loading-skeleton-line h-3.5 w-3/4" /></div>
+            <div className="space-y-2"><span className="text-sm text-muted-foreground">入口</span><div className="cds-loading-skeleton-line h-4 w-36" /></div>
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3">
+            {KPI_LABELS.filter(label => label !== '状态' && label !== '入口').map(label => <span key={label} className="flex items-center gap-2 text-sm text-muted-foreground">{label}<span className="cds-loading-skeleton-line h-3.5 w-10" /></span>)}
+          </div>
         </div>
 
         {/* 1.5 关系：与 RelationCard 的行式加载态是同一个组件 */}
-        <RelationCardSkeleton variant="row" badge="等分支详情" note="分支详情到了就开始体检，通常 1 秒内完成" />
+        <RelationCardSkeleton variant="row" badge="等分支详情" />
 
         {/* 3. 曲线：CPU 图满宽 + 下面两块并排，与总览出图前用的是同一个骨架 */}
         <div className="flex flex-col gap-3">

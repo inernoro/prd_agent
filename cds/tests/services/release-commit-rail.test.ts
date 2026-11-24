@@ -46,8 +46,8 @@ function defaultReply(args: string[]): string | undefined {
   }
   if (args.includes('rev-list')) {
     const range = args[args.length - 1];
-    if (range === `${SHA_C}..origin/main`) return '2\n';
-    if (range === `origin/main..${SHA_C}`) return '0\n';
+    if (range === `${SHA_C}..${SHA_A}`) return '2\n';
+    if (range === `${SHA_A}..${SHA_C}`) return '0\n';
     return '0\n';
   }
   if (args.includes('log')) return '2026-07-28T09:00:00+00:00\n';
@@ -105,14 +105,14 @@ describe('纯函数解析', () => {
 });
 
 describe('流水轴读取', () => {
-  it('正常情况给出节点、refsAsOf 与该环境的落点', () => {
+  it('正常情况给出节点、refsAsOf 与该环境的落点', async () => {
     const { reader } = readerFor(defaultReply);
 
-    const result = reader.read({
+    const result = (await reader.read({
       projectId: 'proj-a',
       branch: 'main',
       targets: [{ targetId: 't1', commitSha: SHA_C }],
-    });
+    }));
 
     expect(result.rail.unavailableReason).toBeUndefined();
     expect(result.rail.ref).toBe('origin/main');
@@ -127,35 +127,35 @@ describe('流水轴读取', () => {
     expect(position.oldestUnreleasedAt).toBe('2026-07-28T09:00:00.000Z');
   });
 
-  it('分叉时 behind 与 ahead 同时非零，两个都如实给出', () => {
+  it('分叉时 behind 与 ahead 同时非零，两个都如实给出', async () => {
     // 事故值：只算一个方向、另一个靠相减推，分叉时给出的是个无声的错数。
     const { reader } = readerFor((args) => {
       if (args.includes('rev-list')) {
         const range = args[args.length - 1];
-        if (range === `${SHA_C}..origin/main`) return '5\n';
-        if (range === `origin/main..${SHA_C}`) return '3\n';
+        if (range === `${SHA_C}..${SHA_A}`) return '5\n';
+        if (range === `${SHA_A}..${SHA_C}`) return '3\n';
       }
       return defaultReply(args);
     });
 
-    const position = reader.read({
+    const position = (await reader.read({
       projectId: 'proj-a',
       branch: 'main',
       targets: [{ targetId: 't1', commitSha: SHA_C }],
-    }).positions.t1;
+    })).positions.t1;
 
     expect(position.behindCount).toBe(5);
     expect(position.aheadCount).toBe(3);
   });
 
-  it('本地没有该 ref → 有人话原因、nodes 为空、落点全 null', () => {
+  it('本地没有该 ref → 有人话原因、nodes 为空、落点全 null', async () => {
     const { reader } = readerFor((args) => (args.includes('rev-parse') ? undefined : defaultReply(args)));
 
-    const result = reader.read({
+    const result = (await reader.read({
       projectId: 'proj-a',
       branch: 'main',
       targets: [{ targetId: 't1', commitSha: SHA_C }],
-    });
+    }));
 
     expect(result.rail.nodes).toEqual([]);
     expect(result.rail.unavailableReason).toContain('main');
@@ -164,10 +164,10 @@ describe('流水轴读取', () => {
     expect(result.positions.t1.reason).toBeTruthy();
   });
 
-  it('项目没有本地仓库路径 → 不可用原因说清是路径的事', () => {
+  it('项目没有本地仓库路径 → 不可用原因说清是路径的事', async () => {
     const { reader, calls } = readerFor(defaultReply, { repoRoot: undefined });
 
-    const result = reader.read({ projectId: 'proj-a', branch: 'main', targets: [] });
+    const result = (await reader.read({ projectId: 'proj-a', branch: 'main', targets: [] }));
 
     expect(result.rail.nodes).toEqual([]);
     expect(result.rail.unavailableReason).toContain('本地仓库路径');
@@ -175,120 +175,120 @@ describe('流水轴读取', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('项目没记远端默认分支 → 不可用而不是瞎猜一个 main', () => {
+  it('项目没记远端默认分支 → 不可用而不是瞎猜一个 main', async () => {
     const { reader, calls } = readerFor(defaultReply);
 
-    const result = reader.read({ projectId: 'proj-a', branch: null, targets: [] });
+    const result = (await reader.read({ projectId: 'proj-a', branch: null, targets: [] }));
 
     expect(result.rail.unavailableReason).toContain('默认分支');
     expect(calls).toHaveLength(0);
   });
 
-  it('分支名不过 ref 白名单时压根不进 argv', () => {
+  it('分支名不过 ref 白名单时压根不进 argv', async () => {
     // sha / ref 最终是 git 的命令行参数：`-` 开头的值会被当成选项。
     const { reader, calls } = readerFor(defaultReply);
 
-    const result = reader.read({ projectId: 'proj-a', branch: '--upload-pack=/bin/sh', targets: [] });
+    const result = (await reader.read({ projectId: 'proj-a', branch: '--upload-pack=/bin/sh', targets: [] }));
 
     expect(result.rail.unavailableReason).toContain('白名单');
     expect(calls).toHaveLength(0);
   });
 
-  it('git 整体不可用 → 退化成不可用，不抛给调用方', () => {
+  it('git 整体不可用 → 退化成不可用，不抛给调用方', async () => {
     const { reader } = readerFor(() => undefined);
 
-    const result = reader.read({
+    const result = (await reader.read({
       projectId: 'proj-a',
       branch: 'main',
       targets: [{ targetId: 't1', commitSha: SHA_C }],
-    });
+    }));
 
     expect(result.rail.nodes).toEqual([]);
     expect(result.rail.unavailableReason).toBeTruthy();
   });
 
-  it('该环境从未发布过（无 commit）→ 给原因，不算成落后 0', () => {
+  it('该环境从未发布过（无 commit）→ 给原因，不算成落后 0', async () => {
     const { reader } = readerFor(defaultReply);
 
-    const position = reader.read({
+    const position = (await reader.read({
       projectId: 'proj-a',
       branch: 'main',
       targets: [{ targetId: 't1', commitSha: '' }],
-    }).positions.t1;
+    })).positions.t1;
 
     expect(position.behindCount).toBeNull();
     expect(position.inRail).toBe(false);
     expect(position.reason).toContain('成功发布过');
   });
 
-  it('本地查不到该 commit → 两个方向都 null 且给原因', () => {
+  it('本地查不到该 commit → 两个方向都 null 且给原因', async () => {
     const { reader } = readerFor((args) => (args.includes('rev-list') ? undefined : defaultReply(args)));
 
-    const position = reader.read({
+    const position = (await reader.read({
       projectId: 'proj-a',
       branch: 'main',
       targets: [{ targetId: 't1', commitSha: SHA_C }],
-    }).positions.t1;
+    })).positions.t1;
 
     expect(position.behindCount).toBeNull();
     expect(position.aheadCount).toBeNull();
     expect(position.reason).toContain(SHA_C.slice(0, 7));
   });
 
-  it('TTL 内同样的输入不再起 git 进程', () => {
+  it('TTL 内同样的输入不再起 git 进程', async () => {
     let clock = 1_000;
     const { reader, calls } = readerFor(defaultReply, { now: () => clock });
     const input = { projectId: 'proj-a', branch: 'main', targets: [{ targetId: 't1', commitSha: SHA_C }] };
 
-    reader.read(input);
+    (await reader.read(input));
     const firstCallCount = calls.length;
     expect(firstCallCount).toBeGreaterThan(0);
-    reader.read(input);
+    (await reader.read(input));
     // 事故值：不缓存的话，每打开一次发布中心就按目标数放大成一串 git 进程。
     expect(calls).toHaveLength(firstCallCount);
 
     clock += 120_000;
-    reader.read(input);
+    (await reader.read(input));
     expect(calls.length).toBeGreaterThan(firstCallCount);
   });
 
-  it('目标的版本变了就重算，不吃过期缓存', () => {
+  it('目标的版本变了就重算，不吃过期缓存', async () => {
     const { reader, calls } = readerFor(defaultReply, { now: () => 1_000 });
 
-    reader.read({ projectId: 'proj-a', branch: 'main', targets: [{ targetId: 't1', commitSha: SHA_C }] });
+    (await reader.read({ projectId: 'proj-a', branch: 'main', targets: [{ targetId: 't1', commitSha: SHA_C }] }));
     const firstCallCount = calls.length;
-    reader.read({ projectId: 'proj-a', branch: 'main', targets: [{ targetId: 't1', commitSha: SHA_B }] });
+    (await reader.read({ projectId: 'proj-a', branch: 'main', targets: [{ targetId: 't1', commitSha: SHA_B }] }));
 
     expect(calls.length).toBeGreaterThan(firstCallCount);
   });
 });
 
 describe('跨环境提交距离直算', () => {
-  it('给出 from..to 的提交数', () => {
+  it('给出 from..to 的提交数', async () => {
     const { reader, calls } = readerFor((args) => (args.includes('rev-list') ? '4\n' : defaultReply(args)));
 
-    expect(reader.countCommitsBetween('proj-a', SHA_C, SHA_A)).toBe(4);
+    expect((await reader.countCommitsBetween('proj-a', SHA_C, SHA_A))).toBe(4);
     expect(calls.at(-1)?.at(-1)).toBe(`${SHA_C}..${SHA_A}`);
   });
 
-  it('同一个 commit 直接 0，不起 git', () => {
+  it('同一个 commit 直接 0，不起 git', async () => {
     const { reader, calls } = readerFor(defaultReply);
 
-    expect(reader.countCommitsBetween('proj-a', SHA_A, SHA_A)).toBe(0);
+    expect((await reader.countCommitsBetween('proj-a', SHA_A, SHA_A))).toBe(0);
     expect(calls).toHaveLength(0);
   });
 
-  it('sha 形状不合法一律 null 且不进 argv', () => {
+  it('sha 形状不合法一律 null 且不进 argv', async () => {
     const { reader, calls } = readerFor(defaultReply);
 
-    expect(reader.countCommitsBetween('proj-a', '--upload-pack=/bin/sh', SHA_A)).toBeNull();
-    expect(reader.countCommitsBetween('proj-a', SHA_A, 'HEAD')).toBeNull();
+    expect((await reader.countCommitsBetween('proj-a', '--upload-pack=/bin/sh', SHA_A))).toBeNull();
+    expect((await reader.countCommitsBetween('proj-a', SHA_A, 'HEAD'))).toBeNull();
     expect(calls).toHaveLength(0);
   });
 
-  it('git 失败 → null，不是 0', () => {
+  it('git 失败 → null，不是 0', async () => {
     const { reader } = readerFor((args) => (args.includes('rev-list') ? undefined : defaultReply(args)));
 
-    expect(reader.countCommitsBetween('proj-a', SHA_C, SHA_A)).toBeNull();
+    expect((await reader.countCommitsBetween('proj-a', SHA_C, SHA_A))).toBeNull();
   });
 });

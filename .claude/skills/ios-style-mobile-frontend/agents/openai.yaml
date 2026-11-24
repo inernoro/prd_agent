@@ -1,0 +1,4 @@
+interface:
+  display_name: "苹果风移动端前端"
+  short_description: "先明确手机上的任务与取舍，再设计触屏交互、苹果风界面并检查多端表现"
+  default_prompt: "使用 $ios-style-mobile-frontend，先说明手机任务及依据、值得改动与原样保留的地方，再完成设计实现和适用验证。"

@@ -1,0 +1,61 @@
+.share-assistant { flex-direction: column; align-items: flex-end; gap: 8px; }
+.share-assistant-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0,0,0,.14);
+  cursor: pointer;
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+.share-assistant-trigger:hover { background: var(--bg-tertiary); box-shadow: 0 5px 20px rgba(0,0,0,.2); }
+.share-assistant-menu {
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  box-shadow: 0 6px 24px rgba(0,0,0,.16);
+  animation: share-assistant-open 140ms ease-out;
+  transform-origin: bottom right;
+}
+.share-assistant-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.share-assistant-menu button:hover { background: var(--bg-tertiary); }
+.share-assistant button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.share-assistant button:disabled { opacity: .5; cursor: default; }
+.share-assistant-rounds { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+.share-assistant-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 16px;
+}
+@keyframes share-assistant-open { from { opacity: 0; transform: translateY(4px) scale(.96); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .share-assistant-trigger { transition: none; }
+  .share-assistant-menu { animation: none; }
+}

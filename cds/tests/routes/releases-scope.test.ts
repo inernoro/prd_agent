@@ -203,6 +203,15 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.targets.map((target: ReleaseTarget) => target.id)).toEqual(['target-a']);
   });
 
+  it('不能用客户端 trigger 将全局 Agent Key 伪装成系统发布', async () => {
+    const res = await request(server, 'POST', '/api/releases/branches/branch-a/runs', {
+      'X-AI-Access-Key': 'global-ai-key', 'X-CDS-Trigger': 'webhook',
+    }, { targetId: 'target-a' });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('project_key_required');
+    expect(stateService.getReleaseRuns({ targetId: 'target-a' })).toEqual([]);
+  });
+
   it('refuses Project A key creating a Project B SSH release target', async () => {
     const res = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
       id: 'target-b-hijack',
@@ -258,6 +267,7 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(201);
     expect(res.body.target.ssh.deployCommand).toBe('');
     expect(res.body.target.strategy.mode).toBe('generated-compose');
+    expect(res.body.target.governance.required).toBe(true);
     expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
   });
 
@@ -272,6 +282,20 @@ describe('release control plane project-scope isolation', () => {
     expect(res.body.target.name).toBe('A production updated');
     expect(res.body.target.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
     expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
+  });
+
+  it('defaults new targets to the standard project file and persists an explicitly selected standalone script', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      projectId: 'proj-a', name: 'Project script', privateKeyRef: 'proj-a-host-key',
+      host: '127.0.0.1', port: 22, user: 'root', appPath: '/srv/app', healthcheckUrl: 'https://a.example.test/healthz',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.target.strategy).toMatchObject({ mode: 'project-script', scriptFile: 'cds-release.sh' });
+    expect(res.body.target.ssh.deployCommand).toBe('');
+    const script = '#!/bin/bash\nset -eu\n# check / deploy\n';
+    const patched = await request(server, 'PATCH', `/api/releases/targets/${res.body.target.id}`, { 'X-Test-Key': KEY_A }, { strategy: { mode: 'managed-script', script } });
+    expect(patched.status).toBe(200);
+    expect(patched.body.target.strategy).toMatchObject({ mode: 'managed-script', script });
   });
 
   it('returns 409 when patching a second active canonical target into the same environment', async () => {
@@ -377,6 +401,7 @@ describe('release control plane project-scope isolation', () => {
     expect(res.status).toBe(201);
     expect(res.body.target.projectId).toBe('proj-a');
     expect(res.body.target.name).toBe('www.a.example.test 本机生产');
+    expect(res.body.target.governance.required).toBe(true);
     expect(res.body.target.ssh.host).toBe('127.0.0.1');
     expect(res.body.target.ssh.user).toBe('root');
     expect(res.body.target.ssh.appPath).toBe('/opt/a-prod');

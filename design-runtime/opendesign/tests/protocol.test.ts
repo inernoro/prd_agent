@@ -67,6 +67,7 @@ describe('GET /v1/capabilities', () => {
       engineVersion: '0.21.1',
       codexVersion: 'codex-cli 0.143.0',
       designSystems: ['default', 'editorial'],
+      browserQuality: { ready: true, observation: 'test Chromium' },
       healthy: true,
       busy: false,
       acceptingTasks: true,
@@ -76,6 +77,24 @@ describe('GET /v1/capabilities', () => {
     });
     const ready = await harness.request('GET', '/healthz/ready');
     expect(ready.status).toBe(200);
+  });
+
+  it('refuses readiness and new tasks when the isolated quality browser is missing', async () => {
+    harness = await startHarness({ overrides: {
+      selfCheck: {
+        codexVersion: 'codex-cli 0.143.0',
+        codexMatches: true,
+        codexObservation: 'codex-cli 0.143.0',
+        missingSkillFiles: [],
+        designSystems: ['default', 'editorial'],
+        browserQuality: { ready: false, executablePath: '/missing/chromium', observation: 'browser executable missing' },
+      },
+    } });
+    const capabilities = await harness.request('GET', '/v1/capabilities');
+    expect(capabilities.body.engineReady).toBe(false);
+    expect(capabilities.body.browserQuality).toEqual({ ready: false, observation: 'browser executable missing' });
+    expect(capabilities.body.conditions.map((condition: { code: string }) => condition.code)).toContain('browser_quality_unavailable');
+    expect((await harness.request('GET', '/healthz/ready')).status).toBe(503);
   });
 
   it('actually probes the daemon: a failing /api/health turns healthy false with an external-cause-first reason', async () => {
@@ -136,6 +155,41 @@ describe('authentication', () => {
 });
 
 describe('POST /v1/tasks', () => {
+  it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const direct = taskRequest(map, pkg, {
+      model: {
+        baseUrl: 'http://gateway/gw/v1',
+        protocol: 'openai',
+        apiKey: 'run-scoped-grant',
+        model: 'default-chat-curated',
+        sourceSystem: 'map',
+        appCallerCode: 'prd-agent-web.web-hosting.generate-html::chat',
+        userId: 'user-1',
+        runId: pkg.runId,
+      },
+    });
+
+    const normalized = normalizeTaskRequest(direct, 'http://gateway/gw/v1');
+
+    expect(normalized.model).toMatchObject({
+      baseUrl: 'http://gateway/gw/v1',
+      sourceSystem: 'map',
+      appCallerCode: 'prd-agent-web.web-hosting.generate-html::chat',
+      userId: 'user-1',
+      runId: pkg.runId,
+    });
+    expect(() => normalizeTaskRequest({
+      ...direct,
+      model: { ...(direct.model as object), baseUrl: 'https://other-internal.example/gw/v1' },
+    }, 'http://gateway/gw/v1')).toThrow(/configured LLMGW endpoint/);
+    expect(() => normalizeTaskRequest({
+      ...direct,
+      model: { ...(direct.model as object), runId: 'another-run' },
+    }, 'http://gateway/gw/v1')).toThrow(/model.runId must equal taskId/);
+  });
+
   it('runs a task end to end, streams status / text_delta / done, commits to MAP and empties every task directory', async () => {
     harness = await startHarness();
     const pkg = buildPackage([{ path: 'knowledge/source.md', content: 'Product overview for the launch.', mediaType: 'text/markdown' }]);
@@ -171,7 +225,8 @@ describe('POST /v1/tasks', () => {
     expect(done.payload.resultSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(done.payload.files.map((file: { path: string }) => file.path)).toEqual([
       'assets/accessibility-static-report.json', 'assets/design-tokens.json', 'assets/page-outline.json',
-      'assets/provenance.json', 'index.html', 'manifest.json',
+      'assets/provenance.json', 'assets/quality/attempt-0-desktop.png', 'assets/quality/attempt-0-mobile.png',
+      'assets/visual-quality-report.json', 'index.html', 'manifest.json',
     ]);
     // 与 CDS 回传给 MAP 的阶段名一致，MAP 的 OpenDesignStageProgress 能直接认。
     const reasons = events.filter((event) => event.type === 'status').map((event) => event.payload.reason);

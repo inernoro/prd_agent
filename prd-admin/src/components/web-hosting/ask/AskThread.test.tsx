@@ -1,0 +1,182 @@
+// @vitest-environment jsdom
+import { act, type ComponentProps } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { copyWithFeedback } from '@/lib/clipboard';
+import AskThread from './AskThread';
+import type { AskMessage } from './askTypes';
+
+vi.mock('@/lib/clipboard', () => ({ copyWithFeedback: vi.fn() }));
+let container: HTMLDivElement;
+let root: Root;
+const onPick = vi.fn();
+const answer = '风险评分包含三个维度。[^1]\n\n[^1]: 风险分、置信度、业务价值。';
+const messages: AskMessage[] = [
+  { id: 'u1', role: 'user', content: '风险评分由哪些维度组成？' },
+  { id: 'a1', role: 'assistant', content: answer, streaming: false },
+];
+const questions = ['风险评分由哪些维度组成?', '怎么分层处理风险？', '怎么分层处理风险?', '规则如何降级？', '有哪些例外？', '谁负责审核？'];
+const props: ComponentProps<typeof AskThread> = {
+  messages, title: '风控规则', openingQuestions: questions, onPick,
+  refusal: null, onLogin: vi.fn(), onRetry: vi.fn(), isBusy: false,
+  phaseMessage: '', elapsedSeconds: 0, onCancel: vi.fn(),
+};
+const footer = () => container.querySelector<HTMLElement>('[aria-label="回答操作与后续问题"]');
+const button = (label: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const render = (overrides: Partial<ComponentProps<typeof AskThread>> = {}) => act(() => root.render(<AskThread {...props} {...overrides} />));
+beforeEach(() => {
+  vi.clearAllMocks(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.mocked(copyWithFeedback).mockResolvedValue(true);
+  container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+});
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+
+describe('回答完成后的操作与本页续问', () => {
+  it('最新成功回答显示完成状态和三条未问过的本页问题，点击发送真实问题', () => {
+    render();
+    expect(footer()?.textContent).toContain('回答完成');
+    const picks = container.querySelectorAll<HTMLButtonElement>('.ask-answer-followup');
+    expect([...picks].map((pick) => pick.textContent)).toEqual(['怎么分层处理风险？', '规则如何降级？', '有哪些例外？']);
+    act(() => picks[1].click());
+    expect(onPick).toHaveBeenCalledWith('规则如何降级？');
+    act(() => button('再问一次').click());
+    expect(onPick).toHaveBeenLastCalledWith(messages[0].content);
+  });
+
+  it('复制保留答案与原文脚注，复制失败不显示成功状态', async () => {
+    render();
+    await act(async () => button('复制回答').click());
+    expect(copyWithFeedback).toHaveBeenCalledWith(answer, expect.objectContaining({ successMessage: '已复制回答及引用' }));
+    expect(button('已复制回答')).not.toBeNull();
+    vi.mocked(copyWithFeedback).mockResolvedValue(false);
+    await act(async () => button('已复制回答').click());
+    expect(button('复制回答')).not.toBeNull();
+    expect(container.querySelector('[aria-label="已复制回答"]')).toBeNull();
+  });
+
+  it.each([
+    { messages: [] },
+    { messages: [messages[0]] },
+    { messages: [messages[0], { ...messages[1], content: '' }] },
+    { messages: [messages[0], { ...messages[1], streaming: true }], isBusy: true },
+    { messages: [messages[0], { ...messages[1], error: '已停止回答' }] },
+    { messages: [messages[0], { ...messages[1], error: '回答被中断' }] },
+  ])('未完成、停止和错误状态不冒充回答完成：%j', (overrides) => {
+    render(overrides);
+    expect(footer()).toBeNull();
+  });
+
+  it('无题库或分享未选开场问题时仍提供三个本页续问；只保留最新完成区', () => {
+    render({ openingQuestions: [] });
+    expect(footer()).not.toBeNull();
+    expect(container.querySelectorAll('.ask-answer-followup')).toHaveLength(3);
+    render({ openingQuestions: ['风险评分由哪些维度组成?'] });
+    expect(container.querySelectorAll('.ask-answer-followup')).toHaveLength(3);
+    render({ messages: [...messages, { id: 'u2', role: 'user', content: '规则如何降级？' }, { id: 'a2', role: 'assistant', content: '新回答' }] });
+    expect(container.querySelectorAll('.ask-answer-footer')).toHaveLength(1);
+    expect(container.querySelector('.ask-answer-next')?.textContent).not.toContain('规则如何降级？');
+    act(() => button('再问一次').click());
+    expect(onPick).toHaveBeenLastCalledWith('规则如何降级？');
+  });
+
+  it('登录或额度门禁出现时禁止续问和再问，仍可复制已有答案', async () => {
+    render({ refusal: 'need-login' });
+    expect(button('再问一次').disabled).toBe(true);
+    expect([...container.querySelectorAll<HTMLButtonElement>('.ask-answer-followup')].every((pick) => pick.disabled)).toBe(true);
+    expect(button('复制回答').disabled).toBe(false);
+    await act(async () => button('复制回答').click());
+    expect(copyWithFeedback).toHaveBeenCalled();
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('尚未提问时题库更新不把欢迎语滚出视野', () => {
+    render({ messages: [] });
+    const scroll = container.firstElementChild as HTMLDivElement;
+    Object.defineProperties(scroll, { scrollHeight: { value: 600, configurable: true }, clientHeight: { value: 200, configurable: true } });
+    scroll.scrollTop = 0;
+    render({ messages: [], openingQuestions: [...questions] });
+    expect(scroll.scrollTop).toBe(0);
+  });
+
+  it('完成区增高时继续跟随底部，用户上翻历史时不抢滚动位置', () => {
+    render();
+    const scroll = container.firstElementChild as HTMLDivElement;
+    Object.defineProperties(scroll, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 500, configurable: true } });
+    scroll.scrollTop = 500;
+    act(() => scroll.dispatchEvent(new Event('scroll')));
+    Object.defineProperty(scroll, 'scrollHeight', { value: 1250, configurable: true });
+    render({ messages: [...messages] });
+    expect(scroll.scrollTop).toBe(1250);
+    scroll.scrollTop = 100;
+    act(() => scroll.dispatchEvent(new Event('scroll')));
+    Object.defineProperty(scroll, 'scrollHeight', { value: 1500, configurable: true });
+    render({ messages: [...messages] });
+    expect(scroll.scrollTop).toBe(100);
+  });
+});
+
+
+describe('评分、表格和公共流式状态', () => {
+  it('评分仅成功后更新，失败显示原因并可重试，旧回答无回执不显示虚假控件', async () => {
+    const onRate = vi.fn().mockRejectedValueOnce(new Error('评分未保存'));
+    render({ onRate });
+    expect(button('评 4 分')).toBeNull();
+    const rated = [...messages.slice(0, 1), { ...messages[1], messageId: 'db-answer', ratingToken: 'receipt' }];
+    render({ messages: rated, onRate });
+    await act(async () => button('评 4 分').click());
+    expect(onRate).toHaveBeenCalledWith('a1', 4);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('评分未保存');
+    expect(button('评 4 分').getAttribute('aria-pressed')).toBe('false');
+    onRate.mockResolvedValueOnce(undefined);
+    await act(async () => button('评 4 分').click());
+    render({ messages: [rated[0], { ...rated[1], rating: 4 }], onRate });
+    expect(button('评 4 分').getAttribute('aria-pressed')).toBe('true');
+    expect(container.textContent).toContain('已评 4 分');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('回答表格有独立可键盘操作的横向滚动容器，保留列和引用', () => {
+    render({ messages: [messages[0], { ...messages[1], content: '| 设计维度 | Cloudflare 参照 | 本页应用 |\n| --- | --- | --- |\n| 规则执行 | Ruleset Engine | 风险分层[^1] |\n\n[^1]: 规则原文' }] });
+    const region = container.querySelector<HTMLElement>('[aria-label="回答表格，可横向滚动"]')!;
+    expect(region.tabIndex).toBe(0);
+    expect(region.querySelectorAll('th')).toHaveLength(3);
+    expect(region.querySelectorAll('td')).toHaveLength(3);
+    expect(region.textContent).toContain('Cloudflare');
+    expect(region.querySelector('[data-citation-badge]')).not.toBeNull();
+  });
+
+  it('等待与输出复用品牌光标和文字动效，状态提示保持轻量且停止可用', () => {
+    render({ isBusy: true, phaseMessage: '正在读取页面内容…', elapsedSeconds: 3 });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('正在读取页面内容… · 已等待 3 秒');
+    render({ isBusy: true, phaseMessage: '正在回答…', messages: [messages[0], { ...messages[1], content: '**要点', streaming: true }] });
+    expect(container.querySelector('strong')?.textContent).toContain('要点');
+    expect(container.querySelector('strong .streaming-text--blur .streaming-u')).not.toBeNull();
+    expect(container.querySelectorAll('.streaming-text-caret--custom')).toHaveLength(1);
+    expect(container.querySelector('.streaming-text-caret--custom')?.textContent).toBe('M');
+    expect(container.textContent).not.toContain('▌');
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('正在回答…');
+    expect(container.querySelector('[role="status"] .rounded-lg')).toBeNull();
+    act(() => button('停止回答').click());
+    expect(props.onCancel).toHaveBeenCalled();
+  });
+
+  it('逐 chunk 更新保留旧文字节点，完成后移除动效并展示服务端校验引用', () => {
+    const streaming = (content: string) => render({ isBusy: true, messages: [messages[0], { ...messages[1], content, streaming: true }] });
+    streaming('**风险评分**分三维');
+    const firstWord = container.querySelector('strong .streaming-u');
+    for (const suffix of ['[', '[引', '[引用', '[引用:', '[引用:1', '[引用:1]']) {
+      streaming(`**风险评分**分三维${suffix}`);
+      expect(container.querySelector('strong .streaming-u')).toBe(firstWord);
+      expect(container.querySelector('.ask-md')?.textContent).toBe('风险评分分三维M');
+    }
+    streaming('**风险评分**分三维[引用:1]。后续说明');
+    expect(container.querySelector('strong .streaming-u')).toBe(firstWord);
+    expect(container.textContent).not.toContain('[引用:1]');
+    expect(container.querySelector('[data-citation-badge]')).toBeNull();
+    render();
+    expect(container.querySelector('.streaming-text-caret')).toBeNull();
+    expect(container.querySelector('.streaming-u')).toBeNull();
+    expect(container.querySelector('[data-citation-badge]')).not.toBeNull();
+    expect(footer()).not.toBeNull();
+  });
+});

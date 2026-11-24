@@ -28,12 +28,14 @@ public interface IGatewayAdapter
     /// <param name="apiKey">API 密钥</param>
     /// <param name="requestBody">请求体</param>
     /// <param name="enablePromptCache">是否启用 Prompt Cache</param>
+    /// <param name="includeThinking">经过模型类型约束的推理输出意图，由适配器按上游协议编码</param>
     /// <returns>HTTP 请求消息</returns>
     HttpRequestMessage BuildHttpRequest(
         string endpoint,
         string? apiKey,
         JsonObject requestBody,
-        bool enablePromptCache = false);
+        bool enablePromptCache = false,
+        bool includeThinking = false);
 
     /// <summary>
     /// 解析流式响应块

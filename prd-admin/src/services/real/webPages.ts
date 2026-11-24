@@ -1,4 +1,5 @@
-import { apiDownload, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
+import { getWebHostingUploadError } from '@/lib/webHostingUploadLimits';
+import { apiDownload, apiMultipartRequest, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
 import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -7,6 +8,24 @@ import { connectSse } from '@/lib/useSseStream';
 import type { SseEvent } from '@/lib/sse';
 
 // ─── Types ───
+
+export interface HostedSiteTrafficScope {
+  visits: number;
+  visitors: number;
+  lastViewedAt?: string | null;
+}
+export interface HostedSiteTraffic {
+  all: HostedSiteTrafficScope;
+  external: HostedSiteTrafficScope;
+  activeShareLinks: number;
+}
+
+export interface HostedSiteActivity {
+  /** 服务端按已成功发布的内容修改与回退版本统计，不含基线、草稿或元信息修改。 */
+  editCount: number;
+  /** 服务端判断：近七天创建且当前用户未打开。 */
+  isNew: boolean;
+}
 
 export interface HostedSiteFile {
   path: string;
@@ -38,9 +57,13 @@ export interface HostedSite {
    * resolveSitePreviewSource 的调用点会直接编译不过（predicate-and-wiring-discipline 形状 2）。
    */
   pdfAssetUrl: string | undefined;
+  /** 后端依据当前文件清单派生的 PDF 下载白名单。 */
+  pdfFilePaths?: string[];
+  zipHomepageAssetPath?: string | null;
   files: HostedSiteFile[];
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
+  requiresPreviewBridge?: boolean;
   totalSize: number;
   tags: string[];
   folder?: string;
@@ -139,6 +162,33 @@ export interface ResolvedDesignKnowledgeReference extends DesignKnowledgeReferen
   title: string;
 }
 
+export interface DesignArtifactRuntimeFailure {
+  code: string;
+  issueCodes: string[];
+  repairAttempts?: number | null;
+  repairBudgetExhausted?: boolean | null;
+  /** 管理员诊断用的有界浏览器测量；普通用户界面不得直接渲染其中技术值。 */
+  browserQualityEvidence?: {
+    schemaVersion: string;
+    ruleVersion: string;
+    heuristicVersion: string;
+    repairAttempts: number;
+    repairBudgetExhausted: boolean;
+    attempts: Array<{
+      repairAttempt: number;
+      hardPassed: boolean;
+      score: number;
+      issues: Array<{
+        issueCode: string;
+        viewport: 'desktop' | 'mobile' | string;
+        actual: Record<string, string | number | boolean | null>;
+        target: string;
+        elementSummary?: { tag: string; id?: string | null; role?: string | null; label?: string | null } | null;
+      }>;
+    }>;
+  } | null;
+}
+
 export interface DesignArtifactRunSummary {
   runId: string;
   status: string;
@@ -149,6 +199,30 @@ export interface DesignArtifactRunSummary {
   title?: string | null;
   progress: number;
   phase: string;
+  phaseCode?: string | null;
+  firstVisibleFeedbackAt?: string | null;
+  firstPreviewAt?: string | null;
+  /** Run 上持久化的最后一版受信预览；终态失败重开时只用于展示，不代表任务仍可续跑。 */
+  previewHtml?: string | null;
+  previewRevision?: number | null;
+  lastProgressAt?: string | null;
+  maxStaticGapSeconds?: number | null;
+  streamReconnectCount?: number;
+  lastStreamReconnectAt?: string | null;
+  /** 最终产物的隔离浏览器质量摘要；逐视口证据保存在产物包，不进入普通运行流。 */
+  browserQuality?: {
+    schemaVersion: string;
+    ruleVersion: string;
+    heuristicVersion: string;
+    firstPassPassed: boolean;
+    repairAttempts: number;
+    repairSucceeded: boolean;
+    finalHardPassed: boolean;
+    finalScore: number;
+    viewports: string[];
+    evidenceRef: string;
+  } | null;
+  restartedFromRunId?: string | null;
   artifactSiteId?: string | null;
   artifactRevisionId?: string | null;
   producedArtifactSiteId?: string | null;
@@ -171,10 +245,13 @@ export interface DesignArtifactRunSummary {
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
+  runtimeFailure?: DesignArtifactRuntimeFailure | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string | null;
   cancelledAt?: string | null;
   createdAt: string;
+  /** 服务端持久化的结束时间；历史记录缺失时耗时未知，不能以恢复窗口的时钟补算。 */
+  completedAt?: string | null;
   knowledgeReferences: Array<{
     entryId: string;
     storeId?: string | null;
@@ -327,6 +404,8 @@ export function getPendingSiteOptimizationSession(): PendingOptimizationSession 
 }
 
 export interface ShareLinkItem {
+  /** 章节合集身份；与兼容目录的 collectionId 分开。 */
+  documentCollectionId?: string;
   id: string;
   token: string;
   /** 统一短链 Seq（数字 ID）；旧记录可能为 0，UI 此时退回老 /s/wp/{token} 链接 */
@@ -479,6 +558,7 @@ export function buildApiUrl(path: string) {
 
 export async function uploadSite(input: {
   file: File;
+  entryFile?: string;
   title?: string;
   description?: string;
   folder?: string;
@@ -498,10 +578,15 @@ export async function uploadSite(input: {
   /** 拿到 XHR 句柄，调用方据此实现「中止」 */
   onStart?: (xhr: XMLHttpRequest) => void;
 }): Promise<ApiResponse<HostedSite>> {
+  const sizeError = getWebHostingUploadError(input.file);
+  if (sizeError) return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: sizeError } };
+
   const token = useAuthStore.getState().token;
 
   const fd = new FormData();
   fd.append('file', input.file);
+  if (input.entryFile === '') fd.append('openAsDirectory', 'true');
+  else if (input.entryFile !== undefined) fd.append('entryFile', input.entryFile);
   if (input.title) fd.append('title', input.title);
   if (input.description) fd.append('description', input.description);
   if (input.folder) fd.append('folder', input.folder);
@@ -549,6 +634,8 @@ export async function uploadSite(input: {
  */
 export async function reviewSiteZip(input: {
   file: File;
+  entryFile?: string;
+  entryIndex?: number;
   title?: string;
   description?: string;
   folder?: string;
@@ -560,6 +647,9 @@ export async function reviewSiteZip(input: {
   onStage?: (stage: string) => void;
   signal?: AbortSignal;
 }): Promise<ApiResponse<HostedSiteOptimizationReviewResult>> {
+  const sizeError = getWebHostingUploadError(input.file);
+  if (sizeError) return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: sizeError } };
+
   const created = await apiRequest<HostedSiteOptimizationUploadCreatedResult>(
     api.webPages.optimizationUploads(),
     {
@@ -568,6 +658,8 @@ export async function reviewSiteZip(input: {
       body: {
         fileName: input.file.name,
         fileSize: input.file.size,
+        entryFile: input.entryFile,
+        entryIndex: input.entryIndex,
         title: input.title,
         description: input.description,
         folder: input.folder,
@@ -809,6 +901,9 @@ export async function cancelSiteOptimization(sessionId: string): Promise<ApiResp
 export async function reuploadSite(
   id: string, file: File, uploadId?: string, signal?: AbortSignal,
 ): Promise<ApiResponse<HostedSite>> {
+  const sizeError = getWebHostingUploadError(file);
+  if (sizeError) return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: sizeError } };
+
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -840,6 +935,8 @@ export async function reuploadSite(
 // ─── From Content ───
 
 export async function createFromContent(input: {
+  writingTemplateId?: string;
+  documentType?: string;
   htmlContent: string;
   title?: string;
   description?: string;
@@ -877,8 +974,10 @@ export async function listSites(params?: {
     total: number;
     owners?: Record<string, SiteOwnerCard>;
     /** 每个站点的独立访客数（siteId → 人数，后端按 userId / IP 去重）。
-     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。没有访问记录的站点不出现在表里。 */
+     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。新站无记录时为零；旧累计有值但记录缺失时不返回该项。 */
     visitors?: Record<string, number>;
+    activity?: Record<string, HostedSiteActivity>;
+    traffic?: Record<string, HostedSiteTraffic>;
     /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
     myWebHostingRole?: WebHostingRole;
   }>
@@ -1224,9 +1323,15 @@ export interface SharedSiteInfo {
   description?: string;
   siteUrl: string;
   entryFile: string;
+  /** 与站内预览共用服务端文件结构分类；旧服务端缺字段时沿用原策略。 */
+  contentShape?: HostedSite['contentShape'];
+  requiresPreviewBridge?: boolean;
   totalSize: number;
   /** 入口文件自己的字节数（不是 totalSize 那个所有文件之和）。后端取不到时为 0 */
   entrySize: number;
+  /** 服务端登记的可下载 PDF 路径；不包含对象存储物理键。 */
+  pdfFilePaths?: string[];
+  zipHomepageAssetPath?: string | null;
   fileCount: number;
   coverImageUrl?: string;
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
@@ -1242,9 +1347,18 @@ export interface SharedSiteInfo {
    * 反而看得见。匿名访问恒为 false。
    */
   viewerCanEdit?: boolean;
+  /** 服务端确认的网页作者身份，不是分享链接创建者。 */
+  viewerIsOwner?: boolean;
 }
 
 export interface ShareViewData {
+  revisionId?: string;
+  previewUrl?: string;
+  documentCollectionId?: string;
+  collectionId?: string;
+  mainSiteId?: string;
+  collectionVersion?: number;
+  collectionNeedsUpdate?: boolean;
   title: string;
   description?: string;
   shareType: string;
@@ -1268,7 +1382,7 @@ export interface ShareAskInfo {
   openingQuestions: string[];
 }
 
-export async function viewShare(token: string, password?: string): Promise<ApiResponse<ShareViewData>> {
+export async function viewShare(token: string, password?: string, revisionId?: string): Promise<ApiResponse<ShareViewData>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   // 使用 raw fetch 避免 apiRequest 的 401 自动 refresh/redirect 逻辑，此端点是公开的
   // 但仍需携带 auth token（如果已登录），以便后端识别观看者身份
@@ -1277,12 +1391,34 @@ export async function viewShare(token: string, password?: string): Promise<ApiRe
   const authToken = useAuthStore.getState().token;
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
+    if (revisionId) return await openFixedRevision(token, revisionId, password, headers);
     const res = await fetch(url, { headers });
-    const json = await res.json();
-    return json as ApiResponse<ShareViewData>;
+    const result = await res.json() as ApiResponse<ShareViewData>;
+    if (result.success && result.data.revisionId)
+      return await openFixedRevision(token, result.data.revisionId, password, headers);
+    return result;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }
+}
+
+async function openFixedRevision(token: string, revisionId: string, password: string | undefined,
+  headers: Record<string, string>): Promise<ApiResponse<ShareViewData>> {
+  const endpoint = buildApiUrl(`${api.webPages.viewShare(encodeURIComponent(token))}/revisions/${encodeURIComponent(revisionId)}/access`);
+  const response = await fetch(endpoint, { method: 'POST', credentials: 'include', cache: 'no-store',
+    headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+  const result = await response.json() as ApiResponse<{ revisionId: string; previewUrl: string; title?: string; createdAt: string }>;
+  if (!result.success) return result;
+  const requestUrl = new URL(endpoint, globalThis.location?.href);
+  const previewUrl = new URL(result.data.previewUrl, requestUrl);
+  const apiPrefix = requestUrl.pathname.split('/api/web-pages/shares/view/', 1)[0];
+  const resources = `${apiPrefix}/api/hosted-site-preview-files/shared/`;
+  if (result.data.revisionId !== revisionId || previewUrl.origin !== requestUrl.origin
+      || !previewUrl.pathname.startsWith(resources) || !previewUrl.pathname.endsWith('/index.html')
+      || previewUrl.search || previewUrl.hash)
+    return { success: false, data: null as never, error: { code: 'NOT_FOUND', message: '分享的固定版本不可读取' } };
+  return { success: true, data: { revisionId, previewUrl: previewUrl.href, title: result.data.title || '固定版本',
+    shareType: 'single', createdAt: result.data.createdAt, sites: [] }, error: null };
 }
 
 // ─── Save Shared Site ───
@@ -1332,15 +1468,102 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
 
 // ─── 评论 ───
 
+/** 发布版本的评审元数据；版本编号和内容标识由服务端维护。 */
+export interface HostedReviewVersion {
+  historyRestricted?: boolean;
+  authorName?: string | null;
+  restoredFromRevisionId?: string | null;
+  id: string;
+  siteId: string;
+  versionLabel: string;
+  contentVersionKey: string;
+  publishedAt?: string | null;
+  isCurrent: boolean;
+  canPreview: boolean;
+  entryFile: string;
+  contentShape?: 'self-contained-html' | 'multi-file';
+  siteUrl: string | null;
+}
+
+export type HostedReviewSource = { mode: 'site'; siteId: string }
+  | { mode: 'share'; token: string; password?: string; siteId?: string };
+
+async function readHostedReview<T>(source: HostedReviewSource, suffix: string): Promise<ApiResponse<T>> {
+  if (source.mode === 'site') return apiRequest(`/api/web-pages/${encodeURIComponent(source.siteId)}/revisions${suffix}`);
+  const params = new URLSearchParams();
+  if (source.password) params.set('password', source.password);
+  if (source.siteId) params.set('siteId', source.siteId);
+  const query = params.size ? `?${params}` : '';
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = useAuthStore.getState().token;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(buildApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/revisions${suffix}${query}`), { headers });
+    return await response.json() as ApiResponse<T>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '无法加载版本，请重试' } };
+  }
+}
+
+export function listHostedReviewVersions(source: HostedReviewSource): Promise<ApiResponse<HostedReviewVersion[]>> {
+  return readHostedReview(source, '');
+}
+
+export function previewHostedReviewVersion(source: HostedReviewSource, id: string): Promise<ApiResponse<{ revision: HostedReviewVersion; html: string; siteUrl: string | null }>> {
+  return readHostedReview(source, `/${encodeURIComponent(id)}/preview`);
+}
+
+export interface HostedSiteCommentAnchor {
+  kind: 'element' | 'text';
+  pagePath: string;
+  selector: string;
+  tagName: string;
+  text: string;
+  elementText: string;
+  prefix: string;
+  suffix: string;
+  contentVersion: string;
+}
+
+export const commentAttachmentLimit = 2 * 1024 * 1024;
+export const maxCommentAttachments = 3;
+
+export interface HostedSiteCommentFile {
+  index: number;
+  name: string;
+  length: number;
+}
+
+export interface HostedSiteCommentOptions {
+  files?: readonly File[];
+  clientId?: string;
+  siteId?: string;
+  revisionId?: string;
+  expectedContentVersion?: string;
+  anchor?: HostedSiteCommentAnchor;
+  parentId?: string;
+}
+
 export interface HostedSiteCommentDto {
   id: string;
   siteId: string;
+  contentVersion?: string | null;
+  revisionId?: string | null;
   content: string;
   authorUserId: string;
+  isMine?: boolean;
   authorName: string;
-  authorAvatarFileName?: string;
+  authorAvatarFileName?: string | null;
+  authorAvatarUrl?: string | null;
   createdAt: string;
   canDelete: boolean;
+  anchor?: HostedSiteCommentAnchor | null;
+  parentId?: string | null;
+  isResolved?: boolean;
+  canResolve?: boolean;
+  isAi?: boolean;
+  aiReplyStatus?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+  attachments?: HostedSiteCommentFile[];
 }
 
 export interface SiteCommentsResult {
@@ -1366,16 +1589,16 @@ export async function listSiteComments(siteId: string): Promise<ApiResponse<Site
 }
 
 /** 在某站点发表评论（owner / 团队成员视角，需登录） */
-export async function addSiteComment(siteId: string, content: string): Promise<ApiResponse<HostedSiteCommentDto>> {
-  return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, {
-    method: 'POST',
-    body: { content },
-  });
+export async function addSiteComment(siteId: string, content: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
+  return postHostedComment(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, content, options);
 }
 
 /** 经分享链接列出评论（无需登录即可读）。走 raw fetch（公开端点 + 可选携带 token 识别身份） */
-export async function listShareComments(token: string, password?: string): Promise<ApiResponse<SiteCommentsResult>> {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+export async function listShareComments(token: string, password?: string, siteId?: string): Promise<ApiResponse<SiteCommentsResult>> {
+  const params = new URLSearchParams();
+  if (password) params.set('password', password);
+  if (siteId) params.set('siteId', siteId);
+  const q = params.size ? `?${params}` : '';
   const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`);
   const headers: Record<string, string> = { Accept: 'application/json' };
   const authToken = useAuthStore.getState().token;
@@ -1441,12 +1664,78 @@ export function downloadShareOfflineHtml(
   return apiDownload(api.webPages.shareOfflineHtml(token, query), fallbackFileName);
 }
 
+/** PDF 附件仅从站点清单读取；分享访客沿用原分享门禁。 */
+export function downloadHostedPdf(siteId: string, filePath: string,
+  share?: { token: string; password?: string }): Promise<ApiDownloadedFile> {
+  const query = new URLSearchParams({ filePath });
+  if (share) {
+    query.set('siteId', siteId);
+    if (share.password) query.set('password', share.password);
+  }
+  const path = share ? api.webPages.sharePdf(share.token) : api.webPages.pdf(siteId);
+  return apiDownload(`${path}?${query}`, filePath.split('/').pop() || 'document.pdf', false, !!share);
+}
+
+export function downloadZipHomepageAsset(siteId: string, filePath: string, siteUrl: string,
+  share?: { token: string; password?: string }): Promise<ApiDownloadedFile> {
+  const version = new URL(siteUrl, window.location.href).searchParams.get('v') ?? '';
+  const query = new URLSearchParams({ filePath, version });
+  if (share) {
+    query.set('siteId', siteId);
+    if (share.password) query.set('password', share.password);
+  }
+  const path = share ? api.webPages.shareZipHomepageAsset(share.token) : api.webPages.zipHomepageAsset(siteId);
+  return apiDownload(`${path}?${query}`, filePath.split('/').pop() || '原文件', false, !!share);
+}
+
 /** 经分享链接发表评论（需登录） */
-export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+export async function addShareComment(token: string, content: string, password?: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
-  return apiRequest(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, {
-    method: 'POST',
-    body: { content },
+  return postHostedComment(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, content, options);
+}
+
+function postHostedComment(path: string, content: string, options: HostedSiteCommentOptions = {}): Promise<ApiResponse<HostedSiteCommentDto>> {
+  const { files, ...metadata } = options;
+  const body = { content, ...metadata };
+  const headers = options.clientId ? { 'Idempotency-Key': options.clientId } : undefined;
+  if (!files?.length) return apiRequest(path, { method: 'POST', body, headers });
+  return apiMultipartRequest(path, {
+    headers,
+    createFormData: () => {
+      const form = new FormData();
+      form.append('comment', JSON.stringify(body));
+      for (const file of files) form.append('files', file);
+      return form;
+    },
+  });
+}
+
+export function downloadCommentFile(source: { siteId: string } | { token: string; password?: string; siteId?: string },
+  commentId: string, file: HostedSiteCommentFile): Promise<ApiDownloadedFile> {
+  const params = new URLSearchParams();
+  const shared = 'token' in source;
+  if (shared && source.password) params.set('password', source.password);
+  if (shared && source.siteId) params.set('siteId', source.siteId);
+  const prefix = shared ? `shares/view/${encodeURIComponent(source.token)}` : encodeURIComponent(source.siteId);
+  const query = params.size ? `?${params}` : '';
+  return apiDownload(`/api/web-pages/${prefix}/comments/${encodeURIComponent(commentId)}/attachments/${file.index}${query}`,
+    file.name, false, shared);
+}
+
+/** 解决/重新打开根讨论；分享路径仍需验证当前分享链接和密码。 */
+export function setSiteCommentResolved(source: { siteId: string } | { token: string; password?: string; siteId?: string },
+  commentId: string, resolved: boolean): Promise<ApiResponse<HostedSiteCommentDto>> {
+  const prefix = 'token' in source
+    ? `/api/web-pages/shares/view/${encodeURIComponent(source.token)}`
+    : `/api/web-pages/${encodeURIComponent(source.siteId)}`;
+  const params = new URLSearchParams();
+  if ('token' in source) {
+    if (source.password) params.set('password', source.password);
+    if (source.siteId) params.set('siteId', source.siteId);
+  }
+  const query = params.size ? `?${params}` : '';
+  return apiRequest(`${prefix}/comments/${encodeURIComponent(commentId)}/resolved${query}`, {
+    method: 'PATCH', body: { resolved },
   });
 }
 
@@ -1462,6 +1751,7 @@ export async function deleteSiteComment(commentId: string): Promise<ApiResponse<
 /** 站点提问配置（owner 视角） */
 export interface SiteAskConfig {
   siteId: string;
+  aiReplyEnabled?: boolean;
   /** 叠加站点形态、站点覆盖与 owner 全局默认后的当前有效值 */
   enabled: boolean;
   /** 站点自己的三态：null = 未覆盖，继续继承 owner 全局默认 */
@@ -1502,6 +1792,7 @@ export async function updateSiteAskConfig(
   config: {
     /** 只在用户真的拨动开关时传；省略 = 保留站点原来的继承/覆盖关系 */
     enabled?: boolean;
+    aiReplyEnabled?: boolean;
     welcome?: string | null;
     /**
      * 只在用户**真的编辑过题库**时才传。省略（undefined）= 「这次不动题库」。
@@ -1548,11 +1839,14 @@ export async function regenerateSiteAskQuestions(
 
 // ─── 帮我修改 / 版本 ───
 
+/** 服务端探测执行器最多 8 秒；前端留出余量后封顶，卡住时以失败收场，界面才不会一直停在「正在检测」。 */
+const RUNTIME_CAPABILITIES_TIMEOUT_MS = 15_000;
+
 export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   defaultRuntime: string;
   runtimes: DesignRuntimeCapability[];
 }>> {
-  return apiRequest(api.designArtifacts.runtimeCapabilities());
+  return apiRequest(api.designArtifacts.runtimeCapabilities(), { timeoutMs: RUNTIME_CAPABILITIES_TIMEOUT_MS });
 }
 
 /** 一项耗时指标（秒）。样本为 0 时百分位为 null；estimateReady 由后端按最少样本数判定。 */
@@ -1574,6 +1868,23 @@ export interface DesignTimingGroup {
   /** 资料到可分享链接：创建时刻 → 生成者为产出站点建的第一条分享/访问链接。 */
   materialToShareLink: DesignTimingMetric;
   materialToShareLinkEligibleRuns: number;
+  firstPreview?: DesignTimingMetric;
+  maxStaticGap?: DesignTimingMetric;
+  restartedCount?: number;
+  recoveredCount?: number;
+  streamReconnectCount?: number;
+  publishedWithin24HoursCount?: number;
+  browserQuality?: {
+    sampleCount: number;
+    firstPassPassedCount: number;
+    firstPassRate: number | null;
+    repairedRunCount: number;
+    repairSucceededCount: number;
+    repairSuccessRate: number | null;
+    averageRepairAttempts: number | null;
+    finalScore: DesignTimingMetric;
+    ruleVersions: string[];
+  };
 }
 
 export interface DesignTimingStats {
@@ -1627,7 +1938,6 @@ export async function resolveDesignKnowledgeReferences(
 export async function createDesignArtifactRun(input: {
   instruction: string;
   title?: string;
-  runtime?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
   /**
    * 目标团队空间，在发起这一刻冻结、由服务端建站时应用。
@@ -1647,7 +1957,7 @@ export async function createDesignArtifactRun(input: {
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
-  const { styleId, designSystemId, attachmentIds, runtime, ...rest } = input;
+  const { styleId, designSystemId, attachmentIds, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
@@ -1659,8 +1969,6 @@ export async function createDesignArtifactRun(input: {
         storeId,
         contentHash,
       })),
-      // 不传执行器时交给服务端按「网页生成设置」的默认值决定，前端不再写死一个默认。
-      ...(runtime ? { runtime } : {}),
       ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
@@ -1671,6 +1979,27 @@ export async function getDesignArtifactRun(
   runId: string,
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export async function getActiveDesignArtifactRun(input: {
+  operation: 'generate' | 'edit';
+  targetSiteId?: string;
+  includeLatestFailed?: boolean;
+}): Promise<ApiResponse<DesignArtifactRunSummary | null>> {
+  const params = new URLSearchParams({ operation: input.operation });
+  if (input.targetSiteId) params.set('targetSiteId', input.targetSiteId);
+  if (input.includeLatestFailed) params.set('includeLatestFailed', 'true');
+  return apiRequest(`${api.designArtifacts.activeRun()}?${params.toString()}`);
+}
+
+export async function restartDesignArtifactRun(
+  runId: string,
+  idempotencyKey: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.designArtifacts.restart(runId), {
+    method: 'POST',
+    body: { idempotencyKey },
+  });
 }
 
 export async function cancelDesignArtifactRun(
@@ -1710,7 +2039,6 @@ export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
-  runtime = 'map-gateway',
   extras: HostedSiteEditRunExtras = {},
 ): Promise<ApiResponse<Pick<DesignArtifactRunSummary, 'runId' | 'status' | 'runtime'>
   & Partial<Pick<DesignArtifactRunSummary, 'styleName' | 'promptFingerprint' | 'reviewMode'>>>> {
@@ -1722,7 +2050,6 @@ export async function createHostedSiteEditRun(
     method: 'POST',
     body: {
       instruction,
-      runtime,
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,

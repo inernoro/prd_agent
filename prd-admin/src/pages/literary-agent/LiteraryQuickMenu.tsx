@@ -1,6 +1,7 @@
 import * as React from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Check, ChevronsUpDown } from 'lucide-react';
+import { InlineMenuContext, LiteraryInlineMenu } from './LiteraryInlineMenu';
 
 /**
  * 文学创作编辑器的就地菜单（弹出按钮 + 菜单）。
@@ -26,6 +27,7 @@ const CSS = `
 .lqm-trigger[data-state="open"] { border-color: var(--accent-primary); background: var(--bg-input-hover); }
 .lqm-trigger:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
 .lqm-trigger[data-set="true"] { color: var(--text-primary); }
+.lqm-trigger[data-warning="true"] { border-color: var(--accent-fg-amber); color: var(--accent-fg-amber); }
 .lqm-trigger-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .lqm-trigger--pill { height: 24px; padding: 0 6px 0 8px; border-radius: 999px; font-size: 11px; border-color: transparent; }
 
@@ -66,11 +68,13 @@ type PopupButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   isSet?: boolean;
   /** 头部模型选择那种更小的胶囊形态 */
   pill?: boolean;
+  /** 当前值不是用户以为的那套（如记住的设定已失效、正按回退值出图）：描边与文字转为警示色 */
+  warning?: boolean;
 };
 
 /** 弹出按钮：图标 + 当前值 + 上下箭头。作为 DropdownMenu.Trigger 的 asChild 目标，必须转发 ref。 */
 export const PopupButton = React.forwardRef<HTMLButtonElement, PopupButtonProps>(function PopupButton(
-  { icon, value, isSet, pill, className, ...rest },
+  { icon, value, isSet, pill, warning, className, ...rest },
   ref,
 ) {
   React.useLayoutEffect(ensureStyles, []);
@@ -79,6 +83,7 @@ export const PopupButton = React.forwardRef<HTMLButtonElement, PopupButtonProps>
       ref={ref}
       type="button"
       data-set={isSet ? 'true' : 'false'}
+      data-warning={warning ? 'true' : undefined}
       className={`lqm-trigger${pill ? ' lqm-trigger--pill' : ''}${className ? ` ${className}` : ''}`}
       {...rest}
     >
@@ -97,6 +102,8 @@ export function QuickMenu({
   align = 'start',
   open,
   onOpenChange,
+  inline = false,
+  search,
   children,
 }: {
   trigger: React.ReactElement;
@@ -106,9 +113,14 @@ export function QuickMenu({
   align?: 'start' | 'center' | 'end';
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  inline?: boolean;
+  search?: { value: string; onChange: (value: string) => void; placeholder: string };
   children: React.ReactNode;
 }) {
   React.useLayoutEffect(ensureStyles, []);
+  if (inline) {
+    return <LiteraryInlineMenu trigger={trigger} title={title} note={note} open={open} onOpenChange={onOpenChange} search={search}>{children}</LiteraryInlineMenu>;
+  }
   return (
     <DropdownMenu.Root open={open} onOpenChange={onOpenChange}>
       <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
@@ -118,11 +130,18 @@ export function QuickMenu({
           align={align}
           sideOffset={6}
           className="lqm-content"
-          style={{ width, maxWidth: `min(92vw, ${width}px)` }}
+          style={{
+            width,
+            maxWidth: `min(92vw, ${width}px)`,
+            maxHeight: 'var(--radix-dropdown-menu-content-available-height)',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+          }}
         >
           {title && <div className="lqm-title">{title}</div>}
           {note && <div className="lqm-note">{note}</div>}
-          <div style={{ maxHeight: 300, overflowY: 'auto', overscrollBehavior: 'contain' }}>{children}</div>
+          <div style={{ minHeight: 0, maxHeight: 300, overflowY: 'auto', overscrollBehavior: 'contain' }}>{children}</div>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
@@ -135,13 +154,34 @@ export function QuickMenuItem({
   selected,
   disabled,
   onSelect,
+  preview,
+  trailing,
+  tabIndex,
 }: {
   label: React.ReactNode;
   description?: React.ReactNode;
   selected?: boolean;
   disabled?: boolean;
   onSelect: () => void;
+  preview?: React.ReactNode;
+  trailing?: React.ReactNode;
+  tabIndex?: number;
 }) {
+  const inline = React.useContext(InlineMenuContext);
+  if (inline) {
+    return (
+      <button type="button" className="lit-inline-option" role="menuitemradio" aria-checked={selected}
+        disabled={disabled} tabIndex={tabIndex ?? (selected ? 0 : -1)} onClick={() => { onSelect(); inline.close(); }}>
+        <span className="lit-inline-check">{selected ? <Check size={15} strokeWidth={2.5} /> : null}</span>
+        <span className="lit-inline-option-body">
+          <span className="lit-inline-option-name">{label}</span>
+          {description && <span className="lit-inline-option-detail">{description}</span>}
+        </span>
+        {preview}
+        {trailing && <span className="lit-inline-option-trailing">{trailing}</span>}
+      </button>
+    );
+  }
   return (
     <DropdownMenu.Item
       className="lqm-item"
@@ -155,12 +195,17 @@ export function QuickMenuItem({
         <span className="block truncate">{label}</span>
         {description && <span className="lqm-item-desc">{description}</span>}
       </span>
+      {preview}
     </DropdownMenu.Item>
   );
 }
 
 /** 菜单最底部的「管理…」类动作：打开完整配置页。 */
 export function QuickMenuAction({ label, onSelect }: { label: string; onSelect: () => void }) {
+  const inline = React.useContext(InlineMenuContext);
+  if (inline) {
+    return <button type="button" role="menuitem" className="lit-inline-option lit-inline-action" onClick={() => { onSelect(); inline.close(); }}>{label}</button>;
+  }
   return (
     <>
       <DropdownMenu.Separator className="lqm-sep" />
@@ -172,5 +217,6 @@ export function QuickMenuAction({ label, onSelect }: { label: string; onSelect: 
 }
 
 export function QuickMenuEmpty({ children }: { children: React.ReactNode }) {
-  return <div className="lqm-empty">{children}</div>;
+  const inline = React.useContext(InlineMenuContext);
+  return <div className={inline ? 'lit-inline-empty' : 'lqm-empty'}>{children}</div>;
 }

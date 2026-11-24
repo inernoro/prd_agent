@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ReferencesPanel — 配置页签「引用」分区（plan.cds.service-relations 第三批）。
  *
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { postSse, sseEventText } from '@/lib/sse';
 
 type RefKind = 'cds-ref' | 'url' | 'name-hint' | 'platform';
@@ -58,6 +60,7 @@ function StatusChip({ status }: { status: RefStatus | string }): JSX.Element {
 }
 
 export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: ReferencesResponse } | { status: 'error'; message: string }>({ status: 'loading' });
   const [picker, setPicker] = useState<{ item: ReferenceItem; ref: ResolvedRef; branches: BranchRow[] | null } | null>(null);
   const [pendingRedeploy, setPendingRedeploy] = useState<Set<string>>(new Set());
@@ -152,7 +155,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
   };
 
   if (state.status === 'loading') {
-    return <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在从环境变量里抽出地址类引用…</div>;
+    return <ContentLoading label="读取地址引用" variant="table" />;
   }
   if (state.status === 'error') {
     return <div className="text-xs text-destructive">读取引用失败：{state.message} <Button size="sm" variant="ghost" onClick={() => void load()}>重试</Button></div>;
@@ -218,7 +221,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
                     </td>
                     <td className="px-3 py-2 align-top text-muted-foreground">{SOURCE_LABEL[item.source] ?? item.source}{item.detail === 'cds-ref' ? '' : item.detail ? ` · ${item.detail}` : ''}</td>
                     <td className="px-3 py-2 align-top">
-                      {r ? (
+                      {r && canManageConsole ? (
                         <div className="flex flex-col gap-1">
                           {resolvedList.map((x) => x.status !== 'missing-project' && x.status !== 'restricted' ? (
                             <Button key={x.ref.raw} size="sm" variant="outline" className="h-6 text-[0.6875rem]" disabled={busy} onClick={() => void openPicker(item, x)} title={resolvedList.length > 1 ? `切换 ${x.ref.raw}` : undefined}>
@@ -237,7 +240,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
           </table>
         </div>
       )}
-      {picker ? (
+      {picker && canManageConsole ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3" data-testid="reference-branch-picker">
           <div className="mb-2 flex items-center gap-2 text-xs">
             <span className="font-semibold">切换分支</span>
@@ -246,7 +249,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
             <Button size="sm" variant="ghost" className="h-6 text-[0.6875rem]" onClick={() => setPicker(null)}>取消</Button>
           </div>
           {picker.branches === null ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取目标项目的分支…</div>
+            <ContentLoading label="读取目标项目分支" />
           ) : (
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className="h-7 text-[0.6875rem]" disabled={busy} onClick={() => void switchTo(null)} title="不钉分支，跟随目标项目的默认分支">默认分支</Button>

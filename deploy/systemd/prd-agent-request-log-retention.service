@@ -1,0 +1,14 @@
+[Unit]
+Description=Report MAP API request log age without deleting records
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Environment=PRD_LOG_RETENTION_DAYS=30
+Environment=PRD_LOG_RETENTION_EXECUTE=0
+ExecStart=/usr/local/sbin/prd-agent-request-log-retention
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=180

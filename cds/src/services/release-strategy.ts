@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,6 +12,8 @@ import type {
   ReleaseTarget,
 } from '../types.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
+import { DEFAULT_RELEASE_SCRIPT_FILE } from '../domain/release-script-contract.js';
+import { projectReleaseExecution, validateProjectScript } from './project-release-script.js';
 
 export interface ReleaseStrategyCandidate {
   mode: ReleaseExecutionMode;
@@ -117,6 +120,20 @@ export function discoverReleaseStrategies(project: Project, branch: BranchEntry)
   }
 
   const scripts = SCRIPT_CANDIDATES.filter((candidate) => fs.existsSync(path.join(root, candidate.replace(/^\.\//, ''))));
+  const projectScriptExists = fs.existsSync(path.join(root, DEFAULT_RELEASE_SCRIPT_FILE));
+  candidates.push({
+    mode: 'project-script', label: '项目发布脚本（默认）',
+    description: `项目维护 ${DEFAULT_RELEASE_SCRIPT_FILE}，CI 校验后 CDS 只执行该提交的脚本，不推断部署类型。`,
+    confidence: projectScriptExists ? 'high' : 'manual',
+    strategy: { mode: 'project-script', scriptFile: DEFAULT_RELEASE_SCRIPT_FILE },
+    requirements: ['脚本提交 Git，支持 check / deploy', '同一提交 CI 成功'],
+  }, {
+    mode: 'managed-script', label: 'CDS 独立脚本（备选）',
+    description: '仅在明确需要时由 CDS 保存脚本，不会自动替代项目脚本。',
+    confidence: 'manual', strategy: { mode: 'managed-script', script: '' },
+    requirements: ['明确选择独立脚本并审查正文', '脚本支持 check / deploy'],
+  });
+  if (!projectScriptExists) warnings.push(`请在项目提交 ${DEFAULT_RELEASE_SCRIPT_FILE} 并接入 CI；不会自动选择 Compose 或静态站部署。`);
   if (scripts.length > 0) {
     const command = scripts.includes('./fast.sh') && scripts.includes('./exec_dep.sh')
       ? './fast.sh && ./exec_dep.sh'
@@ -141,7 +158,7 @@ export function discoverReleaseStrategies(project: Project, branch: BranchEntry)
       strategy: {
         mode: 'generated-compose',
         composeFile,
-        composeProject: shellSafeName(`${project.slug}-prod`),
+        composeProject: shellSafeName(`${projectResourceNamespace(project)}-prod`),
         detectedFrom: [composeFile],
       },
       requirements: ['远端已安装 Git、Docker、Docker Compose 与 Python 3', '远端发布目录是该项目的 Git 仓库'],
@@ -161,7 +178,7 @@ export function discoverReleaseStrategies(project: Project, branch: BranchEntry)
         mode: 'generated-static',
         buildCommand: buildCommand || '',
         artifactDirectory: artifactDirectory || 'dist',
-        publicDirectory: `/opt/${project.slug}-web`,
+        publicDirectory: `/opt/${projectResourceNamespace(project)}-web`,
         detectedFrom: [
           ...(packageJson ? ['package.json'] : []),
           ...(artifactDirectory ? [artifactDirectory] : []),
@@ -174,7 +191,8 @@ export function discoverReleaseStrategies(project: Project, branch: BranchEntry)
   if (candidates.length === 0) {
     warnings.push('未发现发布脚本、Compose 文件或静态构建信号，需要手动选择策略并补齐参数。');
   }
-  const recommended = candidates.find((candidate) => candidate.mode === 'existing-script')
+  const recommended = candidates.find((candidate) => candidate.mode === 'project-script')
+    || candidates.find((candidate) => candidate.mode === 'existing-script')
     || candidates.find((candidate) => candidate.mode === 'generated-compose')
     || candidates.find((candidate) => candidate.mode === 'generated-static');
   return {
@@ -194,6 +212,7 @@ export function effectiveReleaseStrategy(target: ReleaseTarget): ReleaseStrategy
 }
 
 export function validateReleaseStrategy(strategy: ReleaseStrategy): string | null {
+  if (strategy.mode === 'project-script' || strategy.mode === 'managed-script') return validateProjectScript(strategy);
   if (strategy.mode === 'existing-script') {
     return strategy.command?.trim() ? null : 'existing-script strategy requires command';
   }
@@ -220,11 +239,15 @@ export function buildReleaseExecution(
   mode: ReleaseExecutionMode;
   command: string;
   scriptSha256: string;
+  scriptContent?: string;
   summary: string;
 } {
   const strategy = effectiveReleaseStrategy(target);
   const validation = validateReleaseStrategy(strategy);
   if (validation) throw new Error(validation);
+  if (strategy.mode === 'project-script' || strategy.mode === 'managed-script') {
+    return projectReleaseExecution(strategy, run, options?.preservePrevious === true);
+  }
   if (strategy.mode === 'existing-script') {
     const command = strategy.command!.trim();
     return {
@@ -252,7 +275,8 @@ export function buildStrategyPreflightCommand(target: ReleaseTarget): string {
   const strategy = effectiveReleaseStrategy(target);
   if (strategy.mode === 'existing-script') return '';
   const repo = shellQuote(target.ssh.appPath);
-  const base = `test -d ${repo} && git -C ${repo} rev-parse --is-inside-work-tree >/dev/null && command -v base64 >/dev/null && command -v bash >/dev/null && command -v python3 >/dev/null`;
+  const base = `test -d ${repo} && git -C ${repo} rev-parse --is-inside-work-tree >/dev/null && command -v base64 >/dev/null && command -v bash >/dev/null && command -v python3 >/dev/null && command -v flock >/dev/null`;
+  if (strategy.mode === 'project-script' || strategy.mode === 'managed-script') return base;
   if (strategy.mode === 'generated-compose') {
     return `${base} && command -v docker >/dev/null && docker compose version >/dev/null && test -f ${shellQuote(path.posix.join(target.ssh.appPath, strategy.composeFile!))}`;
   }
@@ -270,6 +294,9 @@ repo_parent="$(dirname "$repo")"
 release_root="$repo_parent/.cds-releases/$CDS_TARGET_ID"
 worktree="$release_root/worktrees/$CDS_RELEASE_ID"
 mkdir -p "$release_root/worktrees"
+test ! -L "$release_root/.retention.lock"
+exec 8>>"$release_root/.retention.lock"
+flock -x 8
 git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
@@ -292,19 +319,27 @@ set -Eeuo pipefail
 repo="$PWD"
 publish_root=${shellQuote(strategy.publicDirectory!)}
 repo_parent="$(dirname "$repo")"
-worktree_root="$repo_parent/.cds-releases/$CDS_TARGET_ID/worktrees"
+release_root="$repo_parent/.cds-releases/$CDS_TARGET_ID"
+worktree_root="$release_root/worktrees"
 worktree="$worktree_root/$CDS_RELEASE_ID"
 version="$publish_root/.releases/$CDS_RELEASE_ID"
 mkdir -p "$worktree_root" "$publish_root/.releases"
 chmod 755 "$publish_root" "$publish_root/.releases"
+test ! -L "$release_root/.retention.lock"
+exec 8>>"$release_root/.retention.lock"
+flock -x 8
 git -C "$repo" fetch --all --prune
 git -C "$repo" cat-file -e "$CDS_COMMIT_SHA^{commit}"
 if [ ! -d "$worktree" ]; then git -C "$repo" worktree add --detach "$worktree" "$CDS_COMMIT_SHA"; fi
 cd "$worktree"
+test "$(git rev-parse HEAD)" = "$CDS_COMMIT_SHA"
 ${strategy.buildCommand}
 source_dir="$worktree/${strategy.artifactDirectory}"
 test -s "$source_dir/index.html"
-rm -rf "$version.tmp"
+if [ -e "$version.tmp" ] || [ -L "$version.tmp" ] || [ -e "$version" ] || [ -L "$version" ]; then
+  echo 'Static preparation or version already exists; preserved for inspection' >&2
+  exit 1
+fi
 mkdir -p "$version.tmp"
 cp -a "$source_dir/." "$version.tmp/"
 find "$version.tmp" -type d -exec chmod 755 {} +
@@ -327,8 +362,11 @@ for ref in refs:
     if not asset.is_file() or asset.stat().st_size == 0:
         raise SystemExit(f'entry asset missing or empty: {clean}')
 PY
-rm -rf "$version"
-mv "$version.tmp" "$version"
+mv -T "$version.tmp" "$version"
+python3 - "$version" "$release_root" "$CDS_TARGET_ID" "$CDS_RELEASE_ID" "$CDS_COMMIT_SHA" <<'CDS_STATIC_PROOF_PY'
+${fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8')}
+seal_static_artifact(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), *sys.argv[3:])
+CDS_STATIC_PROOF_PY
 ${preservePrevious ? '# auto-restore preserves the last known-good previous pointer' : 'if [ -L "$publish_root/current" ]; then ln -sfn "$(readlink "$publish_root/current")" "$publish_root/previous"; fi'}
 rm -f "$publish_root/current.next"
 ln -s "$version" "$publish_root/current.next"

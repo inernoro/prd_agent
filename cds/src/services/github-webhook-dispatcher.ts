@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 /**
  * GitHubWebhookDispatcher — processes an already-verified GitHub webhook
  * and translates it into CDS state changes.
@@ -18,7 +19,10 @@
  */
 
 import type { StateService } from './state.js';
-import type { WorktreeService } from './worktree.js';
+import { WorktreeService, deploymentNeedsSourceCheckout } from './worktree.js';
+import { mergeBranchProfiles } from './branch-extra-services.js';
+import { resolveEffectiveProfile } from './container.js';
+import { worktreePathActivity } from './worktree-path-activity.js';
 import type { IShellExecutor, CdsConfig, BranchEntry, Project } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import { branchEvents, nowIso } from './branch-events.js';
@@ -26,17 +30,26 @@ import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
 import { isTrunkBranch } from './branch-protection.js';
-import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
+import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch, assertValidDefaultDeployModes } from './deploy-runtime.js';
 import { decideProjectScope, resolveProjectScope } from './project-scope.js';
 
 /**
  * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
  * CDS 只在这个工作流的 workflow_run.completed 到达时才触发拉取部署,避免被 ci.yml /
  * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
- * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds.ci-prebuilt.md）。
+ * 后续可做成 project 级配置以泛化到任意 public 仓库（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.ci-prebuilt.md）。
  */
-const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
-const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+export const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
+export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+
+/** 有路径时以路径为准；仅旧回执缺少路径时才回退名称。 */
+export function isPrebuiltImageWorkflow(run: { path?: string; name?: string }): boolean {
+  const workflowPath = (run.path || '').trim();
+  return workflowPath
+    ? workflowPath.split('@', 1)[0].split('/').pop() === CI_PREBUILT_WORKFLOW_FILE
+    : (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+}
+
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
@@ -653,13 +666,13 @@ export class GitHubWebhookDispatcher {
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
       ciWaitingSince: '',
-      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
     });
     this.deps.stateService.save();
     this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
     return {
       action: 'ci-image-failed',
-      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
+      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -903,7 +916,7 @@ export class GitHubWebhookDispatcher {
     project: Project,
   ): Promise<WebhookDispatchResult> {
     const slugified = StateServiceClass.slugify(event.ref);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Prefer the canonical id, but fall back to a (projectId, branch)
     // lookup so a branch created under the previous legacyFlag formula
     // is still found after the flag was flipped.
@@ -914,6 +927,10 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    if (entry.archive) {
+      return { action: 'ignored-event', branchId,
+        message: `GitHub分支已删除，CDS归档仍保留至 ${entry.archive.retireAt}；到期回收由分支生命周期处理。` };
+    }
     // 主干兜底（2026-07-27 P0：CDS 把 main 回收删掉）：GitHub 上删除主干是极端事件，
     // 更常见的是 webhook 误判（ref 实为 tag、分支名匹配错、仓库刚改过默认分支）。
     // 任何情况下都不允许由一条 webhook 自动删掉主干预览 —— 拒绝停容器 + 拒绝删 entry，
@@ -1007,7 +1024,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
       const names = projects.map((p) => `'${p.name}'`).join('、');
@@ -1031,12 +1048,7 @@ export class GitHubWebhookDispatcher {
 
   /** 极速版（CI 预构建）：判断 workflow_run 是否来自「构建预构建镜像」的工作流。 */
   private isPrebuiltImageWorkflow(run: NonNullable<GitHubWorkflowRunEvent['workflow_run']>): boolean {
-    // workflow_run.path 形如 `.github/workflows/branch-image.yml`。只认这个工作流,
-    // 避免 ci.yml / cds.yml 等其它工作流先完成就误触发部署（那时镜像还没 push）。
-    const base = (run.path || '').split('/').pop() || '';
-    if (base === CI_PREBUILT_WORKFLOW_FILE) return true;
-    // 兜底:按 workflow name 匹配（防止个别 GitHub 投递缺 path）。
-    return (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+    return isPrebuiltImageWorkflow(run);
   }
 
   private emitCiStatus(
@@ -1075,7 +1087,7 @@ export class GitHubWebhookDispatcher {
    * 只处理 `completed` + 来自预构建镜像工作流（branch-image.yml）的 run,按
    * head_sha 找到「等待中」的极速版分支:
    *   - success → 置 ready + 返回 deployRequest（路由层触发 docker pull + 部署）
-   *   - 其它   → 置 failed（前端提示可切回源码编译,不自动回退）
+   *   - 其它   → 置 failed（前端提示修复后重试 CI,不自动回退）
    */
   private async handleWorkflowRun(event: GitHubWorkflowRunEvent, dryRun: boolean): Promise<WebhookDispatchResult> {
     const run = event.workflow_run;
@@ -1139,7 +1151,7 @@ export class GitHubWebhookDispatcher {
     // ciTargetSha 可能还在,此时不该再认 CI 完成事件去自动重部署一个已退出极速版的分支。
     const wfProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
     const matchable = (b: BranchEntry): boolean =>
-      (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
+      !b.archive && (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
       && b.ciTargetSha === headSha
       && (!run.head_branch || b.branch === run.head_branch)
       && branchUsesPrebuiltMode(wfProfiles, b);
@@ -1184,7 +1196,7 @@ export class GitHubWebhookDispatcher {
       };
     }
 
-    // 失败 / cancelled / timed_out — 不自动回退,等用户手动切回源码编译。
+    // 失败 / cancelled / timed_out — 不自动回退,等待修复后重试 CI。
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'failed',
@@ -1194,14 +1206,14 @@ export class GitHubWebhookDispatcher {
         // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
         // 区别于「超时无 run」的看门狗失败。
         ciWaitingSince: '',
-        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
+        ciImageError: `CI 构建未成功（${conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
     }
     return {
       action: 'ci-image-failed',
-      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,可在分支详情切回源码编译`,
+      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -1259,7 +1271,7 @@ export class GitHubWebhookDispatcher {
       };
     }
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Fall back to a (projectId, branch) lookup so a legacyFlag flip
     // doesn't hide an existing entry stored under the old id.
     const entry =
@@ -1340,7 +1352,7 @@ export class GitHubWebhookDispatcher {
         const baseRef = pr.base?.ref;
         if (baseRef && baseRef !== branchName) {
           const baseSlug = StateServiceClass.slugify(baseRef);
-          const baseCanonicalId = project.legacyFlag ? baseSlug : `${project.slug}-${baseSlug}`;
+          const baseCanonicalId = project.legacyFlag ? baseSlug : `${projectResourceNamespace(project)}-${baseSlug}`;
           const baseEntry =
             this.deps.stateService.getBranch(baseCanonicalId) ??
             this.deps.stateService.findBranchByProjectAndName(project.id, baseRef);
@@ -1570,16 +1582,19 @@ export class GitHubWebhookDispatcher {
     // otherwise a single push would spawn a phantom duplicate (bug: same
     // repo's `main` appearing as both `main` and `<slug>-main`).
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     let entry =
       this.deps.stateService.getBranch(canonicalId) ??
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
     const branchId = entry?.id ?? canonicalId;
     let created = false;
+    if (entry?.archive) return { action: 'ignored-event', branchId,
+      message: '分支已归档，忽略自动部署；请先从归档列表恢复，再推送或部署。' };
 
     // 项目构建配置（极速版判定 + created 分支默认对齐共用）。早算一次,供下面
     // docs-only / dry-run / express 分流复用,避免散落多处重复读取。
     const profiles = this.deps.stateService.getBuildProfilesForProject(project.id);
+    if (!entry) assertValidDefaultDeployModes(project.defaultDeployModes, profiles);
     // 判定某分支(或 webhook 即将新建的分支)是否走极速版(CI 预构建)模式。
     //  - 已存在分支:直接按其 profileOverrides 判定。
     //  - 即将新建分支(existing=undefined):webhook 建分支时会 applyDefaultDeployModesToBranch
@@ -1687,18 +1702,8 @@ export class GitHubWebhookDispatcher {
         project.id,
         branchId,
       );
-      await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-      try {
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-      } catch (err) {
-        // A push for a branch our local clone hasn't fetched yet can fail
-        // because `git worktree add` refuses unknown refs. Try a fetch and
-        // retry once; give up if that also fails.
-        await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-        void err;
-      }
-      entry = {
+      // 在任何外部等待前冻结默认覆盖；State 不发布暂时回到源码基线的半分支。
+      const pendingEntry: BranchEntry = {
         id: branchId,
         projectId: project.id,
         branch: branchName,
@@ -1707,7 +1712,26 @@ export class GitHubWebhookDispatcher {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
-      this.deps.stateService.addBranch(entry);
+      applyDefaultDeployModesToBranch(pendingEntry, project.defaultDeployModes, profiles);
+      const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(profiles, pendingEntry)
+        .map(profile => resolveEffectiveProfile(profile, pendingEntry)));
+      entry = await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+        if (needsSource) {
+          await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
+          try {
+            await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+          } catch (err) {
+            // A push for a branch our local clone hasn't fetched yet can fail
+            // because `git worktree add` refuses unknown refs. Try a fetch and
+            // retry once; give up if that also fails.
+            await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
+            await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+            void err;
+          }
+        }
+        this.deps.stateService.addBranch(pendingEntry);
+        return pendingEntry;
+      });
       created = true;
     }
 
@@ -1774,28 +1798,15 @@ export class GitHubWebhookDispatcher {
       }
     }
 
-    // ── 2026-06-23 极速版（CI 预构建）分流 ──────────────────────────────
-    // webhook 自动建分支时补回项目默认 deploy mode（与 UI 建分支一致;否则新分支
-    // 拿不到极速版 override）。已存在分支不动（其 override 已是 SSOT）。
-    // profiles 已在 handlePush 顶部 hoist。
-    if (created && project.defaultDeployModes && profiles.length > 0) {
-      const fresh = this.deps.stateService.getBranch(branchId);
-      if (fresh) {
-        applyDefaultDeployModesToBranch(fresh, project.defaultDeployModes, profiles);
-        // 显式落盘（mongo-split store 下 getBranch 可能返回副本,mutate 不持久化）
-        for (const [pid, ov] of Object.entries(fresh.profileOverrides || {})) {
-          this.deps.stateService.setBranchProfileOverride(branchId, pid, ov);
-        }
-      }
-    }
-
+    // 新分支默认已在任何工作树写入前冻结，并随 addBranch 整体发布。
+    // 已存在分支保持自己的 override，不因项目默认变化而被改写。
     // 该分支是否走预构建镜像模式？是 → 不本机编译,改为「等待 CI 镜像就绪」,
     // 等 GitHub Actions 的 workflow_run.completed 到达后再按 commit SHA 拉取部署。
     //
     // 注意（Bugbot/Codex review）：此处**不传** project.defaultDeployModes —— 部署路径
     // resolveEffectiveProfile 按 2026-05-14 产品决策**不读**项目默认（默认只在建分支时
     // 拷贝一次写进 override）。若这里用项目默认判定,则「已存在、无 override」的分支会被
-    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支上面
+    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支在创建前
     // 已 applyDefaultDeployModesToBranch 写了 override,靠 override 即可命中。
     const entryForMode = this.deps.stateService.getBranch(branchId) ?? entry;
     const isExpress = branchUsesPrebuiltMode(profiles, entryForMode);
@@ -1807,7 +1818,7 @@ export class GitHubWebhookDispatcher {
         branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
       );
       if (claimed) return claimed;
-      // 入口校验（doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
+      // 入口校验（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
       // 仓库该 commit 下真的有 branch-image.yml。缺文件时 CI 完成事件永远不会来，
       // 与其让分支苦等 15 分钟看门狗超时，不如立即按看门狗同一失败语义归因。
       // API 失败/无凭据 = unknown → fail-open 照旧 waiting（看门狗仍兜底）。
@@ -1815,7 +1826,7 @@ export class GitHubWebhookDispatcher {
         repoFullName, branchName, commitSha, project.githubInstallationId ?? event.installation?.id,
       );
       if (workflowPresence === 'missing') {
-        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow，或在构建配置中把分支切回源码编译模式。';
+        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow 并推送，待 CI 检查通过后再部署。';
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           ciImageStatus: 'failed',
           ciTargetSha: commitSha,
@@ -1927,7 +1938,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
     }

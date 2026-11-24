@@ -1,8 +1,19 @@
+import { partialRead } from '@/lib/partialRead';
+import { MotionLink } from '@/components/layout/RouteMotion';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { CiImageNotice } from '@/components/branch/CiImageNotice';
+import type { CiDiagnosisView } from '@/lib/ci-image-notice';
+import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
+import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import { DatabaseExecutionNotice } from '@/components/branch/DatabaseExecutionNotice';
+import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { useCanManageConsole, useFocusTrap, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
 import { createLatestWinsGate } from '@/lib/latest-wins';
@@ -86,6 +97,14 @@ interface BranchDetailData {
   replicaSets?: Record<string, ProfileReplicaSetView>;
   resources?: BranchResource[];
   createdAt?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciDiagnosis?: CiDiagnosisView | null;
+  ciTargetSha?: string;
+  ciWorkflowConclusion?: string;
+  ciImageError?: string;
+  ciWorkflowRunUrl?: string;
   commitSha?: string;
   subject?: string;
   githubRepoFullName?: string;
@@ -107,6 +126,7 @@ interface BranchDetailData {
   currentVersionId?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
+    prebuilt?: boolean;
     label: string;
     title: string;
     pendingPublish?: boolean;
@@ -385,6 +405,12 @@ interface ResourceCloneInput {
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+export function availableDrawerLogModes(canManageConsole: boolean): Array<[LogsMode, string]> {
+  const modes: Array<[LogsMode, string]> = [
+    ['container', '容器日志'], ['system', '系统日志'], ['webhook', 'Webhook'], ['http', 'HTTP'],
+  ];
+  return modes.filter(([mode]) => canManageConsole || mode !== 'webhook');
+}
 // 全屏详情抽屉的日志区由父级 flex 布局分配剩余高度，不写固定像素高度。
 // 这样高屏不会在日志卡下方制造大片空白，矮屏仍由最近内容层滚动。
 const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
@@ -762,28 +788,6 @@ function failureKeyLogLines(lines: string[], max = 8): string[] {
   return Array.from(new Set(selected)).slice(-max);
 }
 
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Browser permission policies can reject clipboard writes even on HTTPS.
-      // Fall through to the textarea path so the recovery button still works.
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
-}
-
 /**
  * 去重时把「同一次操作的不同叫法」归成一类（Codex P2，核对属实）。
  *
@@ -867,16 +871,24 @@ export function BranchDetailDrawer({
   previewMode = 'multi',
   branchStatus,
   initialResourceId,
+  initialTab,
+  initialConfigSection,
   initialResourceDetailTab,
   resourceWorkbenchDirect = false,
   onToast,
   onActionComplete,
   onRelease,
+  onOpenRelations,
+  initialRelationExpanded = false,
+  onRelationRestoreConsumed,
 }: {
   branchId: string | null;
   projectId: string;
   open: boolean;
   onClose: () => void;
+  onOpenRelations?: (branchId: string, expanded: boolean) => void;
+  initialRelationExpanded?: boolean;
+  onRelationRestoreConsumed?: () => void;
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
   /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
@@ -895,6 +907,8 @@ export function BranchDetailDrawer({
   /** 决定主入口是否需要保留 simple/port 模式下由调用方给出的 host。 */
   previewMode?: PreviewMode;
   initialResourceId?: string | null;
+  initialTab?: DrawerTab;
+  initialConfigSection?: ConfigSection;
   initialResourceDetailTab?: BranchResourceDetailTab | null;
   /* 从分支卡片的数据库 chip 直达工作台：关掉工作台直接退回分支列表，
      不把用户留在中间这层抽屉里。 */
@@ -907,6 +921,10 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  const canManageConsole = useCanManageConsole();
+  const drawerPanel = useRef<HTMLDivElement>(null);
+  useFocusTrap(open && Boolean(branchId), drawerPanel);
+  const canOpenPreview = canUseConsolePreview(previewMode, canManageConsole);
   // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
   // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
@@ -914,12 +932,12 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [entryAliases, setEntryAliases] = useState<WebEntryCollectionLike<WebEntryUrl>>({});
   const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(
-    () => resolveWebEntryPresentation(
+    () => canOpenPreview ? resolveWebEntryPresentation(
       previewMode,
       previewUrl || branch?.previewUrl || '',
       entryAliases,
-    ),
-    [branch?.previewUrl, entryAliases, previewMode, previewUrl],
+    ) : { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] },
+    [branch?.previewUrl, canOpenPreview, entryAliases, previewMode, previewUrl],
   );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
@@ -927,6 +945,7 @@ export function BranchDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [readFailures, setReadFailures] = useState<Record<string, string>>({});
   // 2026-07-26 用户拍板：总览承载入口卡就必须坐第一号位——打开抽屉默认总览（仪表盘）
   const [activeTab, setActiveTab] = useState<DrawerTab>('overview');
   // 方案 A：配置页签内三分区（生效变量 / 配置检查器 / 分支设置）
@@ -940,6 +959,12 @@ export function BranchDetailDrawer({
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
   // 手动多出口配置弹窗：入口卡右上角的「配置入口」按钮打开它（不必找 Agent 改 compose）
   const [webEntryConfigOpen, setWebEntryConfigOpen] = useState(false);
+  useEffect(() => {
+    if (!branchId || new URLSearchParams(window.location.search).get('configureAddress') !== '1') return;
+    setWebEntryConfigOpen(true);
+    const params = new URLSearchParams(window.location.search); params.delete('configureAddress');
+    window.history.replaceState(null, '', `${window.location.pathname}${params.size ? `?${params}` : ''}`);
+  }, [branchId]);
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
@@ -1087,55 +1112,62 @@ export function BranchDetailDrawer({
   } | null>(null);
   const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
-  const load = useCallback(async () => {
+  const [factsUpdatedAt, setFactsUpdatedAt] = useState<number | null>(null);
+  const factsGateRef = useRef(createLatestWinsGate());
+  const sectionGateRef = useRef(createLatestWinsGate());
+  const load = useCallback(async (silent = false) => {
     if (!branchId) return;
-    setLoading(true);
+    const ticket = factsGateRef.current.begin();
+    const sectionTicket = sectionGateRef.current.begin();
+    if (!silent) setLoading(true);
     setError('');
+    const failures: Record<string, string> = {};
+    const read = <T,>(source: string, request: Promise<T>) => partialRead(source, request, failures);
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
       const [branchesRes, logsRes, runsRes, versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
-        apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
-        apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ runs: [] })),
-        apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ versions: [] })),
-        apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
-          .catch((err) => {
-            setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-            return { profiles: [] };
-          }),
-        apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
-          .catch(() => ({ services: [] })),
-        apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
-          .catch(() => ({ resources: [] })),
+        read('部署日志', apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`)),
+        read('部署记录', apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)),
+        read('版本记录', canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`) : Promise.resolve({ versions: [] })),
+        read('分支配置', apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)),
+        read('基础设施', canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`) : Promise.resolve({ services: [] })),
+        read('资源清单', apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)),
         apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
           .catch((): { primaryEntry?: WebEntryUrl; webEntries: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] } => ({ webEntries: [] })),
       ]);
+      if (branchIdRef.current !== branchId) return;
+      const acceptFacts = factsGateRef.current.accept(ticket);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
-      if (!found) {
+      if (acceptFacts && !found) {
         setError('branch_not_found');
         setBranch(null);
-      } else {
+      } else if (acceptFacts && found) {
         setBranch(found);
       }
-      setLogs(logsRes.logs || []);
-      setDeploymentRuns(runsRes.runs || []);
-      setDeploymentVersions(versionsRes.versions || []);
-      setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
-      setInfraServices(infraRes.services || []);
-      setResourceSnapshot(resourcesRes.resources || found?.resources || []);
+      if (acceptFacts) {
+        setFactsUpdatedAt(Date.now());
+        if (logsRes) setLogs(logsRes.logs || []);
+        if (runsRes) setDeploymentRuns(runsRes.runs || []);
+        if (versionsRes) setDeploymentVersions(versionsRes.versions || []);
+      }
+      if (!sectionGateRef.current.accept(sectionTicket)) return;
+      setReadFailures(failures);
+      if (profilesRes) setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
+      else setProfileState(current => current.status === 'ok' ? current : { status: 'error', message: failures['分支配置'] || '分支配置尚未确认，请重试读取。' });
+      if (infraRes) setInfraServices(infraRes.services || []);
+      if (resourcesRes) setResourceSnapshot(resourcesRes.resources || found?.resources || []);
       setEntryAliases(aliasesRes);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      if (branchIdRef.current === branchId && factsGateRef.current.accept(ticket)) setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (branchIdRef.current === branchId) setLoading(false);
     }
-  }, [branchId, projectId]);
+  }, [branchId, projectId, canManageConsole]);
 
   const loadTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setTriggerLogsState({ status: 'loading' });
     try {
       const params = new URLSearchParams();
@@ -1176,7 +1208,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   const loadSystemLogs = useCallback(async () => {
     if (!branchId) return;
@@ -1200,7 +1232,7 @@ export function BranchDetailDrawer({
    * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
    */
   const loadMoreTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
     // updater 的执行时机；这才是这次 offset bug 的根因修复。
     const currentOffset = triggerLogsCountRef.current;
@@ -1257,7 +1289,7 @@ export function BranchDetailDrawer({
     } finally {
       triggerLogsLoadMoreInFlightRef.current = false;
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
   // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
@@ -1271,8 +1303,13 @@ export function BranchDetailDrawer({
   const failureAutoSwitchedRef = useRef(false);
   useEffect(() => {
     if (!open || !branchId) return;
-    failureAutoSwitchedRef.current = false;
-    setActiveTab(initialResourceId ? 'services' : 'overview');
+    factsGateRef.current.newSession();
+    sectionGateRef.current.newSession();
+    setFactsUpdatedAt(null);
+    setReadFailures({});
+    failureAutoSwitchedRef.current = !!initialTab;
+    setActiveTab(initialResourceId ? 'services' : initialTab || 'overview');
+    setConfigSection(initialConfigSection || 'variables');
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
@@ -1311,23 +1348,37 @@ export function BranchDetailDrawer({
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
-  }, [open, branchId, load]);
+  }, [open, branchId, load, initialTab, initialConfigSection]);
 
   useEffect(() => {
-    if (!open || activeTab !== 'deployments' || !branchId || !projectId) return;
-    const refreshRuns = async (): Promise<void> => {
+    if (!open || !branchId || !projectId) return;
+    let cancelled = false;
+    let inFlight = false;
+    const refreshFacts = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
+      const ticket = factsGateRef.current.begin();
       try {
-        const response = await apiRequest<{ runs: DeploymentRunSummary[] }>(
-          `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`,
-        );
-        if (branchIdRef.current === branchId) setDeploymentRuns(response.runs || []);
+        const [branches, runs, versions, history] = await Promise.all([
+          apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
+          apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`),
+          apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`),
+          apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`),
+        ]);
+        if (cancelled || branchIdRef.current !== branchId || !factsGateRef.current.accept(ticket)) return;
+        const current = branches.branches.find(b => b.id === branchId);
+        if (current) setBranch(current);
+        setFactsUpdatedAt(Date.now());
+        setDeploymentRuns(runs.runs || []);
+        setDeploymentVersions(versions.versions || []);
+        setLogs(history.logs || []);
       } catch {
-        // 保留最近一次成功快照，短暂控制面抖动不清空事实账本。
-      }
+        // 短暂失败保留最近事实，下一轮自动恢复。
+      } finally { inFlight = false; }
     };
-    const timer = window.setInterval(() => void refreshRuns(), 2_000);
-    return () => window.clearInterval(timer);
-  }, [activeTab, branchId, open, projectId]);
+    const timer = window.setInterval(() => void refreshFacts(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [branchId, open, projectId]);
 
   useEffect(() => {
     if (!open || !initialResourceId) return;
@@ -1422,13 +1473,17 @@ export function BranchDetailDrawer({
 
   useEffect(() => {
     if (activeTab !== 'logs' || !branch) return;
-    if (logsMode === 'webhook' && triggerLogsState.status === 'idle') {
+    if (canManageConsole && logsMode === 'webhook' && triggerLogsState.status === 'idle') {
       void loadTriggerLogs();
     }
     if (logsMode === 'system' && systemLogsState.status === 'idle') {
       void loadSystemLogs();
     }
-  }, [activeTab, logsMode, branch, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+  }, [activeTab, logsMode, branch, canManageConsole, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+
+  useEffect(() => {
+    if (!canManageConsole && logsMode === 'webhook') setLogsMode('system');
+  }, [canManageConsole, logsMode]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -1623,7 +1678,7 @@ export function BranchDetailDrawer({
   }, [branchId, load, onActionComplete, onToast]);
 
   const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1651,12 +1706,12 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onActionComplete, onToast]);
+  }, [branchId, canManageConsole, load, onActionComplete, onToast]);
 
   // 波1 W1c:按分支切换数据库隔离档位(dbScope)。与部署模式不同,**只保存不自动重部署**——
   // 切库是重操作(应用重启后连到另一个 database),用户应自己决定重部署时机(最小惊讶)。
   const setProfileDbScope = useCallback(async (profile: ProfileRow, scope: '' | 'shared' | 'per-branch'): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1685,7 +1740,7 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -1713,7 +1768,7 @@ export function BranchDetailDrawer({
       if (activeTab === 'logs') {
         if (logsMode === 'system') {
           await loadSystemLogs();
-        } else if (logsMode === 'webhook') {
+        } else if (canManageConsole && logsMode === 'webhook') {
           await loadTriggerLogs();
         } else if (logsMode === 'container' && selectedServiceId) {
           await loadServiceLogs(selectedServiceId);
@@ -1733,6 +1788,7 @@ export function BranchDetailDrawer({
   }, [
     activeTab,
     branchId,
+    canManageConsole,
     headerRefreshing,
     load,
     loadEnv,
@@ -1857,7 +1913,10 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const activeDialog = document.activeElement instanceof Element ? document.activeElement.closest('[role="dialog"]') : null;
+      if (activeDialog && activeDialog !== drawerPanel.current?.closest('[role="dialog"]')) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     const previousOverflow = document.body.style.overflow;
@@ -1892,9 +1951,9 @@ export function BranchDetailDrawer({
       services: branch.services || {},
       profiles: resourceProfiles,
       infraServices,
-      previewUrl,
+      previewUrl: canOpenPreview ? previewUrl : '',
     });
-  }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
+  }, [branch, canOpenPreview, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
   // 复制集副本日志目标（2026-07-26 用户反馈「副本日志看不了 / 分不清」修复）：
   // 副本选择键形如 `pid::memberId`，在 services 里永远匹配不到——旧代码兜底到
@@ -1942,7 +2001,7 @@ export function BranchDetailDrawer({
   // 芯片快捷加副本也走执行计划（与复制集页签「草稿-保存」同一模型：有执行记录、
   // 失败可见、CDS 重启有启动收敛兜底——不许存在绕过计划的隐形执行通道）
   const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-plans`, {
         method: 'POST',
@@ -1958,12 +2017,12 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
   // 数据库保护罩（design.cds.replica-set 波4）：锁按钮一键克隆隔离副本，
   // 克隆期间芯片环绕动画，轮询进度直到 done/error（禁止空白等待）。
   const [dbGuardBusy, setDbGuardBusy] = useState<Record<string, boolean>>({});
   const startDbGuard = useCallback(async (infraId: string) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/db-guard`, {
         method: 'POST',
@@ -1995,7 +2054,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, onToast]);
+  }, [branchId, canManageConsole, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -2204,7 +2263,7 @@ export function BranchDetailDrawer({
 
   if (!open || !branchId) return null;
 
-  return (
+  const drawer = (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="分支详情">
       <button
         type="button"
@@ -2213,9 +2272,11 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
+        ref={drawerPanel}
         className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl md:w-2/3 md:border-l md:border-[hsl(var(--hairline))]"
         style={{ minHeight: 0 }}
       >
+        {factsUpdatedAt ? <div className="shrink-0 px-4 pt-2 text-right text-[0.625rem] text-muted-foreground" aria-label="部署事实更新时间">事实更新于 {new Date(factsUpdatedAt).toLocaleTimeString('zh-CN')} · 自动刷新</div> : null}
         <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="shrink-0 whitespace-nowrap text-sm font-semibold">分支详情</span>
@@ -2239,7 +2300,7 @@ export function BranchDetailDrawer({
                     data-testid="drawer-mirror-badge"
                   >镜像 · 采集于 {new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
                 ) : null}
-                {branch.commitSha ? <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}</span>
                 {(() => {
                   const svcList = Object.values(branch.services || {});
                   if (!svcList.length) return null;
@@ -2309,7 +2370,7 @@ export function BranchDetailDrawer({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
+        <div className="min-h-0 flex-1 overflow-y-auto pb-32 sm:pb-24" style={{ overscrollBehavior: 'contain' }}>
           {/*
                 加载骨架必须是总览的形状（2026-09-17 用户反馈「先出一幅老骨架、三秒后再出一幅更像真实的骨架」）：
                 通用的「四块指标 + 两块内容」和数据到达后的「判断行 / 关系 / 入口 / 曲线」根本不是一个轮廓，
@@ -2320,6 +2381,7 @@ export function BranchDetailDrawer({
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
+              {!canOpenPreview ? <p role="status" className="px-5 py-3 text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
               {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
                   set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
                   原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
@@ -2405,7 +2467,7 @@ export function BranchDetailDrawer({
                         {copiedFailurePrompt ? '已复制' : '复制到大模型'}
                       </button>
                     </div>
-                    <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-destructive/90">{currentFailureReason}</div>
                     {failureDiag && failureDiag.failedServices.length > 0 ? (
                       <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
                         {failureDiag.failedServices.map((diag) => {
@@ -2480,8 +2542,13 @@ export function BranchDetailDrawer({
               </nav>
 
               <div className={activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5' : 'p-5'}>
+                {Object.keys(readFailures).length > 0 ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-warn/35 bg-warn-soft px-3 py-2 text-sm">
+                  <span>{Object.keys(readFailures).join('、')}读取失败，当前结果不完整；未读取到的内容不能视为不存在。</span>
+                  <Button variant="outline" size="sm" onClick={() => void load(true)}>重试读取</Button>
+                  <details className="basis-full"><summary className="cursor-pointer">查看读取错误</summary><ul className="mt-2 space-y-1">{Object.entries(readFailures).map(([source, message]) => <li key={source}>{source}：{message}</li>)}</ul></details>
+                </div> : null}
                 {activeTab === 'run' ? (
-                  <ReplicaSetPanel
+                  canManageConsole ? <ReplicaSetPanel
                     branchId={branch.id}
                     previewUrl={primaryEntryUrl}
                     services={branch.services || {}}
@@ -2495,7 +2562,9 @@ export function BranchDetailDrawer({
                         .map((entry) => ({ name: entry.name, url: entry.url })),
                     ]}
                     onToast={onToast}
-                  />
+                  /> : <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
+                    副本管理仅系统所有者可用，请联系所有者配置副本、分流实测或数据库保护。已授权分支的部署、启停和资源只读查看仍可使用。
+                  </section>
                 ) : null}
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
@@ -2524,7 +2593,7 @@ export function BranchDetailDrawer({
                         置顶——放在部署事实账本与版本账本之上 */}
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
-                        还没有构建记录。点击部署后，构建计划和日志会出现在这里。
+                        {readFailures['部署日志'] || readFailures['部署记录'] ? '部署记录读取不完整，请重试读取；不能据此判断是否已有部署。' : '还没有构建记录。点击部署后，构建计划和日志会出现在这里。'}
                       </section>
                     ) : null}
 
@@ -2568,13 +2637,13 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
-                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    <DeploymentVersionLedger
+                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
+                    {canManageConsole && (!readFailures['版本记录'] || deploymentVersions.length > 0) ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
                       busyVersionId={versionBusyId}
                       onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    />
+                    /> : <p className="px-1 text-sm text-muted-foreground">{canManageConsole ? '版本记录尚未确认。' : '不可变部署版本仅系统所有者可用；你仍可部署此分支并查看上方运行历史。'}</p>}
                   </div>
                 ) : null}
 
@@ -2584,12 +2653,7 @@ export function BranchDetailDrawer({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                           {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
-                          {([
-                            ['container', '容器日志'],
-                            ['system', '系统日志'],
-                            ['webhook', 'Webhook'],
-                            ['http', 'HTTP'],
-                          ] as Array<[LogsMode, string]>).map(([mode, label]) => (
+                          {availableDrawerLogModes(canManageConsole).map(([mode, label]) => (
                             <button
                               key={mode}
                               type="button"
@@ -2616,7 +2680,7 @@ export function BranchDetailDrawer({
                             variant="outline"
                             onClick={() => {
                               if (logsMode === 'system') return void loadSystemLogs();
-                              if (logsMode === 'webhook') return void loadTriggerLogs();
+                              if (canManageConsole && logsMode === 'webhook') return void loadTriggerLogs();
                               if (logsMode === 'http') return void load();
                               const target = selectedServiceId || selectedService?.profileId;
                               if (target) void loadServiceLogs(target);
@@ -2630,7 +2694,7 @@ export function BranchDetailDrawer({
                     </header>
                     {logsMode === 'system' ? (
                       <SystemLogsPanel state={systemLogsState} query={logQuery} />
-                    ) : logsMode === 'webhook' ? (
+                    ) : canManageConsole && logsMode === 'webhook' ? (
                       <TriggerLogsPanel
                         state={triggerLogsState}
                         query={logQuery}
@@ -2704,10 +2768,11 @@ export function BranchDetailDrawer({
                 {activeTab === 'services' ? (
                   <ResourceConsole
                     resources={resources}
+                    readIncomplete={!!(readFailures['资源清单'] || readFailures['基础设施'])}
                     replicaProfileIds={replicaProfileIds}
                     replicaChipInfo={replicaChipInfo}
-                    onQuickReplica={quickAddReplicas}
-                    onDbGuard={startDbGuard}
+                    onQuickReplica={canManageConsole ? quickAddReplicas : undefined}
+                    onDbGuard={canManageConsole ? startDbGuard : undefined}
                     dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
@@ -2777,6 +2842,9 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
+                {branch.deployRuntime?.prebuilt !== false && (branch.ciImageStatus === 'failed' || branch.ciImageStatus === 'waiting') ? (
+                  <CiImageNotice branch={branch} expanded className="mx-4 my-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm" />
+                ) : null}
                 {activeTab === 'overview' ? (
                   <OverviewPanel
                     services={overviewServices}
@@ -2794,8 +2862,9 @@ export function BranchDetailDrawer({
                     // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
                     lifecycle={branchStatus || branch.status}
                     branchName={branch.branch}
-                    commitSha={branch.commitSha}
-                    commitMessage={branch.subject}
+                    commitSha={branch.runningCommitSha || undefined}
+                    targetCommitSha={branch.targetCommitSha || undefined}
+                    ciImageStatus={branch.ciImageStatus}
                     lastReadyAt={branch.lastReadyAt}
                     lastDeployAt={branch.lastDeployAt}
                     deployDurationMs={latestDeployDurationMs}
@@ -2820,9 +2889,9 @@ export function BranchDetailDrawer({
                     rangeStart={seriesMeta?.after}
                     rangeEnd={seriesMeta?.before}
                     onRefreshMetrics={() => void loadMetrics()}
-                    onConfigureEntries={() => setWebEntryConfigOpen(true)}
+                    onConfigureEntries={canManageConsole ? () => setWebEntryConfigOpen(true) : undefined}
                     onOpenDeployments={() => setActiveTab('deployments')}
-                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} variant="row" /> : null}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={canManageConsole ? () => setActiveTab('config') : undefined} variant="row" initialExpanded={initialRelationExpanded} onExpandedRestored={onRelationRestoreConsumed} onFullScreen={onOpenRelations ? expanded => onOpenRelations(branchId, expanded) : undefined} /> : null}
                   />
                 ) : null}
 
@@ -2851,9 +2920,11 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'variables' ? (
                   <VariablesPanel
+                    canManageConsole={canManageConsole}
                     state={envState}
                     revealedValues={revealedValues}
                     onToggleReveal={async (k) => {
+                      if (!canManageConsole) return;
                       // 已 revealed → 折叠回 mask;未 revealed → 调端点拉明文
                       if (revealedValues.has(k)) {
                         setRevealedValues((cur) => {
@@ -2880,6 +2951,7 @@ export function BranchDetailDrawer({
                       }
                     }}
                     onCopySecret={async (k) => {
+                      if (!canManageConsole) return;
                       // 复制 secret:已 revealed 直接用 cache,否则现取 + 复制 +
                       // 不入 cache(用户想"一次性复制"不留显示痕迹)。
                       const cached = revealedValues.get(k);
@@ -2907,7 +2979,7 @@ export function BranchDetailDrawer({
                     branchId={branchId}
                     projectId={projectId}
                     editorOpen={branchEnvEditorOpen}
-                    onToggleEditor={() => setBranchEnvEditorOpen((current) => !current)}
+                    onToggleEditor={() => { if (canManageConsole) setBranchEnvEditorOpen((current) => !current); }}
                     onEnvChanged={() => void loadEnv()}
                     onToast={(message) => onToast?.(message)}
                   />
@@ -2923,6 +2995,7 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'settings' ? (
                   <SettingsPanel
+                    canManageConsole={canManageConsole}
                     branch={branch}
                     projectId={projectId}
                     busy={currentActionBusy}
@@ -2938,9 +3011,9 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
-                  需要修改构建配置 / 环境变量 / 路由？打开
-                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
-                  。需要查看完整日志、Bridge、提交历史？打开
+                  {canManageConsole ? <>需要修改构建配置 / 项目环境变量 / 路由？打开
+                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>。</> : null}
+                  需要查看分支日志与提交历史？打开
                   <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
@@ -2985,27 +3058,27 @@ export function BranchDetailDrawer({
               </>
             ) : (
               <>
-                {previewUrl ? (
+                {previewUrl && canOpenPreview ? (
                   <PreviewActionSplitButton
-                    className="flex-[2_1_0]"
+                    className="cds-branch-detail-footer-primary flex-[2_1_0]"
                     fill
                     previewHref={previewUrl}
                     previewLabel="打开预览"
                     previewTitle="打开预览页"
                     previewAriaLabel="打开预览页"
-                    onRelease={onRelease && branch ? () => onRelease(branch.id) : undefined}
-                    releaseDisabled={!onRelease}
+                    onRelease={canManageConsole && onRelease && branch ? () => onRelease(branch.id) : undefined}
+                    releaseDisabled={!canManageConsole || !onRelease}
                   />
                 ) : (
-                  <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
+                  <Button className="flex-[2_1_0]" disabled title={!canOpenPreview ? MEMBER_PREVIEW_MODE_NOTICE : '当前没有可用预览地址'}>
                     <Play />
-                    等待预览页
+                    {canOpenPreview ? '等待预览页' : '预览暂不可用'}
                   </Button>
                 )}
                 <Button
                   type="button"
                   variant="outline"
-                  className="cds-branch-detail-footer-secondary flex-[1_1_0]"
+                  className="cds-branch-detail-footer-secondary col-span-2 flex-[1_1_0]"
                   onClick={() => { setConfigSection('settings'); setActiveTab('config'); }}
                 >
                   <Settings />
@@ -3030,6 +3103,7 @@ export function BranchDetailDrawer({
       ) : null}
     </div>
   );
+  return typeof document === 'undefined' ? drawer : createPortal(drawer, document.body);
 }
 
 function DeploymentVersionLedger({
@@ -3209,7 +3283,7 @@ function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
     }
   }, [runId]);
 
-  if (loading) return <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在读取结构化诊断</div>;
+  if (loading) return <ContentLoading label="读取结构化诊断" variant="rows" />;
   if (!diagnosis) return <></>;
   const failure = diagnosis.failure;
   return (
@@ -3368,7 +3442,7 @@ function systemLogTypeMeta(type: string): { label: string; cls: string } {
 }
 
 function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
-  if (state.status === 'loading') return <div className={DETAIL_LOG_EMPTY_CLASS}>加载系统日志…</div>;
+  if (state.status === 'loading') return <ContentLoading label="加载系统日志" variant="log" />;
   if (state.status === 'error') {
     return <div className={`${DETAIL_LOG_EMPTY_CLASS} text-destructive`}>加载失败：{state.message}</div>;
   }
@@ -3766,6 +3840,7 @@ function resourceInitialDetailTab(
 
 function ResourceConsole({
   resources,
+  readIncomplete = false,
   replicaProfileIds,
   replicaChipInfo,
   onQuickReplica,
@@ -3786,6 +3861,7 @@ function ResourceConsole({
   onCopy,
 }: {
   resources: BranchResource[];
+  readIncomplete?: boolean;
   /** 已复制集化（含运行成员）的 profileId 集合 —— 卡片加堆叠徽章特殊标识 */
   replicaProfileIds?: Set<string>;
   /** 芯片级复制集信息：成员数 + 是否有启动中成员（光环动画） */
@@ -3820,7 +3896,8 @@ function ResourceConsole({
   const [detailTab, setDetailTab] = useState<BranchResourceDetailTab>(() => resourceInitialDetailTab(selectedResource, initialDetailTab));
   // 菜单锚点带屏幕坐标：菜单经 createPortal 挂 body（验收 P1-2：渲染在
   // overflow-x-auto 芯片行内会被裁剪到肉眼不可见，frontend-modal 规则第 2 条）
-  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; left: number; top: number } | null>(null);
+  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; anchor: HTMLButtonElement } | null>(null);
+  const plusAnchor = useMemo(() => ({ current: plusMenuFor?.anchor ?? null }), [plusMenuFor]);
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
@@ -3881,7 +3958,7 @@ function ResourceConsole({
   if (resources.length === 0) {
     return (
       <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
-        当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。
+        {readIncomplete ? '资源清单尚未确认，请重试读取；不能据此判断是否已部署资源。' : '当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。'}
       </section>
     );
   }
@@ -4001,8 +4078,7 @@ function ResourceConsole({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (plusMenuFor?.id === resource.id) { setPlusMenuFor(null); return; }
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          setPlusMenuFor({ id: resource.id, left: Math.max(8, rect.right - 160), top: rect.bottom + 6 });
+                          setPlusMenuFor({ id: resource.id, anchor: e.currentTarget });
                         }}
                       >
                         <Plus className="h-3 w-3" />
@@ -4012,23 +4088,22 @@ function ResourceConsole({
                       <button
                         type="button"
                         disabled={guarding}
-                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-ok/50 bg-ok-soft text-ok transition-colors hover:bg-ok hover:text-white disabled:opacity-60"
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-ok/50 bg-ok-soft text-ok transition-colors hover:bg-ok hover:text-status-ink disabled:opacity-60"
                         title={guarding ? '正在整库克隆隔离副本…' : '保护罩：一键把当前库克隆成隔离副本（保留在数据快照列表，可随时删除）'}
                         onClick={(e) => { e.stopPropagation(); void onDbGuard?.(infraId); }}
                       >
                         {guarding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
                       </button>
                     ) : null}
-                    {plusMenuFor?.id === resource.id ? createPortal(
-                      <div
-                        className="fixed z-[300] w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
-                        style={{ left: plusMenuFor.left, top: plusMenuFor.top }}
+                    {plusMenuFor?.id === resource.id ? (
+                      <AnchoredPopover open anchorRef={plusAnchor} widthRem={10} align="end" onDismiss={() => setPlusMenuFor(null)} role="menu" aria-label="添加副本"
+                        className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
                       >
                         <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[0.6875rem] text-muted-foreground">加几个副本？</div>
                         {[1, 2, 3].map((n) => (
                           <button
                             key={n}
-                            type="button"
+                            type="button" role="menuitem"
                             className="flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-indigo-500/10"
                             onClick={() => { setPlusMenuFor(null); void onQuickReplica?.(profileId, n); }}
                           >
@@ -4036,8 +4111,7 @@ function ResourceConsole({
                             <span className="text-[0.625rem] text-muted-foreground">确认</span>
                           </button>
                         ))}
-                      </div>,
-                      document.body,
+                      </AnchoredPopover>
                     ) : null}
                   </span>
                 );
@@ -4153,7 +4227,7 @@ function ResourceConsole({
                     }}
                   />
                 ) : null}
-                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
+                {detailTab === 'data' ? <ResourceDataPanel key={`${selectedResource.branchId}:${selectedResource.id}:${selectedResource.runtime}`} resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
                 {detailTab === 'backups' ? (
                   <ResourceBackupsPanel
                     resource={selectedResource}
@@ -4223,6 +4297,20 @@ function ResourceOverview({ resource, branchName }: { resource: BranchResource; 
   );
 }
 
+interface ResourceTcpCapability {
+  enabled: boolean;
+  host: string;
+  reason?: string;
+  passportEnabled?: boolean;
+}
+
+export function ResourceTcpConnectionStatus({ capability }: { capability: ResourceTcpCapability | null }): JSX.Element {
+  if (!capability) return <ContentLoading label="读取实例直连配置" variant="inline" />;
+  return <span>{capability.enabled
+    ? `直连主机：${capability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。`
+    : capability.reason || TCP_DISABLED_DESCRIPTION}</span>;
+}
+
 function ResourceConnection({
   resource,
   permissions,
@@ -4247,10 +4335,25 @@ function ResourceConnection({
   const externalAddress = resource.externalUrl || resource.externalAccess?.address || '';
   const externalEnabled = resource.externalAccess?.enabled || resource.access === 'external';
   const dependentApps = resource.consumers || [];
+  const savedAllowlist = (resource.externalAccess?.allowlist || []).join('\n');
   const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
   const [connectionBusy, setConnectionBusy] = useState<'external' | 'internal' | null>(null);
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [externalError, setExternalError] = useState('');
+  const [sshTarget, setSshTarget] = useState('');
+  const [sshLocalPort, setSshLocalPort] = useState('13306');
+  const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
+  const [sshBusy, setSshBusy] = useState(false);
+  const infraLocalOnly = resource.source === 'infra';
+  const [tcpCapability, setTcpCapability] = useState<ResourceTcpCapability | null>(null);
+  useEffect(() => {
+    setTcpCapability(null);
+    if (!resource.branchId || !infraLocalOnly) return;
+    let cancelled = false;
+    void apiRequest<ResourceTcpCapability>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
+    return () => { cancelled = true; };
+  }, [resource.branchId, resource.id, infraLocalOnly]);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
@@ -4280,20 +4383,49 @@ function ResourceConnection({
     },
     {
       label: '内部连接串（容器内）',
-      value: resource.connectionString || resource.internalUrl || '-',
+      value: externalEnabled ? resource.internalUrl || '-' : resource.connectionString || resource.internalUrl || '-',
       connectionScope: resource.source === 'infra' ? 'internal' as const : undefined,
       copyLabel: '复制容器内用',
       help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
     },
-  ];
+  ].filter((row) => !infraLocalOnly || externalEnabled || !row.label.startsWith('外部'));
   useEffect(() => {
-    setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
+    setExternalError('');
+    setSshGuide(null);
+    setConnectionMessage(null);
+    setSshLocalPort(resource.runtime === 'PostgreSQL' ? '15432' : resource.runtime === 'MongoDB' ? '27018' : resource.runtime === 'Redis' ? '16379' : '13306');
+    setAllowlistDraft(savedAllowlist);
     setTtlDraft(resource.externalAccess?.expiresAt ? '120' : '120');
-  }, [resource.id, resource.externalAccess?.allowlist, resource.externalAccess?.expiresAt]);
+  }, [resource.id, savedAllowlist, resource.externalAccess?.expiresAt]);
+  async function generateSshGuide(copyString = false): Promise<void> {
+    if (!resource.branchId) return;
+    setSshBusy(true);
+    setExternalError('');
+    setConnectionMessage(null);
+    try {
+      const result = await apiRequest<{ sshCommand: string; maskedConnectionString: string; connectionString: string; localPort: number }>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/connection-string?scope=ssh&localPort=${encodeURIComponent(sshLocalPort)}&sshTarget=${encodeURIComponent(sshTarget)}`,
+      );
+      setSshGuide({ sshCommand: result.sshCommand, maskedConnectionString: result.maskedConnectionString, localPort: result.localPort });
+      if (copyString) { await onCopy(result.connectionString); setConnectionMessage('本地连接串已复制。请先在终端保持 SSH 隧道运行，再用数据库客户端连接。'); }
+    } catch (err) {
+      setSshGuide(null);
+      setExternalError(err instanceof ApiError ? err.message : String(err));
+    } finally { setSshBusy(false); }
+  }
+  async function toggleExternal(input: ResourceExternalAccessInput): Promise<void> {
+    setExternalError('');
+    setConnectionMessage(null);
+    if (input.enabled && infraLocalOnly && (!input.allowlist?.length || !Number.isInteger(input.ttlMinutes) || input.ttlMinutes! < 1 || input.ttlMinutes! > 1440)) { setExternalError('请填写至少一个 IPv4/CIDR 白名单，并设置 1–1440 分钟有效期。'); return; }
+    try { await onToggleExternalAccess(input); setConnectionMessage(input.enabled ? '临时直连已开启，只有白名单 IP 可以连接，到期自动断开。' : '临时直连已关闭。'); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
+  }
   async function resetCredentials(): Promise<void> {
     const confirmResourceName = window.prompt(`重置会让 ${resource.displayName} 的旧连接失效。请输入资源名确认：${resource.serviceName}`);
     if (!confirmResourceName) return;
-    await onResetCredentials(confirmResourceName);
+    setExternalError('');
+    try { await onResetCredentials(confirmResourceName); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
   }
   async function copyConnectionString(scope: 'external' | 'internal'): Promise<void> {
     if (!resource.branchId) return;
@@ -4313,6 +4445,7 @@ function ResourceConnection({
   }
   return (
     <div className="space-y-3">
+      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={copyTextToClipboard} /> : null}
       {rows.map((row) => (
         <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
           <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
@@ -4342,11 +4475,35 @@ function ResourceConnection({
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
-      <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold">外部访问控制</div>
-            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时必须填写 IP allowlist、临时有效期和凭据重置记录。</div>
+      {externalError ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">{externalError}</div> : null}
+      {infraLocalOnly ? (
+        <div className="space-y-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs leading-5">
+          <div className="font-semibold">本地数据库客户端 · SSH 隧道</div>
+          <p className="text-muted-foreground">也可使用已有 SSH 账号把数据库映射到本机；DataGrip、Navicat 等客户端连接本地地址。</p>
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem]">
+            <label className="grid gap-1">SSH 主机或配置别名<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" placeholder="user@server 或 SSH 别名" value={sshTarget} onChange={(event) => { setSshTarget(event.target.value); setSshGuide(null); }} /></label>
+            <label className="grid gap-1">本地端口<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" inputMode="numeric" value={sshLocalPort} onChange={(event) => { setSshLocalPort(event.target.value); setSshGuide(null); }} /></label>
+          </div>
+          <Button type="button" size="sm" variant="outline" disabled={sshBusy || !canInjectConnection} onClick={() => void generateSshGuide()}>
+            {sshBusy ? <Loader2 className="animate-spin" /> : <Terminal />}生成连接说明
+          </Button>
+          {!canInjectConnection ? <p className="text-muted-foreground">{resourcePermissionReason(permissions, 'connection-inject')}</p> : null}
+          {sshGuide ? <div className="space-y-2">
+            <p>1. 在本机终端执行并保持运行；关闭终端即可断开隧道：</p>
+            <pre className="overflow-auto rounded border border-[hsl(var(--hairline))] bg-background p-2 font-mono">{sshGuide.sshCommand}</pre>
+            <Button type="button" size="sm" variant="outline" onClick={() => void onCopy(sshGuide.sshCommand)}><Copy />复制 SSH 命令</Button>
+            <p>2. 客户端地址：127.0.0.1，端口：{sshGuide.localPort}。使用数据库账号密码；也可复制完整连接串。</p>
+            <code className="block break-all font-mono">{sshGuide.maskedConnectionString}</code>
+            <Button type="button" size="sm" variant="outline" disabled={sshBusy} onClick={() => void generateSshGuide(true)}><Copy />复制本地连接串</Button>
+          </div> : null}
+        </div>
+      ) : null}
+      {(!tcpCapability?.passportEnabled || !['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) || externalEnabled) ? <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">临时 TCP 直连</div>
+            <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
+            {infraLocalOnly ? <div className="mt-1"><ResourceTcpConnectionStatus capability={tcpCapability} /></div> : null}
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -4364,7 +4521,7 @@ function ResourceConnection({
             type="button"
             size="sm"
             variant="outline"
-            disabled={externalBusy || !canTemporaryExternal}
+            disabled={externalBusy || !canTemporaryExternal || (!externalEnabled && infraLocalOnly && !tcpCapability?.enabled)}
             title={!canTemporaryExternal ? resourcePermissionReason(permissions, 'external-temporary-access') : undefined}
             onClick={() => {
               const allowlist = allowlistDraft
@@ -4372,7 +4529,7 @@ function ResourceConnection({
                 .map((item) => item.trim())
                 .filter(Boolean);
               const ttlMinutes = Number(ttlDraft);
-              void onToggleExternalAccess({
+              void toggleExternal({
                 enabled: !externalEnabled,
                 ttlMinutes: !externalEnabled && Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : undefined,
                 allowlist,
@@ -4380,32 +4537,34 @@ function ResourceConnection({
             }}
           >
             {externalBusy ? <Loader2 className="animate-spin" /> : externalEnabled ? <PowerOff /> : <ExternalLink />}
-            {externalEnabled ? '关闭公网' : '临时开启'}
+            {externalEnabled ? '关闭直连' : '临时开启'}
           </Button>
         </div>
-        <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
-          <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80 /80">有效期（分钟）</span>
+        <div className="grid items-start gap-3 md:grid-cols-2">
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[0.6875rem] text-warn/80">有效期（分钟，开启时生效）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
-              className="h-8 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
+              className="h-10 w-full min-w-0 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
               inputMode="numeric"
               placeholder="120"
+              type="number" min={1} max={1440} step={1}
             />
           </label>
-          <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80 /80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[0.6875rem] text-warn/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
-              className="min-h-[4rem] resize-y rounded-md border border-warn/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-warn"
+              className="h-10 min-h-10 w-full min-w-0 resize-y rounded-md border border-warn/30 bg-background px-2 py-2.5 font-mono text-xs outline-none focus:border-warn"
               placeholder="203.0.113.10/32"
+              rows={1}
               spellCheck={false}
             />
           </label>
         </div>
-      </div>
+      </div> : null}
       {resource.kind === 'database' ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -4446,8 +4605,12 @@ interface DbTableSummary {
 
 interface DbQueryResult {
   columns: string[];
-  rows: string[][];
+  rows: Array<Array<string | null>>;
   rowCount: number;
+  statement?: string;
+  resultSets?: DbQueryResult[];
+  output?: string;
+  truncated?: boolean;
 }
 
 interface WorkbenchCommandResult {
@@ -4724,7 +4887,7 @@ function CodeEditor({
         <pre
           aria-hidden
           className="pointer-events-none absolute inset-0 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs leading-5"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
         >
           {value ? highlightedCode(value, language) : <span className="text-muted-foreground/55">{placeholder || ''}</span>}
         </pre>
@@ -4732,7 +4895,7 @@ function CodeEditor({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className="relative z-10 w-full resize-y bg-transparent px-3 py-2 font-mono text-xs leading-5 text-transparent caret-foreground outline-none selection:bg-primary/20"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
           spellCheck={false}
           placeholder={placeholder}
         />
@@ -4830,6 +4993,7 @@ function resultModeLabel(mode: WorkbenchResultMode): string {
 }
 
 function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
@@ -4844,7 +5008,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
   const [writeForm, setWriteForm] = useState<{ action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string }>({
     action: 'updateMany', collection: '', document: '{\n  \n}', filter: '{\n  \n}', update: '{\n  "$set": {}\n}', confirm: '',
   });
-  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
+  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string; failure?: DatabaseFailure }>({ status: 'idle' });
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -4871,7 +5035,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         return nextDatabase;
       });
     } catch (err) {
-      setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
+      setDatabasesState({ status: 'error', databases: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4889,7 +5053,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setSelectedCollection(nextCollection);
       setCommand(defaultMongoCommand(nextCollection));
     } catch (err) {
-      setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCollectionsState({ status: 'error', collections: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4902,7 +5066,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setResultMode('table');
       setSelectedDocumentIndex(0);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4938,7 +5102,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setSelectedDocumentIndex(0);
       if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
       setResultMode('output');
     }
   }
@@ -4969,7 +5133,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       void loadDocuments(selectedDatabase, coll);
       void loadCollections(selectedDatabase, coll);
     } catch (err) {
-      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setWriteState({ status: 'error', failure: databaseFailure(err, 'mongo') });
     }
   }
 
@@ -4998,9 +5162,9 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">数据库 / collection</div>
-                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={resource.displayName}>{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
                   <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5067,13 +5231,13 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                   })}
                 </div>
               ) : (
-                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : '没有数据库信息。'}</div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? <ContentLoading label="读取数据库列表" /> : '没有数据库信息。'}</div>
               )}
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
-            <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_auto_minmax(0,1fr)]">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">只读</span></div>
@@ -5118,6 +5282,9 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
               </div>
             </section>
 
+            <div className="shrink-0" data-testid="mongo-write-feedback">
+              {writeState.status === 'error' ? <DatabaseExecutionNotice failure={writeState.failure || { summary: writeState.message || '写入未完成。', recovery: '请修正填写内容后重试。' }} showDiagnostics={canManageConsole} /> : null}
+            </div>
             <MongoDocumentsView
               state={commandState}
               collection={selectedCollection}
@@ -5205,9 +5372,7 @@ function MongoStructuredWritePanel({
             执行写入
           </Button>
         </div>
-        {state.status === 'error' ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[0.6875rem] text-destructive">{state.message}</div>
-        ) : state.status === 'ok' ? (
+        {state.status === 'ok' ? (
           <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[0.6875rem] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
         ) : null}
       </div>
@@ -5269,12 +5434,7 @@ function MongoDocumentsView({
         </div>
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          执行中
-        </div>
-      ) : activeMode === 'table' && hasDocuments ? (
+      {state.status === 'loading' ? <ContentLoading label="读取文档结果" variant="table" /> : activeMode === 'table' && hasDocuments ? (
         <MongoDocumentTable documents={state.documents} selectedIndex={selectedIndex} onSelectIndex={onSelectIndex} />
       ) : activeMode === 'json' ? (
         <pre className="min-h-0 overflow-auto p-3 font-mono text-xs leading-5">
@@ -5499,7 +5659,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                 })}
               </div>
             ) : (
-              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? '扫描中...' : '没有匹配的 key。'}</div>
+              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? <ContentLoading label="读取键列表" /> : '没有匹配的 key。'}</div>
             )}
           </div>
           <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-3 py-2 text-xs text-muted-foreground">
@@ -5513,9 +5673,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         <div className="grid min-w-0 gap-3">
           <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Key Detail</div>
-            {detailState.status === 'loading' ? (
-              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取 key</div>
-            ) : detailState.status === 'error' ? (
+            {detailState.status === 'loading' ? <ContentLoading label="读取数据详情" variant="rows" /> : detailState.status === 'error' ? (
               <div className="px-3 py-3 text-xs leading-5 text-destructive">{detailState.message}</div>
             ) : detailState.detail ? (
               <div className="grid gap-3 p-3">
@@ -5616,7 +5774,7 @@ function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): str
   return `\`${table.name.replace(/`/g, '``')}\``;
 }
 
-type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string; failure?: DatabaseFailure; batchWrite?: boolean };
 
 /**
  * 只读语句头。**必须与后端 src/services/sql-statement-policy.ts 的 READ_STATEMENT_HEADS
@@ -5630,7 +5788,7 @@ const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', '
  * 逐字一致**（守卫测试比对两边源码）：两边不一致就会出现「前端当读发过去、后端当写
  * 拒绝」或反过来的死语句。
  */
-const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock|into)\b/i;
 
 /**
  * 与后端 stripSqlComments(sql, { maskLiterals: true, dialect }) 同一套扫描：
@@ -5653,14 +5811,25 @@ function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): st
       if (ch === quote) quote = null;
       continue;
     }
+    if (!hashStartsComment && ch === '$' && !/[A-Za-z0-9_$\u0080-\uffff]/.test(sql[i-1] || ' ')) {
+      const tag=sql.slice(i).match(/^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/)?.[0];
+      if(tag){
+        const close=sql.indexOf(tag,i+tag.length),end=close<0?sql.length:close+tag.length;
+        out += true ? "'"+' '.repeat(end-i)+"'" : sql.slice(i,end);i=end-1;continue;
+      }
+    }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
     if (ch === '/' && next === '*') {
-      const end = sql.indexOf('*/', i + 2);
-      i = end === -1 ? sql.length : end + 1;
-      out += ' ';
-      continue;
+      let cursor=i+2,depth=1;
+      while(cursor<sql.length && depth){
+        if(!hashStartsComment && sql[cursor]==='/'&&sql[cursor+1]==='*'){depth++;cursor+=2;}
+        else if(sql[cursor]==='*'&&sql[cursor+1]==='/'){depth--;cursor+=2;}
+        else cursor++;
+      }
+      i=cursor-1;out+=' ';continue;
     }
-    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
+    const dashComment = ch === '-' && next === '-' && (!hashStartsComment || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
+    if (dashComment || (ch === '#' && hashStartsComment)) {
       const end = sql.indexOf('\n', i);
       i = end === -1 ? sql.length : end;
       out += ' ';
@@ -5677,16 +5846,20 @@ function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
   if (!READ_STATEMENT_HEADS.includes(head)) return false;
   // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
   // ——判据看代码本身，与后端同一条。`#` 只有 MySQL 才是注释。
-  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'));
+  if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'))) return false;
+  if (/\/\*!/.test(body)) return false;
+  return stripSqlCommentsAndLiterals(body, runtime === 'MySQL').split(';').filter((part) => part.trim()).every((part) => READ_STATEMENT_HEADS.includes(part.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || ''));
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
   const [selectedTableKey, setSelectedTableKey] = useState('');
   const [sql, setSql] = useState('SELECT 1');
   const [resultState, setResultState] = useState<DbResultState>({ status: 'idle' });
   const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
+  const [activeResult, setActiveResult] = useState(0);
   const [initSql, setInitSql] = useState('');
   const [migrationCommand, setMigrationCommand] = useState('');
   const [initBusy, setInitBusy] = useState<'init-sql' | 'migration' | null>(null);
@@ -5697,18 +5870,21 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
     : '';
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
+  const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);
 
-  const loadTables = useCallback(async () => {
+  const loadTables = useCallback(async (autoSelect = true) => {
     if (!basePath) return;
     setTablesState((current) => ({ ...current, status: 'loading', message: undefined }));
     try {
       const res = await apiRequest<{ database?: string; tables: DbTableSummary[] }>(`${basePath}/tables`);
       const tables = res.tables || [];
       setTablesState({ status: 'ok', tables, database: res.database });
-      setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
-      setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      if (autoSelect) {
+        setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
+        setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      }
     } catch (err) {
-      setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
+      setTablesState({ status: 'error', tables: [], message: databaseFailure(err, 'sql').summary });
     }
   }, [basePath, resource]);
 
@@ -5719,9 +5895,11 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       const schemaQs = table.schema ? `&schema=${encodeURIComponent(table.schema)}` : '';
       const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table.name)}${schemaQs}&limit=50`);
       setResultState({ status: 'ok', result: preview });
+      setActiveResult(0);
       setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure });
       setResultMode('output');
     }
   }, [basePath]);
@@ -5733,10 +5911,10 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   useEffect(() => {
     if (!selectedTable) return;
     void loadTablePreview(selectedTable);
-  }, [loadTablePreview, selectedTable]);
+  }, [loadTablePreview, selectedTable?.name, selectedTable?.schema]);
 
   async function runInitializationSql(): Promise<void> {
-    if (!basePath || !initSql.trim()) return;
+    if (!canManageConsole || !basePath || !initSql.trim()) return;
     setInitBusy('init-sql');
     setInitError('');
     try {
@@ -5754,7 +5932,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }
 
   async function runMigrationCommand(): Promise<void> {
-    if (!resource.branchId || !migrationCommand.trim()) return;
+    if (!canManageConsole || !resource.branchId || !migrationCommand.trim()) return;
     setInitBusy('migration');
     setInitError('');
     try {
@@ -5772,23 +5950,25 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }
 
   async function runSqlCommand(): Promise<void> {
-    if (!basePath || !sql.trim()) return;
+    if (!basePath || !sql.trim() || (!canManageConsole && !sqlReadOnly)) return;
+    if (resultState.status === 'loading') return;
+    setActiveResult(0);
     setResultState({ status: 'loading' });
     try {
-      const readOnly = sqlCommandIsReadOnly(sql, resource.runtime);
+      const readOnly = sqlReadOnly;
       const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
       });
       setResultState({ status: 'ok', result });
-      setResultMode(result.columns.length > 0 ? 'table' : 'output');
-      if (!readOnly) {
-        void loadTables();
-        if (selectedTable) void loadTablePreview(selectedTable);
-      }
+      setResultMode(result.columns.length > 0 || result.resultSets?.length ? 'table' : 'output');
+      if (!readOnly) void loadTables(false);
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const partialResult = err instanceof ApiError ? (err.body as { partialResult?: DbQueryResult })?.partialResult : undefined;
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure, batchWrite: !sqlReadOnly, result: partialResult });
       setResultMode('output');
+      if (!sqlReadOnly) void loadTables(false);
     }
   }
 
@@ -5797,7 +5977,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       <ResourceWorkbenchLauncher
         resource={resource}
         title={adapter.label}
-        description={`${adapter.treeLabel}，右上执行一条命令，右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
+        description={`${adapter.treeLabel}，右上执行 SQL，多个查询按页签查看，修改结果连续显示；右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
         onOpen={() => setWorkbenchOpen(true)}
       />
       <ResourceWorkbenchModal
@@ -5810,9 +5990,9 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">{adapter.treeLabel}</div>
-                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={`${resource.displayName} · ${tablesState.database || '-'}`}>{resource.displayName} · {tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
                   <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5850,25 +6030,27 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   </div>
                 </div>
               ) : (
-                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? <ContentLoading label="读取表列表" /> : '没有表。'}</div>
               )}
             </div>
           </aside>
 
           <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
-            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
-              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
                   <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
                 </div>
-                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
+                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading' || (!canManageConsole && !sqlReadOnly)} onClick={() => void runSqlCommand()}>
                   {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行
                 </Button>
               </div>
+              <p className="shrink-0 px-3 pt-2 text-[0.6875rem] text-muted-foreground">多条 SQL 使用同一连接执行；查询结果按页签展示，修改结果连续显示。遇错停止，已提交修改不会自动回滚。</p>
               <div
-                className="p-3"
+                className="min-h-0 flex-1 overflow-y-auto p-3"
+                style={{ overscrollBehavior: 'contain' }}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault();
@@ -5881,20 +6063,45 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   value={sql}
                   onChange={setSql}
                   language="sql"
-                  minHeight={158}
+                  minHeight={120}
                   placeholder="SELECT * FROM users LIMIT 50"
                 />
               </div>
             </section>
 
-            <DbResultTable
-              state={resultState}
-              emptyLabel="选择表或执行 SQL 后在这里显示结果。"
-              viewMode={resultMode}
-              onViewModeChange={setResultMode}
-            />
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              {resultState.result?.resultSets?.length ? (
+                <div role="tablist" aria-label="SQL 查询结果" className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3 py-1">
+                  {resultState.result.resultSets.map((item, index) => (
+                    <button key={index} role="tab" aria-selected={activeResult === index} title={item.statement} type="button"
+                      className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === index ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                      onClick={() => { setActiveResult(index); setResultMode('table'); }}>
+                      查询 {index + 1} · {item.rowCount} 行
+                    </button>
+                  ))}
+                  <button role="tab" aria-selected={activeResult === -1} type="button"
+                    className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === -1 ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                    onClick={() => { setActiveResult(-1); setResultMode('output'); }}>执行记录</button>
+                </div>
+              ) : null}
+              {resultState.result?.truncated ? (
+                <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  <span>结果太多，已缩减显示。修改语句可能已执行，请先核对数据，避免重复提交。</span>
+                  <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => { setActiveResult(-1); setResultMode('output'); }}>查看已有执行记录</button>
+                </div>
+              ) : null}
+              {resultState.status === 'error' && resultState.failure ? <DatabaseExecutionNotice failure={resultState.failure} batchWrite={resultState.batchWrite} showDiagnostics={canManageConsole} /> : null}
+              <div className="grid min-h-0 flex-1">
+                <DbResultTable
+                  state={resultState.result?.resultSets?.[activeResult] ? { status: 'ok', result: resultState.result.resultSets[activeResult] } : resultState}
+                  emptyLabel="选择表或执行 SQL 后在这里显示结果。"
+                  viewMode={resultMode}
+                  onViewModeChange={setResultMode}
+                />
+              </div>
+            </div>
           </main>
-          <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
+          {canManageConsole ? <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
             <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
               <summary className="cursor-pointer text-xs font-semibold">初始化 / 迁移 / 重试</summary>
               <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -5938,7 +6145,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                 </div>
               </div>
             </details>
-          </section>
+          </section> : <p className="border-t border-[hsl(var(--hairline))] p-3 text-xs text-muted-foreground lg:col-span-2">普通账号仅支持只读查询；写入、初始化和迁移请联系系统所有者。</p>}
         </div>
       </ResourceWorkbenchModal>
     </>
@@ -5962,9 +6169,11 @@ function DbResultTable({
     ? state.result.rows.map((row) => Object.fromEntries(state.result!.columns.map((column, index) => [column, row[index] ?? null])))
     : [];
   const outputText = state.status === 'error'
-    ? state.message || '执行失败'
+    ? [state.result?.output, state.message || '执行失败'].filter(Boolean).join('\n\n')
     : state.result
-      ? state.result.columns.length > 0
+      ? state.result.output
+        ? `${state.result.output}${state.result.truncated ? '\n输出已截断。' : ''}`
+        : state.result.columns.length > 0
         ? `返回 ${state.result.rowCount} 行。`
         : `执行完成，返回 ${state.result.rowCount} 行。`
       : emptyLabel;
@@ -5993,9 +6202,7 @@ function DbResultTable({
         </div>
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />执行中</div>
-      ) : activeMode === 'table' && hasRows ? (
+      {state.status === 'loading' ? <ContentLoading label="读取查询结果" variant="table" /> : activeMode === 'table' && hasRows ? (
         <div className="min-h-0 overflow-auto">
           <table className="w-full min-w-[45rem] text-left text-xs">
             <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
@@ -6012,7 +6219,7 @@ function DbResultTable({
                 >
                   {state.result!.columns.map((column, columnIndex) => (
                     <td key={`${column}-${columnIndex}`} className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
-                      {row[columnIndex] || 'NULL'}
+                      {row[columnIndex] ?? 'NULL'}
                     </td>
                   ))}
                 </tr>
@@ -6198,9 +6405,7 @@ function ResourceBackupsPanel({
             </Button>
           </div>
         </div>
-        {backupState.status === 'loading' ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取备份列表</div>
-        ) : backupState.status === 'error' ? (
+        {backupState.status === 'loading' ? <ContentLoading label="读取备份列表" variant="rows" /> : backupState.status === 'error' ? (
           <div className="text-xs leading-5 text-destructive">{backupState.message}</div>
         ) : backupState.supported === false ? (
           <div className="text-xs leading-5 text-muted-foreground">{backupState.message || '当前数据库类型的资源级备份恢复待接入。'}</div>
@@ -6291,12 +6496,7 @@ function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.E
   }, [loadMetrics]);
 
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取 {resource.displayName} 指标…
-      </div>
-    );
+    return <ContentLoading label="读取资源指标" variant="panel" />;
   }
 
   if (state.status === 'error') {
@@ -6391,12 +6591,7 @@ function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Elem
   }, [loadLogs]);
 
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取 {resource.displayName} 日志…
-      </div>
-    );
+    return <ContentLoading label="读取资源日志" variant="log" />;
   }
 
   if (state.status === 'error') {
@@ -6564,9 +6759,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
       </div>
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
         <div className="mb-2 text-xs font-semibold text-muted-foreground">最近审计</div>
-        {auditState.status === 'loading' ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />加载中</div>
-        ) : auditState.status === 'error' ? (
+        {auditState.status === 'loading' ? <ContentLoading label="读取设置审计" variant="rows" /> : auditState.status === 'error' ? (
           <div className="text-xs text-destructive">{auditState.message}</div>
         ) : auditState.logs.length > 0 ? (
           <div className="space-y-2">
@@ -6588,7 +6781,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
   );
 }
 
-function ServiceLogsPanel({
+export function ServiceLogsPanel({
   service,
   state,
   replica,
@@ -6634,11 +6827,13 @@ function ServiceLogsPanel({
             <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
               {state.message}
             </div>
+          ) : state.status === 'loading' && isCurrent ? (
+            <div className={`${serviceLogViewportClass} rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3`}>
+              <ContentLoading label="读取服务日志" variant="log" />
+            </div>
           ) : (
             <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground`}>
-              {state.status === 'loading' && isCurrent
-                ? '正在读取 docker logs...'
-                : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
+              {visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
             </pre>
           )}
         </div>
@@ -6780,7 +6975,8 @@ export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; o
 //   - 搜索框过滤 key
 // ──────────────────────────────────────────────────────────────────────────
 
-function VariablesPanel({
+export function VariablesPanel({
+  canManageConsole,
   state,
   revealedValues,
   onToggleReveal,
@@ -6795,6 +6991,7 @@ function VariablesPanel({
   onEnvChanged,
   onToast,
 }: {
+  canManageConsole: boolean;
   state: EffectiveEnvState;
   /** 已 reveal 的 secret key → 明文。未 reveal 的不在 map 里。 */
   revealedValues: Map<string, string>;
@@ -6811,12 +7008,7 @@ function VariablesPanel({
   onToast: (message: string) => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取该分支的生效环境变量…
-      </section>
-    );
+    return <ContentLoading label="读取生效环境变量" variant="table" />;
   }
   if (state.status === 'error') {
     return (
@@ -6850,16 +7042,16 @@ function VariablesPanel({
             <HelpCircle className="h-3.5 w-3.5" />
           </button>
           <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-md border border-[hsl(var(--hairline))] bg-popover p-3 text-xs leading-5 text-popover-foreground shadow-xl group-hover/help:block group-focus-within/help:block">
-            这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。
+            {canManageConsole ? '这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。' : '这里只读展示生效变量；修改或查看密钥请联系系统所有者。'}
           </span>
         </span>
         <span className="text-xs text-muted-foreground">
           共 {data.total ?? 0} 个 · 分支覆盖 {branchOverrideCount} · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
           镜像 {data.bySource?.mirror ?? 0} · CDS 内置 {(data.bySource?.['cds-builtin'] ?? 0) + (data.bySource?.['cds-derived'] ?? 0)}
         </span>
-        <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
+        {canManageConsole ? <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
           <ExternalLink />编辑本分支
-        </Button>
+        </Button> : null}
         <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
           <RefreshCw />刷新
         </Button>
@@ -6867,9 +7059,9 @@ function VariablesPanel({
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         当前编辑范围:<span className="mx-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 font-medium text-warn">仅本分支</span>
         。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
-        项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
+        {canManageConsole ? <>项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。</> : '变量仅供查看，修改或查看密钥请联系系统所有者。'}
       </div>
-      {editorOpen ? (
+      {canManageConsole && editorOpen ? (
         <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/18 px-4 py-3">
           <EnvEditor
             scope={branchId}
@@ -6909,6 +7101,7 @@ function VariablesPanel({
           {filtered.map((v) => (
             <EnvRow
               key={v.key}
+              canRevealSecrets={canManageConsole}
               entry={v}
               revealedPlain={revealedValues.get(v.key)}
               onToggleReveal={() => { void onToggleReveal(v.key); }}
@@ -6920,7 +7113,7 @@ function VariablesPanel({
 
       <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         优先级:project &gt; global &gt; mirror &gt; cds-derived &gt; cds-builtin。同名 key 后写覆盖前写。
-        敏感值默认隐藏,点眼睛图标按条解锁。
+        {canManageConsole ? '敏感值默认隐藏,点眼睛图标按条解锁。' : '敏感值保持隐藏，查看请联系系统所有者。'}
       </footer>
     </section>
   );
@@ -6941,11 +7134,13 @@ function maskedEnvValue(entry: EffectiveEnvVar, isSecretFromKey: boolean): strin
 }
 
 function EnvRow({
+  canRevealSecrets,
   entry,
   revealedPlain,
   onToggleReveal,
   onCopySecret,
 }: {
+  canRevealSecrets: boolean;
   entry: EffectiveEnvVar;
   /** 已 reveal 的明文。undefined 表示尚未 reveal(secret)或非 secret。 */
   revealedPlain: string | undefined;
@@ -6953,7 +7148,7 @@ function EnvRow({
   onCopySecret: () => void;
 }): JSX.Element {
   const effectiveIsSecret = entry.isSecret || isSensitiveEnvKey(entry.key);
-  const isRevealed = revealedPlain !== undefined;
+  const isRevealed = canRevealSecrets && revealedPlain !== undefined;
   // 后端 isSecret=false 但 key 看起来敏感时,列表里的 entry.value 可能是明文;
   // 未 reveal 前必须用前端 mask 兜底,避免 GITHUB_PAT 等直接暴露。
   const displayValue = effectiveIsSecret
@@ -6973,11 +7168,11 @@ function EnvRow({
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
-        title={effectiveIsSecret && !isRevealed ? '点击右侧眼睛查看真实值' : safeDisplayValue}
+        title={effectiveIsSecret && !isRevealed ? (canRevealSecrets ? '点击右侧眼睛查看真实值' : '敏感值仅系统所有者可查看') : safeDisplayValue}
       >
         {safeDisplayValue}
       </span>
-      {effectiveIsSecret ? (
+      {effectiveIsSecret && canRevealSecrets ? (
         <button
           type="button"
           onClick={onToggleReveal}
@@ -6988,7 +7183,7 @@ function EnvRow({
           {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       ) : null}
-      <button
+      {!effectiveIsSecret || canRevealSecrets ? <button
         type="button"
         onClick={() => {
           // secret 走 reveal 端点取明文再复制,non-secret 直接 entry.value
@@ -7000,7 +7195,7 @@ function EnvRow({
         aria-label="复制"
       >
         <Copy className="h-4 w-4" />
-      </button>
+      </button> : null}
     </li>
   );
 }
@@ -7065,7 +7260,8 @@ function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
 // 或停止 — 不再需要关抽屉回卡片找按钮。
 // ──────────────────────────────────────────────────────────────────────────
 
-function SettingsPanel({
+export function SettingsPanel({
+  canManageConsole,
   branch,
   projectId,
   busy,
@@ -7078,6 +7274,7 @@ function SettingsPanel({
   onSetProfileDbScope,
   onToast,
 }: {
+  canManageConsole: boolean;
   branch: BranchDetailData | null;
   projectId: string;
   busy: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null;
@@ -7097,9 +7294,7 @@ function SettingsPanel({
   const [dbChoices, setDbChoices] = useState<BranchDbChoice[]>([]);
   if (!branch) {
     return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        正在加载分支信息…
-      </section>
+      <ContentLoading label="读取分支设置" variant="rows" />
     );
   }
   const isRunning = branch.status === 'running';
@@ -7116,7 +7311,8 @@ function SettingsPanel({
               本分支运行模式
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。
+              {canManageConsole ? '这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。'
+                : '配置仅供查看，修改运行模式或数据库隔离请联系系统所有者。'}
             </div>
           </div>
           <span
@@ -7127,9 +7323,7 @@ function SettingsPanel({
             {runtime?.label || '源码'}
           </span>
         </div>
-        {profileState.status === 'loading' || profileState.status === 'idle' ? (
-          <div className="text-sm text-muted-foreground">正在加载容器模式…</div>
-        ) : null}
+        {profileState.status === 'loading' || profileState.status === 'idle' ? <ContentLoading label="读取容器模式" variant="rows" /> : null}
         {profileState.status === 'error' ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {profileState.message}
@@ -7174,8 +7368,8 @@ function SettingsPanel({
                   <select
                     className="h-9 min-w-[10.625rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={activeMode}
-                    onChange={(event) => onSetProfileDeployMode(profile, event.target.value)}
-                    disabled={entries.length === 0 || modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDeployMode(profile, event.target.value); }}
+                    disabled={!canManageConsole || entries.length === 0 || modeSavingProfileId === profile.profileId}
                     title="只切换当前分支的这个容器"
                   >
                     <option value="">热加载 / 源码</option>
@@ -7188,15 +7382,15 @@ function SettingsPanel({
                   <select
                     className="h-9 min-w-[11.875rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={dbScopeOverride ?? ''}
-                    onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
-                    disabled={modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch'); }}
+                    disabled={!canManageConsole || modeSavingProfileId === profile.profileId}
                     title="高级：只覆盖本分支的数据库隔离；项目默认在项目设置 → 数据库隔离 里改。切换后需重新部署生效"
                   >
                     <option value="">{`数据库:继承项目默认(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
                     <option value="shared">数据库:本分支覆盖为共享库</option>
                     <option value="per-branch">数据库:本分支覆盖为分支独立库</option>
                   </select>
-                  {dbScopeOverride !== undefined ? (
+                  {canManageConsole && dbScopeOverride !== undefined ? (
                     <button
                       type="button"
                       className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
@@ -7211,7 +7405,7 @@ function SettingsPanel({
                 </div>
               );
             })}
-            {profileState.profiles.length > 0 ? (
+            {canManageConsole && profileState.profiles.length > 0 ? (
               <div className="text-xs text-muted-foreground">
                 数据库隔离的项目默认在
                 <a
@@ -7303,34 +7497,35 @@ function SettingsPanel({
       </div>
 
       {/* 跳转 */}
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+      {canManageConsole ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          配置入口
+          项目级配置
         </div>
+        <p className="mb-3 text-xs text-muted-foreground">以下入口修改整个项目的配置，不只影响当前分支。请在项目设置中确认生效范围与时机。</p>
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm" variant="outline">
-            <a href={`/settings/${encodeURIComponent(projectId)}`}>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?fromBranch=${encodeURIComponent(branch.id)}`}>
               <Settings />
               项目设置
-            </a>
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=env&fromBranch=${encodeURIComponent(branch.id)}`}>
               环境变量
-            </a>
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=build`}>
-              构建配置
-            </a>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=services&fromBranch=${encodeURIComponent(branch.id)}`}>
+              构建与启动
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=routing`}>
-              路由规则
-            </a>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=routing&fromBranch=${encodeURIComponent(branch.id)}`}>
+              自定义路由
+            </MotionLink>
           </Button>
         </div>
-      </div>
+      </div> : null}
 
       {/* 危险操作 */}
       <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">

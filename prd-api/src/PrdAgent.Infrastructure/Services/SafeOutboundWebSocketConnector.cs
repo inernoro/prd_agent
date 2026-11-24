@@ -10,6 +10,7 @@ public sealed record SafeWebSocketTarget(Uri Uri, IReadOnlyList<IPAddress> Addre
 
 public interface ISafeOutboundWebSocketConnector
 {
+    Uri ValidateProxyTarget(string? url);
     Task<SafeWebSocketTarget> PrepareAsync(string? url, CancellationToken ct = default);
     Task<IDisposable> ConnectAsync(ClientWebSocket socket, string? url, CancellationToken ct = default);
 }
@@ -23,7 +24,8 @@ public sealed class SafeOutboundWebSocketConnector : ISafeOutboundWebSocketConne
         _validator = validator;
     }
 
-    public async Task<SafeWebSocketTarget> PrepareAsync(string? url, CancellationToken ct = default)
+    // 自定义代理负责目标 DNS；这里只校验 URL 和显式 IP，实际代理对端另由 handler 固定到公网。
+    public Uri ValidateProxyTarget(string? url)
     {
         var trimmed = (url ?? string.Empty).Trim();
         if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri))
@@ -38,6 +40,15 @@ public sealed class SafeOutboundWebSocketConnector : ISafeOutboundWebSocketConne
         var host = uri.IdnHost.Trim().TrimEnd('.');
         if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("外部 WebSocket 不允许连接 localhost");
+        if (IPAddress.TryParse(host, out var literal) && !_validator.IsSafeAddress(literal))
+            throw new InvalidOperationException("外部 WebSocket 不允许连接内网或保留地址");
+        return uri;
+    }
+
+    public async Task<SafeWebSocketTarget> PrepareAsync(string? url, CancellationToken ct = default)
+    {
+        var uri = ValidateProxyTarget(url);
+        var host = uri.IdnHost.Trim().TrimEnd('.');
         var addresses = IPAddress.TryParse(host, out var literal)
             ? new[] { literal }
             : await Dns.GetHostAddressesAsync(host, ct);

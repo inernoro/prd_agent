@@ -148,6 +148,7 @@ export class TicketSsoStateStore {
     redirect: string | null;
     callbackUrl: string;
     createdAt: number;
+    browserBinding?: string;
   }>();
   private readonly ttlMs: number;
   private readonly maxEntries: number;
@@ -167,7 +168,7 @@ export class TicketSsoStateStore {
     this.now = options.now ?? Date.now;
   }
 
-  issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string | null } {
+  issue(redirect: unknown, callbackUrl = '', browserBinding?: string): { state: string; redirect: string | null } {
     const now = this.now();
     this.gcIfDue(now);
     if (this.states.size >= this.maxEntries) {
@@ -184,16 +185,16 @@ export class TicketSsoStateStore {
     const safeRedirect = redirect === undefined || redirect === null || redirect === ''
       ? null
       : cleanInternalRedirect(redirect);
-    this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: now });
+    this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: now, browserBinding });
     return { state, redirect: safeRedirect };
   }
 
-  consume(state: unknown): { redirect: string | null; callbackUrl: string } | null {
+  consume(state: unknown, browserBinding?: string): { redirect: string | null; callbackUrl: string } | null {
     if (typeof state !== 'string') return null;
     const now = this.now();
     this.gcIfDue(now);
     const entry = this.states.get(state);
-    if (!entry) return null;
+    if (!entry || (entry.browserBinding && entry.browserBinding !== browserBinding)) return null;
     this.states.delete(state);
     if (now - entry.createdAt > this.ttlMs) return null;
     return { redirect: entry.redirect, callbackUrl: entry.callbackUrl };
@@ -295,11 +296,13 @@ export function buildTicketSsoAuthorizationUrl(
   config: CdsSsoConfig,
   callbackUrl: string,
   state: string,
+  redirect?: string | null,
 ): string {
   const url = new URL(config.authorizationUrl);
   url.searchParams.set('client_id', config.clientId);
   url.searchParams.set('redirect_uri', callbackUrl);
   url.searchParams.set('state', state);
+  if (config.providerId === 'cds-preview' && redirect) url.searchParams.set('return_to', redirect);
   return url.toString();
 }
 
@@ -309,6 +312,7 @@ export async function exchangeTicketSsoCode(
   callbackUrl: string,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = DEFAULT_TOKEN_EXCHANGE_TIMEOUT_MS,
+  authorizeState?: string,
 ): Promise<TicketSsoIdentity> {
   if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{32,256}$/.test(code)) {
     throw new Error('SSO_CODE_INVALID');
@@ -327,7 +331,9 @@ export async function exchangeTicketSsoCode(
         client_id: config.clientId,
         client_secret: config.clientSecret,
         redirect_uri: callbackUrl,
+        ...(config.providerId === 'cds-preview' ? { state: authorizeState } : {}),
       }),
+      redirect: config.providerId === 'cds-preview' ? 'error' : 'follow',
       signal: controller.signal,
     });
     try {

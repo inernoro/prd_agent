@@ -41,12 +41,6 @@
     "darkRgbaBg": 0,
     "lightFg": 1
   },
-  "/components/BranchBadge.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/changelog/ChangelogBell.tsx": {
     "whiteAlpha": 1,
     "darkHex": 2,
@@ -328,12 +322,6 @@
     "darkHex": 1,
     "darkRgbaBg": 1,
     "lightFg": 0
-  },
-  "/components/model/PlatformAvailableModelsDialog.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
   },
   "/components/model/PoolHealthOverview.tsx": {
     "whiteAlpha": 0,
@@ -2326,5 +2314,11 @@
     "darkHex": 2,
     "darkRgbaBg": 24,
     "lightFg": 16
+  },
+  "/pages/home/film/filmPalette.ts": {
+    "whiteAlpha": 6,
+    "darkHex": 13,
+    "darkRgbaBg": 0,
+    "lightFg": 0
   }
 }

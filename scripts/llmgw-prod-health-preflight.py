@@ -2,8 +2,8 @@
 """Read-only LLM Gateway production health preflight.
 
 This script never calls model providers. It checks the public health endpoint
-and optional auth boundaries before a costly protocol canary or release gate
-run. Its main purpose is to prove which commit is actually deployed.
+and optional auth boundaries before a costly protocol canary or a production
+release. Its main purpose is to prove which commit is actually deployed.
 """
 
 from __future__ import annotations

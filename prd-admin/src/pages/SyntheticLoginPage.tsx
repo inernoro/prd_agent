@@ -76,7 +76,7 @@ export default function SyntheticLoginPage() {
 
         setPermissions(authz.data.effectivePermissions || []);
         setIsRoot(authz.data.isRoot ?? false);
-        if (authz.data.cdnBaseUrl) setCdnBaseUrl(authz.data.cdnBaseUrl);
+        setCdnBaseUrl(authz.data.cdnBaseUrl || '', authz.data.legacyCdnBaseUrl);
         if (authz.data.permissionFingerprint) setPermFingerprint(authz.data.permissionFingerprint);
         setPermissionsLoaded(true);
         navigate(returnUrl, { replace: true });

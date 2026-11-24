@@ -23,10 +23,11 @@
  *
  * 所有 sha 过 isCommitShaLike、所有 ref 过 isSafeGitRef 才准进 argv：这两个值
  * 最终是 git 的命令行参数，`-` 开头的值会被当成选项（`--upload-pack=` 可直接
- * 执行命令）。execFile 不过 shell 能挡住管道，挡不住「参数被当成选项」这一层。
+ * 执行命令）。参数逐项 shell 引用能挡住管道，挡不住「参数被当成选项」这一层。
  */
 
-import { execFileSync } from 'node:child_process';
+import type { IShellExecutor } from '../types.js';
+import { createReleaseGitRunner, type ReleaseGitRunner } from './release-git-reader.js';
 import { isCommitShaLike } from './release-commit-clock.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
 
@@ -42,17 +43,8 @@ export const DEFAULT_RAIL_TTL_MS = 60_000;
  */
 export const MAX_BEHIND_SCAN = 20_000;
 
-const GIT_TIMEOUT_MS = 3_000;
-
-/** 注入点：单测传假 runner，生产走 execFileSync。约定失败时抛异常。 */
-export type GitRunner = (args: readonly string[]) => string;
-
-export const execFileGitRunner: GitRunner = (args) =>
-  execFileSync('git', [...args], {
-    encoding: 'utf8',
-    timeout: GIT_TIMEOUT_MS,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+/** 注入点：假runner可同步返回，生产读取始终经已有观测池。 */
+export type GitRunner = ReleaseGitRunner;
 
 export interface ReleaseCommitRailNode {
   sha: string;
@@ -151,6 +143,7 @@ export interface ReleaseCommitRailOptions {
   /** 项目 → 本地 git 仓库根。取不到即「没有可读的本地仓库」。 */
   repoRootResolver: (projectId: string) => string | undefined;
   runner?: GitRunner;
+  shell?: IShellExecutor;
   ttlMs?: number;
   maxNodes?: number;
   now?: () => number;
@@ -158,11 +151,12 @@ export interface ReleaseCommitRailOptions {
 
 export class ReleaseCommitRailReader {
   private cache = new Map<string, CacheEntry>();
+  private pending = new Map<string, Promise<ReleaseCommitRailResult>>();
 
   constructor(private readonly options: ReleaseCommitRailOptions) {}
 
   private get runner(): GitRunner {
-    return this.options.runner ?? execFileGitRunner;
+    return this.options.runner ?? createReleaseGitRunner(this.options.shell);
   }
 
   private get ttlMs(): number {
@@ -177,9 +171,9 @@ export class ReleaseCommitRailReader {
     return this.options.now ? this.options.now() : Date.now();
   }
 
-  private run(args: readonly string[]): string | undefined {
+  private async run(args: readonly string[]): Promise<string | undefined> {
     try {
-      return this.runner(args);
+      return await this.runner(args);
     } catch {
       return undefined;
     }
@@ -189,12 +183,12 @@ export class ReleaseCommitRailReader {
    * 两个 commit 之间隔了几个提交（`from..to`，即 to 比 from 多几个）。
    * 跨环境「新了几个提交」必须走这里直算，禁止拿两个 behindCount 相减。
    */
-  countCommitsBetween(projectId: string, fromSha: string, toSha: string): number | null {
+  async countCommitsBetween(projectId: string, fromSha: string, toSha: string): Promise<number | null> {
     if (!isCommitShaLike(fromSha) || !isCommitShaLike(toSha)) return null;
     if (sameCommit(fromSha, toSha)) return 0;
     const root = this.resolveRepoRoot(projectId);
     if (!root) return null;
-    const out = this.run(['-C', root, 'rev-list', '--count', `${fromSha}..${toSha}`]);
+    const out = await this.run(['-C', root, 'rev-list', '--count', `${fromSha}..${toSha}`]);
     return out === undefined ? null : parseCount(out);
   }
 
@@ -207,7 +201,8 @@ export class ReleaseCommitRailReader {
     }
   }
 
-  read(input: ReleaseCommitRailInput): ReleaseCommitRailResult {
+  async read(input: ReleaseCommitRailInput): Promise<ReleaseCommitRailResult> {
+    input = { ...input, targets: input.targets.map(target => ({ ...target })) };
     const signature = [
       input.branch || '',
       ...[...input.targets]
@@ -218,16 +213,30 @@ export class ReleaseCommitRailReader {
     if (cached && cached.signature === signature && cached.expiresAt > this.now()) {
       return cached.result;
     }
-    const result = this.compute(input);
-    this.cache.set(input.projectId, {
-      signature,
-      expiresAt: this.now() + this.ttlMs,
-      result,
-    });
-    return result;
+    const key = JSON.stringify([input.projectId, signature]);
+    const existing = this.pending.get(key);
+    if (existing) return existing;
+    if (this.pending.size >= 64) {
+      const reason = '提交历史查询繁忙，请稍后重试';
+      return {
+        rail: { branch: input.branch || '', ref: '', nodes: [], unavailableReason: reason },
+        positions: positionsWithReason(input.targets, reason),
+      };
+    }
+    const request = this.compute(input);
+    this.pending.set(key, request);
+    try {
+      const result = await request;
+      this.cache.delete(input.projectId);
+      this.cache.set(input.projectId, { signature, expiresAt: this.now() + this.ttlMs, result });
+      while (this.cache.size > 128) this.cache.delete(this.cache.keys().next().value!);
+      return result;
+    } finally {
+      if (this.pending.get(key) === request) this.pending.delete(key);
+    }
   }
 
-  private compute(input: ReleaseCommitRailInput): ReleaseCommitRailResult {
+  private async compute(input: ReleaseCommitRailInput): Promise<ReleaseCommitRailResult> {
     const branch = (input.branch || '').trim();
     const unavailable = (reason: string): ReleaseCommitRailResult => ({
       rail: { branch, ref: '', nodes: [], unavailableReason: reason },
@@ -239,14 +248,15 @@ export class ReleaseCommitRailReader {
     const root = this.resolveRepoRoot(input.projectId);
     if (!root) return unavailable('项目未记录本地仓库路径，无法读取提交历史');
 
-    const ref = this.resolveRef(root, branch);
-    if (!ref) return unavailable(`本地仓库没有 ${branch} 的引用，可能尚未拉取过该分支`);
+    const resolved = await this.resolveRef(root, branch);
+    if (!resolved) return unavailable(`本地仓库没有 ${branch} 的引用，可能尚未拉取过该分支`);
+    const { ref, sha } = resolved;
 
-    const logOut = this.run([
+    const logOut = await this.run([
       '-C', root, 'log',
       '--max-count', String(this.maxNodes),
       `--format=%H${UNIT_SEPARATOR}%cI${UNIT_SEPARATOR}%s`,
-      ref,
+      sha,
     ]);
     if (logOut === undefined) return unavailable('git 不可用或读取提交历史失败');
     const nodes = parseRailLog(logOut);
@@ -261,26 +271,26 @@ export class ReleaseCommitRailReader {
 
     const positions: Record<string, ReleaseTargetCommitPosition> = {};
     for (const target of input.targets) {
-      positions[target.targetId] = this.positionOf(root, ref, nodes, target.commitSha);
+      positions[target.targetId] = await this.positionOf(root, sha, nodes, target.commitSha);
     }
     return { rail, positions };
   }
 
   /** 优先 origin/<branch>（真实远端状态），本地没有再退到同名本地分支。 */
-  private resolveRef(root: string, branch: string): string | undefined {
+  private async resolveRef(root: string, branch: string): Promise<{ ref: string; sha: string } | undefined> {
     for (const candidate of [`origin/${branch}`, branch]) {
-      const out = this.run(['-C', root, 'rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
-      if (out && out.trim()) return candidate;
+      const out = await this.run(['-C', root, 'rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
+      if (out && isCommitShaLike(out.trim())) return { ref: candidate, sha: out.trim() };
     }
     return undefined;
   }
 
-  private positionOf(
+  private async positionOf(
     root: string,
     ref: string,
     nodes: ReleaseCommitRailNode[],
     commitSha: string,
-  ): ReleaseTargetCommitPosition {
+  ): Promise<ReleaseTargetCommitPosition> {
     const base: ReleaseTargetCommitPosition = {
       commitSha,
       behindCount: null,
@@ -295,9 +305,9 @@ export class ReleaseCommitRailReader {
     }
 
     const inRail = nodes.some((node) => sameCommit(node.sha, commitSha));
-    const behindOut = this.run(['-C', root, 'rev-list', '--count', `${commitSha}..${ref}`]);
+    const behindOut = await this.run(['-C', root, 'rev-list', '--count', `${commitSha}..${ref}`]);
     const behindCount = behindOut === undefined ? null : parseCount(behindOut);
-    const aheadOut = this.run(['-C', root, 'rev-list', '--count', `${ref}..${commitSha}`]);
+    const aheadOut = await this.run(['-C', root, 'rev-list', '--count', `${ref}..${commitSha}`]);
     const aheadCount = aheadOut === undefined ? null : parseCount(aheadOut);
 
     if (behindCount === null && aheadCount === null) {
@@ -309,7 +319,7 @@ export class ReleaseCommitRailReader {
     }
 
     const oldestUnreleasedAt = behindCount && behindCount > 0 && behindCount <= MAX_BEHIND_SCAN
-      ? this.oldestCommitAt(root, ref, commitSha, behindCount)
+      ? await this.oldestCommitAt(root, ref, commitSha, behindCount)
       : undefined;
 
     return {
@@ -326,8 +336,8 @@ export class ReleaseCommitRailReader {
    * 用 `--skip=N-1 --max-count=1` 而不是 `--reverse`：前者输出恒为一行，
    * 后者要把整段历史打印出来再倒序，落后上千提交时纯属浪费。
    */
-  private oldestCommitAt(root: string, ref: string, commitSha: string, behindCount: number): string | undefined {
-    const out = this.run([
+  private async oldestCommitAt(root: string, ref: string, commitSha: string, behindCount: number): Promise<string | undefined> {
+    const out = await this.run([
       '-C', root, 'log',
       `--skip=${behindCount - 1}`,
       '--max-count', '1',

@@ -5,10 +5,10 @@
 // 某个 Provider 下面，而是这一页的第三段。
 //
 // 生效不是即时的（prd-api 每 60 秒刷一次），这一点写在界面上而不是让人保存完盯着屏幕猜。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createImageGenConfig, deleteImageGenConfig, getImageGenConfigs, updateImageGenConfig } from '@/lib/api';
 import type { ImageGenConfigItem, ImageGenConfigsData, UpsertImageGenConfigRequest } from '@/lib/types';
-import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
+import { Button, Chip, HelpTip, InlineAlert, SectionLoader } from '@/components/ui';
 import { RowActions } from '@/components/RowActions';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -137,6 +137,20 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   const [data, setData] = useState<ImageGenConfigsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const editorOrigin = useRef<HTMLElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const [editorEntry, setEditorEntry] = useState(0);
+  function openEditor(next: { id: string | null; draft: Draft }, origin?: HTMLElement | null) {
+    editorOrigin.current = origin || document.activeElement as HTMLElement;
+    setEditing(next); setEditorEntry(value => value + 1);
+  }
+  useEffect(() => {
+    if (!editorEntry) return;
+    if (editing) { editorRef.current?.scrollIntoView({ block: 'start' }); editorRef.current?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({ preventScroll: true }); }
+    else if (editorOrigin.current?.isConnected && editorOrigin.current !== document.body) editorOrigin.current.focus();
+    else document.querySelector<HTMLButtonElement>('[data-imagegen-create]')?.focus();
+  }, [editorEntry, editing !== null]);
   const [busy, setBusy] = useState(false);
   const [showBuiltin, setShowBuiltin] = useState(false);
   // 轮询的心跳。只靠 data 当依赖的话，一次失败的轮询什么都不会变（data 原样、
@@ -205,7 +219,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   const remove = async (item: ImageGenConfigItem) => {
     const ok = await confirm({
       title: '删掉这条契约？',
-      description: `${item.modelIdPattern} 的契约删掉之后，匹配到它的模型会回落到代码内置那份（如果有）。`,
+      description: `删除 ${item.modelIdPattern} 的自定义契约后，匹配模型将采用适用的内置配置；无内置匹配时不再应用这条尺寸与参数规则。`,
       confirmLabel: '删除',
       tone: 'danger',
     });
@@ -232,20 +246,27 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <header style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h3 className="lg-title" style={{ margin: 0 }}>生图契约</h3>
-          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>
-            新生图模型的尺寸档位与参数格式配在这里就生效，不用改代码也不用发版。
-            这里配的赢；没配的回落到代码内置的 {data.builtinCount} 条。
-          </p>
-          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>{syncNote(data)}</p>
+          <HelpTip label="查看生图契约说明">
+            <p style={{ margin: 0 }}>
+              这里配置生图模型的尺寸档位和参数格式。配置优先生效，未配置的模型回落到代码内置的 {data.builtinCount} 条。
+            </p>
+            <p style={{ margin: '8px 0 0' }}>{syncNote(data)}</p>
+            {data.builtinPublishedAt ? <p style={{ margin: '8px 0 0' }}>内置清单发布于 {data.builtinPublishedAt}</p> : null}
+          </HelpTip>
         </div>
-        {canWrite ? (
-          <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: itemToDraft(null) })}>
-            新增契约
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <Button variant="secondary" size="sm" onClick={() => setShowBuiltin((value) => !value)}>
+            {showBuiltin ? '查看自定义契约' : `查看内置契约（${data.builtinCount}）`}
           </Button>
-        ) : null}
+          {canWrite ? (
+            <Button variant="primary" size="sm" data-imagegen-create onClick={() => openEditor({ id: null, draft: itemToDraft(null) })}>
+              新增契约
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       {error ? (
@@ -257,14 +278,59 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
         </InlineAlert>
       ) : null}
 
-      {data.items.length === 0 ? (
-        <p style={{ ...HINT_TEXT, margin: 0 }}>
-          还没有配过契约，生图全部走代码内置那 {data.builtinCount} 条。
-          上游出了内置表里没有的新模型时，在这里加一条。
-        </p>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      {!showBuiltin ? (
+        <div data-testid="imagegen-contract-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="生图契约字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={TABLE_HEAD_CELL}>匹配模式</th>
+              <th style={TABLE_HEAD_CELL}>模型</th>
+              <th style={TABLE_HEAD_CELL}>尺寸</th>
+              <th style={TABLE_HEAD_CELL}>参数格式</th>
+              <th style={TABLE_HEAD_CELL}>顺序</th>
+              <th style={TABLE_HEAD_CELL} />
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ ...TABLE_CELL, color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>
+                  {data.builtinCount > 0 ? '暂无自定义生图契约；匹配内置模式的模型仍按内置契约处理。' : '暂无自定义生图契约'}
+                </td>
+              </tr>
+            ) : data.items.map((item) => (
+              <tr key={item.id} ref={row => { if (row) rowRefs.current.set(item.id, row); else rowRefs.current.delete(item.id); }}>
+                <td style={TABLE_CELL}>
+                  <code>{item.modelIdPattern}</code>
+                  {!item.enabled ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
+                </td>
+                <td style={TABLE_CELL}>
+                  {item.displayName || '（未命名）'}
+                  {item.provider ? <span style={HINT_TEXT}> · {item.provider}</span> : null}
+                </td>
+                <td style={TABLE_CELL}>{summarizeSizes(item)}</td>
+                <td style={TABLE_CELL}><code>{item.sizeParamFormat}</code></td>
+                <td style={TABLE_CELL}>{item.matchOrder}</td>
+                <td style={TABLE_CELL}>
+                  {canWrite ? (
+                    <RowActions
+                      actions={[
+                        { key: 'edit', label: '编辑', onSelect: () => openEditor({ id: item.id, draft: itemToDraft(item) }, rowRefs.current.get(item.id)?.querySelector<HTMLButtonElement>('.lg-row-actions-trigger')) },
+                        { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
+                      ]}
+                    />
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {showBuiltin ? (
+        <div data-testid="imagegen-contract-table" className="lg-upstream-reference-table" tabIndex={0} role="region" aria-label="生图契约字段，可横向滚动" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', minWidth: 720, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 <th style={TABLE_HEAD_CELL}>匹配模式</th>
@@ -276,27 +342,25 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
-                <tr key={item.id}>
-                  <td style={TABLE_CELL}>
-                    <code>{item.modelIdPattern}</code>
-                    {!item.enabled ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
-                  </td>
-                  <td style={TABLE_CELL}>
-                    {item.displayName || '（未命名）'}
-                    {item.provider ? <span style={HINT_TEXT}> · {item.provider}</span> : null}
-                  </td>
+              {data.builtin.map((item) => (
+                <tr key={item.modelIdPattern}>
+                  <td style={TABLE_CELL}><code>{item.modelIdPattern}</code></td>
+                  <td style={TABLE_CELL}>{item.displayName}</td>
                   <td style={TABLE_CELL}>{summarizeSizes(item)}</td>
                   <td style={TABLE_CELL}><code>{item.sizeParamFormat}</code></td>
                   <td style={TABLE_CELL}>{item.matchOrder}</td>
                   <td style={TABLE_CELL}>
                     {canWrite ? (
-                      <RowActions
-                        actions={[
-                          { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id, draft: itemToDraft(item) }) },
-                          { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
-                        ]}
-                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEditor({
+                          id: null,
+                          draft: { ...itemToDraft(item), modelIdPattern: item.modelIdPattern, matchOrder: 50 },
+                        })}
+                      >
+                        新建这条
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -304,54 +368,10 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
             </tbody>
           </table>
         </div>
-      )}
-
-      {/* 内置那份：只读，但可以「照这条建一份」——比从零填二十个字段现实得多。
-          它由 prd-api 启动时发布进库，不是前端或控制台手抄的。 */}
-      <div>
-        <Button variant="ghost" size="sm" onClick={() => setShowBuiltin((v) => !v)}>
-          {showBuiltin ? '收起内置契约' : `看代码内置的 ${data.builtinCount} 条`}
-        </Button>
-        {data.builtinPublishedAt ? (
-          <span style={{ ...HINT_TEXT, marginLeft: 8 }}>由服务端发布于 {data.builtinPublishedAt}</span>
-        ) : (
-          <span style={{ ...HINT_TEXT, marginLeft: 8 }}>
-            服务端还没发布过内置清单——prd-api 起来之后这里才有内容
-          </span>
-        )}
-        {showBuiltin ? (
-          <div style={{ overflowX: 'auto', marginTop: 8 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <tbody>
-                {data.builtin.map((item) => (
-                  <tr key={item.modelIdPattern}>
-                    <td style={TABLE_CELL}><code>{item.modelIdPattern}</code></td>
-                    <td style={TABLE_CELL}>{item.displayName}</td>
-                    <td style={TABLE_CELL}>{summarizeSizes(item)}</td>
-                    <td style={TABLE_CELL}>
-                      {canWrite ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing({
-                            id: null,
-                            draft: { ...itemToDraft(item), modelIdPattern: item.modelIdPattern, matchOrder: 50 },
-                          })}
-                        >
-                          照这条建一份
-                        </Button>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {editing ? (
-        <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div ref={editorRef} style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <strong>{editing.id ? '编辑契约' : '新增契约'}</strong>
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

@@ -24,6 +24,7 @@ export default {
         foreground: 'hsl(var(--foreground) / <alpha-value>)',
         primary: {
           DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
+          hover: 'hsl(var(--primary-hover) / <alpha-value>)',
           foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
         },
         secondary: {
@@ -32,6 +33,7 @@ export default {
         },
         destructive: {
           DEFAULT: 'hsl(var(--destructive) / <alpha-value>)',
+          hover: 'hsl(var(--destructive-hover) / <alpha-value>)',
           foreground: 'hsl(var(--destructive-foreground) / <alpha-value>)',
         },
         muted: {
@@ -57,6 +59,8 @@ export default {
         //
         // 每档两个值：DEFAULT 是实色（圆点 / 图标 / 进度条 / 文字），
         // soft 是整块底色（行底、提示条底、徽章底）。
+        'express-full': 'hsl(var(--express-full) / <alpha-value>)',
+        'express-partial': 'hsl(var(--express-partial) / <alpha-value>)',
         ok: {
           DEFAULT: 'hsl(var(--ok) / <alpha-value>)',
           soft: 'hsl(var(--ok-soft) / <alpha-value>)',
@@ -76,8 +80,7 @@ export default {
 
         // 主色的两个补充档：soft 是低饱和底（选中态/徽章底），
         // ink 是「主色文字」——见下方 textColor 的说明。
-        // 落在 ok/warn/bad/info 实色填充上的文字墨色（暗色主题深墨、白天白字）。
-        // 直接写 text-white 在暗色主题的亮黄/亮绿底上读不出来。
+        // 落在 ok/warn/info 实色填充上的文字墨色。
         'status-ink': 'hsl(var(--status-ink) / <alpha-value>)',
         'primary-soft': 'hsl(var(--primary-soft) / <alpha-value>)',
         'primary-ink': 'hsl(var(--primary-ink) / <alpha-value>)',
@@ -94,7 +97,10 @@ export default {
       // 「有些按钮都看不清了」就是这么来的。所以文字单独压深两档；
       // 暗色下两者同值，零变化。bg-primary / border-primary 不受影响。
       textColor: {
-        primary: 'hsl(var(--primary-ink) / <alpha-value>)',
+        primary: {
+          DEFAULT: 'hsl(var(--primary-ink) / <alpha-value>)',
+          foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

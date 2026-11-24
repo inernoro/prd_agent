@@ -22,6 +22,9 @@ public sealed class McpToolParam
 
     /// <summary>可选枚举值（如 sort=hot|new）</summary>
     public string[]? EnumValues { get; init; }
+
+    /// <summary>Type=array 时元素的 JSON Schema 类型（integer / string ...）；不填则元素类型不限。</summary>
+    public string? ItemsType { get; init; }
 }
 
 /// <summary>
@@ -40,6 +43,8 @@ public sealed class McpToolDef
     public required string RequiredScope { get; init; }
 
     public required string Method { get; init; }
+    /// <summary>能力参数必须严格匹配，避免客户端拼错特性后被静默忽略。</summary>
+    public bool RejectUnknownArguments { get; init; }
 
     /// <summary>绝对路径模板，可含 {paramName} 占位，如 /api/document-store/stores/{storeId}/entries</summary>
     public required string PathTemplate { get; init; }
@@ -68,6 +73,11 @@ public static class McpBuiltinTools
     public const string ScopeMarketplaceRead = "marketplace.skills:read";
     public const string ScopeDocStoreRead = "document-store:read";
     public const string ScopeDocStoreWrite = "document-store:write";
+    private static readonly McpToolParam WebWriteRequestId = new()
+    {
+        Name = "clientRequestId", In = "body",
+        Description = "为本次写入生成一个不超过 256 字符的操作标识，重试时复用。使用 HTTP Idempotency-Key 的客户端可以省略。",
+    };
 
     /// <summary>
     /// 按真实 HTTP 请求（方法 + 路径）反查内置工具。
@@ -82,7 +92,7 @@ public static class McpBuiltinTools
             if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
             if (PathTemplateMatches(t.PathTemplate, path)) return t;
         }
-        return null;
+        return MatchFileTransport(method, path, template: false);
     }
 
     /// <summary>
@@ -104,6 +114,21 @@ public static class McpBuiltinTools
             if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
             if (RouteTemplatesEqual(t.PathTemplate, routeTemplate)) return t;
         }
+        return MatchFileTransport(method, routeTemplate, template: true);
+    }
+
+    /// <summary>原文件传输与 JSON 操作共用身份、配额和审计，不能变成直连绕过通道。</summary>
+    private static McpToolDef? MatchFileTransport(string method, string path, bool template)
+    {
+        if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return null;
+        var routes = new[]
+        {
+            (Path: "/api/open/web-pages/upload", Tool: "map_web_publish_page"),
+            (Path: "/api/open/web-pages/pages/{siteId}/reupload", Tool: "map_web_update_page"),
+        };
+        foreach (var route in routes)
+            if (template ? RouteTemplatesEqual(route.Path, path) : PathTemplateMatches(route.Path, path))
+                return All.First(t => t.Name == route.Tool);
         return null;
     }
 
@@ -148,6 +173,71 @@ public static class McpBuiltinTools
 
     public static readonly IReadOnlyList<McpToolDef> All = new List<McpToolDef>
     {
+        new()
+        {
+            Name = "map_speech_capabilities", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/capabilities", RejectUnknownArguments = true,
+            Description = "查询当前环境已配置的文生语音能力、音色、试听、默认项、格式与上游专属参数。先查再选择，不猜音色。OpenAI声音指令和豆包情绪参数不能互换。配置为空或不可用时按原因提示用户。",
+        },
+        new()
+        {
+            Name = "map_speech_generate", RequiredScope = McpCapabilityCatalog.ScopeSpeechGenerate, Method = "POST",
+            PathTemplate = "/api/open/speech/runs", RejectUnknownArguments = true,
+            Description = "将文字逐字合成为语音，不改写原文。先查询能力取得实际音色与支持参数。使用声音预设或指定能力；未指定时使用显式默认项。异步返回runId，使用map_speech_get_run查询。成品保存到MAP我的资产的音频分类。重试保持clientRequestId与参数不变；unknown状态禁止自动重复生成。",
+            Params = new List<McpToolParam>()
+            {
+                new() { Name = "text", In = "body", Required = true, Description = "需要朗读的原文，最大长度取能力目录maxTextChars。" },
+                new() { Name = "title", In = "body", Description = "资产标题，最长150字。" },
+                new() { Name = "profileId", In = "body", Description = "能力目录中的id，不是供应商模型名。" },
+                new() { Name = "profileRevision", In = "body", Type = "integer", Description = "能力目录中的revision，防止配置变化后误用。" },
+                new() { Name = "presetId", In = "body", Description = "本人在当前环境保存的声音预设id。" },
+                new() { Name = "voiceId", In = "body", Description = "该能力voices中的id，音色只在对应能力内有效。" },
+                new() { Name = "format", In = "body", Description = "该能力formats中支持的输出格式。" },
+                new() { Name = "speed", In = "body", Type = "number", Description = "语速倍率，范围取该能力minSpeed/maxSpeed，默认1。" },
+                new() { Name = "instructions", In = "body", Description = "仅supportsInstructions为true时提供的声音风格指令，不修改朗读稿。" },
+                new() { Name = "emotion", In = "body", Description = "仅supportsEmotion为true时从emotions列表选择。" },
+                new() { Name = "clientRequestId", In = "body", Description = "本次逻辑请求的唯一标识；响应丢失重试时必须复用，避免重复生成和费用。" },
+            },
+        },
+        new()
+        {
+            Name = "map_speech_get_run", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/runs/{runId}", RejectUnknownArguments = true,
+            Description = "查询本人语音生成任务的阶段与结果。completed后返回资产标识、MAP历史入口、受授权保护的audioUrl，下载需继续携带当前Bearer凭据。unknown表示上游结果待核查，禁止自动重发生成。客户端断线不取消后台任务。",
+            Params = new List<McpToolParam>() { new() { Name = "runId", In = "path", Required = true, Description = "生成工具返回的runId。" } },
+        },
+        new()
+        {
+            Name = "map_speech_list_runs", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/runs", RejectUnknownArguments = true,
+            Description = "找回本人在当前环境的语音生成历史，包括成功、失败和待核查任务。受权限保护的音频需携带凭据下载。",
+            Params = new List<McpToolParam>() { new() { Name = "limit", In = "query", Type = "integer", Description = "返回条数1–100，默认30。" } },
+        },
+        new()
+        {
+            Name = "map_speech_list_presets", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/presets", RejectUnknownArguments = true,
+            Description = "查询本人在当前环境保存的声音预设。预设绑定具体能力、音色与配置版本，能力变更后需重新检查并保存。",
+        },
+        new()
+        {
+            Name = "map_speech_save_preset", RequiredScope = McpCapabilityCatalog.ScopeSpeechGenerate, Method = "POST",
+            PathTemplate = "/api/open/speech/presets", RejectUnknownArguments = true,
+            Description = "保存本人声音预设，供不同MCP客户端复用。新建不传id，修改必须带id和当前revision。不会修改平台配置。",
+            Params = new List<McpToolParam>()
+            {
+                new() { Name = "id", In = "body", Description = "修改时提供本人预设id。" },
+                new() { Name = "revision", In = "body", Type = "integer", Description = "修改时提供预设当前版本。" },
+                new() { Name = "name", In = "body", Required = true, Description = "预设名称，最长100字。" },
+                new() { Name = "profileId", In = "body", Required = true, Description = "当前环境能力id。" },
+                new() { Name = "profileRevision", In = "body", Type = "integer", Description = "能力配置版本。" },
+                new() { Name = "voiceId", In = "body", Description = "对应能力中的音色id。" },
+                new() { Name = "format", In = "body", Description = "支持的音频格式。" },
+                new() { Name = "speed", In = "body", Type = "number", Description = "受能力范围约束的语速倍率。" },
+                new() { Name = "instructions", In = "body", Description = "该能力支持时使用声音指令。" },
+                new() { Name = "emotion", In = "body", Description = "该能力支持时使用目录中的情绪。" },
+            },
+        },
         // ── 海鲜市场（技能市场）──
         new McpToolDef
         {
@@ -283,7 +373,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_debt_list",
-            Description = "读工程债务台账：还欠着什么、谁认领了、哪几条已经转成任务了。债务正文来自仓库的 doc/debt.*.md，认领人与状态来自任务台。mineOnly=true 只看我认领的。",
+            Description = "读取任务台已有的债务快照、认领人与转为任务的记录。mineOnly=true 只看我认领的。当前项目的债务登记、状态与偿还进展通过 CDS 工程规划读取。",
             RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
             Method = "GET",
             PathTemplate = "/api/open/tasks/debts",
@@ -296,8 +386,8 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_debt_sync",
-            Description = "把仓库里 doc/debt.*.md 的债务台账推到任务台，按 key 幂等（重复推同一条只更新不新建）。key 形如 platform.active-tasks#15 —— 台账文件名去掉 debt. 前缀和 .md，加表格里的编号。**只覆盖正文**（标题/现状/补的条件）；谁认领了、转成了哪条任务一律不动，所以反复跑不会抹掉认领记录。改完 debt 文档顺手跑一次即可。",
-            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Description = "任务台历史债务快照的兼容导入，按原 key 幂等更新标题、现状与补的条件。key 形如 platform.active-tasks#15。认领与任务关系继续可读。当前工程债务通过 CDS 工程规划登记或提交提案。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
             Method = "POST",
             PathTemplate = "/api/open/tasks/debts/sync",
             Params = new List<McpToolParam>
@@ -316,6 +406,7 @@ public static class McpBuiltinTools
             Params = new List<McpToolParam>
             {
                 new() { Name = "prompt", In = "body", Required = true, Description = "画面描述，中英文均可，越具体越好" },
+                new() { Name = "modelId", In = "body", Description = "可选：先用 map_visual_list_models 查看开放模型。省略跟随组织默认；稳定标识跟随已验收版本，具体版本标识固定版本；兼容别名由服务端解析。" },
                 new() { Name = "size", In = "body", Description = "尺寸，如 1024x1024（默认）/ 1024x1536 / 1536x1024" },
                 new() { Name = "count", In = "body", Type = "integer", Description = "张数，1-4，默认 1" },
                 new() { Name = "clientRequestId", In = "body", Description = "幂等键：重试时带同一个值不会重复生成" },
@@ -336,7 +427,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_visual_list_models",
-            Description = "看当前视觉创作开放给智能体的生图模型。生图报「未配默认模型」时用它确认。",
+            Description = "列出视觉创作开放给智能体的生图模型、默认项和兼容别名。生图可省略 modelId 跟随默认，也可传其中的标识；未知模型不会静默替换。",
             RequiredScope = McpCapabilityCatalog.ScopeVisualUse,
             Method = "GET",
             PathTemplate = "/api/open/visual/models",
@@ -358,7 +449,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_get_workspace",
-            Description = "读一个文学创作工作区的正文。改稿、续写、以及冲突后重读都用它；正文很长时用 offset 分段读，返回里的 hasMore 说明还有没有。返回里的 updatedAt 是版本令牌：要整篇覆盖时把它原样传给 map_literary_write_content 的 expectedUpdatedAt。",
+            Description = "读一个文学创作工作区的正文与配图进度。illustrations[] 给出每个标记当前的描述 prompt、status、图片 url 与 assetId（生图后轮询它即可，一次看全部）。format=marked 返回带 [插图]: 标记的整篇（标记里是当前描述，含用户在网页上改过的），改稿重配时拿它改、原样作为 markedContent 写回；format=illustrated 返回把已完成配图插在原位的 Markdown；plain 是不带标记的原稿。只改某一张图的描述用 map_literary_update_illustration，不必整篇重写。正文很长时用 offset 分段读，hasMore 说明还有没有。updatedAt 是版本令牌：整篇覆盖时原样传给 map_literary_write_content 的 expectedUpdatedAt。historyImageCount 是被换下的旧图数，明细用 map_literary_list_history。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "GET",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}",
@@ -367,53 +458,107 @@ public static class McpBuiltinTools
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "工作区 id" },
                 new() { Name = "offset", In = "query", Type = "integer", Description = "从第几个字开始读（默认 0）" },
                 new() { Name = "limit", In = "query", Type = "integer", Description = "本次最多读多少字（默认 20000）" },
-                new() { Name = "format", In = "query", Description = "plain 原稿；illustrated 按真实标记位置返回已完成配图的 Markdown，未完成保留标记", EnumValues = new[] { "plain", "illustrated" } },
+                new() { Name = "format", In = "query", Description = "plain 原稿（不带标记）；marked 带 [插图]: 当前描述 的整篇，改稿重配用它；illustrated 按真实标记位置返回已完成配图的 Markdown，未完成保留标记", EnumValues = new[] { "plain", "marked", "illustrated" } },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_list_presets",
+            Description = "列出这个账号在文学创作里能选的风格（参考图配置）、水印配置和尺寸，并标出账号默认配置。用户点名风格时，style 传同一名称或 ID（none 表示不用参考图）；已有文章沿用风格时，传读取工作区返回的 illustrationPrefs.styleId。sizes 对应该风格下这台客户端所用模型（sizeModel）的真实能力，不传 style 则按账号默认风格查询。先查预设，再把同一风格、水印和支持的尺寸传给 map_literary_generate_image。查询不会占用模型恢复探测或生图额度。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "GET",
+            PathTemplate = "/api/open/literary/presets",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "style", In = "query", Description = "准备生图的风格名称或 ID；none = 不用参考图；不传按账号默认风格列尺寸。已有文章沿用风格时传 illustrationPrefs.styleId。" },
             },
         },
         new McpToolDef
         {
             Name = "map_literary_create_workspace",
-            Description = "新建私有文学工作区，可带初稿及文件夹。需要配图时传 markedContent（与 content 互斥）：正文中独立行写 [插图]: 画面描述，支持 1-4 张。读取工作区取得标记索引与 workflowVersion，再调用 map_literary_generate_image。归档到文件夹不等于公开发布。",
+            Description = "新建私有文学工作区，可带初稿及文件夹。需要配图时传 markedContent（与 content 互斥）：正文中独立一行写 [插图]: 画面描述（全角冒号、【插图】也认），单篇 1-20 张。返回里直接带 workflowVersion 与 illustrations[].index，可立刻调用 map_literary_generate_image。不给 title 时取正文第一行。同一个 clientRequestId 只对应一篇：内容不同会返回 IDEMPOTENCY_CONFLICT。归档到文件夹不等于公开发布。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces",
             Params = new List<McpToolParam>
             {
-                new() { Name = "title", In = "body", Description = "工作区标题，最长 40 字，留空为「未命名」" },
-                new() { Name = "content", In = "body", Description = "初稿正文，可留空" },
-                new() { Name = "markedContent", In = "body", Description = "含 1-4 行 [插图]: 描述 的完整文章，与 content 互斥；最多 200000 字，每个描述最多 4000 字" },
+                new() { Name = "title", In = "body", Description = "工作区标题，最长 40 字；留空取正文第一行" },
+                new() { Name = "content", In = "body", Description = "初稿正文（不配图时用），可留空；不能含 [插图] 标记" },
+                new() { Name = "markedContent", In = "body", Description = "含 1-20 行 [插图]: 描述 的完整文章，与 content 互斥；最多 200000 字，每个描述最多 4000 字，描述不能为空" },
                 new() { Name = "folderName", In = "body", Description = "文学创作内文件夹名称，最长 80 字；不填写为未分类，不公开发布" },
-                new() { Name = "clientRequestId", In = "body", Description = "幂等键" },
+                new() { Name = "clientRequestId", In = "body", Description = "幂等键：一篇文章一个值，重试原样提交" },
             },
         },
         new McpToolDef
         {
             Name = "map_literary_write_content",
-            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。先用 map_literary_list_workspaces 拿 workspaceId，改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉；不传这个参数就没有这层保护。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
+            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。改稿后要重新配图时传 markedContent（带 [插图]: 标记的整篇，只能 replace；先用 map_literary_get_workspace format=marked 读回再改，并把读回的 updatedAt 作为 expectedUpdatedAt 一起传，标记里的描述是当前值）：画面描述没变的标记会沿用原来那张图（reusedImages），只需为 needsGeneration 里的标记调用生图；被换下的旧图保留在历史里、不删除。返回新的 workflowVersion 与 illustrations。改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}/content",
             Params = new List<McpToolParam>
             {
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "工作区 id" },
-                new() { Name = "content", In = "body", Required = true, Description = "正文内容" },
+                new() { Name = "content", In = "body", Description = "正文内容（不带配图标记）；与 markedContent 二选一" },
+                new() { Name = "markedContent", In = "body", Description = "带 [插图]: 标记的整篇正文（1-20 个标记），用于改稿后重新配图；不想换图的小节，把原来的画面描述原样写回即可保留原图。与 content 二选一，只能整篇覆盖" },
                 new() { Name = "mode", In = "body", Description = "replace（默认）或 append", EnumValues = new[] { "replace", "append" } },
-                new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇正文时它的 updatedAt。mode=replace 传了才有「期间被改过就不覆盖」这层保护。" },
+                new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇正文时它的 updatedAt。传 markedContent 整篇重写时必填；纯正文 mode=replace 传了才有「期间被改过就不覆盖」这层保护。" },
             },
         },
 
         new McpToolDef
         {
             Name = "map_literary_generate_image",
-            Description = "为文学工作区一个现有配图标记生成一张图，使用文学创作模型和当前用户参考图配置，保存到该工作区并回填原文位置。每次一张，异步返回 runId。超时重试必须保持 clientRequestId；查询终态后用 get_workspace(format=illustrated) 取图文稿。",
+            Description = "为文学工作区的配图标记生成图片，保存到该工作区并回填原文位置。markerIndexes 可一次传多个（每个标记一个独立任务），markerIndex 只生一张，二选一。风格 style、水印 watermark 可传名称或 ID（none 表示不用）；不传时沿用这篇文章上次指定的那套，从没指定过才用账号默认；可选值先用 map_literary_list_presets 查。size 传比例（如 3:2）或 宽x高，必须是 map_literary_list_presets 的 sizes 里有的；模型不支持的尺寸会被直接拒绝（不入队、不扣额度）并列出可选项。返回里 applied 说明实际套用了哪套风格/水印/尺寸以及来源（explicit 本次指定 / remembered 沿用上次 / account-default 账号默认）。异步执行：之后用 map_literary_get_workspace 看 illustrations[].status/url，一次看全部。超时重试必须保持 clientRequestId 与其它参数不变。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/images",
             Params = new List<McpToolParam>
             {
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
-                new() { Name = "markerIndex", In = "body", Type = "integer", Required = true, Description = "get_workspace 返回的 illustrations[].index，从 0 开始" },
-                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "get_workspace 返回的 workflowVersion，改稿后旧版本不能生成" },
-                new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一张图一个值，原样重试使用同一个值" },
+                new() { Name = "markerIndexes", In = "body", Type = "array", ItemsType = "integer", Description = $"批量：要生成的标记序号列表（illustrations[].index，从 0 开始），每批最多 {PrdAgent.Core.LlmGateway.GatewayTaskPermitRecord.MaximumRuns} 个；更多配图分批提交，每批使用不同 clientRequestId，同一批重试保持原值" },
+                new() { Name = "markerIndex", In = "body", Type = "integer", Description = "单张：一个标记序号；与 markerIndexes 二选一" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "建稿 / 读取工作区返回的 workflowVersion，改稿后旧版本不能生成" },
+                new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一次请求一个值，原样重试使用同一个值" },
+                new() { Name = "style", In = "body", Description = "风格（参考图配置）名称或 ID；none = 不用参考图；不传 = 沿用这篇文章上次指定的，没有则账号当前启用的那套" },
+                new() { Name = "watermark", In = "body", Description = "水印配置名称或 ID；none = 不打水印；不传 = 沿用这篇文章上次指定的，没有则账号给文学创作绑定的那套" },
+                new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、3:2，或 宽x高如 1536x1024，可用值以 map_literary_list_presets 的 sizes 为准；不传 = 沿用这篇文章上次指定的，没有则 1:1" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_update_illustration",
+            Description = "只改一个配图标记的画面描述，正文和其它标记都不动（与用户在网页上改描述是同一处）。改完图不会自动换：要按新描述出图，再对这个标记调用 map_literary_generate_image。读稿之后文章被改过（包括用户在网页上改描述）会返回 409，重读后再改。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/illustrations/{markerIndex}/prompt",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
+                new() { Name = "markerIndex", In = "path", Type = "integer", Required = true, Description = "标记序号（illustrations[].index，从 0 开始）" },
+                new() { Name = "prompt", In = "body", Required = true, Description = "新的画面描述，1-4000 字" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "读稿返回的 workflowVersion" },
+                new() { Name = "expectedUpdatedAt", In = "body", Required = true, Description = "读稿返回的 updatedAt，原样传回；期间用户在网页上改过就返回 409，不会盖掉对方的修改" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_list_history",
+            Description = "列出这篇文章生成过的全部配图，含重画、改稿后被换下的旧图（与网页「历史配图」同一份）。每张给 assetId、url、当时所在的标记 markerIndex、当时的描述、是否正挂在正文上（mountedAt 列出它现在挂的全部位置，同一张图可以挂在多处），以及什么时候、因为什么被换下（replacedAt / replacedReason）。previousSets 是每次换稿（网页换正文、整篇重写、重新生成标记）前真正挂在正文上的那组图，从新到旧，是存档时记下的，不用按生成时间推断：用户说「恢复成上传前用的那几张」就取 previousSets[0]。换稿后带标记写回时，描述与上一组一致的标记会自动沿用那张图（看写稿回执的 reusedImages）；其余用 map_literary_restore_image 一张张放回。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "GET", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/history",
+            Params = new List<McpToolParam> { new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" } },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_restore_image",
+            Description = "把历史里的一张旧图放回指定配图位置，不重新生成、不消耗额度；被换下的那张同样留在历史里。图若记着当初的描述，标记描述会一并换成它（返回的 prompt），保证图和描述对得上。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/illustrations/{markerIndex}/restore",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
+                new() { Name = "markerIndex", In = "path", Type = "integer", Required = true, Description = "放到哪个标记上（从 0 开始）" },
+                new() { Name = "assetId", In = "body", Required = true, Description = "map_literary_list_history 返回的 assetId" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "读稿返回的 workflowVersion" },
             },
         },
         new McpToolDef
@@ -487,7 +632,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_publish_page",
-            Description = "把一整页 HTML 托管成站点，返回可以直接打开的地址。适合把生成的报告、看板、演示页交付给用户。只收 HTML 文本（不支持 zip、图片等二进制），单页上限 4MB。",
+            Description = "把一整页 HTML 托管成站点，返回可以直接打开的地址。适合把生成的报告、看板、演示页交付给用户。此工具收 HTML 文本，单页上限 4MB；原样上传 ZIP、图片等文件请先调用 map_web_get_upload_info，再用返回的短期凭证走 multipart 上传。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "POST",
             PathTemplate = "/api/open/web-pages/pages",
@@ -516,7 +661,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_create_share",
-            Description = "给某个托管站点建一条分享链接（默认 7 天有效）。链接是 owner-only 的：只有用户自己和他的团队打得开，不会公开到互联网。",
+            Description = "给托管站点建分享链接，默认 owner-only、7 天。对外分享须由主人在 MAP 客户端设置中独立开启发布授权，确认参数不能替代授权。用户明确要求公开时传 visibility=public、confirmedExposure=true；expiresInDays=0 表示永久。返回实际可见范围和到期时间；有私有资料引用时先向用户说明并取得指纹确认。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "POST",
             PathTemplate = "/api/open/web-pages/pages/{siteId}/share",
@@ -524,7 +669,194 @@ public static class McpBuiltinTools
             {
                 new() { Name = "siteId", In = "path", Required = true, Description = "站点 id（来自 map_web_publish_page 或 map_web_list_pages）" },
                 new() { Name = "title", In = "body", Description = "分享标题，留空用站点标题" },
-                new() { Name = "expiresInDays", In = "body", Type = "integer", Description = "有效期天数，1-90，默认 7" },
+                new() { Name = "expiresInDays", In = "body", Type = "integer", Description = "0 = 永久，1-365 = 天数；省略默认 7" },
+                new() { Name = "visibility", In = "body", EnumValues = new[] { "owner-only", "logged-in", "public" }, Description = "谁能打开；省略默认 owner-only" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "仅在用户明确要求对外分享时传 true；public/logged-in 必填 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Description = "用户确认所列私有资料对外后，传核查返回的 fingerprint；不可自行代替用户确认" },
+                WebWriteRequestId,
+            },
+        },
+
+        // 文件与分享管理：原文件走 multipart，结构化操作继续走 MCP。
+        new McpToolDef
+        {
+            Name = "map_web_get_upload_info",
+            Description = "取得原文件上传地址和十分钟短期凭证。更新原站前先查 map_web_get_page_settings。更新对外站点须由客户端取得发布授权，用户确认本次对外更新后传 confirmedExposure=true。客户端用 multipart 上传原文件与返回的必填表单字段。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "GET", PathTemplate = "/api/open/web-pages/upload-info",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "query", Type = "string", Required = false, Description = "要替换的原站 ID；新建时不传" },
+                new() { Name = "confirmedExposure", In = "query", Type = "boolean", Description = "用户已确认更新该站点的对外内容时传 true，并照回执附带 multipart 字段" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_upload_progress",
+            Description = "查询上传解包进度，计数来自真实上传。只查询当前用户发起的 uploadId。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/upload-progress/{uploadId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "uploadId", In = "path", Type = "string", Required = true, Description = "上传表单传入的 uploadId" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_page",
+            Description = "读取有权访问的站点详情、可见性、入口和资源文件清单；用于确认 ZIP 多页面与图片保留情况。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+                new() { Name = "offset", In = "query", Type = "integer", Description = "文件清单起点，默认0；filesHasMore=true 时继续读取" },
+                new() { Name = "limit", In = "query", Type = "integer", Description = "每次文件数，默认200，上限1000" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_page_content",
+            Description = "读取有编辑权限的站点入口 HTML 源码，最多2MB；PDF、视频等包装站请读取详情中的原文件，不支持源码读取。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}/content",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_update_page",
+            Description = "修改原站标题、描述、文件夹或标签。修改对外站点标题或描述需要客户端发布授权和用户确认；只改内部文件夹和标签只需网页写权限。改文件请使用 map_web_get_upload_info。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "原站 ID" },
+                new() { Name = "title", In = "body", Type = "string", Required = false, Description = "新标题" },
+                new() { Name = "description", In = "body", Type = "string", Required = false, Description = "新描述" },
+                new() { Name = "folder", In = "body", Type = "string", Required = false, Description = "新文件夹，空串表示未分类" },
+                new() { Name = "tags", In = "body", Type = "array", Required = false, Description = "新标签数组", ItemsType = "string" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "用户已确认更新对外标题或描述时传 true" },
+                WebWriteRequestId,
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_page_settings",
+            Description = "在更新前读取有编辑权的站点的可见性、评论开关和当前客户端权限。externalAccess 包括现有对外分享；canUpdateContent 为 false 时先给用户可选方案。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}/settings",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Required = true, Description = "原站 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_organization",
+            Description = "读取本人站点使用的文件夹和标签。在移动站点或修改标签前核对已有名称。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/organization",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "limit", In = "query", Type = "integer", Description = "文件夹及标签各自的上限，1–100，默认 50" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_set_comments_enabled",
+            Description = "打开或关闭站点评论，沿用创建者或编辑者权限。对外站点开启评论需要客户端发布授权和用户确认，关闭只需网页写权限。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}/comments-enabled",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Required = true, Description = "原站 ID" },
+                new() { Name = "enabled", In = "body", Type = "boolean", Required = true, Description = "是否开启评论" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "用户同意在该对外站点开启评论时传 true" },
+                WebWriteRequestId,
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_set_visibility",
+            Description = "修改站点可见性 private/public，仅站点创建者可改。公开须先由主人在 MAP 客户端设置中独立开启发布授权，再确认本次用户意图并传 confirmedExposure=true；不等于修改分享链接的可见性或有效期。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}/visibility",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+                new() { Name = "visibility", In = "body", Type = "string", Required = true, Description = "private 或 public" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Required = false, Description = "用户明确要求公开才传 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Type = "string", Required = false, Description = "用户确认当前私有资料后传核查返回的 fingerprint" },
+                WebWriteRequestId,
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_private_sources",
+            Description = "在公开或对外分享之前核查站点引用的私有资料。返回指纹与资料清单，仅有分享权限的用户可查；取得用户确认后才可带指纹公开。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}/private-sources",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_list_shares",
+            Description = "列出当前用户创建的分享，包含已撤销条目。可按站点筛选；读回实际可见范围、到期时间、链接状态。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/shares",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "query", Type = "string", Required = false, Description = "可选站点 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_update_share",
+            Description = "就地修改自己创建的分享链接可见范围和有效期；expiresInDays=0 为永久，其他天数从现在重算；已撤销链接不能复活。对外范围须先由主人在 MAP 客户端设置中独立开启发布授权，再明确本次意图并传 confirmedExposure=true。收回为 owner-only 无需发布授权。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/shares/{shareId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
+                new() { Name = "visibility", In = "body", Type = "string", Required = false, Description = "owner-only、logged-in 或 public" },
+                new() { Name = "expiresInDays", In = "body", Type = "integer", Required = false, Description = "0 永久；1-365天，从现在重算" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Required = false, Description = "用户明确要求对外分享才传 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Type = "string", Required = false, Description = "用户确认私有资料后传核查指纹" },
+                WebWriteRequestId,
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_renew_share",
+            Description = "延长自己创建的分享链接有效期；在现有到期日或当前时间的较晚者上加天数。对外链接须先由主人在 MAP 客户端设置中独立开启发布授权。设永久请用 map_web_update_share expiresInDays=0。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "POST", PathTemplate = "/api/open/web-pages/shares/{shareId}/renew",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
+                new() { Name = "extendDays", In = "body", Type = "integer", Required = true, Description = "延长天数，1-365" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "延长对外分享前，用户明确要求时传 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Description = "用户确认当前私有资料后传核查指纹" },
+                WebWriteRequestId,
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_revoke_share",
+            Description = "撤销自己创建的分享链接，立即停止通过该链接访问，不删除原站。撤销不可恢复，用户明确要求收回链接后调用。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "POST", PathTemplate = "/api/open/web-pages/shares/{shareId}/revoke",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
+                new() { Name = "reason", In = "body", Type = "string", Required = false, Description = "撤销原因，可选" },
+                WebWriteRequestId,
             },
         },
 

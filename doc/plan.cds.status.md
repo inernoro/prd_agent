@@ -43,7 +43,7 @@
 | 项目与分支基础设施 | 已落地 | [design.cds.md](./design.cds.md)、[spec.cds.project-model.md](./spec.cds.project-model.md) |
 | GitHub 授权与 Webhook | 已落地 | [guide.cds.github-webhook-events.md](./guide.cds.github-webhook-events.md) |
 | MySQL、Postgres、Mongo 接入 | 已落地，持续兼容验证 | [guide.cds.orm-support.md](./guide.cds.orm-support.md) |
-| 多项目隔离 | 已落地，残留偿债 | [plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)、[debt.cds.branch-isolation.md](./debt.cds.branch-isolation.md) |
+| 多项目隔离 | 已落地，残留偿债 | [plan.cds.multi-project-phases.md](./plan.cds.multi-project-phases.md)、[debt.cds.branch-isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.branch-isolation.md) |
 | React 控制台 | 现行权威，旧代码待删 | [plan.cds.web-migration.md](./plan.cds.web-migration.md) |
 | Agent 工作台 | Lite 可用，官方 SDK 商业闭环未关闭 | [plan.cds.agent.official-sdk-migration.md](./plan.cds.agent.official-sdk-migration.md) |
 | 高可用与多 executor | 代码已具备，真实运行验证未关闭 | [plan.cds.resilience-rollout.md](./plan.cds.resilience-rollout.md) |

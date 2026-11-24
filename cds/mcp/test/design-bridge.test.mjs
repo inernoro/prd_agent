@@ -1,0 +1,197 @@
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { createDesignBridge } from '../src/design-bridge.mjs';
+
+test('design tools read fixed versions and upload Git-bound bytes only with publish access', async t => {
+  const projectId = 'fixture-design';
+  const projectKey = 'cdsp_fixture_design_key';
+  const root = await mkdtemp(path.join(tmpdir(), 'cds-design-mcp-'));
+  const bytes = Buffer.from('fixture package bytes');
+  await writeFile(path.join(root, 'draft.zip'), bytes);
+  const versions = [{ version: 1, title: 'First draft' }, { version: 2, title: 'Second draft' }];
+  let write = false;
+  let responseProject = projectId;
+  const writes = [];
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (request.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      writes.push({ url, type: request.headers['content-type'], key: request.headers['x-ai-access-key'], bytes: Buffer.concat(chunks) });
+    }
+    const value = request.method === 'POST' ? { projectId, reused: writes.length > 1,
+      result: { type: 'package', designId: 'DSN-fixture', version: 2 } }
+      : { projectId: responseProject, permissions: { write }, designs: [{ projectId, id: 'DSN-fixture', versions }], frameworks: [{ projectId, id: 'FW-fixture', versions }] };
+    response.writeHead(request.method === 'POST' && writes.length === 1 ? 201 : 200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(value));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const bridge = createDesignBridge({ root, projectId, projectKey, host: `http://127.0.0.1:${server.address().port}` });
+  t.after(async () => {
+    await bridge.close();
+    await new Promise(resolve => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  const read = 'cds_design_read';
+  const publish = 'cds_design_publish';
+  const draft = { designId: 'DSN-fixture', zipPath: 'draft.zip', sourceCommit: 'a'.repeat(40), sourcePath: 'design/draft', requestId: 'fixture-v2' };
+
+  assert.deepEqual((await bridge.listTools()).map(row => row.name), [read]);
+  assert.deepEqual(await bridge.call(read, { view: 'framework', id: 'FW-fixture', version: 1 }), { projectId, id: 'FW-fixture', version: versions[0] });
+  await assert.rejects(bridge.call(publish, draft), /没有稿件发布权限/);
+  assert.equal(writes.length, 0);
+
+  write = true;
+  assert.deepEqual((await bridge.listTools()).map(row => row.name), [read, publish]);
+  await assert.rejects(bridge.call(read, { view: 'framework', id: 'FW-fixture', version: 99 }), /frameworks.*版本/);
+  await assert.rejects(bridge.call(publish, { ...draft, sourceCommit: 'main' }), /sourceCommit/);
+  await assert.rejects(bridge.call(publish, { ...draft, designId: 'DSN-unknown', zipPath: 'missing.zip' }), /designs.*原稿.*基线/);
+  assert.equal(writes.length, 0);
+  await assert.rejects(bridge.call(publish, { ...draft, projectId: 'other' }));
+  assert.equal((await bridge.call(publish, draft)).reused, false);
+  assert.equal((await bridge.call(publish, draft)).reused, true);
+  for (const upload of writes) {
+    assert.equal(upload.url.pathname, `/api/projects/${projectId}/design/packages`);
+    assert.equal(upload.url.searchParams.get('requireGit'), 'true');
+    assert.equal(upload.url.searchParams.get('requestId'), draft.requestId);
+    assert.equal(upload.url.searchParams.has('zipPath'), false);
+    assert.equal(upload.type, 'application/zip');
+    assert.equal(upload.key, projectKey);
+    assert.deepEqual(upload.bytes, bytes);
+  }
+  responseProject = 'other';
+  await assert.rejects(bridge.call(read, { view: 'frameworks' }), /当前项目/);
+  assert.equal(writes.length, 2);
+});
+
+async function intakeFixture(t) {
+  const projectId = 'fixture-design-intake';
+  const readKey = 'cdsp_fixture_intake_read';
+  const writeKey = 'cdsp_fixture_intake_publish';
+  const root = await mkdtemp(path.join(tmpdir(), 'cds-design-intake-'));
+  const bytes = Buffer.from('fixture intake zip');
+  await writeFile(path.join(root, 'draft.zip'), bytes);
+  const route = `/api/projects/${projectId}/design`;
+  const calls = [];
+  const writes = [];
+  const stored = { designId: 'DSN-existing', designKey: 'accounts/summary', latestVersion: 4,
+    sourceCommit: 'a'.repeat(40), sourcePaths: ['design/accounts', 'design/moved-accounts'] };
+  const former = { designId: 'DSN-legacy', latestVersion: 2, sourceCommit: 'b'.repeat(40), sourcePaths: ['design/profile'] };
+  let intakeProject = projectId;
+  let protocolVersion = 1;
+  const intake = write => ({ protocolVersion, projectId: intakeProject, permissions: { write },
+    designs: [{ ...stored, canRevise: write }, { ...former, canRevise: false }] });
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const key = request.headers['x-ai-access-key'];
+    const write = key === writeKey;
+    calls.push({ method: request.method, path: url.pathname, key });
+    let value;
+    let status = 200;
+    if (request.method === 'GET' && url.pathname === `${route}/intake`) {
+      value = intake(write);
+    } else if (request.method === 'GET' && url.pathname === route) {
+      value = { projectId, permissions: { write }, frameworks: [], designs: [stored, former].map(row => ({ projectId, id: row.designId,
+        versions: [{ version: row.latestVersion, title: row.designId, sourceCommit: row.sourceCommit }] })) };
+    } else if (request.method === 'POST' && url.pathname === `${route}/packages` && write) {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      writes.push({ query: url.searchParams, bytes: Buffer.concat(chunks), header: request.headers['content-type'], key });
+      const intent = url.searchParams.get('intent');
+      value = { projectId, reused: false, result: { type: 'package', designId: intent === 'create' ? 'DSN-created' : stored.designId,
+        version: intent === 'create' ? 1 : 5 } };
+      status = 201;
+      if (url.searchParams.get('requestId') === 'intake-fixture-conflict') {
+        status = 409;
+        value = { error: 'design_intake_conflict', message: '本地夹具的私有上游明细' };
+      }
+    } else {
+      status = write || request.method === 'GET' ? 404 : 403;
+      value = { error: 'fixture_route_error' };
+    }
+    response.writeHead(status, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(value));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const host = `http://127.0.0.1:${server.address().port}`;
+  const reader = createDesignBridge({ root, projectId, projectKey: readKey, host });
+  const publisher = createDesignBridge({ root, projectId, projectKey: writeKey, host });
+  t.after(async () => {
+    await Promise.all([reader.close(), publisher.close()]);
+    await new Promise(resolve => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = { zipPath: 'draft.zip', sourceCommit: 'c'.repeat(40), sourcePath: 'design/accounts', requestId: 'intake-fixture-release' };
+  return { projectId, route, calls, writes, stored, bytes, writeKey, readKey, intake, reader, publisher, base,
+    setIntakeProject: value => { intakeProject = value; }, setProtocolVersion: value => { protocolVersion = value; } };
+}
+
+test('intake reads the authoritative project endpoint and scopes the result to the bound credential', async t => {
+  const { projectId, route, calls, writes, readKey, writeKey, reader, publisher, intake, base, setIntakeProject, setProtocolVersion } = await intakeFixture(t);
+  const tool = 'cds_design_read';
+  assert.deepEqual((await reader.listTools()).map(row => row.name), [tool]);
+  assert.deepEqual((await publisher.listTools()).map(row => row.name), [tool, 'cds_design_publish']);
+  for (const [bridge, key, write] of [[reader, readKey, false], [publisher, writeKey, true]]) {
+    const count = calls.length;
+    assert.deepEqual(await bridge.call(tool, { view: 'intake' }), intake(write));
+    assert(calls.slice(count).some(call => call.method === 'GET' && call.path === `${route}/intake` && call.key === key));
+  }
+  const fixed = await reader.call(tool, { view: 'design', id: 'DSN-existing', version: 4 });
+  assert.equal(fixed.version.version, 4);
+  await assert.rejects(reader.call('cds_design_publish', { ...base, intent: 'create', designKey: 'reports/detail' }));
+  assert(calls.every(call => call.method === 'GET'));
+  setIntakeProject('foreign-project');
+  await assert.rejects(reader.call(tool, { view: 'intake' }));
+  setIntakeProject(projectId);
+  setProtocolVersion(2);
+  await assert.rejects(reader.call(tool, { view: 'intake' }));
+  assert.equal(writes.length, 0);
+});
+
+test('publish forwards create and revision identity through the Git-bound package route', async t => {
+  const { writes, stored, bytes, writeKey, publisher, base } = await intakeFixture(t);
+  const tool = 'cds_design_publish';
+  const create = { ...base, intent: 'create', designKey: 'reports/detail', sourcePath: 'design/reports' };
+  const revise = { ...base, requestId: 'intake-fixture-revision', intent: 'revise', designId: stored.designId,
+    designKey: stored.designKey, expectedVersion: stored.latestVersion };
+  const unkeyedRevision = { ...base, requestId: 'intake-fixture-unkeyed-revision', intent: 'revise', designId: stored.designId,
+    expectedVersion: stored.latestVersion };
+  for (const invalid of [
+    { ...create, designId: stored.designId }, { ...create, expectedVersion: 1 }, { ...create, designKey: undefined },
+    { ...create, designKey: 'Reports/detail' }, { ...create, designKey: 'reports/detail/variant' },
+    { ...revise, expectedVersion: undefined }, { ...revise, expectedVersion: 0 }, { ...revise, designId: undefined },
+  ]) await assert.rejects(publisher.call(tool, invalid));
+  assert.equal(writes.length, 0);
+
+  assert.deepEqual((await publisher.call(tool, create)).result, { type: 'package', designId: 'DSN-created', version: 1 });
+  assert.deepEqual((await publisher.call(tool, revise)).result, { type: 'package', designId: stored.designId, version: 5 });
+  assert.deepEqual((await publisher.call(tool, unkeyedRevision)).result, { type: 'package', designId: stored.designId, version: 5 });
+  assert.equal(writes.length, 3);
+  for (const [index, upload] of writes.entries()) {
+    const { zipPath: _zipPath, ...fields } = [create, revise, unkeyedRevision][index];
+    const query = new URLSearchParams({ requireGit: 'true' });
+    for (const [key, value] of Object.entries(fields)) if (value !== undefined) query.set(key, String(value));
+    assert.deepEqual(Object.fromEntries(upload.query), Object.fromEntries(query));
+    assert.deepEqual(upload.bytes, bytes);
+    assert.equal(upload.header, 'application/zip');
+    assert.equal(upload.key, writeKey);
+  }
+});
+
+
+test('intake conflicts direct the agent to the authoritative baseline without echoing server details', async t => {
+  const { publisher, base, stored } = await intakeFixture(t);
+  await assert.rejects(publisher.call('cds_design_publish', { ...base, intent: 'revise', designId: stored.designId,
+    expectedVersion: 3, requestId: 'intake-fixture-conflict' }), error => {
+    assert.match(error.message, /intake.*最新版本/);
+    assert.doesNotMatch(error.message, /私有上游明细/);
+    return true;
+  });
+});

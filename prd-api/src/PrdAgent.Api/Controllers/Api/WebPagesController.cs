@@ -10,7 +10,9 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -21,15 +23,21 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
-public class WebPagesController : ControllerBase
+public partial class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
     private readonly IHostedSiteOptimizationService _optimizationService;
     private readonly IUploadProgressService _uploadProgress;
 
-    // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
-    private const long MaxSingleFileSize = 500L * 1024 * 1024;
+    private const long MaxSingleFileSize = HostedSiteUploadLimits.MaxSingleFileBytes;
+    // 直接 ZIP 入口与分片入口共用包容量；为 multipart 边界预留请求开销。
+    private const long MaxUploadRequestSize = HostedSiteUploadLimits.MaxPackageBytes + 1024 * 1024;
     private const long MaxOptimizationChunkRequestSize = 3L * 1024 * 1024;
+
+    internal static string? ValidateUploadSize(long bytes, string extension) =>
+        string.Equals(extension, ".zip", StringComparison.OrdinalIgnoreCase)
+            ? HostedSiteUploadLimits.IsWithinPackageLimit(bytes) ? null : "ZIP 文件不能超过 5000 MB"
+            : bytes > MaxSingleFileSize ? HostedSiteUploadLimits.ValidateSingleFileSize(bytes) : null;
 
     // 视频扩展名（浏览器原生 <video> 支持）
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -42,10 +50,24 @@ public class WebPagesController : ControllerBase
         ".md", ".markdown",
     };
 
+    internal static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".ico", ".bmp",
+    };
+
+    internal static bool IsWrappedUploadExtension(string ext)
+        => VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext)
+           || ImageExtensions.Contains(ext) || ext == ".pdf";
+
+    internal static string? WrappedUploadType(string ext)
+        => ext == ".pdf" ? "pdf" : VideoExtensions.Contains(ext) ? "video"
+            : MarkdownExtensions.Contains(ext) ? "markdown" : ImageExtensions.Contains(ext) ? "image" : null;
+
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
     private readonly ITeamService _teams;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
+    private readonly IConfiguration? _commentAvatarConfiguration;
 
     public WebPagesController(
         IHostedSiteService siteService,
@@ -54,7 +76,9 @@ public class WebPagesController : ControllerBase
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
-        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null)
+        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
+        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null,
+        IConfiguration? configuration = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -64,6 +88,8 @@ public class WebPagesController : ControllerBase
         _httpClientFactory = httpClientFactory;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
+        _reviewStorage = assetStorage;
+        _commentAvatarConfiguration = configuration;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -290,24 +316,47 @@ public class WebPagesController : ControllerBase
 
     /// <summary>上传 HTML/ZIP/Markdown/PDF/视频文件，解压或包装后托管</summary>
     [HttpPost("upload")]
-    [RequestSizeLimit(MaxSingleFileSize)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
+    [RequestSizeLimit(MaxUploadRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = HostedSiteUploadLimits.MaxPackageBytes)]
     public async Task<IActionResult> Upload(
         IFormFile file,
         [FromForm] string? title,
         [FromForm] string? description,
         [FromForm] string? folder,
         [FromForm] string? tags,
-        [FromForm] string? uploadId)
+        [FromForm] string? uploadId,
+        [FromForm] string? entryFile = null,
+        [FromForm] bool openAsDirectory = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
 
-        if (file.Length > MaxSingleFileSize)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxSingleFileSize / 1024 / 1024}MB"));
-
         var userId = GetUserId();
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var sizeError = ValidateUploadSize(file.Length, ext);
+        if (sizeError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
+        if (ext == ".zip")
+        {
+            try
+            {
+                using var zipStream = file.OpenReadStream();
+                var zipTags = string.IsNullOrWhiteSpace(tags) ? new List<string>()
+                    : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                var zipTitle = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title;
+                var zipSite = await _siteService.CreateFromZipAsync(userId, zipStream, zipTitle, description, folder, zipTags,
+                    uploadId: uploadId, entryFile: openAsDirectory ? string.Empty : entryFile);
+                return Ok(ApiResponse<object>.Ok(zipSite));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+            finally
+            {
+                await _uploadProgress.CompleteAsync(uploadId);
+            }
+        }
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
@@ -320,15 +369,11 @@ public class WebPagesController : ControllerBase
         try
         {
             HostedSite site;
-            if (ext == ".zip")
-            {
-                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList, uploadId: uploadId);
-            }
-            else if (ext is ".html" or ".htm")
+            if (ext is ".html" or ".htm")
             {
                 site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
             }
-            else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+            else if (IsWrappedUploadExtension(ext))
             {
                 // 视频 / PDF / Markdown：现场生成 index.html 壳子 + 原文件，打包成 ZIP 走现有路径
                 // 标题留空时用文件名（去扩展名）兜底，避免 ZIP 路径把视频/PDF 全落成"未命名站点"
@@ -338,17 +383,14 @@ public class WebPagesController : ControllerBase
                     : title!.Trim();
                 var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
                 // 写 marker，下游靠它判定包装站，避免"用户上传的 index.html + report.pdf"被误判
-                var assetType = ext == ".pdf" ? "pdf"
-                    : VideoExtensions.Contains(ext) ? "video"
-                    : MarkdownExtensions.Contains(ext) ? "markdown"
-                    : null;
+                var assetType = WrappedUploadType(ext);
                 site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType, uploadId: uploadId);
             }
             else
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
-                    "支持的文件类型：.html / .htm / .zip / .md / .markdown / .pdf / .mp4 / .m4v / .webm / .mov / .ogg / .ogv"));
+                    "支持的文件类型：HTML / ZIP / Markdown / PDF / 视频 / PNG / JPG / GIF / WebP / SVG / AVIF / ICO / BMP"));
             }
 
             return Ok(ApiResponse<object>.Ok(site));
@@ -395,7 +437,7 @@ public class WebPagesController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>把媒体文件（视频/PDF/Markdown）包装成可托管的 ZIP（含 index.html 壳子 + 原文件）</summary>
-    private static byte[] BuildWrapperZip(string originalFileName, byte[] fileBytes, string ext, string? title)
+    internal static byte[] BuildWrapperZip(string originalFileName, byte[] fileBytes, string ext, string? title)
     {
         // 资产文件名做安全清洗，避免路径穿越
         var safeAssetName = SanitizeFileName(originalFileName);
@@ -405,6 +447,7 @@ public class WebPagesController : ControllerBase
         var indexHtml = ext switch
         {
             ".pdf" => BuildPdfWrapper(safeAssetName, displayTitle),
+            _ when ImageExtensions.Contains(ext) => BuildImageWrapper(safeAssetName, displayTitle),
             _ when VideoExtensions.Contains(ext) => BuildVideoWrapper(safeAssetName, displayTitle, ext),
             _ when MarkdownExtensions.Contains(ext) => BuildMarkdownWrapper(fileBytes, displayTitle),
             _ => throw new InvalidOperationException($"未识别的包装类型: {ext}"),
@@ -429,6 +472,19 @@ public class WebPagesController : ControllerBase
             }
         }
         return ms.ToArray();
+    }
+
+    private static string BuildImageWrapper(string assetName, string title)
+    {
+        var safeTitle = HtmlEscape(title);
+        var urlAsset = UrlEncodeFilename(assetName);
+        return $$$"""
+        <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1"><title>{{{safeTitle}}}</title>
+        <style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center}
+        img{display:block;max-width:100%;max-height:100vh;object-fit:contain}</style></head>
+        <body><img src="{{{urlAsset}}}" alt="{{{safeTitle}}}"></body></html>
+        """;
     }
 
     private static string SanitizeFileName(string raw)
@@ -660,12 +716,24 @@ public class WebPagesController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(req.HtmlContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
+        var documentType = string.IsNullOrWhiteSpace(req.DocumentType) ? null : req.DocumentType.Trim();
+        if (documentType != null && !WritingTemplateRegistry.All.Any(template => template.Type == documentType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的文档类型"));
 
         var site = await _siteService.CreateFromContentAsync(
             GetUserId(), req.HtmlContent,
             req.Title, req.Description,
             req.SourceType ?? "api", req.SourceRef,
             req.Tags, req.Folder);
+
+        var documentInfo = CollectionDocumentText(req.HtmlContent);
+        site.DocumentHeadings = documentInfo.Headings; site.DocumentTextExcerpt = documentInfo.Excerpt;
+        site.WritingTemplateId = WritingTemplateRegistry.Find(req.WritingTemplateId ?? "")?.Id;
+        site.DocumentType = documentType;
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == site.Id && s.OwnerUserId == GetUserId(),
+            Builders<HostedSite>.Update.Set(s => s.DocumentHeadings, site.DocumentHeadings)
+                .Set(s => s.DocumentTextExcerpt, site.DocumentTextExcerpt).Set(s => s.WritingTemplateId, site.WritingTemplateId)
+                .Set(s => s.DocumentType, site.DocumentType));
 
         return Ok(ApiResponse<object>.Ok(site));
     }
@@ -683,94 +751,108 @@ public class WebPagesController : ControllerBase
     /// 站点没有任何访问记录时不出现在返回里，前端据此显示 0 而不是编一个数。
     /// </summary>
     /// <summary>
-    /// 每个站点的独立访客数。
+    /// 每个站点的访问次数、独立访客与最近访问。
     ///
     /// 必须并两个来源：站内访问记在 SiteViewEvents（登录用户直接打开或团队内访问），
     /// 而公开分享链接的访问记在 ShareViewLogs、按分享而不是按站点存。只数前者的话，
     /// 一个只通过分享链接传播的站点在卡片上永远是「0 访客」——那不是「没人看」，
     /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
-    /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
+    /// 所以按同一访客和固定半小时时段合并，避免一次打开在两端被重复计数。
     /// </summary>
-    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds)
+    private async Task<Dictionary<string, HostedSiteTraffic>> BuildTrafficAsync(
+        IReadOnlyCollection<HostedSite> sites, string viewerUserId, ISet<string> openedSites)
     {
-        var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        if (ids.Count == 0) return new Dictionary<string, long>();
+        var buckets = sites.ToDictionary(site => site.Id, site => new HostedSiteTrafficAccumulator(site.OwnerUserId));
+        var ids = buckets.Keys.ToList();
+        if (ids.Count == 0) return new Dictionary<string, HostedSiteTraffic>();
 
-        // 登录用户按用户去重，匿名退回 IP；两端用同一把尺子，否则并集会把同一个人算两次
-        var visitorKey = new BsonDocument("$ifNull", new BsonArray
+        // 同一来源先在数据库中合并到访客/半小时时段，跨来源再按同一键合并。
+        BsonDocument Group(string target) => new("$group", new BsonDocument
         {
-            "$ViewerUserId",
-            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "anonymous" }),
+            { "_id", new BsonDocument
+                {
+                    { "target", "$" + target },
+                    { "user", new BsonDocument("$ifNull", new BsonArray { "$ViewerUserId", "" }) },
+                    { "ip", new BsonDocument("$cond", new BsonArray
+                        {
+                            new BsonDocument("$eq", new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$ViewerUserId", "" }), "" }),
+                            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "" }), "",
+                        }) },
+                    { "window", new BsonDocument("$floor", new BsonDocument("$divide", new BsonArray
+                        { new BsonDocument("$toLong", "$ViewedAt"), HostedSiteTrafficAccumulator.WindowMilliseconds })) },
+                }
+            },
+            { "lastViewedAt", new BsonDocument("$max", "$ViewedAt") },
         });
-
-        var buckets = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        void Add(string siteId, string visitor)
+        void Add(string siteId, BsonDocument row, bool provesOpened)
         {
-            if (!buckets.TryGetValue(siteId, out var set))
-                buckets[siteId] = set = new HashSet<string>(StringComparer.Ordinal);
-            set.Add(visitor);
+            if (!buckets.TryGetValue(siteId, out var bucket)) return;
+            var key = row["_id"].AsBsonDocument;
+            var user = key["user"].AsString;
+            bucket.Add(user, key["ip"].AsString, row["lastViewedAt"].ToUniversalTime());
+            if (provesOpened && user == viewerUserId) openedSites.Add(siteId);
         }
 
-        // 来源一：站内访问，本来就带 SiteId
         var sitePipeline = new[]
         {
             new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
-            new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
-            {
-                { "site", "$SiteId" },
-                { "visitor", visitorKey },
-            })),
+            Group("SiteId"),
         };
-        foreach (var row in await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToListAsync())
-        {
-            var key = row["_id"].AsBsonDocument;
-            if (key["site"].IsBsonNull) continue;
-            Add(key["site"].AsString, key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString);
-        }
+        using (var cursor = await _db.SiteViewEvents.AggregateAsync<BsonDocument>(sitePipeline))
+            while (await cursor.MoveNextAsync())
+                foreach (var row in cursor.Current) Add(row["_id"].AsBsonDocument["target"].AsString, row, true);
 
-        // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
-        // 一条分享可以带多个站点，访客算给这条分享里的每个站点——这是这份日志能支持的最细粒度，
-        // 比整列显示 0 诚实得多；真要做到「他到底点开了哪一个」得在分享阅读页按站点埋点，另记一笔账。
-        // 两个字段都要认：合集分享写 SiteIds，存量单站点分享只写 SiteId。只查 SiteIds 的话，
-        // 单站点分享整条被漏掉，而那正是「纯靠分享访问的站点显示 0 访客」最常见的形态——
-        // 修了一半等于没修。字段口径走 WebPageShareLink.TargetSiteIds() 这一个来源。
+        // 包含站内便捷链以及已撤销/已过期链接的历史；链接状态不能抹去已发生的访问。
         var fb = Builders<WebPageShareLink>.Filter;
         var shares = await _db.WebPageShareLinks
             .Find(fb.Or(fb.AnyIn(x => x.SiteIds, ids), fb.In(x => x.SiteId, ids)))
             .Project<WebPageShareLink>(Builders<WebPageShareLink>.Projection
-                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds))
+                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds)
+                .Include(x => x.Purpose).Include(x => x.IsRevoked).Include(x => x.ExpiresAt))
             .ToListAsync();
-        var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var share in shares)
-        {
-            if (string.IsNullOrEmpty(share.Id)) continue;
-            var hit = share.TargetSiteIds().Where(ids.Contains).ToList();
-            if (hit.Count > 0) shareToSites[share.Id] = hit;
-        }
-
+        var now = DateTime.UtcNow;
+        foreach (var share in shares.Where(share => share.Purpose != "visit" && !share.IsRevoked && (share.ExpiresAt == null || share.ExpiresAt > now)))
+            foreach (var siteId in share.TargetSiteIds().Distinct())
+                if (buckets.TryGetValue(siteId, out var bucket)) bucket.Value.ActiveShareLinks++;
+        var shareToSites = shares.ToDictionary(share => share.Id, share => share.TargetSiteIds().Distinct().ToList());
         if (shareToSites.Count > 0)
         {
             var sharePipeline = new[]
             {
-                new BsonDocument("$match", new BsonDocument("ShareId",
-                    new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
-                new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
-                {
-                    { "share", "$ShareId" },
-                    { "visitor", visitorKey },
-                })),
+                new BsonDocument("$match", new BsonDocument("ShareId", new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
+                Group("ShareId"),
             };
-            foreach (var row in await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToListAsync())
-            {
-                var key = row["_id"].AsBsonDocument;
-                if (key["share"].IsBsonNull) continue;
-                if (!shareToSites.TryGetValue(key["share"].AsString, out var sites)) continue;
-                var visitor = key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString;
-                foreach (var siteId in sites) Add(siteId, visitor);
-            }
+            using var cursor = await _db.ShareViewLogs.AggregateAsync<BsonDocument>(sharePipeline);
+            while (await cursor.MoveNextAsync())
+                foreach (var row in cursor.Current)
+                {
+                    var targets = shareToSites[row["_id"].AsBsonDocument["target"].AsString];
+                    foreach (var siteId in targets) Add(siteId, row, targets.Count == 1);
+                }
         }
+        return sites.Select(site => (site.Id, Summary: buckets[site.Id].Build(site.ViewCount)))
+            .Where(item => item.Summary != null).ToDictionary(item => item.Id, item => item.Summary!);
+    }
 
-        return buckets.ToDictionary(kv => kv.Key, kv => (long)kv.Value.Count);
+    private async Task<Dictionary<string, HostedSiteActivity>> BuildActivityAsync(
+        IReadOnlyCollection<HostedSite> sites, ISet<string> openedSites)
+    {
+        var now = DateTime.UtcNow;
+        var result = sites.ToDictionary(site => site.Id, site => new HostedSiteActivity
+        {
+            IsNew = HostedSiteActivityPolicy.IsNew(site.CreatedAt, openedSites.Contains(site.Id), now),
+        });
+        if (result.Count == 0) return result;
+        var filter = Builders<HostedSiteRevision>.Filter.In(revision => revision.SiteId, result.Keys)
+            & Builders<HostedSiteRevision>.Filter.Where(HostedSiteActivityPolicy.PublishedEdit);
+        var counts = await _db.HostedSiteRevisions.Aggregate().Match(filter)
+            .Group<BsonDocument>(new BsonDocument
+            {
+                { "_id", "$SiteId" }, { "count", new BsonDocument("$sum", 1) },
+            }).ToListAsync(CancellationToken.None);
+        foreach (var count in counts)
+            if (result.TryGetValue(count["_id"].AsString, out var activity)) activity.EditCount = count["count"].ToInt64();
+        return result;
     }
 
     /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
@@ -790,9 +872,11 @@ public class WebPagesController : ControllerBase
         var (items, total) = await _siteService.ListAsync(
             userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
 
-        // 卡片要展示「N 访客」（设计稿屏 2 中卡与大卡都有这一格），浏览数是累计次数、访客是去重人数，
-        // 两个数不是一回事，所以必须单独算，不能拿 ViewCount 冒充。
-        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id));
+        // 三个访问指标共用记录范围；旧 visitors 映射继续供现有消费方使用，旧累计浏览不覆盖。
+        var openedSites = new HashSet<string>(StringComparer.Ordinal);
+        var traffic = await BuildTrafficAsync(items, userId, openedSites);
+        var visitors = traffic.ToDictionary(kv => kv.Key, kv => kv.Value.All.Visitors);
+        var activity = await BuildActivityAsync(items, openedSites);
 
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
@@ -806,12 +890,12 @@ public class WebPagesController : ControllerBase
             {
                 var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
                 var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
-                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors }));
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors, activity, traffic }));
             }
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors }));
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors, activity, traffic }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, visitors }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, visitors, activity, traffic }));
     }
 
     /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>
@@ -1203,68 +1287,62 @@ public class WebPagesController : ControllerBase
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
-        const long maxBytes = 16L * 1024 * 1024; // 覆盖约 12MB 的网页入口，同时限制匿名代理单次内存占用
         try
         {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            if (site.SiteUrl.StartsWith("/local-assets/", StringComparison.Ordinal))
+            {
+                // LocalAssetStorage 的地址是站内相对路径。按已授权站点清单中的 key 读取，
+                // 不拿客户端 Host 拼回环 HTTP，也不从 URL 反解任意磁盘路径。
+                var entry = site.Files.FirstOrDefault(file => string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+                var handle = entry == null || _reviewStorage == null ? null
+                    : await _reviewStorage.TryOpenReadByKeyAsync(entry.CosKey, cts.Token);
+                if (handle == null)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件不存在或当前存储不支持读取"));
+                await using var local = handle.Content;
+                return await ReadSiteHtmlStreamAsync(site, local, handle.Length, cts.Token);
+            }
+            if (!Uri.TryCreate(site.SiteUrl, UriKind.Absolute, out var address)
+                || address.Scheme is not ("http" or "https"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口地址无效"));
             var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
             var url = $"{site.SiteUrl}{(site.SiteUrl.Contains('?') ? "&" : "?")}v={version.Ticks}";
             var http = _httpClientFactory.CreateClient();
             http.Timeout = TimeSpan.FromSeconds(20);
-
-            // 整个取回过程（含读 body）都必须有截止时间。
-            // HttpClient.Timeout 配 ResponseHeadersRead 只覆盖到「响应头到手」，之后读 body
-            // 是不设防的——对方慢慢滴数据就能把这个请求永久挂住。
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-
             using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
-            if (resp.Content.Headers.ContentLength is > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
-
-            // 边读边卡上限，**不能**先 ReadAsStringAsync 再判长度。
-            //
-            // Content-Length 只是「对方自愿声明的」：缺头、chunked、或者声明一个压缩后的小尺寸，
-            // 上面那道判断就形同虚设，而托管上传允许到 500MB。这条路由是匿名可达的
-            // （拿着公开分享 token 就能打），先缓冲后判断等于把「一次请求分配几百 MB」
-            // 的开关交给外部——读满上限就立刻断，多一个字节都不收。
-            var over = false;
-            byte[] bytes;
-            await using (var stream = await resp.Content.ReadAsStreamAsync(cts.Token))
-            using (var buffered = new MemoryStream())
-            {
-                var chunk = new byte[8192];
-                while (true)
-                {
-                    var read = await stream.ReadAsync(chunk, cts.Token);
-                    if (read <= 0) break;
-                    if (buffered.Length + read > maxBytes) { over = true; break; }
-                    buffered.Write(chunk, 0, read);
-                }
-                bytes = buffered.ToArray();
-            }
-            if (over)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
-
-            // 去掉 UTF-8 BOM，否则首字符是 \ufeff，注进 srcDoc 会在页面顶部留一个空白字符
-            var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
-                ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
-                : Encoding.UTF8.GetString(bytes);
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                siteId = site.Id,
-                title = site.Title,
-                contentType = "text/html",
-                siteUrl = site.SiteUrl,
-                html,
-            }));
+            await using var remote = await resp.Content.ReadAsStreamAsync(cts.Token);
+            return await ReadSiteHtmlStreamAsync(site, remote, resp.Content.Headers.ContentLength, cts.Token);
         }
-        // OperationCanceledException 而不是 TaskCanceledException：显式 CancellationToken 触发时
-        // 抛的是前者，只写后者会漏掉「读 body 超时」这条新路径（TaskCanceled 是它的子类，写父类才全）。
-        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点内容读取超时或失败，请稍后重试"));
         }
+    }
+
+    private async Task<IActionResult> ReadSiteHtmlStreamAsync(HostedSite site, Stream stream, long? declaredLength, CancellationToken ct)
+    {
+        const long maxBytes = 16L * 1024 * 1024; // 覆盖约 12MB 的网页入口，同时限制匿名代理单次内存占用
+        if (declaredLength is > maxBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
+        // 清单 Size、远端 Content-Length 不能代替实际流上限。未知或偏小长度也逐块检查，
+        // 绝不先缓冲整个文件；本地 key、远端 HTTP 与分享读取共用这一条判据。
+        using var buffered = new MemoryStream();
+        var chunk = new byte[8192];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk, ct);
+            if (read <= 0) break;
+            if (buffered.Length + read > maxBytes)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
+            buffered.Write(chunk, 0, read);
+        }
+        var bytes = buffered.ToArray();
+        var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+            ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3) : Encoding.UTF8.GetString(bytes);
+        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title,
+            contentType = "text/html", siteUrl = site.SiteUrl, html }));
     }
 
     /// <summary>更新站点元信息</summary>
@@ -1285,29 +1363,52 @@ public class WebPagesController : ControllerBase
 
     /// <summary>重新上传站点内容（覆盖原有文件）</summary>
     [HttpPost("{id}/reupload")]
-    [RequestSizeLimit(MaxSingleFileSize)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
+    [RequestSizeLimit(MaxUploadRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = HostedSiteUploadLimits.MaxPackageBytes)]
     public async Task<IActionResult> Reupload(string id, IFormFile file, [FromForm] string? uploadId = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
 
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var sizeError = ValidateUploadSize(file.Length, ext);
+        if (sizeError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
+        if (ext == ".zip")
+        {
+            try
+            {
+                using var zipStream = file.OpenReadStream();
+                var zipSite = await _siteService.ReuploadAsync(
+                    id, GetUserId(), zipStream, file.FileName, uploadId: uploadId);
+                return Ok(ApiResponse<object>.Ok(zipSite));
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+            finally
+            {
+                await _uploadProgress.CompleteAsync(uploadId);
+            }
+        }
+
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
         var fileBytes = ms.ToArray();
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         var uploadName = file.FileName;
 
         // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
         string? wrappedAssetType = null;
-        if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+        if (IsWrappedUploadExtension(ext))
         {
             fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
             uploadName = Path.ChangeExtension(file.FileName, ".zip");
-            wrappedAssetType = ext == ".pdf" ? "pdf"
-                : VideoExtensions.Contains(ext) ? "video"
-                : MarkdownExtensions.Contains(ext) ? "markdown"
-                : null;
+            wrappedAssetType = WrappedUploadType(ext);
         }
 
         try
@@ -1426,6 +1527,10 @@ public class WebPagesController : ControllerBase
             if (updated == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
             return Ok(ApiResponse<object>.Ok(updated));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
         }
         catch (ArgumentException ex)
         {
@@ -1557,7 +1662,9 @@ public class WebPagesController : ControllerBase
 
     /// <summary>创建分享链接</summary>
     [HttpPost("share")]
-    public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req)
+    public async Task<IActionResult> CreateShare([FromBody] CreateWebPageShareRequest req) => await CreateShareCore(req);
+
+    private async Task<IActionResult> CreateShareCore(CreateWebPageShareRequest req, HostedCollectionSnapshot? snapshot = null)
     {
         try
         {
@@ -1570,7 +1677,7 @@ public class WebPagesController : ControllerBase
 
             // 新建「不止协作者能打开」的分享之前核对私有资料。visit 便捷链不经过这道闸（已知边界：
             // 它是作者自己点「访问 / 扫码」时用的入口，失败时前端本就回退站点原始地址，拦它挡不住任何人）。
-            if (!isVisit && IsBeyondCollaborators(visibility) && _privateSources != null)
+            if (req.RevisionId == null && !isVisit && IsBeyondCollaborators(visibility) && _privateSources != null)
             {
                 var targetSiteIds = TargetShareSiteIds(req.SiteId, req.SiteIds);
                 // 先过与 CreateShareAsync 同一道权限门，再核查、记录确认：GetByIdAsync 对团队 viewer 也放行，
@@ -1585,7 +1692,40 @@ public class WebPagesController : ControllerBase
                 if (refusal != null) return refusal;
             }
 
-            var share = await _siteService.CreateShareAsync(
+            HostedSiteFixedRevision? fixedRevision = null;
+            var fixedValidity = TimeSpan.Zero;
+            if (req.RevisionId != null)
+            {
+                var validHours = req.ExpiresInHours ?? (long)req.ExpiresInDays * 24;
+                if (isVisit || snapshot != null || req.ShareType == "collection" || req.SiteIds is { Count: > 0 }
+                    || string.IsNullOrWhiteSpace(req.SiteId) || string.IsNullOrWhiteSpace(req.RevisionId) || validHours is < 1 or > 8760)
+                    throw new ArgumentException("固定版本分享需选择一个站点、版本与有效期");
+                fixedValidity = TimeSpan.FromHours(validHours);
+                var ct = HttpContext.RequestAborted;
+                if (!await _siteService.CanCreateShareAsync([req.SiteId], GetUserId(), ct))
+                    throw new UnauthorizedAccessException(HostedSiteService.NoSharePermissionMessage);
+                var site = await _siteService.GetByIdAsync(req.SiteId, GetUserId(), ct);
+                var revision = await _db.HostedSiteRevisions.Find(row => row.Id == req.RevisionId && row.SiteId == req.SiteId
+                    && row.Status == HostedSiteRevisionStatuses.Published).FirstOrDefaultAsync(ct);
+                if (site == null || revision == null)
+                    return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "已核验的发布版本不存在"));
+                var fingerprint = HostedSitePreviewAccessService.ComputePackageFingerprint(revision.VerifiedFiles);
+                if (IsBeyondCollaborators(visibility) && _privateSources != null)
+                {
+                    var decision = await _privateSources.EnforceForRevisionShareAsync(
+                        site, revision, GetUserId(), req.ConfirmedPrivateSourceFingerprint, ct);
+                    if (!decision.Allowed) return Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
+                }
+                var hashes = revision.VerifiedFiles.ToDictionary(file => file.Path, file => file.Sha256, StringComparer.Ordinal);
+                fixedRevision = new HostedSiteFixedRevision(revision.Id, fingerprint, hashes);
+            }
+
+            var share = fixedRevision != null ? await _siteService.CreateFixedRevisionShareAsync(
+                GetUserId(), await ResolveDisplayNameAsync(GetUserId()), req.SiteId!, fixedRevision, req.Title,
+                req.Description, req.Password, fixedValidity, visibility, HttpContext.RequestAborted)
+                : snapshot != null ? await _siteService.CreateCollectionShareAsync(
+                GetUserId(), await ResolveDisplayNameAsync(GetUserId()), snapshot, req.Title, req.Description,
+                req.Password, req.ExpiresInDays, visibility) : await _siteService.CreateShareAsync(
                 GetUserId(), await ResolveDisplayNameAsync(GetUserId()),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
@@ -1613,12 +1753,19 @@ public class WebPagesController : ControllerBase
                 share.ExpiresAt,
                 share.ShortSeq,
                 share.Visibility,
-                shareUrl = $"/s/wp/{share.Token}",
+                revisionId = share.FixedRevision?.RevisionId,
+                shareUrl = share.FixedRevision is { } pinned
+                    ? $"/s/wp/{share.Token}?revision={Uri.EscapeDataString(pinned.RevisionId)}"
+                    : $"/s/wp/{share.Token}",
                 // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
                 // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
                 shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
                 unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
         }
         catch (ArgumentException ex)
         {
@@ -1689,6 +1836,7 @@ public class WebPagesController : ControllerBase
             x.Id,
             x.Token,
             x.ShortSeq,
+            documentCollectionId = x.CollectionSnapshot?.CollectionId,
             x.SiteId,
             x.SiteIds,
             x.ShareType,
@@ -1768,8 +1916,15 @@ public class WebPagesController : ControllerBase
             }
         }
 
-        var result = await _siteService.UpdateShareSettingsAsync(
-            shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        UpdateShareSettingsResult result;
+        try
+        {
+            result = await _siteService.UpdateShareSettingsAsync(shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         if (!result.Ok)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "修改失败"));
         return Ok(ApiResponse<object>.Ok(new { visibility = result.Visibility, expiresAt = result.ExpiresAt }));
@@ -1835,6 +1990,12 @@ public class WebPagesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
+            result.DocumentCollectionId,
+            result.RevisionId,
+            result.CollectionId,
+            result.MainSiteId,
+            result.CollectionVersion,
+            result.CollectionNeedsUpdate,
             result.Title,
             result.Description,
             result.ShareType,
@@ -1886,6 +2047,13 @@ public class WebPagesController : ControllerBase
     // 评论
     // ─────────────────────────────────────────────
 
+    /// <summary>公开静态批注脚本，不携带站点数据或身份凭据。</summary>
+    [AllowAnonymous]
+    [HttpGet("annotation-runtime.js")]
+    [ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+    public IActionResult AnnotationRuntime() =>
+        Content(HostedSiteAnnotationRuntime.Script, "text/javascript; charset=utf-8");
+
     /// <summary>切换站点是否允许评论（仅 owner / editor 可调）</summary>
     [HttpPatch("{id}/comments-enabled")]
     public async Task<IActionResult> SetCommentsEnabled(string id, [FromBody] SetCommentsEnabledRequest req)
@@ -1903,38 +2071,67 @@ public class WebPagesController : ControllerBase
         var result = await _siteService.ListCommentsBySiteAsync(siteId, GetUserId());
         if (result == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        foreach (var comment in result.Comments) SetCommentAvatarUrl(comment);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
     /// <summary>在某站点发表评论（owner / 团队成员视角，需登录）</summary>
     [HttpPost("{siteId}/comments")]
-    public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
+    [Consumes("application/json")]
+    public Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req) =>
+        SaveSiteCommentAsync(siteId, req);
+
+    private async Task<IActionResult> SaveSiteCommentAsync(string siteId, AddSiteCommentRequest req, IReadOnlyList<HostedSiteCommentFile>? files = null)
     {
         var result = await _siteService.AddCommentBySiteAsync(
-            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
+            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, clientId: req.ClientId, attachments: files);
         return MapAddCommentResult(result);
     }
 
     /// <summary>经分享链接列出评论（公开访问，无需登录即可读）</summary>
     [HttpGet("shares/view/{token}/comments")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password)
+    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password, [FromQuery] string? siteId = null)
     {
         var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
-        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId);
+        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId, siteId: siteId);
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        foreach (var comment in result.Comments) SetCommentAvatarUrl(comment);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
     /// <summary>经分享链接发表评论（需登录）</summary>
     [HttpPost("shares/view/{token}/comments")]
-    public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req)
+    [Consumes("application/json")]
+    public Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req) =>
+        SaveShareCommentAsync(token, password, req);
+
+    private async Task<IActionResult> SaveShareCommentAsync(string token, string? password, AddSiteCommentRequest req, IReadOnlyList<HostedSiteCommentFile>? files = null)
     {
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
-            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
+            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId, clientId: req.ClientId, attachments: files);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("{siteId}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetSiteCommentResolved(string siteId, string commentId, [FromBody] SetCommentResolvedRequest req)
+    {
+        var result = await _siteService.SetCommentResolvedBySiteAsync(siteId, commentId, GetUserId(), req.Resolved);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>分享访问门禁通过后，根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("shares/view/{token}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetShareCommentResolved(string token, string commentId, [FromQuery] string? password,
+        [FromBody] SetCommentResolvedRequest req, [FromQuery] string? siteId = null)
+    {
+        var result = await _siteService.SetCommentResolvedByShareAsync(token, password, commentId, GetUserId(), req.Resolved, siteId: siteId);
         return MapAddCommentResult(result);
     }
 
@@ -1958,7 +2155,14 @@ public class WebPagesController : ControllerBase
     {
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        if (result.Comment != null) SetCommentAvatarUrl(result.Comment);
         return Ok(ApiResponse<object>.Ok(result.Comment));
+    }
+
+    private void SetCommentAvatarUrl(HostedSiteCommentDto comment)
+    {
+        if (_commentAvatarConfiguration != null && !comment.IsAi && !string.IsNullOrWhiteSpace(comment.AuthorAvatarFileName))
+            comment.AuthorAvatarUrl = AvatarUrlBuilder.Build(_commentAvatarConfiguration, comment.AuthorAvatarFileName);
     }
 
     private IActionResult MapCommentError(string error, int httpStatus, string? errorCode, int? retryAfterSeconds = null)
@@ -1976,6 +2180,7 @@ public class WebPagesController : ControllerBase
             401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, error)),
             403 => StatusCode(403, ApiResponse<object>.Fail(errorCode ?? "FORBIDDEN", error)),
             400 => BadRequest(ApiResponse<object>.Fail(errorCode ?? ErrorCodes.INVALID_FORMAT, error)),
+            409 => Conflict(ApiResponse<object>.Fail(errorCode ?? "CONTENT_VERSION_CHANGED", error)),
             _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, error)),
         };
     }
@@ -1987,6 +2192,8 @@ public class WebPagesController : ControllerBase
 
 public class CreateFromContentRequest
 {
+    public string? WritingTemplateId { get; set; }
+    public string? DocumentType { get; set; }
     public string HtmlContent { get; set; } = string.Empty;
     public string? Title { get; set; }
     public string? Description { get; set; }
@@ -2086,6 +2293,8 @@ public class InspectPrivateSourcesRequest
 public class CreateWebPageShareRequest
 {
     public string? SiteId { get; set; }
+    public string? RevisionId { get; set; }
+    public int? ExpiresInHours { get; set; }
     public List<string>? SiteIds { get; set; }
     public string? ShareType { get; set; }
     public string? Title { get; set; }
@@ -2150,8 +2359,19 @@ public class SetCommentsEnabledRequest
     public bool Enabled { get; set; }
 }
 
+public class SetCommentResolvedRequest
+{
+    public bool Resolved { get; set; }
+}
+
 public class AddSiteCommentRequest
 {
+    public string? ClientId { get; set; }
+    public string? SiteId { get; set; }
+    public string? RevisionId { get; set; }
+    public string? ExpectedContentVersion { get; set; }
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+    public string? ParentId { get; set; }
     /// <summary>评论正文（1-2000 字）</summary>
     public string? Content { get; set; }
 }

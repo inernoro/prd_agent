@@ -1,3 +1,6 @@
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
 /*
  * Agent 请求观测台（2026-06-11）路由测试：
  * - 会话创建接受 title/clientUser/clientApp 标签并在视图中返回
@@ -95,6 +98,35 @@ describe('Agent requests observability routes', () => {
       server = app.listen(0, '127.0.0.1', () => resolve());
     });
   }
+
+  it('持久化系统所有者可管理 Agent 会话，普通本地账号不可获得管理员权限', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-owner-auth-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+
+    const startWithUser = async (isSystemOwner: boolean): Promise<http.Server> => {
+      const app = express();
+      app.use((req, _res, next) => {
+        (req as any).cdsUser = {
+          username: isSystemOwner ? 'owner' : 'member',
+          isSystemOwner,
+          authProvider: 'local',
+        };
+        (req as any).cdsSession = { id: isSystemOwner ? 'owner-session' : 'member-session' };
+        next();
+      });
+      app.use('/api', createRemoteHostsRouter({ stateService }));
+      return new Promise((resolve) => {
+        const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+      });
+    };
+
+    const ownerServer = await startWithUser(true);
+    expect((await request(ownerServer, 'GET', '/api/projects/project-1/agent-sessions')).status).toBe(200);
+    await new Promise<void>((resolve) => ownerServer.close(() => resolve()));
+
+    server = await startWithUser(false);
+    expect((await request(server, 'GET', '/api/projects/project-1/agent-sessions')).status).toBe(401);
+  });
 
   async function waitForSession(projectId: string, token: string, sessionId: string, status: string) {
     let result: Awaited<ReturnType<typeof request>>;
@@ -1029,6 +1061,10 @@ describe('Agent requests observability routes', () => {
     const releaseRecovery = deferred<void>();
     const runtimeShell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
+        const probeCidFile = command.match(/--cidfile '([^']+)'/)?.[1];
+        if (probeCidFile) fs.writeFileSync(probeCidFile, 'a'.repeat(64));
+        if (/^docker rm -f '[a-f0-9]{64}'$/.test(command)) return { stdout: 'removed', stderr: '', exitCode: 0 };
         if (command.startsWith('docker ps -aq')) {
           recoveryStarted.resolve();
           await releaseRecovery.promise;
@@ -1038,7 +1074,7 @@ describe('Agent requests observability routes', () => {
           return { stdout: '', stderr: '', exitCode: 0 };
         }
         if (command.startsWith('docker version')) return { stdout: '27.0.0\n', stderr: '', exitCode: 0 };
-        if (command.startsWith('docker image inspect')) return { stdout: 'sha256:image\n', stderr: '', exitCode: 0 };
+        if (command.startsWith('docker image inspect')) return { stdout: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n', stderr: '', exitCode: 0 };
         if (command.includes('--entrypoint /bin/sh') && !command.includes('/cds-storage-probe')) {
           return { stdout: '/usr/local/bin/opencode\n', stderr: '', exitCode: 0 };
         }

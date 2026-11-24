@@ -1,10 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 
+# Installed on production hosts; local development keeps the existing behavior.
+if [ "${PRD_AGENT_PRODUCTION_LOCK_HELD:-0}" != 1 ] && [ -x /usr/local/sbin/prd-agent-with-release-lock ]; then
+  exec /usr/local/sbin/prd-agent-with-release-lock "$0" "$@"
+fi
+
 # 生产部署脚本：
 # - 从 GitHub Release 下载 prd-admin dist 压缩包
 # - 在稳定的 deploy/web/dist bind 根内离线校验并原子切换 current/previous
-# - 校验 sha256（如果 Release 同时上传了 .sha256 文件）
+# - 固定版本必须从持久 Release 取得 ZIP、清单及 SHA256，验证后消费
 # - 执行 docker-compose up -d（若系统仅有 docker compose，则自动回退）
 #
 # 依赖：curl + unzip（或 busybox unzip），以及 docker-compose
@@ -18,6 +23,7 @@ set -eu
 #   SKIP_VERIFY=1 ./exec_dep.sh  # 同上，环境变量方式
 #
 # 可选环境变量：
+#   - PRD_AGENT_RELEASE_MIN_FREE_MB：新增发布写入前的最低余量，默认 4096 MiB（已有产物只读核验不受此门禁影响）
 #   - PRD_AGENT_RELEASE_REF：指定发布 ref（latest / sha-<commit> / <tag>）
 #   - PRD_AGENT_DEPLOY_COMMIT：指定 commit，等价于 PRD_AGENT_RELEASE_REF=sha-<commit>
 #   - PRD_AGENT_RELEASE_TAG：指定发布 tag，等价于 PRD_AGENT_RELEASE_REF=<tag>
@@ -27,63 +33,46 @@ set -eu
 #   - PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1：复用现有 deploy/web/dist，不下载 prd-admin zip；仅用于后端/GW-only shadow 部署
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO + 发布 ref 组装，并优先走 get.miduo.org 镜像代理）
 #   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认按 REPO + 发布 ref 组装；compose 已含 llmgw service，随 up 一起拉起）
+#   - PRD_AGENT_DESIGN_OPENDESIGN_IMAGE：覆盖设计执行服务镜像（默认按 REPO + 发布 ref 组装，与 api 同批拉取）
+#   - DESIGN_RUNTIME_API_KEY：api 与 design-opendesign 之间的内部密钥；.env 里没有时自动生成并写入，不打印
+#   - DESIGN_ARTIFACT_PUBLIC_BASE_URL：设计服务回调 api 的公网基址，默认取 PRD_AGENT_PUBLIC_BASE_URL
+#   - DESIGN_RUNTIME_READY_TIMEOUT_SECONDS：发布等待 design-opendesign 容器健康的上限，默认 420 秒
 #   - API_PULL_TIMEOUT_SECONDS：发布镜像整批拉取总超时时间，默认 420 秒
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
 #   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
-#   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
+#   - PRD_AGENT_STATIC_ONLY_COMMIT：仅切换 MAP 静态站的完整 40 位 SHA；必须与 --commit 的运行时 SHA 成对校验
+#   - PRD_AGENT_RELEASE_ASSET_BASE_URL：显式兼容固定 ref 的公开下载目录；默认使用持久 Release asset-ID API
+#   - PAGES_BASE_URL：仅覆盖兼容 latest 的 GitHub Pages 根地址
 #   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收与网关返回 MAP 的权威根地址，必须显式配置
 #   - PRD_AGENT_API_SERVICE：正式 Compose 中的 API service 名，默认 api
 #   - PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL：API 容器内强制存储探针地址
 #   - PRD_AGENT_ASSET_STORAGE_READINESS_ATTEMPTS / INTERVAL_SECONDS / TIMEOUT_SECONDS：存储发布门禁重试参数
 #   - PRD_AGENT_RELEASE_EVIDENCE_DIR：不可覆盖的发布证据目录，默认 $HOME/prd-agent-release-evidence
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
-#   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
-#   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
-#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/asr/video-asr
-#   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
-#     非 0 时会强制部署后 serving probe + gw-smoke 校验，但不会要求已有 shadow 样本数
-#   - LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST：shadow 模式下强制 full sample 的 appCaller 列表；
-#     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
-#   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
-#   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#   - LLMGW_GATE_BASE / GW_BASE：发布后网关探测使用的 serving base URL（形如 https://host/gw/v1）；
+#     未设时由 PRD_AGENT_PUBLIC_BASE_URL + PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH（默认 /llmgw/gw/v1）推出，发布后必跑带 key 的 serving probe
+#   - LLMGW_GATE_KEY / GW_KEY：发布后网关探测使用的 X-Gateway-Key；未设时回退 .env 的 LLMGW_SERVE_KEY，三者皆空则拒绝发布
 #   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层业务 smoke 使用的 scoped service key；
 #     未设时兼容回退 LLMGW_GATE_KEY。
 #   - LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY：四协议 canary 使用的 scoped service key；
 #     sourceSystem 应与 canary 请求的 X-Gateway-Source 一致。未设时兼容回退业务 smoke key。
-#     全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke/canary 复用 legacy key。
 #   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
 #   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
-#   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
-#   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
-#   - LLMGW_GATE_SHADOW_SINCE_HOURS：http/canary 发布只接受最近 N 小时 shadow 样本，默认 48
-#   - LLMGW_GATE_MIN_COVERAGE_HOURS：http/canary 发布要求 shadow 样本覆盖至少 N 小时，默认 24；设 0 可关闭
-#   - LLMGW_GATE_HEALTH_SAMPLES：全量 http 前 healthz 连续采样次数，默认 3
+#   - LLMGW_GATE_HEALTH_SAMPLES：发布后 healthz 连续采样次数，默认 3
 #   - LLMGW_GATE_HEALTH_INTERVAL_SECONDS：healthz 连续采样间隔秒数，默认 5
-#   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
-#   - LLMGW_GATE_FULL_HTTP_APP_CALLERS：全量 http 未显式设置 LLMGW_GATE_APP_CALLERS 时默认逐个 gate 的核心入口列表
-#   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
-#     全量 LLMGW_MODE=http 时若未显式设置，默认要求 send/stream/raw 各达到 LLMGW_GATE_MIN_PER_APP（默认 30）
-#   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
-#     全量 LLMGW_MODE=http 时若未显式设置，默认要求核心 send/stream/raw 入口逐个达到样本门槛
-#   - LLMGW_GATE_FULL_HTTP_APP_KINDS：全量 http 未显式设置 LLMGW_GATE_REQUIRED_APP_KINDS 时默认逐个 gate 的 appCallerCode:kind:min 列表
-#   - LLMGW_GATE_CANARY_KIND_MIN：canary 阶段默认 kind 样本门槛，默认跟随 LLMGW_GATE_MIN_PER_APP
-#   - LLMGW_GATE_CANARY_APP_KIND_MIN：canary 阶段 raw app-kind 样本门槛，默认跟随 LLMGW_GATE_CANARY_KIND_MIN
-#   - LLMGW_GATE_CANARY_APP_KINDS：canary 阶段自定义 appCallerCode:kind:min 列表
-#   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
-#   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
-#   - LLMGW_GATE_RUN_SERVING_PROBE：是否在 http/canary 发布时强制运行 llmgw-serving-probe.py，默认 1
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
-#   - LLMGW_GATE_RUN_SMOKE：是否在 http/canary 发布时强制运行 gw-smoke.py，默认 1
+#   - LLMGW_RELEASE_FEATURES：本次发布启用的模型功能（逗号分隔）；兼容默认 defect-agent，显式 none 表示不交付模型功能；不检查未选 Agent
+#   - LLMGW_GATE_RUN_SMOKE：发布后是否运行 gw-smoke.py（会真调模型）；显式给了探测 key 或业务 smoke key 时默认 1，否则默认 0
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - GW_SMOKE_JSON_OUT / GW_SMOKE_REPORT_MD：保存 post-deploy D 层 smoke 证据
-#   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
 LLMGW_VERIFY_ONLY="${LLMGW_VERIFY_ONLY:-0}"
+static_only_commit_raw="${PRD_AGENT_STATIC_ONLY_COMMIT:-}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
 
@@ -95,6 +84,8 @@ Usage:
   ./exec_dep.sh --commit <40-char-sha>
   ./exec_dep.sh --tag <tag>
   ./exec_dep.sh --ref <latest|sha-commit|tag>
+  PRD_AGENT_STATIC_ONLY_COMMIT=<static-sha> LLMGW_VERIFY_ONLY=1 SKIP_API_PULL=1 \
+    DIST_URL=<zip-url> DIST_SHA256=<sha256> ./exec_dep.sh --commit <runtime-sha>
 
 Compatibility:
   ./exec_dep.sh release continues to deploy latest. Prefer an immutable --commit for audited production releases.
@@ -261,10 +252,45 @@ normalize_ref() {
 }
 
 TAG="$(normalize_ref "$release_ref" "$release_ref_type")"
+static_only_mode=0
+static_commit=""
+runtime_commit=""
+static_artifact_tag="$TAG"
+release_command_semantics="${release_ref_type}:${TAG}"
+if [ -n "$(printf '%s' "$static_only_commit_raw" | xargs || true)" ]; then
+  static_only_tag="$(normalize_commit_ref "$static_only_commit_raw")"
+  static_commit="${static_only_tag#sha-}"
+  case "$TAG" in
+    sha-*) runtime_commit="${TAG#sha-}" ;;
+    *)
+      echo "ERROR: PRD_AGENT_STATIC_ONLY_COMMIT requires --commit <runtime-sha>" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$static_commit" = "$runtime_commit" ]; then
+    echo "ERROR: static-only release requires different static and runtime commits; use the existing --commit flow for one SHA" >&2
+    exit 1
+  fi
+  static_only_mode=1
+  static_artifact_tag="$static_only_tag"
+  release_command_semantics="static-only:${static_only_tag}@runtime:${TAG}"
+  echo "Deploy target: static-only static=$static_only_tag runtime=$TAG"
+fi
 if [ "$TAG" = "latest" ]; then
   echo "Deploy target: latest"
 else
   echo "Deploy target: immutable ref $TAG"
+fi
+
+# Reuse the existing disk admission helper before downloads, image pulls, or
+# configuration rewrites. Help and existing-artifact verification stay usable.
+if [ "$LLMGW_VERIFY_ONLY" != "1" ] || [ "$static_only_mode" = "1" ] || \
+   [ "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" != "1" ] || [ "${SKIP_API_PULL:-0}" != "1" ]; then
+  if [ ! -f scripts/llmgw-disk-space-guard.sh ]; then
+    echo "ERROR: missing scripts/llmgw-disk-space-guard.sh" >&2
+    exit 1
+  fi
+  sh scripts/llmgw-disk-space-guard.sh "$PWD" "${PRD_AGENT_RELEASE_MIN_FREE_MB:-4096}" "production release"
 fi
 
 # 兼容两种方式传 repo：
@@ -299,15 +325,17 @@ default_api_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:$
 default_llmgw_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:${TAG}"
 default_llmgw_serve_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:${TAG}"
 default_llmgw_web_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
+default_design_opendesign_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-design-opendesign:${TAG}"
 
 if [ "$release_ref_type" = "commit" ] && [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" != "1" ]; then
-  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
-    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保四个镜像钉到 ${TAG}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
+  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-}" ]; then
+    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保五个镜像钉到 ${TAG}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
   fi
   export PRD_AGENT_API_IMAGE="$default_api_image"
   export PRD_AGENT_LLMGW_IMAGE="$default_llmgw_image"
   export PRD_AGENT_LLMGW_SERVE_IMAGE="$default_llmgw_serve_image"
   export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
+  export PRD_AGENT_DESIGN_OPENDESIGN_IMAGE="$default_design_opendesign_image"
 fi
 
 # 默认后端镜像。latest 兼容旧部署；指定 ref 时钉到不可变 tag，避免 latest 竞态。
@@ -335,6 +363,11 @@ fi
 # 默认直连 ghcr.io，需代理主机会卡住，故一并钉到 get.miduo.org 镜像源。
 if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
   export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
+fi
+
+# 设计执行服务镜像（design-opendesign）。main 的每个提交都会构建 sha-<commit>，与 api 钉同一个 ref。
+if [ -z "${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-}" ]; then
+  export PRD_AGENT_DESIGN_OPENDESIGN_IMAGE="$default_design_opendesign_image"
 fi
 
 intent_value() {
@@ -407,6 +440,7 @@ check_fast_release_intent() {
   check_intent_image_match PRD_AGENT_LLMGW_IMAGE "$PRD_AGENT_LLMGW_IMAGE"
   check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE "$PRD_AGENT_LLMGW_SERVE_IMAGE"
   check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE "$PRD_AGENT_LLMGW_WEB_IMAGE"
+  check_intent_image_match PRD_AGENT_DESIGN_OPENDESIGN_IMAGE "$PRD_AGENT_DESIGN_OPENDESIGN_IMAGE"
 
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
@@ -425,25 +459,25 @@ persist_release_image_pins() {
     return
   fi
 
-  tmp_file="${dotenv_file}.tmp.$$"
   DOTENV_FILE="$dotenv_file" \
-  TMP_FILE="$tmp_file" \
   PRD_AGENT_API_IMAGE_VALUE="$PRD_AGENT_API_IMAGE" \
   PRD_AGENT_LLMGW_IMAGE_VALUE="$PRD_AGENT_LLMGW_IMAGE" \
   PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE="$PRD_AGENT_LLMGW_SERVE_IMAGE" \
   PRD_AGENT_LLMGW_WEB_IMAGE_VALUE="$PRD_AGENT_LLMGW_WEB_IMAGE" \
+  PRD_AGENT_DESIGN_OPENDESIGN_IMAGE_VALUE="$PRD_AGENT_DESIGN_OPENDESIGN_IMAGE" \
   python3 - <<'PY'
 import os
 import re
+import tempfile
 from pathlib import Path
 
 env_path = Path(os.environ["DOTENV_FILE"])
-tmp_path = Path(os.environ["TMP_FILE"])
 updates = {
     "PRD_AGENT_API_IMAGE": os.environ["PRD_AGENT_API_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_IMAGE": os.environ["PRD_AGENT_LLMGW_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_SERVE_IMAGE": os.environ["PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_WEB_IMAGE": os.environ["PRD_AGENT_LLMGW_WEB_IMAGE_VALUE"],
+    "PRD_AGENT_DESIGN_OPENDESIGN_IMAGE": os.environ["PRD_AGENT_DESIGN_OPENDESIGN_IMAGE_VALUE"],
 }
 
 lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
@@ -466,9 +500,18 @@ for key, value in updates.items():
     if not seen[key]:
         out.append(f"{key}={value}")
 
-tmp_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+tmp_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=env_path.parent, prefix=f".{env_path.name}.pins-", delete=False
+    ) as output:
+        tmp_path = Path(output.name)
+        output.write("\n".join(out) + "\n")
+    os.replace(tmp_path, env_path)
+finally:
+    if tmp_path is not None:
+        tmp_path.unlink(missing_ok=True)
 PY
-  mv "$tmp_file" "$dotenv_file"
   echo "Release image pins: persisted to $dotenv_file"
 }
 
@@ -513,106 +556,65 @@ config_value() {
   return 0
 }
 
-llmgw_mode_value() {
-  value="$(config_value LLMGW_MODE LlmGateway__Mode)"
-  printf '%s' "$value"
-}
+check_fast_release_intent
 
-llmgw_allowlist_value() {
-  config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist
-}
-
-llmgw_shadow_sample_value() {
-  value="$(config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent)"
-  if [ -z "$value" ]; then
-    value="0"
-  fi
-  printf '%s' "$value"
-}
-
-llmgw_shadow_sample_allowlist_value() {
-  config_value LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST LlmGateway__ShadowFullSampleAppCallerAllowlist
-}
-
-guard_llmgw_prod_stage_context_if_needed() {
-  mode_raw="$(llmgw_mode_value)"
-  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
-  if [ -z "$mode" ]; then
-    echo "ERROR: LLMGW_MODE 未配置；生产发布必须显式设置 http、shadow，或通过回滚脚本设置 inproc。" >&2
+validate_static_only_release_contract() {
+  [ "$static_only_mode" = "1" ] || return 0
+  if [ "$LLMGW_VERIFY_ONLY" != "1" ] || [ "${SKIP_API_PULL:-}" != "1" ]; then
+    echo "ERROR: static-only release requires LLMGW_VERIFY_ONLY=1 and SKIP_API_PULL=1" >&2
     exit 1
   fi
-  case "$mode" in
-    http|shadow|inproc) ;;
-    *)
-      echo "ERROR: LLMGW_MODE=$mode 非法；允许值为 http、shadow、inproc。" >&2
+  if [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" = "1" ]; then
+    echo "ERROR: static-only release cannot override runtime image identities" >&2
+    exit 1
+  fi
+  if [ -n "${SKIP_VERIFY:-}" ] || [ -n "${PRD_AGENT_IGNORE_FAST_INTENT:-}" ]; then
+    echo "ERROR: static-only release cannot skip artifact verification or fast intent validation" >&2
+    exit 1
+  fi
+  case "$(printf '%s' "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" | tr 'A-Z' 'a-z' | xargs || true)" in
+    1|true|yes)
+      echo "ERROR: static-only release cannot reuse the existing static distribution" >&2
       exit 1
       ;;
   esac
-  allowlist_raw="$(llmgw_allowlist_value)"
-  allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_raw="$(llmgw_shadow_sample_value)"
-  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
-  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
-  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  maintenance_baseline_commit="$(printf '%s' "${LLMGW_MAINTENANCE_BASELINE_COMMIT:-}" | tr 'A-F' 'a-f' | xargs || true)"
-  maintenance_baseline_json="$(printf '%s' "${LLMGW_MAINTENANCE_BASELINE_JSON:-}" | xargs || true)"
-  maintenance_release=0
-  if [ -n "$maintenance_baseline_commit" ] || [ -n "$maintenance_baseline_json" ]; then
-    if ! printf '%s' "$maintenance_baseline_commit" | grep -Eq '^[0-9a-f]{40}$'; then
-      echo "ERROR: LLMGW_MAINTENANCE_BASELINE_COMMIT must be a complete 40-character commit." >&2
-      exit 1
-    fi
-    if [ -z "$maintenance_baseline_json" ] || [ ! -f "$maintenance_baseline_json" ]; then
-      echo "ERROR: maintenance release requires an existing LLMGW_MAINTENANCE_BASELINE_JSON." >&2
-      exit 1
-    fi
-    python3 - "$maintenance_baseline_json" "$maintenance_baseline_commit" <<'PY'
-import json
-import sys
-
-path, expected = sys.argv[1:3]
-with open(path, "r", encoding="utf-8") as handle:
-    report = json.load(handle)
-failures = report.get("failures") or []
-if report.get("verdict") != "pass" or str(report.get("commit") or "").lower() != expected or failures:
-    raise SystemExit("ERROR: maintenance baseline JSON is not a matching pass result")
-if str(report.get("stage") or "").lower() != "http-full" or not report.get("releaseGateJson"):
-    raise SystemExit("ERROR: maintenance baseline JSON is missing audited http-full evidence")
-PY
-    maintenance_release=1
-    echo "LLM Gateway maintenance release: audited baseline accepted commit=$maintenance_baseline_commit"
-  fi
-  shadow_sample_enabled=0
-  if [ "$mode" = "shadow" ]; then
-    case "$shadow_sample_compact" in
-      ""|0|0.0|0.00|0.000)
-        ;;
-      *)
-        shadow_sample_enabled=1
-        ;;
-    esac
-    if [ -n "$shadow_sample_allowlist_compact" ]; then
-      shadow_sample_enabled=1
-    fi
-  fi
-  release_gate_required=0
-  if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
-    release_gate_required=1
-  fi
-  if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    return 0
-  fi
-
-  if [ "${LLMGW_PROD_STAGE_ACTIVE:-}" != "1" ] || [ -z "$(printf '%s' "${LLMGW_PROD_STAGE:-}" | xargs || true)" ]; then
-    echo "ERROR: LLM Gateway shadow/canary/http 发布必须通过 scripts/llmgw-prod-stage.sh 执行。" >&2
-    echo "       直接运行 exec_dep.sh 会绕过 rollout ledger、生产预检和阶段顺序审计。" >&2
-    echo "       示例：scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute" >&2
+  if [ -z "${DIST_URL:-}" ] || [ -z "${DIST_SHA256:-}" ]; then
+    echo "ERROR: static-only release requires an audited DIST_URL and DIST_SHA256 for the static commit" >&2
     exit 1
   fi
+  static_dotenv_file="${PRD_AGENT_DOTENV_FILE:-}"
+  static_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
+  case "$static_dotenv_file" in
+    /*) ;;
+    *)
+      echo "ERROR: static-only release requires an absolute PRD_AGENT_DOTENV_FILE" >&2
+      exit 1
+      ;;
+  esac
+  case "$static_project_directory" in
+    /*) ;;
+    *)
+      echo "ERROR: static-only release requires an absolute PRD_AGENT_COMPOSE_PROJECT_DIRECTORY" >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$static_dotenv_file" ] || [ ! -d "$static_project_directory" ]; then
+    echo "ERROR: static-only release requires the existing production env file and compose project directory" >&2
+    exit 1
+  fi
+  normalized_dist_sha="$(printf '%s' "$DIST_SHA256" | tr 'A-F' 'a-f' | xargs || true)"
+  if ! printf '%s' "$normalized_dist_sha" | grep -Eq '^[0-9a-f]{64}$'; then
+    echo "ERROR: static-only DIST_SHA256 must contain exactly 64 hexadecimal characters" >&2
+    exit 1
+  fi
+  release_intent_file="${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}"
+  if [ -z "$release_intent_file" ] || [ ! -f "$release_intent_file" ]; then
+    echo "ERROR: static-only release requires the fast.sh intent for runtime $TAG" >&2
+    exit 1
+  fi
+  echo "Static-only contract: verified static=$static_artifact_tag runtime=$TAG"
 }
-
-check_fast_release_intent
-guard_llmgw_prod_stage_context_if_needed
+validate_static_only_release_contract
 
 if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
@@ -625,6 +627,13 @@ fi
 
 compose_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
 compose_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
+# Keep host logging policy even for a rollback to a release without Compose limits.
+if [ -f /etc/prd-agent/compose.logging.yml ]; then
+  case ":${COMPOSE_FILE:-}:" in
+    *:/etc/prd-agent/compose.logging.yml:*) ;;
+    *) export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:/etc/prd-agent/compose.logging.yml" ;;
+  esac
+fi
 compose_run() {
   if [ -n "$compose_project_directory" ]; then
     set -- --project-directory "$compose_project_directory" "$@"
@@ -660,6 +669,9 @@ if [ -z "$(printf '%s' "${PRD_AGENT_PUBLIC_BASE_URL:-}" | xargs || true)" ]; the
 fi
 # 同一份部署输入同时驱动公网验收和 LLM Gateway 返回入口，避免两个地址各自漂移。
 export LLMGW_MAP_HOME_URL="${LLMGW_MAP_HOME_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
+# .env 里显式配置的回调基址优先（shell 导出的值会盖过 compose 的 --env-file，所以先读出来再兜底）。
+DESIGN_ARTIFACT_PUBLIC_BASE_URL="$(config_value DESIGN_ARTIFACT_PUBLIC_BASE_URL)"
+export DESIGN_ARTIFACT_PUBLIC_BASE_URL="${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
 echo "Compose project: $COMPOSE_PROJECT_NAME"
 
 if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
@@ -668,8 +680,37 @@ if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
 fi
 scripts/llmgw-prod-topology-preflight.sh
 
-persist_release_image_pins
-
+# api 与 design-opendesign 之间的内部密钥：没人需要知道它的值。shell 或 .env 里已有就原样使用；
+# 都没有时生成一把写进 .env（只追加这一行，不打印值），之后每次发布沿用同一把。
+ensure_design_runtime_api_key() {
+  key_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+  if [ -n "${DESIGN_RUNTIME_API_KEY:-}" ] || [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
+    # 继续收紧历史环境文件权限。后续镜像锁定写入也始终使用私有临时文件。
+    if [ -f "$key_dotenv_file" ] && [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
+      chmod 600 "$key_dotenv_file"
+    fi
+    echo "Design runtime key: configured"
+    return 0
+  fi
+  key_dotenv_dir="$(dirname -- "$key_dotenv_file")"
+  if [ ! -d "$key_dotenv_dir" ]; then
+    echo "ERROR: DESIGN_RUNTIME_API_KEY 未配置，且 env 目录不存在，无法自动生成：$key_dotenv_dir" >&2
+    exit 1
+  fi
+  generated_key="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  if [ -z "$generated_key" ]; then
+    echo "ERROR: DESIGN_RUNTIME_API_KEY 自动生成失败（python3 secrets 不可用）" >&2
+    exit 1
+  fi
+  if [ ! -f "$key_dotenv_file" ]; then
+    (umask 077 && : > "$key_dotenv_file")
+  fi
+  printf '\nDESIGN_RUNTIME_API_KEY=%s\n' "$generated_key" >> "$key_dotenv_file"
+  generated_key=""
+  # 带密钥的环境文件只允许属主读写。
+  chmod 600 "$key_dotenv_file"
+  echo "Design runtime key: generated and saved to $key_dotenv_file (value not printed)"
+}
 if [ ! -f scripts/lib/static-release.sh ]; then
   echo "ERROR: missing scripts/lib/static-release.sh" >&2
   exit 1
@@ -688,8 +729,20 @@ release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 release_evidence_id="$(date -u '+%Y%m%dT%H%M%SZ')_${TAG}_$$"
 release_evidence_dir="${PRD_AGENT_RELEASE_EVIDENCE_DIR:-${HOME:-.}/prd-agent-release-evidence}"
 release_evidence_file="$release_evidence_dir/${release_evidence_id}.json"
+# Keep full safe response metadata beside the existing release evidence, outside
+# temporary staging; CDS console summaries may truncate individual log lines.
+export PRD_AGENT_ARTIFACT_AUDIT_PATH="$release_evidence_dir/${release_evidence_id}.artifact-audit.jsonl"
+export PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="$release_evidence_id"
 public_smoke_json="$tmp_dir/public-surface.json"
 rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
+gateway_readiness_baseline="$tmp_dir/gateway-readiness-before.json"
+runtime_rollback_dir="$tmp_dir/runtime-rollback"
+asset_readiness_baseline="$tmp_dir/asset-storage-readiness-before.json"
+force_external=0
+if [ "${CDS_RELEASE_FORCE_EXTERNAL:-0}" = "1" ]; then
+  force_external=1
+  echo "WARN: 强制发布已启用，外部业务依赖故障会记为警告。"
+fi
 asset_storage_readiness_json="$tmp_dir/asset-storage-readiness.json"
 static_staging_dir=""
 static_release_id=""
@@ -725,6 +778,97 @@ static_before_mode="$(stat -c '%a' "$active_static_root" 2>/dev/null || true)"
 static_before_owner="$(stat -c '%u:%g' "$active_static_root" 2>/dev/null || true)"
 static_before_current="$(readlink "$active_static_root/current" 2>/dev/null || true)"
 static_before_previous="$(readlink "$active_static_root/previous" 2>/dev/null || true)"
+static_rollback_commit=""
+runtime_identity_before_file="$tmp_dir/runtime-identity-before.txt"
+static_only_dotenv_sha_before=""
+
+file_sha256() {
+  file_path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file_path" | awk '{print $1}'
+  else
+    shasum -a 256 "$file_path" | awk '{print $1}'
+  fi
+}
+
+read_static_entry_commit() {
+  static_root="$1"
+  python3 - "$static_root/index.html" <<'PY'
+import re
+import sys
+from html.parser import HTMLParser
+from pathlib import Path
+
+class Parser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.urls = []
+    def handle_starttag(self, tag, attrs):
+        values = {key.lower(): value or "" for key, value in attrs}
+        if tag.lower() == "script" and values.get("src"):
+            self.urls.append(values["src"])
+        if tag.lower() == "link" and "stylesheet" in values.get("rel", "").lower() and values.get("href"):
+            self.urls.append(values["href"])
+
+parser = Parser()
+parser.feed(Path(sys.argv[1]).read_text(encoding="utf-8"))
+commits = {match.group(1).lower() for url in parser.urls for match in [re.search(r"([0-9a-fA-F]{40})", url)] if match}
+if len(commits) != 1:
+    raise SystemExit(f"expected exactly one commit in entry assets, found {len(commits)}")
+print(commits.pop())
+PY
+}
+
+capture_runtime_identity() {
+  identity_output="$1"
+  : > "$identity_output"
+  for identity_service in api llmgw llmgw-serve llmgw-serve-b llmgw-web design-opendesign; do
+    identity_container="$(compose_run ps -q "$identity_service" 2>/dev/null | head -n 1)"
+    if [ -z "$identity_container" ]; then
+      echo "ERROR: static-only release requires running service: $identity_service" >&2
+      return 1
+    fi
+    identity_started="$(docker inspect --format '{{.State.StartedAt}}' "$identity_container" 2>/dev/null || true)"
+    identity_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$identity_container" 2>/dev/null || true)"
+    if [ -z "$identity_started" ] || [ "$identity_revision" != "$runtime_commit" ]; then
+      echo "ERROR: static-only runtime identity mismatch for $identity_service" >&2
+      return 1
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$identity_service" "$identity_container" "$identity_started" "$identity_revision" >> "$identity_output"
+  done
+}
+
+verify_static_only_gateway_config() {
+  [ "$static_only_mode" = "1" ] || return 0
+  candidate_conf="deploy/nginx/conf.d/branches/_standalone.conf"
+  active_conf="$active_nginx_conf_root/branches/_standalone.conf"
+  if [ ! -f "$candidate_conf" ] || [ ! -f "$active_conf" ]; then
+    echo "ERROR: static-only release requires both candidate and active standalone nginx configs" >&2
+    return 1
+  fi
+  candidate_conf_sha="$(file_sha256 "$candidate_conf")"
+  active_conf_sha="$(file_sha256 "$active_conf")"
+  if [ "$candidate_conf_sha" != "$active_conf_sha" ]; then
+    echo "ERROR: static-only release refuses to overwrite a different active nginx configuration" >&2
+    return 1
+  fi
+  if [ "$(readlink "$active_nginx_conf_root/default.conf" 2>/dev/null || true)" != "branches/_standalone.conf" ]; then
+    echo "ERROR: static-only release requires the active gateway to use branches/_standalone.conf" >&2
+    return 1
+  fi
+  echo "Static-only gateway config: unchanged and verified"
+}
+
+if [ "$static_only_mode" = "1" ]; then
+  static_only_dotenv_sha_before="$(file_sha256 "$compose_dotenv_file")"
+  verify_static_only_gateway_config
+  if [ -L "$active_static_root/current" ]; then
+    static_rollback_commit="$(read_static_entry_commit "$active_static_root/current")"
+  else
+    static_rollback_commit="$(read_static_entry_commit "$active_static_root")"
+  fi
+  capture_runtime_identity "$runtime_identity_before_file"
+fi
 
 write_release_evidence() {
   evidence_status="$1"
@@ -739,7 +883,7 @@ write_release_evidence() {
     --status "$evidence_status" \
     --release-ref "$TAG" \
     --started-at "$release_started_at" \
-    --command-semantics "${release_ref_type}:${TAG}" \
+    --command-semantics "$release_command_semantics" \
     --release-pid "$$" \
     --asset-url "$asset_url" \
     --asset-file "$zip_path" \
@@ -754,6 +898,9 @@ write_release_evidence() {
     --static-before-current "$static_before_current" \
     --static-before-previous "$static_before_previous" \
     --smoke-json "$public_smoke_json" \
+    --rollback-smoke-json "$rollback_smoke_json" \
+    --gateway-readiness-baseline "$gateway_readiness_baseline" \
+    --force-external "$force_external" \
     --asset-storage-readiness-json "$asset_storage_readiness_json" \
     --gateway-bind-state "$GATEWAY_BIND_STATE" \
     --gateway-bind-reason "$GATEWAY_BIND_REASON" \
@@ -781,13 +928,10 @@ write_release_evidence() {
 run_public_surface_smoke() {
   smoke_output="$1"
   smoke_attempts="${2:-${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}}"
+  smoke_static_commit="${3:-}"
+  smoke_runtime_commit="${4:-}"
   public_base="$PRD_AGENT_PUBLIC_BASE_URL"
-  public_smoke_commit_args=""
-  case "$TAG" in
-    sha-*) public_smoke_commit_args="--expect-commit ${TAG#sha-}" ;;
-  esac
-  # shellcheck disable=SC2086
-  python3 scripts/prd-agent-public-surface-smoke.py \
+  set -- python3 scripts/prd-agent-public-surface-smoke.py \
     --base "$public_base" \
     --api-health-path "${PRD_AGENT_PUBLIC_API_HEALTH_PATH:-/api/version}" \
     --root-health-path "${PRD_AGENT_PUBLIC_ROOT_HEALTH_PATH:-/health}" \
@@ -797,8 +941,15 @@ run_public_surface_smoke() {
     --attempts "$smoke_attempts" \
     --interval "${PRD_AGENT_PUBLIC_SMOKE_INTERVAL_SECONDS:-5}" \
     --timeout "${PRD_AGENT_PUBLIC_SMOKE_TIMEOUT_SECONDS:-15}" \
-    --json-out "$smoke_output" \
-    $public_smoke_commit_args
+    --json-out "$smoke_output"
+  if [ -n "$smoke_static_commit" ] || [ -n "$smoke_runtime_commit" ]; then
+    set -- "$@" --expect-static-commit "$smoke_static_commit" --expect-runtime-commit "$smoke_runtime_commit"
+  else
+    case "$TAG" in
+      sha-*) set -- "$@" --expect-commit "${TAG#sha-}" ;;
+    esac
+  fi
+  "$@"
 }
 
 run_asset_storage_readiness() {
@@ -835,6 +986,41 @@ run_asset_storage_readiness() {
     printf '{"status":"unhealthy","errorCode":"probe_request_failed","attempts":%s}\n' \
       "$readiness_attempts" > "$asset_storage_readiness_json"
   fi
+  if python3 - "${asset_readiness_baseline:-}" "$asset_storage_readiness_json" "${force_external:-0}" <<'PY'
+import json
+import sys
+
+def asset_failure(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            report = json.load(stream)
+        code = str(report.get("errorCode") or "").lower()
+        if "components" in report:
+            checks = {item["name"]: item["ready"] for item in report["components"]}
+            core_ready = checks.get("mongodb") is True and checks.get("redis") is True
+            failed = {name for name, ready in checks.items() if ready is not True}
+            return code if core_ready and failed == {"asset-storage"} and code == "asset_storage_unavailable" else ""
+        # The older storage-only endpoint reports the explicit failing operation.
+        return code if report.get("provider") and code in {
+            "provider_mismatch", "write_failed", "internal_read_failed", "public_read_failed",
+            "cleanup_failed", "probe_failed",
+        } else ""
+    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return ""
+
+before, after = (asset_failure(path) for path in sys.argv[1:3])
+if not after:
+    raise SystemExit(1)
+if before == after:
+    print(f"WARN: 对象存储已有故障 {after}，故障在本次发布前已存在。")
+elif sys.argv[3] == "1":
+    print(f"WARN: 强制发布放行对象存储就绪检查（{after}）。")
+else:
+    raise SystemExit(1)
+PY
+  then
+    return 0
+  fi
   echo "ERROR: asset storage readiness failed after ${readiness_attempts} attempts: $readiness_url" >&2
   echo "RECOVERY: keep the gateway online, restore Tencent COS/CDN access or the API container, then retry the release gate." >&2
   return 1
@@ -851,15 +1037,168 @@ reload_active_gateway() {
     echo "ERROR: active gateway container is not running" >&2
     return 1
   fi
-  docker exec "$current_gateway_id" nginx -t
+  docker exec "$current_gateway_id" nginx -t || return 1
   docker exec "$current_gateway_id" nginx -s reload
+}
+
+capture_production_runtime() {
+  mkdir "$runtime_rollback_dir"
+  if [ -f "$compose_dotenv_file" ]; then
+    cp -p "$compose_dotenv_file" "$runtime_rollback_dir/dotenv"
+    chmod 600 "$runtime_rollback_dir/dotenv"
+  fi
+  for config in branches/_standalone.conf default.conf; do
+    if [ -e "$active_nginx_conf_root/$config" ] || [ -L "$active_nginx_conf_root/$config" ]; then
+      mkdir -p "$runtime_rollback_dir/nginx/$(dirname "$config")"
+      cp -a "$active_nginx_conf_root/$config" "$runtime_rollback_dir/nginx/$config"
+    fi
+  done
+  rollback_static_identity="$(read_static_entry_commit "$active_static_root/current" 2>/dev/null ||
+    read_static_entry_commit "$active_static_root" 2>/dev/null || true)"
+  rollback_api_id="$(compose_run ps -q "$api_service" | head -n 1)"
+  rollback_runtime_identity=""
+  if [ -n "$rollback_api_id" ]; then
+    rollback_runtime_identity="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$rollback_api_id")"
+  fi
+  python3 scripts/lib/production-runtime-rollback.py capture "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" \
+    --compose "$COMPOSE" --env-file "$compose_dotenv_file"
+}
+
+select_release_features() {
+  if [ -z "$rollback_runtime_identity" ]; then
+    return 0
+  fi
+  case "$TAG" in sha-*) ;; *) return 0 ;; esac
+  if ! changed_files="$(git diff --name-only "$rollback_runtime_identity" "${TAG#sha-}" -- 2>/dev/null)"; then
+    return 0
+  fi
+  if ! printf '%s\n' "$changed_files" | grep -Eq '^(design-runtime/|docker-compose[^/]*\.yml$)|/(DesignAgent|DesignRuntime)'; then
+    design_in_scope=0
+  fi
+  if [ -z "${LLMGW_RELEASE_FEATURES:-}" ] &&
+     printf '%s\n' "$changed_files" | grep -Eq '/(ImageGenController|GatewayCapabilityContract|GatewayServingReadinessProbe|ModelResolver)\.cs$|/Services/(ImageGen|ImageGeneration)/'; then
+    export LLMGW_RELEASE_FEATURES="defect-agent,image-generation"
+  fi
+}
+
+verify_runtime_images() {
+  while read -r service expected_image; do
+    container="$(compose_run ps -a -q "$service" | head -n 1)"
+    expected_id="$(docker image inspect --format '{{.Id}}' "$expected_image")" || return 1
+    actual_id=""
+    if [ -n "$container" ]; then
+      actual_id="$(docker inspect --format '{{.Image}}' "$container")" || return 1
+    fi
+    if [ "$actual_id" != "$expected_id" ]; then
+      echo "ERROR: 服务 $service 未运行本次发布指定的镜像" >&2
+      return 1
+    fi
+  done <<IMAGES
+api $PRD_AGENT_API_IMAGE
+llmgw $PRD_AGENT_LLMGW_IMAGE
+llmgw-serve $PRD_AGENT_LLMGW_SERVE_IMAGE
+llmgw-serve-b $PRD_AGENT_LLMGW_SERVE_IMAGE
+llmgw-web $PRD_AGENT_LLMGW_WEB_IMAGE
+design-opendesign $PRD_AGENT_DESIGN_OPENDESIGN_IMAGE
+IMAGES
+}
+
+restore_production_runtime() {
+  restore_ok=1
+  if [ -f "$runtime_rollback_dir/dotenv" ]; then
+    if cp -p "$runtime_rollback_dir/dotenv" "${compose_dotenv_file}.rollback.$$"; then
+      mv -f "${compose_dotenv_file}.rollback.$$" "$compose_dotenv_file" || restore_ok=0
+    else
+      restore_ok=0
+    fi
+  else
+    rm -f "$compose_dotenv_file" || restore_ok=0
+  fi
+  if [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
+    static_release_rollback "$active_static_root" "$static_rollback_target" || restore_ok=0
+    if [ -n "$static_before_previous" ]; then
+      static_release_atomic_link "$active_static_root/previous" "$static_before_previous" || restore_ok=0
+    else
+      rm -f "$active_static_root/previous" || restore_ok=0
+    fi
+  fi
+  for config in branches/_standalone.conf default.conf; do
+    backup="$runtime_rollback_dir/nginx/$config"
+    active="$active_nginx_conf_root/$config"
+    if [ -e "$backup" ] || [ -L "$backup" ]; then
+      if cp -a "$backup" "${active}.rollback.$$"; then
+        mv -f "${active}.rollback.$$" "$active" || restore_ok=0
+      else
+        restore_ok=0
+      fi
+    else
+      rm -f "$active" || restore_ok=0
+    fi
+  done
+  python3 scripts/lib/production-runtime-rollback.py restore "$compose_project_name" "$gateway_service" "$runtime_rollback_dir" \
+    --compose "$COMPOSE" || restore_ok=0
+  if [ -n "$gateway_container_id" ] && [ -n "$(compose_run ps -q "$gateway_service")" ]; then
+    reload_active_gateway || restore_ok=0
+  fi
+  [ "$restore_ok" = "1" ]
+}
+
+write_static_only_rollback_evidence() {
+  combined_output="$1"
+  failed_smoke="$2"
+  rollback_smoke="$3"
+  STATIC_COMMIT="$static_commit" RUNTIME_COMMIT="$runtime_commit" \
+  FAILED_SMOKE="$failed_smoke" ROLLBACK_SMOKE="$rollback_smoke" COMBINED_OUTPUT="$combined_output" \
+  python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+def read_optional(path_value):
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"verdict": "unreadable"}
+
+payload = {
+    "verdict": "fail",
+    "commandSemantics": "static-only-rollback",
+    "expectedStaticCommit": os.environ["STATIC_COMMIT"],
+    "expectedRuntimeCommit": os.environ["RUNTIME_COMMIT"],
+    "releaseFailure": read_optional(os.environ["FAILED_SMOKE"]),
+    "rollbackVerification": read_optional(os.environ["ROLLBACK_SMOKE"]),
+}
+output = Path(os.environ["COMBINED_OUTPUT"])
+output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
 }
 
 release_exit() {
   exit_status=$?
   trap - EXIT
   if [ "$exit_status" -ne 0 ] && [ "$release_completed" != "1" ]; then
-    if [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
+    if [ "$compose_started" = "1" ]; then
+      echo "Release failed at stage '$release_failure_stage'; restoring pre-release runtime, gateway and static web..." >&2
+      echo "CDS_RELEASE_ROLLBACK=started" >&2
+      if restore_production_runtime; then
+        release_rollback_result="full-restored"
+        if [ -n "$rollback_static_identity" ] && [ -n "$rollback_runtime_identity" ] &&
+           run_public_surface_smoke "$rollback_smoke_json" 6 "$rollback_static_identity" "$rollback_runtime_identity"; then
+          release_rollback_result="full-restored-and-public-verified"
+          echo "生产回滚已验证：运行服务、网关配置和网页均已恢复到本次发布前的版本"
+          echo "CDS_RELEASE_ROLLBACK=verified"
+        else
+          release_rollback_result="full-restored-public-verification-failed"
+          echo "ERROR: 已恢复发布前运行版本，公网复验未通过" >&2
+        fi
+      else
+        release_rollback_result="full-rollback-failed"
+        echo "ERROR: 整套回滚未完成，请根据回滚日志恢复现场" >&2
+      fi
+    elif [ "$STATIC_RELEASE_SWITCH_PERFORMED" = "1" ]; then
       echo "Release failed at stage '$release_failure_stage'; restoring previous static release..." >&2
       if static_release_rollback "$active_static_root" "$static_rollback_target"; then
         release_rollback_result="static-restored"
@@ -870,12 +1209,28 @@ release_exit() {
             release_rollback_result="static-restored-gateway-reload-failed"
           fi
         fi
-        if [ "$compose_started" = "1" ] && [ "$release_rollback_result" != "static-restored-gateway-reload-failed" ]; then
-          if run_public_surface_smoke "$rollback_smoke_json" 6; then
-            public_smoke_json="$rollback_smoke_json"
+        if { [ "$compose_started" = "1" ] || [ "$static_only_mode" = "1" ]; } && [ "$release_rollback_result" != "static-restored-gateway-reload-failed" ]; then
+          if [ "$static_only_mode" = "1" ]; then
+            rollback_static_commit="$static_rollback_commit"
+            rollback_runtime_commit="$runtime_commit"
+          else
+            rollback_static_commit=""
+            rollback_runtime_commit=""
+          fi
+          failed_public_smoke_json="$public_smoke_json"
+          rollback_smoke_passed=0
+          if run_public_surface_smoke "$rollback_smoke_json" 6 "$rollback_static_commit" "$rollback_runtime_commit"; then
             release_rollback_result="static-restored-and-public-verified"
+            rollback_smoke_passed=1
           else
             release_rollback_result="static-restored-public-verification-failed"
+          fi
+          if [ "$static_only_mode" = "1" ]; then
+            combined_smoke_json="$tmp_dir/static-only-failure-and-rollback.json"
+            write_static_only_rollback_evidence "$combined_smoke_json" "$failed_public_smoke_json" "$rollback_smoke_json"
+            public_smoke_json="$combined_smoke_json"
+          elif [ "$rollback_smoke_passed" = "1" ]; then
+            public_smoke_json="$rollback_smoke_json"
           fi
         fi
       else
@@ -886,6 +1241,16 @@ release_exit() {
   fi
   if [ -n "$static_staging_dir" ] && [ -d "$static_staging_dir" ]; then
     rm -rf "$static_staging_dir"
+  fi
+  if [ "$release_rollback_result" = "full-rollback-failed" ]; then
+    recovery_root="${HOME:-.}/.prd-agent-release-recovery"
+    if (umask 077; mkdir -p "$recovery_root" && chmod 700 "$recovery_root" &&
+        mv "$runtime_rollback_dir" "$recovery_root/$release_evidence_id"); then
+      echo "回滚点已保留在私有目录 $recovery_root/$release_evidence_id" >&2
+    else
+      echo "回滚点仍位于受保护的临时目录 $runtime_rollback_dir" >&2
+      exit "$exit_status"
+    fi
   fi
   rm -rf "$tmp_dir"
   exit "$exit_status"
@@ -911,27 +1276,46 @@ case "$reuse_static_dist" in
     ;;
   *)
     sha_url=""
+    retained_zip=""
 
     if [ -n "${DIST_URL:-}" ]; then
       asset_url="$DIST_URL"
       sha_url="${DIST_SHA256_URL:-}"
-    else
+      manifest_url="${DIST_MANIFEST_URL:-}"
+    elif [ "$TAG" = "latest" ]; then
       pages_base="${PAGES_BASE_URL:-https://get.miduo.org/https://${OWNER}.github.io/${REPO_NAME}}"
       asset_url="${pages_base%/}/prd-admin-dist-${TAG}.zip"
       sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
       manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
+    else
+      retained_base="${PRD_AGENT_RELEASE_ASSET_BASE_URL:-}"
+      release_failure_stage="static-retained-artifact"
+      mkdir -p "$release_evidence_dir"
+      if [ -n "$retained_base" ]; then
+        python3 scripts/lib/release-artifacts.py fetch --repo "$REPO" --ref "$TAG" \
+          --base-url "$retained_base" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      else
+        PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT=github-api python3 scripts/lib/release-artifacts.py fetch \
+          --repo "$REPO" --ref "$TAG" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      fi
+      cat "$tmp_dir/retained-evidence.json"
+      asset_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][0])' "$tmp_dir/retained-evidence.json")"
+      sha_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][1])' "$tmp_dir/retained-evidence.json")"
+      manifest_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][2])' "$tmp_dir/retained-evidence.json")"
+      retained_zip="$tmp_dir/retained/prd-admin-dist-${TAG}.zip"
     fi
 
     if [ -z "$asset_url" ]; then
       echo "ERROR: 未能确定静态站压缩包下载地址。" >&2
-      echo "  - 默认从 GitHub Pages 下载 prd-admin-dist-${TAG}.zip（可用 PAGES_BASE_URL 覆盖）" >&2
+      echo "  - 固定版本必须存在完整的持久 Release；latest 保留 Pages 兼容路径" >&2
       echo "  - 或直接设置 DIST_URL=... 指定 zip 地址" >&2
       exit 1
     fi
 
     if [ -n "$manifest_url" ]; then
       manifest_path="$tmp_dir/release-manifest.json"
-      if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
+      if { [ -n "$retained_zip" ] && cp "$tmp_dir/retained/release-manifest-${TAG}.json" "$manifest_path"; } \
+        || curl -fL -H 'Accept: application/octet-stream' "$manifest_url" -o "$manifest_path" 2>/dev/null; then
         echo "Release manifest: $manifest_url"
         grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
       fi
@@ -940,7 +1324,11 @@ case "$reuse_static_dist" in
     zip_path="$tmp_dir/prd-admin-dist.zip"
     release_failure_stage="static-download"
     echo "Downloading: $asset_url"
-    curl -fL "$asset_url" -o "$zip_path"
+    if [ -n "$retained_zip" ]; then
+      cp "$retained_zip" "$zip_path"
+    else
+      curl -fL "$asset_url" -o "$zip_path"
+    fi
 
     sha_path="$tmp_dir/prd-admin-dist.zip.sha256"
     artifact_checksum_verified=0
@@ -952,6 +1340,9 @@ case "$reuse_static_dist" in
       echo "WARN: latest compatibility release skipped sha256 verification" >&2
     else
       expected="$(printf '%s' "${DIST_SHA256:-}" | tr 'A-F' 'a-f' | xargs || true)"
+      if [ -z "$expected" ] && [ -n "$retained_zip" ]; then
+        expected="$(awk '{print $1}' "$tmp_dir/retained/prd-admin-dist-${TAG}.zip.sha256")"
+      fi
       if [ -z "$expected" ] && [ -n "$sha_url" ]; then
         if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
           expected="$(awk '{print $1}' "$sha_path" | head -n 1 | tr 'A-F' 'a-f')"
@@ -1005,7 +1396,7 @@ case "$reuse_static_dist" in
       exit 1
     fi
     release_failure_stage="static-offline-validation"
-    static_release_id="${TAG}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    static_release_id="${static_artifact_tag}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
     mkdir -p "$active_static_root"
     static_staging_dir="$active_static_root/.staging-$static_release_id"
     if [ -e "$static_staging_dir" ] || [ -L "$static_staging_dir" ]; then
@@ -1015,6 +1406,23 @@ case "$reuse_static_dist" in
     mkdir -p "$static_staging_dir"
     unzip -q "$zip_path" -d "$static_staging_dir"
     scripts/validate-static-dist.sh --normalize "$static_staging_dir"
+    case "$static_artifact_tag" in
+      sha-*)
+        staged_static_commit="$(read_static_entry_commit "$static_staging_dir")"
+        if [ "$staged_static_commit" != "${static_artifact_tag#sha-}" ]; then
+          echo "ERROR: static artifact entry assets do not match the immutable static commit" >&2
+          exit 1
+        fi
+        ;;
+    esac
+    if [ "$static_only_mode" = "1" ]; then
+      staged_static_commit="$(read_static_entry_commit "$static_staging_dir")"
+      if [ "$staged_static_commit" != "$static_commit" ]; then
+        echo "ERROR: static artifact entry assets do not match PRD_AGENT_STATIC_ONLY_COMMIT" >&2
+        exit 1
+      fi
+      echo "Static artifact identity: verified $static_artifact_tag"
+    fi
 
     echo "Static release staged and verified: $static_staging_dir"
     ;;
@@ -1029,7 +1437,11 @@ if [ -L "$active_static_root/current" ]; then
 else
   active_static_validation_root="$active_static_root"
 fi
-scripts/validate-static-dist.sh --normalize "$active_static_validation_root"
+if [ "$static_only_mode" = "1" ]; then
+  scripts/validate-static-dist.sh "$active_static_validation_root"
+else
+  scripts/validate-static-dist.sh --normalize "$active_static_validation_root"
+fi
 
 # 激活独立部署模式的 nginx 配置：
 # - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
@@ -1043,10 +1455,6 @@ if [ ! -f "$STANDALONE_CONF" ]; then
   echo "  这通常意味着仓库不完整，请确认已 git pull 到最新。" >&2
   exit 1
 fi
-echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
-rm -f "$DEFAULT_CONF"
-ln -s "branches/_standalone.conf" "$DEFAULT_CONF"
-
 sync_active_gateway_nginx_config() {
   source_conf="deploy/nginx/conf.d/branches/_standalone.conf"
   target_conf="$active_nginx_conf_root/branches/_standalone.conf"
@@ -1225,169 +1633,43 @@ ensure_ffmpeg() {
   fi
 }
 
-ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
+if [ "$static_only_mode" = "1" ]; then
+  echo "ffmpeg check: skipped for static-only release"
+else
+  ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
+fi
 
-run_llmgw_release_gate_if_needed() {
+# MAP 只有一条模型调用路径（独立网关 serving），发布前不再有影子样本门禁。
+# 发布后必须带 key 探测一次公网网关：地址默认由 PRD_AGENT_PUBLIC_BASE_URL 推出，
+# key 默认取 .env 里的 LLMGW_SERVE_KEY，所以不需要额外配置；拿不到 key 就拒绝发布。
+prepare_llmgw_post_deploy_verification() {
   LLMGW_POST_DEPLOY_VERIFY_NEEDED=0
-  LLMGW_POST_DEPLOY_GATE_BASE=""
-  LLMGW_POST_DEPLOY_GATE_KEY=""
-  LLMGW_POST_DEPLOY_SMOKE_KEY=""
-  LLMGW_POST_DEPLOY_EXPECT_COMMIT=""
-
-  mode_raw="$(llmgw_mode_value)"
-  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
-  allowlist_raw="$(llmgw_allowlist_value)"
-  allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_raw="$(llmgw_shadow_sample_value)"
-  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
-  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
-  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_enabled=0
-  if [ "$mode" = "shadow" ]; then
-    case "$shadow_sample_compact" in
-      ""|0|0.0|0.00|0.000)
-        ;;
-      *)
-        shadow_sample_enabled=1
-        ;;
-    esac
-    if [ -n "$shadow_sample_allowlist_compact" ]; then
-      shadow_sample_enabled=1
-    fi
-  fi
-  release_gate_required=0
-  if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
-    release_gate_required=1
-  fi
-  if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=$mode, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
-    return 0
-  fi
-
-  if [ "${LLMGW_PROD_STAGE_ACTIVE:-}" != "1" ] || [ -z "$(printf '%s' "${LLMGW_PROD_STAGE:-}" | xargs || true)" ]; then
-    echo "ERROR: LLM Gateway shadow/canary/http 发布必须通过 scripts/llmgw-prod-stage.sh 执行。" >&2
-    echo "       直接运行 exec_dep.sh 会绕过 rollout ledger、生产预检和阶段顺序审计。" >&2
-    echo "       示例：scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute" >&2
+  public_serving_base="${PRD_AGENT_PUBLIC_BASE_URL%/}${PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH:-/llmgw/gw/v1}"
+  gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-$public_serving_base}}"
+  explicit_gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-}}"
+  gate_key="${explicit_gate_key:-$(config_value LLMGW_SERVE_KEY)}"
+  if [ -z "$gate_key" ]; then
+    echo "ERROR: LLM Gateway post-deploy probe 需要 key：LLMGW_GATE_KEY / GW_KEY / LLMGW_SERVE_KEY 均为空，拒绝发布。" >&2
     exit 1
   fi
-
-  canary_stage=""
-  canary_allowed_app_callers=""
-  if [ -n "$allowlist_compact" ] && [ "$mode" != "http" ]; then
-    canary_stage="$(printf '%s' "${LLMGW_CANARY_STAGE:-}" | tr 'A-Z' 'a-z' | xargs || true)"
-    case "$canary_stage" in
-      intent-text)
-        canary_allowed_app_callers="report-agent.generate::chat"
-        ;;
-      chat)
-        canary_allowed_app_callers="report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat"
-        ;;
-      streaming)
-        canary_allowed_app_callers="report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat"
-        ;;
-      vision)
-        canary_allowed_app_callers="visual-agent.image.vision::generation"
-        ;;
-      image)
-        canary_allowed_app_callers="visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
-        ;;
-      asr)
-        canary_allowed_app_callers="document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
-        ;;
-      video-asr)
-        canary_allowed_app_callers="video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
-        ;;
-      "")
-        echo "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。" >&2
-        echo "       允许阶段：intent-text/chat/streaming/vision/image/asr/video-asr；必须按低风险到高风险逐段推进。" >&2
-        exit 1
-        ;;
-      *)
-        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/asr/video-asr。" >&2
-        exit 1
-        ;;
-    esac
-
-    old_ifs="$IFS"
-    IFS=',;'
-    for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
-      app_trimmed="$(printf '%s' "$app" | xargs)"
-      if [ -n "$app_trimmed" ]; then
-        case " $canary_allowed_app_callers " in
-          *" $app_trimmed "*)
-            ;;
-          *)
-            echo "ERROR: LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed。" >&2
-            echo "       本阶段允许：$canary_allowed_app_callers" >&2
-            exit 1
-            ;;
-        esac
-      fi
-    done
-    IFS="$old_ifs"
-    echo "LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact"
-  fi
-
-  if [ "${LLMGW_SKIP_RELEASE_GATE:-}" = "1" ]; then
-    echo "ERROR: LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required." >&2
-    echo "       Use scripts/llmgw-rollback-inproc.sh for emergency rollback; do not bypass shadow/canary/http gates." >&2
-    exit 1
-  fi
-
-  if [ ! -f "scripts/llmgw-release-gate.py" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-release-gate.py，拒绝发布。" >&2
-    exit 1
-  fi
-  if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ] && [ ! -f "scripts/gw-smoke.py" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/gw-smoke.py，拒绝发布。" >&2
-    exit 1
-  fi
-  if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ] && [ ! -f "scripts/llmgw-serving-probe.py" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
-    exit 1
-  fi
-  if [ ! -f "scripts/llmgw-disk-space-guard.sh" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-disk-space-guard.sh，拒绝发布。" >&2
-    exit 1
-  fi
-  scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
-
-  provider_audit_required=0
-  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$canary_stage" = "video-asr" ]; then
-    provider_audit_required=1
-  fi
-  if [ "$provider_audit_required" = "1" ]; then
-    if [ ! -f "scripts/llmgw-prod-provider-config-audit.py" ]; then
-      echo "ERROR: LLM Gateway http/video-asr 发布但缺少 scripts/llmgw-prod-provider-config-audit.py，拒绝发布。" >&2
+  for required_script in scripts/llmgw-serving-probe.py scripts/gw-smoke.py; do
+    if [ ! -f "$required_script" ]; then
+      echo "ERROR: LLM Gateway post-deploy probe 缺少 $required_script，拒绝发布。" >&2
       exit 1
     fi
-    provider_audit_args=""
-    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_JSON_OUT:-}" | xargs || true)" ]; then
-      provider_audit_args="$provider_audit_args --json-out $LLMGW_PROVIDER_AUDIT_JSON_OUT"
-    fi
-    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_REPORT_MD:-}" | xargs || true)" ]; then
-      provider_audit_args="$provider_audit_args --report-md $LLMGW_PROVIDER_AUDIT_REPORT_MD"
-    fi
-    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON:-}" | xargs || true)" ]; then
-      provider_audit_args="$provider_audit_args --seed-evidence-json $LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON"
-    fi
-    echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
-    # shellcheck disable=SC2086
-    python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
-  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
-    echo "LLM Gateway provider config audit: inherited from audited full-http maintenance baseline"
-  fi
+  done
 
-  gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
-  gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
-  if [ -z "$gate_base" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE（形如 https://host/gw/v1）以校验 serving 与 shadow 证据。" >&2
-    exit 1
+  # D 层 smoke 会真的调模型：显式给了探测 key 或业务 smoke key 才默认跑，只有 serve key 时默认跳过。
+  if [ -n "$explicit_gate_key" ] || [ -n "${LLMGW_POST_DEPLOY_SERVICE_KEY:-}" ]; then
+    LLMGW_POST_DEPLOY_RUN_SMOKE="${LLMGW_GATE_RUN_SMOKE:-1}"
+  else
+    LLMGW_POST_DEPLOY_RUN_SMOKE="${LLMGW_GATE_RUN_SMOKE:-0}"
   fi
-  if [ -z "$gate_key" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY 以读取 /gw/v1/shadow-comparisons 并运行 smoke。" >&2
-    exit 1
+  if [ "$static_only_mode" = "1" ]; then
+    LLMGW_POST_DEPLOY_RUN_SMOKE=0
+    LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY=0
   fi
+  echo "LLM Gateway post-deploy probe target: $gate_base"
 
   expect_commit=""
   case "$TAG" in
@@ -1401,136 +1683,6 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_GATE_KEY="$gate_key"
   LLMGW_POST_DEPLOY_SMOKE_KEY="${LLMGW_POST_DEPLOY_SERVICE_KEY:-$gate_key}"
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
-
-  if [ "$maintenance_release" = "1" ]; then
-    # 维护发布已经通过 maintenance baseline 审计继承了完整 http-full
-    # shadow 证据。当前 serving API 要求 shadow-comparisons 必须显式带
-    # appCaller，因此不能再发起旧版的全局无 appCaller 查询。这里只跳过
-    # 已继承的 global cells；健康、commit、部署后 smoke 与公网门禁仍照常执行。
-    args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"
-  else
-    args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
-  fi
-  args="$args --since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
-  gate_min_coverage_hours="${LLMGW_GATE_MIN_COVERAGE_HOURS:-}"
-  if [ "$release_gate_required" = "1" ] && [ -z "$(printf '%s' "$gate_min_coverage_hours" | xargs || true)" ]; then
-    gate_min_coverage_hours="24"
-    echo "LLM Gateway release gate: http/canary 未设置 LLMGW_GATE_MIN_COVERAGE_HOURS，默认要求 shadow 证据覆盖 24 小时"
-  fi
-  if [ -n "$(printf '%s' "$gate_min_coverage_hours" | xargs || true)" ]; then
-    args="$args --min-coverage-hours $gate_min_coverage_hours"
-  fi
-  args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
-  require_config_authority_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_CONFIG_AUTHORITY:-}" | xargs || true)"
-  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
-    args="$args --require-config-authority"
-    echo "LLM Gateway release gate: requiring GW config-authority report for http/full rollout"
-  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
-    echo "LLM Gateway release gate: config-authority inherited from audited full-http maintenance baseline"
-  fi
-  if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
-    args="$args --json-out $LLMGW_GATE_JSON_OUT"
-  fi
-  if [ -n "${LLMGW_GATE_REPORT_MD:-}" ]; then
-    args="$args --report-md $LLMGW_GATE_REPORT_MD"
-  fi
-  shadow_release_commit="$(printf '%s' "${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit}" | xargs || true)"
-  if [ -n "$shadow_release_commit" ]; then
-    args="$args --shadow-release-commit $shadow_release_commit"
-  fi
-
-  old_ifs="$IFS"
-  IFS=',;'
-  gate_app_callers_raw="${LLMGW_GATE_APP_CALLERS:-}"
-  gate_app_callers_compact="$(printf '%s' "$gate_app_callers_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$gate_app_callers_compact" ]; then
-    gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,prd-agent-desktop.preview-ask.section::chat,open-platform-agent.proxy::chat,open-api.proxy::chat,open-api.proxy::generation,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,tutorial-email.generate::chat,visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标"
-  fi
-  for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
-    app_trimmed="$(printf '%s' "$app" | xargs)"
-    if [ -n "$app_trimmed" ]; then
-      args="$args --app-caller $app_trimmed"
-    fi
-  done
-  for app in ${gate_app_callers_raw}; do
-    app_trimmed="$(printf '%s' "$app" | xargs)"
-    if [ -n "$app_trimmed" ]; then
-      args="$args --app-caller $app_trimmed"
-    fi
-  done
-  IFS="$old_ifs"
-
-  old_ifs="$IFS"
-  IFS=',;'
-  required_kinds_raw="${LLMGW_GATE_REQUIRED_KINDS:-}"
-  required_kinds_compact="$(printf '%s' "$required_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$required_kinds_compact" ]; then
-    full_http_kind_min="${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
-    required_kinds_raw="send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
-  elif [ -n "$canary_stage" ] && [ -z "$required_kinds_compact" ]; then
-    canary_kind_min="${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
-    case "$canary_stage" in
-      intent-text|chat)
-        required_kinds_raw="send:${canary_kind_min}"
-        ;;
-      streaming)
-        required_kinds_raw="stream:${canary_kind_min}"
-        ;;
-      vision|image|asr|video-asr)
-        required_kinds_raw="raw:${canary_kind_min}"
-        ;;
-    esac
-    echo "LLM Gateway release gate: canary 阶段 $canary_stage 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
-  fi
-  for kind_req in ${required_kinds_raw}; do
-    kind_req_trimmed="$(printf '%s' "$kind_req" | xargs)"
-    if [ -n "$kind_req_trimmed" ]; then
-      args="$args --require-kind $kind_req_trimmed"
-    fi
-  done
-  required_app_kinds_raw="${LLMGW_GATE_REQUIRED_APP_KINDS:-}"
-  required_app_kinds_compact="$(printf '%s' "$required_app_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$required_app_kinds_compact" ]; then
-    full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
-    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-report-agent.generate::chat:send:${full_http_app_kind_min},prd-agent-desktop.chat.sendmessage::chat:stream:${full_http_app_kind_min},prd-agent-desktop.preview-ask.section::chat:stream:${full_http_app_kind_min},open-platform-agent.proxy::chat:stream:${full_http_app_kind_min},open-api.proxy::chat:send:${full_http_app_kind_min},open-api.proxy::generation:raw:${full_http_app_kind_min},prd-agent-web.model-lab.run::chat:stream:${full_http_app_kind_min},prd-agent.arena.battle::chat:stream:${full_http_app_kind_min},tutorial-email.generate::chat:send:${full_http_app_kind_min},visual-agent.image-gen.generate::generation:raw:${full_http_app_kind_min},visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},visual-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min},video-agent.v2d.transcribe::asr:raw:${full_http_app_kind_min},video-agent.video-to-text::asr:raw:${full_http_app_kind_min}}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本"
-  elif [ -n "$canary_stage" ] && [ -z "$required_app_kinds_compact" ]; then
-    canary_app_kind_min="${LLMGW_GATE_CANARY_APP_KIND_MIN:-${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
-    case "$canary_stage" in
-      vision)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image.vision::generation:raw:${canary_app_kind_min}}"
-        ;;
-      image)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image-gen.generate::generation:raw:${canary_app_kind_min},visual-agent.image.text2img::generation:raw:${canary_app_kind_min},visual-agent.image.img2img::generation:raw:${canary_app_kind_min}}"
-        ;;
-      asr)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
-        ;;
-      video-asr)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-video-agent.videogen::video-gen:raw:${canary_app_kind_min},visual-agent.videogen::video-gen:raw:${canary_app_kind_min},document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
-        ;;
-    esac
-    if [ -n "$required_app_kinds_raw" ]; then
-      echo "LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标"
-    fi
-  fi
-  for app_kind_req in ${required_app_kinds_raw}; do
-    app_kind_req_trimmed="$(printf '%s' "$app_kind_req" | xargs)"
-    if [ -n "$app_kind_req_trimmed" ]; then
-      args="$args --require-app-kind $app_kind_req_trimmed"
-    fi
-  done
-  IFS="$old_ifs"
-
-  if [ "$release_gate_required" = "1" ]; then
-    echo "LLM Gateway release gate: required before deploy (selected shadow evidence commit; new commit probes run after compose up)"
-    # shellcheck disable=SC2086
-    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
-  else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=$mode, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
-  fi
 }
 
 run_llmgw_post_deploy_verification_if_needed() {
@@ -1544,6 +1696,7 @@ run_llmgw_post_deploy_verification_if_needed() {
   smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"
   protocol_canary_key="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}"
   expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
+  release_features="${LLMGW_RELEASE_FEATURES:-defect-agent}"
 
   if [ -z "$gate_base" ]; then
     echo "ERROR: LLM Gateway post-deploy verification missing gate base." >&2
@@ -1558,31 +1711,36 @@ run_llmgw_post_deploy_verification_if_needed() {
     exit 1
   fi
 
-  if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ]; then
-    probe_args="--base $gate_base"
-    probe_args="$probe_args --samples ${LLMGW_GATE_SERVING_PROBE_SAMPLES:-${LLMGW_GATE_HEALTH_SAMPLES:-3}}"
-    probe_args="$probe_args --interval ${LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS:-${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}}"
-    if [ -n "${LLMGW_SERVING_PROBE_JSON_OUT:-}" ]; then
-      probe_args="$probe_args --json-out $LLMGW_SERVING_PROBE_JSON_OUT"
-    fi
-    if [ -n "${LLMGW_SERVING_PROBE_REPORT_MD:-}" ]; then
-      probe_args="$probe_args --report-md $LLMGW_SERVING_PROBE_REPORT_MD"
-    fi
-    if [ -n "$expect_commit" ]; then
-      probe_args="$probe_args --expect-commit $expect_commit"
-    fi
-    echo "LLM Gateway post-deploy serving probe: required (healthz commit stability + no-key auth)"
-    # shellcheck disable=SC2086
-    python3 scripts/llmgw-serving-probe.py $probe_args
-  else
-    echo "WARN: LLM Gateway post-deploy serving probe skipped because LLMGW_GATE_RUN_SERVING_PROBE=0" >&2
+  # 带 key 的 serving 探测是发布必过项，不提供跳过开关：MAP 的全部模型调用都经这一跳。
+  probe_args="--base $gate_base"
+  probe_args="$probe_args --samples ${LLMGW_GATE_SERVING_PROBE_SAMPLES:-${LLMGW_GATE_HEALTH_SAMPLES:-3}}"
+  probe_args="$probe_args --interval ${LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS:-${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}}"
+  if [ -n "${LLMGW_SERVING_PROBE_JSON_OUT:-}" ]; then
+    probe_args="$probe_args --json-out $LLMGW_SERVING_PROBE_JSON_OUT"
   fi
+  if [ -n "${LLMGW_SERVING_PROBE_REPORT_MD:-}" ]; then
+    probe_args="$probe_args --report-md $LLMGW_SERVING_PROBE_REPORT_MD"
+  fi
+  if [ -n "$expect_commit" ]; then
+    probe_args="$probe_args --expect-commit $expect_commit"
+  fi
+  echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
+  echo "LLM Gateway release feature scope: $release_features (read-only metadata routing; no model calls)"
+  set --
+  if [ -n "${gateway_readiness_baseline:-}" ]; then
+    set -- --readiness-baseline "$gateway_readiness_baseline"
+  fi
+  if [ "${force_external:-0}" = "1" ]; then
+    set -- "$@" --force-external
+  fi
+  # shellcheck disable=SC2086
+  LLMGW_GATE_KEY="$gate_key" LLMGW_RELEASE_FEATURES="$release_features" python3 scripts/llmgw-serving-probe.py $probe_args "$@"
 
-  if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
+  if [ "${LLMGW_POST_DEPLOY_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
-    GW_BASE="$gate_base" GW_KEY="$smoke_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
+    GW_BASE="$gate_base" GW_KEY="$smoke_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py || return 1
   else
-    echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
+    echo "LLM Gateway post-deploy D-layer smoke: skipped（只有 serve key 时默认不调模型；要跑请设 LLMGW_POST_DEPLOY_SERVICE_KEY 或 LLMGW_GATE_RUN_SMOKE=1）"
   fi
 
   protocol_canary_arg=""
@@ -1639,30 +1797,9 @@ run_llmgw_post_deploy_verification_if_needed() {
       fi
       ;;
   esac
-
-  require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
-    echo "LLM Gateway post-deploy runtime gates: skipped for audited full-http maintenance release; serving probe and requested canaries remain required"
-  elif [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
-    echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
-    runtime_gate_expect_arg=""
-    if [ -n "$expect_commit" ]; then
-      runtime_gate_expect_arg="--expect-commit $expect_commit"
-    fi
-    if [ "$mode" = "http" ] && [ "${LLMGW_PROD_STAGE:-}" = "http-full" ]; then
-      echo "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only"
-      runtime_gate_expect_arg="$runtime_gate_expect_arg --allow-pending-http-full-ledger"
-    fi
-    # shellcheck disable=SC2086
-    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates
-  else
-    echo "LLM Gateway post-deploy runtime gates: skipped (not full http)"
-  fi
 }
 
-if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
-  echo "LLM Gateway verify-only: skipping image pull"
-elif [ -n "${SKIP_API_PULL:-}" ]; then
+if [ -n "${SKIP_API_PULL:-}" ]; then
   echo "Skipping release image pull (SKIP_API_PULL=1)"
 else
   echo "Pulling release images:"
@@ -1670,7 +1807,8 @@ else
   echo "  llmgw: $PRD_AGENT_LLMGW_IMAGE"
   echo "  llmgw-serve: $PRD_AGENT_LLMGW_SERVE_IMAGE"
   echo "  llmgw-web: $PRD_AGENT_LLMGW_WEB_IMAGE"
-  # 这里的一次 compose pull 覆盖五个服务，使用 fast.sh 已校准的整批总预算
+  echo "  design-opendesign: $PRD_AGENT_DESIGN_OPENDESIGN_IMAGE"
+  # 这里的一次 compose pull 覆盖六个服务，使用 fast.sh 已校准的整批总预算
   # 420 秒，而不是它的单镜像 180 秒预算。调用方仍可按目标环境显式覆盖，
   # 但不可变发布的失败语义不变。
   pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-420}"
@@ -1681,7 +1819,7 @@ else
     else
       pull_command="$COMPOSE"
     fi
-    if ! timeout "$pull_timeout_seconds" $pull_command pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
+    if ! timeout "$pull_timeout_seconds" $pull_command pull api llmgw llmgw-serve llmgw-serve-b llmgw-web design-opendesign; then
       if [ "$TAG" = "latest" ]; then
         echo "WARN: release image pull skipped or timed out after ${pull_timeout_seconds}s; continuing with existing local images" >&2
       else
@@ -1689,7 +1827,7 @@ else
         exit 1
       fi
     fi
-  elif ! compose_run pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
+  elif ! compose_run pull api llmgw llmgw-serve llmgw-serve-b llmgw-web design-opendesign; then
     if [ "$TAG" = "latest" ]; then
       echo "WARN: release image pull failed; continuing with existing local images" >&2
     else
@@ -1699,7 +1837,17 @@ else
   fi
 fi
 
-run_llmgw_release_gate_if_needed
+prepare_llmgw_post_deploy_verification
+release_failure_stage="gateway-readiness-baseline"
+LLMGW_GATE_KEY="$LLMGW_POST_DEPLOY_GATE_KEY" python3 scripts/llmgw-serving-probe.py \
+  --base "$LLMGW_POST_DEPLOY_GATE_BASE" --readiness-baseline-out "$gateway_readiness_baseline"
+if [ -n "$(compose_run ps -q "$api_service" | head -n 1)" ]; then
+  if ! compose_run exec -T "$api_service" curl --fail-with-body -sS --max-time 10 \
+    "${PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL:-http://localhost:8080/health/ready?force=true}" \
+    > "$asset_readiness_baseline"; then
+    echo "WARN: 发布前对象存储检查未通过，部署后将按故障代码复核。"
+  fi
+fi
 
 refresh_gateway_after_compose() {
   gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
@@ -1797,16 +1945,92 @@ wait_for_llmgw_serving_readiness() {
   done
 }
 
+# 设计执行服务是本次发布涉及的专项服务：引擎没就绪就不许记成功（生产发布安全规则条目 3）。
+# 判据只认 compose 里声明的容器健康检查（匿名 /healthz/ready，引擎健康才 200）。
+wait_for_design_runtime_readiness() {
+  design_service="design-opendesign"
+  if ! compose_run config --services 2>/dev/null | grep -Fxq "$design_service"; then
+    echo "Design runtime readiness wait skipped: no $design_service service in compose"
+    return 0
+  fi
+  design_timeout_seconds="${DESIGN_RUNTIME_READY_TIMEOUT_SECONDS:-420}"
+  if ! printf '%s' "$design_timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$design_timeout_seconds" -lt 1 ]; then
+    echo "ERROR: DESIGN_RUNTIME_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+    return 1
+  fi
+  echo "Waiting for design runtime readiness: service=$design_service timeout=${design_timeout_seconds}s"
+  design_deadline=$(( $(date +%s) + design_timeout_seconds ))
+  while :; do
+    design_container_id="$(compose_run ps -q "$design_service" 2>/dev/null | head -n 1)"
+    design_running=""
+    design_health="missing"
+    if [ -n "$design_container_id" ]; then
+      design_running="$(docker inspect --format '{{.State.Running}}' "$design_container_id" 2>/dev/null || true)"
+      design_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$design_container_id" 2>/dev/null || true)"
+    fi
+    design_state="running=${design_running:-none},health=$design_health"
+    if [ "$design_running" = "true" ] && [ "$design_health" = "healthy" ]; then
+      echo "Design runtime readiness: PASS $design_service[$design_state]"
+      return 0
+    fi
+    if [ "$design_health" = "unhealthy" ] || [ "$design_running" = "false" ]; then
+      echo "ERROR: design runtime $design_service cannot become ready ($design_state); see: docker logs $design_service" >&2
+      return 1
+    fi
+    if [ "$(date +%s)" -ge "$design_deadline" ]; then
+      echo "ERROR: design runtime readiness timeout after ${design_timeout_seconds}s: $design_service[$design_state]" >&2
+      return 1
+    fi
+    sleep 3
+  done
+}
+
+design_runtime_degraded() {
+  design_id="$(compose_run ps -q design-opendesign | head -n 1)"
+  [ -n "$design_id" ] && [ "$(docker inspect --format '{{.State.Running}}/{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$design_id")" = "true/unhealthy" ]
+}
+
+check_design_runtime_after_deploy() {
+  if wait_for_design_runtime_readiness; then
+    return 0
+  fi
+  # /healthz/ready 验证容器内的浏览器、镜像资源和引擎兼容性，属于运行时检查。
+  if [ "$design_before_degraded" = "1" ] && [ "$design_in_scope" = "0" ] && design_runtime_degraded; then
+    echo "WARN: 设计引擎的就绪故障在本次发布前已存在，继续发布。" >&2
+    return 0
+  fi
+  return 1
+}
+
+design_in_scope=1
+design_before_degraded=0
+if design_runtime_degraded; then
+  design_before_degraded=1
+  echo "WARN: 发布前设计引擎就绪检查已异常。"
+fi
+
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
+  if [ "$static_only_mode" = "1" ]; then
+    release_failure_stage="serving-readiness"
+    wait_for_llmgw_serving_readiness
+    release_failure_stage="design-runtime-readiness"
+    design_in_scope=0
+    check_design_runtime_after_deploy
+  fi
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness
   activate_pending_static_release
 else
   release_failure_stage="compose-update"
+  capture_production_runtime
+  select_release_features
   echo "Ensuring Docker network exists..."
   docker network inspect prdagent-network >/dev/null 2>&1 || docker network create prdagent-network
   compose_started=1
+  ensure_design_runtime_api_key
+  echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
+  static_release_atomic_link "$DEFAULT_CONF" "branches/_standalone.conf"
 
   release_services="$(compose_services_without_gateway)"
   if [ -z "$release_services" ]; then
@@ -1823,8 +2047,14 @@ else
   if [ -n "$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)" ]; then
     reload_active_gateway
   fi
+  release_failure_stage="runtime-image-verification"
+  verify_runtime_images
 
+  release_failure_stage="serving-readiness"
   wait_for_llmgw_serving_readiness
+
+  release_failure_stage="design-runtime-readiness"
+  check_design_runtime_after_deploy
 
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness
@@ -1833,27 +2063,59 @@ else
 
   refresh_gateway_after_compose
 
-  deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
-  if [ -n "$deploy_receipt_file" ]; then
-    deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
-    mkdir -p "$deploy_receipt_dir"
-    deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
-    {
-      printf 'RELEASE_REF=%s\n' "$TAG"
-      printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    } > "$deploy_receipt_tmp"
-    mv "$deploy_receipt_tmp" "$deploy_receipt_file"
-    echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
-  fi
 fi
 
 release_failure_stage="llmgw-post-deploy-verification"
 run_llmgw_post_deploy_verification_if_needed
 
+if [ "$compose_started" = "1" ]; then
+  release_failure_stage="release-image-pins"
+  persist_release_image_pins
+fi
+
 release_failure_stage="public-product-surface"
-run_public_surface_smoke "$public_smoke_json"
+if [ "$static_only_mode" = "1" ]; then
+  run_public_surface_smoke "$public_smoke_json" "${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}" "$static_commit" "$runtime_commit"
+  runtime_identity_after_file="$tmp_dir/runtime-identity-after.txt"
+  capture_runtime_identity "$runtime_identity_after_file"
+  if ! cmp -s "$runtime_identity_before_file" "$runtime_identity_after_file"; then
+    echo "ERROR: static-only release changed one or more runtime container identities" >&2
+    exit 1
+  fi
+  if [ "$(file_sha256 "$compose_dotenv_file")" != "$static_only_dotenv_sha_before" ]; then
+    echo "ERROR: static-only release changed the production env file" >&2
+    exit 1
+  fi
+  echo "Static-only runtime identity: all six containers preserved"
+else
+  run_public_surface_smoke "$public_smoke_json"
+fi
+
+release_completed=1
+
+write_deploy_receipt() {
+  deploy_receipt_file="$(printf '%s' "${LLMGW_DEPLOY_RECEIPT_FILE:-}" | xargs || true)"
+  if [ -n "$deploy_receipt_file" ]; then
+    deploy_receipt_dir="$(dirname -- "$deploy_receipt_file")"
+    mkdir -p "$deploy_receipt_dir" || return 1
+    deploy_receipt_tmp="${deploy_receipt_file}.tmp.$$"
+    {
+      printf 'RELEASE_REF=%s\n' "$TAG"
+      printf 'DEPLOYED_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } > "$deploy_receipt_tmp" || return 1
+    mv "$deploy_receipt_tmp" "$deploy_receipt_file" || return 1
+    echo "LLM Gateway deploy receipt written: $deploy_receipt_file"
+  fi
+}
+
+if [ "$compose_started" = "1" ] && ! write_deploy_receipt; then
+  echo "WARN: 发布已通过公网验证，写入网关发布回执失败。" >&2
+fi
 
 release_failure_stage="release-evidence"
-write_release_evidence success "" "not-needed"
-release_completed=1
-echo "Production release completed with public surface evidence: $release_evidence_file"
+if write_release_evidence success "" "not-needed"; then
+  echo "Production release completed with public surface evidence: $release_evidence_file"
+else
+  echo "WARN: 无法写入本机证据文件，公网验证结果已保留在 CDS 发布日志中。" >&2
+  echo "Production release completed with public surface evidence: CDS release log for $TAG"
+fi

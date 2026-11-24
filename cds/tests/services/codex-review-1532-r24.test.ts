@@ -12,7 +12,9 @@
  * 判据：不传 config 建的 store 必须跟着当前环境变量走。传了 config（含 null）的仍然钉死，
  * 测试与调用方靠那条注入。
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { createCodeReviewInputs } from '../../src/services/code-review-inputs.js';
+import * as r2 from '../../src/services/infra-backup-r2.js';
 import {
   createReportObjectStore, reportObjectStoreFromEnv,
   type ReportObjectStoreConfig,
@@ -36,6 +38,7 @@ function clearAll(): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const [k, v] of saved) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -55,6 +58,24 @@ function configure(suffix: string): void {
 }
 
 describe('报告对象存储必须跟着热改后的凭据走', () => {
+  it('真实审查输入在热配置及轮换后使用当前凭据，仍写入独立前缀', async () => {
+    clearAll();
+    const upload = vi.spyOn(r2, 'uploadAndVerifyR2Object').mockImplementation(async opts => ({
+      objectKey: opts.objectKey, bytes: opts.body.byteLength, sha256: 'synthetic-only',
+    }));
+    const read = vi.spyOn(r2, 'fetchR2ObjectBuffer').mockResolvedValue(Buffer.from(Buffer.from('原快照').toString('base64')));
+    const inputs = createCodeReviewInputs(); expect(inputs.configured()).toBe(false);
+    configure('first'); expect(inputs.configured()).toBe(true);
+    const key = await inputs.put('task', 'project', Buffer.from('原快照'));
+    expect(key).toBe('cds-acceptance-reports/code-review-inputs/reports/project/task.md');
+    expect(upload.mock.calls[0][0].config.accessKeyId).toBe('ak-first');
+    configure('rotated'); setEnv({ R2_BUCKET: 'bucket-first' });
+    expect(await inputs.get(key)).toEqual(Buffer.from('原快照'));
+    expect(read.mock.calls[0][0].config.accessKeyId).toBe('ak-rotated');
+    await inputs.put('next', 'project', Buffer.from('后继快照'));
+    expect(upload.mock.calls[1][0].config.secretAccessKey).toBe('sk-rotated');
+    expect(upload.mock.calls[1][0].objectKey).toContain('/code-review-inputs/');
+  });
   it('启动时没配、之后热配上——store 立刻认，不必重启', async () => {
     clearAll();
     const seen: ReportObjectStoreConfig[] = [];

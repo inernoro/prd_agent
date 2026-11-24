@@ -1,17 +1,21 @@
+import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import http from 'node:http';
+import { runningCommitSha } from './running-version.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
+import { setCdsForwardedHost } from './forwarded-host.js';
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
+import { servingRuntime } from './service-runtime.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
-import { buildWidgetScript } from '../widget-script.js';
+import { buildWidgetScript, isPreviewWidgetNavigation } from '../widget-script.js';
 import { profileHostsPreviewInstance } from './preview-instance.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { isAutoWakeEligible } from './branch-wake-eligibility.js';
 import { computeWaitTiming } from './wait-timing.js';
-import { GEM_STORY_CSS, buildGemStorySvg, serverGemMineralForStatus } from '../loading-pages/gem.js';
+import { WAITING_GEM_CSS, WAITING_GEM_DARK_CSS, buildWaitingGemSvg } from '../loading-pages/gem.js';
 import { resolveProfileForPath } from './route-conventions.js';
 import { isTrustedProbeRequest, stripProbeMarker } from './probe-marker.js';
 import { resolveEffectiveProfile } from './container.js';
@@ -31,9 +35,10 @@ export function resolveBranchUpstream(branch: BranchEntry | undefined, profileId
   if (!branch) return null;
   const service = profileId
     ? branch.services[profileId]
-    : Object.values(branch.services).find((candidate) => candidate.status === 'running');
-  return service?.status === 'running' && service.hostPort > 0
-    ? `http://127.0.0.1:${service.hostPort}`
+    : Object.values(branch.services).find((candidate) => servingRuntime(candidate));
+  const runtime = servingRuntime(service);
+  return runtime
+    ? `http://127.0.0.1:${runtime.hostPort}`
     : null;
 }
 
@@ -244,8 +249,8 @@ export class ProxyService {
     for (const entry of Object.values(state.branches)) {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
-      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
-        if (computePreviewSlug(entry.branch, projectSlug) === slug) {
+      for (const previewSlug of projectBranchPreviewSlugs(entry, project)) {
+        if (previewSlug === slug) {
           previewMatches.push(entry);
           break;
         }
@@ -262,8 +267,10 @@ export class ProxyService {
     // ③ v2 兼容：${project.slug}-${slug} 拼接
     for (const project of projects) {
       if (!project.slug || project.legacyFlag) continue;
-      const candidate = state.branches[`${project.slug}-${slug}`];
-      if (candidate) return candidate;
+      for (const historical of previewProjectSlugCandidates(project)) {
+        const candidate = state.branches[`${historical}-${slug}`];
+        if (candidate && candidate.projectId === project.id) return candidate;
+      }
     }
     return undefined;
   }
@@ -590,8 +597,7 @@ export class ProxyService {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
       let profiles: BuildProfile[] | undefined;
-      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
-        const ps = computePreviewSlug(entry.branch, projectSlug);
+      for (const ps of projectBranchPreviewSlugs(entry, project)) {
         if (!ps || !slug.startsWith(`${ps}-`)) continue;
         const sub = slug.slice(ps.length + 1); // 去掉 `<ps>-`
         if (!sub) continue;
@@ -668,7 +674,11 @@ export class ProxyService {
       return;
     }
 
-    if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+    const selectedProfileId = forcedProfileId && branch.services[forcedProfileId]
+      ? forcedProfileId : this.detectProfileFromRequest(req, branch);
+    const preservedRuntime = ['building', 'starting', 'running', 'error', 'restarting'].includes(branch.status) && selectedProfileId
+      && branch.services[selectedProfileId]?.servingRuntime ? servingRuntime(branch.services[selectedProfileId]) : null;
+    if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status) && !preservedRuntime) {
       // 墓碑优先：PR 合并/关闭后分支若**未被自动删除**（仓库保留 PR 分支），停止的
       // BranchEntry 仍在，否则会落到下面的泛化「分支已停止」状态页，永远走不到
       // serveBranchGonePage。先查墓碑：命中则与「分支已删除」走同一套合并/放弃页。
@@ -690,7 +700,11 @@ export class ProxyService {
         Date.parse(branch.lastDeployAt || '') || 0,
       );
       const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
-      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+      // A released hostname can now belong to a different existing branch whose
+      // creation predates this tombstone. History never overrides its new owner.
+      const tombOwnsBranch = tomb && tomb.projectId === branch.projectId
+        && (tomb.branchId ? tomb.branchId === branch.id : tomb.branch === branch.branch);
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tombOwnsBranch && tombAt >= liveSince) {
         this.onBranchGone(tomb.previewSlug || branch.id, req, res);
         return;
       }
@@ -752,7 +766,7 @@ export class ProxyService {
     }
 
     // Branch-level loading: container creating / building / restarting
-    if (LOADING_BRANCH_STATUSES.has(branch.status)) {
+    if (LOADING_BRANCH_STATUSES.has(branch.status) && !preservedRuntime) {
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
@@ -775,7 +789,7 @@ export class ProxyService {
     // (prevents CSS MIME type errors from Vite returning HTML before ready).
     if (profileId) {
       const svc = branch.services[profileId];
-      if (svc && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
+      if (svc && !svc.servingRuntime && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
         this.serveBranchStatusResponse(req, res, branchSlug, branch, profileId);
         return;
       }
@@ -1261,11 +1275,11 @@ export class ProxyService {
     // 的等待页（「预览环境准备中 · 极速版正在拉取分支」+ 自动刷新）。
     if (branch.ciImageStatus === 'waiting') return null;
     // 极速版 CI 构建失败（conclusion 非 success / 看门狗等待超时）：这才是需要人工介入的终态，
-    // 给出明确的 CI 归因 + 下一步（切回源码编译或重跑 CI），而不是泛化的「未运行」。
+    // 给出明确的 CI 归因 + 下一步（修复后重跑 CI），而不是泛化的「未运行」。
     if (branch.ciImageStatus === 'failed') {
       return {
         heading: '极速版镜像未就绪',
-        description: '该分支为极速版（CI 预构建镜像）模式，但本次 commit 的镜像构建未成功或等待超时，因此没有可用的运行环境。可在分支详情切回源码编译，或重跑 GitHub Actions 构建后重新部署。',
+        description: '该分支为极速版（CI 预构建镜像）模式，但本次 commit 的镜像构建未成功或等待超时，因此没有可用的运行环境。请查看 CI 日志并修复后重试，或重跑 GitHub Actions 构建后重新部署。',
         detail: branch.ciImageError || branch.errorMessage || branch.lastStopReason,
       };
     }
@@ -1647,7 +1661,6 @@ void main(){
     // 真实的已等待/预计还需，不再渲染静止的状态估算（2026-07-16「卡 86%」修复）。
     const isRestarting = branch.status === 'restarting';
     const resolved = isRestarting ? null : this.resolveWaitTimingMode(branch, waitingProfileId);
-    const buildMode: DeployDurationMode = isRestarting ? 'restart' : resolved!.mode;
     const restartEstimate = isRestarting
       ? this.stateService.getDeployEstimate(branch.projectId || 'default', 'restart')
       : null;
@@ -1662,8 +1675,6 @@ void main(){
     const progress = this.estimateWaitingProgress(branch, waitingProfileId, initialTiming);
     const safeBranch = this.escapeHtml(displayBranch);
     const safeProgressLabel = this.escapeHtml(progress.label);
-    const safeProgressReason = this.escapeHtml(progress.reason);
-    const safeProgressConfidence = this.escapeHtml(progress.confidence === 'high' ? '高' : progress.confidence === 'medium' ? '中' : '低');
     const safeWaitingProfile = waitingProfileId ? this.escapeHtml(waitingProfileId) : '';
     const branchStatus = String(branch.status);
     const stageLabel = (status: string): string => {
@@ -1696,10 +1707,7 @@ void main(){
     // 极速版「等待 CI 镜像」：status 仍是 idle，但这是会自动完成的加载态（CI 构建完成后
     // CDS 自动拉取部署），必须开自动刷新、用「准备中」文案，绝不能显示「未运行 / 手动重部署」。
     const ciWaiting = branch.ciImageStatus === 'waiting';
-    const branchLabel = ciWaiting ? '准备中' : stageLabel(branchStatus);
-    // 构建模式（极速版 = CI 预构建镜像直接部署 / 源码 = 拉代码热加载编译）+ 分支/PR 直达链接，
-    // 让等待页一眼知道「这是哪种构建、对应哪个分支与 PR」，不必猜。
-    const safeModeLabel = this.escapeHtml(buildMode === 'restart' ? '热重启' : buildMode === 'release' ? '极速版' : '源码');
+    // 保留当前分支与 PR 的直达链接，状态由标题和服务摘要表达。
     const dashBase = this.dashboardBaseUrl();
     const branchPanelUrl = dashBase ? `${dashBase}/branch-panel/${encodeURIComponent(branch.id)}` : '';
     const prNum = branch.githubPrNumber;
@@ -1725,12 +1733,14 @@ void main(){
         ? '预览访问不会自动重新部署。请回到 CDS 控制台确认日志后手动重新部署。'
       : waitingProfileId
         ? `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`
-        : 'CDS 正在同步当前分支的运行状态，服务稳定后会自动打开。';
+        : '服务就绪后将自动打开。';
 
-    // 宝石六芒(组装-碎裂叙事)= 系统核心叙事,等待页前景必须有它(2026-07-22 定稿)。
-    // 矿色按系统状态设定 v2:构建=琥珀 amber,启动/重启=银河 galaxy,其余=品牌 iris。
-    const gemMineral = ciWaiting ? 'iris' : serverGemMineralForStatus(branchStatus);
-    const gemSvg = buildGemStorySvg(gemMineral, 64);
+    const gemSvg = buildWaitingGemSvg(40);
+    const readyServices = services.filter((svc) => svc.status === 'running').length;
+    const serviceSummary = services.length === 0 ? '正在准备服务'
+      : readyServices === services.length ? `${services.length} 个服务已就绪`
+      : readyServices > 0 ? `${readyServices} / ${services.length} 个服务已就绪`
+      : `${services.length} 个服务${isRestarting ? '重启中' : '准备中'}`;
 
     const html = `<!DOCTYPE html>
 <html lang="zh-CN"><head>
@@ -1738,98 +1748,92 @@ void main(){
 <title>${heading} · ${safeBranch}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-	:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--accent:#ffffff;--accent-two:#9f5050;--sync:#22c55e}
-	html,body{min-height:100%}
-	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
-	.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
-	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(780px 560px at 50% 50%,rgba(255,255,255,.08),transparent 54%),linear-gradient(90deg,rgba(18,15,23,.9),rgba(18,15,23,.34) 48%,rgba(18,15,23,.86));z-index:1}
-	.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
-	.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
-	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
-	.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
-h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bottom:22px;max-width:100%}
-.shiny-text{display:inline-block;color:rgba(247,245,255,.78);background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
-.subtitle{max-width:580px;font-size:clamp(15px,1.45vw,20px);line-height:1.75;color:var(--muted);margin-bottom:28px}
-.meta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
-.chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
-.chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
-.branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
-.chip.mode{color:#cbd5e1}
-a.chip.link{cursor:pointer;text-decoration:none;color:#dde3ea;transition:border-color .2s ease,background .2s ease}
-a.chip.link:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255,.07)}
-.services{display:flex;flex-direction:column;gap:12px;margin:0 0 28px;max-width:620px}
-	.svc{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid rgba(245,242,255,.13);font-size:15px;line-height:1.5}
-.svc::after{content:"";position:absolute;left:-35%;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.14),transparent);transform:skewX(-18deg);animation:svc-glint 3.2s ease-in-out infinite}
-.svc:nth-child(2)::after{animation-delay:.42s}
-.svc:nth-child(3)::after{animation-delay:.84s}
-.svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color);animation:svc-pulse 1.55s ease-in-out infinite}
-.svc:nth-child(2) .svc-dot{animation-delay:.22s}
-.svc:nth-child(3) .svc-dot{animation-delay:.44s}
-.estimate{width:min(620px,100%);margin:-8px 0 28px;padding:15px 16px;border:1px solid rgba(245,242,255,.12);border-radius:18px;background:rgba(255,255,255,.035);backdrop-filter:blur(12px)}
-.estimate-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;font-size:12px;color:rgba(245,242,255,.7)}
-.estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
-.estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
-.estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#aeb4bd);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
-.estimate-time{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-top:12px}
-.estimate-time-main{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;font-weight:700;color:#f8fafc;letter-spacing:.01em}
-.estimate-time-sub{font-size:11px;color:rgba(245,242,255,.52)}
-.estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
-.estimate-meta span{display:inline-flex;align-items:center}
-.cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
-.cds-tip strong{color:rgba(245,242,255,.82);font-weight:700}
-.err{margin:0 0 22px;padding:0 0 14px;border-bottom:1px solid rgba(252,165,165,.28);color:var(--error);font-size:13px;line-height:1.7;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
-.hint{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted)}
-.hint strong{color:#f5f7fa;font-weight:600}
-.note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
-.note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
-.magic-rings-bg.is-static{background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.22),transparent 12%,rgba(174,180,189,.16) 24%,transparent 42%),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
-.gem-row{margin-bottom:20px}
-${GEM_STORY_CSS}
-@keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
-@keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
-@keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
-@keyframes glint{0%,38%{transform:translateX(0) skewX(-18deg);opacity:0}54%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
-@keyframes fallback-pulse{0%,100%{filter:saturate(.9) brightness(.8)}50%{filter:saturate(1.2) brightness(1.1)}}
-@keyframes shiny-text{0%{background-position:120% 0}100%{background-position:-120% 0}}
-@media (max-width:760px){.shell{padding:28px;display:flex;align-items:flex-end}.content{width:100%}h1{font-size:44px}.subtitle{font-size:14px}.hint{align-items:flex-start;flex-direction:column}}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+:root{color-scheme:dark;--text:#f7f5ff;--muted:rgba(245,242,255,.64);--surface:#120f17;--veil:18,15,23;--veil-center:.22;--track:rgba(255,255,255,.18);--line:rgba(245,242,255,.16);--ring-line:rgba(225,215,255,.18);--ring-glow:rgba(161,137,207,.14)}
+[hidden]{display:none!important}
+html,body{min-height:100%}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--surface);color:var(--text);min-height:100vh;overflow-x:hidden}
+/* Keep the ring backdrop visible before the first WebGL frame and without WebGL. */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse at 60% 50%,var(--ring-glow),transparent 70%),
+    radial-gradient(circle at center,
+      transparent calc(35vmin - 1px),var(--ring-line) 35vmin,transparent calc(35vmin + 1px),
+      transparent calc(46vmin - 1px),var(--ring-line) 46vmin,transparent calc(46vmin + 1px),
+      transparent calc(57vmin - 1px),var(--ring-line) 57vmin,transparent calc(57vmin + 1px));
+}
+.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;pointer-events:none}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(var(--veil),.8),rgba(var(--veil),var(--veil-center)) 60%,rgba(var(--veil),.7));z-index:1}
+.shell{position:relative;z-index:2;min-height:100vh;min-height:100svh;padding:48px clamp(28px,5.5vw,112px);display:flex;align-items:center}
+.content{width:min(100%,650px);text-shadow:0 2px 24px rgba(0,0,0,.4)}
+.brand{display:flex;align-items:center;gap:18px;margin-bottom:26px}
+.eyebrow{font-size:11px;letter-spacing:.24em;color:var(--text);font-family:"SFMono-Regular",Menlo,monospace}
+h1{font-size:clamp(30px,3.1vw,56px);line-height:1.2;letter-spacing:-.02em;margin-bottom:16px}
+.subtitle{font-size:16px;line-height:1.7;color:var(--muted);margin-bottom:22px;max-width:580px;overflow-wrap:anywhere}
+.branch{display:block;font-family:"SFMono-Regular",Menlo,monospace;font-size:13px;line-height:1.6;overflow-wrap:anywhere;color:var(--text);margin-bottom:28px}
+.estimate{width:100%;margin-bottom:22px}
+.estimate-time{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 18px;margin-bottom:22px}
+.estimate-time-main{font-size:clamp(22px,2vw,34px);font-weight:650;line-height:1.45;font-variant-numeric:tabular-nums}
+.estimate-time-sub{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.estimate-top{display:flex;align-items:center;gap:16px}
+.estimate-track{height:5px;flex:1;min-width:0;border-radius:999px;background:var(--track);overflow:hidden}
+.estimate-bar{display:block;height:100%;border-radius:inherit;background:var(--text);transition:width .45s ease}
+.estimate-top strong{min-width:62px;text-align:right;font-family:"SFMono-Regular",Menlo,monospace;font-size:13px;font-variant-numeric:tabular-nums}
+.service-details{margin-bottom:32px}
+.service-details summary{display:flex;justify-content:space-between;align-items:center;gap:16px;cursor:pointer;list-style:none;min-height:44px;font-size:13px}
+.service-details summary::-webkit-details-marker{display:none}
+.service-summary{display:flex;gap:10px;align-items:center;min-width:0}
+.summary-dot{width:6px;height:6px;border-radius:50%;background:var(--text);box-shadow:0 0 7px rgba(255,255,255,.35);flex-shrink:0}
+.details-label{color:var(--muted);white-space:nowrap}
+.details-label::after{content:" ›";display:inline-block;margin-left:8px;transition:transform .2s}
+.service-details[open] .details-label::after{transform:rotate(90deg)}
+.services{max-height:240px;overflow:auto;min-height:0;margin-top:10px}
+.svc{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.svc-dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%;color:transparent;background:var(--svc-color)}
+.links{display:flex;gap:24px;align-items:center;font-size:13px}
+.links a{color:var(--text);text-decoration:none;text-underline-offset:5px;padding:8px 0}
+.links a:hover{text-decoration:underline}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--text);outline-offset:5px;border-radius:2px}
+${isRestarting ? WAITING_GEM_DARK_CSS : WAITING_GEM_CSS}
+${isRestarting ? '' : `
+@media(prefers-color-scheme:light){
+  :root{color-scheme:light;--text:#28252d;--muted:#625d69;--surface:#f6f5f7;--veil:246,245,247;--veil-center:.1;--line:rgba(40,37,45,.16);--track:rgba(40,37,45,.18);--ring-line:rgba(86,72,113,.32);--ring-glow:rgba(133,111,176,.2)}
+  .magic-rings-bg{filter:invert(1);opacity:.48}
+  .content{text-shadow:none}
+  .svc-dot{filter:brightness(.55)}
+  .cds-waiting-gem{filter:invert(1)}
+  .summary-dot{box-shadow:none}
+}
+`}
+@media(max-width:760px){.shell{padding:36px 24px}.brand{gap:12px}.content{width:100%}.subtitle{font-size:14px}.estimate-time{gap:6px 14px}.services{max-height:220px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
 </head><body>
 <canvas class="magic-rings-bg" id="magic-rings" aria-hidden="true"></canvas>
 <main class="shell">
   <section class="content">
-    <div class="gem-row" aria-hidden="true">${gemSvg}</div>
-    <div class="eyebrow">CDS Waiting Room</div>
-    <h1><span class="${shouldAutoRefresh ? 'shiny-text' : ''}" data-role="heading">${heading}</span></h1>
+    <div class="brand"><span aria-hidden="true">${gemSvg}</span><span class="eyebrow">CDS Waiting Room</span></div>
+    <h1><span data-role="heading">${heading}</span></h1>
     <p class="subtitle" data-role="subheading">${subheading}</p>
-    <div class="meta">
-      <span class="chip branch" data-role="branch-name">${safeBranch}</span>
-      <span class="chip" data-role="branch-status">分支状态 · ${branchLabel}</span>
-      <span class="chip mode" data-role="build-mode">构建模式 · ${safeModeLabel}</span>
-      <a class="chip link" data-role="branch-link" href="${safeBranchPanelUrl}" target="_blank" rel="noopener"${branchPanelUrl ? '' : ' hidden'}>查看分支</a>
-      <a class="chip link" data-role="pr-link" href="${safePrUrl}" target="_blank" rel="noopener"${prUrl ? '' : ' hidden'}>${safePrLabel}</a>
-    </div>
-    <div class="services" data-role="services">${serviceRows}</div>
-    <div class="estimate" data-role="progress-estimate">
-      <div class="estimate-top">
-        <span data-role="progress-label">${safeProgressLabel}</span>
-        <strong data-role="progress-percent">${progress.percent.toFixed(2)}%</strong>
-      </div>
-      <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
+    <span class="branch" data-role="branch-name">${safeBranch}</span>
+    <div class="estimate" data-role="progress-estimate" aria-label="${safeProgressLabel}">
       <div class="estimate-time" data-role="wait-timing" hidden>
         <span class="estimate-time-main" data-role="wait-timing-main"></span>
         <span class="estimate-time-sub" data-role="wait-timing-sub"></span>
       </div>
-      <div class="estimate-meta">
-        <span data-role="progress-confidence">置信度 ${safeProgressConfidence}</span>
-        <span data-role="progress-reason">${safeProgressReason}</span>
+      <div class="estimate-top">
+        <div class="estimate-track" role="progressbar" aria-label="${safeProgressLabel}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
+        <strong data-role="progress-percent">${progress.percent.toFixed(2)}%</strong>
       </div>
     </div>
-    <p class="cds-tip"><strong>CDS 小提示：</strong><span data-role="cds-tip-text">构建完成后还会等待服务健康检查稳定，再切入真实页面。</span></p>
-    <div class="hint">
-      <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
-      <span class="note">CDS Live Sync</span>
-    </div>
+    <details class="service-details">
+      <summary><span class="service-summary"><span class="summary-dot" aria-hidden="true"></span><span data-role="service-summary">${serviceSummary}</span></span><span class="details-label">服务详情</span></summary>
+      <div class="services" data-role="services">${serviceRows}</div>
+    </details>
+    <nav class="links" aria-label="相关链接">
+      <a data-role="branch-link" href="${safeBranchPanelUrl}" target="_blank" rel="noopener"${branchPanelUrl ? '' : ' hidden'}>查看分支</a>
+      <a data-role="pr-link" href="${safePrUrl}" target="_blank" rel="noopener"${prUrl ? '' : ' hidden'}>${safePrLabel}</a>
+    </nav>
   </section>
 </main>
 <script id="magic-rings-vertex" type="x-shader/x-vertex">
@@ -1888,10 +1892,7 @@ void main(){
   if(!canvas) return;
   var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var gl=canvas.getContext('webgl',{alpha:true,antialias:false});
-  if(!gl){
-    canvas.className='magic-rings-bg is-static';
-    return;
-  }
+  if(!gl) return;
   function source(id){var node=document.getElementById(id);return node?node.textContent:'';}
   function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader compile failed');}return s;}
   function hex(hexColor){var raw=String(hexColor).replace('#','');var n=parseInt(raw.length===3?raw.replace(/(.)/g,'$1$1'):raw,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
@@ -1903,7 +1904,6 @@ void main(){
     gl.linkProgram(program);
     if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'program link failed');
   }catch(err){
-    canvas.className='magic-rings-bg is-static';
     return;
   }
   var buffer=gl.createBuffer();
@@ -1962,26 +1962,25 @@ ${shouldAutoRefresh ? `;(function(){
   var labels={building:'构建中',starting:'启动中',restarting:'重启中',running:'已就绪',error:'失败',stopping:'停止中',stopped:'已停止',idle:'准备中'};
   var colors={running:'#f8fafc',error:'#fca5a5',building:'#dbe4ee',starting:'#dbe4ee',restarting:'#dbe4ee',stopping:'#6b7280',stopped:'#6b7280',idle:'#6b7280'};
   var waitingProfile=${JSON.stringify(waitingProfileId || '')};
-  var tips=[
-    'CDS 会把拉代码、构建镜像、启动服务和健康检查归并为一个等待状态。',
-    '百分比是根据服务状态、构建日志关键词和运行时长估算，服务未 ready 前不会显示 100%。',
-    '内部 upstream 或 forwarder 窗口期不会直接暴露给用户，只会继续显示分支环境正在构建。',
-    '若进入失败页，CDS 会保留最近日志摘要，方便复制给大模型或重新部署。'
-  ];
-  var tipIndex=0;
-  function renderTip(){
-    var tip=document.querySelector('[data-role="cds-tip-text"]');
-    if(tip)tip.textContent=tips[tipIndex++%tips.length];
-  }
   function label(status){return labels[status]||'待命';}
   function serviceText(svc){
     var base=svc.profileId+' · '+label(svc.status);
     return waitingProfile&&waitingProfile===svc.profileId?base+'（正在等待此服务就绪）':base;
   }
-  function renderServices(services){
+  function renderServices(services,status){
     var root=document.querySelector('[data-role="services"]');
-    if(!root||!Array.isArray(services)||services.length===0)return;
+    if(!root||!Array.isArray(services))return;
+    var ready=services.filter(function(svc){return svc.status==='running';}).length;
+    var summary=document.querySelector('[data-role="service-summary"]');
+    if(summary)summary.textContent=services.length===0?'正在准备服务':ready===services.length?services.length+' 个服务已就绪':ready>0?ready+' / '+services.length+' 个服务已就绪':services.length+' 个服务'+(status==='restarting'?'重启中':'准备中');
     root.innerHTML='';
+    if(services.length===0){
+      var empty=document.createElement('div');
+      empty.className='svc';
+      empty.textContent='服务尚未创建';
+      root.appendChild(empty);
+      return;
+    }
     services.forEach(function(svc){
       var row=document.createElement('div');
       row.className='svc';
@@ -2022,18 +2021,11 @@ ${shouldAutoRefresh ? `;(function(){
     var bar=document.querySelector('[data-role="progress-bar"]');
     var shown=pct.display.toFixed(2);
     if(percentEl)percentEl.textContent=shown+'%';
-    if(bar)bar.style.width=shown+'%';
+    if(bar){bar.style.width=shown+'%';bar.parentElement.setAttribute('aria-valuenow',shown);}
   }
   function renderProgress(progress){
     if(!progress)return;
     pct.server=Math.max(0,Math.min(100,Number(progress.percent)||0));
-    var label=document.querySelector('[data-role="progress-label"]');
-    var confidence=document.querySelector('[data-role="progress-confidence"]');
-    var reason=document.querySelector('[data-role="progress-reason"]');
-    var confidenceText=progress.confidence==='high'?'高':progress.confidence==='medium'?'中':'低';
-    if(label)label.textContent=progress.label||'预计处理进度';
-    if(confidence)confidence.textContent='置信度 '+confidenceText;
-    if(reason)reason.textContent=progress.reason||'基于当前状态估算';
     // 百分比文本/进度条由 tickPct 平滑驱动（两位小数 + 按预估时间倒推），这里只更新锚点。
   }
   // 时间渲染：服务端轮询给 elapsedMs/medianMs，本地 1s ticker 让"已等待"平滑跳秒。
@@ -2055,20 +2047,16 @@ ${shouldAutoRefresh ? `;(function(){
     var ee=clock(elapsedMs);
     var samples=Number(timingState.samples)||0;
     var median=timingState.medianMs;
-    var mainText='',subText='';
+    var mainText='',subText='已等待 '+ee;
     if(samples>0&&median!=null){
       if(timingState.overdue||elapsedMs>median){
-        mainText='已等待 '+ee+' · 通常约 '+clock(median)+' 完成，本次稍久，仍在继续';
-        subText='';
+        mainText='本次稍久，仍在继续';
       }else{
         var remainingMs=Math.max(0,median-elapsedMs);
-        mainText='已等待 '+ee+' · 预计还需约 '+clock(remainingMs);
-        var modeLabel=timingState.mode==='release'?'发布版':timingState.mode==='source'?'热加载':'';
-        subText='（基于本项目最近 '+samples+' 次'+modeLabel+'构建的中位耗时，非单分支）';
+        mainText='预计还需约 '+clock(remainingMs);
       }
     }else{
-      mainText='已等待 '+ee+' · 正在积累历史耗时数据，暂无预计';
-      subText='';
+      mainText='正在准备，暂无预计';
     }
     if(main)main.textContent=mainText;
     if(sub){sub.textContent=subText;sub.hidden=!subText;}
@@ -2105,32 +2093,28 @@ ${shouldAutoRefresh ? `;(function(){
         if(data.loading===false && !waitingProfile){
           notLoadingStreak++;
           if(notLoadingStreak<3){
-            var calmEl=document.querySelector('[data-role="branch-status"]');
-            if(calmEl)calmEl.textContent='分支状态 · 正在恢复';
+            var calmEl=document.querySelector('[data-role="service-summary"]');
+            if(calmEl)calmEl.textContent='服务正在恢复';
             return;
           }
           location.reload();return;
         }
         notLoadingStreak=0;
-        var statusEl=document.querySelector('[data-role="branch-status"]');
-        if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
         var branchEl=document.querySelector('[data-role="branch-name"]');
         if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
-        if(data.modeLabel){var modeEl=document.querySelector('[data-role="build-mode"]');if(modeEl)modeEl.textContent='构建模式 · '+data.modeLabel;}
         setLink('[data-role="branch-link"]',data.branchPanelUrl,'查看分支');
         setLink('[data-role="pr-link"]',data.prUrl,data.prLabel||'PR');
         renderProgress(data.progress);
         applyTiming(data.timing);
-        renderServices(data.services);
+        renderServices(data.services,data.status);
       })
       .catch(function(){});
   }
   window.setInterval(poll,2000);
-  window.setInterval(renderTip,4200);
   window.setInterval(renderTiming,1000);
   window.setInterval(tickPct,200);
   window.setTimeout(poll,400);
-  renderTip();
+  applyTiming(${JSON.stringify({ ...initialTiming, mode: isRestarting ? 'restart' : resolved!.mode })});
   tickPct();
 }())` : ''}
 </script>
@@ -2436,6 +2420,7 @@ ${shouldAutoRefresh ? `;(function(){
       clientRes.setHeader('X-CDS-Request-Id', requestId);
       // 判定来源（master 兜底）与落点服务：与 forwarder 的 X-CDS-Resolver / X-CDS-Profile 同名
       clientRes.setHeader('X-CDS-Resolver', 'master-fallback');
+      if (branchCtx?.branchId) clientRes.setHeader('X-CDS-Branch', branchCtx.branchId);
       if (branchCtx?.profileId) clientRes.setHeader('X-CDS-Profile', branchCtx.profileId);
     }
     const suppressPreviewBody = isHostedSitePreviewRequest(clientReq.url || '/');
@@ -2525,16 +2510,18 @@ ${shouldAutoRefresh ? `;(function(){
       });
     };
     const url = new URL(upstream);
+    const upstreamHeaders = {
+      ...clientReq.headers,
+      'x-cds-request-id': requestId,
+      host: `${url.hostname}:${url.port}`,
+    };
+    setCdsForwardedHost(upstreamHeaders, branchCtx ? clientReq.headers.host : undefined);
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
       path: clientReq.url,
       method: clientReq.method,
-      headers: {
-        ...clientReq.headers,
-        'x-cds-request-id': requestId,
-        host: `${url.hostname}:${url.port}`,
-      },
+      headers: upstreamHeaders,
     };
 
     // NOTE: Do NOT strip accept-encoding here. We handle decompression on the
@@ -2587,6 +2574,8 @@ ${shouldAutoRefresh ? `;(function(){
     }
 
     const proxyReq = http.request(options, (proxyRes) => {
+      if (branchCtx?.branchId) proxyRes.headers['x-cds-branch'] = branchCtx.branchId;
+      else delete proxyRes.headers['x-cds-branch'];
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
       // browser disk-cache from mixing assets across branch switches.
@@ -2601,7 +2590,8 @@ ${shouldAutoRefresh ? `;(function(){
       // ── Widget injection: only for HTML 200 responses with branch context ──
       const contentType = proxyRes.headers['content-type'] || '';
       const statusCode = proxyRes.statusCode || 200;
-      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300;
+      const isHtml = contentType.includes('text/html') && branchCtx && isPreviewWidgetNavigation(clientReq)
+        && statusCode >= 200 && statusCode < 300;
 
       if (isHtml) {
         // Buffer the HTML response, decompress if needed, inject widget before </body>
@@ -2638,14 +2628,9 @@ ${shouldAutoRefresh ? `;(function(){
           const modeLabel = anyMode
             ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
             : '';
-          // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
-          //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
-          //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
-          //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
-          //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
-          const badgeSha = (modeLabel === '极速'
-            ? (entry?.ciTargetSha || entry?.githubCommitSha)
-            : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+          const badgeSha = entry ? runningCommitSha(entry,
+            entry.currentVersionId ? this.stateService.getDeploymentVersion(entry.currentVersionId) : undefined,
+            branchCtx.profileId) || '' : '';
           // 托管态：这条分支起的是 CDS 预览实例（CDS 托管 CDS），徽章换成深绿的
           // 「CDS 托管 CDS」变体，子实例侦测到它就不再画自己的橙 pill。判据看 profile.env
           // 里 compose 声明的 CDS_PREVIEW_INSTANCE（cds-compose.selfhost.yml），
@@ -2813,12 +2798,16 @@ ${shouldAutoRefresh ? `;(function(){
     // Same canonical-id fallback as routeToBranch: subdomain hits on
     // non-legacy projects must resolve to `${projectSlug}-${slug}` entries.
     const branch = this.resolveBranchEntry(branchSlug);
-    if (!branch || branch.status !== 'running') {
+    if (!branch) {
       socket.destroy();
       return;
     }
 
     const profileId = this.detectProfileFromRequest(req, branch);
+    if (branch.status !== 'running' && !(profileId && branch.services[profileId]?.servingRuntime
+      && servingRuntime(branch.services[profileId]) && ['building', 'starting', 'restarting', 'error'].includes(branch.status))) {
+      socket.destroy(); return;
+    }
     const upstream = this.resolveUpstream(branch.id, profileId);
     if (!upstream) {
       socket.destroy();
@@ -2827,15 +2816,14 @@ ${shouldAutoRefresh ? `;(function(){
 
     // Proxy WebSocket upgrade
     const url = new URL(upstream);
+    const upstreamHeaders = { ...req.headers, host: `${url.hostname}:${url.port}` };
+    setCdsForwardedHost(upstreamHeaders, req.headers.host);
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
       path: req.url,
       method: 'GET',
-      headers: {
-        ...req.headers,
-        host: `${url.hostname}:${url.port}`,
-      },
+      headers: upstreamHeaders,
     };
 
     const proxyReq = http.request(options);

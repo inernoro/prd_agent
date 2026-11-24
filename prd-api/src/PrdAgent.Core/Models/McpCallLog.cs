@@ -54,6 +54,8 @@ public class McpCallLog
     public string? ArtifactUrl { get; set; }
 
     public string? ArtifactTitle { get; set; }
+    /// <summary>异步产物自身的状态，与MCP调用是否成功是不同事实。</summary>
+    public string? ArtifactStatus { get; set; }
 
     /// <summary>
     /// 是不是「写入类动作」（会在平台里留下东西：建站、写文档、建工作区…）。

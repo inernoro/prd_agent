@@ -147,5 +147,5 @@ M1、M2、M3 可并行推进，先到先验收。
 
 - [CDS 数据库隔离三档 · 设计](./design.cds.database-isolation.md) —— 模型、同步策略、可信数据面、故障矩阵
 - [CDS 复制集模式](./design.cds.replica-set.md) —— 波 4 保护罩、波 5 回写
-- [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) —— 已知边界
+- [CDS 多分支跨分支隔离 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.branch-isolation.md) —— 已知边界
 - [CDS 当前工作看板](./plan.cds.status.md) —— CDS 全局进度

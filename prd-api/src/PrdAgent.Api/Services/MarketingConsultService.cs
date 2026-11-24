@@ -55,8 +55,6 @@ public class MarketingConsultService
                     new JsonObject { ["role"] = "user", ["content"] = sb.ToString() }
                 },
                 ["temperature"] = 0.4,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,

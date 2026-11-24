@@ -46,6 +46,12 @@ public sealed class StableSmokeIdentityPolicyTests
             StableSmokeIdentityPolicy.RequiredPermissions.Distinct(StringComparer.Ordinal).Count());
     }
 
+    [Fact]
+    public void RequiredPermissions_ShouldAllowProductionLogAudit()
+    {
+        Assert.Contains(AdminPermissionCatalog.LogsRead, StableSmokeIdentityPolicy.RequiredPermissions);
+    }
+
     [Theory]
     [MemberData(nameof(MatrixControllers))]
     public void RequiredPermissions_ShouldCoverEveryControllerTheMatrixTouches(Type controller, bool matrixWrites)

@@ -10,6 +10,7 @@
  */
 
 import type { BuildProfile, BranchEntry } from '../types.js';
+import { normalizeProjectProfileDependencies } from './project-profile-dependencies.js';
 
 /** 分支额外服务 id 合法性:小写/数字开头,可含 - _,长度 1..63(对齐 docker/profile 命名习惯)。 */
 export function isValidExtraProfileId(id: string): boolean {
@@ -52,17 +53,55 @@ export function isValidServiceSubdomain(sub: string): boolean {
  */
 export function mergeBranchProfiles(
   projectProfiles: BuildProfile[],
-  branch: Pick<BranchEntry, 'extraProfiles'> | undefined,
+  branch: Pick<BranchEntry, 'extraProfiles' | 'excludedProjectProfileIds'> | undefined,
 ): BuildProfile[] {
   const extras = branch?.extraProfiles;
-  if (!extras || extras.length === 0) return projectProfiles;
+  const excluded = new Set(branch?.excludedProjectProfileIds || []);
+  if ((!extras || extras.length === 0) && excluded.size === 0) return projectProfiles;
   const seen = new Set(projectProfiles.map((p) => p.id));
-  const merged = projectProfiles.slice();
-  for (const extra of extras) {
+  // Reserve every baseline id, including excluded ids: an extra must never adopt it.
+  const merged = projectProfiles.filter(p => !excluded.has(p.id));
+  for (const extra of extras || []) {
     if (!extra || !extra.id || !isValidExtraProfileId(extra.id)) continue;
     if (seen.has(extra.id)) continue; // 撞项目 id 或额外项内部重复 → 跳过(底座优先)
     seen.add(extra.id);
     merged.push(extra);
   }
   return merged;
+}
+
+/** Validate only explicitly isolated branches; legacy branches keep their existing behavior. */
+export function assertBranchServiceIsolation(
+  projectProfiles: BuildProfile[], branch: BranchEntry, infraIds: string[] = [], idSuffix = '',
+): void {
+  const excluded = branch.excludedProjectProfileIds;
+  if (excluded == null || (Array.isArray(excluded) && excluded.length === 0)) return;
+  const baselineIds = new Set(projectProfiles.map(p => p.id));
+  if (!Array.isArray(excluded) || new Set(excluded).size !== excluded.length
+    || excluded.some(id => !isValidExtraProfileId(id) || !baselineIds.has(id))) {
+    throw new Error('分支排除清单必须是不重复的项目服务标识');
+  }
+  const all = normalizeProjectProfileDependencies(
+    mergeBranchProfiles(projectProfiles, { ...branch, excludedProjectProfileIds: [] }), idSuffix,
+    branch.profileOverrides,
+  );
+  const retained = all.filter(p => !excluded.includes(p.id));
+  if (!retained.length) throw new Error('分支至少保留一项服务');
+  const ids = new Set(retained.map(p => p.id));
+  const allowed = new Set([...ids, ...infraIds]);
+  for (const p of retained) {
+    for (const target of [...(p.dependsOn || []), ...(p.calls || [])]) {
+      if (!allowed.has(target)) throw new Error(`服务 ${p.id} 仍引用已排除或不存在的服务 ${target}`);
+    }
+  }
+  const visiting = new Set<string>(), visited = new Set<string>();
+  const byId = new Map(retained.map(p => [p.id, p]));
+  const visit = (id: string): void => {
+    if (visiting.has(id)) throw new Error('分支服务启动依赖存在循环');
+    if (visited.has(id)) return;
+    visiting.add(id);
+    for (const next of byId.get(id)?.dependsOn || []) if (ids.has(next)) visit(next);
+    visiting.delete(id); visited.add(id);
+  };
+  for (const id of ids) visit(id);
 }

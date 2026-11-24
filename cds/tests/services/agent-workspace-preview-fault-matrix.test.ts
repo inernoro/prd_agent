@@ -1,3 +1,6 @@
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -87,9 +90,12 @@ class FaultMatrixShell implements IShellExecutor {
   relayConnectFails = false;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
     this.calls.push({ command, options });
+    const probeCidFile = command.match(/--cidfile '([^']+)'/)?.[1];
+    if (probeCidFile) fs.writeFileSync(probeCidFile, digest(command));
     if (command.startsWith('docker version')) return execResult('27.0.0\n');
-    if (command.startsWith('docker image inspect')) return execResult('sha256:fault-matrix-image\n');
+    if (command.startsWith('docker image inspect')) return execResult('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
     if (command.includes('/cds-storage-probe') && command.startsWith('docker run --rm')) {
       return execResult('hard-limit-enforced\n');
     }

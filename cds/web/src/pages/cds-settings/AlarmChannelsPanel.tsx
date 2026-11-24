@@ -1,3 +1,4 @@
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 /*
  * 通知通道（多协议）。
  *
@@ -15,9 +16,10 @@
  *   - **配完当场演练**：没演练过的通道，和没配的通道在真出事那天是一样的。
  *     所以每条通道旁边永远有一个「演练」，而不是把它藏进某个菜单。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BellRing, CheckCircle2, Plus, Send, Trash2, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { BellRing, CheckCircle2, Clock, Plus, Send, Trash2, XCircle } from 'lucide-react';
 
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -61,7 +63,7 @@ interface StatusView {
   last?: { at: number; ok: boolean; kind: 'alert' | 'drill'; reason?: string; status?: number };
 }
 
-const INPUT = 'w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary/50';
+const INPUT = 'min-h-[3.25rem] w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary/50';
 const LABEL = 'text-[0.6875rem] text-muted-foreground';
 
 interface DraftState {
@@ -133,45 +135,55 @@ function bodyOf(d: DraftState): Record<string, unknown> {
 }
 
 export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray<{ id: string; name: string }> }): JSX.Element {
+  const [initialLoading, setInitialLoading] = useState(true);
   const [channels, setChannels] = useState<ChannelView[]>([]);
   const [status, setStatus] = useState<StatusView[]>([]);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
+  const [reading, setReading] = useState(false);
+  const generation = useRef(0);
+  const alive = useRef(true);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const editorName = useRef<HTMLInputElement>(null);
+  useLayoutEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++}},[]);
+  useLayoutEffect(()=>{if(draft){editorName.current?.focus();editorName.current?.scrollIntoView({block:'nearest'});}},[draft?.id,draft?.kind]);
+  const beginEdit=(next:DraftState, trigger:HTMLElement)=>{returnFocus.current=trigger;setErr(null);setDraft(next)};
+  const cancelEdit=()=>{setDraft(null);setErr(null);requestAnimationFrame(()=>{const target=returnFocus.current;if(target?.isConnected){target.focus();target.scrollIntoView({block:'nearest'});}})};
   const [busy, setBusy] = useState(false);
-  const [drill, setDrill] = useState<{ id: string; ok: boolean; reason?: string } | null>(null);
+  const [drill, setDrill] = useState<{ id: string; ok?: boolean; queued?: boolean; reason?: string } | null>(null);
 
   const load = useCallback(async (): Promise<void> => {
+    const request=++generation.current; setReading(true);
     try {
       const res = await apiRequest<{ channels: ChannelView[]; status: StatusView[] }>('/api/cds-system/alarm-channels');
-      setChannels(res.channels); setStatus(res.status); setErr(null);
+      if(!alive.current||request!==generation.current)return;
+      setChannels(res.channels); setStatus(res.status); setReadError(null); setHasSnapshot(true);
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : String(e));
-    }
+      if(alive.current&&request===generation.current)setReadError(e instanceof ApiError?e.message:String(e));
+    } finally { if(alive.current&&request===generation.current){setInitialLoading(false);setReading(false);} }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
   const statusOf = useCallback((id: string): StatusView | undefined => status.find((s) => s.id === id), [status]);
 
-  /**
-   * 顶部那句结论。
-   *
-   * 「N 条通道」不是结论，是计数。人要知道的是**出问题时到底会不会有人被通知**，
-   * 所以这句话必须从「能不能响」这一侧说，而不是从「配了几条」那一侧。
-   */
   const verdict = useMemo(() => {
-    const live = status.filter((s) => s.enabled && s.status !== 'unconfigured');
-    if (status.length === 0) {
-      return { tone: 'bad', text: '一条通知通道都没有 —— 出问题时不会有任何人被通知' };
-    }
-    if (live.length === 0) {
-      return { tone: 'bad', text: `${status.length} 条通道全都停用或没配齐 —— 出问题时不会有任何人被通知` };
-    }
-    const untested = live.filter((s) => s.status === 'untested').length;
-    const failing = live.filter((s) => s.status === 'failing').length;
-    if (failing > 0) return { tone: 'bad', text: `${failing} 条通道上次没送出去 —— 现在出问题也可能没人收到` };
-    if (untested > 0) return { tone: 'warn', text: `${live.length} 条通道在用，其中 ${untested} 条还没演练过 —— 没演练过的通道，和没配的通道在真出事那天是一样的` };
-    return { tone: 'ok', text: `${live.length} 条通道都演练通过 —— 出问题时会响` };
-  }, [status]);
+    if(!hasSnapshot)return {tone:'warn',text:'通知通道尚未读取成功，配置与投递状态未确认'};
+    if(channels.length===0)return {tone:'warn',text:'尚未配置多协议通知通道，可添加 Bark、Webhook 或 MAP 通道'};
+    const enabled=channels.filter(c=>c.enabled);
+    const known=status.filter(s=>enabled.some(c=>c.id===s.id));
+    const failing=known.filter(s=>s.status==='failing').length;
+    const unknown=enabled.length-known.length;
+    const untested=known.filter(s=>s.status==='untested').length;
+    const incomplete=known.filter(s=>s.status==='unconfigured').length;
+    if(failing)return {tone:'bad',text:`${channels.length} 条通道，${failing} 条上次投递失败，请核对对应记录`};
+    if(unknown)return {tone:'warn',text:`${channels.length} 条通道，${unknown} 条投递状态未确认`};
+    if(incomplete)return {tone:'warn',text:`${channels.length} 条通道，${incomplete} 条配置不完整`};
+    if(enabled.length===0)return {tone:'warn',text:`${channels.length} 条通道均已停用，配置保留`};
+    if(untested)return {tone:'warn',text:`${channels.length} 条通道，${untested} 条尚未演练`};
+    return {tone:'ok',text:`${channels.length} 条通道，${enabled.length} 条启用；实际投递结果见各通道`};
+  }, [channels,status,hasSnapshot]);
 
   const save = useCallback(async (): Promise<void> => {
     if (!draft) return;
@@ -191,8 +203,8 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
   const runDrill = useCallback(async (id: string): Promise<void> => {
     setBusy(true);
     try {
-      const res = await apiRequest<{ ok: boolean; reason?: string }>(`/api/cds-system/alarm-channels/${id}/drill`, { method: 'POST', body: {} });
-      setDrill({ id, ...res });
+      const res = await apiRequest<{ ok?: boolean; queued?: boolean; reason?: string }>(`/api/cds-system/alarm-channels/${id}/drill`, { method: 'POST', body: {} });
+      setDrill({ ...res, id });
       await load();
     } catch (e) {
       setDrill({ id, ok: false, reason: e instanceof ApiError ? e.message : String(e) });
@@ -213,6 +225,8 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
     ? { ...d, projects: d.projects.includes(id) ? d.projects.filter((p) => p !== id) : [...d.projects, id] }
     : d));
 
+  if (initialLoading) return <SettingsContentSkeleton label="读取通知通道" />;
+
   return (
     <div className="flex flex-col gap-3">
       {/* 结论行 */}
@@ -223,30 +237,29 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
         <BellRing className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="text-sm font-medium">{verdict.text}</span>
         <div className="flex-grow" />
-        {draft === null ? (
-          <div className="flex items-center gap-1">
+          <details className="group/add-channel"><summary className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm"><Plus className="h-4 w-4"/>添加通知通道</summary><div className="mt-2 flex flex-wrap items-center gap-2">
             {(['bark', 'webhook', 'map'] as ChannelKind[]).map((k) => (
-              <Button key={k} size="sm" variant="outline" disabled={busy} onClick={() => { setDraft(emptyDraft(k)); setErr(null); }}>
+              <Button key={k} size="sm" variant="outline" className="min-h-[3.25rem]" disabled={busy||Boolean(draft)||!hasSnapshot||Boolean(readError)} onClick={e=>beginEdit(emptyDraft(k),e.currentTarget)}>
                 <Plus className="mr-1" />{KIND_LABEL[k]}
               </Button>
             ))}
-          </div>
-        ) : null}
+          </div></details>
       </div>
 
+      {readError?<div role="alert" className="space-y-2 text-sm text-destructive"><p>通知通道读取失败。{hasSnapshot?'下方为上次读取的配置，当前投递状态未确认。':'暂不能确认现有配置。'}</p><details><summary className="min-h-[3.25rem] cursor-pointer py-3">查看读取错误详情</summary><pre className="whitespace-pre-wrap break-all text-xs">{readError}</pre></details><Button variant="outline" className="min-h-[3.25rem]" disabled={reading} onClick={()=>void load()}>重新读取通知通道</Button></div>:null}
       {err ? <div className="text-[0.6875rem] text-destructive">{err}</div> : null}
 
       {/* 通道列表 */}
       {channels.map((c) => {
         const st = statusOf(c.id);
-        const meta = STATUS_META[st?.status ?? 'unconfigured'];
+        const meta = st ? STATUS_META[st.status] : {text:'投递状态未确认',tone:'text-muted-foreground'};
         const last = st?.last;
         return (
-          <div key={c.id} className="flex flex-col gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
+          <div key={c.id} data-alarm-channel-id={c.id} className="min-w-0 flex flex-col gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className={cn('h-2 w-2 shrink-0 rounded-full',
-                st?.status === 'healthy' ? 'bg-ok' : st?.status === 'untested' ? 'bg-warn' : 'bg-destructive')} />
-              <span className="text-[0.8125rem] font-medium text-foreground">{c.name}</span>
+                st?.status === 'healthy' ? 'bg-ok' : st?.status === 'untested' ? 'bg-warn' : st?'bg-destructive':'bg-muted-foreground')} />
+              <span className="min-w-0 break-words text-[0.8125rem] font-medium text-foreground">{c.name}</span>
               <span className="rounded border border-[hsl(var(--hairline))] px-1 font-mono text-[0.625rem] leading-4 text-muted-foreground">
                 {KIND_LABEL[c.kind]}
               </span>
@@ -254,15 +267,13 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
               <span className={cn('text-[0.6875rem]', meta.tone)}>{meta.text}</span>
               <div className="flex-grow" />
               {/* 主动操作靠右 */}
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void runDrill(c.id)}>
+              <Button size="sm" variant="outline" className="min-h-[3.25rem]" disabled={busy||Boolean(draft)||Boolean(readError)} onClick={() => void runDrill(c.id)}>
                 <Send className="mr-1" />演练
               </Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => { setDraft(draftOf(c)); setErr(null); }}>编辑</Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void remove(c.id)}>
-                <Trash2 />
-              </Button>
+              <Button size="sm" variant="outline" className="min-h-[3.25rem]" disabled={busy||Boolean(draft)||Boolean(readError)} onClick={e=>beginEdit(draftOf(c),e.currentTarget)}>编辑</Button>
+              <ConfirmAction title="删除通知通道？" description={`删除 “${c.name}” 的${KIND_LABEL[c.kind]}配置，此通道将不再接收${c.events.map(e=>EVENT_META[e].label).join('、')}；${c.projects.length?'仅影响项目 '+c.projects.join('、'):'作用于全部项目'}。其他通道保留。`} scopeKey={JSON.stringify([c.id,c.kind,c.projects,c.events])} disabled={busy||Boolean(draft)||Boolean(readError)} onConfirm={()=>remove(c.id)} confirmLabel="删除通道" trigger={<Button size="sm" variant="outline" className="min-h-[3.25rem]" aria-label={`删除 ${c.name}`} disabled={busy||Boolean(draft)||Boolean(readError)}><Trash2 className="mr-1"/>删除</Button>} />
             </div>
-            <div className="text-[0.6875rem] leading-5 text-muted-foreground">
+            <div className="break-all text-[0.6875rem] leading-5 text-muted-foreground">
               收 {c.events.map((e) => EVENT_META[e].label).join('、')}
               {' · '}
               {c.projects.length === 0 ? '全部项目' : `仅 ${c.projects.join('、')}`}
@@ -276,9 +287,9 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
               </div>
             ) : null}
             {drill?.id === c.id ? (
-              <div className={cn('flex items-center gap-1.5 text-[0.6875rem]', drill.ok ? 'text-ok' : 'text-destructive')}>
-                {drill.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                {drill.ok ? '演练已送达 —— 这条链现在是通的，去手机上确认收到了' : `演练失败：${drill.reason ?? '原因不明'}`}
+              <div className={cn('flex items-center gap-1.5 text-[0.6875rem]', drill.queued ? 'text-muted-foreground' : drill.ok ? 'text-ok' : 'text-destructive')}>
+                {drill.queued ? <Clock className="h-3 w-3" /> : drill.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {drill.queued ? '演练已交给独立监控。稍后刷新本页，可在此通道查看投递结果。' : drill.ok ? '演练已送达 —— 这条链现在是通的，去手机上确认收到了' : `演练失败：${drill.reason ?? '原因不明'}`}
               </div>
             ) : null}
           </div>
@@ -287,14 +298,14 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
 
       {/* 编辑器 */}
       {draft ? (
-        <div className="flex flex-col gap-3 rounded-lg border border-primary/35 bg-[hsl(var(--surface-raised))] p-4">
+        <fieldset disabled={busy} className="min-w-0 flex flex-col gap-3 rounded-lg border border-primary/35 bg-[hsl(var(--surface-raised))] p-4">
           <div className="text-xs font-medium text-foreground">
-            {draft.id ? '编辑' : '新建'}：{KIND_LABEL[draft.kind]}
+            {draft.id ? `编辑 ${channels.find(c=>c.id===draft.id)?.name||draft.id}` : '新建通知通道'}：{KIND_LABEL[draft.kind]}
           </div>
 
           <label className="flex flex-col gap-1">
             <span className={LABEL}>通道名字（出问题时你要认得出是谁响了）</span>
-            <input className={INPUT} placeholder="我的手机 / 运维群" value={draft.name}
+            <input ref={editorName} className={INPUT} placeholder="我的手机 / 运维群" value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </label>
 
@@ -389,7 +400,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
               {(Object.keys(EVENT_META) as EventKind[]).map((k) => (
                 <button key={k} type="button" title={EVENT_META[k].what} onClick={() => toggleEvent(k)}
                   aria-pressed={draft.events.includes(k)}
-                  className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
+                  className={cn('inline-flex min-h-[3.25rem] items-center gap-1 rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
                     draft.events.includes(k) ? 'border-primary/50 bg-primary-soft text-primary-ink'
                       : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground')}>
                   {EVENT_META[k].label}
@@ -403,6 +414,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
             </span>
           </div>
 
+          <p className="text-sm text-muted-foreground">项目范围：{draft.projects.length?draft.projects.map(id=>projects.find(p=>p.id===id)?.name||id).join('、'):'全部项目'}</p>
           {projects.length > 0 ? (
             <div className="flex flex-col gap-1.5">
               <span className={LABEL}>管哪些项目（一个都不勾 = 全部项目）</span>
@@ -410,7 +422,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
                 {projects.map((p) => (
                   <button key={p.id} type="button" onClick={() => toggleProject(p.id)}
                     aria-pressed={draft.projects.includes(p.id)}
-                    className={cn('rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
+                    className={cn('min-h-[3.25rem] rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
                       draft.projects.includes(p.id) ? 'border-primary/50 bg-primary-soft text-primary-ink'
                         : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground')}>
                     {p.name}
@@ -420,14 +432,14 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
             </div>
           ) : null}
 
-          <div className="flex items-center gap-2">
-            <Button size="sm" disabled={busy} onClick={() => void save()}>保存</Button>
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => { setDraft(null); setErr(null); }}>取消</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" className="min-h-[3.25rem]" disabled={busy} onClick={() => void save()}>保存</Button>
+            <Button size="sm" className="min-h-[3.25rem]" variant="outline" disabled={busy} onClick={cancelEdit}>取消</Button>
             <span className="text-[0.6875rem] text-muted-foreground">
               保存后立刻生效，不用重启；存完请紧接着点一次「演练」—— 没演练过的通道，和没配的通道在真出事那天是一样的。
             </span>
           </div>
-        </div>
+        </fieldset>
       ) : null}
     </div>
   );

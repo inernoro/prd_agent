@@ -164,6 +164,38 @@ const LOGICAL_MODELS = [
     })],
   })),
 ];
+const CATALOG_ENTRIES = Array.from({ length: 44 }, (_, index) => ({
+  id: `catalog-${index + 1}`,
+  canonicalId: `demo-model-${index + 1}`,
+  displayName: `演示模型 ${index + 1}`,
+  vendor: 'demo',
+  capabilities: index % 2 === 0 ? ['chat', 'reasoning'] : ['vision'],
+  acceptsImageInput: index % 2 === 1,
+  requiresImageInput: false,
+  aliases: [],
+  enabled: true,
+}));
+const IMAGEGEN_CONFIGS = Array.from({ length: 44 }, (_, index) => ({
+  id: `imagegen-${index + 1}`,
+  modelIdPattern: `demo-image-${index + 1}`,
+  matchOrder: index + 1,
+  enabled: true,
+  displayName: `演示生图 ${index + 1}`,
+  provider: 'demo',
+  platformType: 'openai',
+  sizeConstraintType: 'whitelist',
+  sizeConstraintDescription: '',
+  sizesByResolution: { '1k': ['1024x1024'] },
+  sizesNotApplicable: false,
+  sizeParamFormat: 'WxH',
+  injectSizePrompt: false,
+  paramRenames: {},
+  requiresResolutionParam: false,
+  supportsImageToImage: true,
+  supportsInpainting: false,
+  supportsResponseFormat: true,
+  notes: [],
+}));
 const LIST = { items: [], total: 2, page: 1, pageSize: 20 };
 const STUBS = {
   '/auth/tenants': [],
@@ -190,8 +222,15 @@ const STUBS = {
   },
   '/parameter-capabilities/meta': { items: [], templates: [] },
   '/imagegen-configs': {
-    items: [], total: 0, builtinCount: 0, builtin: [], refreshSeconds: 60,
-    staleAfterSeconds: 180, syncedAt: nowIso, syncedPatterns: [], syncHosts: [],
+    items: IMAGEGEN_CONFIGS, total: IMAGEGEN_CONFIGS.length,
+    builtinCount: 1, builtin: [IMAGEGEN_CONFIGS[0]], refreshSeconds: 60,
+    staleAfterSeconds: 180, syncedAt: nowIso,
+    syncedPatterns: IMAGEGEN_CONFIGS.map((item) => item.modelIdPattern), syncHosts: [],
+  },
+  '/catalog-entries': {
+    items: CATALOG_ENTRIES, total: CATALOG_ENTRIES.length,
+    builtinCount: 1, builtin: [CATALOG_ENTRIES[0]],
+    knownCapabilities: ['chat', 'reasoning', 'vision', 'image_generation'],
   },
   '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
   // 白名单列表那条趋势线的数据源。桩里必须给真值：给空会让页面走「暂无用量」分支，
@@ -383,6 +422,115 @@ await page.fill('#llmgw-password', 'demo');
 await page.click('button[type=submit]');
 await page.waitForURL('**/llmgw/logs');
 
+// 只用本机假数据验证模型页合同；不创建真实模型、授权或计费记录。
+if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
+  try {
+    const allowedBefore = ['demo.web-create::chat', 'demo.web-edit::chat', 'demo.ppt-plan::chat', 'demo.ppt-create::chat', 'demo.ppt-edit::chat'];
+    const fixtures = LOGICAL_MODELS.slice(0, 3).map((model, index) => index === 0
+      ? { ...model, allowedAppCallerCodes: allowedBefore, defaultForAppCallerCodes: allowedBefore.slice(2) } : model);
+    const originalModel = structuredClone(fixtures[0]);
+    let allowlistSubmitted = null;
+    let allowlistRequests = 0;
+    const usage = fixtures.map((model, index) => ({
+      publicId: model.publicId, days: ['2026-11-06'], dailyCalls: [736],
+      totalCalls: 736, totalTokens: 1000,
+      totalCostUsd: index === 1 ? 2.5 : 0,
+      unpricedCalls: index === 0 ? 736 : index === 1 ? 20 : 0,
+    }));
+    let submitted = null;
+    await page.route('**/llmgw/gw/logical-models', async (route) => {
+      if (route.request().method() === 'POST') {
+        submitted = route.request().postDataJSON();
+        return route.fulfill({ json: { success: true, error: null,
+          data: { ...submitted, id: 'local-code-only', enabled: true, offerings: [],
+            defaultForAppCallerCodes: [], isDefaultForType: false } } });
+      }
+      return route.fulfill({ json: { success: true, error: null, data: { items: fixtures, total: fixtures.length } } });
+    });
+    await page.route(/\/llmgw\/gw\/logical-models\/usage(?:\?.*)?$/, (route) => route.fulfill({
+      json: { success: true, error: null, data: { days: 30, items: usage } },
+    }));
+    await page.route('**/llmgw/gw/logical-models/lm1', async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      allowlistRequests += 1;
+      allowlistSubmitted = route.request().postDataJSON();
+      fixtures[0] = { ...fixtures[0], ...allowlistSubmitted, updatedAt: new Date().toISOString() };
+      return route.fulfill({ json: { success: true, error: null, data: fixtures[0] } });
+    });
+    activeProbe = '模型Code选择与缺价费用';
+    await page.goto(`${base}/logical-models`);
+    const rows = page.locator('.lg-logical-model-grid').filter({ has: page.locator('code') });
+    await rows.first().waitFor();
+    const costs = await Promise.all(fixtures.map((item) => rows.filter({
+      has: page.locator('code', { hasText: item.publicId }),
+    }).locator('[aria-label="近 30 天用量"]').innerText()));
+    const header = await page.locator('.lg-page-heading .lg-summary-strip').innerText();
+    await page.getByRole('button', { name: '手动新建', exact: true }).click();
+    const type = page.locator('label').filter({ hasText: /^模型类型/ }).locator('select');
+    await type.waitFor({ state: 'visible' });
+    const codeAvailable = await type.locator('option[value="code"]').count() === 1;
+    if (codeAvailable) {
+      await page.getByLabel('公开模型标识', { exact: true }).fill('local-workflow-code');
+      await page.getByLabel('显示名称', { exact: true }).fill('本机Code合同');
+      await type.selectOption('code');
+      await page.locator('label').filter({ hasText: /^能力，逗号分隔/ }).locator('input').fill('code');
+      await page.locator('label').filter({ hasText: /^允许的 appCaller/ }).locator('input').fill('demo.workflow::code');
+      await page.getByRole('button', { name: '保存逻辑模型', exact: true }).click();
+      await page.getByText('逻辑模型「本机Code合同」已创建', { exact: false }).waitFor();
+    }
+    await rows.filter({ has: page.locator('code', { hasText: fixtures[0].publicId }) })
+      .getByRole('button', { name: '查看', exact: true }).click();
+    await page.getByRole('button', { name: '模型配置', exact: true }).click();
+    const allowButton = page.getByRole('button', { name: '允许调用方', exact: true });
+    let allowlistOnlyUpdate = false;
+    if (await allowButton.count() === 1) {
+      await allowButton.click();
+      const editor = page.getByTestId('logical-model-allowlist');
+      const input = editor.getByRole('textbox');
+      const prepopulated = await input.inputValue() === allowedBefore.join(', ');
+      const emptyMeaningVisible = (await editor.innerText()).includes('留空表示当前租户全部调用方可用');
+      const expected = [...allowedBefore, 'workflow-agent.report-generator::chat'];
+      await input.fill(expected.join(', '));
+      await editor.getByRole('button', { name: '保存', exact: true }).click();
+      await page.getByText('允许调用方已更新：限 6 个 appCaller', { exact: false }).waitFor();
+      await allowButton.click();
+      const saved = await page.getByTestId('logical-model-allowlist').getByRole('textbox').inputValue();
+      allowlistOnlyUpdate = prepopulated && emptyMeaningVisible && allowlistRequests === 1
+        && Object.keys(allowlistSubmitted || {}).join(',') === 'allowedAppCallerCodes'
+        && JSON.stringify(allowlistSubmitted.allowedAppCallerCodes) === JSON.stringify(expected)
+        && saved === expected.join(', ')
+        && JSON.stringify({ ...fixtures[0], allowedAppCallerCodes: originalModel.allowedAppCallerCodes,
+          updatedAt: originalModel.updatedAt }) === JSON.stringify(originalModel);
+    }
+    const checks = {
+      codeAvailable,
+      originalCreateContract: submitted?.modelType === 'code'
+        && submitted.capabilities.join(',') === 'code'
+        && submitted.allowedAppCallerCodes.join(',') === 'demo.workflow::code',
+      allUnpricedUnknown: costs[0].includes('费用未知') && !costs[0].includes('$0.00'),
+      partialEstimateExplicit: costs[1].includes('已计价部分') && costs[1].includes('$2.50') && costs[1].includes('20'),
+      genuineZeroRetained: costs[2].includes('$0.00') && !costs[2].includes('费用未知'),
+      headerPartialEstimateExplicit: header.includes('已计价部分') && header.includes('$2.50'),
+      allowlistOnlyUpdate,
+      noRuntimeErrors: runtimeErrors.length === 0,
+    };
+    console.log(JSON.stringify({ checks, costs, header, localFakeDataOnly: true, productionWrites: 0, modelCalls: 0 }));
+    if (Object.values(checks).some((passed) => !passed)) process.exitCode = 1;
+  } catch (error) {
+    console.error(JSON.stringify({ localModelContractFailure: String(error),
+      formCount: await page.locator('form').count(), labels: await page.locator('label').allTextContents(),
+      selects: await page.locator('select').evaluateAll((elements) => elements.map((el) => ({
+        name: Array.from(el.labels ?? []).map((label) => label.textContent),
+        options: Array.from(el.options).map((option) => option.value), height: el.getBoundingClientRect().height,
+      }))), runtimeErrors }));
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exit(process.exitCode || 0);
+}
+
 const ROUTES = ['/logs', '/platforms', '/models', '/service-keys', '/audits', '/app-callers', '/pools', '/logical-models', '/exchanges'];
 const data = {};
 const idleFetches = {};
@@ -493,6 +641,51 @@ for (const [label, viewport, theme] of [
 ]) {
   logicalModelScroll[label] = await probeLogicalModelScroll(label, viewport, theme);
 }
+
+// 上游配置是同一个入口下的四类列表。任一时刻只能出现当前 Tab 的一张业务表，
+// 长列表的纵向滚动必须归唯一的 PageBody；内置/自定义切换也只能替换列表，不能再叠一张表。
+async function probeUpstreamView(view, expectedTabLabel, tableSelector, toggleLabel) {
+  activeProbe = `/platforms?view=${view}`;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${base}/platforms?view=${view}`);
+  await page.waitForSelector(tableSelector);
+  await page.waitForTimeout(200);
+  const initial = await page.evaluate(async ({ expectedTabLabel }) => {
+    const body = document.querySelector('.lg-page-body');
+    const tablist = document.querySelector('[role="tablist"][aria-label="上游配置分类"]');
+    const active = tablist?.querySelector('[role="tab"][aria-selected="true"]');
+    const tables = body ? [...body.querySelectorAll('table')].filter((table) => table.offsetParent !== null) : [];
+    if (!body || !tablist || !active) return { 可验证: false, 原因: '缺少 Tab 或 PageBody' };
+    const scrollable = body.scrollHeight > body.clientHeight + 1;
+    const last = tables[0]?.querySelector('tbody tr:last-child');
+    last?.scrollIntoView({ block: 'end' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bodyRect = body.getBoundingClientRect();
+    const lastRect = last?.getBoundingClientRect();
+    return {
+      可验证: true,
+      当前Tab: active.textContent?.trim(),
+      预期Tab: expectedTabLabel,
+      PageBody数量: document.querySelectorAll('.lg-page-body').length,
+      可见表格数: tables.length,
+      可滚动: scrollable,
+      已滚动: !scrollable || body.scrollTop > 0,
+      末行可见: Boolean(lastRect && lastRect.bottom <= bodyRect.bottom + 1 && lastRect.top >= bodyRect.top - 1),
+    };
+  }, { expectedTabLabel });
+  if (toggleLabel) {
+    await page.getByRole('button', { name: toggleLabel }).click();
+    await page.waitForTimeout(100);
+    initial.切换后可见表格数 = await page.locator('.lg-page-body table:visible').count();
+  }
+  return initial;
+}
+
+const upstreamViews = {
+  Provider: await probeUpstreamView('provider', 'Provider', '.lg-config-table-shell', null),
+  模型名录: await probeUpstreamView('catalog', '模型名录', '[data-testid="model-catalog-table"]', '查看内置名录（1）'),
+  生图契约: await probeUpstreamView('imagegen', '生图契约', '[data-testid="imagegen-contract-table"]', '查看内置契约（1）'),
+};
 await page.setViewportSize({ width: 1440, height: 900 });
 activeProbe = '/exchanges';
 await page.goto(`${base}/exchanges#image-layering`);
@@ -724,6 +917,7 @@ for (const [label, result] of Object.entries(logicalModelScroll)) {
     continue;
   }
   const failed = [];
+  if (result.当前Tab !== result.预期Tab) failed.push(`当前 Tab 为「${result.当前Tab}」，预期「${result.预期Tab}」`);
   if (!result.initial.外层可滚动) failed.push('初始长列表没有让 PageBody 可滚动');
   if (!result.initial.列表未裁切) failed.push('初始列表内容被自身裁切');
   if (result.initial.列表flexShrink !== '0') failed.push(`列表 flex-shrink=${result.initial.列表flexShrink}`);
@@ -736,6 +930,28 @@ for (const [label, result] of Object.entries(logicalModelScroll)) {
   if (!result.页头固定) failed.push('滚动时页头发生位移');
   if (failed.length) {
     console.error(`${label}模型目录滚动契约失败：${failed.join('；')}`);
+    drift += failed.length;
+  }
+}
+
+console.log('上游 Tab 与滚动契约:', JSON.stringify(upstreamViews));
+for (const [label, result] of Object.entries(upstreamViews)) {
+  if (!result.可验证) {
+    console.error(`${label} 无法验证：${result.原因}`);
+    drift += 1;
+    continue;
+  }
+  const failed = [];
+  if (result.当前Tab !== result.预期Tab) failed.push(`当前 Tab 为「${result.当前Tab}」，预期「${result.预期Tab}」`);
+  if (result.PageBody数量 !== 1) failed.push(`PageBody 有 ${result.PageBody数量} 个`);
+  if (result.可见表格数 !== 1) failed.push(`当前 Tab 可见 ${result.可见表格数} 张表`);
+  if ((label === '模型名录' || label === '生图契约') && !result.可滚动) failed.push('长列表没有产生纵向滚动');
+  if (!result.已滚动 || !result.末行可见) failed.push('无法滚到最后一行');
+  if (result.切换后可见表格数 !== undefined && result.切换后可见表格数 !== 1) {
+    failed.push(`切到内置数据后可见 ${result.切换后可见表格数} 张表`);
+  }
+  if (failed.length) {
+    console.error(`${label} 上游列表契约失败：${failed.join('；')}`);
     drift += failed.length;
   }
 }

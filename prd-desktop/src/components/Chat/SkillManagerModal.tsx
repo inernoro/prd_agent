@@ -321,7 +321,7 @@ export default function SkillManagerModal({ open, onClose, initialFormData }: Pr
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <p className="text-[11px] text-blue-600 dark:text-blue-300 leading-relaxed">
-                    SKILL.md 是跨平台开放标准。从 Claude Code、Cursor 等平台导出的技能文件可直接导入。
+                    SKILL.md 是跨平台开放标准。从 Claude Code、Codex 等平台导出的技能文件可直接导入。
                   </p>
                 </div>
                 <div className="flex items-center justify-end gap-2 pt-1">

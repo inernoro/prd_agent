@@ -400,7 +400,7 @@ export default function SaveAsSkillModal({ open, triggerMessage, onClose, onExtr
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <p className="text-[11px] text-blue-600 dark:text-blue-300 leading-relaxed">
-                  SKILL.md 是跨平台开放标准，可在 Claude Code、Cursor、GitHub Copilot 等 14+ 平台使用。
+                  SKILL.md 是跨平台开放标准，可在 Claude Code、Codex、GitHub Copilot 等平台使用。
                   保存为文件后放入项目的 <code className="px-1 py-0.5 rounded bg-blue-500/10 font-mono">.claude/skills/</code> 目录即可生效。
                 </p>
               </div>

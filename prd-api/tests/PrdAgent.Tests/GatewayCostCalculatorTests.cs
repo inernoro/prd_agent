@@ -22,10 +22,12 @@ public sealed class GatewayCostCalculatorTests
         int outputTokens = 0,
         int cacheReadTokens = 0,
         int cacheWriteTokens = 0,
-        bool countCall = true)
+        bool countCall = true,
+        bool cacheWriteCountedInsideInput = false)
         => GatewayCostCalculator.Calculate(
             protocol, currency, inputPrice, outputPrice, cachedInputPrice, cacheWritePrice, pricePerCall,
-            inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, countCall);
+            inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, countCall,
+            cacheWriteCountedInsideInput);
 
     /// <summary>
     /// OpenAI 口径：命中缓存的 token 已经含在 prompt_tokens 里，必须先扣掉再按缓存价单算。
@@ -61,6 +63,65 @@ public sealed class GatewayCostCalculatorTests
         Assert.Equal(0.0075m, cost.CacheWrite);  // 2000 * 3.75 / 1M
         Assert.Equal(0.015m, cost.Output);
         Assert.Equal(0.0369m, cost.Total);
+    }
+
+    [Fact]
+    public void Responses嵌套缓存写入已含在输入中_只计费一次()
+    {
+        var cost = Calc(
+            protocol: "openai",
+            inputPrice: 4m,
+            outputPrice: 20m,
+            cachedInputPrice: 0.4m,
+            cacheWritePrice: 5m,
+            inputTokens: 1_000,
+            outputTokens: 100,
+            cacheReadTokens: 600,
+            cacheWriteTokens: 150,
+            cacheWriteCountedInsideInput: true);
+
+        Assert.Equal(0.001m, cost.Input);       // (1000 - 600 - 150) * 4 / 1M
+        Assert.Equal(0.00024m, cost.CacheRead); // 600 * 0.4 / 1M
+        Assert.Equal(0.00075m, cost.CacheWrite);// 150 * 5 / 1M
+        Assert.Equal(0.002m, cost.Output);      // 100 * 20 / 1M
+        Assert.Equal(0.00399m, cost.Total);
+    }
+
+    [Fact]
+    public void 独立缓存写入不从OpenAI输入中扣减()
+    {
+        var cost = Calc(
+            protocol: "openai",
+            inputPrice: 4m,
+            cacheWritePrice: 5m,
+            inputTokens: 1_000,
+            cacheWriteTokens: 150,
+            cacheWriteCountedInsideInput: false);
+
+        Assert.Equal(0.004m, cost.Input);
+        Assert.Equal(0.00075m, cost.CacheWrite);
+    }
+
+    [Theory]
+    [InlineData("priced", null, "admin", "apiyi-openai", "official_baseline_estimate")]
+    [InlineData("priced", null, "upstream", "other-provider", "provider_policy_estimate")]
+    [InlineData("priced", "0.012", "admin", "apiyi-openai", "provider_actual")]
+    [InlineData("unpriced", null, "admin", "apiyi-openai", "unpriced")]
+    [InlineData("no_usage", null, "admin", "apiyi-openai", "no_usage")]
+    public void 金额性质明确区分实际_估算_未计价和无用量(
+        string status,
+        string? providerReportedCost,
+        string priceSource,
+        string provider,
+        string expected)
+    {
+        var actual = GatewayCostKind.Resolve(
+            status,
+            providerReportedCost is null ? null : decimal.Parse(providerReportedCost),
+            priceSource,
+            provider);
+
+        Assert.Equal(expected, actual);
     }
 
     /// <summary>

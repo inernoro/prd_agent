@@ -20,6 +20,7 @@ const SSE_KEEPALIVE_MS = 15_000;
 
 export interface ServerContext extends CapabilitiesContext {
   apiKey: string;
+  llmgwBaseUrl: string;
   tasks: TaskManager;
 }
 
@@ -134,7 +135,7 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
     }
     let normalized;
     try {
-      normalized = normalizeTaskRequest(await readJsonBody(req));
+      normalized = normalizeTaskRequest(await readJsonBody(req), context.llmgwBaseUrl);
     } catch (error) {
       if (error instanceof AgentWorkspaceRuntimeError) {
         sendError(res, error.code === 'request_too_large' ? 413 : 400, {

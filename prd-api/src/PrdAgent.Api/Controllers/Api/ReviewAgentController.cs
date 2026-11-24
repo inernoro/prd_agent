@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -57,6 +58,15 @@ public class ReviewAgentController : ControllerBase
     }
 
     private string GetUserId() => this.GetRequiredUserId();
+
+    private Task<Attachment?> FindReviewAttachmentAsync(string attachmentId, string userId, CancellationToken ct)
+    {
+        var filter = Builders<Attachment>.Filter.Eq(x => x.AttachmentId, attachmentId);
+        // 产品入口向全员开放，评审只接受当前用户上传的附件。
+        if (Request.Path.StartsWithSegments("/api/product/review", StringComparison.OrdinalIgnoreCase))
+            filter &= Builders<Attachment>.Filter.Eq(x => x.UploaderId, userId);
+        return _db.Attachments.Find(filter).FirstOrDefaultAsync(ct);
+    }
 
     private string? GetDisplayName()
         => User.FindFirst("displayName")?.Value
@@ -167,15 +177,15 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        // 验证附件存在
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var userId = GetUserId();
+        // 校验附件归属
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
 
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
 
-        var userId = GetUserId();
         var displayName = GetDisplayName() ?? userId;
 
         var submission = new ReviewSubmission
@@ -637,7 +647,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
@@ -685,7 +695,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
@@ -954,7 +964,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        var attachment = await FindReviewAttachmentAsync(req.AttachmentId, userId, ct);
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
@@ -1101,7 +1111,22 @@ public class ReviewAgentController : ControllerBase
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(submission.ExtractedContent))
+        {
+            await WriteSseEventAsync("error", new { message = "无法读取方案内容，请确认上传的文件包含文本内容" });
+            await _db.ReviewSubmissions.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ReviewSubmission>.Update
+                    .Set(x => x.Status, ReviewStatuses.Error)
+                    .Set(x => x.ErrorMessage, "文件内容为空"),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
         // 标记为评审中
+        var taskIdentity = await HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>()
+            .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+        using var task = TaskExecutionContext.Enter(taskIdentity with { RunId = id });
         await _db.ReviewSubmissions.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReviewSubmission>.Update
@@ -1146,18 +1171,7 @@ public class ReviewAgentController : ControllerBase
         // 推送阶段：准备中
         await WriteSseEventAsync("phase", new { phase = "preparing", message = "正在准备评审..." });
 
-        var content = submission.ExtractedContent;
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            await WriteSseEventAsync("error", new { message = "无法读取方案内容，请确认上传的文件包含文本内容" });
-            await _db.ReviewSubmissions.UpdateOneAsync(
-                x => x.Id == submissionId,
-                Builders<ReviewSubmission>.Update
-                    .Set(x => x.Status, ReviewStatuses.Error)
-                    .Set(x => x.ErrorMessage, "文件内容为空"),
-                cancellationToken: CancellationToken.None);
-            return;
-        }
+        var content = submission.ExtractedContent!;
 
         // 构建评审提示词
         var systemPrompt = BuildReviewSystemPrompt(dims);

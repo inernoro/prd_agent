@@ -1,5 +1,8 @@
+import { createLatestWinsGate } from '@/lib/latest-wins';
+import { partialRead } from '@/lib/partialRead';
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -23,7 +26,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownItem, DropdownLabel, DropdownDivider } from '@/components/ui/dropdown-menu';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,7 +35,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { postSse } from '@/lib/sse';
 import { multiPreviewUrl, resolveWebEntryPresentation, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
-import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import {
+  BRANCH_DETAIL_COLUMN_CLASS, BRANCH_DETAIL_GRID_CLASS, BRANCH_DETAIL_HEADER_CLASS, BRANCH_DIAGNOSTIC_TABS_CLASS,
+  BRANCH_SELECTOR_GRID_CLASS, BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile,
+} from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
@@ -67,6 +73,8 @@ interface BranchSummary {
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
   commitSha?: string;
+  runningCommitSha?: string;
+  targetCommitSha?: string;
   subject?: string;
   previewSlug?: string;
   deployCount?: number;
@@ -256,7 +264,8 @@ type LoadState =
       bridgeActive: boolean;
       bridgeConnection?: BridgeConnection;
       bridgeState?: unknown;
-      previewMode: 'simple' | 'port' | 'multi';
+      previewMode: 'simple' | 'port' | 'multi' | undefined;
+      readFailures: Record<string, string>;
       config: CdsConfigResponse;
     };
 
@@ -560,7 +569,16 @@ export function BranchDetailPage(): JSX.Element {
   const { branchId: branchIdParam } = useParams();
   const branchId = branchIdParam || queryValue('branch') || queryValue('id');
   const projectId = queryValue('project');
+  return <BranchWorkspace key={`${projectId}:${branchId}`} branchId={branchId} projectId={projectId} />;
+}
+
+function BranchWorkspace({ branchId, projectId }: { branchId: string; projectId: string }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const loadGate = useRef(createLatestWinsGate());
+  const containerLogGate = useRef(createLatestWinsGate());
+  const canOpenPreview = state.status === 'ok' && !!state.previewMode && canUseConsolePreview(state.previewMode, canManageConsole);
+  const previewUnavailableNotice = state.status === 'ok' && !state.previewMode ? '预览模式尚未确认，请重试读取后再打开预览。' : MEMBER_PREVIEW_MODE_NOTICE;
   const [action, setAction] = useState<ActionState | null>(null);
   const [toast, setToast] = useState('');
   const [detailTab, setDetailTab] = useState<'logs' | 'config' | 'history' | 'bridge'>('logs');
@@ -584,6 +602,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [updateAction]);
 
   const load = useCallback(async (showLoading = false, forceLive = false) => {
+    const ticket = loadGate.current.begin();
     if (showLoading) setState({ status: 'loading' });
     try {
       if (!branchId) {
@@ -595,7 +614,7 @@ export function BranchDetailPage(): JSX.Element {
           apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
           apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         ]);
-        setState({ status: 'select', project, branches: branchesRes.branches || [] });
+        if (loadGate.current.accept(ticket)) setState({ status: 'select', project, branches: branchesRes.branches || [] });
         return;
       }
 
@@ -605,46 +624,53 @@ export function BranchDetailPage(): JSX.Element {
       const branchesRes = await apiRequest<BranchesResponse>(branchesPath);
       const branch = (branchesRes.branches || []).find((item) => item.id === branchId);
       if (!branch) {
-        setState({ status: 'error', message: 'branch_not_found', projectId });
+        if (loadGate.current.accept(ticket)) setState({ status: 'error', message: 'branch_not_found', projectId });
         return;
       }
 
       const realProjectId = branch.projectId || projectId;
+      const readFailures: Record<string, string> = {};
+      const read = <T,>(source: string, request: Promise<T>) => partialRead(source, request, readFailures);
       const [project, operationLogs, commits, profiles, aliases, proxyLogs, previewMode, config] = await Promise.all([
         realProjectId
           ? apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(realProjectId)}`).catch(() => undefined)
           : Promise.resolve(undefined),
-        apiRequest<LogsResponse>(`/api/branches/${encodeURIComponent(branch.id)}/logs`).catch(() => ({ logs: [] })),
-        apiRequest<GitLogResponse>(`/api/branches/${encodeURIComponent(branch.id)}/git-log?count=15`).catch(() => ({ commits: [] })),
-        apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`).catch(() => ({ profiles: [] })),
-        apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`).catch(() => ({ aliases: [] })),
-        apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })),
+        read('部署日志', apiRequest<LogsResponse>(`/api/branches/${encodeURIComponent(branch.id)}/logs`)),
+        read('提交历史', apiRequest<GitLogResponse>(`/api/branches/${encodeURIComponent(branch.id)}/git-log?count=15`)),
+        read('分支配置', apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`)),
+        read('预览入口', apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`)),
+        read('请求日志', canManageConsole ? apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc') : Promise.resolve({ events: [] })),
         realProjectId
-          ? apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const }))
-          : Promise.resolve({ mode: 'multi' as const }),
-        apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
+          ? read('预览模式', apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`))
+          : Promise.resolve(undefined),
+        read('实例配置', apiRequest<CdsConfigResponse>('/api/config')),
       ]);
-      setState({
+      if (!loadGate.current.accept(ticket)) return;
+      setState(previous => {
+        const known = previous.status === 'ok' && previous.branch.id === branch.id ? previous : undefined;
+        const knownAliases = aliases ?? known?.aliases ?? { aliases: [] };
+        return {
         status: 'ok',
         project,
         branch,
-        operationLogs: operationLogs.logs || [],
-        commits: commits.commits || [],
-        profiles: profiles.profiles || [],
-        aliases,
-        proxyLogs: filterProxyLogsForBranch(proxyLogs.events || [], branch, aliases),
+        operationLogs: operationLogs?.logs ?? known?.operationLogs ?? [],
+        commits: commits?.commits ?? known?.commits ?? [],
+        profiles: profiles?.profiles ?? known?.profiles ?? [],
+        aliases: knownAliases,
+        proxyLogs: proxyLogs ? filterProxyLogsForBranch(proxyLogs.events || [], branch, knownAliases) : known?.proxyLogs ?? [],
         bridgeActive: false,
         bridgeConnection: undefined,
-        previewMode: previewMode.mode || 'multi',
-        config,
-      });
-      const firstService = Object.keys(branch.services || {})[0] || profiles.profiles?.[0]?.profileId || '';
+        previewMode: previewMode?.mode,
+        readFailures,
+        config: config ?? known?.config ?? {},
+      }; });
+      const firstService = Object.keys(branch.services || {})[0] || profiles?.profiles?.[0]?.profileId || '';
       setSelectedProfileId((current) => current || firstService);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      setState({ status: 'error', message, projectId });
+      if (loadGate.current.accept(ticket)) setState(previous => previous.status === 'ok' ? { ...previous, readFailures: { ...previous.readFailures, '分支状态': message } } : { status: 'error', message, projectId });
     }
-  }, [branchId, projectId]);
+  }, [branchId, projectId, canManageConsole]);
 
   useEffect(() => {
     void load(true);
@@ -681,7 +707,7 @@ export function BranchDetailPage(): JSX.Element {
     : '';
 
   useEffect(() => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || !canManageConsole) return;
     const labels = branchProxyLabels(state.branch, state.aliases);
     const source = new EventSource(apiUrl('/api/proxy-log/stream'));
     // 2026-05-28 阻断浏览器原生 3s 重试,避免 Cloudflare 边缘 400 风暴
@@ -700,7 +726,7 @@ export function BranchDetailPage(): JSX.Element {
       }
     };
     return () => source.close();
-  }, [proxyStreamKey]);
+  }, [proxyStreamKey, canManageConsole]);
 
   useEffect(() => {
     if (!toast) return;
@@ -756,14 +782,14 @@ export function BranchDetailPage(): JSX.Element {
     return state.profiles.find((profile) => profile.profileId === selectedProfileId) || state.profiles[0];
   }, [selectedProfileId, state]);
   const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(() => {
-    if (state.status !== 'ok') {
+    if (state.status !== 'ok' || !canOpenPreview) {
       return { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] };
     }
     const baseUrl = state.previewMode === 'simple'
       ? simplePreviewUrl(state.config)
       : (state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config));
-    return resolveWebEntryPresentation(state.previewMode, baseUrl, state.aliases);
-  }, [state]);
+    return resolveWebEntryPresentation(state.previewMode!, baseUrl, state.aliases);
+  }, [canOpenPreview, state]);
 
   const saveAliases = useCallback(async () => {
     if (state.status !== 'ok') return;
@@ -846,7 +872,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [load, state, updateAction]);
 
   const saveProfileOverride = useCallback(async (profile: ProfileRow, override: BuildProfileOverride) => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || !canManageConsole) return;
     const next = compactOverride(override);
     try {
       if (!overrideHasFields(next)) {
@@ -865,7 +891,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [load, state]);
+  }, [load, state, canManageConsole]);
 
   const editProfileTextOverride = useCallback(async (profile: ProfileRow, field: 'command' | 'dockerImage') => {
     const label = field === 'command' ? '启动命令' : 'Docker 镜像';
@@ -928,7 +954,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [saveProfileOverride]);
 
   const clearProfileOverride = useCallback(async (profile: ProfileRow) => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || !canManageConsole) return;
     const ok = window.confirm(`恢复 ${profile.profileName || profile.profileId} 为公共 BuildProfile？重新部署后生效。`);
     if (!ok) return;
     try {
@@ -941,7 +967,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [load, state]);
+  }, [load, state, canManageConsole]);
 
   const startBridgeSession = useCallback(async () => {
     if (state.status !== 'ok') return;
@@ -1020,18 +1046,23 @@ export function BranchDetailPage(): JSX.Element {
 
   const loadContainerLogs = useCallback(async (profileId: string) => {
     if (state.status !== 'ok') return;
+    const ticket = containerLogGate.current.begin();
     setContainerLogs({ status: 'loading', profileId });
     try {
       const res = await apiRequest<ContainerLogsResponse>(`/api/branches/${encodeURIComponent(state.branch.id)}/container-logs`, {
         method: 'POST',
         body: { profileId },
       });
-      setContainerLogs({ status: 'ok', profileId, logs: res.logs || '' });
+      if (containerLogGate.current.accept(ticket)) setContainerLogs({ status: 'ok', profileId, logs: res.logs || '' });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      setContainerLogs({ status: 'error', profileId, message });
+      if (containerLogGate.current.accept(ticket)) setContainerLogs({ status: 'error', profileId, message });
     }
   }, [state]);
+
+  useEffect(() => {
+    if (detailTab === 'logs' && selectedService?.profileId && containerLogs.status === 'idle') void loadContainerLogs(selectedService.profileId);
+  }, [detailTab, selectedService?.profileId, containerLogs.status, loadContainerLogs]);
 
   const forceRebuild = useCallback(async (profileId: string) => {
     if (state.status !== 'ok') return;
@@ -1085,6 +1116,10 @@ export function BranchDetailPage(): JSX.Element {
 
   const openPreview = useCallback(async () => {
     if (state.status !== 'ok') return;
+    if (!canOpenPreview) {
+      setToast(previewUnavailableNotice);
+      return;
+    }
     if (state.branch.status !== 'running') {
       setToast('分支未运行，先部署后再打开预览');
       return;
@@ -1102,14 +1137,14 @@ export function BranchDetailPage(): JSX.Element {
       } else {
         url = multiPreviewUrl(state.branch, state.config);
       }
-      url = resolveWebEntryUrl(state.previewMode, url, primaryEntry);
+      url = resolveWebEntryUrl(state.previewMode!, url, primaryEntry);
       if (!url) throw new Error('缺少预览域名配置');
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [deploy, load, state]);
+  }, [canOpenPreview, deploy, load, state, previewUnavailableNotice]);
 
   if (!branchId && !projectId) return <Navigate to="/project-list" replace />;
 
@@ -1171,7 +1206,7 @@ export function BranchDetailPage(): JSX.Element {
                   分支
                 </a>
               </Button>
-              {state.status === 'ok' && state.branch.status === 'running' ? (
+              {state.status === 'ok' && state.branch.status === 'running' && canOpenPreview ? (
                 webEntries.length > 0 ? (
                   <DropdownMenu
                     align="end"
@@ -1215,7 +1250,7 @@ export function BranchDetailPage(): JSX.Element {
                   </Button>
                 )
               ) : null}
-              {state.status === 'ok' ? (
+              {state.status === 'ok' && canManageConsole ? (
                 <Button asChild variant="ghost" size="sm" title="项目设置">
                   <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
                     <Settings />
@@ -1223,7 +1258,7 @@ export function BranchDetailPage(): JSX.Element {
                   </a>
                 </Button>
               ) : null}
-              {state.status === 'ok' ? (
+              {state.status === 'ok' && canManageConsole ? (
                 <Button asChild variant="ghost" size="sm" title="服务拓扑">
                   <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
                     <Network />
@@ -1247,7 +1282,7 @@ export function BranchDetailPage(): JSX.Element {
       }
     >
       <Workspace fluid>
-        {state.status === 'loading' ? <BranchDetailLoadingSkeleton className="rounded-md" /> : null}
+        {state.status === 'loading' ? <BranchDetailLoadingSkeleton selectBranch={!branchId && Boolean(projectId)} canManage={canManageConsole} /> : null}
         {state.status === 'error' ? (
           // 2026-07-09：错误码翻译成人话 + 给出路（旧版把 branch_not_found 机器码
           // 裸展示且无任何按钮——从旧链接/收藏进来的用户看不懂也走不出去）。
@@ -1270,33 +1305,27 @@ export function BranchDetailPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
-            <section className="min-w-0 space-y-5">
+          <div className={BRANCH_DETAIL_GRID_CLASS}>
+            <section className={BRANCH_DETAIL_COLUMN_CLASS}>
+              {!canOpenPreview ? <p role="status" className="text-sm text-muted-foreground">{!state.previewMode ? '预览模式尚未确认，请重试读取后再打开预览。' : MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
+              {Object.keys(state.readFailures).length > 0 ? <div role="alert" className="rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">{Object.keys(state.readFailures).join('、')}读取失败，当前结果不完整；未读取到的内容不能视为不存在。<Button className="ml-2" size="sm" variant="outline" onClick={() => void load()}>重试读取</Button><details className="mt-2"><summary className="cursor-pointer">查看读取错误</summary><ul className="mt-2 space-y-1">{Object.entries(state.readFailures).map(([source, message]) => <li key={source}>{source}：{message}</li>)}</ul></details></div> : null}
               <Card className="rounded-md">
                 <CardHeader className="p-5">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className={BRANCH_DETAIL_HEADER_CLASS}>
                     <div className="min-w-0">
-                      <CardTitle className="truncate text-lg">{state.branch.branch}</CardTitle>
+                      <CardTitle className="break-all text-lg">{state.branch.branch}</CardTitle>
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                         <CodePill>{state.branch.id}</CodePill>
                         <span className={`rounded border px-2 py-0.5 ${statusClass(state.branch.status)}`}>
                           {statusLabel(state.branch.status)}
                         </span>
-                        {state.branch.commitSha ? (
-                          // 用户反馈 2026-05-08:原 CodePill text-xs 不够醒目 → 加大字号 + 提对比 + 加边框,
-                          // 仅截短到 8 位(40 位太长喧宾夺主)。font-mono 保留:hex 串靠 mono 防 0/O 混淆。
-                          <code
-                            className="rounded-md border border-primary/30 bg-primary/15 px-2.5 py-1 font-mono text-sm font-semibold tracking-wider text-foreground"
-                            title={state.branch.commitSha}
-                          >
-                            {state.branch.commitSha.slice(0, 8)}
-                          </code>
-                        ) : null}
+                        <span className="text-sm text-muted-foreground">运行 <code className="font-mono text-foreground" title={state.branch.runningCommitSha}>{state.branch.runningCommitSha?.slice(0, 8) || '版本未确认'}</code></span>
+                        {state.branch.targetCommitSha && state.branch.targetCommitSha !== state.branch.runningCommitSha ? <span className="text-sm text-muted-foreground">待部署 <code className="font-mono" title={state.branch.targetCommitSha}>{state.branch.targetCommitSha.slice(0, 8)}</code></span> : null}
                         {state.branch.pinnedCommit ? <CodePill>pinned {state.branch.pinnedCommit}</CodePill> : null}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {state.branch.status === 'running' && webEntries.length > 0 ? (
+                      {canOpenPreview && state.branch.status === 'running' && webEntries.length > 0 ? (
                         <DropdownMenu
                           align="start"
                           width={280}
@@ -1328,7 +1357,7 @@ export function BranchDetailPage(): JSX.Element {
                           ))}
                         </DropdownMenu>
                       ) : (
-                        <Button onClick={openPreview} disabled={state.branch.status !== 'running'}>
+                        <Button onClick={openPreview} disabled={state.branch.status !== 'running' || !canOpenPreview} title={!canOpenPreview ? previewUnavailableNotice : undefined}>
                           <ExternalLink />
                           打开预览
                         </Button>
@@ -1348,12 +1377,12 @@ export function BranchDetailPage(): JSX.Element {
                 </CardHeader>
                 <CardContent className="space-y-4 p-5 pt-0">
                   <p className="text-sm leading-6 text-muted-foreground">{state.branch.subject || '暂无提交摘要'}</p>
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <MetricTile label="服务数" value={services.length} />
-                    <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
-                    <MetricTile label="最近推送" value={formatDate(state.branch.lastPushAt)} />
-                    <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt)} />
-                  </div>
+                  <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                    <div className="flex gap-2"><dt className="text-muted-foreground">服务</dt><dd>{services.length}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">部署次数</dt><dd>{state.branch.deployCount || 0}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">最近推送</dt><dd>{formatDate(state.branch.lastPushAt)}</dd></div>
+                    <div className="flex gap-2"><dt className="text-muted-foreground">最近部署</dt><dd>{formatDate(state.branch.lastDeployAt)}</dd></div>
+                  </dl>
                   {/*
                     2026-05-14 Cursor Bugbot Medium：lastStoppedAt 为历史戳，
                     stop 后又被 deploy/auto-build/调度器唤醒重新 running 时
@@ -1387,13 +1416,13 @@ export function BranchDetailPage(): JSX.Element {
                       <div className="opacity-95">{state.branch.lastStopReason || '原因未记录'}</div>
                     </div>
                   ) : null}
-                  <div className="rounded-md border border-border bg-muted/30 p-3">
-                    <div className="mb-2 text-xs font-medium text-muted-foreground">提交一致性</div>
-                    <div className="grid gap-2 text-xs md:grid-cols-2">
+                  <details className="rounded-md border border-border bg-muted/30 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-muted-foreground">部署版本与拉取记录</summary>
+                    <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
                       <div className="min-w-0">
                         <div className="text-muted-foreground">当前运行</div>
-                        <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.commitSha || ''}>
-                          {state.branch.commitSha || '未知'}
+                        <code className="mt-1 block truncate font-mono text-foreground" title={state.branch.runningCommitSha || ''}>
+                          {state.branch.runningCommitSha || '未知'}
                         </code>
                       </div>
                       <div className="min-w-0">
@@ -1415,12 +1444,12 @@ export function BranchDetailPage(): JSX.Element {
                         </code>
                       </div>
                     </div>
-                    {state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? (
+                    {state.branch.githubCommitSha && state.branch.runningCommitSha && !sameCommit(state.branch.githubCommitSha, state.branch.runningCommitSha) ? (
                       <div className="mt-3 rounded border border-warn/30 bg-warn-soft px-2 py-1 text-xs text-warn">
                         当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
                       </div>
                     ) : null}
-                  </div>
+                  </details>
                   {state.branch.errorMessage ? (
                     <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                       {state.branch.errorMessage}
@@ -1432,6 +1461,7 @@ export function BranchDetailPage(): JSX.Element {
               {diagnosticIssues.length > 0 ? (
                 <FailureDiagnosticPanel
                   issues={diagnosticIssues}
+                  canManageConsole={canManageConsole}
                   onAction={(issue) => {
                     if (issue.profileId) setSelectedProfileId(issue.profileId);
                     const profile = issue.profileId
@@ -1541,15 +1571,291 @@ export function BranchDetailPage(): JSX.Element {
                       </button>
                     );
                   })}
-                </CardContent>
-              </Card>
-
               {/* 波1 W1b:分支级临时额外服务(只作用于本分支的实验容器,如 Nacos)。 */}
               <ExtraServicesPanel
                 branchId={state.branch.id}
+                compactWhenEmpty
                 onToast={setToast}
                 onChanged={() => void load(false)}
               />
+
+                </CardContent>
+              </Card>
+
+              {/* 选中服务后直接进入诊断工作区；不让低频空态挡在日志与配置之前。 */}
+              <Tabs orientation="horizontal" value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
+                <TabsList aria-label="分支诊断分区" className={BRANCH_DIAGNOSTIC_TABS_CLASS}>
+                  <TabsTrigger value="logs" className="min-w-0 justify-center gap-1 px-1">
+                    <FileText className="h-4 w-4 shrink-0" />
+                    日志
+                  </TabsTrigger>
+                  <TabsTrigger value="config" className="min-w-0 justify-center gap-1 px-1">
+                    <Wrench className="h-4 w-4 shrink-0" />
+                    配置
+                  </TabsTrigger>
+                  <TabsTrigger value="history" className="min-w-0 justify-center gap-1 px-1">
+                    <GitCommitHorizontal className="h-4 w-4 shrink-0" />
+                    历史
+                  </TabsTrigger>
+                  <TabsTrigger value="bridge" className="min-w-0 justify-center gap-1 px-1">
+                    <ShieldCheck className="h-4 w-4 shrink-0" />
+                    Bridge
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="logs" className="space-y-4">
+              <DisclosurePanel
+                icon={<TerminalSquare className="h-4 w-4" />}
+                title="容器日志"
+                defaultOpen
+                subtitle={selectedService?.profileId || '选择服务后查看'}
+                contentClassName="p-5"
+              >
+                  {selectedService ? (
+                    <div className="mb-3 flex justify-end">
+                      <Button size="sm" variant="outline" onClick={() => void loadContainerLogs(selectedService.profileId)}>
+                        <RefreshCw />
+                        刷新
+                      </Button>
+                    </div>
+                  ) : null}
+                  {selectedService ? (
+                    <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                      <CodePill>{selectedService.profileId}</CodePill>
+                      <CodePill>{selectedService.containerName}</CodePill>
+                    </div>
+                  ) : null}
+                  {containerLogs.status === 'loading' ? <LoadingBlock label="加载容器日志" /> : null}
+                  {containerLogs.status === 'error' ? <ErrorBlock message={containerLogs.message} /> : null}
+                  {containerLogs.status === 'ok' ? (
+                    <pre className="max-h-[26.25rem] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
+                      {containerLogs.logs.trim() || '还没有日志输出'}
+                    </pre>
+                  ) : null}
+                  {containerLogs.status === 'idle' ? (
+                    <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                      选择一个服务后显示最近容器日志。
+                    </div>
+                  ) : null}
+              </DisclosurePanel>
+
+{canManageConsole ? <DisclosurePanel
+                icon={<ExternalLink className="h-4 w-4" />}
+                title="HTTP 转发日志"
+                subtitle={`${state.proxyLogs.length} 条，实时订阅`}
+                contentClassName="space-y-3 p-5"
+              >
+                  <div className="flex gap-2">
+                    <input
+                      value={proxyLogQuery}
+                      onChange={(event) => setProxyLogQuery(event.target.value)}
+                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="筛 host / path / 状态"
+                    />
+                    <Button size="sm" variant="outline" onClick={() => void refreshProxyLogs()}>
+                      <RefreshCw />
+                      刷新
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <MetricTile label="总数" value={proxyLogStats.total} />
+                    <MetricTile label="异常" value={proxyLogStats.issues} />
+                    <MetricTile label="慢请求" value={proxyLogStats.slow} />
+                  </div>
+                  {state.proxyLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                      {state.readFailures['请求日志'] ? '转发记录尚未确认，请重试读取。' : '暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。'}
+                    </div>
+                  ) : null}
+                  {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                      没有匹配的转发记录。
+                    </div>
+                  ) : null}
+                  {filteredProxyLogs.map((event) => (
+                    <div key={event.id} className="rounded-md border border-border p-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded border px-2 py-0.5 ${httpStatusClass(event.status)}`}>{event.status}</span>
+                        <span className={`rounded border px-2 py-0.5 ${proxyOutcomeClass(event.outcome)}`}>{event.outcome}</span>
+                        <CodePill>{event.method}</CodePill>
+                        {event.profileId ? <CodePill>{event.profileId}</CodePill> : null}
+                        <span className="text-muted-foreground">{formatDurationMs(event.durationMs)}</span>
+                      </div>
+                      <div className="mt-2 break-all text-sm">{event.host}{event.url}</div>
+                      <div className="mt-1 text-muted-foreground">{formatDate(event.ts)}{event.upstream ? ` -> ${event.upstream}` : ''}</div>
+                      {event.hint || event.errorMessage ? (
+                        <div className="mt-2 text-muted-foreground">{event.hint || event.errorMessage}</div>
+                      ) : null}
+                    </div>
+                  ))}
+              </DisclosurePanel> : <p className="text-sm text-muted-foreground">HTTP 转发日志仅系统所有者可用；分支构建和容器日志仍可查看。</p>}
+
+                </TabsContent>
+
+                <TabsContent value="config" className="space-y-4">
+              <DisclosurePanel
+                icon={<Settings className="h-4 w-4" />}
+                title="有效配置"
+                defaultOpen
+                subtitle="命令 / 镜像 / 端口"
+                contentClassName="space-y-3 p-5 text-sm"
+              >
+                  {selectedProfile ? (
+                    <>
+                      {canManageConsole ? <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void editProfileTextOverride(selectedProfile, 'command')}>
+                          <TerminalSquare />
+                          覆写命令
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void editProfileTextOverride(selectedProfile, 'dockerImage')}>
+                          <Code2 />
+                          覆写镜像
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void editProfilePortOverride(selectedProfile)}>
+                          <Settings />
+                          覆写端口
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void editProfilePathPrefixesOverride(selectedProfile)}>
+                          <ExternalLink />
+                          路径前缀
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => void editProfileStartupSignalOverride(selectedProfile)}>
+                          <TerminalSquare />
+                          启动信号
+                        </Button>
+                        {selectedProfile.hasOverride ? (
+                          <Button size="sm" variant="outline" onClick={() => void clearProfileOverride(selectedProfile)}>
+                            <RefreshCw />
+                            恢复公共配置
+                          </Button>
+                        ) : null}
+                      </div> : <p className="text-muted-foreground">配置仅供查看，修改请联系系统所有者。</p>}
+                      <Field label="镜像" value={selectedProfile.effective?.dockerImage || '未设置'} />
+                      <Field label="端口" value={selectedProfile.effective?.containerPort || '未设置'} />
+                      <Field label="路径前缀" value={(selectedProfile.effective?.pathPrefixes || []).join(', ') || '默认'} />
+                      <Field
+                        label="启动信号"
+                        value={selectedProfile.effective?.startupSignal || '未设置(走默认 readiness 探针)'}
+                      />
+                      <div>
+                        <div className="mb-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground">命令</div>
+                        <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
+                          {selectedProfile.effective?.command || '未设置'}
+                        </pre>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-muted-foreground">{state.readFailures['分支配置'] ? '分支配置尚未确认，请重试读取。' : '暂无 profile 信息。'}</div>
+                  )}
+              </DisclosurePanel>
+
+                </TabsContent>
+
+                <TabsContent value="bridge" className="space-y-4">
+              <DisclosurePanel
+                icon={<ShieldCheck className="h-4 w-4" />}
+                title="Bridge 操作"
+                defaultOpen
+                subtitle="paused"
+                contentClassName="space-y-3 p-5 text-sm"
+              >
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className={`rounded border px-2 py-0.5 ${statusClass('idle')}`}>
+                      bridge paused
+                    </span>
+                  </div>
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+                    Page Agent Bridge HTTP 轮询已暂停。预览页不会建立 Bridge 连接，也不会静默轮询控制面。
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => void startBridgeSession()} disabled>
+                      <Play />
+                      激活
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => void readBridgeState()} disabled={!state.bridgeConnection}>
+                      <ShieldCheck />
+                      读取状态
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => void endBridgeSession()} disabled={!state.bridgeActive && !state.bridgeConnection}>
+                      <RefreshCw />
+                      结束
+                    </Button>
+                  </div>
+                  {state.bridgeState ? (
+                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
+                      {JSON.stringify(state.bridgeState, null, 2)}
+                    </pre>
+                  ) : null}
+              </DisclosurePanel>
+
+                </TabsContent>
+
+                <TabsContent value="history" className="space-y-4">
+              <DisclosurePanel
+                icon={<GitCommitHorizontal className="h-4 w-4" />}
+                title="最近提交"
+                defaultOpen
+                subtitle={state.readFailures['提交历史'] ? '读取未完成' : `${state.commits.length} 条`}
+                contentClassName="space-y-3 p-5"
+              >
+                  <input
+                    value={commitQuery}
+                    onChange={(event) => setCommitQuery(event.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    placeholder="搜索提交"
+                  />
+                  {state.branch.pinnedCommit ? (
+                    <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn">
+                      当前固定在 {shortCommit(state.branch.pinnedCommit)}。下次部署会恢复到分支最新提交；也可以直接点最新提交旁的“恢复最新”。
+                    </div>
+                  ) : null}
+                  {state.commits.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">{state.readFailures['提交历史'] ? '提交历史尚未确认，请重试读取。' : '暂无 git log。'}</div>
+                  ) : null}
+                  {state.commits.length > 0 && filteredCommits.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                      没有匹配的提交。
+                    </div>
+                  ) : null}
+                  {filteredCommits.map((commit) => {
+                    const latestHash = state.commits[0]?.hash;
+                    const isActuallyLatest = sameCommit(commit.hash, latestHash);
+                    const isPinned = sameCommit(commit.hash, state.branch.pinnedCommit);
+                    const isCurrent = sameCommit(commit.hash, state.branch.runningCommitSha);
+                    return (
+                      <div key={commit.hash} className={`rounded-md border p-3 text-sm ${isCurrent ? 'border-primary/50 bg-primary/5' : 'border-border'}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isCurrent ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />}
+                              <CodePill>{commit.hash}</CodePill>
+                              {isActuallyLatest ? <span className="rounded border border-ok/40 bg-ok-soft px-2 py-0.5 text-xs text-ok">最新</span> : null}
+                              {isCurrent ? <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs text-primary">当前</span> : null}
+                              {isPinned ? <span className="rounded border border-warn/40 bg-warn-soft px-2 py-0.5 text-xs text-warn">已固定</span> : null}
+                              <span className="text-xs text-muted-foreground">{commit.date}</span>
+                            </div>
+                            <div className="mt-2 line-clamp-2">{commit.subject}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">{commit.author}</div>
+                          </div>
+                          {isActuallyLatest && state.branch.pinnedCommit ? (
+                            <Button size="sm" variant="outline" onClick={() => void unpinCommit()}>
+                              <RefreshCw />
+                              恢复最新
+                            </Button>
+                          ) : (
+                            <Button size="sm" variant="outline" disabled={isPinned} onClick={() => void checkoutCommit(commit)}>
+                              <GitCommitHorizontal />
+                              {isPinned ? '已固定' : '固定'}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </DisclosurePanel>
+
+                </TabsContent>
+              </Tabs>
 
               {/* 波2:配置检查器(逐 key 溯源 + 部署计划预览)。 */}
               <DisclosurePanel
@@ -1571,7 +1877,7 @@ export function BranchDetailPage(): JSX.Element {
                     <LogPanel title={action.label} lines={action.log} status={action.status} />
                   ) : state.operationLogs.length === 0 ? (
                     <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                      还没有构建记录。
+                      {state.readFailures['部署日志'] ? '部署日志尚未确认，请重试读取。' : '还没有构建记录。'}
                     </div>
                   ) : (
                     state.operationLogs.slice().reverse().slice(0, 5).map((log) => (
@@ -1590,19 +1896,19 @@ export function BranchDetailPage(): JSX.Element {
               </DisclosurePanel>
             </section>
 
-            <aside className="min-w-0 space-y-5">
+            <aside className={BRANCH_DETAIL_COLUMN_CLASS}>
               <Card className="rounded-md">
                 <CardHeader className="p-5">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-base">预览别名</CardTitle>
-                    <Button size="sm" variant="outline" onClick={() => void saveAliases()}>
+                    {canManageConsole ? <Button size="sm" variant="outline" onClick={() => void saveAliases()}>
                       <Settings />
                       编辑
-                    </Button>
+                    </Button> : null}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-5 pt-0 text-sm">
-                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || '未配置'} />
+                  <Field label={primaryEntry?.name || '主应用入口'} value={primaryEntryUrl || (state.readFailures['预览入口'] || !state.previewMode ? '尚未确认' : '未配置')} />
                   {state.aliases.aliases.length > 0 ? (
                     <div className="space-y-2">
                       <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">别名</div>
@@ -1648,280 +1954,7 @@ export function BranchDetailPage(): JSX.Element {
                 </CardContent>
               </Card>
 
-              {/* Diagnostics tabs — Week 4.6: 6 个 DisclosurePanel 折叠成 4 类
-                  二级视图（日志 / 配置 / 历史 / Bridge）。每个 tab 内仍然
-                  保留 DisclosurePanel 的展开 / 收起，但同时只暴露一类。 */}
-              <Tabs value={detailTab} onValueChange={(value) => setDetailTab(value as typeof detailTab)}>
-                <TabsList aria-label="分支诊断分区" className="cds-surface-raised cds-hairline p-1">
-                  <TabsTrigger value="logs">
-                    <FileText className="h-4 w-4 shrink-0" />
-                    日志
-                  </TabsTrigger>
-                  <TabsTrigger value="config">
-                    <Wrench className="h-4 w-4 shrink-0" />
-                    配置
-                  </TabsTrigger>
-                  <TabsTrigger value="history">
-                    <GitCommitHorizontal className="h-4 w-4 shrink-0" />
-                    历史
-                  </TabsTrigger>
-                  <TabsTrigger value="bridge">
-                    <ShieldCheck className="h-4 w-4 shrink-0" />
-                    Bridge
-                  </TabsTrigger>
-                </TabsList>
 
-                <TabsContent value="logs" className="space-y-4">
-              <DisclosurePanel
-                icon={<TerminalSquare className="h-4 w-4" />}
-                title="容器日志"
-                subtitle={selectedService?.profileId || '选择服务后查看'}
-                contentClassName="p-5"
-              >
-                  {selectedService ? (
-                    <div className="mb-3 flex justify-end">
-                      <Button size="sm" variant="outline" onClick={() => void loadContainerLogs(selectedService.profileId)}>
-                        <RefreshCw />
-                        刷新
-                      </Button>
-                    </div>
-                  ) : null}
-                  {selectedService ? (
-                    <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                      <CodePill>{selectedService.profileId}</CodePill>
-                      <CodePill>{selectedService.containerName}</CodePill>
-                    </div>
-                  ) : null}
-                  {containerLogs.status === 'loading' ? <LoadingBlock label="加载容器日志" /> : null}
-                  {containerLogs.status === 'error' ? <ErrorBlock message={containerLogs.message} /> : null}
-                  {containerLogs.status === 'ok' ? (
-                    <pre className="max-h-[26.25rem] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
-                      {containerLogs.logs.trim() || '还没有日志输出'}
-                    </pre>
-                  ) : null}
-                  {containerLogs.status === 'idle' ? (
-                    <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                      选择一个服务后显示最近容器日志。
-                    </div>
-                  ) : null}
-              </DisclosurePanel>
-
-<DisclosurePanel
-                icon={<ExternalLink className="h-4 w-4" />}
-                title="HTTP 转发日志"
-                subtitle={`${state.proxyLogs.length} 条，实时订阅`}
-                contentClassName="space-y-3 p-5"
-              >
-                  <div className="flex gap-2">
-                    <input
-                      value={proxyLogQuery}
-                      onChange={(event) => setProxyLogQuery(event.target.value)}
-                      className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      placeholder="筛 host / path / 状态"
-                    />
-                    <Button size="sm" variant="outline" onClick={() => void refreshProxyLogs()}>
-                      <RefreshCw />
-                      刷新
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <MetricTile label="总数" value={proxyLogStats.total} />
-                    <MetricTile label="异常" value={proxyLogStats.issues} />
-                    <MetricTile label="慢请求" value={proxyLogStats.slow} />
-                  </div>
-                  {state.proxyLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      暂无该分支的 worker 转发记录。打开预览或访问接口后这里会自动出现。
-                    </div>
-                  ) : null}
-                  {state.proxyLogs.length > 0 && filteredProxyLogs.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      没有匹配的转发记录。
-                    </div>
-                  ) : null}
-                  {filteredProxyLogs.map((event) => (
-                    <div key={event.id} className="rounded-md border border-border p-3 text-xs">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded border px-2 py-0.5 ${httpStatusClass(event.status)}`}>{event.status}</span>
-                        <span className={`rounded border px-2 py-0.5 ${proxyOutcomeClass(event.outcome)}`}>{event.outcome}</span>
-                        <CodePill>{event.method}</CodePill>
-                        {event.profileId ? <CodePill>{event.profileId}</CodePill> : null}
-                        <span className="text-muted-foreground">{formatDurationMs(event.durationMs)}</span>
-                      </div>
-                      <div className="mt-2 break-all text-sm">{event.host}{event.url}</div>
-                      <div className="mt-1 text-muted-foreground">{formatDate(event.ts)}{event.upstream ? ` -> ${event.upstream}` : ''}</div>
-                      {event.hint || event.errorMessage ? (
-                        <div className="mt-2 text-muted-foreground">{event.hint || event.errorMessage}</div>
-                      ) : null}
-                    </div>
-                  ))}
-              </DisclosurePanel>
-
-                </TabsContent>
-
-                <TabsContent value="config" className="space-y-4">
-              <DisclosurePanel
-                icon={<Settings className="h-4 w-4" />}
-                title="有效配置"
-                subtitle="命令 / 镜像 / 端口"
-                contentClassName="space-y-3 p-5 text-sm"
-              >
-                  {selectedProfile ? (
-                    <>
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void editProfileTextOverride(selectedProfile, 'command')}>
-                          <TerminalSquare />
-                          覆写命令
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => void editProfileTextOverride(selectedProfile, 'dockerImage')}>
-                          <Code2 />
-                          覆写镜像
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => void editProfilePortOverride(selectedProfile)}>
-                          <Settings />
-                          覆写端口
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => void editProfilePathPrefixesOverride(selectedProfile)}>
-                          <ExternalLink />
-                          路径前缀
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => void editProfileStartupSignalOverride(selectedProfile)}>
-                          <TerminalSquare />
-                          启动信号
-                        </Button>
-                        {selectedProfile.hasOverride ? (
-                          <Button size="sm" variant="outline" onClick={() => void clearProfileOverride(selectedProfile)}>
-                            <RefreshCw />
-                            恢复公共配置
-                          </Button>
-                        ) : null}
-                      </div>
-                      <Field label="镜像" value={selectedProfile.effective?.dockerImage || '未设置'} />
-                      <Field label="端口" value={selectedProfile.effective?.containerPort || '未设置'} />
-                      <Field label="路径前缀" value={(selectedProfile.effective?.pathPrefixes || []).join(', ') || '默认'} />
-                      <Field
-                        label="启动信号"
-                        value={selectedProfile.effective?.startupSignal || '未设置(走默认 readiness 探针)'}
-                      />
-                      <div>
-                        <div className="mb-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground">命令</div>
-                        <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
-                          {selectedProfile.effective?.command || '未设置'}
-                        </pre>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-muted-foreground">暂无 profile 信息。</div>
-                  )}
-              </DisclosurePanel>
-
-                </TabsContent>
-
-                <TabsContent value="bridge" className="space-y-4">
-              <DisclosurePanel
-                icon={<ShieldCheck className="h-4 w-4" />}
-                title="Bridge 操作"
-                subtitle="paused"
-                contentClassName="space-y-3 p-5 text-sm"
-              >
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <span className={`rounded border px-2 py-0.5 ${statusClass('idle')}`}>
-                      bridge paused
-                    </span>
-                  </div>
-                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
-                    Page Agent Bridge HTTP 轮询已暂停。预览页不会建立 Bridge 连接，也不会静默轮询控制面。
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => void startBridgeSession()} disabled>
-                      <Play />
-                      激活
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => void readBridgeState()} disabled={!state.bridgeConnection}>
-                      <ShieldCheck />
-                      读取状态
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => void endBridgeSession()} disabled={!state.bridgeActive && !state.bridgeConnection}>
-                      <RefreshCw />
-                      结束
-                    </Button>
-                  </div>
-                  {state.bridgeState ? (
-                    <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
-                      {JSON.stringify(state.bridgeState, null, 2)}
-                    </pre>
-                  ) : null}
-              </DisclosurePanel>
-
-                </TabsContent>
-
-                <TabsContent value="history" className="space-y-4">
-              <DisclosurePanel
-                icon={<GitCommitHorizontal className="h-4 w-4" />}
-                title="最近提交"
-                subtitle={`${state.commits.length} 条`}
-                contentClassName="space-y-3 p-5"
-              >
-                  <input
-                    value={commitQuery}
-                    onChange={(event) => setCommitQuery(event.target.value)}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    placeholder="搜索提交"
-                  />
-                  {state.branch.pinnedCommit ? (
-                    <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn">
-                      当前固定在 {shortCommit(state.branch.pinnedCommit)}。下次部署会恢复到分支最新提交；也可以直接点最新提交旁的“恢复最新”。
-                    </div>
-                  ) : null}
-                  {state.commits.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">暂无 git log。</div>
-                  ) : null}
-                  {state.commits.length > 0 && filteredCommits.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                      没有匹配的提交。
-                    </div>
-                  ) : null}
-                  {filteredCommits.map((commit) => {
-                    const latestHash = state.commits[0]?.hash;
-                    const isActuallyLatest = sameCommit(commit.hash, latestHash);
-                    const isPinned = sameCommit(commit.hash, state.branch.pinnedCommit);
-                    const isCurrent = state.branch.pinnedCommit
-                      ? isPinned
-                      : sameCommit(commit.hash, state.branch.commitSha) || isActuallyLatest;
-                    return (
-                      <div key={commit.hash} className={`rounded-md border p-3 text-sm ${isCurrent ? 'border-primary/50 bg-primary/5' : 'border-border'}`}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              {isCurrent ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />}
-                              <CodePill>{commit.hash}</CodePill>
-                              {isActuallyLatest ? <span className="rounded border border-ok/40 bg-ok-soft px-2 py-0.5 text-xs text-ok">最新</span> : null}
-                              {isCurrent ? <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs text-primary">当前</span> : null}
-                              {isPinned ? <span className="rounded border border-warn/40 bg-warn-soft px-2 py-0.5 text-xs text-warn">已固定</span> : null}
-                              <span className="text-xs text-muted-foreground">{commit.date}</span>
-                            </div>
-                            <div className="mt-2 line-clamp-2">{commit.subject}</div>
-                            <div className="mt-1 text-xs text-muted-foreground">{commit.author}</div>
-                          </div>
-                          {isActuallyLatest && state.branch.pinnedCommit ? (
-                            <Button size="sm" variant="outline" onClick={() => void unpinCommit()}>
-                              <RefreshCw />
-                              恢复最新
-                            </Button>
-                          ) : (
-                            <Button size="sm" variant="outline" disabled={isCurrent} onClick={() => void checkoutCommit(commit)}>
-                              <GitCommitHorizontal />
-                              {isCurrent ? '当前' : '固定'}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-              </DisclosurePanel>
-
-                </TabsContent>
-              </Tabs>
             </aside>
           </div>
         ) : null}
@@ -1948,7 +1981,7 @@ function BranchSelect({ project, branches }: { project: ProjectSummary; branches
           这个项目还没有跟踪分支。先到分支列表从远程分支创建并部署。
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className={BRANCH_SELECTOR_GRID_CLASS}>
           {branches.map((branch) => (
             <a key={branch.id} href={`/branch-panel/${encodeURIComponent(branch.id)}?project=${encodeURIComponent(project.id)}`} className="cds-surface-raised cds-hairline p-4 hover:bg-accent/50">
               <div className="font-medium">{branch.branch}</div>
@@ -1978,10 +2011,12 @@ function diagnosticActionLabel(issue: DiagnosticIssue): string {
 
 function FailureDiagnosticPanel({
   issues,
+  canManageConsole,
   onAction,
   onDeploy,
 }: {
   issues: DiagnosticIssue[];
+  canManageConsole: boolean;
   onAction: (issue: DiagnosticIssue) => void;
   onDeploy: (profileId?: string) => void;
 }): JSX.Element {
@@ -2019,10 +2054,10 @@ function FailureDiagnosticPanel({
                 </div>
                 <div className="mt-2 text-sm leading-6 text-muted-foreground">{issue.message}</div>
               </div>
-              <Button size="sm" variant={issue.action === 'command' || issue.action === 'image' || issue.action === 'port' ? 'default' : 'outline'} onClick={() => onAction(issue)}>
+              {canManageConsole || !['command', 'image', 'port'].includes(issue.action || '') ? <Button size="sm" variant={issue.action === 'command' || issue.action === 'image' || issue.action === 'port' ? 'default' : 'outline'} onClick={() => onAction(issue)}>
                 <Wrench />
                 {diagnosticActionLabel(issue)}
-              </Button>
+              </Button> : <span className="text-sm text-muted-foreground">配置修改请联系系统所有者。</span>}
             </div>
           </div>
         ))}

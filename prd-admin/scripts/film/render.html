@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- 片花导出专用页面：由 scripts/render-landing-film.mjs 通过 vite dev server 打开，不参与生产构建 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- 无头浏览器里没有苹方：中文走 Noto Sans SC（与苹方同为现代无衬线黑体）。字体请求由导出脚本代为下载，见 render-landing-film.mjs -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" />
+    <style>
+      html, body { margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      #film { position: relative; width: 1920px; height: 1080px; }
+    </style>
+  </head>
+  <body>
+    <div id="film"></div>
+    <script type="module" src="/src/pages/home/film/filmRenderEntry.tsx"></script>
+  </body>
+</html>

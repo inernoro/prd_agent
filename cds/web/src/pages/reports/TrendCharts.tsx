@@ -21,7 +21,7 @@
  * 3. **颜色不是唯一编码**。仓库的 --ok/--warn/--bad 在白天主题下色觉分辨
  *    ΔE 7.7，落在 6–8 的地板区，按规矩必须配第二编码，所以三档另带不同虚线
  *    样式与线端直标。（夜间那组明度偏高、越出暗底的明度带，是已知边界，
- *    见 doc/debt.cds.md；此处不改全局 token，改它会波及整个 CDS。）
+ *    见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md；此处不改全局 token，改它会波及整个 CDS。）
  */
 import type { PipelineSeries } from '@/lib/api';
 
@@ -222,7 +222,7 @@ function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: Char
       </div>
       {zoom && say ? <p className="say">{say}</p> : null}
       <div className="capv">
-        <span>上限 {max} 件/日{zoom ? '（当日峰值）' : '（7 日均）'}</span>
+        <span>近 {days.length} 天 · 上限 {max} 件/日{zoom ? '（当日峰值）' : '（7 日均）'}</span>
         <span>
           {md(days[0] ?? '')} 至 {md(days[days.length - 1] ?? '')}
         </span>

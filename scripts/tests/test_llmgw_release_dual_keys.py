@@ -6,7 +6,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXEC_DEP = ROOT / "exec_dep.sh"
-PROD_STAGE_WORKFLOW = ROOT / ".github" / "workflows" / "llmgw-prod-stage.yml"
 STANDALONE_NGINX = ROOT / "deploy" / "nginx" / "conf.d" / "branches" / "_standalone.conf"
 
 
@@ -31,31 +30,14 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
         self.assertIn('GW_KEY="$protocol_canary_key" python3 scripts/llmgw-protocol-canary.py', self.source)
         self.assertNotIn('GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py', self.source)
 
-    def test_global_runtime_gate_keeps_release_gate_key(self) -> None:
-        self.assertIn(
-            'GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py '
-            '$args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates',
-            self.source,
-        )
-
-    def test_production_workflow_injects_independent_post_deploy_keys(self) -> None:
-        workflow = PROD_STAGE_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn(
-            "LLMGW_POST_DEPLOY_SERVICE_KEY: ${{ secrets.LLMGW_PROD_POST_DEPLOY_SERVICE_KEY }}",
-            workflow,
-        )
-        self.assertIn(
-            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY: ${{ secrets.LLMGW_PROD_PROTOCOL_CANARY_KEY }}",
-            workflow,
-        )
-        self.assertNotIn(
-            "LLMGW_POST_DEPLOY_SERVICE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}",
-            workflow,
-        )
-        self.assertNotIn(
-            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}",
-            workflow,
-        )
+    def test_post_deploy_has_no_shadow_release_gate(self) -> None:
+        # MAP 只剩 HTTP 调网关一条路，发布前后都不再有影子样本门禁与阶段账本；
+        # 发布后只跑 serving probe + gw-smoke + 可选四协议 canary。
+        self.assertNotIn("scripts/llmgw-release-gate.py", self.source)
+        self.assertNotIn("--require-runtime-gates", self.source)
+        self.assertNotIn("LLMGW_MODE", self.source)
+        self.assertNotIn("scripts/llmgw-prod-stage.sh", self.source)
+        self.assertIn("python3 scripts/llmgw-serving-probe.py", self.source)
 
     def test_smoke_sends_scoped_identity_headers(self) -> None:
         smoke_source = (ROOT / "scripts" / "gw-smoke.py").read_text(encoding="utf-8")

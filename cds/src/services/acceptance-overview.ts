@@ -7,24 +7,19 @@
  *     §7.0 决策读者首屏（产品失败与验收失败分开）、§7.1 Verdict 语义分层
  *   - doc/guide.acceptance.report-evidence.md §4 失败首屏红标、颜色契约
  *   - .claude/rules/conclusion-before-numbers.md 第一屏是挂着数字的判断句；建议句相同的卡片合并
- *   - doc/debt.acceptance-center-cds.md「验收报告重复归档」：通过率分母必须只计每个目标的最新版
+ *   - https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.acceptance-center-cds.md「验收报告重复归档」：通过率分母必须只计每个目标的最新版
  */
 import type { AcceptanceReportMeta, BranchTombstone } from '../types.js';
+import { parseReportMetadata, isCodeReviewReport } from '../shared/report-kind.js';
+import type { ReportKind, ParsedReportTitle } from '../shared/report-kind.js';
+export { REPORT_KINDS, parseReportTitle, parseReportMetadata, isCodeReviewReport } from '../shared/report-kind.js';
+export type { ReportKind, ParsedReportTitle } from '../shared/report-kind.js';
 
 export type OverviewVerdict = 'pass' | 'conditional' | 'fail';
 
-/** 标题合同的九类前缀（§4.1.2）。不在此列的标题归「其他」。 */
-export const REPORT_KINDS = [
-  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练',
-] as const;
-export type ReportKind = (typeof REPORT_KINDS)[number] | '其他';
-
-export interface ParsedReportTitle {
-  kind: ReportKind;
-  /** 重点对象（标题中段）；无法解析时为整个标题。 */
-  target: string;
-  /** 目标日期 YYYY-MM-DD；无法解析时为 null。 */
-  targetDate: string | null;
+/** Operational monitor snapshots and code reviews are not acceptance evidence. */
+export function isAcceptanceAggregationReport(report: AcceptanceReportMeta): boolean {
+  return !report.monitorEvent && !isCodeReviewReport(report);
 }
 
 export interface OverviewReportRef {
@@ -141,20 +136,10 @@ export interface ReportsOverview {
    *
    * 为什么必须返回：台账「展开被取代版本」时这些行也要落进九类页签。前端只有
    * `reports` 时查不到它们的 kind，会整批掉进「其他」——页签计数虚高、点真实类目
-   * 又看不到它们（2026-09-09 富数据验收实测）。标题解析是服务端 SSOT，
-   * 前端不得自己再实现一份（predicate-and-wiring-discipline 形状 3）。
+   * 又看不到它们（2026-09-09 富数据验收实测）。标题解析复用 shared/report-kind 同一纯函数，
+   * 前后端不得分别实现判据（predicate-and-wiring-discipline 形状 3）。
    */
   supersededReports: OverviewReportRef[];
-}
-
-const TITLE_RE = /^(\S+?)\s*[·・]\s*(.+?)\s*[·・]\s*(\d{4}-\d{2}-\d{2})\s*$/;
-
-export function parseReportTitle(title: string): ParsedReportTitle {
-  const m = TITLE_RE.exec(title.trim());
-  if (!m) return { kind: '其他', target: title.trim(), targetDate: null };
-  const prefix = m[1];
-  const kind: ReportKind = (REPORT_KINDS as readonly string[]).includes(prefix) ? (prefix as ReportKind) : '其他';
-  return { kind, target: kind === '其他' ? title.trim() : m[2].trim(), targetDate: m[3] };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -247,7 +232,7 @@ function toRef(r: AcceptanceReportMeta, parsed: ParsedReportTitle, version: numb
 export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: OverviewReportRef[]; superseded: OverviewReportRef[]; folded: number } {
   const groups = new Map<string, AcceptanceReportMeta[]>();
   for (const r of reports) {
-    const key = identityKey(r, parseReportTitle(r.title));
+    const key = identityKey(r, parseReportMetadata(r));
     const g = groups.get(key);
     if (g) g.push(r);
     else groups.set(key, [r]);
@@ -258,9 +243,9 @@ export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: O
   for (const g of groups.values()) {
     g.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const last = g[g.length - 1];
-    const parsed = parseReportTitle(last.title);
+    const parsed = parseReportMetadata(last);
     latest.push(toRef(last, parsed, g.length, g.slice(0, -1).map((x) => x.id)));
-    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportTitle(old.title), i + 1, [])));
+    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportMetadata(old), i + 1, [])));
     folded += g.length - 1;
   }
   latest.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -451,6 +436,8 @@ export function buildReportsOverview(
   tombstones: BranchTombstone[],
   options: BuildOverviewOptions = {},
 ): ReportsOverview {
+  const ledger = foldReportVersions(reports.filter((r) => !r.monitorEvent));
+  reports = reports.filter(isAcceptanceAggregationReport);
   const days = Math.max(1, Math.min(90, options.days ?? 7));
   const toMs = (options.to ?? new Date()).getTime();
   const fromMs = toMs - days * DAY_MS;
@@ -473,6 +460,8 @@ export function buildReportsOverview(
   const kindCounts = new Map<ReportKind, number>();
   for (const r of windowReports) kindCounts.set(r.kind, (kindCounts.get(r.kind) ?? 0) + 1);
   const kinds = Array.from(kindCounts, ([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count);
+  const reviewCount = ledger.latest.filter((r) => r.kind === '代码审查报告' && inWindow(r.createdAt, fromMs, toMs)).length;
+  if (reviewCount) kinds.push({ kind: '代码审查报告', count: reviewCount });
 
   const clusters = buildClusters(windowReports, allLatest, days, toMs);
   const daily = buildDaily(allLatest, toMs, Math.max(1, Math.min(90, options.dailyDays ?? 14)), tz);
@@ -585,7 +574,7 @@ export function buildReportsOverview(
     clusters,
     daily,
     mergeCoverage,
-    reports: allLatest,
-    supersededReports: allSuperseded,
+    reports: ledger.latest,
+    supersededReports: ledger.superseded,
   };
 }

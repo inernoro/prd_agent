@@ -32,6 +32,7 @@ export type SsoLoginOption = {
 export type SsoOptionsResponse = {
   items: SsoLoginOption[];
   passwordLoginDisabled: boolean;
+  cdsEnabled?: boolean;
 };
 
 export type GetSsoOptionsContract = () => Promise<ApiResponse<SsoOptionsResponse>>;

@@ -19,7 +19,7 @@ public class AgentApiKey
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>Key 展示名（如"我的 Cursor 工作站"）</summary>
+    /// <summary>Key 展示名（如"我的 Codex 工作站"）</summary>
     public string Name { get; set; } = string.Empty;
 
     /// <summary>Key 说明（可选，如用途、调用方来源）</summary>
@@ -149,6 +149,9 @@ public class AgentApiKey
 
     /// <summary>每分钟工具调用次数上限；null=系统默认 60。</summary>
     public int? McpRateLimitPerMin { get; set; }
+
+    /// <summary>用户在客户端设置中独立授予的对外发布权限；存量和新密钥默认关闭，不随自动范围授予。</summary>
+    public bool WebPublicExposureAllowed { get; set; }
 
     /// <summary>
     /// 文学配图的模型选择方式。存量文档没有该字段时反序列化为 0，必须等价于跟随用户面板，

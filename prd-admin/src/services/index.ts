@@ -23,6 +23,7 @@ import type {
 import type {
   GetAdminNotificationsContract,
   HandleAdminNotificationContract,
+  HandleBatchAdminNotificationsContract,
   HandleAllAdminNotificationsContract,
   GetAdminPushSubscriptionsContract,
   UpdateAdminPushProfileContract,
@@ -305,6 +306,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
 import {
+  completeCdsLoginReal,
   getSsoOptionsReal,
   loginReal,
   loginWithMiduoPlanetTokenReal,
@@ -374,6 +376,7 @@ import {
 } from '@/services/real/watermark';
 import { adminImpersonateReal } from '@/services/real/lab';
 import {
+  getModelLabModelOptionsReal,
   createModelLabExperimentReal,
   deleteModelLabExperimentReal,
   getModelLabExperimentReal,
@@ -383,6 +386,7 @@ import {
   updateModelLabExperimentReal,
   upsertModelLabModelSetReal,
 } from '@/services/real/modelLab';
+export const getModelLabModelOptions = withAuth(getModelLabModelOptionsReal);
 import {
   cancelImageGenRunReal,
   clarifyImageGenPromptReal,
@@ -526,6 +530,7 @@ import {
   getLiteraryAgentImageGenResolvedModelReal,
   getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
+  getLiteraryAgentRunByRequestReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
   listReferenceImageConfigsMarketplaceReal,
@@ -617,6 +622,7 @@ import {
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
+  handleBatchAdminNotificationsReal,
   handleAllAdminNotificationsReal,
   getAdminPushSubscriptionsReal,
   updateAdminPushProfileReal,
@@ -829,6 +835,26 @@ import {
   revokeTeamWeekShareReal,
   viewTeamWeekShareReal,
 } from '@/services/real/reportAgent';
+import {
+  listMonthlyReportsReal,
+  getMonthlyReportReal,
+  createMonthlyReportReal,
+  updateMonthlyReportReal,
+  deleteMonthlyReportReal,
+  submitMonthlyReportReal,
+  recordMonthlyReportViewReal,
+  getMonthlyReportViewsSummaryReal,
+  listMonthlyWeeklyCandidatesReal,
+  getMonthlyTeamOverviewReal,
+  listMonthlyCommentsReal,
+  createMonthlyCommentReal,
+  updateMonthlyCommentReal,
+  deleteMonthlyCommentReal,
+  uploadMonthlyCommentImageReal,
+  listMonthlyLikesReal,
+  likeMonthlyReportReal,
+  unlikeMonthlyReportReal,
+} from '@/services/real/reportAgentMonthly';
 export type {
   CreateTeamWeekShareInput,
   TeamWeekShareCreateResult,
@@ -849,6 +875,7 @@ function withAuth<TArgs extends unknown[], TResult>(
 
 export const login: LoginContract = loginReal;
 export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
+export const completeCdsLogin = completeCdsLoginReal;
 export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
 export const loginWithSyntheticTicket: SyntheticLoginContract = loginWithSyntheticTicketReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;
@@ -1111,6 +1138,7 @@ export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = with
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
 export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
+export const getLiteraryAgentRunByRequest = withAuth(getLiteraryAgentRunByRequestReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);
 // Reference Image Configs 海鲜市场
@@ -1258,6 +1286,25 @@ export const getTeamIssuesView: GetTeamIssuesViewContract = withAuth(getTeamIssu
 export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
 export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);
 export const exportReportMarkdown = exportReportMarkdownReal;
+// Report Agent 月报
+export const listMonthlyReports = withAuth(listMonthlyReportsReal);
+export const getMonthlyReport = withAuth(getMonthlyReportReal);
+export const createMonthlyReport = withAuth(createMonthlyReportReal);
+export const updateMonthlyReport = withAuth(updateMonthlyReportReal);
+export const deleteMonthlyReport = withAuth(deleteMonthlyReportReal);
+export const submitMonthlyReport = withAuth(submitMonthlyReportReal);
+export const recordMonthlyReportView = withAuth(recordMonthlyReportViewReal);
+export const getMonthlyReportViewsSummary = withAuth(getMonthlyReportViewsSummaryReal);
+export const listMonthlyWeeklyCandidates = withAuth(listMonthlyWeeklyCandidatesReal);
+export const getMonthlyTeamOverview = withAuth(getMonthlyTeamOverviewReal);
+export const listMonthlyComments: ListCommentsContract = withAuth(listMonthlyCommentsReal);
+export const createMonthlyComment: CreateCommentContract = withAuth(createMonthlyCommentReal);
+export const updateMonthlyComment: UpdateCommentContract = withAuth(updateMonthlyCommentReal);
+export const deleteMonthlyComment: DeleteCommentContract = withAuth(deleteMonthlyCommentReal);
+export const uploadMonthlyCommentImage: UploadReportCommentImageContract = withAuth(uploadMonthlyCommentImageReal);
+export const listMonthlyLikes: ListReportLikesContract = withAuth(listMonthlyLikesReal);
+export const likeMonthlyReport: LikeReportContract = withAuth(likeMonthlyReportReal);
+export const unlikeMonthlyReport: UnlikeReportContract = withAuth(unlikeMonthlyReportReal);
 export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
 export const markVacation: MarkVacationContract = withAuth(markVacationReal);
 export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
@@ -1298,6 +1345,7 @@ export const viewTeamWeekShare = viewTeamWeekShareReal;
 
 // Arena 竞技场
 import {
+  getArenaModelOptionsReal,
   listArenaGroupsReal,
   createArenaGroupReal,
   updateArenaGroupReal,
@@ -1319,6 +1367,7 @@ import {
 } from '@/services/real/arena';
 export type { ArenaAttachmentInfo } from '@/services/real/arena';
 
+export const getArenaModelOptions = withAuth(getArenaModelOptionsReal);
 export const listArenaGroups = withAuth(listArenaGroupsReal);
 export const createArenaGroup = withAuth(createArenaGroupReal);
 export const updateArenaGroup = withAuth(updateArenaGroupReal);
@@ -2389,3 +2438,5 @@ export type {
   FrontEndAgentRequest,
   FrontEndAgentTaskType,
 } from '@/services/real/frontEndAgent';
+
+export const handleBatchAdminNotifications: HandleBatchAdminNotificationsContract = withAuth(handleBatchAdminNotificationsReal);

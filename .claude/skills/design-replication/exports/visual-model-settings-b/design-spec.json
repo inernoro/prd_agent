@@ -1,0 +1,883 @@
+{
+  "rootId": "2:23",
+  "sections": [
+    {
+      "name": "方案标题",
+      "w": 1120,
+      "h": 52,
+      "gap": 16,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "方案编号",
+      "w": 48,
+      "h": 48,
+      "gap": 0,
+      "padding": 0,
+      "radius": 8
+    },
+    {
+      "name": "设计方向",
+      "w": 1000,
+      "h": 52,
+      "gap": 4,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "视觉创作模型设置",
+      "w": 1120,
+      "h": 816,
+      "gap": 0,
+      "padding": 0,
+      "radius": 8
+    },
+    {
+      "name": "固定标题",
+      "w": 1120,
+      "h": 108,
+      "gap": 16,
+      "padding": 24,
+      "radius": 0
+    },
+    {
+      "name": "标题与说明",
+      "w": 920,
+      "h": 60,
+      "gap": 4,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "分隔线",
+      "w": 1120,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "内容区",
+      "w": 1120,
+      "h": 631,
+      "gap": 16,
+      "padding": 28,
+      "radius": 0
+    },
+    {
+      "name": "开放规则",
+      "w": 1064,
+      "h": 42,
+      "gap": 8,
+      "padding": 12,
+      "radius": 8
+    },
+    {
+      "name": "模型与详情",
+      "w": 1064,
+      "h": 517,
+      "gap": 20,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "模型列表",
+      "w": 600,
+      "h": 517,
+      "gap": 10,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "列表筛选",
+      "w": 600,
+      "h": 38,
+      "gap": 12,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Input",
+      "w": 388,
+      "h": 37,
+      "gap": 0,
+      "padding": 12,
+      "radius": 8
+    },
+    {
+      "name": "弹性留白",
+      "w": 111,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Checkbox and Label",
+      "w": 120,
+      "h": 24,
+      "gap": 12,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Switch",
+      "w": 40,
+      "h": 24,
+      "gap": 0,
+      "padding": 0,
+      "radius": 9999
+    },
+    {
+      "name": "Checkbox and Label",
+      "w": 120,
+      "h": 24,
+      "gap": 12,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Switch",
+      "w": 40,
+      "h": 24,
+      "gap": 0,
+      "padding": 0,
+      "radius": 9999
+    },
+    {
+      "name": "Checkbox and Label",
+      "w": 120,
+      "h": 24,
+      "gap": 12,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Switch",
+      "w": 40,
+      "h": 24,
+      "gap": 0,
+      "padding": 0,
+      "radius": 9999
+    },
+    {
+      "name": "Checkbox and Label",
+      "w": 120,
+      "h": 24,
+      "gap": 12,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Switch",
+      "w": 40,
+      "h": 24,
+      "gap": 0,
+      "padding": 0,
+      "radius": 9999
+    },
+    {
+      "name": "Checkbox and Label",
+      "w": 120,
+      "h": 24,
+      "gap": 12,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Switch",
+      "w": 40,
+      "h": 24,
+      "gap": 0,
+      "padding": 0,
+      "radius": 9999
+    },
+    {
+      "name": "模型详情面板",
+      "w": 444,
+      "h": 517,
+      "gap": 10,
+      "padding": 24,
+      "radius": 8
+    },
+    {
+      "name": "当前模型",
+      "w": 396,
+      "h": 32,
+      "gap": 8,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "弹性留白",
+      "w": 248,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "分隔线",
+      "w": 396,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "分辨率筛选",
+      "w": 396,
+      "h": 32,
+      "gap": 8,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "分隔线",
+      "w": 396,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "Input",
+      "w": 396,
+      "h": 37,
+      "gap": 0,
+      "padding": 12,
+      "radius": 8
+    },
+    {
+      "name": "展示顺序",
+      "w": 396,
+      "h": 36,
+      "gap": 8,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "弹性留白",
+      "w": 177,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "默认项",
+      "w": 396,
+      "h": 36,
+      "gap": 8,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "弹性留白",
+      "w": 188,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    },
+    {
+      "name": "固定底部操作栏",
+      "w": 1120,
+      "h": 76,
+      "gap": 12,
+      "padding": 24,
+      "radius": 0
+    },
+    {
+      "name": "弹性留白",
+      "w": 519,
+      "h": 1,
+      "gap": 0,
+      "padding": 0,
+      "radius": 0
+    }
+  ],
+  "texts": [
+    {
+      "text": "B",
+      "size": 24,
+      "font": "Noto Sans SC",
+      "weight": "Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 34
+      }
+    },
+    {
+      "text": "左右分栏 / 渐进披露",
+      "size": 16,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 24
+      }
+    },
+    {
+      "text": "推荐方案。左侧做选择，右侧看详情；尺寸不再打断模型浏览。",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "视觉创作模型设置",
+      "size": 24,
+      "font": "Noto Sans SC",
+      "weight": "Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 34
+      }
+    },
+    {
+      "text": "管理客户可用模型、默认项与展示顺序",
+      "size": 14,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "关闭",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "新增模型需手动开放；调整展示顺序不会改变默认项。",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "搜索模型名称或标识",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "全部 5 / 开放 4",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "Gemini 3.1 Flash",
+      "size": 15,
+      "font": "Inter",
+      "weight": "Semi Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "gemini-3.1-flash-image-preview",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "Gemini 3 Pro",
+      "size": 15,
+      "font": "Inter",
+      "weight": "Semi Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "gemini-3-pro-image-preview",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "Seedream 4.5",
+      "size": 15,
+      "font": "Inter",
+      "weight": "Semi Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "doubao-seedream-4-5-251128",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "GPT Image 2",
+      "size": 15,
+      "font": "Inter",
+      "weight": "Semi Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "gpt-image-2-all",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "GPT Image 2.5",
+      "size": 15,
+      "font": "Inter",
+      "weight": "Semi Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "gpt-image-2.5-sunburst",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "点击模型查看详情；开关仅控制客户是否可选。",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "模型详情",
+      "size": 16,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 24
+      }
+    },
+    {
+      "text": "当前默认",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "Gemini 3.1 Flash",
+      "size": 15,
+      "font": "Inter",
+      "weight": "Semi Bold",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "gemini-3.1-flash-image-preview",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "支持参考图 · 文字生成图片",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "输出尺寸",
+      "size": 14,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "1K",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "2K",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "4K",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "1024 × 1024     1024 × 256     256 × 1024",
+      "size": 12,
+      "font": "Inter",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "查看全部尺寸与比例",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "业务说明",
+      "size": 14,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 22
+      }
+    },
+    {
+      "text": "适合日常创作与快速出图",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "这段说明会展示在客户的模型选择器中。",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "展示顺序  01",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "上移",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "下移",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "当前默认模型",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "切换模型后可设为默认",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "已开放 4 个模型",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "默认：Gemini 3.1 Flash",
+      "size": 12,
+      "font": "Noto Sans SC",
+      "weight": "Regular",
+      "lineHeight": {
+        "unit": "PIXELS",
+        "value": 18
+      }
+    },
+    {
+      "text": "刷新目录",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "取消",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    },
+    {
+      "text": "保存配置",
+      "size": 13,
+      "font": "Noto Sans SC",
+      "weight": "Medium",
+      "lineHeight": {
+        "unit": "PERCENT",
+        "value": 100
+      }
+    }
+  ],
+  "colors": [
+    {
+      "name": "color/base",
+      "values": {
+        "2:0": {
+          "r": 0.0784313753247261,
+          "g": 0.0784313753247261,
+          "b": 0.0941176488995552,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/surface",
+      "values": {
+        "2:0": {
+          "r": 0.11764705926179886,
+          "g": 0.11764705926179886,
+          "b": 0.1411764770746231,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/raised",
+      "values": {
+        "2:0": {
+          "r": 0.1568627506494522,
+          "g": 0.1568627506494522,
+          "b": 0.18431372940540314,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/input",
+      "values": {
+        "2:0": {
+          "r": 0.1882352977991104,
+          "g": 0.1882352977991104,
+          "b": 0.21568627655506134,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/text",
+      "values": {
+        "2:0": {
+          "r": 0.95686274766922,
+          "g": 0.95686274766922,
+          "b": 0.9607843160629272,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/secondary",
+      "values": {
+        "2:0": {
+          "r": 0.6901960968971252,
+          "g": 0.6901960968971252,
+          "b": 0.7411764860153198,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/muted",
+      "values": {
+        "2:0": {
+          "r": 0.5215686559677124,
+          "g": 0.5215686559677124,
+          "b": 0.5803921818733215,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/border",
+      "values": {
+        "2:0": {
+          "r": 0.23137255012989044,
+          "g": 0.23137255012989044,
+          "b": 0.27450981736183167,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/accent",
+      "values": {
+        "2:0": {
+          "r": 0.8509804010391235,
+          "g": 0.46666666865348816,
+          "b": 0.34117648005485535,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/accentSoft",
+      "values": {
+        "2:0": {
+          "r": 0.21960784494876862,
+          "g": 0.16470588743686676,
+          "b": 0.14901961386203766,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/blue",
+      "values": {
+        "2:0": {
+          "r": 0.5764706134796143,
+          "g": 0.772549033164978,
+          "b": 0.9921568632125854,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "color/green",
+      "values": {
+        "2:0": {
+          "r": 0.47058823704719543,
+          "g": 0.7960784435272217,
+          "b": 0.6470588445663452,
+          "a": 1
+        }
+      }
+    }
+  ],
+  "source": {
+    "fileKey": "xB1H3nRjAjhS95ba6oaxZW",
+    "nodeId": "5:201",
+    "measuredAt": "2026-10-12",
+    "screenshotSha256": "579b59e4ad167f2fac705ea42b204dbc61a9a8951b2d85e29ebac5e454d7c171"
+  }
+}

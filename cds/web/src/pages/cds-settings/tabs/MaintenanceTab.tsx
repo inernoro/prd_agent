@@ -1,3 +1,6 @@
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { SettingsMaintenanceControlsSkeleton, SettingsMaintenanceStatusSkeleton } from '@/components/skeletons/SettingsMaintenanceSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
@@ -152,9 +155,9 @@ interface SelfStatusResponse {
   recommendedBranch: string;
   headSha: string;
   headIso: string;
-  fetchOk: boolean;
+  fetchOk?: boolean;
   fetchError?: string;
-  remoteAheadCount: number;
+  remoteAheadCount?: number;
   localAheadCount: number;
   remoteAheadSubjects: Array<{ sha: string; subject: string; date: string }>;
   /** 非空表示后端正在跑 self-update / self-force-sync(任一 session 触发) */
@@ -708,9 +711,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       recommendedBranch: snap.recommendedBranch ?? 'main',
       headSha: snap.headSha ?? '',
       headIso: snap.headIso ?? '',
-      fetchOk: snap.fetchOk ?? true,
+      fetchOk: snap.fetchOk,
       fetchError: snap.fetchError ?? undefined,
-      remoteAheadCount: snap.remoteAheadCount ?? 0,
+      remoteAheadCount: snap.remoteAheadCount,
       localAheadCount: snap.localAheadCount ?? 0,
       remoteAheadSubjects: (snap.remoteAheadSubjects ?? []) as Array<{
         sha: string;
@@ -729,20 +732,12 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setSelfStatus({ status: 'ok', data: mapped });
   }, [cdsEvents.snapshot, cdsEvents.lastKnownGood]);
 
-  // 关闭 dropdown 当用户点外面
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handler = (event: PointerEvent): void => {
-      if (!pickerWrapRef.current?.contains(event.target as Node)) setPickerOpen(false);
-    };
-    document.addEventListener('pointerdown', handler);
-    return () => document.removeEventListener('pointerdown', handler);
-  }, [pickerOpen]);
-
   /** 候选分支列表 — 按 committerDate 倒排,优先用 branchDetails(后端已排好序),
    * fallback 到旧 branches: string[]。当前分支总在最前(便于看到自己在哪)。*/
   const visibleBranches = useMemo<BranchMeta[]>(() => {
     if (branchState.status !== 'ok') return [];
+
+
     const query = selectedBranch.trim().toLowerCase();
     const details = branchState.data.branchDetails;
     const list: BranchMeta[] = details && details.length > 0
@@ -767,6 +762,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     });
     return sorted.slice(0, 80);
   }, [selectedBranch, branchState]);
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const frame = requestAnimationFrame(() => document.getElementById(`cds-update-branch-option-${highlightedIndex}`)?.scrollIntoView({ block: 'nearest' }));
+    return () => cancelAnimationFrame(frame);
+  }, [pickerOpen, highlightedIndex]);
 
   function appendRunLine(line: string): void {
     if (!line.trim()) return;
@@ -894,38 +894,32 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   return (
     <div>
-      <Section title="CDS 更新" description="拉取最新代码后按影响范围选择极速版、零停机、热路径或源码构建。失败时旧版本继续运行,不会让服务下线。">
-        <div className="space-y-5">
+      <Section title="CDS 更新" description="选择分支后更新，系统自动选择更新方式。失败时旧版本继续运行。">
+        <div className="space-y-3">
           <SelfUpdateStatusPanel
             state={selfStatus}
             onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
             onRestart={() => void runSelfUpdate('/api/self-restart', '重启')}
             restarting={runState === 'running'}
           />
-          {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
+          {branchState.status === 'loading' ? <SettingsMaintenanceControlsSkeleton /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
             <div className="grid gap-4">
-              <div className="rounded-md border border-border bg-card px-4 py-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <GitBranch className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">更新控制</span>
-                      <CodePill>
-                        {branchState.data.detached
-                          ? `游离提交 ${branchState.data.commitHash || '-'}`
-                          : branchState.data.current || '-'}
-                      </CodePill>
-                    </div>
-                    <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                      选择目标分支后更新；默认使用后端推荐的稳定分支。若目标 SHA 有 CI 预构建产物，应走极速版路径，跳过本机编译；否则按影响范围自动选择零停机、热路径或源码构建。
-                    </div>
+              <div className="cds-update-controls rounded-md border border-border bg-card p-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <GitBranch className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">更新控制</span>
+                    <CodePill>
+                      {branchState.data.detached
+                        ? `游离提交 ${branchState.data.commitHash || '-'}`
+                        : branchState.data.current || '-'}
+                    </CodePill>
                   </div>
-                  <Button type="button" variant="outline" onClick={() => void loadBranches()}>
-                    <RefreshCw />
-                    刷新分支
-                  </Button>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    默认推荐稳定分支；更新前会再次确认。
+                  </div>
                 </div>
 
                 {branchState.data.detached ? (
@@ -942,18 +936,19 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                 {/* 2026-05-04 重构:单 input combobox 取代「搜索框 + 经典 select」双控件。
                     用户输入 = selectedBranch(无歧义),回车/点击候选 = 确认选中。
                     候选下拉显示更新时间 + cds-touched 标识(是否动了 cds/ 目录)。 */}
-                <div className="mt-4">
-                  <label className="block space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">目标分支</span>
-                      {visibleBranches.length > 1 ? (
-                        <span className="text-[0.6875rem] text-muted-foreground">
-                          {visibleBranches.length} 个候选 · 按更新时间倒序
-                        </span>
-                      ) : null}
-                    </div>
-                    <div ref={pickerWrapRef} className="relative">
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="cds-update-target-branch" className="text-xs font-medium">目标分支</label>
+                    {visibleBranches.length > 1 ? (
+                      <span className="text-[0.6875rem] text-muted-foreground">
+                        {visibleBranches.length} 个候选 · 按更新时间倒序
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <div ref={pickerWrapRef} className="relative min-w-0 flex-1">
                       <input
+                        id="cds-update-target-branch"
                         ref={inputRef}
                         type="text"
                         value={selectedBranch}
@@ -990,18 +985,20 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                             setPickerOpen(false);
                           }
                         }}
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                        className="h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                         placeholder="输入或选择分支(main / release / codex/...)"
                         autoComplete="off"
                         spellCheck={false}
                         role="combobox"
                         aria-expanded={pickerOpen}
                         aria-autocomplete="list"
+                        aria-controls="cds-update-branch-options"
+                        aria-activedescendant={pickerOpen && visibleBranches[highlightedIndex] ? `cds-update-branch-option-${highlightedIndex}` : undefined}
                       />
                       {pickerOpen && visibleBranches.length > 0 ? (
-                        <div
-                          role="listbox"
-                          className="absolute left-0 right-0 top-full z-[100] mt-1 max-h-[22.5rem] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+                        <AnchoredPopover open anchorRef={pickerWrapRef} width="anchor" maxHeightRem={22.5} onDismiss={() => setPickerOpen(false)} tabIntoPanel={false}
+                          id="cds-update-branch-options" role="listbox"
+                          className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
                           style={{ overscrollBehavior: 'contain' }}
                         >
                           {visibleBranches.map((branch, idx) => {
@@ -1013,6 +1010,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                 key={branch.name}
                                 type="button"
                                 role="option"
+                                id={`cds-update-branch-option-${idx}`}
                                 aria-selected={isHighlighted}
                                 onMouseEnter={() => setHighlightedIndex(idx)}
                                 onClick={() => {
@@ -1069,18 +1067,22 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                               </button>
                             );
                           })}
-                        </div>
+                        </AnchoredPopover>
                       ) : null}
                       {pickerOpen && visibleBranches.length === 0 ? (
-                        <div className="absolute left-0 right-0 top-full z-[100] mt-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
+                        <AnchoredPopover open anchorRef={pickerWrapRef} width="anchor" onDismiss={() => setPickerOpen(false)} className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3 text-xs text-muted-foreground shadow-2xl">
                           没有匹配「{selectedBranch}」的分支。回车将以原值提交(后端会校验 origin/{selectedBranch} 是否存在)。
-                        </div>
+                        </AnchoredPopover>
                       ) : null}
                     </div>
-                  </label>
+                    <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => void loadBranches()}>
+                      <RefreshCw />
+                      刷新分支
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <ConfirmAction
                     title="更新并重启"
                     description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行。"
@@ -1204,11 +1206,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 }
 
 export function SelfUpdateHistoryTab(): JSX.Element {
-  const { historyState, manualRefresh } = useSelfUpdateHistory();
+  const { historyState, manualRefresh, refreshing } = useSelfUpdateHistory();
 
   return (
     <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
-      <SelfUpdateHistoryList historyState={historyState} onManualRefresh={manualRefresh} />
+      <SelfUpdateHistoryList historyState={historyState} onManualRefresh={manualRefresh} refreshing={refreshing} />
     </Section>
   );
 }
@@ -1483,11 +1485,7 @@ function SelfUpdateStatusPanel({
   restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-        正在检查 GitHub 远端 + 自更新流水…
-      </div>
-    );
+    return <SettingsMaintenanceStatusSkeleton />;
   }
   if (state.status === 'error') {
     return (
@@ -1506,7 +1504,7 @@ function SelfUpdateStatusPanel({
   const data = state.data;
   const remoteAheadSubjects = Array.isArray(data.remoteAheadSubjects) ? data.remoteAheadSubjects : [];
   const selfUpdateHistory = Array.isArray(data.selfUpdateHistory) ? data.selfUpdateHistory : [];
-  const remoteAheadCount = Number.isFinite(data.remoteAheadCount) ? data.remoteAheadCount : 0;
+  const remoteAheadCount = typeof data.remoteAheadCount === 'number' && Number.isFinite(data.remoteAheadCount) ? data.remoteAheadCount : 0;
   const localAheadCount = Number.isFinite(data.localAheadCount) ? data.localAheadCount : 0;
   const headSha = data.headSha || '';
   const lastHistorySha = data.lastSelfUpdate?.toSha || '';
@@ -1519,7 +1517,7 @@ function SelfUpdateStatusPanel({
   const showHistoryGap = !!data.lastSelfUpdate && !data.activeSelfUpdate && !historyMatchesHead;
   const trackingBranch = data.currentBranch || data.recommendedBranch || 'main';
   const aheadColor =
-    !data.detachedHead && remoteAheadCount === 0
+    data.fetchOk === true && Number.isFinite(data.remoteAheadCount) && !data.detachedHead && remoteAheadCount === 0
       ? 'border-ok/30 bg-ok-soft text-ok'
       : 'border-warn/40 bg-warn-soft text-warn';
 
@@ -1535,15 +1533,17 @@ function SelfUpdateStatusPanel({
         ) : null}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
           <GitBranch className="h-3.5 w-3.5" />
-          {data.detachedHead
-            ? remoteAheadCount > 0
-              ? `游离提交 · origin/${trackingBranch} 领先 ${remoteAheadCount} 个 commit`
-              : `游离提交 · 更新目标 origin/${trackingBranch}`
-            : data.fetchOk
-              ? remoteAheadCount === 0
-                ? `已与 origin/${trackingBranch} 同步`
-                : `GitHub 领先 ${remoteAheadCount} 个 commit`
-              : 'fetch 失败 / 远端不可达'}
+          {data.fetchOk !== true
+            ? data.fetchOk === false ? '更新检查失败 · 远端状态未确认' : '远端更新状态未确认'
+            : !Number.isFinite(data.remoteAheadCount)
+              ? '远端版本差异未确认'
+              : data.detachedHead
+                ? remoteAheadCount > 0
+                  ? `游离提交 · origin/${trackingBranch} 领先 ${remoteAheadCount} 个 commit`
+                  : `游离提交 · 更新目标 origin/${trackingBranch}`
+                : remoteAheadCount === 0
+                  ? `已与 origin/${trackingBranch} 同步`
+                  : `GitHub 领先 ${remoteAheadCount} 个 commit`}
         </span>
         {localAheadCount > 0 ? (
           <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 py-0.5 text-xs text-warn">
@@ -1694,51 +1694,60 @@ function StepLevelPrefix({ level }: { level: 'info' | 'warning' | 'error' }): JS
 type HistoryFetchState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; records: SelfUpdateRecord[] };
+  | { status: 'ok'; records: SelfUpdateRecord[]; readError?: string };
 
 // 数据源上移到父组件 useSelfUpdateHistory(与进度条共用,不再自己 fetch)。
-function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
+function SelfUpdateHistoryList({ historyState, onManualRefresh, refreshing }: {
   historyState: HistoryFetchState;
   onManualRefresh: () => void;
+  refreshing: boolean;
 }): JSX.Element {
   const [selectedKey, setSelectedKey] = useState<string>('');
+  const [query, setQuery] = useState('');
+  const [resultFilter, setResultFilter] = useState('all');
+  const [mobileRecord, setMobileRecord] = useState<SelfUpdateRecord | null>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const refreshButton = useRef<HTMLButtonElement | null>(null);
   const manualRefresh = onManualRefresh;
+  const recordKey = (rec: SelfUpdateRecord, _idx: number): string => `${rec.ts}-${rec.branch}-${rec.fromSha}-${rec.toSha}-${rec.trigger}`;
+  const currentDetail = mobileRecord && historyState.status==='ok' ? historyState.records.find((record,index)=>recordKey(record,index)===recordKey(mobileRecord,0)) : null;
+  const detailRecord = currentDetail || mobileRecord;
+  const historyReadError = historyState.status==='ok' ? historyState.readError : historyState.status==='error' ? historyState.message : '';
+  const detailDialog = <Dialog open={Boolean(mobileRecord)} onOpenChange={open => { if(!open)setMobileRecord(null); }}><DialogContent className="max-w-2xl border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]" onCloseAutoFocus={event => { event.preventDefault();const target=returnFocus.current;if(target?.isConnected&&target.getClientRects().length)target.focus({preventScroll:true});else refreshButton.current?.focus({preventScroll:true}); }}><DialogHeader className="pr-10"><DialogTitle>更新详情</DialogTitle><DialogDescription className="break-all">{mobileRecord?.branch} · {mobileRecord ? formatAbsoluteTime(mobileRecord.ts) : ''}</DialogDescription></DialogHeader>{historyReadError?<div role="alert" className="space-y-2 text-sm text-warn"><p>更新历史刷新失败，以下仍是上次读取的记录：{historyReadError}。</p><Button type="button" variant="outline" className="min-h-[3.25rem] text-base" disabled={refreshing} onClick={manualRefresh}>重新读取历史</Button></div>:null}{mobileRecord&&!currentDetail&&!historyReadError?<p className="text-sm text-muted-foreground">本轮列表未返回这条记录，以下为打开时的快照。</p>:null}{detailRecord ? <SelfUpdateHistoryDetail selected={detailRecord} /> : null}<DialogFooter><Button type="button" className="min-h-[3.25rem] text-base" onClick={()=>setMobileRecord(null)}>返回历史列表</Button></DialogFooter></DialogContent></Dialog>;
 
   if (historyState.status === 'loading') {
-    return (
-      <div className="py-8 text-center text-sm text-muted-foreground">加载中…</div>
-    );
+    return <><SettingsContentSkeleton label="读取自更新历史" />{detailDialog}</>;
   }
   if (historyState.status === 'error') {
     return (
-      <div className="py-8 text-center text-sm text-destructive">{historyState.message}</div>
+      <><div className="space-y-3 py-4"><p role="alert" className="text-sm text-destructive">更新历史读取失败：{historyState.message}</p><Button ref={refreshButton} type="button" variant="outline" className="min-h-[3.25rem] text-base" disabled={refreshing} onClick={manualRefresh}>{refreshing?'正在读取':'重新读取历史'}</Button></div>{detailDialog}</>
     );
   }
   if (historyState.records.length === 0) {
     return (
-      <div className="py-8 text-center text-sm text-muted-foreground">尚无历史</div>
+      <><div className="space-y-3 py-4">{historyState.readError?<p role="alert" className="text-sm text-warn">上次读取为空，本次更新历史刷新失败：{historyState.readError}。请重试。</p>:<p className="text-sm text-muted-foreground">尚无历史</p>}<Button ref={refreshButton} type="button" variant="outline" className="min-h-[3.25rem] text-base" disabled={refreshing} onClick={manualRefresh}>刷新历史</Button></div>{detailDialog}</>
     );
   }
-  const recordKey = (rec: SelfUpdateRecord, idx: number): string => `${rec.ts}-${rec.fromSha}-${rec.toSha}-${idx}`;
   const stats = summariseHistory(historyState.records);
-  const activeKey = selectedKey || recordKey(historyState.records[0], 0);
-  const selected =
-    historyState.records.find((rec, idx) => recordKey(rec, idx) === activeKey) ||
-    historyState.records[0];
-  const selectedSteps = Array.isArray(selected.steps) ? selected.steps : [];
+  const needle = query.trim().toLocaleLowerCase();
+  const visibleRecords = historyState.records.filter(record => (resultFilter === 'all' || record.status === resultFilter) && (!needle || [record.branch, record.fromSha, record.toSha, record.actor, record.failure?.cause, record.error].some(value => value?.toLocaleLowerCase().includes(needle))));
+  const activeKey = selectedKey || recordKey(visibleRecords[0] || historyState.records[0], 0);
   return (
     <div className="space-y-3">
+      {historyState.readError?<p role="alert" className="text-sm text-warn">刷新失败，仍显示上次读取的记录：{historyState.readError}。可重新读取核对。</p>:null}
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <SelfUpdateHistoryStats stats={stats} />
-        <Button type="button" variant="outline" size="sm" onClick={manualRefresh} className="shrink-0">
-          <RefreshCw /> 刷新历史
+        <Button ref={refreshButton} type="button" variant="outline" size="sm" disabled={refreshing} onClick={manualRefresh} className="min-h-[3.25rem] shrink-0 text-base xl:min-h-0 xl:text-xs">
+          <RefreshCw className={refreshing ? 'animate-spin' : undefined} /> 刷新历史
         </Button>
       </div>
-      <div className="flex min-h-0 flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_24.375rem]">
-        <div className="min-w-0 overflow-hidden rounded-md border border-border bg-card">
+      {historyState.records.length > 5 || query || resultFilter !== 'all' ? <div className="flex flex-wrap gap-3"><label className="min-w-0 flex-1"><span className="sr-only">搜索更新记录</span><input aria-label="搜索更新记录" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm" placeholder="按分支、版本、操作者或失败原因搜索" value={query} onChange={event => setQuery(event.target.value)} /></label><label className="flex items-center gap-2 text-sm">结果<select aria-label="筛选更新结果" className="min-h-[3.25rem] rounded-md border border-input bg-background px-3" value={resultFilter} onChange={event => setResultFilter(event.target.value)}><option value="all">全部</option><option value="failed">失败</option><option value="success">成功</option><option value="deferred">延后</option><option value="aborted">中止</option></select></label></div> : null}
+      {visibleRecords.length === 0 ? <p className="py-4 text-sm text-muted-foreground">没有匹配的更新记录，请调整搜索或结果筛选。</p> : null}
+      <div className="min-w-0">
+        <div className="hidden min-w-0 overflow-hidden rounded-md border border-border bg-card xl:block">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-[hsl(var(--surface-raised))] px-3 py-2">
             <div className="text-sm font-medium">历史记录</div>
-            <div className="text-xs text-muted-foreground">点击一行查看完整日志和阶段耗时</div>
+            <div className="text-xs text-muted-foreground">选择时间查看完整日志和阶段耗时</div>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-[61.25rem] text-sm">
@@ -1755,7 +1764,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                 </tr>
               </thead>
               <tbody>
-                {historyState.records.map((rec, idx) => {
+                {visibleRecords.map((rec, idx) => {
                   const key = recordKey(rec, idx);
                   const active = key === activeKey;
                   const mode = rec.updateMode || (rec.noOp ? 'noOp' : undefined);
@@ -1766,7 +1775,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                       className={`border-b border-border last:border-b-0 ${active ? 'bg-[hsl(var(--surface-sunken))]' : 'hover:bg-[hsl(var(--surface-sunken))]/70'}`}
                     >
                       <td className="px-3 py-2 align-middle">
-                        <button type="button" className="block w-full text-left" onClick={() => setSelectedKey(key)}>
+                        <button type="button" className="block w-full text-left" aria-label={`查看 ${formatAbsoluteTime(rec.ts)} ${rec.branch} 的更新详情`} onClick={event => { returnFocus.current=event.currentTarget;setSelectedKey(key);setMobileRecord(rec); }}>
                           <div className="font-medium">{formatAbsoluteTime(rec.ts)}</div>
                           <div className="text-xs text-muted-foreground">{formatRelativeTime(rec.ts)}</div>
                         </button>
@@ -1781,7 +1790,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                           <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateModeClass(mode)}`}>
                             {selfUpdateModeLabel(mode)}
                           </span>
-                        ) : <span className="text-xs text-muted-foreground">未标记</span>}
+                        ) : <span className="text-xs text-muted-foreground">{isRestartCancelled(rec) ? '未执行重启' : '未标记'}</span>}
                       </td>
                       <td className="px-3 py-2 align-middle text-xs text-muted-foreground">
                         {selfUpdateTriggerLabel(rec.trigger)}
@@ -1806,8 +1815,17 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
             </table>
           </div>
         </div>
-        <aside className="min-h-[22.5rem] rounded-md border border-border bg-card lg:sticky lg:top-4 lg:max-h-[calc(100vh-8rem)]">
-          <div className="border-b border-border px-4 py-3">
+        <div className="divide-y divide-border xl:hidden">{visibleRecords.map((record, index) => <article key={recordKey(record,index)} data-update-record={record.branch} className="space-y-2 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><time className="text-sm font-medium">{formatAbsoluteTime(record.ts)}</time><span className={`rounded px-2 py-1 text-sm ${selfUpdateStatusClass(record.status)}`}>{selfUpdateStatusLabel(record.status)}</span></div><h3 className="break-all font-mono text-sm">{record.branch || '(当前分支)'}</h3><p className="text-sm text-muted-foreground">{selfUpdateTriggerLabel(record.trigger)}{record.actor ? ` · ${record.actor}` : ''} · {fmtMs(record.durationMs)}</p>{record.failure?.cause || record.error ? <p className="break-words text-sm text-destructive">{record.failure?.cause || record.error}</p> : null}<Button type="button" variant="outline" className="min-h-[3.25rem] text-base" onClick={event => { returnFocus.current=event.currentTarget;setSelectedKey(recordKey(record,index));setMobileRecord(record); }}>查看详情</Button></article>)}</div>
+      </div>
+      {detailDialog}
+    </div>
+  );
+}
+
+function SelfUpdateHistoryDetail({ selected }: { selected: SelfUpdateRecord }): JSX.Element {
+  const selectedSteps = Array.isArray(selected.steps) ? selected.steps : [];
+  return <section className="min-w-0">
+          <div className="pb-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(selected.status)}`}>
                 {selfUpdateStatusLabel(selected.status)}
@@ -1818,22 +1836,23 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                 </span>
               ) : null}
             </div>
-            <div className="mt-2 text-sm font-semibold">{formatAbsoluteTime(selected.ts)}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {selfUpdateTriggerLabel(selected.trigger)}{selected.actor ? ` · ${selected.actor}` : ''} · {selected.branch || '(当前分支)'}
+              {selfUpdateTriggerLabel(selected.trigger)}{selected.actor ? ` · ${selected.actor}` : ''}
             </div>
           </div>
-          <div className="max-h-[38.75rem] space-y-4 overflow-auto px-4 py-3 lg:max-h-[calc(100vh-16rem)]" style={{ overscrollBehavior: 'contain' }}>
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2 text-xs">
               <SelfUpdateDetailMetric label="流程耗时" value={fmtMs(selected.durationMs)} />
               <SelfUpdateDetailMetric label="体感耗时" value={fmtMs(selected.totalElapsedMs)} />
-              <SelfUpdateDetailMetric label="from" value={selected.fromSha || '-'} mono />
-              <SelfUpdateDetailMetric label="to" value={selected.toSha || '-'} mono />
+              <SelfUpdateDetailMetric label="更新前版本" value={selected.fromSha || '-'} mono />
+              <SelfUpdateDetailMetric label="更新后版本" value={selected.toSha || '-'} mono />
             </div>
             <div>
               <div className="mb-1.5 text-xs font-medium text-muted-foreground">更新路径</div>
-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
-                {selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
+              <div className="text-sm leading-6 text-muted-foreground">
+                {isRestartCancelled(selected)
+                  ? '等待其他项目操作超时，本次重启已取消，其他项目继续运行。'
+                  : selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
               </div>
             </div>
             {selected.timings ? <SelfUpdateStageBar timings={selected.timings} totalMs={selected.durationMs} /> : null}
@@ -1856,22 +1875,19 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                     </div>
                   );
                 }) : (
-                  <div className="text-muted-foreground">这条记录没有保存完整步骤。</div>
+                  <div className="text-muted-foreground">当前读取未包含可展示的完整执行步骤。</div>
                 )}
               </div>
             </div>
           </div>
-        </aside>
-      </div>
-    </div>
-  );
+        </section>;
 }
 
 function SelfUpdateDetailMetric({ label, value, mono = false }: { label: string; value: string; mono?: boolean }): JSX.Element {
   return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
+    <div className="min-w-0">
       <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
-      <div className={`mt-1 truncate text-sm font-medium ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
+      <div className={`mt-1 break-all text-sm font-medium ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
     </div>
   );
 }
@@ -1947,10 +1963,14 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
   }
 }
 
+function isRestartCancelled(record: SelfUpdateRecord): boolean {
+  return record.status === 'aborted' && record.failure?.stage === 'restart-drain';
+}
+
 function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
-    case 'aborted': return '中止(校验未过)';
+    case 'aborted': return '已中止';
     case 'deferred': return '已延后';
     case 'failed':  return '失败';
   }
@@ -2036,7 +2056,7 @@ interface SelfUpdateHistoryStatsData {
   slowestRec: SelfUpdateRecord | null;
 }
 
-function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsData {
+export function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsData {
   const total = records.length;
   let success = 0, failed = 0, deferred = 0, aborted = 0;
   const durations: number[] = [];
@@ -2046,7 +2066,7 @@ function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsDa
     else if (r.status === 'failed') failed += 1;
     else if (r.status === 'deferred') deferred += 1;
     else if (r.status === 'aborted') aborted += 1;
-    if (typeof r.durationMs === 'number' && r.durationMs > 0) {
+    if (typeof r.durationMs === 'number' && Number.isFinite(r.durationMs) && r.durationMs >= 0) {
       durations.push(r.durationMs);
       if (!slowestRec || (r.durationMs > (slowestRec.durationMs || 0))) slowestRec = r;
     }
@@ -2054,8 +2074,10 @@ function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsDa
   durations.sort((a, b) => a - b);
   const sum = durations.reduce((s, v) => s + v, 0);
   const avgMs = durations.length > 0 ? Math.round(sum / durations.length) : null;
-  const medianMs = durations.length > 0 ? durations[Math.floor(durations.length / 2)] : null;
-  const p95Idx = Math.max(0, Math.floor(durations.length * 0.95) - 1);
+  const middle = Math.floor(durations.length / 2);
+  const medianMs = durations.length > 0 ? durations.length % 2 ? durations[middle] : (durations[middle - 1] + durations[middle]) / 2 : null;
+  // Same nearest-rank P95 convention as cds/src/server.ts percentile().
+  const p95Idx = Math.max(0, Math.ceil(durations.length * 0.95) - 1);
   const p95Ms = durations.length > 0 ? durations[Math.min(p95Idx, durations.length - 1)] : null;
   const fastestMs = durations.length > 0 ? durations[0] : null;
   return { total, success, failed, deferred, aborted, avgMs, medianMs, p95Ms, fastestMs, slowestRec };
@@ -2071,7 +2093,7 @@ function fmtMs(ms: number | null | undefined): string {
 function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }): JSX.Element {
   const successRate = stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
   return (
-    <div className="sticky top-0 z-10 mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
+    <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <span className="font-semibold">最近 {stats.total} 次:</span>
         <span className="rounded bg-ok-soft text-ok px-2 py-0.5">
@@ -2094,6 +2116,7 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
         ) : null}
         <span className="text-muted-foreground">成功率 {successRate}%</span>
       </div>
+      <details className="mt-2"><summary className="min-h-[3.25rem] cursor-pointer text-sm text-muted-foreground xl:min-h-0">查看耗时统计</summary><p className="mt-2 text-xs text-muted-foreground">以有效耗时记录计算，少量样本的分位数仅供参考。</p>
       <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <div>
           <div className="text-muted-foreground">最快</div>
@@ -2121,15 +2144,16 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
             : null}
         </div>
       ) : null}
-    </div>
+    </details></div>
   );
 }
 
 // 自更新历史的统一数据源(进度条 + 历史列表共用,Bugbot #716:避免两处各自
 // fetch 同一 endpoint)。只在三个时刻 re-fetch:首次 mount、一次更新真正结束
 // (events.updating true→false)、用户点刷新。中间的 status/heartbeat/step 不刷。
-function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefresh: () => void } {
+function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefresh: () => void; refreshing: boolean } {
   const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
+  const [refreshing, setRefreshing] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const events = useCdsEvents();
   const updatingPrev = useRef<typeof events.updating>(null);
@@ -2141,6 +2165,7 @@ function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefres
   }, [events.updating]);
   useEffect(() => {
     let cancelled = false;
+    setRefreshing(true);
     fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2151,13 +2176,13 @@ function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefres
         if (cancelled) return;
         // eslint-disable-next-line no-console
         console.warn('[self-update-history] 拉取失败:', err.message);
-        // 保留当前状态不变(避免刷成空);仅首次 loading 失败才落 error 态。
-        setHistoryState((cur) => (cur.status === 'loading' ? { status: 'error', message: err.message } : cur));
-      });
+        // 保留已有记录并明确它们不是本轮刷新结果；初读失败保留就地重试。
+        setHistoryState(cur => cur.status === 'ok' ? { ...cur, readError: err.message } : { status: 'error', message: err.message });
+      }).finally(() => { if (!cancelled) setRefreshing(false); });
     return () => { cancelled = true; };
   }, [refreshNonce]);
   const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
-  return { historyState, manualRefresh };
+  return { historyState, manualRefresh, refreshing };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

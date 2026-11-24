@@ -1,11 +1,17 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import { type ApiResponse } from '@/types/api';
+import type { ArenaGroup, ArenaSlot, SaveArenaSlotInput } from '@/services/contracts/arena';
+import type { LogicalModelOption } from '@/services/contracts/modelReferences';
 import { useAuthStore } from '@/stores/authStore';
+
+export async function getArenaModelOptionsReal(): Promise<ApiResponse<{ items: LogicalModelOption[] }>> {
+  return await apiRequest(api.arena.modelOptions());
+}
 
 // ============ Arena Groups ============
 
-export async function listArenaGroupsReal(): Promise<ApiResponse<any>> {
+export async function listArenaGroupsReal(): Promise<ApiResponse<{ items: ArenaGroup[] }>> {
   return await apiRequest(api.arena.groups.list());
 }
 
@@ -38,14 +44,14 @@ export async function listArenaSlotsReal(group?: string): Promise<ApiResponse<an
   return await apiRequest(`${api.arena.slots.list()}${qs}`);
 }
 
-export async function createArenaSlotReal(data: any): Promise<ApiResponse<any>> {
+export async function createArenaSlotReal(data: SaveArenaSlotInput): Promise<ApiResponse<ArenaSlot>> {
   return await apiRequest(api.arena.slots.list(), {
     method: 'POST',
     body: data,
   });
 }
 
-export async function updateArenaSlotReal(id: string, data: any): Promise<ApiResponse<any>> {
+export async function updateArenaSlotReal(id: string, data: SaveArenaSlotInput): Promise<ApiResponse<ArenaSlot>> {
   return await apiRequest(api.arena.slots.byId(id), {
     method: 'PUT',
     body: data,
@@ -66,7 +72,7 @@ export async function toggleArenaSlotReal(id: string): Promise<ApiResponse<any>>
 
 // ============ Arena Lineup & Reveal ============
 
-export async function getArenaLineupReal(): Promise<ApiResponse<any>> {
+export async function getArenaLineupReal(): Promise<ApiResponse<{ items: ArenaGroup[] }>> {
   return await apiRequest(api.arena.lineup());
 }
 
@@ -84,6 +90,7 @@ export async function createArenaRunReal(data: {
   groupKey: string;
   slots: Array<{
     slotId: string;
+    logicalModelId?: string | null;
     platformId: string;
     modelId: string;
     label: string;

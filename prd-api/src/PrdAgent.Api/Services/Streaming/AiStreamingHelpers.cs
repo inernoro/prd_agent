@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using PrdAgent.Api.Services.PrReview;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services.Streaming;
 
@@ -94,7 +96,7 @@ public static class AiStreamingHelpers
                         ? $"{label} 正在生成　{elapsed}s"
                         : elapsed < 40
                             ? $"上游首字延迟较高, 已等待 {elapsed}s"
-                            : $"⚠ 上游响应缓慢, 已等待 {elapsed}s, 可点击放弃后重试";
+                            : $"上游响应缓慢, 已等待 {elapsed}s, 可点击放弃后重试";
                     await SafeWriteAsync("phase", new { phase = "waiting", message = msg, elapsedMs = elapsed * 1000 });
                 }
             }
@@ -159,8 +161,15 @@ public static class AiStreamingHelpers
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "{Label} stream failed", label);
-            try { await SafeWriteAsync("error", new { message = $"{label}失败: " + ex.Message }); }
+            var code = (ex as GatewayRouteFailureException)?.FailureCode ?? ErrorCodes.INTERNAL_ERROR;
+            var message = ex is GatewayRouteFailureException
+                ? GatewayRouteFailure.UserMessage(code)
+                : $"{label}未完成，请稍后重试。";
+            var requestId = response.HttpContext.TraceIdentifier;
+            var elapsedMs = (long)(DateTime.UtcNow - startAt).TotalMilliseconds;
+            logger.LogWarning(ex, "{Label} stream failed: Code={Code}, RequestId={RequestId}, ElapsedMs={ElapsedMs}",
+                label, code, requestId, elapsedMs);
+            try { await SafeWriteAsync("error", new { code, message, requestId, elapsedMs }); }
             catch { /* 客户端已断 */ }
         }
         finally

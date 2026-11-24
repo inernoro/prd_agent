@@ -20,15 +20,11 @@
  * | principal-disabled | 凭据没问题，是持有它的主体被停用了 | 重新签发无用，先恢复主体 |
  * | grant-revoked | 主体对这个项目的授权被撤了 | 重新签发也进不来，先请人重新批准 |
  * | never-issued | 这个系统从没签发过这把 | 拿错实例 / 拿错钥匙 / 复制截断 |
- * | prefix-mismatch | 凭据本身有效，但项目前缀与项目当前 slug 不符 | 重新签发（见下） |
  * | not-checkable | 认得出类型，但本实例没有可比对的记录 | 明说查不了，不猜 |
  * | malformed | 形状就不对 | 复制完整了吗 |
  *
- * `prefix-mismatch` 是查证时挖出来的第六种「key 还在却用不了」：鉴权路径
- * （`StateService.findAgentKeyForAuth`）先用 `cdsp_<slug 前 12 位>_` 这段前缀
- * 定位项目、再比哈希。项目一旦改过 slug，存量密钥前缀就对不上，鉴权直接跳过
- * 它 —— 密钥没被吊销、项目卡上看得见，但每次都 401。本模块**不按前缀筛**，
- * 扫全部项目比哈希，因此能把这种情况单独报出来。
+ * 项目级凭据与真实鉴权都按保存的哈希绑定项目；前缀仅表示签发时的名称，
+ * 项目改名不会撤销凭据，吊销、到期与授权撤销仍立即生效。
  *
  * ## 安全边界
  *
@@ -43,7 +39,8 @@
 
 import crypto from 'node:crypto';
 
-import { credentialUsability } from './identity.js';
+import type { AgentKey } from '../types.js';
+import { credentialUsability, hasProjectKeyGrant } from './identity.js';
 
 /** 凭据类型。与 server.ts 的鉴权分支一一对应。 */
 export type CredentialKind =
@@ -70,7 +67,6 @@ export type CredentialStatus =
   /** 凭据与主体都没问题，是这个主体对该项目的授权被撤了。 */
   | 'grant-revoked'
   | 'never-issued'
-  | 'prefix-mismatch'
   | 'not-checkable'
   | 'malformed';
 
@@ -97,7 +93,7 @@ export interface CredentialFacts {
     slug: string;
     name?: string;
     /** 含已吊销条目 —— 少了它就分不出 revoked 与 never-issued */
-    agentKeys?: StoredCredential[];
+    agentKeys?: (StoredCredential & Pick<AgentKey, 'designAccess' | 'designAccessRequestId'>)[];
   }>;
   globalAgentKeys?: StoredCredential[];
   /**
@@ -216,7 +212,7 @@ function base(kind: CredentialKind, status: CredentialStatus, summary: string, n
  * 自检要回答「这把发生了什么」，所以必须看得见已吊销的那条 —— 否则
  * 「被吊销」和「从没签发」就永远分不开，正是本模块要解决的问题。
  */
-function matchStored(entries: StoredCredential[] | undefined, presentedHash: string): StoredCredential | undefined {
+function matchStored<T extends StoredCredential>(entries: T[] | undefined, presentedHash: string): T | undefined {
   for (const entry of entries || []) {
     if (hashesEqual(entry.hash, presentedHash)) return entry;
   }
@@ -322,13 +318,10 @@ export function checkCredential(plaintext: string, facts: CredentialFacts): Cred
         '多半是复制时被截断了，重新完整复制一次；仍不对就在项目卡上重新签发。',
       );
     }
-    const claimedSlugHead = parts[1].toLowerCase();
-    // 刻意不按前缀筛项目：前缀对不上但哈希对得上，正是 prefix-mismatch 那种情况，
-    // 而它恰恰是最难自己查出来的一种（密钥没吊销、项目卡上看得见、就是进不来）。
+    // 哈希记录绑定项目；可读前缀不随项目改名成为拒绝依据。
     for (const project of facts.projects || []) {
       const entry = matchStored(project.agentKeys, presentedHash);
       if (!entry) continue;
-      const actualSlugHead = (project.slug || '').slice(0, PROJECT_SLUG_HEAD_LENGTH).toLowerCase();
       const identity = {
         projectId: project.id,
         projectSlug: project.slug,
@@ -348,38 +341,19 @@ export function checkCredential(plaintext: string, facts: CredentialFacts): Cred
           ...identity,
         };
       }
-      // 顺序：先答「这把已经死了」（吊销 / 到期 / 主体停用），再答「还活着但前缀
-      // 对不上」。三者的下一步各不相同，塌缩成一个就等于没拆。
+      // 吊销、到期和主体停用仍立即拒绝，改名不改变权限。
       const dead = deadReasonOf(entry, facts);
       if (dead) return { ...describeDead('project', dead, entry, facts), ...identity };
       // 授权被撤：凭据本身、主体都没问题，但鉴权照样拒。少了这一档，自检会对着
       // 自己造成的 401 回答「有效」。判据与鉴权同一条（未撤销的授权算数）。
-      if (entry.principalId && facts.grants) {
-        const granted = facts.grants.some((g) =>
-          g.principalId === entry.principalId && g.projectId === project.id && !g.revokedAt);
-        if (!granted) {
-          return {
-            ...describeStored(
-              base(
-                'project',
-                'grant-revoked',
-                `凭据本身有效、主体也正常，但该主体对项目「${project.name || project.slug}」的授权已被撤销 —— 鉴权因此拒绝它。`,
-                '这不是凭据问题，重新签发也进不来。请人重新批准一次该项目的接入；批准之后这把凭据无需更换即可恢复。',
-              ),
-              entry,
-            ),
-            ...identity,
-          };
-        }
-      }
-      if (actualSlugHead && actualSlugHead !== claimedSlugHead) {
+      if (facts.grants && !hasProjectKeyGrant(facts.grants, entry, project.id)) {
         return {
           ...describeStored(
             base(
               'project',
-              'prefix-mismatch',
-              `凭据本身有效且未被吊销，但它的项目前缀是 ${claimedSlugHead}，而项目「${project.name || project.slug}」当前的 slug 前缀是 ${actualSlugHead} —— 项目改过 slug，鉴权按前缀定位项目时会跳过这把凭据。`,
-              '在项目卡上重新签发一把（新凭据会带上当前 slug 前缀），再吊销这一把。这不是权限问题，重试多少次都一样。',
+              'grant-revoked',
+              `凭据本身有效、主体也正常，但该主体对项目「${project.name || project.slug}」的授权已被撤销 —— 鉴权因此拒绝它。`,
+              '这不是凭据问题，重新签发也进不来。请人重新批准一次该项目的接入；批准之后这把凭据无需更换即可恢复。',
             ),
             entry,
           ),

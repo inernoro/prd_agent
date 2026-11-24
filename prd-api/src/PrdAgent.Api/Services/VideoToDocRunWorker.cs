@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -20,6 +21,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class VideoToDocRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<VideoToDocRunWorker> _logger;
     private readonly IConfiguration _config;
@@ -33,8 +35,10 @@ public class VideoToDocRunWorker : BackgroundService
     public VideoToDocRunWorker(
         IServiceScopeFactory scopeFactory,
         ILogger<VideoToDocRunWorker> logger,
-        IConfiguration config)
+        IConfiguration config,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _logger = logger;
         _config = config;
@@ -88,6 +92,10 @@ public class VideoToDocRunWorker : BackgroundService
 
     private async Task ProcessRunAsync(VideoToDocRun run, IServiceProvider sp)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         var db = sp.GetRequiredService<MongoDbContext>();
         var runStore = sp.GetRequiredService<IRunEventStore>();
         var gateway = sp.GetRequiredService<ILlmGateway>();
@@ -326,8 +334,7 @@ public class VideoToDocRunWorker : BackgroundService
                 DocumentHash: null,
                 SystemPromptRedacted: "[VIDEO_TO_DOC_ASR]",
                 RequestType: ModelTypes.Asr,
-                AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
-                ForceFullShadowSample: run.ForceFullShadowSample));
+                AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe));
 
             rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, asrResolution, CancellationToken.None);
         }
@@ -505,8 +512,7 @@ public class VideoToDocRunWorker : BackgroundService
             DocumentHash: null,
             SystemPromptRedacted: "[VIDEO_TO_DOC_ANALYZE]",
             RequestType: ModelTypes.Vision,
-            AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Analyze,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Analyze));
 
         await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
         {

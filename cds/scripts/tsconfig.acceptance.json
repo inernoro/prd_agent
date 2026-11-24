@@ -1,0 +1,32 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../dist/.acceptance.tsbuildinfo"
+  },
+  "include": [
+    "widget-stream-recovery-fixture.ts",
+    "deployment-recovery-drill.ts",
+    "replica-confirmation-drill.ts",
+    "actual-stop-drill.ts",
+    "observation-isolation-drill.ts",
+    "artifact-admission-drill.ts",
+    "json-write-overlap-drill.ts",
+    "deployment-queue-drill.ts",
+    "orphan-worktree-recheck-drill.ts",
+    "filesystem-removal-drill.ts",
+    "default-regression-drill.ts",
+    "branch-claim-entry-drill.ts",
+    "application-bootstrap-drill.ts",
+    "application-docker-host-drill.ts",
+    "owned-resource-task.ts",
+    "backup-retention-drill.ts",
+    "backup-mount-native-drill.ts",
+    "resource-lifecycle-native-drill.ts",
+    "image-cache-native-drill.ts",
+    "application-docker-inner-drill.ts",
+    "runtime-memory-stage-drill.ts",
+    "cpu-fairness-stop-drill.ts"
+  ]
+}

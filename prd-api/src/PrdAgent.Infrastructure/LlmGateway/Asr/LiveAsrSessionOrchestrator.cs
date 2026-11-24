@@ -1,8 +1,11 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.LlmGateway.Asr;
+using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 
@@ -22,7 +25,9 @@ public interface ILiveAsrSessionTransport
 
 public sealed record LiveAsrOrchestrationResult(
     LiveAsrSessionResult? SessionResult,
-    string? Failure);
+    string? Failure,
+    string? ErrorCode = null,
+    int? StatusCode = null);
 
 /// <summary>
 /// 实时 ASR 会话的核心编排：模型解析、流式候选切换、双通道生命周期和滚动窗口兜底。
@@ -36,17 +41,24 @@ public sealed class LiveAsrSessionOrchestrator
     private readonly DoubaoStreamAsrService _asr;
     private readonly LiveAsrBatchFallbackService _batchFallback;
     private readonly ILogger<LiveAsrSessionOrchestrator> _logger;
+    private readonly IGatewayInvocationAuthority? _invocationAuthority;
+    private readonly string _internalTenantId;
 
     public LiveAsrSessionOrchestrator(
         IModelResolver resolver,
         DoubaoStreamAsrService asr,
         LiveAsrBatchFallbackService batchFallback,
-        ILogger<LiveAsrSessionOrchestrator> logger)
+        ILogger<LiveAsrSessionOrchestrator> logger,
+        IGatewayInvocationAuthority? invocationAuthority = null,
+        IConfiguration? configuration = null)
     {
         _resolver = resolver;
         _asr = asr;
         _batchFallback = batchFallback;
         _logger = logger;
+        _invocationAuthority = invocationAuthority;
+        _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId : GatewayTenantDefaults.InternalTenantId;
     }
 
     public async Task<LiveAsrOrchestrationResult> ExecuteAsync(
@@ -54,24 +66,31 @@ public sealed class LiveAsrSessionOrchestrator
         GatewayRequestContext requestContext,
         Func<LiveAsrEvent, Task> emit,
         Action onUpstreamRequest,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        CancellationToken platformCancellationToken = default,
+        Func<CancellationToken, Task>? beforeFallbackSend = null,
+        string appCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio)
     {
         LiveAsrSessionResult? sessionResult = null;
         string? sessionFailure = null;
+        string? admissionError = null;
+        int? admissionStatus = null;
         Channel<LiveAsrAudioFrame>? frames = null;
         Channel<LiveAsrAudioFrame>? batchFrames = null;
         Task? receiveTask = null;
         using var receiveCancellation =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, platformCancellationToken);
         try
         {
+            platformCancellationToken.ThrowIfCancellationRequested();
+            _invocationAuthority?.AssertAuthorized(appCallerCode, requestContext);
             bool startAccepted;
             try
             {
                 startAccepted = await ReceiveStartWithDeadlineAsync(
                     transport,
                     InitialControlTimeout,
-                    cancellationToken);
+                    receiveCancellation.Token);
             }
             catch (TimeoutException ex)
             {
@@ -99,7 +118,7 @@ public sealed class LiveAsrSessionOrchestrator
             // 一个会话只解析一次完整候选计划。流式与批量降级都从同一模型池快照筛选，
             // 避免健康状态或配置在两次查询间变化后混用不一致的候选。
             var plan = await _resolver.ResolveAsync(
-                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                appCallerCode,
                 ModelTypes.Asr,
                 ct: CancellationToken.None);
             var candidates = LiveAsrCandidatePolicy.Select(plan);
@@ -133,7 +152,9 @@ public sealed class LiveAsrSessionOrchestrator
                         batchFrames.Reader,
                         emit,
                         onUpstreamRequest,
-                        requestContext);
+                        requestContext,
+                        platformCancellationToken,
+                        beforeFallbackSend, appCallerCode);
                     sessionResult = batchResult;
                     if (!batchResult.Completed)
                     {
@@ -174,6 +195,7 @@ public sealed class LiveAsrSessionOrchestrator
             LiveAsrSessionResult? finalResult = null;
             for (var index = 0; index < candidates.Count; index++)
             {
+                platformCancellationToken.ThrowIfCancellationRequested();
                 var candidate = candidates[index];
                 await emit(new LiveAsrEvent
                 {
@@ -202,6 +224,10 @@ public sealed class LiveAsrSessionOrchestrator
                 }
                 else
                 {
+                    if (beforeFallbackSend is null)
+                        throw new TaskExecutionAdmissionException("TASK_ADMISSION_UNAVAILABLE", "任务授权服务暂时不可用，已停止转写；请保留录音后稍后重试。", 503);
+                    _invocationAuthority?.AssertAuthorized(appCallerCode, requestContext);
+                    await beforeFallbackSend(platformCancellationToken);
                     onUpstreamRequest();
                     finalResult = await _asr.TranscribeLivePcmAsync(
                         ResolveWebSocketUrl(candidate),
@@ -214,9 +240,13 @@ public sealed class LiveAsrSessionOrchestrator
                         index + 1,
                         candidates.Count,
                         candidate.ExchangeTransformerConfig,
-                        CancellationToken.None,
-                        requirePublicPinnedWebSocket: true);
+                        platformCancellationToken,
+                        requirePublicPinnedWebSocket: true,
+                        upstreamProxy: candidate.UpstreamProxy,
+                        allowPrivateProxy: string.Equals(requestContext.TenantId, _internalTenantId, StringComparison.Ordinal));
                 }
+
+                platformCancellationToken.ThrowIfCancellationRequested();
 
                 finalResult = await PreserveResultAndRecordHealthBestEffortAsync(
                     candidate,
@@ -239,7 +269,9 @@ public sealed class LiveAsrSessionOrchestrator
                         batchFrames.Reader,
                         emit,
                         onUpstreamRequest,
-                        requestContext);
+                        requestContext,
+                        platformCancellationToken,
+                        beforeFallbackSend, appCallerCode);
                     sessionResult = finalResult;
                     await Task.WhenAll(receiveTask, drainPrimaryTask);
                     if (finalResult.Completed)
@@ -275,7 +307,19 @@ public sealed class LiveAsrSessionOrchestrator
         }
         catch (Exception ex)
         {
-            sessionFailure = ex.Message;
+            sessionFailure = platformCancellationToken.IsCancellationRequested
+                ? "本次实时转写任务授权已到期，已停止转写；请保留录音后重新发起。"
+                : ex.Message;
+            if (platformCancellationToken.IsCancellationRequested)
+            {
+                admissionError = "TASK_PERMIT_EXPIRED";
+                admissionStatus = 403;
+            }
+            else if (ex is TaskExecutionAdmissionException denied)
+            {
+                admissionError = denied.Code;
+                admissionStatus = denied.StatusCode;
+            }
             _logger.LogWarning(ex, "实时 ASR 会话编排异常");
             receiveCancellation.Cancel();
             frames?.Writer.TryComplete();
@@ -301,13 +345,14 @@ public sealed class LiveAsrSessionOrchestrator
             }
             await emit(new LiveAsrEvent
             {
-                Type = LiveAsrEventTypes.Degraded,
-                ErrorCode = "LIVE_ASR_GATEWAY_FAILED",
-                Message = "实时转写连接异常，录音仍在安全保存，结束后将自动批量转写",
+                Type = platformCancellationToken.IsCancellationRequested || admissionError is not null ? LiveAsrEventTypes.Error : LiveAsrEventTypes.Degraded,
+                ErrorCode = platformCancellationToken.IsCancellationRequested ? "TASK_PERMIT_EXPIRED" : admissionError ?? "LIVE_ASR_GATEWAY_FAILED",
+                Message = platformCancellationToken.IsCancellationRequested || admissionError is not null ? sessionFailure
+                    : "实时转写连接异常，录音仍在安全保存，结束后将自动批量转写",
             });
         }
 
-        return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
+        return new LiveAsrOrchestrationResult(sessionResult, sessionFailure, admissionError, admissionStatus);
     }
 
     internal static async Task<bool> ReceiveStartWithDeadlineAsync(

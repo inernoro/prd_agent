@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * EffectiveConfigPanel — 分支生效配置检查器(波2)。
  *
@@ -11,9 +12,10 @@
  * 挂载点:BranchDetailDrawer 的「配置」tab + BranchDetailPage。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Layers, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Layers, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { DbProbePanel } from '@/components/branch/DbProbePanel';
 
 type EnvSource =
@@ -190,6 +192,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
 }
 
 export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<PanelState>({ status: 'idle' });
   const [copying, setCopying] = useState(false);
 
@@ -241,12 +244,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
         </Button>
       </div>
 
-      {state.status === 'loading' || state.status === 'idle' ? (
-        <div className="flex items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-4 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在解析生效配置…
-        </div>
-      ) : null}
+      {state.status === 'loading' || state.status === 'idle' ? <ContentLoading label="读取生效配置" variant="rows" /> : null}
 
       {state.status === 'error' ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -266,7 +264,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                 {!state.data.derivedFrom.sourceStillExists ? <span className="ml-1">;来源分支已删除</span> : null}
                 <span className="ml-1">配置为快照拷贝,两边各自独立。</span>
               </div>
-              {state.data.derivedFrom.sourceStillExists ? (
+              {state.data.derivedFrom.sourceStillExists && canManageConsole ? (
                 <Button
                   size="sm"
                   variant="outline"

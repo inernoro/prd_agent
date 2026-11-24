@@ -93,10 +93,13 @@ public class EntryContentWriteService
         DateTime? expectedUpdatedAt = null,
         EntryFields? entryFields = null,
         string? derivedStateMetadataKey = null,
-        FilterDefinition<DocumentEntry>? extraGuard = null)
+        FilterDefinition<DocumentEntry>? extraGuard = null,
+        UpdateDefinition<DocumentEntry>? atomicEntryUpdate = null)
     {
+        if (entry.Writing != null && atomicEntryUpdate == null)
+            throw new InvalidOperationException("按模版成文的文档请在作者工作区编辑并审核发布");
         // 更新或创建 ParsedPrd（内容寻址 + 共享保护；乐观并发模式不就地覆盖旧文档）
-        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: expectedUpdatedAt == null);
+        var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: false);
         entry.DocumentId = newDocId;
 
         // 摘要/搜索索引：html 条目剥标签取可读文本
@@ -136,6 +139,9 @@ public class EntryContentWriteService
                 .Set(e => e.Metadata, entryFields.Metadata.ToDictionary(pair => pair.Key, pair => pair.Value))
                 .Set(e => e.FileSize, entryFields.FileSize);
         }
+        // 发布快照与正文指针必须在同一个 entry 原子提交，不能先暴露新正文再保存版本。
+        if (atomicEntryUpdate != null)
+            contentUpdate = Builders<DocumentEntry>.Update.Combine(contentUpdate, atomicEntryUpdate);
 
         // 乐观并发：条件更新（Id + UpdatedAt），检查与写入是同一条原子操作。
         // 未命中说明期间有人保存过 → 整次写入放弃（评论/账本/快照都不动），
@@ -144,14 +150,14 @@ public class EntryContentWriteService
         // 时间戳只回答「有没有被人动过」，答不了「这还是不是我那条」：确定性 id 会被重用，
         // 而 BSON 只到毫秒 —— 同一毫秒内被删掉再重建的话，两条在 Id + UpdatedAt 上完全一样，
         // 这次写入就会把正文落进**别人那一代**里，还接着参与它的收尾。
-        var entryFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id);
+        var entryFilter = DocumentEntryWriteGuard.ForCurrentLifecycle(entry);
         if (expectedUpdatedAt != null)
             entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter,
                 Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, expectedUpdatedAt.Value));
         if (extraGuard != null)
             entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter, extraGuard);
         var updateResult = await _db.DocumentEntries.UpdateOneAsync(entryFilter, contentUpdate);
-        if ((expectedUpdatedAt != null || extraGuard != null) && updateResult.MatchedCount == 0)
+        if (updateResult.MatchedCount == 0)
             return new WriteResult(now, 0, 0, 0, entry.DocumentId!, Conflicted: true);
 
         try
@@ -242,7 +248,7 @@ public class EntryContentWriteService
             parsed.Title = oldDoc?.Title ?? entry.Title;
             if (parsed.Id != entry.DocumentId && reuseExclusiveDocId)
             {
-                var sharedByOthers = await _db.DocumentEntries.CountDocumentsAsync(
+                var sharedByOthers = await _db.DocumentEntriesIncludingTrash.CountDocumentsAsync(
                     e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
                 if (!sharedByOthers)
                     parsed.Id = entry.DocumentId; // 独占 → 复用旧 id 就地更新，不产生孤儿

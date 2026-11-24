@@ -1,3 +1,4 @@
+import { RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS } from '../../web/src/components/skeletons/ReleaseConsoleSkeleton';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -36,7 +37,16 @@ function bodyAfter(source: string, marker: string): string {
   throw new Error(`${marker} 的函数体没有闭合`);
 }
 
-const PAGE = read('pages/ReleaseConsolePage.tsx');
+/** 新增未确认请求section后，结尾必须从操作组起点查找，不能误取此前section。 */
+function sectionAfter(source: string, marker: string): string {
+  const start = source.indexOf(marker);
+  expect(start).toBeGreaterThanOrEqual(0);
+  return source.slice(start, source.indexOf('</section>', start));
+}
+
+const layoutClasses: Record<string, string> = { RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS };
+// 展开真实导出的 class 常量后沿用布局守卫；删掉页面的常量接线仍会失败。
+const PAGE = read('pages/ReleaseConsolePage.tsx').replace(/className=\{(RELEASE_CONSOLE_\w+_CLASS)\}/g, (_, key) => `className="${layoutClasses[key]}"`);
 const APP = read('App.tsx');
 const SHELL = read('components/layout/AppShell.tsx');
 const CENTER = read('pages/ReleaseCenterPage.tsx');
@@ -57,11 +67,12 @@ describe('发布控制台 · 路由与入口接线', () => {
     expect(fn).toMatch(/release-console'\)\)\s*return\s*'release-center'/);
   });
 
-  /** 用户 2026-08-13：「肯定是要新版的」——左栏落地页必须是控制台，不是发布中心。 */
-  it('左栏导航落地到发布控制台，发布中心退居管理面', () => {
-    const rail = SHELL.slice(SHELL.indexOf('to="/release-console"'), SHELL.indexOf('<span>Releases</span>'));
-    expect(rail, '左栏 Releases 应指向 /release-console').toContain('preloadReleaseConsolePage');
-    expect(SHELL).not.toContain('to="/release-center"');
+  /** 2026-11-16：用户选择版本追溯作为主页面，执行控制台保留中心内的入口。 */
+  it('左栏先展示发布追溯中心，中心仍可进入执行控制台', () => {
+    const rail = SHELL.slice(SHELL.indexOf('to="/release-center"'), SHELL.indexOf('to="/task-schedule"'));
+    expect(rail).toContain('preloadReleaseCenterPage');
+    expect(rail).toContain('aria-label="发布中心"');
+    expect(CENTER).toContain('to={consoleHref()}');
     // 接入 Agent 的语境识别要认得新落地页，否则在它上面退化成 general
     expect(read('lib/agent-onboarding.ts')).toContain("startsWith('/release-console')");
   });
@@ -103,13 +114,13 @@ describe('发布控制台 · 数据接线', () => {
    * 而不是字面量。
    */
   it('发布来源地址取自后端下发的 previewUrl（SSOT），不是空串也不是前端拼的', () => {
-    expect(PAGE).toContain("import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress'");
+    expect(PAGE).toMatch(/import \{[^}]*\bresolveReleaseSourceUrls\b[^}]*\} from '@\/lib\/releaseDialogAddress'/);
     expect(PAGE).toContain('resolveReleaseSourceUrls({ branch })');
-    const start = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(start).toContain('previewUrl }');
+    const start = bodyAfter(PAGE, 'const startRelease = async (force: boolean)');
+    expect(start).toContain('targetId: target, previewUrl, expectedCommitSha: commitSha');
     expect(start).not.toContain("previewUrl: ''");
-    const preflight = bodyAfter(PAGE, 'const passesPreflight = async ()');
-    expect(preflight).toContain('previewUrl }');
+    const preflight = bodyAfter(PAGE, 'const runPreflight = async ()');
+    expect(preflight).toContain('body: { targetId: target, previewUrl }');
     expect(preflight).not.toContain("previewUrl: ''");
     // 前端自己 slugify 预览域名是 CLAUDE.md §11 明令禁止的
     expect(PAGE).not.toContain('.miduo.org');
@@ -156,7 +167,7 @@ describe('发布控制台 · 并发口径不许对后端撒谎', () => {
 
   it('发布配置只读，改配置指回发布中心，不开第二处写入口', () => {
     const sheet = PAGE.slice(PAGE.indexOf("sheet === 'pipeline'"), PAGE.indexOf("sheet === 'agent'"));
-    expect(sheet).toContain('href="/release-center"');
+    expect(sheet).toContain('to={`/release-center?project=${encodeURIComponent(projectId)}&section=config`}');
     expect(sheet).not.toContain('<input');
     expect(sheet).not.toContain("method: 'POST'");
   });
@@ -167,8 +178,10 @@ describe('发布控制台 · 并发口径不许对后端撒谎', () => {
    */
   it('受保护环境要点两下才真发', () => {
     expect(PAGE).toContain("row?.target.isCanonical && row.target.environment === 'production'");
-    expect(PAGE).toContain('if (isProtected && !awaitingConfirm) { setConfirmTargetId(row.target.id); return; }');
-    expect(PAGE).toContain('确认发布到 ');
+    const request = bodyAfter(PAGE, 'const requestRelease = (force: boolean)');
+    expect(request).toContain('(isProtected || force) && pendingConfirmation?.force !== force');
+    expect(request.indexOf('setConfirmation({ key: preflightKey, force })')).toBeLessThan(request.indexOf('void startRelease(force)'));
+    expect(PAGE).toContain('确认强制发布');
   });
 });
 
@@ -179,15 +192,15 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
    */
   it('卡住条在，并给出取证与中止两个出口', () => {
     expect(PAGE).toContain('import { detectStall');
-    expect(PAGE).toContain('{stall.stalled ? (');
-    const strip = PAGE.slice(PAGE.indexOf('{stall.stalled ? ('), PAGE.indexOf('终态结论条'));
+    expect(PAGE).toContain('{stall.stalled && !targetUnconfirmed ? (');
+    const strip = PAGE.slice(PAGE.indexOf('{stall.stalled && !targetUnconfirmed ? ('), PAGE.indexOf('终态结论条'));
     expect(strip).toContain('秒没有新输出了');
     expect(strip).toContain("setSheet('agent')");
     expect(strip).toContain('cancelRun()');
   });
 
   it('终态给结论条，失败挂重发、成功可回滚', () => {
-    const strip = PAGE.slice(PAGE.indexOf('{shown && !running ? ('), PAGE.indexOf('{preflight ? ('));
+    const strip = PAGE.slice(PAGE.indexOf('{shown && !running && !targetUnconfirmed ? ('), PAGE.indexOf('{preflight ? ('));
     expect(strip).toContain('diagnosis?.headline');
     expect(strip).toContain('retryRun(shown)');
     expect(strip).toContain('rollbackRun(shown)');
@@ -218,10 +231,11 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
     expect(PAGE).toContain("type RailPane = 'history' | 'failed'");
     expect(PAGE).not.toContain("pane === 'config'");
     const sheetFn = PAGE.slice(PAGE.indexOf('function Sheet('), PAGE.indexOf('export function ReleaseConsolePage'));
-    expect(sheetFn).toContain('fixed inset-0');
-    expect(sheetFn).toContain("aria-modal=\"true\"");
-    // Esc 关闭：全屏浮层没有键盘出口是无障碍缺陷
-    expect(sheetFn).toContain("event.key === 'Escape'");
+    expect(sheetFn).toContain('<Dialog open onOpenChange=');
+    expect(sheetFn).toContain('<DialogContent frame');
+    // Portal、焦点约束与 Escape 由共享 Radix Dialog 负责，浏览器回归验证真实关闭行为。
+    expect(read('components/ui/dialog.tsx')).toContain('<DialogPortal>');
+    expect(read('components/ui/dialog.tsx')).toContain('<DialogPrimitive.Content');
   });
 
   /**
@@ -384,7 +398,7 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
     // 除 SectionLabel 自身外，不许再有第二处手写同款标题样式
     expect(PAGE.match(/tracking-\[0\.14em\]/g) || []).toHaveLength(1);
     for (const label of ['PROJECTS', 'ENVIRONMENTS', 'Pipeline', 'Live output']) {
-      expect(PAGE, `${label} 应当走 SectionLabel`).toContain(`<SectionLabel>${label}</SectionLabel>`);
+      expect(PAGE, `${label} 应当走 SectionLabel`).toMatch(new RegExp(`<SectionLabel>[^<]*${label}[^<]*</SectionLabel>`));
     }
   });
 
@@ -401,7 +415,7 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
    */
   it('日志按语义着色，时间单独成列', () => {
     expect(PAGE).toContain('LOG_TONE_CLASS[logLineTone(log.level, log.message)]');
-    expect(PAGE).toContain('text-muted-foreground/60">{formatClock(log.at)}');
+    expect(PAGE).toContain('text-muted-foreground">{formatClock(log.at)}');
     // 别再把 `[时间] LEVEL 正文` 拼成一整行塞进 pre
     expect(PAGE).not.toContain('log.level.toUpperCase()');
   });
@@ -448,7 +462,7 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
    * 宽度不够必须换行，不许裁。流水线卡头照参考稿只有一个标签，无此风险。
    */
   it('实时输出卡头可换行，不会把按钮裁在卡片外', () => {
-    const head = PAGE.slice(PAGE.indexOf('<SectionLabel>Live output</SectionLabel>') - 400, PAGE.indexOf('<SectionLabel>Live output</SectionLabel>'));
+    const head = PAGE.slice(PAGE.indexOf('Live output') - 400, PAGE.indexOf('Live output'));
     expect(head).toContain('flex-wrap');
   });
 
@@ -516,7 +530,7 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
       expect(text.length, `按钮文案「${text}」太长，会把状态条顶成两行`).toBeLessThanOrEqual(8);
     }
     // 二次确认那一下例外：要人看清发到哪
-    expect(PAGE).toContain('`确认发布到 ${row?.target.name}`');
+    expect(PAGE).toContain("`确认${pendingConfirmation?.force ? '强制' : ''}发布到 ${row?.target.name}`");
   });
 });
 
@@ -530,7 +544,7 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
  */
 describe('发布控制台 · 状态条一行的宽度预算', () => {
   it('中段 min-width 留得下操作组，且版本选择不在操作组里', () => {
-    expect(PAGE).toContain('min-w-[21.25rem] flex-1 basis-0');
+    expect(PAGE).toContain('min-w-0 flex-1 basis-[21.25rem]');
     const STACK_MIN = 340;
     const ICON = 52;
     const GAP = 18;
@@ -546,7 +560,8 @@ describe('发布控制台 · 状态条一行的宽度预算', () => {
   it('版本选择在标题行，进度条才横贯中段', () => {
     const titleRow = PAGE.slice(PAGE.indexOf('flex flex-wrap items-baseline gap-x-3'), PAGE.indexOf('overflow-hidden rounded bg-[hsl(var(--surface-sunken))]'));
     expect(titleRow, '版本选择应当在标题行里').toContain('aria-label="要发布的版本"');
-    const group = PAGE.slice(PAGE.indexOf('[&_button]:h-10'), PAGE.indexOf('试跑'));
+    const groupStart = PAGE.indexOf('flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
+    const group = PAGE.slice(groupStart, PAGE.indexOf('</section>', groupStart));
     expect(group, '操作组里不该再有版本选择').not.toContain('aria-label="要发布的版本"');
   });
 });
@@ -594,26 +609,27 @@ describe('发布控制台 · 节奏', () => {
   });
 });
 
-/**
- * 发布前检查并进发布，不再是一个并列按钮（用户 2026-08-14：「干脆合并，不让单独
- * 试跑，让软件根据情况自动做决定」）。后端 startRelease 本来就会先跑一遍
- * （release-service 的 resolvePreflight，不过就抛错），单独摆个按钮既多一步，
- * 又让人以为不点就不检查。
- */
-describe('发布控制台 · 发布前检查是发布的第一步', () => {
-  it('没有单独的试跑按钮，检查在 startRelease 里先跑', () => {
-    const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
-    expect(group, '操作组里不该再有试跑按钮').not.toContain('试跑');
-    const start = bodyAfter(PAGE, 'const startRelease = async ()');
-    expect(start, '发布前必须先过检查').toContain('if (!(await passesPreflight())) return;');
+describe('发布控制台 · 发起发布前展示预检结论', () => {
+  it('检查只生成结论，发布使用同一份回执和已确认的完整版本', () => {
+    const group = sectionAfter(PAGE, 'flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
+    expect(group).toContain('void runPreflight()');
+    const check = bodyAfter(PAGE, 'const runPreflight = async ()');
+    expect(check).toContain('/preflight');
+    expect(check).toContain('if (!stillHere(scope)) return;');
+    expect(check).toContain('setPreflight({ key: preflightKey, result })');
+    expect(check).not.toContain('submitRelease');
+    const start = bodyAfter(PAGE, 'const startRelease = async (force: boolean)');
+    expect(start).toContain('expectedCommitSha: commitSha, preflightId: preflight.preflightId');
+    expect(start).toContain('...(force ? { forceReason: forceReason.trim() } : {})');
+    expect(PAGE).toContain('preflightState?.key === preflightKey');
+    expect(PAGE).toContain('preflight?.artifact?.commitSha === commitSha');
   });
 
-  /** 检查全过时不弹结果面板——它已经继续往下发了，一屏绿勾是噪音。 */
-  it('检查全过不打扰，只有被拦下才摊开原因', () => {
-    const fn = bodyAfter(PAGE, 'const passesPreflight = async ()');
-    expect(fn).toContain("check.blocking && check.status === 'fail'");
-    expect(fn).toContain('setPreflight(blocking.length > 0 ? res : null)');
-    expect(PAGE).toContain('发布前检查未通过，已停在发布前');
+  it('普通发布与强制发布分别按检查结果授权，告警显示服务端原因', () => {
+    expect(PAGE).toContain('preflightMatchesCommit && preflight?.ok === true');
+    expect(PAGE).toContain('preflightMatchesCommit && preflight?.forceAvailable === true && Boolean(forceReason.trim())');
+    expect(PAGE).toContain("{check.blocking ? '阻断' : '告警'}");
+    expect(PAGE).toContain('collapseCheckMessage(check.message).summary');
   });
 
   /**
@@ -621,7 +637,7 @@ describe('发布控制台 · 发布前检查是发布的第一步', () => {
    * 中止常驻时是一个 90% 时间都点不了的灰按钮，占位又没用。
    */
   it('开始在最右，中止只在进行中出现', () => {
-    const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    const group = sectionAfter(PAGE, 'flex min-w-0 w-full max-w-full flex-wrap items-center justify-end');
     const cancelAt = group.indexOf('中止');
     // 主按钮的文案已收进 buildConsoleStance，锚点换成它的渲染点，
     // 不再依赖「开始发布」这个字面量出现在页面里。

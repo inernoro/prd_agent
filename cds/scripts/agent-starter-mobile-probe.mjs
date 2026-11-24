@@ -200,6 +200,9 @@ async function main() {
       const page = await ctx.newPage();
       await page.goto(`${server.url}/probe.html`, { waitUntil: 'domcontentloaded', timeout: 45000 });
       await page.waitForTimeout(1200);
+      // The dialog now opens on the short connection prompt. Enter the
+      // role wizard through its real tab before measuring its five steps.
+      await page.getByRole('dialog').getByRole('button', { name: '上手助手', exact: true }).click();
 
       for (const step of STEPS) {
         const m = await measure(page, step.exit, step.heading);

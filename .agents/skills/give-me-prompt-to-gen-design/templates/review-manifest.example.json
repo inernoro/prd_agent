@@ -1,0 +1,23 @@
+{
+  "title": "项目名称 · 设计对照验收表",
+  "design_version": "填写实际设计来源及版本",
+  "implementation_version": "填写实际提交或构建 ID",
+  "environment": "填写视口、浏览器、数据与时间控制方式",
+  "cases": [
+    {
+      "id": "CASE-001",
+      "title": "替换为实际页面与状态",
+      "module": "替换为实际模块",
+      "report": "尚未执行；模板中的文字不构成验收结论。",
+      "fidelity": "待评",
+      "status": "未执行",
+      "reviewer": "待执行",
+      "differences": "执行后填写实际差异及拟真度依据",
+      "reference_source": "填写左侧设计来源",
+      "actual_source": "填写右侧系统入口与版本",
+      "reference_image": "",
+      "actual_image": "",
+      "evidence": []
+    }
+  ]
+}

@@ -4,6 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text;
+using System.Security.Cryptography;
+using MongoDB.Driver;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Core.Interfaces;
@@ -162,6 +165,59 @@ public sealed class HostedSiteObsoleteAssetKeyTests
         // 旧入口对象在指针切走之后就是孤儿：必须真的被回收，
         // 否则每发布一次就在对象存储里多留一份永不回收的旧正文。
         storage.Verify(x => x.DeleteByKeyAsync(oldEntryKey, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishedHistorySurvivesPackageSwapWhileFailedUploadsAndExplicitDeletionStillCleanUp()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync("hosted_history_keys");
+        var now = DateTime.UtcNow;
+        now = now.AddTicks(-(now.Ticks % TimeSpan.TicksPerMillisecond));
+        string[] paths = ["index.html", "manifest.json", "assets/design-tokens.json", "assets/page-outline.json",
+            "assets/provenance.json", "assets/accessibility-static-report.json"];
+        HostedSiteVerifiedFile[] Package(string text) => paths.Select(path =>
+        {
+            var bytes = Encoding.UTF8.GetBytes(path == "index.html" ? HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+                "<!doctype html><html><head></head><body><h1>" + text + "</h1></body></html>", paths) : "{}");
+            return new HostedSiteVerifiedFile(path, bytes, Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                path == "index.html" ? "text/html" : "application/json");
+        }).ToArray();
+        var old = Package("old");
+        var objects = old.ToDictionary(x => "sites/site-1/.versions/old/" + x.Path, x => x.Content.ToArray());
+        var oldKeys = objects.Keys.ToArray();
+        await fixture.Db.HostedSites.InsertOneAsync(new HostedSite { Id="site-1",OwnerUserId="user-1",Visibility="private",
+            EntryFile="index.html",PublishedRevisionId="old",ContentVersion=now,CreatedAt=now,
+            Files=old.Select(x=>new HostedSiteFile { Path=x.Path,CosKey="sites/site-1/.versions/old/"+x.Path,
+                Size=x.Content.Length,MimeType=x.MimeType }).ToList() });
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision { Id="old",SiteId="site-1",
+            CreatedByUserId="user-1",Status=HostedSiteRevisionStatuses.Published,PublishedContentVersion=now,
+            Html=Encoding.UTF8.GetString(old.Single(x=>x.Path=="index.html").Content),
+            VerifiedFiles=old.Select(x=>new HostedSiteRevisionFile { Path=x.Path,Content=x.Content,Sha256=x.Sha256,MimeType=x.MimeType }).ToList() });
+        var fail = false; var writes = 0;
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x=>x.BuildSiteKey(It.IsAny<string>(),It.IsAny<string>())).Returns<string,string>((site,path)=>"sites/"+site+"/"+path);
+        storage.Setup(x=>x.BuildUrlForKey(It.IsAny<string>())).Returns<string>(key=>"https://cdn.example/"+key);
+        storage.Setup(x=>x.TryDownloadBytesAsync(It.IsAny<string>(),It.IsAny<CancellationToken>()))
+            .Returns<string,CancellationToken>((key,ct)=>Task.FromResult(objects.GetValueOrDefault(key)));
+        storage.Setup(x=>x.UploadToKeyAsync(It.IsAny<string>(),It.IsAny<byte[]>(),It.IsAny<string>(),It.IsAny<CancellationToken>(),It.IsAny<string>()))
+            .Returns<string,byte[],string,CancellationToken,string>((key,bytes,mime,ct,cache)=>
+            { if(fail && ++writes==2) throw new IOException("fixture upload failed"); objects[key]=bytes.ToArray();return Task.CompletedTask; });
+        storage.Setup(x=>x.DeleteByKeyAsync(It.IsAny<string>(),It.IsAny<CancellationToken>()))
+            .Returns<string,CancellationToken>((key,ct)=>{ objects.Remove(key);return Task.CompletedTask; });
+        var service = CreateHostedSiteService(fixture.Db,storage.Object);
+        var current = await service.ReplaceWithVerifiedFilesAsync("site-1","user-1",Package("new"),now,"new");
+        oldKeys.ShouldAllBe(key=>objects.ContainsKey(key));
+        var beforeFailed = objects.Keys.ToHashSet();
+        fail = true;
+        await Should.ThrowAsync<IOException>(()=>service.ReplaceWithVerifiedFilesAsync(
+            "site-1","user-1",Package("failed"),current.ContentVersion,"failed"));
+        fail = false;
+        await service.ResumeNextPendingAssetCleanupAsync(DateTime.UtcNow.AddMinutes(10));
+        objects.Keys.OrderBy(x=>x).ShouldBe(beforeFailed.OrderBy(x=>x));
+        (await fixture.Db.HostedSites.Find(x=>x.Id=="site-1").SingleAsync()).PublishedRevisionId.ShouldBe("new");
+        (await service.DeleteAsync("site-1","user-1",CancellationToken.None)).ShouldBeTrue();
+        objects.ShouldBeEmpty();
     }
 
     private static HostedSiteService CreateHostedSiteService(MongoDbContext db, IAssetStorage storage)

@@ -24,7 +24,6 @@ export type ConsolePage =
   | 'organization'
   | 'usage'
   | 'audits'
-  | 'shadow'
   | 'governance'
   | 'gatewaySettings'
   | 'settings';
@@ -56,7 +55,6 @@ export const PAGE_ACCESS: Record<ConsolePage, PageRule> = {
   organization: { capability: 'logsRead' },
   usage: { capability: 'usageRead' },
   audits: { capability: 'auditRead' },
-  shadow: { capability: 'logsRead', internalOnly: true },
   governance: { capability: 'logsRead', internalOnly: true },
   // 系统级模型配置属于配置面，和 promptPolicy 同档：只有 owner/admin 能开。
   gatewaySettings: { capability: 'configWrite' },

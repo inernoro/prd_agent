@@ -26,6 +26,11 @@ paths:
 7. 通知、指标和控制台不是请求执行或自动恢复的前置依赖。任一辅助链路故障不得扩大到数据面。
 8. 所有池不可用时仍必须保留目录、错误详情、恢复和回滚入口。
 9. 隔离、恢复、默认池切换、跨池授权与回滚必须写入审计。
+10. Gateway 模型目录是“模型是否存在”的唯一事实源；MAP 只保存开放范围与默认意图。运行时必须将 MAP 策略与实时目录求交集，失效引用不得继续执行、不得继续标成默认，也不得静默替换成列表第一项。
+11. 删除任何逻辑模型 PublicId 前，必须统一审计 MAP 中仍会参与未来执行的引用，包括视觉模型策略、固定模型/API Key 绑定和未终结生图任务。规则按传入的 PublicId 生效，覆盖全部当前及未来模型，禁止为单个模型追加特判。
+12. 图生图参考图必须作为独立结构化字段贯穿“入口 → 交接包 → 编辑器 → 资产落盘 → ImageRefs → Gateway”；所有新请求必须显式提交入口看到的参考图数量，字段缺失或数量不一致都必须在上游调用前拒绝。禁止把 `data:` / `blob:` 图片塞进消息文本或依赖缩略图推断业务类型。参考图无法持久化时必须阻断生成，禁止静默降级成文生图。
+13. 文生图/图生图的 AppCaller 与日志分类必须由最终提交给后端的结构化 `ImageRefs` 判定，不能由按钮、预览缩略图或页面来源判定。新增入口必须复用同一个交接包构造/解析器，并补一条“data URL 最终仍进入 ImageRefs”的回归测试。
+14. 模型目录、开放策略、默认选择、交接与删除审计属于通用契约层，禁止按某个产品模型 PublicId 写分支。回归测试必须至少使用一个仓库和正式环境从未配置过的虚构未来模型，证明新增模型不需要修改这些通用层代码；具体模型协议差异只能留在 Adapter/Offering 配置层。
 
 详细规则与验收边界见 `doc/rule.platform.llm-gateway.md` 和 `doc/design.platform.model-pool.md`。
 
@@ -77,7 +82,7 @@ Worker / BackgroundService 场景：UserId 从触发任务的实体读出（如 
 
 ### 反面案例（真实踩过）
 
-Cursor 写的 `pa-agent` Controller 调 `_gateway.StreamAsync` 前没有 `BeginScope`，导致：
+某次 `pa-agent` Controller 实现调用 `_gateway.StreamAsync` 前没有 `BeginScope`，导致：
 1. 日志出现 `[LlmLog] UserId 为空` warning，但 warning 不阻断
 2. Gateway 继续往下走，访问控制层查不到用户，抛 `User not found`
 3. Service 层看到 "LLM stream error: User not found" 以为是上游模型出错
@@ -148,29 +153,17 @@ OpenRouter 默认**不向客户端转发 reasoning 内容**。即使上游模型
 - 我们的 Gateway 收到第一个 Text chunk 要 50+ 秒
 - 之间 48 秒是 OpenRouter hold 住 reasoning 的时间
 
-**修复**：在 `RequestBody` 里显式设置两个字段：
+**职责边界**：业务层只设置 `GatewayRequest.IncludeThinking = true`，不在 `RequestBody` 中手写 OpenRouter 扩展。Gateway 先检查模型推理能力，再将有效意图交给实际发送的协议适配器；Intent 类型仍强制关闭思考输出。
+
+`OpenAIGatewayAdapter` 仅在真实 HTTPS 目标 Host 精确为 `openrouter.ai` 时编码：
 ```csharp
-RequestBody = new JsonObject
-{
-    ["messages"] = ...,
-    ["temperature"] = ...,
-    ["include_reasoning"] = true,                               // 旧字段，仍然生效
-    ["reasoning"] = new JsonObject { ["exclude"] = false },     // 新字段
-},
+requestBody["include_reasoning"] = true;                    // OpenRouter 旧扩展
+requestBody["reasoning"] = new JsonObject { ["exclude"] = false }; // OpenRouter 扩展
 ```
 
-两个都要加，因为 OpenRouter 对不同模型/时期支持的字段名不一致。
+该双字段兼容行为集中在适配器，保留不同 OpenRouter 上游的推理输出。严格原生 OpenAI 和其他 OpenAI 兼容目标不注入这些未知扩展；不能根据模型名字或 URL 子串猜供应商。经自建代理转发的 OpenRouter 目标尚无显式能力声明时，也不自动注入扩展。
 
-同时服务层必须设置：
-```csharp
-IncludeThinking = true,  // Gateway 决定是否向调用方 yield Thinking chunk
-```
-
-这是两个独立的开关：
-- `include_reasoning: true` 让**上游**愿意往下流 reasoning
-- `IncludeThinking = true` 让**Gateway 内部**把 Thinking chunk 透传给调用方
-
-只设一个不够，必须都设。
+`IncludeThinking` 同时表达请求推理输出与向调用方透传 Thinking chunk 的意图，并不保证模型一定产生推理内容；能力不支持时保留 `THINKING_UNSUPPORTED` 等结构化错误，禁止为此静默切换模型。
 
 ### 3. Reasoning 字段名不统一
 

@@ -1,3 +1,5 @@
+import { buildDocBrowserTree, docBrowserEntryPath } from './docBrowserTree';
+import { ProgressiveEntries } from './ProgressiveEntries';
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { TranscribeStatusCard, type TranscribeStatusRun } from './TranscribeStatusCard';
@@ -396,6 +398,7 @@ export type DocBrowserProps = {
   enableSelectionAi?: boolean;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
+  onCreateWriting?: () => void;
   onUploadFile?: () => void;
   /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
   onImportFromHosting?: () => void;
@@ -407,7 +410,9 @@ export type DocBrowserProps = {
    * 由 DocBrowser 根据 fileTypeRegistry 的 preview 字段选择渲染方式。
    */
   loadContent: (entryId: string) => Promise<EntryPreview | null>;
-  onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
+  onSearch?: (keyword: string, searchContent: boolean, cursor?: string) => Promise<DocBrowserEntry[] | {
+    items: DocBrowserEntry[]; total: number; nextCursor?: string | null;
+  } | null>;
   /** 点击订阅条目右侧的状态徽标时触发，用于打开订阅详情面板 */
   onOpenSubscription?: (entryId: string) => void;
   /** 点击"生成字幕"时触发（仅 audio/video/image entries 显示） */
@@ -1140,6 +1145,7 @@ function EntryRenameDialog({
 function TreeNode({
   entry,
   childrenMap,
+  revealPath,
   depth,
   selectedEntryId,
   returnEntryId,
@@ -1175,6 +1181,7 @@ function TreeNode({
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
+  revealPath: ReadonlySet<string>;
   depth: number;
   selectedEntryId?: string;
   /** 从正文退回列表后保留的来源行，只做浅色定位，不代表仍处于选中态。 */
@@ -1555,11 +1562,14 @@ function TreeNode({
       </button>
 
       {/* 子节点 */}
-      {isFolder && isOpen && children.map(child => (
+      {isFolder && isOpen && <ProgressiveEntries items={children} itemKey={child => child.id}
+        revealIndex={children.findIndex(child => revealPath.has(child.id))}
+        render={child => (
         <TreeNode
           key={child.id}
           entry={child}
           childrenMap={childrenMap}
+          revealPath={revealPath}
           depth={depth + 1}
           selectedEntryId={selectedEntryId}
           returnEntryId={returnEntryId}
@@ -1593,7 +1603,7 @@ function TreeNode({
           onToggleSelect={onToggleSelect}
           selectionActive={selectionActive}
         />
-      ))}
+      )} />}
     </>
   );
 }
@@ -1635,6 +1645,7 @@ export function DocBrowser({
   loadContent,
   onCreateFolder,
   onCreateDocument,
+  onCreateWriting,
   onUploadFile,
   onImportFromHosting,
   onOpenVideoParser,
@@ -1678,6 +1689,10 @@ export function DocBrowser({
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
+  const [searchCursor, setSearchCursor] = useState<string | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const navigationTree = useMemo(() => buildDocBrowserTree(entries), [entries]);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   // 音频条目的转录笔记 markdown（歌词滚轮跟读数据源；无笔记为 null）
@@ -1912,10 +1927,12 @@ export function DocBrowser({
   // 否则祖先链断、文件夹不展开、滚不到位。
   const parentMap = useMemo(() => {
     const m = new Map<string, string | undefined>();
-    for (const e of entries) m.set(e.id, e.parentId);
+    for (const [id, parent] of navigationTree.parentIds) m.set(id, parent);
     for (const e of (searchResults ?? [])) if (!m.has(e.id)) m.set(e.id, e.parentId);
     return m;
-  }, [entries, searchResults]);
+  }, [navigationTree, searchResults]);
+  const revealPath = useMemo(() => docBrowserEntryPath(parentMap, selectedEntryId ?? lastVisitedEntryId),
+    [parentMap, selectedEntryId, lastVisitedEntryId]);
 
   // 选中条目自动展开祖先；退回列表后继续滚到刚才阅读的来源行，保留空间记忆。
   useEffect(() => {
@@ -2590,19 +2607,8 @@ export function DocBrowser({
 
   // 构建树结构
   const { rootEntries, childrenMap, fileCount } = useMemo(() => {
-    // 移除对 'github_directory' 的硬编码过滤，使订阅文件夹与文件可以在树结构中正常显示。
-    const cMap = new Map<string, DocBrowserEntry[]>();
-    const roots: DocBrowserEntry[] = [];
-
-    for (const e of entries) {
-      if (!e.parentId) {
-        roots.push(e);
-      } else {
-        const siblings = cMap.get(e.parentId) ?? [];
-        siblings.push(e);
-        cMap.set(e.parentId, siblings);
-      }
-    }
+    const roots = [...navigationTree.rootEntries];
+    const cMap = new Map([...navigationTree.childrenMap].map(([id, children]) => [id, [...children]]));
 
     // 排序 SSOT：默认模式消费服务端 SortOrder，未设置时按自然标题兜底。
     const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => compareDocBrowserEntries(a, b, {
@@ -2613,10 +2619,10 @@ export function DocBrowser({
     roots.sort(sortFn);
     for (const [, children] of cMap) children.sort(sortFn);
 
-    const fCount = entries.filter(e => !e.isFolder).length;
+    const fCount = entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length;
 
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
-  }, [entries, primaryEntryId, pinnedSet, sortMode]);
+  }, [entries, navigationTree, primaryEntryId, pinnedSet, sortMode]);
 
   // 拖拽自定义排序：仅书籍顺序（消费 SortOrder 的模式）+ 非后端搜索态启用。
   // 时间排序下位置由时间决定，拖了也会弹回，不如不给放置目标（预期管理）。
@@ -2690,7 +2696,6 @@ export function DocBrowser({
 
     // 本地搜索 / tag 过滤（两者 AND）
     const matchIds = new Set<string>();
-    const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
       let searchHit = !hasLocalSearch;
       if (hasLocalSearch) {
@@ -2702,14 +2707,7 @@ export function DocBrowser({
       // 文件夹本身不参与 tag 过滤（无 tag），但若其后代命中则保留
       const tagHit = !hasTagFilter || (!e.isFolder && (e.tags ?? []).some(t => selectedTags.has(t)));
       if (searchHit && tagHit && !e.isFolder) {
-        matchIds.add(e.id);
-        let cur = e;
-        while (cur.parentId) {
-          matchIds.add(cur.parentId);
-          const parent = entryMap.get(cur.parentId);
-          if (!parent) break;
-          cur = parent;
-        }
+        for (const id of docBrowserEntryPath(parentMap, e.id)) matchIds.add(id);
       } else if (hasLocalSearch && !hasTagFilter && e.isFolder && e.title.toLowerCase().includes(kw)) {
         // 仅文本搜索时文件夹标题命中仍保留（与原逻辑保持兼容）
         matchIds.add(e.id);
@@ -2724,7 +2722,7 @@ export function DocBrowser({
     }
 
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines, parentMap]);
 
   // 收集 entries 中所有出现过的 tag（按出现频次排序，热门 tag 排前）
   const allTagsRanked = useMemo(() => {
@@ -2789,10 +2787,12 @@ export function DocBrowser({
     return ids;
   }, [search, searchResults, filteredRoots, filteredChildrenMap, contentFirstLines]);
 
-  // 搜索处理（防抖 + 永远同时搜标题+内容，走后端；onSearch 内部会先 rebuildContentIndex）
+  // 搜索处理：正文检索只读，游标继续加载；过时响应不得覆盖新查询。
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
-    setSearchResults(null);
+    setSearchResults(value.trim() && onSearch ? [] : null);
+    setSearchCursor(null);
+    setSearchError(null);
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
@@ -2807,22 +2807,44 @@ export function DocBrowser({
           const results = await onSearch(trimmed, true);
           // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
           if (reqId !== searchSeqRef.current) return;
-          setSearchResults(results);
-        } catch {
+          setSearchResults(Array.isArray(results) || results == null ? results : results.items);
+          setSearchCursor(results && !Array.isArray(results) ? results.nextCursor ?? null : null);
+          setSearchTotal(results && !Array.isArray(results) ? results.total : results?.length ?? 0);
+        } catch (error) {
           if (reqId !== searchSeqRef.current) return;
-          setSearchResults(null);
+          setSearchResults([]);
+          setSearchError(error instanceof Error ? error.message : '搜索失败，请重试');
         } finally {
           // 仅最新请求负责收起 spinner：陈旧响应不动它（更新的在途请求会收），
           // 但 onSearch 抛错时最新请求也必须解除 loading，避免 spinner 永久卡住。
           if (reqId === searchSeqRef.current) setSearching(false);
         }
-      }, 400);
+      }, 150);
     } else {
       // 搜索框被清空：立即回到本地全量树，并让任何在途响应作废
       setSearchResults(null);
       setSearching(false);
     }
   }, [onSearch]);
+
+  const loadMoreSearchResults = useCallback(async () => {
+    if (!onSearch || !searchCursor || searching) return;
+    const reqId = searchSeqRef.current;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const result = await onSearch(search.trim(), true, searchCursor);
+      if (reqId !== searchSeqRef.current) return;
+      if (!result || Array.isArray(result)) throw new Error('搜索分页失效，请重新搜索');
+      setSearchResults(previous => [...new Map([...(previous ?? []), ...result.items].map(e => [e.id, e])).values()]);
+      setSearchCursor(result.nextCursor ?? null);
+      setSearchTotal(result.total);
+    } catch (error) {
+      if (reqId === searchSeqRef.current) setSearchError(error instanceof Error ? error.message : '加载失败，请重试');
+    } finally {
+      if (reqId === searchSeqRef.current) setSearching(false);
+    }
+  }, [onSearch, searchCursor, search, searching]);
 
   const toggleFolder = useCallback((folderId: string) => {
     setExpandedFolders(prev => {
@@ -2835,11 +2857,11 @@ export function DocBrowser({
 
   // 搜索时自动展开所有文件夹（后端结果为扁平列表时无需展开，但展开无副作用）
   useEffect(() => {
-    if (search.trim()) {
+    if (search.trim() && !onSearch) {
       const allFolderIds = entries.filter(e => e.isFolder).map(e => e.id);
       setExpandedFolders(new Set(allFolderIds));
     }
-  }, [search, entries]);
+  }, [search, entries, onSearch]);
 
   // 加载内容
   // contentKey = `${entryId}:${updatedAt}`：替换文件后后端会更新 updatedAt，
@@ -2957,12 +2979,11 @@ export function DocBrowser({
     const autoSelect = (entryId: string) => {
       didAutoSelectRef.current = true;
       onSelectEntry(entryId);
-      const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
-      let cur = entryMap.get(entryId);
-      while (cur?.parentId) {
-        toExpand.add(cur.parentId);
-        cur = entryMap.get(cur.parentId);
+      let parent = parentMap.get(entryId);
+      while (parent && !toExpand.has(parent)) {
+        toExpand.add(parent);
+        parent = parentMap.get(parent);
       }
       if (toExpand.size > 0) {
         setExpandedFolders(prev => new Set([...prev, ...toExpand]));
@@ -2985,7 +3006,7 @@ export function DocBrowser({
     };
     const first = findFirstDoc(rootEntries);
     if (first) autoSelect(first.id);
-  }, [primaryEntryId, entries, selectedEntryId, onSelectEntry, isMobile, rootEntries, childrenMap]);
+  }, [primaryEntryId, entries, selectedEntryId, onSelectEntry, isMobile, rootEntries, childrenMap, parentMap]);
 
   const handleCreateFolder = useCallback(async () => {
     if (!newFolderName.trim() || !onCreateFolder) return;
@@ -3022,9 +3043,9 @@ export function DocBrowser({
     const ids = Array.from(selectedIds);
     const confirmed = await systemDialog.confirm({
       title: '批量删除文档',
-      message: `将永久删除选中的 ${ids.length} 个文件及其解析正文 / 附件。\n\n此操作不可恢复。`,
+      message: `将选中的 ${ids.length} 个文件移入回收站，30 天内可恢复。`,
       tone: 'danger',
-      confirmText: `永久删除 ${ids.length} 个`,
+      confirmText: `移入回收站 ${ids.length} 个`,
       cancelText: '取消',
     });
     if (!confirmed) return;
@@ -3035,8 +3056,9 @@ export function DocBrowser({
   }, [onDeleteEntry, selectedIds]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, entry: DocBrowserEntry) => {
-    setContextMenu({ x: e.clientX, y: e.clientY, entry });
-  }, []);
+    const canonical = entries.find(item => item.id === entry.id) ?? entry;
+    setContextMenu({ x: e.clientX, y: e.clientY, entry: canonical });
+  }, [entries]);
 
   if (loading) {
     return (
@@ -3573,7 +3595,10 @@ export function DocBrowser({
                 </>
               )}
             </div>
-          ) : displayItems.map((item, idx) => (
+          ) : <ProgressiveEntries key={`${search}|${[...selectedTags].join(',')}|${sortMode}`}
+            items={displayItems} itemKey={(item, idx) => item.kind === 'header' ? `grp-${item.bucketKey}-${idx}` : item.entry.id}
+            revealIndex={displayItems.findIndex(item => item.kind === 'entry' && revealPath.has(item.entry.id))}
+            render={(item, idx) => (
             item.kind === 'header' ? (
               <div
                 key={`grp-${item.bucketKey}-${idx}`}
@@ -3593,18 +3618,19 @@ export function DocBrowser({
               /* layout="position"：拖拽换位 / 置顶 / 切排序时 FLIP 位移动画，行滑到新位置
                  而非瞬移（与列表页卡片同一套「看得见去哪了」反馈）。layout 动画单独给
                  无延迟的 spring——不能吃入场 stagger 的 delay，否则重排像多米诺 */
-              layout="position"
-              initial={{ opacity: 0, y: 6 }}
+              layout={search.trim() ? false : 'position'}
+              initial={search.trim() ? false : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{
                 duration: 0.28,
-                delay: Math.min(idx * 0.018, 0.5),
+                delay: search.trim() ? 0 : Math.min(idx * 0.018, 0.5),
                 ease: [0.25, 0.1, 0.25, 1],
                 layout: { type: 'spring', stiffness: 420, damping: 38, delay: 0 },
               }}
             >
             <TreeNode
               entry={item.entry}
+              revealPath={revealPath}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
@@ -3643,7 +3669,13 @@ export function DocBrowser({
             />
             </motion.div>
             )
-          ))}
+          )} />}
+          {searchError && <div role="alert" className="px-3 py-2 text-[11px] text-token-muted">{searchError}</div>}
+          {searchResults !== null && searchCursor && <button type="button" disabled={searching}
+            className="w-full px-3 py-2 text-[11px] text-token-muted hover-text-primary"
+            onClick={() => void loadMoreSearchResults()}>
+            {searching ? '正在加载…' : `加载更多搜索结果（已加载 ${searchResults.length} / ${searchTotal}）`}
+          </button>}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}
         {onMoveEntry && (
@@ -4462,6 +4494,7 @@ export function DocBrowser({
         <CreatePaletteFab
           onDoubleActivation={onQuickRecord ?? onUploadAudio}
           actions={[
+            ...(onCreateWriting ? [{ key: 'writing', label: '按模版成文', icon: FilePlus, onClick: onCreateWriting }] : []),
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
             ...((onUploadFile || onOpenVideoParser || onImportFromHosting) ? [{
@@ -4504,9 +4537,9 @@ export function DocBrowser({
                   : '解析正文、附件文件';
             const confirmed = await systemDialog.confirm({
               title: `确认删除${isFolder ? '文件夹' : '文档'}`,
-              message: `删除「${target.title}」将永久清除：\n  · ${consequence}\n\n此操作不可恢复。`,
+              message: `将「${target.title}」移入回收站：\n  · ${consequence}\n\n30 天内可在知识库回收站恢复。`,
               tone: 'danger',
-              confirmText: '永久删除',
+              confirmText: '移入回收站',
               cancelText: '取消',
             });
             if (confirmed) onDeleteEntry(entryId);

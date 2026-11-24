@@ -23,13 +23,14 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/video-agent")]
 [Authorize]
 [AdminController("video-agent", AdminPermissionCatalog.VideoAgentUse)]
-public class VideoAgentController : ControllerBase
+public partial class VideoAgentController : ControllerBase
 {
+    internal string? ExportDeploymentScope { get; set; } = DeploymentScope.Current;
+    internal string? ExportDurableScope { get; set; } = DeploymentScope.CurrentDurable;
     private readonly IVideoGenService _videoGenService;
     private readonly IRunEventStore _runStore;
     private readonly MongoDbContext _db;
     private readonly IModelPoolQueryService _modelPoolQuery;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<VideoAgentController> _logger;
@@ -45,7 +46,6 @@ public class VideoAgentController : ControllerBase
         MongoDbContext db,
         IModelPoolQueryService modelPoolQuery,
         IOpenRouterVideoClient videoClient,
-        ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
         IHttpClientFactory httpClientFactory,
         IDataProtectionProvider dataProtectionProvider,
@@ -56,7 +56,6 @@ public class VideoAgentController : ControllerBase
         _db = db;
         _modelPoolQuery = modelPoolQuery;
         _videoClient = videoClient;
-        _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -618,6 +617,9 @@ public class VideoAgentController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
+        await VideoGenService.RefreshOwnedExportScopeAsync(_db, run, GetAdminId(), AppKey,
+            ExportDeploymentScope, ExportDurableScope, ct);
+        await _videoGenService.PrepareGenerationRecoveryAsync(run, GetAdminId(), AppKey, ct);
         return Ok(ApiResponse<VideoGenRun>.Ok(VideoGenerationUserError.SanitizeForResponse(run)));
     }
 
@@ -1046,13 +1048,13 @@ public class VideoAgentController : ControllerBase
 
         var run = new VideoToDocRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = VideoToDocRunStatus.Queued,
             VideoUrl = videoUrl,
             VideoTitle = request?.VideoTitle?.Trim(),
             SystemPrompt = request?.SystemPrompt?.Trim(),
             Language = (request?.Language ?? "auto").Trim(),
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

@@ -1,6 +1,10 @@
+import type { EnvAuditFact } from './shared/engineering-planning.js';
+import type { ProjectInspection } from './shared/project-inspections.js';
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
+import type { BranchOperationRequest } from './services/branch-operation-coordinator.js';
+import type { RemoteDeploymentOwner } from './services/remote-deployment-owner.js';
 
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
@@ -38,6 +42,31 @@ export type ServiceRole = 'web' | 'api' | 'worker';
 export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
 
 /** A build profile defines how to build/run a specific type of project */
+export interface StaticWebConfig {
+  /** Explicit contract: this frontend has no consumers through Docker DNS. */
+  browserOnly?: boolean;
+  /** Public frontend directory inside the verified CI image; the image is never started. */
+  imagePath: string;
+  basePath?: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
+export interface StaticWebRuntime {
+  browserOnly?: boolean;
+  id: string;
+  serviceName: string;
+  projectId: string;
+  branchId: string;
+  profileId: string;
+  image: string;
+  revision: string;
+  rootDirectory: string;
+  basePath: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
 export interface BuildProfile {
   id: string;
   /**
@@ -48,6 +77,8 @@ export interface BuildProfile {
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
+  /** A frontend served as files by the shared CDS process, without an application container. */
+  staticWeb?: StaticWebConfig;
   /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
   /**
@@ -63,6 +94,8 @@ export interface BuildProfile {
    * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
    */
   command?: string;
+  /** 默认先启动候选；独占数据卷的服务可显式选择先停旧实例，允许本服务短暂不可用。 */
+  updateOrder?: 'start-first' | 'stop-first';
   /**
    * CDS managed 车道的 build/start 分离契约。compose 车道不写此字段，继续使用
    * command 的兼容语义。managed 构建先把源码复制进临时容器，执行 install/build，
@@ -81,6 +114,8 @@ export interface BuildProfile {
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
   cacheMounts?: CacheMount[];
+  /** Original retired CDS compiler-cache declarations; metadata only, physical bytes untouched. */
+  retiredCatalogCacheMounts?: CacheMount[];
   /** Timeout for build in ms (default: 600000) */
   buildTimeout?: number;
   /**
@@ -339,7 +374,7 @@ export interface EnvKeyProvenance {
  * 每次 PUT /env 或 PUT /env/:key 时追加一条,记录"谁、何时、改了哪些 key"。
  * 不记 value(避免密钥泄漏到日志);只记 key 列表 + 操作类型。
  *
- * 用 ring buffer 限制 ≤ 200 条 / project,防止无限增长。
+ * 普通列表限制历史窗口，项目授权的导出可读视图外的记录。
  */
 export interface EnvChangeLogEntry {
   /** ISO 时间戳 */
@@ -352,6 +387,7 @@ export interface EnvChangeLogEntry {
   actor?: string;
   /** 来源:UI / cdscli / api(通用) */
   source?: 'ui' | 'cdscli' | 'api';
+  facts?: EnvAuditFact[];
 }
 
 /**
@@ -424,6 +460,7 @@ export interface ReadinessProbe {
 
 /** A deploy mode override — alternative command/image/env for a build profile */
 export interface DeployModeOverride {
+  staticWeb?: StaticWebConfig;
   /** Human-readable label shown in dropdown (e.g., "开发模式", "静态部署") */
   label: string;
   /** Override command (replaces profile.command when this mode is active) */
@@ -494,6 +531,9 @@ export interface DeployModeOverride {
  * See the helper `resolveEffectiveProfile()` in services/container.ts.
  */
 export interface BuildProfileOverride {
+  staticWeb?: StaticWebConfig;
+  /** 本分支实际依赖的服务；未设时继承项目依赖，空数组显式清空。 */
+  dependsOn?: string[];
   /** Override Docker image (replaces baseline.dockerImage) */
   dockerImage?: string;
   /** Override run command (replaces baseline.command) */
@@ -549,10 +589,29 @@ export interface BuildProfileOverride {
 
 /** A shared cache mount to avoid duplicating packages across branches */
 export interface CacheMount {
-  /** Host path (absolute) for the shared cache */
+  /** 未标记的存量条目沿用 bind 缓存迁移；volume 是 Docker 命名卷，不能改写为宿主机目录。 */
+  kind?: 'volume' | 'bind';
+  /** bind 的宿主机路径，或 volume 的 Docker 卷名。 */
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
+  /** Explicitly read-only configuration or cache. */
+  readOnly?: boolean;
+  /** Stable owner declaration for writable storage; never inferred from a path. */
+  storage?: StorageBinding;
+}
+
+export interface StorageBinding {
+  version: 1;
+  /** Fixed server-owned log policy; never a request-supplied path/device/quota. */
+  policy?: 'xxl-task-logs-v1';
+  purpose: 'cache' | 'persistent';
+  instanceId: string;
+  projectId: string;
+  scope: 'branch-private' | 'project-shared';
+  branchId?: string;
+  serviceId: string;
+  mountKey: string;
 }
 
 /**
@@ -897,9 +956,37 @@ export interface PreviewMirrorTag {
   previewUrl?: string;
   previewUrls?: string[];
   subject?: string;
+  /** 只读镜像的路由投影，不携带父实例的设置审计记录。 */
+  routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
+}
+
+export interface CiImageDiagnosis {
+  code: 'not_triggered' | 'workflow_missing' | 'queued' | 'building' | 'startup_failed' | 'cancelled' | 'build_failed' | 'build_timed_out' | 'result_unsynced' | 'unknown';
+  title: string;
+  message: string;
+  targetSha: string;
+  checkedAt: string;
+  actionUrl: string;
+  actionLabel: string;
+}
+
+export interface BranchPin {
+  kind: 'temporary' | 'permanent';
+  createdAt: string;
+  expiresAt?: string;
+  actor: string;
+  reason: string;
+  authorizationRef?: string;
 }
 
 export interface BranchEntry {
+  /** CDS login required at this branch's registered HTTPS site. */
+  hostedSso?: import('./services/hosted-sso.js').HostedSsoConfig;
+  /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
+  archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
+  /** 整组未就绪的连续观察起点，完全就绪后清空。 */
+  incompleteSince?: string | null;
+  restoredFromArchiveAt?: string;
   /** 父实例镜像来的只读分支（预览实例专用），生产实例永远没有这个字段 */
   mirror?: PreviewMirrorTag;
   id: string;
@@ -922,6 +1009,10 @@ export interface BranchEntry {
   worktreePath: string;
   /** Per-profile container state */
   services: Record<string, ServiceState>;
+  /** 当前部署候选的独立网络，不改变既有服务网络。 */
+  replacementNetwork?: string;
+  replacementOperationId?: string;
+  replacementNetworks?: string[];
   /**
    * Overall branch status.
    * `restarting` is a transient state entered when a container is being
@@ -933,6 +1024,8 @@ export interface BranchEntry {
   errorMessage?: string;
   /** 最近一次分支部署事实记录。旧分支无该字段时按现有状态降级。 */
   lastDeploymentRunId?: string;
+  /** 远端原操作资格；取消或较新代次后拒绝旧执行器心跳。 */
+  remoteDeployment?: RemoteDeploymentOwner;
   /** 当前运行态对应的不可变部署版本。DeploymentVersion 落地前保持为空。 */
   currentVersionId?: string;
   createdAt: string;
@@ -961,6 +1054,11 @@ export interface BranchEntry {
    * The default branch and color-marked branches are also treated as pinned implicitly.
    */
   pinnedByUser?: boolean;
+  /** New protections carry provenance; missing/malformed legacy provenance remains protected. */
+  userPin?: BranchPin;
+  colorMarkPin?: BranchPin;
+  /** Owner review of a legacy config pin, bound to the exact configured list. */
+  configPinReview?: BranchPin & { configuredBranches: string[] };
   /**
    * Custom subdomain aliases for this branch. Each alias is a DNS label
    * (e.g. "paypal-webhook", "demo", "api-staging") that, when combined with
@@ -1016,6 +1114,8 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /** Explicit branch-local omission of baseline services; absent/empty preserves inheritance. */
+  excludedProjectProfileIds?: string[];
   /**
    * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
    * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
@@ -1121,6 +1221,8 @@ export interface BranchEntry {
    * 非极速版分支不设此字段,行为不变（push 即本机编译）。
    */
   ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  /** 对账原因绑定到目标 SHA；新 push/完成回执时清空，避免旧原因覆盖新状态。 */
+  ciDiagnosis?: CiImageDiagnosis | null;
   /** 极速版正在等待 CI 构建的目标 commit SHA（用于 workflow_run 的 head_sha 匹配）。 */
   ciTargetSha?: string;
   /** 最近一次匹配到的 CI workflow_run 结论（success / failure / cancelled / timed_out …）。 */
@@ -1263,11 +1365,32 @@ export interface BranchEntry {
 }
 
 /** State of a single service (one build profile instance) within a branch */
+/** 可切换入口的实际运行身份；不保存环境变量或构建日志。 */
+export interface ServiceRuntimeRef {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
+  containerName: string;
+  hostPort: number;
+  containerId?: string;
+  creationIssued?: boolean;
+  networkName?: string;
+  connectedNetworks?: string[];
+  aliasNetworks?: string[];
+  deployedMode?: string;
+  deployedImage?: string;
+  sourceCheckoutPath?: string;
+  sourceCommitSha?: string;
+}
+
 export interface ServiceState {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   profileId: string;
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
+  containerId?: string;
+  creationIssued?: boolean;
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
@@ -1281,6 +1404,19 @@ export interface ServiceState {
   deployedMode?: string;
   /** 当前容器实际使用的镜像引用；用于生成不可变 DeploymentVersion。 */
   deployedImage?: string;
+  /** 当前源码容器实际挂载的部署专用目录；重启时继续使用同一份源码。 */
+  sourceCheckoutPath?: string;
+  /** 部署专用目录的实际完整 Git 提交。 */
+  sourceCommitSha?: string;
+  networkName?: string;
+  connectedNetworks?: string[];
+  aliasNetworks?: string[];
+  /** 实际继续服务的已确认版本；切换后保存新版本身份，主动停止时清除。 */
+  servingRuntime?: ServiceRuntimeRef;
+  /** 已保留端口和身份的新容器；不会成为公网入口。 */
+  pendingRuntime?: ServiceRuntimeRef;
+  /** 仍被同网的旧服务使用的版本；实际占用继续纳入容量。 */
+  retainedRuntimes?: ServiceRuntimeRef[];
 }
 
 /** 分支部署的触发来源。 */
@@ -1328,6 +1464,18 @@ export interface DeploymentRunEvent {
  * 记录必须在 pull / build / docker 等副作用之前创建。events 是有界窗口，
  * seq 终身递增；firstEventSeq 告诉续传客户端窗口是否已经截断。
  */
+export interface PersistedDeploymentIntent {
+  /** 配对记录损坏时拒绝重放，覆盖请求身份及全部私有执行输入。 */
+  inputDigest: string;
+  schema: 1;
+  runId: string;
+  operationId: string;
+  generation: number;
+  admissionGeneration: number;
+  request: BranchOperationRequest;
+  inputPayload: string | SealedSecret;
+}
+
 export interface DeploymentRun {
   id: string;
   projectId: string;
@@ -1340,6 +1488,11 @@ export interface DeploymentRun {
   commitSha?: string;
   versionId?: string;
   operationId?: string;
+  operationGeneration?: number;
+  /** 原请求的受理顺序；强制重建续接不因执行代次递增而成为更晚意图。 */
+  operationAdmissionGeneration?: number;
+  profileId?: string;
+  environmentAuditIds?: string[];
   executorId?: string;
   configHash?: string;
   startedAt: string;
@@ -1354,6 +1507,9 @@ export interface DeploymentVersionProfile {
   profileId: string;
   name: string;
   artifactImage: string;
+  /** 版本创建时的完整CI输入范围；历史重放不得借当前配置缩窄等价证明。 */
+  buildScope?: string[];
+  staticWeb?: StaticWebConfig;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   reusable: boolean;
   reuseBlockedReason?: string;
@@ -1509,7 +1665,7 @@ export interface ReleaseArtifact {
   artifactPath?: string;
 }
 
-export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'generated-static';
+export type ReleaseExecutionMode = 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
 
 /**
  * 生产发布的可执行合同。existing-script 复用项目自带脚本；另外两种模式由
@@ -1517,6 +1673,12 @@ export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'ge
  */
 export interface ReleaseStrategy {
   mode: ReleaseExecutionMode;
+  /** Default: the project's CI-tested file, read at the immutable release commit. */
+  scriptFile?: string;
+  /** Project-owned workflow which tests the release contract; never image CI. */
+  ciWorkflowFile?: string;
+  /** Explicit fallback only: script maintained in CDS, not in the project. */
+  script?: string;
   /** existing-script 模式下的项目脚本或命令。 */
   command?: string;
   /** generated-compose 模式下相对远端 Git 仓库根目录的 compose 文件。 */
@@ -1553,6 +1715,9 @@ export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json'
  * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
  */
 export interface MonitorObservation {
+  /** 产物地址含鉴权信息时，公开证据隐藏地址并说明原因。 */
+  artifactProtected?: boolean;
+  upstreamCalls?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /** ISO 时间 */
   at: string;
   ok: boolean;
@@ -1581,6 +1746,8 @@ export interface MonitorObservation {
 }
 
 export interface UptimeCustomMonitor {
+  /** Only the MCP import route writes this sealed server-side configuration. */
+  mcp?: import('./services/mcp-monitor.js').McpMonitorConfig;
   id: string;
   /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
   name: string;
@@ -1742,6 +1909,8 @@ export interface ReleaseProjectIdentity {
 }
 
 export interface ReleaseTarget {
+  /** Existing targets opt in explicitly; policy is preserved by every target update. */
+  governance?: { required: boolean; enabledAt: string; enabledBy: string };
   id: string;
   projectId: string;
   name: string;
@@ -1818,7 +1987,7 @@ export interface ReleasePlan {
   id: string;
   projectId: string;
   name: string;
-  template: 'ssh-script' | 'generated-compose' | 'generated-static' | 'docker-compose-remote' | 'image-push' | 'webhook';
+  template: 'project-script' | 'managed-script' | 'ssh-script' | 'generated-compose' | 'generated-static' | 'docker-compose-remote' | 'image-push' | 'webhook';
   targetType: ReleaseTarget['type'];
   steps: ReleasePlanStep[];
   failureStrategy: 'stop' | 'rollback';
@@ -1923,6 +2092,10 @@ export type ReleaseRunStatus =
   | 'rollback_failed';
 
 export interface ReleaseRun {
+  forceReason?: string;
+  governance?: import('./domain/release-governance.js').ReleaseGovernanceReceipt;
+  batchId?: string;
+  batchAttemptId?: string;
   releaseId: string;
   projectId: string;
   branchId: string;
@@ -1997,6 +2170,8 @@ export interface ReleaseRun {
   executionSnapshot?: {
     mode: ReleaseExecutionMode;
     scriptSha256: string;
+    /** Immutable evidence/cache for replay after a preview checkout is retired. */
+    scriptContent?: string;
     summary: string;
     strategy: ReleaseStrategy;
   };
@@ -2110,7 +2285,25 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export type { AcceptanceCase, AcceptanceTemplate, AcceptanceTask, AcceptanceSubmission, AcceptanceSummary, AcceptanceEnvironment, AcceptanceEvidence, AcceptanceReportSource } from './acceptance-types.js';
+
+export interface LegacyDataCase {
+  id: string; projectId: string; sourceIdentity: string; dataIdentity: string;
+  marker: string; device: number; inode: number; birthtimeMs?: number; firstObservedAt: string; lastObservedAt: string;
+  status: 'needs-owner' | 'protected' | 'backup-required';
+  disposition?: 'business-data' | 'ephemeral-test' | 'unknown';
+  confirmedBy?: string; confirmedAt?: string; note?: string;
+}
+
 export interface CdsState {
+  globalEnvironmentChangeLog?: EnvChangeLogEntry[];
+  /** Explicit owner opt-in for bounded read-only capacity collection. */
+  hostCapacitySamplingEnabled?: boolean;
+  /** 不可变模板版本与任务快照；跟随现有 backingStore 持久化。 */
+  acceptanceTemplates?: import('./acceptance-types.js').AcceptanceTemplate[];
+  acceptanceTasks?: import('./acceptance-types.js').StoredAcceptanceTask[];
+  profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
+  profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */
   routingRules: RoutingRule[];
   /** Build profiles */
@@ -2123,6 +2316,8 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** 分支部署唯一事实记录，key 为 DeploymentRun.id。旧状态可缺省。 */
   deploymentRuns?: Record<string, DeploymentRun>;
+  /** 私有执行输入，Mongo 与对应 run 同文档落盘，不进入 run API 或 SSE。 */
+  deploymentIntents?: Record<string, PersistedDeploymentIntent>;
   /** 不可变部署版本，key 为 DeploymentVersion.id。旧状态可缺省。 */
   deploymentVersions?: Record<string, DeploymentVersion>;
   /** Release targets keyed by id. */
@@ -2131,12 +2326,19 @@ export interface CdsState {
   releasePlans?: Record<string, ReleasePlan>;
   /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
   uptimeMonitors?: Record<string, UptimeCustomMonitor>;
+  /** 总览订阅独立于探测开关；取消订阅不会改动共享探测或通知策略。 */
+  monitorSubscriptions?: Record<string, { subscribed: boolean; updatedAt: string; updatedBy: string }>;
+  monitorNotifications?: import('./services/alarm-route.js').MonitorNotificationSettings;
+  mcpMonitorAudits?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
    * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
    */
   releasePreflights?: Record<string, ReleasePreflightRecord>;
+  releaseGovernance?: import('./domain/release-governance.js').ReleaseGovernanceState;
+  /** Durable ordered batches, including request receipts; old state may omit it. */
+  releaseBatches?: Record<string, import('./domain/release-batch.js').ReleaseBatch>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
@@ -2171,6 +2373,10 @@ export interface CdsState {
   customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Stable platform storage owner; accepted durably during boot before runtime admission. */
+  storageInstanceId?: string;
+  storageBirths?: Record<string, import('./services/storage-provision.js').StorageBirth>;
+  storageProvisionPublications?: Record<string, {service: InfraService; names: string[]; operationId: string}>;
   /** Project-scoped scheduled jobs owned by CDS. */
   scheduledJobs?: ScheduledJob[];
   /** Append-only scheduled job execution history. */
@@ -2220,6 +2426,7 @@ export interface CdsState {
    * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
    */
   schedulerMaxHotOverride?: number;
+  imageRetentionCursor?: string;
   /**
    * UI-controlled override for the global janitor enable flag. When defined,
    * it supersedes `config.janitor.enabled` at runtime and is re-applied on boot.
@@ -2237,6 +2444,10 @@ export interface CdsState {
   resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
   /** Resource-scoped database clone / create / restore task history. */
   resourceCloneTasks?: ResourceCloneTask[];
+  /** Persistent-data observations are a disposition queue, never deletion permissions. */
+  legacyDataCases?: LegacyDataCase[];
+  /** Bounded last execution per host/keeper. Object identities live in native catalogs. */
+  resourceRetirementExecutions?: Record<string, unknown>;
   /**
    * 正在直接占用基础设施数据面的短作业台账。轮换在撤销旧凭据前以此做 drain 门禁；
    * completed/failed 记录只保留有限历史，active 记录在进程崩溃后故意保持阻断，等待人工核对。
@@ -2280,6 +2491,13 @@ export interface CdsState {
   userCredentials?: UserCredential[];
   /** 身份层：项目授权表，「要不要再批一次」的唯一判据。 */
   projectGrants?: ProjectGrant[];
+  /** 与授权同属global原子快照；未确认写入重启时先恢复安全快照。 */
+  humanAccessRecovery?: Record<string, {
+    startedAt: string;
+    mode: 'grants' | 'disabled';
+    grants: ProjectGrant[];
+    principal?: Principal;
+  }>;
   /**
    * Legacy single-slot GitHub Device Flow token. Kept for installations
    * without CDS user sessions and for backwards-compatible state loading.
@@ -2310,6 +2528,8 @@ export interface CdsState {
    * 标记 rejected。与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
    */
   accessRequests?: AccessRequest[];
+  /** 批准式设备接入/全失联恢复；凭据交付信封由发起方票据加密。 */
+  identityConnections?: IdentityConnection[];
   /**
    * FU-04 — worktree directory layout version.
    *
@@ -2334,6 +2554,8 @@ export interface CdsState {
    * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
+  /** 删除项目时持久化本项目的网络清理任务；仅清理无端点、无人认领的网络。 */
+  pendingNetworkTeardowns?: Array<{ name: string; projectId: string }>;
   /**
    * 已删项目的 worktree 桶墓碑（见 DeletedProjectWorktreeTombstone 注释）。
    * 孤儿对账把这些 id 并入「已知项目桶」白名单，桶清空后自动摘除。
@@ -2482,7 +2704,7 @@ export interface CdsState {
    * process.env，那份只能从宿主的 `.cds.env` 来，于是「把铃接上」变成必须登主机的事——
    * 而这条链最常见的失败恰恰是**根本没人去接**。设置里配了就用设置，没配才回落 env。
    */
-  alarmNotify?: AlarmNotifyConfig;
+  alarmNotify?: StoredAlarmNotifyConfig;
   /**
    * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
    *
@@ -2491,6 +2713,7 @@ export interface CdsState {
    * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
    * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
    */
+  alarmIdentity?: import('./services/alarm-identity.js').AlarmIdentitySettings;
   alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
@@ -2535,6 +2758,10 @@ export interface CdsState {
    * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
    */
   acceptanceReports?: AcceptanceReportMeta[];
+  /** Durable review task metadata; source snapshots and reports use object storage. */
+  codeReviewTasks?: import('./shared/code-review.js').CodeReviewTask[];
+  /** Independent DeepAudit project reference; never contains service credentials. */
+  codeReviewSettings?: import('./services/code-review-settings.js').CodeReviewSettings;
   /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
   reportFolders?: ReportFolder[];
   /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
@@ -2660,6 +2887,19 @@ export interface ScheduledJob {
   lastRunStatus?: ScheduledJobRunStatus;
   lastRunId?: string;
   nextRunAt?: string | null;
+  /** 报告生产者须将 X-CDS-Job-Run-Id / CDS_JOB_RUN_ID 带到归档请求。 */
+  completion?: ScheduledJobCompletion;
+  scheduleGraceSeconds?: number;
+  /** 独立于手动运行，且不受运行历史裁剪影响。 */
+  lastScheduledRun?: ScheduledJobRun;
+  /** 最近 push 运行独立于手动执行，且不随历史裁剪丢失健康依据。 */
+  lastPushRun?: ScheduledJobRun;
+  recoveryRequiredRunId?: string;
+  healthAlertKey?: string;
+  /** 旧幂等键拒绝重放，最新请求保留结果，不依赖运行史保留时长。 */
+  lastManualRequest?: ScheduledJobRun;
+  /** 每个来源分支最近一次认领的 push 版本；重复 webhook 不重放。 */
+  lastPushCommits?: Record<string, string>;
   /**
    * 连续失败计数（成功或跳过即清零）。只对含 release 动作的任务累计——
    * 给 http/command 任务加自动停用会改变存量行为，本轮不动它们。
@@ -2672,6 +2912,15 @@ export interface ScheduledJob {
 }
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
+
+export interface ScheduledJobCompletion {
+  type: 'reports';
+  minCount: number;
+  requireObjectStorage?: boolean;
+  allowedVerdicts?: Array<'pass' | 'conditional' | 'fail'>;
+}
+
+export type ScheduledJobFailureKind = 'missed' | 'execution' | 'timeout' | 'artifact-invalid' | 'interrupted';
 
 /**
  * 一次运行里单个动作的结果。
@@ -2697,6 +2946,22 @@ export interface ScheduledJobRun {
   projectId: string;
   trigger: 'schedule' | 'manual' | 'push';
   status: ScheduledJobRunStatus;
+  scheduledFor?: string;
+  failureKind?: ScheduledJobFailureKind;
+  /** 核实恢复不能抹掉原故障；同一运行保留首次失败与验证时刻。 */
+  recovery?: {
+    failureKind?: ScheduledJobFailureKind;
+    error?: string;
+    failedAt?: string;
+    verifiedAt: string;
+  };
+  phase?: 'executing' | 'validating';
+  actionCount?: number;
+  deadlineAt?: string;
+  completion?: ScheduledJobCompletion;
+  artifacts?: Array<{ reportId: string; sha256: string; sizeBytes: number }>;
+  /** 客户端重试仅复用原结果；不重放动作。 */
+  requestKey?: string;
   queuedAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -2765,6 +3030,11 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
+  scheduledJobRunId?: string;
+  classification?: import('./shared/notification-templates.js').ReportClassification;
+  monitorEvent?: import('./shared/notification-templates.js').ReportMonitorEvent;
+  reportType?: 'acceptance' | 'code-review';
+  reviewTaskId?: string;
   /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
   /**
@@ -2808,6 +3078,8 @@ export interface AcceptanceReportMeta {
   deployMode?: string | null;
   /** 规范/外部源同步：源文档标识；普通验收报告为空。 */
   sourceId?: string | null;
+  /** 任务报告归档时由服务端固定的图片资源基址，后续绑定/重试不随请求域名改变。 */
+  inlineAssetBaseUrl?: string;
   /** 规范/外部源同步：仓库内源文档路径；普通验收报告为空。 */
   sourcePath?: string | null;
   /** 规范/外部源同步：源内容哈希，如 sha256:...；普通验收报告为空。 */
@@ -2878,6 +3150,10 @@ export interface CdsConnection {
   pairingTokenHash?: string;
   /** 配对密钥过期时间（默认 issuedAt + 10 分钟）。 */
   pairingExpiresAt?: string;
+  /** Consumed hash, used to reject a repeated exchange for a cluster connection. */
+  redeemedPairingTokenHash?: string;
+  /** The authority owns this record. Only this member may exchange or use it. */
+  clusterMemberId?: string;
 
   // ── 激活态字段（status='active' 时有） ──
   /** SHA256 hash of long token（明文不存）。 */
@@ -2892,7 +3168,7 @@ export interface CdsConnection {
   partnerName?: string;
   /** 对端公开访问 URL，CDS 反向 callback / 健康检查用。 */
   partnerBaseUrl?: string;
-  /** 这条连接绑定的 shared-service Project（accept 时 CDS 自动创建）。 */
+  /** Standalone shared-service project, or pre-approved authority project for a cluster member. */
   projectId?: string;
 
   /** ISO 时间戳。 */
@@ -3087,6 +3363,7 @@ export interface AgentRequestRecord {
   clientUser: string | null;
   clientApp: string | null;
   runtime: string;
+  runtimeImage?: string | null;
   model: string | null;
   status: string;
   createdAt: string;
@@ -3291,11 +3568,15 @@ export interface ProjectActivityLog {
     | 'restart'        // POST /branches/:id/restart（轻量重启，未重建）
     | 'crash'          // 容器异常退出，auto-restart 巡检发现
     | 'colormark-on'   // 标记调试中
+    | 'scheduler-pin'
+    | 'scheduler-unpin'
     | 'colormark-off'  // 取消调试中
     | 'ai-occupy'      // AI agent 开始操作
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'branch-archived'
+    | 'branch-restored'
     | 'resource-created'
     | 'resource-deleted'
     | 'resource-restart'
@@ -3317,6 +3598,9 @@ export interface ProjectActivityLog {
   actor?: string;
   /** 自由文本，可空。展示用，<= 200 字符。 */
   note?: string;
+  /** Structured protection receipt retained alongside the actor and timestamp. */
+  pin?: BranchPin;
+  pinSource?: 'user' | 'config';
   /** 关联资源（如 app:frontend / infra:mysql）。 */
   resourceId?: string;
   /** 资源显示名缓存，避免 UI 再 join。 */
@@ -3439,6 +3723,7 @@ export interface ConfigSnapshot {
     branchConfigs?: Record<string, {
       profileOverrides?: Record<string, BuildProfileOverride>;
       extraProfiles?: BuildProfile[];
+      excludedProjectProfileIds?: string[];
       derivedFromBranchId?: string;
       derivedFromBranchName?: string;
       derivedAt?: string;
@@ -3583,6 +3868,40 @@ export type ProjectAgentExperienceId = 'newcomer' | 'experienced';
  * 后者要等 cdscli 上报才能确认，所以字段叫 declaredAt 而不是 confirmedAt，
  * 避免把一次声明读成一次验证。
  */
+/**
+ * 分支列表的自定义分组（2026-09-29）。按项目存、项目内所有人和 Agent 共享一套。
+ *
+ * 一个分支只归一组，认领顺序：手动钉入 → 规则（按分组顺序，第一个命中的认领）→ 未归组。
+ * 判定在前端（lib/branchGroups.ts）；这里只存定义，校验在 services/branch-groups.ts。
+ * 颜色是有限枚举而不是任意色值：五个色块在两个主题下都预先调过对比度。
+ */
+export type BranchGroupColor = 'orange' | 'blue' | 'green' | 'purple' | 'gray';
+/** prefix：分支名以…开头；contains：包含；equals：完全等于；tag：带这个标签。 */
+export type BranchGroupRuleKind = 'prefix' | 'contains' | 'equals' | 'tag';
+
+export interface BranchGroupRule {
+  kind: BranchGroupRuleKind;
+  value: string;
+}
+
+export interface BranchGroup {
+  id: string;
+  name: string;
+  color: BranchGroupColor;
+  /** 满足任意一条即归入。 */
+  rules: BranchGroupRule[];
+  /** 手动钉入的分支 id（拖进来的），优先于任何规则。 */
+  pinnedBranchIds: string[];
+}
+
+export interface BranchGroupsSettings {
+  /** 数组顺序即页面顺序，也是规则认领的优先级。 */
+  groups: BranchGroup[];
+  updatedAt: string | null;
+  /** 最后一次修改是谁做的（actor-resolver 的口径：user / ai / ai:<name>）。 */
+  updatedBy: string | null;
+}
+
 export interface ProjectAgentProfile {
   role: ProjectAgentRoleId;
   experience: ProjectAgentExperienceId;
@@ -3625,7 +3944,175 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+export interface StandbyMirrorBranchFingerprint {
+  /** 目标节点执行 deploy/stop 时使用的 CDS branch id；不是 Git branch name。 */
+  id: string;
+  name: string;
+  commitSha: string | null;
+  status: string;
+  /** 人工固定提交必须保留；缓存与固定提交不一致时不能自动操作。 */
+  pinnedCommit?: string | null;
+  commitIdentityConfirmed?: boolean;
+  runtimeIdentityConfirmed?: boolean;
+  configHash?: string;
+  secretKeyHash?: string;
+  /** 仅用于同节点的瞬时配置条件核对；进程重启即失效，不跨站比较。 */
+  configurationRevision?: string;
+}
+
+/** 备用 CDS 之间只交换不可逆指纹与版本事实，不交换环境变量明文。 */
+export interface StandbyMirrorFingerprint {
+  protocolVersion: 1;
+  /** 缺少能力声明的旧节点只能核对，不能接收精确提交创建。 */
+  capabilities?: { expectedCommitCreate: true; pinAwareIdentity?: true; runtimeIdentity?: true; branchConfigIdentity?: true };
+  projectId: string;
+  repository: string | null;
+  defaultBranch: string | null;
+  configHash: string;
+  secretKeyHash: string;
+  secretKeyCount: number;
+  branches: StandbyMirrorBranchFingerprint[];
+  generatedAt: string;
+}
+
+export interface StandbyMirrorAudit {
+  id: string;
+  responseAuditId?: string;
+  checkedAt: string;
+  peerId: string;
+  remoteProjectId: string;
+  remoteReachable: boolean;
+  protocolReady: boolean;
+  repositoryMatches: boolean;
+  configMatches: boolean;
+  secretKeysMatch: boolean;
+  defaultBranchMatches: boolean;
+  dataSnapshotReady: boolean;
+  /** A historical transfer alone cannot prove current stateful data equality. */
+  currentDataVerified?: boolean;
+  dataReadinessReason?: string;
+  readyForFailover: boolean;
+  missingBranches: string[];
+  divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  performance: {
+    samples: number;
+    healthP50Ms: number | null;
+    healthP95Ms: number | null;
+    fingerprintMs: number | null;
+    localFingerprintMs: number;
+  };
+  error?: string;
+}
+
+export type StandbyBranchSyncPolicy = 'audit-only' | 'catalog' | 'warm-running';
+
+export interface StandbyBranchSyncAction {
+  configurationDivergence?: boolean;
+  name: string;
+  sourceStatus: string;
+  sourceCommit: string | null;
+  targetBranchId?: string;
+  kind: 'create' | 'deploy' | 'stop' | 'divergent';
+  reason: string;
+}
+
+export interface StandbyBranchSyncResult {
+  responseAuditId?: string;
+  startedAt: string;
+  completedAt: string;
+  dryRun: boolean;
+  policy: StandbyBranchSyncPolicy;
+  sourceBranchCount: number;
+  targetBranchCount: number;
+  planned: StandbyBranchSyncAction[];
+  created: string[];
+  deployed: string[];
+  stopped: string[];
+  divergent: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  failed: Array<{ name: string; action: StandbyBranchSyncAction['kind']; error: string }>;
+}
+
+export interface StandbyMirrorConfig {
+  peerId: string;
+  remoteProjectId: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  /**
+   * audit-only: 只核对；catalog: 补齐分支目录但不启动；warm-running: 另外对齐运行/停止状态。
+   * 任何策略都不自动删除目标独有分支，也不强制覆盖提交分叉。
+   */
+  branchSyncPolicy?: StandbyBranchSyncPolicy;
+  /** 自动切流必须经过独立发布门，第一阶段固定 false。 */
+  autoFailover: false;
+  updatedAt: string;
+  lastAudit?: StandbyMirrorAudit;
+  lastBranchSync?: StandbyBranchSyncResult;
+  history?: StandbyMirrorAudit[];
+}
+
+export interface ProjectIdentitySnapshot {
+  name: string;
+  displayName: string;
+  slug: string;
+  /** 只读取上一版审计快照，不能作为项目配置写入。 */
+  previewIdentifier?: string;
+  originalIdentifier?: string;
+  repository: string;
+  /** 已绑定的 GitHub 仓库；与显式 Git 地址分别留痕，旧记录可能没有此字段。 */
+  githubRepository?: string;
+}
+
+export interface ProjectIdentityRecord {
+  id: string;
+  at: string;
+  kind: 'created' | 'baseline' | 'changed' | 'migrated';
+  actor: string;
+  requestId?: string;
+  slugSource?: 'explicit' | 'repository' | 'name';
+  before?: ProjectIdentitySnapshot;
+  after: ProjectIdentitySnapshot;
+}
+
+export interface PreviewAddressOverride {
+  /** DNS-facing name only; Git branch/resource identity never changes. */
+  branchName?: string;
+  projectSlug?: string;
+  customSubdomain?: string;
+}
+
+export interface PreviewAddressAudit {
+  id: string;
+  at: string;
+  actor: string;
+  requestId?: string;
+  branchId: string;
+  action: 'save' | 'verify' | 'visit-conflict' | 'rejected' | 'release' | 'preview';
+  scope: 'branch' | 'project';
+  result: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface OpenDesignWorkspaceVersionState {
+  baselineImage: string;
+  activeImage: string;
+  previousImage?: string;
+  changedAt?: string;
+  /** SHA-256 of the verified MAP run ID → exact image for all its sessions. */
+  runImages: Record<string, string>;
+}
+
 export interface Project {
+  /** Server-owned OpenDesign versions, keyed by the hash of the paired MAP origin. */
+  openDesignWorkspaceVersions?: Record<string, OpenDesignWorkspaceVersionState>;
+  /** 定期实测的执行方回填，不能冒充 CDS 主动探测或已验证的通知送达。 */
+  monitoringInspections?: ProjectInspection[];
+  /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
+  previewAddresses?: Record<string, PreviewAddressOverride>;
+  /** Append-only address/verification audit. Never accepted from request bodies. */
+  previewAddressAudit?: PreviewAddressAudit[];
+  /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
+  identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */
   mirror?: PreviewMirrorTag;
   /**
@@ -3648,7 +4135,9 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
-  /** URL-friendly slug (may equal id, usually kebab-case). */
+  /** 主备对账策略与最近证据。缺省表示该项目尚未启用备用站。 */
+  standbyMirror?: StandbyMirrorConfig;
+  /** 唯一可编辑的项目 slug，用于预览地址；关联使用稳定的 id。 */
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
@@ -3670,17 +4159,6 @@ export interface Project {
    * the legacy default project) is not the label the user wants to see.
    */
   aliasName?: string;
-  /**
-   * Optional alternative slug, reserved for a future "use alias in new
-   * branch ids" toggle. Stored here so the Settings UI can capture it
-   * alongside `aliasName`, but NOT consumed by branch-id derivation
-   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
-   * prefix change is scoped to a follow-up PR).
-   *
-   * Must pass the same SLUG_REGEX as `slug` and must not collide with
-   * any other project's `slug` or `aliasSlug`.
-   */
-  aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
   /** 旧项目缺省为 compose，保持现有 BuildProfile/compose 行为。 */
@@ -4053,6 +4531,8 @@ export interface Project {
    * 只是一份声明，不是权限：它不参与任何鉴权判断，改它不影响 Agent 能做什么。
    */
   agentProfile?: ProjectAgentProfile;
+  /** 分支列表的自定义分组；没配过为缺省（页面按「按状态」视图呈现，并给出按前缀建组的建议）。 */
+  branchGroups?: BranchGroupsSettings;
   /**
    * PR_C.1 起新增的项目级运营计数。每次部署 / 拉取 / 调试 / AI 操作时
    * 由 StateService 内部 helper 自增。所有字段 optional，未设视作 0。
@@ -4122,15 +4602,26 @@ export interface Project {
 export interface AgentKey {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
+  /** 明确人工核对的历史凭据归属审计，不按名称推断。 */
+  claimedAt?: string;
+  claimedBy?: string;
   /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
   label: string;
   /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';
+  /** Optional restriction to this project's planning reads or proposal intake. */
+  planningAccess?: 'read' | 'propose';
+  /** Optional restriction to this project's private design reads or Git-verified publishing. */
+  designAccess?: 'read' | 'feedback' | 'publish';
+  /** Dedicated design approval grants access without a general project grant. */
+  designAccessRequestId?: string;
+  /** Original publisher identity for a verified design credential replacement. */
+  designPublisherKeyId?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
-  /** GitHub login of the signer if github auth mode, else undefined. */
+  /** Verified account that issued the key, when present. */
   createdBy?: string;
   /** ISO timestamp updated (best-effort) each time the key authenticates. */
   lastUsedAt?: string;
@@ -4168,6 +4659,26 @@ export interface AgentKey {
  * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,发起方凭
  * pollToken 轮询取走一次;取走后明文清空、deliveredAt 落时间戳(一次性交付)。
  */
+export interface IdentityConnection {
+  id: string;
+  repository: string;
+  projectHint?: string;
+  agentName: string;
+  pollTokenHash: string;
+  status: 'pending' | 'approved' | 'delivered' | 'rejected';
+  createdAt: string;
+  expiresAt: string;
+  projectId?: string;
+  userId?: string;
+  principalId?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  userCredentialId?: string;
+  projectCredentialId?: string;
+  /** AES-GCM；只有持有pollToken的发起方请求时才能解封。 */
+  envelope?: { iv: string; tag: string; ciphertext: string };
+}
+
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
@@ -4181,12 +4692,26 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
+  /** Scoped design permission shown to the approver and applied to the issued project key. */
+  designAccess?: AgentKey['designAccess'];
+  /** Existing design key proved by the applicant and rechecked at approval. */
+  designRecoveryKeyId?: string;
+  /** Agent 申报的建项目目标；新审批按规范化仓库和名称绑定一次建项目权限。 */
+  requestedProject?: { name: string; repository?: string };
+  /** 服务端已验证并将审批限制到目标；旧记录缺省不作绑定声明。 */
+  targetBound?: boolean;
+  /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
+  createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
+  /** 首次建项目申请的等待截止时间；不依赖 Agent 进程存活。 */
+  expiresAt?: string;
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
   decidedAt?: string;
+  /** 此次批准已启用建项目回执；存量已批准记录不反推未采集过的进度。 */
+  creationReceiptEnabled?: boolean;
   /** GitHub login / 'cookie' / 'global-key' — who decided. */
   decidedBy?: string;
   /** 拒绝原因(status='rejected' 时可选)。 */
@@ -4276,6 +4801,8 @@ export interface UserCredential {
   /** `uc_` + 12 hex */
   id: string;
   principalId: string;
+  /** 设备交接只恢复当前项目；缺省保留旧用户凭据行为。 */
+  projectIds?: string[];
   /** sha256(明文 `cdsu_<suffix>`) */
   hash: string;
   label?: string;
@@ -4357,6 +4884,10 @@ export interface GlobalAgentKey {
   access?: AgentKeyAccess;
   /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
   oneTime?: boolean;
+  /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
+  creationTarget?: { name: string; repository: string };
+  /** 一次性创建凭据的硬截止时间；存量非一次性 key 不受影响。 */
+  expiresAt?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */
@@ -4488,6 +5019,7 @@ export interface InfraVolume {
   type?: 'volume' | 'bind';
   /** Read-only mount flag */
   readOnly?: boolean;
+  storage?: StorageBinding;
 }
 
 /** Health check configuration for infrastructure service */
@@ -4720,6 +5252,8 @@ export interface SchedulerConfig {
 
 /** Application configuration */
 export interface CdsConfig {
+  /** Fixed storage namespace, explicitly configured independently of checkout/host display names. */
+  storageInstanceId?: string;
   repoRoot: string;
   /**
    * Base directory that houses every per-project git clone for the
@@ -4830,7 +5364,7 @@ export interface CdsConfig {
    * 解析顺序：设置里配了就用设置，没配才回落 env。四项缺任何一项都算没配，
    * 那时铃是哑的，面板上必须直说。
    */
-  alarmNotify?: AlarmNotifyConfig;
+  alarmNotify?: StoredAlarmNotifyConfig;
   /**
    * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
    *
@@ -4839,6 +5373,7 @@ export interface CdsConfig {
    * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
    * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
    */
+  alarmIdentity?: import('./services/alarm-identity.js').AlarmIdentitySettings;
   alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * Public base URL of this CDS install (e.g. "https://cds.example.com").
@@ -4881,9 +5416,13 @@ export interface AlarmNotifyConfig {
   keyId: string;
   /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
   username: string;
+  targetUsername?: string;
   /** PKCS#8 私钥 PEM。**只写不读**：任何读接口都不许把它回显出去。 */
   privateKey: string;
 }
+
+/** 持久化形状；已有明文只读兼容，新写入必须密封。 */
+export type StoredAlarmNotifyConfig = Omit<AlarmNotifyConfig, 'privateKey'> & { privateKey: string | SealedSecret };
 
 /** Shell execution result */
 export interface ExecResult {
@@ -4897,10 +5436,31 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
   return [result.stdout, result.stderr].filter(Boolean).join('\n');
 }
 
+export interface ExecAssignment {
+  jobId: number;
+  factoryGeneration: number | null;
+  factoryPid: number | null;
+  actorPid: number | null;
+  lane: 'observation' | 'operation';
+}
+
 export interface ExecOptions {
+  /** 明确标记只读观测；生产主装配将普通操作与观测分配到独立进程池。 */
+  executionLane?: 'observation' | 'operation';
+  /** 排队取消不会启动进程；执行中的取消等待所属进程组收尾。 */
+  signal?: AbortSignal;
+  /** 独立执行槽就绪后在控制面重新检查资格；抛错保留原异常且不启动命令，不经IPC传输此函数。 */
+  beforeStart?: () => void;
+  /** Qualified private executor assignment; callback remains in the control process. Unknown identities stay null. */
+  onAssigned?: (assignment: ExecAssignment) => void;
+  /** 仅用于已确认创建且按本次调用独立命名的临时容器回收，占用保留清理槽。 */
+  executionPurpose?: 'temporary-cleanup';
   cwd?: string;
+  /** timeout=0仅用于关闭全文捕获且提供AbortSignal和消费回调的持续流；其他调用使用有限预算。 */
   timeout?: number;
-  onData?: (chunk: string) => void;
+  /** 独立执行可关闭完整输出捕获；回调消费确认后才继续发送，默认仍保留有限全文捕获。 */
+  captureOutput?: boolean;
+  onData?: (chunk: string, channel?: 'stdout' | 'stderr') => void;
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
    *  2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。 */
   env?: Record<string, string>;
@@ -4918,5 +5478,9 @@ export interface ExecOptions {
 }
 
 export interface IShellExecutor {
+  /** 保证在归属操作进程实际派发前复核，且等待所属进程清理；普通shell不能冒充。 */
+  execOwnedOperation?(command: string, options: ExecOptions & { beforeStart: () => void }): Promise<ExecResult>;
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  /** 非紧急纯读取：已有隔离操作池承接，不占健康池或保留清理槽；缺能力时调用方保持未知。 */
+  execBackgroundObservation?(command: string, options?: ExecOptions): Promise<ExecResult>;
 }

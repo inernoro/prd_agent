@@ -17,7 +17,7 @@ x-cds-project:
 #
 # 为什么剥离：仓库携带 `TODO: 请填写实际值` 占位符会让全量 `cdscli import`
 # 被审核拒绝（占位值覆盖线上真实密钥），结构变更无法落地（见
-# doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
+# https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
 #
 # 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
 #   ASSETS_PROVIDER=cloudflareR2 时：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
@@ -204,6 +204,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/console-api/**"
+        - "prd-api/src/LlmGateway.Transport/**"
         - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
@@ -259,9 +260,11 @@ x-cds-deploy-modes:
         - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-main"
       # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**
-      # （design_opendesign 那一组）。声明得比 CI 窄会让 CDS 把旧镜像当新代码发出去。
+      # （design_opendesign 那一组，加上 api 那一组：api 改动时也构建本镜像，供正式发布同 sha 钉版）。
+      # 声明得比 CI 窄会让 CDS 把旧镜像当新代码发出去。
       buildScope:
         - "design-runtime/opendesign/**"
+        - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8093
@@ -351,28 +354,15 @@ services:
       # 口令里一个 @ 就能把主机名解析歪。
       MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
-      # 避免依赖代码缺省值。单个业务调用方通过项目级白名单渐进切到 HTTP 权威，
-      # 不需要把整个 CDS 环境一次性切成 http/shadow。
-      LlmGateway__Mode: "inproc"
-      # CDS 将 profile env 原样写入容器，不展开 Docker Compose 的 `${KEY:-default}` 语法。
-      # 录音转写调用方固定走独立 serving 权威；如需扩展灰度范围，必须通过受审 compose 导入修改。
-      # 「向我提问」两个调用方一并切到 HTTP 权威：模型池配置在 llmgw 那边，
-      # 留在 inproc 会去查 MAP 自己的 model_groups —— 那张表在网关剥离之后就是空的，
-      # 结果是 [ModelResolver] 未找到可用模型（无池且 legacy 未命中），访客看到「回答失败了」。
-      # HTML PPT 的大纲和页级生成同样由 MAP 选模，但必须经独立 LLMGW 记录模型、调用方和 runId。
-      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent,md-to-ppt-agent.outline::chat,md-to-ppt-agent.html-generate::chat"
-      # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
-      LlmGateway__LogicalModelsRequireHttp: "true"
       # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
       # 必须是 host:port,user=,password= 这个格式，所以这里用原始 USER/PASSWORD 自己拼，
       # 不用 CDS_REDIS_URL。已知边界：口令若含 , 或 = 会把这个串解析歪（CDS 生成的是十六进制，不会）。
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT},user=${CDS_REDIS_USER},password=${CDS_REDIS_PASSWORD}"
-      # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
-      # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
-      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。服务间地址使用 CDS 实际注入的
-      # Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
+      # MAP 的模型调用全部经 HttpLlmGatewayClient 打到 llmgw-serve，需要与它同一把 M2M key
+      # 和 serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
+      # 服务间地址使用 CDS 实际注入的 Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
       # 设计执行服务（design-opendesign，map-design-executor-v1）。两项都在时 api 的 OpenDesign 默认直连它；
@@ -458,6 +448,7 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      LlmGateway__ModelReferences__MapDeploymentIdentity: "prd-agent:cds::${VITE_GIT_BRANCH}"
       # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
       # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
       # 口令里一个 @ 就能把主机名解析歪。
@@ -465,7 +456,6 @@ services:
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      LlmGateway__RolloutLedgerPath: /repo/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台写 GW-owned 平台/模型/Exchange key 时使用；必须与 api/llmgw-serve 同一把。
       ApiKeyCrypto__Secret: "${ApiKeyCrypto__Secret}"
       ApiKeyCrypto__LegacySecrets: "${ApiKeyCrypto__LegacySecrets}"
@@ -558,6 +548,8 @@ services:
     environment:
       # 任务接口的 Bearer 密钥。未注入时服务照常起来，但拒绝一切任务接口并在 /v1/capabilities 说明原因。
       DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
+      # CDS 的 serving 服务别名与正式 Compose 不同；模型数据面仍由任务级短期授权直达 LLMGW。
+      DESIGN_RUNTIME_LLMGW_BASE_URL: "http://llmgw-serve:8091/gw/v1"
     labels:
       cds.prebuilt-image: "true"
       # CI 构建该镜像的输入范围，与 x-cds-deploy-modes.design-opendesign.express.buildScope 同一份、
@@ -565,7 +557,7 @@ services:
       # 本服务只有 express 一种模式，项目里不存在 activeDeployMode，CDS 读取的是基础 profile，
       # 模式里的 buildScope 读不到。缺了它，没改 design-runtime/ 的分支拉不到 sha 镜像时，
       # 回退到 branch-main 会因「无法证明与目标提交等价」被拒，整条分支部署失败。
-      cds.build-scope: "design-runtime/opendesign/**,.github/workflows/branch-image.yml"
+      cds.build-scope: "design-runtime/opendesign/**,prd-api/**,.github/workflows/branch-image.yml"
       # 匿名就绪探针：引擎健康检查通过才 200，否则 503（CDS 把 < 500 当就绪）。它不看 API key——
       # 缺 key 时容器照样就绪，原因由能力接口说清，而不是让整条分支卡在「未就绪」。
       cds.readiness-path: "/healthz/ready"

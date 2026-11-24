@@ -177,7 +177,7 @@ token / secret / password 这类词的，要么已登记脱敏，要么写进「
 
 ## 已知边界
 
-见 [debt.platform.cross-instance-data-sync.md](./debt.platform.cross-instance-data-sync.md)。
+见 [debt.platform.cross-instance-data-sync.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.cross-instance-data-sync.md)。
 其中最要紧的一条：**附件二进制不搬**，依赖两站共用同一个对象存储桶——不同桶时图片会全裂，
 这条已列为待纠正项。
 

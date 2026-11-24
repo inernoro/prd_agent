@@ -14,6 +14,7 @@
 
 import { lazy, type ReactElement } from 'react';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
+import { ProductAgentAppearance } from '@/pages/product-agent/VersionAppearance';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
@@ -30,6 +31,12 @@ const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m
 const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
+const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
+const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
+const HostedTemplatePage = lazy(() => import('@/pages/hosted-collections/HostedTemplatePage'));
+const HostedCollectionsPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionsPage'));
+const HostedCollectionPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionPage'));
+const HostedCollectionSharePage = lazy(() => import('@/pages/hosted-collections/HostedCollectionSharePage'));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
 const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
 const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
@@ -44,14 +51,19 @@ const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ defa
 const PmMilestoneDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.MilestoneDetailPage })));
 const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
-const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
-const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
+const ProductVersionProductRoute = lazy(() => import('@/pages/product-agent/ProductVersionAccessPage').then(m => ({ default: m.ProductVersionProductRoute })));
+const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent/ProductObjectDetailPage').then(m => ({ default: m.ProductObjectDetailPage })));
 const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
+const ReviewAgentSubmitPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentSubmitPage').then(m => ({ default: m.ReviewAgentSubmitPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const ReviewAgentResultPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentResultPage').then(m => ({ default: m.ReviewAgentResultPage })));
+const ReviewAgentAllPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentAllPage').then(m => ({ default: m.ReviewAgentAllPage })));
+const ReviewAssessmentListPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentListPage').then(m => ({ default: m.ReviewAssessmentListPage })));
+const ReviewAssessmentDetailPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentDetailPage').then(m => ({ default: m.ReviewAssessmentDetailPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const EmailAgentPage = lazy(() => import('@/pages/email-agent').then(m => ({ default: m.EmailAgentPage })));
 const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
@@ -68,6 +80,7 @@ const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPa
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
+const CdsDesignSharePage = lazy(() => import('@/pages/CdsDesignSharePage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
@@ -144,6 +157,14 @@ function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElem
       <RequirePermission perm={perm}>{el}</RequirePermission>
     </RequireAuth>
   );
+}
+
+function productGuarded(el: ReactElement): ReactElement {
+  return <RequireAuth><ProductAgentAppearance>{el}</ProductAgentAppearance></RequireAuth>;
+}
+
+function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
+  return productGuarded(<OverviewShell sectionOverride={section}>{el}</OverviewShell>);
 }
 
 // ── 注册表正文 ─────────────────────────────────────────────
@@ -612,31 +633,53 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/product-agent/review/submit',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review', <ReviewAgentSubmitPage />),
+  },
+  {
+    path: '/product-agent/review/submissions/:id',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review', <ReviewAgentResultPage />),
+  },
+  {
+    path: '/product-agent/review/all',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review',
+      <RequirePermission perm={['review-agent.view-all', 'product-agent.map-admin']}><ReviewAgentAllPage /></RequirePermission>),
+  },
+  {
+    path: '/product-agent/requirements/assessments',
+    placement: 'fullscreen',
+    element: productReviewGuarded('requirements', <ReviewAssessmentListPage />),
+  },
+  {
+    path: '/product-agent/requirements/assessments/:id',
+    placement: 'fullscreen',
+    element: productReviewGuarded('requirements', <ReviewAssessmentDetailPage />),
+  },
+  {
     // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
     path: '/product-agent/p/:productId/knowledge/:entryId',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
+    element: productGuarded(<KnowledgeDetailPage />),
   },
   {
     // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
     path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+    element: productGuarded(<ProductObjectDetailPage />),
   },
   {
     // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
     path: '/product-agent/p/:productId',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+    element: productGuarded(<ProductVersionProductRoute />),
   },
   {
     path: '/product-agent',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <OverviewShell />),
+    element: productGuarded(<OverviewShell />),
     nav: {
       label: '产品管理',
       shortLabel: '产品',
@@ -864,6 +907,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['文档', '知识', '知识库', 'docs'],
     },
   },
+  ...['/document-store/:storeId/write', '/document-store/:storeId/write/:entryId', '/document-store/:storeId/write/:entryId/:view'].map(path => ({
+    path, placement: 'fullscreen' as const, permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingWorkspacePage />),
+  })),
+  { path: '/document-store/:storeId/collection', placement: 'fullscreen', permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingCollectionPage />) },
   {
     // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
     // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。
@@ -979,6 +1028,16 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['工作流', '自动化', '编排'],
     },
   },
+  { path: '/web-pages/new-document', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedTemplatePage />) },
+  { path: '/web-pages/cds-share', placement: 'fullscreen', permission: 'web-pages.write',
+    element: fullscreenGuarded('web-pages.write', <CdsDesignSharePage />) },
+  { path: '/web-pages/collections', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionsPage />) },
+  { path: '/web-pages/collections/:collectionId', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionPage />) },
+  { path: '/web-pages/collections/:collectionId/share', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionSharePage />) },
   {
     path: '/web-pages',
     permission: 'web-pages.read',

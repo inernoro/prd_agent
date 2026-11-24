@@ -13,7 +13,7 @@
  *   4. 轮转 + 节流：.bak 写入 ≥60s 节流；总数不超过 MAX_STATE_BACKUPS。
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -183,4 +183,116 @@ describe('JsonStateBackingStore', () => {
       expect(store.kind).toBe('json');
     });
   });
+
+  it('reports a failed disk barrier to every waiter and clears it only after a newer successful write', async () => {
+    fs.mkdirSync(filePath); // Real rename failure: a directory occupies the state file path.
+    store.save(emptyState());
+    const results = await Promise.allSettled([store.flush(), store.flush()]);
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    await expect(store.flush()).rejects.toThrow();
+    fs.rmdirSync(filePath);
+    const recovered = emptyState(); recovered.nextPortIndex = 19;
+    store.save(recovered);
+    await expect(store.flush()).resolves.toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).nextPortIndex).toBe(19);
+  });
+  it('retains a serialization failure for all observers until a serializable snapshot succeeds', async () => {
+    const state = emptyState(); (state as any).cycle = state;
+    store.save(state);
+    const results = await Promise.allSettled([store.flush(), store.flush()]);
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    await expect(store.flush()).rejects.toThrow();
+    store.save(emptyState()); await store.flush();
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).nextPortIndex).toBe(0);
+  });
+  it('keeps an older failed write barrier failed while a queued newer snapshot can succeed', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = (store as any).writeToDisk.bind(store);
+    const write = vi.spyOn(store as any, 'writeToDisk').mockImplementation(async (serialized: unknown) => {
+      if (write.mock.calls.length === 1) { await gate; throw new Error('owned write failure'); }
+      await original(serialized);
+    });
+    store.save(emptyState());
+    const first = store.flush();
+    const firstResult = first.then(() => 'passed', () => 'failed');
+    const next = emptyState(); next.nextPortIndex = 22;
+    store.save(next); const second = store.flush();
+    release();
+    expect(await firstResult).toBe('failed');
+    await second; expect(store.load()?.nextPortIndex).toBe(22);
+  });
+
+  it('does not fail a valid in-flight barrier when a later snapshot cannot serialize', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = (store as any).writeToDisk.bind(store);
+    vi.spyOn(store as any, 'writeToDisk').mockImplementation(async (serialized: unknown) => {
+      await gate; await original(serialized);
+    });
+    store.save(emptyState()); const first = store.flush();
+    const invalid = emptyState(); (invalid as any).cycle = invalid;
+    store.save(invalid); const second = store.flush();
+    const rejected = second.then(() => false, () => true);
+    release(); await first; expect(await rejected).toBe(true);
+    await expect(store.flush()).rejects.toThrow();
+    store.save(emptyState()); await store.flush();
+  });
+
+  it('protects a queued valid flush from a newer serialization error and freezes live mutations at flush', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = (store as any).writeToDisk.bind(store);
+    const write = vi.spyOn(store as any, 'writeToDisk').mockImplementation(async (serialized: unknown) => {
+      if (write.mock.calls.length === 1) await gate;
+      await original(serialized);
+    });
+    store.save(emptyState()); const first = store.flush();
+    const queued = emptyState(); queued.nextPortIndex = 42;
+    store.save(queued); const second = store.flush();
+    queued.nextPortIndex = 999; // Unsaved live mutation must not alter the frozen barrier.
+    const invalid = emptyState(); (invalid as any).cycle = invalid;
+    store.save(invalid); const rejected = store.flush().then(() => false, () => true);
+    release(); await Promise.all([first, second]);
+    expect(await rejected).toBe(true);
+    expect(store.load()?.nextPortIndex).toBe(42);
+    await expect(store.flush()).rejects.toThrow();
+    store.save(emptyState()); await store.flush();
+  });
+
+  it('commits every explicit frozen flush before acknowledging it, including overwritten later states', async () => {
+    const committed: number[] = [];
+    store = new JsonStateBackingStore(filePath, { onWrite: e => {
+      if (e.purpose === 'primary' && e.phase === 'committed') committed.push(JSON.parse(fs.readFileSync(filePath, 'utf8')).nextPortIndex);
+    } });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = (store as any).writeToDisk.bind(store);
+    const write = vi.spyOn(store as any, 'writeToDisk').mockImplementation(async (serialized: unknown) => {
+      if (write.mock.calls.length === 1) await gate;
+      await original(serialized);
+    });
+    const live = emptyState(); live.nextPortIndex = 11;
+    store.save(live); const first = store.flush();
+    live.nextPortIndex = 22; store.save(live); const second = store.flush();
+    live.nextPortIndex = 33; store.save(live); const third = store.flush();
+    release(); await Promise.all([first, second, third]);
+    expect(committed).toEqual([11, 22, 33]);
+    expect(store.load()?.nextPortIndex).toBe(33);
+  });
+
+  it('preserves a null rejection even when the diagnostic sink throws, without an unhandled observer rejection', async () => {
+    const bad = emptyState(); (bad as any).toJSON = () => { throw null; };
+    const logger = vi.spyOn(console, 'error').mockImplementation(() => { throw new Error('diagnostic sink unavailable'); });
+    try {
+      store.save(bad);
+      expect(await Promise.allSettled([store.flush(), store.flush()])).toEqual([
+        { status: 'rejected', reason: null }, { status: 'rejected', reason: null },
+      ]);
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+    } finally { logger.mockRestore(); }
+    store.save(emptyState()); await store.flush();
+  });
+
 });

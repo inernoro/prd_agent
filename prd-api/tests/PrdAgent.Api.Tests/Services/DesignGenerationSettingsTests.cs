@@ -68,11 +68,28 @@ public sealed class DesignGenerationSettingsTests
 
     [Theory]
     [InlineData("codex")]
+    [InlineData("map-gateway")]
     [InlineData("")]
-    public void 默认执行器只接受两种取值(string runtime)
+    public void 旧客户端不能再把默认执行器改成其它值(string runtime)
     {
         Assert.Throws<DesignGenerationSettingsException>(() => DesignGenerationSettingsService.Apply(
             new DesignGenerationSettings(), new DesignGenerationSettingsUpdate { DefaultRuntime = runtime }, Catalog));
+    }
+
+    [Fact]
+    public void 历史保存的直连默认值不影响新任务_下次保存会清理该字段()
+    {
+        var legacy = new DesignGenerationSettings { DefaultRuntime = DesignArtifactRuntimes.MapGateway };
+
+        var effective = DesignGenerationSettingsService.Effective(legacy, Catalog);
+        var saved = DesignGenerationSettingsService.Apply(legacy, new DesignGenerationSettingsUpdate
+        {
+            DefaultRuntime = DesignArtifactRuntimes.OpenDesign,
+            ReviewMode = DesignReviewModes.Strict,
+        }, Catalog);
+
+        Assert.Equal(DesignArtifactRuntimes.OpenDesign, effective.DefaultRuntime);
+        Assert.Null(saved.DefaultRuntime);
     }
 
     [Fact]

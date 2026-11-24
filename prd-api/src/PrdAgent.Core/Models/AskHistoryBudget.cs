@@ -35,7 +35,9 @@ public static class AskHistoryBudget
             .Where(h => !string.IsNullOrWhiteSpace(h.Content))
             .Select(h => (
                 Role: string.Equals(h.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user",
-                Content: Truncate(h.Content!.Trim(), MaxCharsPerMessage)))
+                Content: Truncate((string.Equals(h.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                    ? WebPageAskEvidence.ToHistoryText(h.Content!) : h.Content!).Trim(), MaxCharsPerMessage)))
+            .Where(h => h.Content.Length > 0)
             .ToList();
 
         if (recent.Count > MaxMessages)

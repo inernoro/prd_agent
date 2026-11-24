@@ -2,9 +2,12 @@ import { Heart, Eye, History } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import type { ReportViewSummary, ReportVersionEntry, ReportVersionEventType } from '@/services/contracts/reportAgent';
 import { ReportLikeBar } from './ReportLikeBar';
+import type { ReportKind } from '../reportInteractionApi';
 
 export interface RightRailPanelProps {
   reportId: string;
+  /** 周报（默认）或月报 */
+  kind?: ReportKind;
   viewSummary: ReportViewSummary;
   versionHistory?: ReportVersionEntry[];
   fallbackTimestamps?: {
@@ -62,7 +65,7 @@ function buildFallbackHistory(ts?: RightRailPanelProps['fallbackTimestamps']): R
   return out;
 }
 
-export function RightRailPanel({ reportId, viewSummary, versionHistory, fallbackTimestamps }: RightRailPanelProps) {
+export function RightRailPanel({ reportId, kind = 'weekly', viewSummary, versionHistory, fallbackTimestamps }: RightRailPanelProps) {
   const rawEntries = versionHistory && versionHistory.length > 0
     ? versionHistory
     : buildFallbackHistory(fallbackTimestamps);
@@ -82,7 +85,7 @@ export function RightRailPanel({ reportId, viewSummary, versionHistory, fallback
           <Heart size={13} style={{ color: 'rgba(236,72,153,.92)' }} />
           <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>点赞</span>
         </div>
-        <ReportLikeBar reportId={reportId} compact />
+        <ReportLikeBar reportId={reportId} kind={kind} compact />
       </GlassCard>
 
       {/* 已阅段 */}

@@ -178,6 +178,7 @@ export interface VideoGenScene {
   cost?: number;
   videoUrl?: string;
   activeVersionId?: string;
+  narration?: { speechRunId: string; text: string; durationSeconds: number };
   versions: VideoGenSceneVersion[];
 }
 
@@ -203,7 +204,9 @@ export interface VideoGenRun {
   generateAudio: boolean;
   // 调用结果
   directVideoJobId?: string;
-  directVideoCost?: number;
+  directVideoCost?: number | null;
+  directVideoUpstreamStatus?: string | null;
+  directVideoReconciledAt?: string | null;
   // storyboard 模式分镜列表
   scenes: VideoGenScene[];
   // 产出

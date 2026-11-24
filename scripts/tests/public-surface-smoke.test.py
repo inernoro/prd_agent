@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +21,7 @@ SPEC.loader.exec_module(MODULE)
 
 BASE = "https://example.test/"
 COMMIT_A = "a" * 40
+COMMIT_B = "b" * 40
 HEALTH = json.dumps({"status": "healthy", "commit": "a" * 40}).encode()
 VERSION = json.dumps({"service": "prd-api", "commit": "a" * 40}).encode()
 RESPONSES = {
@@ -99,6 +102,7 @@ passed = MODULE.probe_once(
 )
 assert passed["verdict"] == "pass", passed
 assert len(passed["checks"]) == 8, passed
+assert passed["commandSemantics"] == "single-commit", passed
 
 broken = dict(RESPONSES)
 broken[f"https://example.test/assets/app-{COMMIT_A}.js"] = MODULE.HttpResult(
@@ -162,6 +166,94 @@ metadata_only_result = MODULE.probe_once(
 assert metadata_only_result["verdict"] == "fail", metadata_only_result
 assert any("entry asset commit mismatch" in item for item in metadata_only_result["failures"]), metadata_only_result
 
+split_responses = dict(RESPONSES)
+split_responses["https://example.test/"] = MODULE.HttpResult(
+    "https://example.test/",
+    200,
+    "text/html",
+    f'<script src="/assets/app-{COMMIT_B}.js"></script><link rel="stylesheet" href="/assets/app-{COMMIT_B}.css">'.encode(),
+)
+split_responses[f"https://example.test/assets/app-{COMMIT_B}.js"] = MODULE.HttpResult(
+    f"https://example.test/assets/app-{COMMIT_B}.js", 200, "application/javascript", b"console.log('new')"
+)
+split_responses[f"https://example.test/assets/app-{COMMIT_B}.css"] = MODULE.HttpResult(
+    f"https://example.test/assets/app-{COMMIT_B}.css", 200, "text/css", b"body{}"
+)
+split_passed = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: split_responses[url],
+    expected_static_commit=COMMIT_B,
+    expected_runtime_commit=COMMIT_A,
+)
+assert split_passed["verdict"] == "pass", split_passed
+assert split_passed["commandSemantics"] == "static-runtime-split", split_passed
+assert split_passed["expectedStaticCommit"] == COMMIT_B, split_passed
+assert split_passed["expectedRuntimeCommit"] == COMMIT_A, split_passed
+
+old_mode_mixed = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: split_responses[url],
+    expected_commit=COMMIT_A,
+)
+assert old_mode_mixed["verdict"] == "fail", old_mode_mixed
+assert any("entry asset commit mismatch" in item for item in old_mode_mixed["failures"]), old_mode_mixed
+
+split_old_static = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    fake_fetch,
+    expected_static_commit=COMMIT_B,
+    expected_runtime_commit=COMMIT_A,
+)
+assert split_old_static["verdict"] == "fail", split_old_static
+assert any("entry asset commit mismatch" in item for item in split_old_static["failures"]), split_old_static
+
+split_wrong_runtime = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: split_responses[url],
+    expected_static_commit=COMMIT_B,
+    expected_runtime_commit=COMMIT_B,
+)
+assert split_wrong_runtime["verdict"] == "fail", split_wrong_runtime
+assert any("api-version commit mismatch" in item for item in split_wrong_runtime["failures"]), split_wrong_runtime
+assert any("llmgw-serving-health commit mismatch" in item for item in split_wrong_runtime["failures"]), split_wrong_runtime
+
+for invalid_args in (
+    ("map", "", COMMIT_B, ""),
+    ("map", COMMIT_A, COMMIT_B, COMMIT_A),
+    ("gateway", "", COMMIT_B, COMMIT_A),
+    ("map", "", "short", COMMIT_A),
+):
+    try:
+        MODULE.resolve_expected_commits(*invalid_args)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"expected split identity contract to reject: {invalid_args}")
+
 
 def fake_gateway_request(method: str, url: str, _timeout: float, _body: bytes | None):
     return GATEWAY_RESPONSES[(method, url)]
@@ -203,5 +295,48 @@ with tempfile.TemporaryDirectory() as temporary:
     MODULE.write_json(str(output), passed)
     persisted = json.loads(output.read_text(encoding="utf-8"))
     assert persisted["verdict"] == "pass"
+
+def run_public_asset_timeout_case(timeout_count: int, expected_code: int) -> None:
+    entry_asset = f"{BASE}assets/app-{COMMIT_A}.js"
+    asset_reads = 0
+
+    def urlopen_with_delayed_asset(request, *, timeout):
+        nonlocal asset_reads
+        path = request.full_url
+        fixture = RESPONSES[path]
+        response = MagicMock(status=fixture.status, headers={"Content-Type": fixture.content_type})
+        response.__enter__.return_value = response
+        response.geturl.return_value = fixture.url
+        response.read.return_value = fixture.body
+        if path == entry_asset:
+            asset_reads += 1
+            if asset_reads <= timeout_count:
+                response.read.side_effect = TimeoutError("The read operation timed out")
+        return response
+
+    with tempfile.TemporaryDirectory() as temporary:
+        output_path = Path(temporary) / "report.json"
+        args = ["public-surface-smoke", "--base", BASE, "--expect-commit", COMMIT_A,
+                "--attempts", "2", "--interval", "0", "--json-out", str(output_path)]
+        with patch.object(sys, "argv", args), patch.object(MODULE.urllib.request, "urlopen", side_effect=urlopen_with_delayed_asset):
+            assert MODULE.main() == expected_code
+        persisted = json.loads(output_path.read_text(encoding="utf-8"))
+        assert asset_reads == 2, persisted
+        assert persisted["attempt"] == 2, persisted
+        if expected_code:
+            assert persisted["verdict"] == "fail", persisted
+            check = next(check for check in persisted["checks"] if check["name"] == "entry-js-1")
+            assert check["status"] == 0 and check["contentType"] == "network-error" and not check["ok"], check
+        else:
+            assert persisted["verdict"] == "pass", persisted
+
+
+run_public_asset_timeout_case(timeout_count=1, expected_code=0)
+run_public_asset_timeout_case(timeout_count=2, expected_code=1)
+
+response_error = MODULE.urllib.error.HTTPError(BASE, 401, "Unauthorized", {"Content-Type": "application/json"}, io.BytesIO(GATEWAY_UNAUTHORIZED))
+with patch.object(MODULE.urllib.request, "urlopen", side_effect=response_error):
+    rejected = MODULE.request_once("POST", BASE, 1, b"{}")
+assert (rejected.status, rejected.content_type, rejected.body) == (401, "application/json", GATEWAY_UNAUTHORIZED), rejected
 
 print("Public surface smoke test: PASS")

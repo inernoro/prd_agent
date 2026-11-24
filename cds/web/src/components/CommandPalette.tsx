@@ -1,5 +1,7 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import {
   ArrowRight,
   CornerDownLeft,
@@ -190,7 +192,7 @@ const STATIC_ACTIONS: ResultItem[] = [
   { key: 'action:snapshots',        type: 'action', label: '配置快照',           path: 'CDS 系统设置',  hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
   { key: 'action:storage',          type: 'action', label: '存储后端',           path: 'CDS 系统设置',  hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
   { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       path: 'CDS 系统设置',  hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
-  { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
+  { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: '本地账号 / GitHub OAuth / SSO', href: '/cds-settings#auth',             icon: 'settings' },
   { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     path: 'CDS 系统设置',  hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
 ];
 
@@ -386,7 +388,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1 pb-3">
           {results.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {loading ? '加载中…' : '没有匹配项'}
+              {loading ? <ContentLoading label="读取命令与搜索结果" /> : '没有匹配项'}
             </div>
           ) : (
             results.map((item, idx) => (

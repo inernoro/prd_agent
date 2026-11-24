@@ -661,6 +661,10 @@ describe('GitHubWebhookDispatcher', () => {
       const updated = stateService.getProject('p1')!;
       expect(updated.githubRepoFullName).toBeUndefined();
       expect(updated.githubInstallationId).toBeUndefined();
+      const record = updated.identityHistory!.at(-1)!;
+      expect(record.actor).toBe('system:github-webhook');
+      expect(record.before?.githubRepository).toBe('octocat/repo');
+      expect(record.after.githubRepository).toBeUndefined();
     });
   });
 
@@ -1137,6 +1141,10 @@ describe('GitHubWebhookDispatcher', () => {
       expect(r.action).toBe('repo-detached');
       const p = stateService.getProject('p1')!;
       expect(p.githubRepoFullName).toBeUndefined();
+      const record = p.identityHistory!.at(-1)!;
+      expect(record.actor).toBe('system:github-webhook');
+      expect(record.before?.githubRepository).toBe('octocat/repo');
+      expect(record.after.githubRepository).toBeUndefined();
     });
 
     it('detaches link on repository.renamed using changes.repository.name.from', async () => {

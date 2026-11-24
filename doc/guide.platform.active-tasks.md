@@ -99,8 +99,8 @@
 | `map_tasks_suggest` | 给某人提一条建议（不进对方队列） | use |
 | `map_tasks_team` | 读全员在做什么 | manage |
 | `map_tasks_assign` | 派一件给别人 | manage |
-| `map_debt_list` | 读债务台账：还欠着什么、谁认领了 | use |
-| `map_debt_sync` | 把 `doc/debt.*.md` 推到任务台（幂等，只覆盖正文） | use |
+| `map_debt_list` | 读任务台原有债务快照、认领和转任务记录 | use |
+| `map_debt_sync` | 历史快照兼容导入，按原编号幂等更新正文 | manage |
 
 一条刻意的边界：**智能体不能结案**。
 「做成了什么样」是人对结果的认领，让机器代签，这个字段当天就会退化成「已完成」，
@@ -111,8 +111,7 @@
 
 ## 下半屏：欠着的
 
-列表底下有一块「欠着的」，默认折着。它装的是 `doc/debt.*.md` 里那些工程债务 ——
-交付时说好「这次没做、后面要补」的那些事。
+列表底下的「欠着的」可回看任务台原有债务、认领和转任务关系。当前项目登记、偿还进展及证据在 CDS 工程债务查看。 [债务指南](./guide.doc.pri.debt.md)
 
 点开之后每行是一条债务：前面那串等宽小字（`platform.active-tasks#15`）是它的稳定标识，
 对得回台账里第几条；后面跟着「还没人管」或「谁认领了」。点标题展开看现状和「补的条件」。
@@ -123,25 +122,7 @@
   接手的人不用回去翻台账就知道什么算补完了。转完这条债务就归你了。
 - **认领 / 放回去**：只表态不建任务。适合「我知道这条归我，但还没排到」。
 
-**正文在这里改不了，这是有意的。** 债务的正文跟代码同生共死，它的 SSOT 是仓库里那份
-Markdown；界面上把文件路径亮出来，就是为了让你知道该去哪改。在这儿能改的只有
-「归谁、什么状态」—— 那两样恰恰是 Markdown 存不住的。
-
-### 让它出现在这一屏
-
-有人（或智能体）改完 `doc/debt.*.md` 之后跑一次：
-
-```bash
-python3 scripts/sync-debt-ledger.py --dry-run     # 先看会推什么
-python3 scripts/sync-debt-ledger.py --base https://你的站点   # 真推（Agent Key 放环境变量 MAP_AGENT_KEY）
-```
-
-智能体那边是同一件事的两个工具：`map_debt_list` 读、`map_debt_sync` 推。
-同步是幂等的，反复跑只会更新正文，**不会抹掉谁认领了**。
-
-一条现状：45 份台账里目前只有 9 份接得进来（105 条）。同步只收「主表」——
-第一列是 `#`、标题列叫 债务/项/事项 的那张表，一份台账只取一张。
-想让自己那份接进来，就把债务整理成一张编号主表。
+历史任务台能查已有的认领或转任务记录。工程债务的登记、补充、偿还及历史回读使用 CDS 工程规划。固定 Git 来源仍可用于核对旧编号及原条目。 [债务记录原则](./guide.doc.pri.debt.md)
 
 ## 对外的那块看板
 
@@ -178,5 +159,5 @@ python3 scripts/sync-debt-ledger.py --base https://你的站点   # 真推（Age
 | 内容 | 位置 |
 |---|---|
 | 为什么这么设计、联动图与状态机 | [活动任务清单 · 设计](./design.platform.active-tasks.md) |
-| 这一版明确没做的部分 | [活动任务清单 · 债务台账](./debt.platform.active-tasks.md) |
+| 这一版明确没做的部分 | [活动任务清单 · 债务台账](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.active-tasks.md) |
 | 智能体凭据怎么签、scope 怎么取交集 | [开放平台功能概要 · 设计](./design.open-platform.md) |

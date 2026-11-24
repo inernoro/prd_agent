@@ -41,14 +41,14 @@ describe('通知账本接线守卫', () => {
     expect(
       source,
       '外发配置必须由 resolveNoticeOutboundConfig 从 env 解析（凭据只在服务端）',
-    ).toContain('resolveNoticeOutboundConfig(');
+    ).toContain('resolveCurrentNoticeOutbound(');
 
     const call = windowAfter(source, 'startNoticeLedger(', 900);
     expect(call, 'startNoticeLedger 必须拿到账本实例').toContain('ledger:');
     expect(
       call,
       '外发接线被摘掉后账本照常记账、只是永远不外发——删掉不会红，故在此钉住',
-    ).toContain('outbound: noticeOutbound');
+    ).toContain('getOutbound: getNoticeOutbound');
   });
 
   it('server.ts 挂载了站内信路由（否则前端拉账本 404）', () => {

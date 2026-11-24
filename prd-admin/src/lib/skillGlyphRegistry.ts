@@ -30,11 +30,9 @@ function deriveKey(seed: string): string {
   return seed.startsWith('official-') ? seed.slice('official-'.length) : seed;
 }
 
-/** 暖色板（赤陶/琥珀，色相 10~45） */
-function pal(seed: string): [string, string, string] {
-  const h = hash32(seed);
-  const b = 10 + (h % 36);
-  return [`hsl(${b} 74% 66%)`, `hsl(${(b + 14) % 360} 70% 58%)`, `hsl(${(b + 28) % 360} 64% 50%)`];
+/** 同一图标使用同一墨蓝色，避免相邻暖色混合后显脏。明暗取值由主题控制。 */
+function pal(): [string, string, string] {
+  return ['var(--skill-glyph-ink)', 'var(--skill-glyph-ink)', 'var(--skill-glyph-ink)'];
 }
 export function glyphGlow(seed: string): string {
   const b = 10 + (hash32(seed) % 36);
@@ -173,7 +171,7 @@ const PROC_BUILDERS = { concentric: gConcentric, radiate: gRadiate, sprig: gSpri
 
 /** 生成 svg 内部内容：六边框 + （专属符号 | 哈希抽象兜底）。 */
 export function buildGlyphInner(seed: string): string {
-  const c = pal(seed);
+  const c = pal();
   const key = deriveKey(seed);
   const sym = SYMBOLS[key]
     ? SYMBOLS[key](c)

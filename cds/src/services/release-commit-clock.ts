@@ -20,7 +20,8 @@
  * leadTime.sampleCount / eligibleCount 如实暴露，不做任何回填式猜测。
  */
 
-import { execFileSync } from 'node:child_process';
+import type { IShellExecutor } from '../types.js';
+import { createReleaseGitRunner } from './release-git-reader.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -46,7 +47,7 @@ export interface ReleaseCommitMetaRead {
 export type CommitTimeReader = (
   worktreePath: string,
   commitSha: string,
-) => string | ReleaseCommitMetaRead | undefined;
+) => string | ReleaseCommitMetaRead | undefined | Promise<string | ReleaseCommitMetaRead | undefined>;
 
 /** 台账上限。按 targetId 无关的 projectId::sha 分键，超出从最早的开始丢。 */
 export const MAX_COMMIT_TIME_ENTRIES = 500;
@@ -89,7 +90,7 @@ export function releaseCommitKey(projectId: string, commitSha: string): string {
  * commit sha 白名单校验。
  *
  * 不是洁癖：sha 最终会拼进 git 的 argv，一个以 `-` 开头的值会被 git 当成选项
- * （`--upload-pack=...` 这类可以直接跑命令）。execFile 不过 shell 能挡住管道，
+ * （`--upload-pack=...` 这类可以直接跑命令）。参数逐项 shell 引用能挡住管道，
  * 挡不住「参数被当成选项」这一层，所以必须在这里就把形状卡死。
  */
 export function isCommitShaLike(value: string): boolean {
@@ -104,25 +105,14 @@ export function isCommitShaLike(value: string): boolean {
  * 任何失败（worktree 已被回收 / sha 不在本地 / git 不在）都返回 undefined，
  * 让上层退化成「这次没有前置时间样本」，绝不抛给发布主链路。
  */
-export const gitCommitMetaReader: CommitTimeReader = (worktreePath, commitSha) => {
+export async function gitCommitMetaReader(worktreePath: string, commitSha: string, shell?: IShellExecutor): Promise<ReleaseCommitMetaRead | undefined> {
   if (!worktreePath || !isCommitShaLike(commitSha)) return undefined;
   try {
-    const out = execFileSync(
-      'git',
-      ['-C', worktreePath, 'show', '-s', `--format=%cI${UNIT_SEPARATOR}%s${UNIT_SEPARATOR}%an`, commitSha],
-      {
-        encoding: 'utf8',
-        timeout: 3_000,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    );
-    const line = out.split('\n')[0] ?? '';
-    const [at, subject, author] = line.split(UNIT_SEPARATOR);
+    const out = await createReleaseGitRunner(shell)(['-C', worktreePath, 'show', '-s', `--format=%cI${UNIT_SEPARATOR}%s${UNIT_SEPARATOR}%an`, commitSha]);
+    const [at, subject, author] = (out.split('\n')[0] || '').split(UNIT_SEPARATOR);
     return normalizeMetaRead({ at: (at || '').trim(), subject, author });
-  } catch {
-    return undefined;
-  }
-};
+  } catch { return undefined; }
+}
 
 /**
  * 落盘格式。v1 的条目是裸 ISO 字符串，v2 升级成元信息对象。
@@ -146,6 +136,7 @@ export class ReleaseCommitClock {
       storePath?: string;
       maxEntries?: number;
       reader?: CommitTimeReader;
+      shell?: IShellExecutor;
       logger?: { warn?: (m: string) => void };
     } = {},
   ) {}
@@ -212,7 +203,7 @@ export class ReleaseCommitClock {
    * 可以传多个候选 worktree：分支 worktree 被回收之后，项目主 clone 里通常
    * 仍然有这个 commit。逐个试到第一个成功为止，全失败才放弃 —— 绝不猜。
    */
-  remember(projectId: string, commitSha: string, ...worktreePaths: Array<string | undefined>): string | undefined {
+  async remember(projectId: string, commitSha: string, ...worktreePaths: Array<string | undefined>): Promise<string | undefined> {
     if (!projectId || !commitSha) return undefined;
     this.ensureLoaded();
     const key = releaseCommitKey(projectId, commitSha);
@@ -224,7 +215,7 @@ export class ReleaseCommitClock {
       if (!worktreePath || seen.has(worktreePath)) continue;
       seen.add(worktreePath);
       try {
-        meta = normalizeMetaRead((this.options.reader ?? gitCommitMetaReader)(worktreePath, commitSha));
+        meta = normalizeMetaRead(await (this.options.reader ?? ((root, sha) => gitCommitMetaReader(root, sha, this.options.shell)))(worktreePath, commitSha));
       } catch {
         meta = undefined;
       }

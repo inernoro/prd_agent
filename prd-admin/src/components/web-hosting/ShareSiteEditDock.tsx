@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useContext, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { WandSparkles, X } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { WandSparkles } from 'lucide-react';
+import { Dialog } from '@/components/ui/Dialog';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { toast } from '@/lib/toast';
 import { getSite, type HostedSite } from '@/services/real/webPages';
 import SiteEditPanel from './SiteEditPanel';
+import { ShareAssistantContext, useShareAssistantAction } from './shareAssistantContext';
 
 interface Props {
   siteId: string;
   isMobile?: boolean;
   hidden?: boolean;
-  adjacentToAsk?: boolean;
   onPublished: (site: HostedSite) => void;
 }
 
@@ -21,21 +22,26 @@ interface Props {
  * 分享接口只下发公开预览字段，修改面板需要完整站点对象。因此入口先用登录态读取完整站点，
  * 但编辑、版本、发布和回退仍全部复用 SiteEditPanel，避免形成第二套修改协议。
  */
-export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = false, adjacentToAsk = false, onPublished }: Props) {
+export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = false, onPublished }: Props) {
+  const assistant = useContext(ShareAssistantContext);
   const [site, setSite] = useState<HostedSite | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
   const loadSite = useCallback(async (notifyFailure = false) => {
     setLoading(true);
-    const result = await getSite(siteId);
-    setLoading(false);
-    if (!result.success) {
-      if (notifyFailure) toast.error('修改工具准备失败', result.error?.message || '请稍后重试');
+    try {
+      const result = await getSite(siteId);
+      if (!result.success) {
+        if (notifyFailure) toast.error('修改工具准备失败', result.error?.message || '请稍后重试');
+        return null;
+      }
+      setSite(result.data);
+      return result.data;
+    } catch {
+      if (notifyFailure) toast.error('修改工具准备失败', '请稍后重试');
       return null;
-    }
-    setSite(result.data);
-    return result.data;
+    } finally { setLoading(false); }
   }, [siteId]);
 
   useEffect(() => {
@@ -45,7 +51,7 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
       if (!active) return;
       setLoading(false);
       if (result.success) setSite(result.data);
-    });
+    }).catch(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [siteId]);
 
@@ -58,10 +64,13 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [open]);
 
-  const openEditor = async () => {
+  const openEditor = useCallback(async () => {
+    setOpen(true);
     const ready = site ?? await loadSite(true);
-    if (ready) setOpen(true);
-  };
+    if (!ready) setOpen(false);
+  }, [site, loadSite]);
+
+  useShareAssistantAction('edit', openEditor, { active: open, busy: loading, disabled: loading });
 
   const handlePublished = (updated: HostedSite) => {
     setSite(updated);
@@ -72,7 +81,7 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
 
   return createPortal(
     <>
-      {!hidden && !open && (
+      {!assistant && !hidden && !open && (
         <button
           type="button"
           className="border border-token-subtle"
@@ -82,9 +91,7 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
           style={{
             position: 'fixed',
             right: isMobile ? 14 : 18,
-            bottom: adjacentToAsk
-              ? 'calc(66px + env(safe-area-inset-bottom, 0px))'
-              : 'calc(18px + env(safe-area-inset-bottom, 0px))',
+            bottom: 'calc(18px + env(safe-area-inset-bottom, 0px))',
             zIndex: 60,
             height: 40,
             minWidth: 116,
@@ -107,60 +114,11 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
         </button>
       )}
 
-      {open && site && (
-        <>
-          <div
-            onClick={() => setOpen(false)}
-            className="surface-backdrop"
-            style={{ position: 'fixed', inset: 0, zIndex: 68 }}
-          />
-          <aside
-            className="surface-tone-dark border-l border-l-token-subtle"
-            aria-label="网页修改面板"
-            style={{
-              position: 'fixed',
-              top: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 69,
-              width: 'min(440px, 100vw)',
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'var(--bg-primary)',
-              boxShadow: '-16px 0 48px rgba(0,0,0,0.38)',
-            }}
-          >
-            <div
-              className="border-b border-b-token-subtle"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, padding: '10px 12px 10px 16px' }}
-            >
-              <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 }}>网页修改</span>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                title="关闭修改面板"
-                aria-label="关闭修改面板"
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 8,
-                  border: 'none',
-                  background: 'var(--nested-block-bg)',
-                  color: 'var(--text-secondary)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <SiteEditPanel site={site} onPublished={handlePublished} />
-            </div>
-          </aside>
-        </>
+      {open && (
+        <Dialog open={open} onOpenChange={setOpen} title="帮我修改" maxWidth={640}
+          content={<div className="h-[min(65dvh,640px)] min-h-0">
+            {site ? <SiteEditPanel site={site} onPublished={handlePublished} compact /> : <MapSectionLoader text="正在准备修改工具…" />}
+          </div>} />
       )}
     </>,
     document.body,

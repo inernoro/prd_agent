@@ -8,8 +8,12 @@ namespace PrdAgent.Core.Models;
 /// - Worker 内使用 CancellationToken.None 写入 MongoDB
 /// - 事件通过 IRunEventStore 推送，SSE 支持 afterSeq 续传
 /// </summary>
-public class DocumentStoreAgentRun
+public class DocumentStoreAgentRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>类型：subtitle（字幕生成） / reprocess（文档再加工）</summary>
@@ -17,6 +21,11 @@ public class DocumentStoreAgentRun
 
     /// <summary>源文档条目 ID（字幕：音视频/图片；再加工：文字 entry）</summary>
     public string SourceEntryId { get; set; } = string.Empty;
+
+    /// <summary>索引刷新绑定的保存版本；不从长期旧任务许可恢复付费执行。</summary>
+    public string? SourceDocumentId { get; set; }
+    public DateTime? SourceUpdatedAt { get; set; }
+    public string? SourceContentHash { get; set; }
 
     /// <summary>所属知识库</summary>
     public string StoreId { get; set; } = string.Empty;
@@ -116,12 +125,6 @@ public class DocumentStoreAgentRun
     /// <summary>Worker 存活心跳；用于区分仍在处理与已失联的 running 任务。</summary>
     public DateTime? HeartbeatAt { get; set; }
     public DateTime? EndedAt { get; set; }
-
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
 }
 
 /// <summary>再加工对话历史消息</summary>
@@ -146,6 +149,7 @@ public static class DocumentStoreAgentRunKind
 {
     public const string Subtitle = "subtitle";
     public const string Reprocess = "reprocess";
+    public const string KnowledgeIndex = "knowledgeIndex";
 
     /// <summary>知识库级自动补链（标题精确匹配改写为 [[标题]]）。SourceEntryId 存空串，任务粒度是整个 StoreId。</summary>
     public const string AutoLink = "autolink";
@@ -170,6 +174,7 @@ public static class DocumentStoreRunKinds
 {
     public const string Subtitle = "docStoreSubtitle";
     public const string Reprocess = "docStoreReprocess";
+    public const string KnowledgeIndex = "docStoreKnowledgeIndex";
     public const string AutoLink = "docStoreAutoLink";
     public const string Transcribe = "docStoreTranscribe";
 }

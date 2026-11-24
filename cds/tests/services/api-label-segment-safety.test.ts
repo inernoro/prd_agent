@@ -18,6 +18,14 @@
 import { describe, it, expect } from 'vitest';
 import { resolveApiLabel } from '../../src/server.js';
 
+it('labels the exact fixed design share handoff route at startup and at runtime', () => {
+  const route = '/projects/demo-a/design/shares/SHARE-a/handoff';
+  expect(resolveApiLabel('POST', '/projects/:projectId/design/shares/:preparationId/handoff')).toBe('交接稿件分享');
+  expect(resolveApiLabel('POST', route)).toBe('交接稿件分享');
+  expect(resolveApiLabel('GET', route)).not.toBe('交接稿件分享');
+  expect(resolveApiLabel('POST', `${route}/other`)).not.toBe('交接稿件分享');
+});
+
 describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fix)', () => {
   it('单段 branch id → 查看分支详情', () => {
     expect(resolveApiLabel('GET', '/branches/twenty-demo-main')).toBe('查看分支详情');
@@ -84,5 +92,12 @@ describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fi
     const label = resolveApiLabel('GET', '/branches/foo/unknown-sub');
     // 不应该是"查看分支详情"
     expect(label).not.toBe('查看分支详情');
+  });
+
+  it('项目设置历史在路由审计和真实请求中都有专用 label', () => {
+    expect(resolveApiLabel('GET', '/projects/:id/identity-history')).toBe('查看设置记录');
+    expect(resolveApiLabel('GET', '/projects/demo-a/identity-history')).toBe('查看设置记录');
+    expect(resolveApiLabel('GET', '/projects/demo-a')).toBe('查询项目');
+    expect(resolveApiLabel('GET', '/projects/demo-a/extra/identity-history')).not.toBe('查看设置记录');
   });
 });

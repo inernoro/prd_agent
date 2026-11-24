@@ -6,6 +6,7 @@
     "users.read",
     "users.write",
     "authz.manage",
+    "logs.read",
     "document-store.read",
     "document-store.write",
     "ai-toolbox.use",

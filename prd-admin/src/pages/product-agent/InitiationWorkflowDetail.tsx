@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getInitiation, getProduct, listFeatures, listProductMembers, listRequirements, listTracedDefects, type TracedDefect } from '@/services/real/productAgent';
+import { getInitiation, getVersionApplicationProduct, listFeatures, listProductMembers, listRequirements, listTracedDefects, type TracedDefect } from '@/services/real/productAgent';
 import { getUserCards } from '@/services/real/teams';
 import type { Feature, ProductInitiation, ProductMember, Requirement } from './types';
 import { useEffectiveWorkflow } from './DynamicForm';
@@ -15,7 +15,8 @@ import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } f
 import { DetailRecordActions } from './DetailRecordActions';
 import { InitiationWorkflowPanel } from './InitiationWorkflowPanel';
 import { InitiationWizard } from './VersionWorkflowTab';
-import { useAuthStore } from '@/stores/authStore';
+import { VersionCopyActions } from './VersionCopyActions';
+import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -23,7 +24,7 @@ const STATUS_LABEL: Record<string, string> = {
   review_pending: 'Agent 评审中',
   review_failed: '评审未通过',
   decision_pending: '待确认评审方式',
-  owner_pending: '待负责人同意',
+  owner_pending: '待自动发号',
   approved: '已取得立项号',
 };
 
@@ -37,7 +38,6 @@ export function InitiationWorkflowDetail({
   initiationId: string;
 }) {
   const navigate = useNavigate();
-  const currentUserId = useAuthStore((s) => s.user?.userId);
   const [tab, setTab] = useState<DetailTab>('basic');
   const [loading, setLoading] = useState(true);
   const [initiation, setInitiation] = useState<ProductInitiation | null>(null);
@@ -57,7 +57,7 @@ export function InitiationWorkflowDetail({
       listFeatures(productId),
       listProductMembers(productId),
       listTracedDefects(productId),
-      getProduct(productId),
+      getVersionApplicationProduct(productId),
     ]);
     if (initRes.success) setInitiation(initRes.data);
     if (reqRes.success) setRequirements(reqRes.data.items);
@@ -96,6 +96,7 @@ export function InitiationWorkflowDetail({
 
   useEffect(() => {
     const ids = [
+      initiation?.ownerId,
       initiation?.primaryOwnerId,
       initiation?.createdBy,
     ].filter(Boolean) as string[];
@@ -106,7 +107,7 @@ export function InitiationWorkflowDetail({
       setDisplayNames(new Map(res.data.items.map((u) => [u.userId, u.displayName])));
     });
     return () => { cancelled = true; };
-  }, [initiation?.createdBy, initiation?.primaryOwnerId]);
+  }, [initiation?.createdBy, initiation?.ownerId, initiation?.primaryOwnerId]);
 
   const resolveName = (userId?: string | null) => {
     if (!userId) return '—';
@@ -119,11 +120,11 @@ export function InitiationWorkflowDetail({
   );
 
   const displayTitle = initiation?.tCode?.trim() || initiation?.planName?.trim() || '内部版本';
-  const canRetryReview = initiation?.status === 'review_failed' && initiation.createdBy === currentUserId;
-  const canContinueDecision = initiation?.status === 'decision_pending' && initiation.createdBy === currentUserId;
+  const canRetryReview = initiation?.status === 'review_failed';
+  const canContinueDecision = initiation?.status === 'decision_pending';
   const canEditMeeting = Boolean(
     initiation?.reviewMeetingRequired
-    && (initiation.createdBy === currentUserId),
+    && initiation.status !== 'voided',
   );
 
   if (loading) return <MapSectionLoader text="正在加载立项详情…" />;
@@ -167,7 +168,13 @@ export function InitiationWorkflowDetail({
             继续立项决策
           </button>
         )}
+        {initiation.tCode && initiation.status !== 'voided' && (
+          <button type="button" onClick={() => setRetryOpen(true)} className="rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary hover-bg-soft">修改资料</button>
+        )}
+        {initiation.tCode && <InitiationDeleteAction id={initiation.id} code={initiation.tCode} status={initiation.status} voidReason={initiation.voidReason} canDelete={initiation.canDelete} onDeleted={() => navigate('/product-agent?section=versions&versionTab=initiation')} />}
       </div>
+
+      {initiation.tCode && <VersionCopyActions kind="initiation" id={initiation.id} code={initiation.tCode} />}
 
       <div className="flex border-b border-token-subtle">
         <TabButton active={tab === 'basic'} onClick={() => setTab('basic')}>基础信息</TabButton>

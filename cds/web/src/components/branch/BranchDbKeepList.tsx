@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * BranchDbKeepList — 删分支前先展示会留下什么（数据库隔离收敛 3）。
  *
@@ -6,7 +7,6 @@
  * 产出 choices 交给 DELETE /api/branches/:id 的请求体 dbs。
  */
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
 import { apiRequest, ApiError } from '@/lib/api';
 import { hasVerifiedBackup, KIND_LABEL, type DbLedgerEntry } from '@/components/branch/DbLedgerSection';
 
@@ -25,7 +25,7 @@ export function BranchDbKeepList({ branchId, choices, onChange }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchId]);
 
-  if (state.status === 'loading') return <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在查这条分支留下了哪些库…</div>;
+  if (state.status === 'loading') return <ContentLoading label="读取分支数据库" variant="rows" />;
   if (state.status === 'error') return <div className="text-xs text-warn">查不到派生库清单（{state.message}），删除将按默认保留处理</div>;
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-3 py-2 text-xs" data-branch-db-keep-list={state.entries.length}>

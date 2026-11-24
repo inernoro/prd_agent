@@ -14,6 +14,7 @@ import { listDefects } from '@/services';
 import type { DefectReport } from '@/services/contracts/defectAgent';
 import type { BehaviorInsight } from '@/services/contracts/teamActivity';
 import { getInsightKindMeta } from './insightKinds';
+import { ActivitySectionState } from './ActivitySectionState';
 
 const RED = '#f8717a';
 const AMBER = '#fbbf24';
@@ -49,12 +50,18 @@ function fmtRelTime(iso?: string): string {
 
 export function ExperienceBoard({
   items,
+  loading = false,
+  error,
+  onRetry = () => {},
   onSelectTarget,
   onSwitchHeatmap,
   from,
   to,
 }: {
   items: BehaviorInsight[];
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   onSelectTarget?: (target: string, fallback: { label: string; metric: string; kind?: string }) => void;
   onSwitchHeatmap?: () => void;
   /** 当前选中时间窗：用户之声（真实缺陷）也按此窗口对齐，与左侧行为之声同口径 */
@@ -110,7 +117,7 @@ export function ExperienceBoard({
 
   const empty = behaviorVoice.length === 0 && (windowedDefects?.length ?? 0) === 0 && windowedDefects !== null;
 
-  if (empty && !defectsErr) {
+  if (empty && !defectsErr && !loading && !error) {
     return (
       <GlassCard className="overflow-hidden h-full flex flex-col voc-board-card" style={{ padding: 0, minHeight: 0 }}>
         <Header />
@@ -137,7 +144,7 @@ export function ExperienceBoard({
       <Header />
       <div className="px-3 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {/* 左声道：行为之声 = 遥测自动发现的痛点 */}
-        <BehaviorChannel items={behaviorVoice} onSelectTarget={onSelectTarget} />
+        {loading || error ? <ActivitySectionState title="行为之声" loading={loading} error={error} onRetry={onRetry} /> : <BehaviorChannel items={behaviorVoice} onSelectTarget={onSelectTarget} />}
         {/* 右声道：用户之声 = 用户主动提交的真实缺陷 */}
         <UserChannel defects={windowedDefects} error={defectsErr} startIdx={behaviorVoice.length} onOpenDefect={() => navigate('/defect-agent')} />
       </div>

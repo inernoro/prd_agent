@@ -44,7 +44,7 @@
 - 增加 Webhook 预热能力，验证新提交到达后目标分支可以在首个用户请求前进入 warming 或 hot。
 - 实现 executor 故障后的重新派发：清理旧租约、在目标节点恢复 worktree、部署并切入口。
 - 实现过载分支迁移，保留事件、审计和回滚，不以删除旧节点数据作为迁移第一步。
-- `state.json` 单点问题不在本计划复制解决，统一依赖 [debt.cds.state-json.md](./debt.cds.state-json.md) 的 Mongo 权威退场路线。
+- `state.json` 单点问题不在本计划复制解决，统一依赖 [debt.cds.state-json.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.state-json.md) 的 Mongo 权威退场路线。
 
 ## 验收矩阵
 
@@ -68,6 +68,6 @@
 ## 关联文档
 
 - [doc/design.cds.resilience.md](./design.cds.resilience.md)
-- [doc/debt.cds.state-json.md](./debt.cds.state-json.md)
+- [doc/debt.cds.state-json.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.state-json.md)
 - [doc/guide.cds.cluster-setup.md](./guide.cds.cluster-setup.md)
 - [doc/report.cds.self-update-timing-audit.md](./report.cds.self-update-timing-audit.md)

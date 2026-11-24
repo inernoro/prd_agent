@@ -1,10 +1,10 @@
-// 模型出口转发口：引擎只拿占位 token，真实的 MAP 模型票据只在这里注入。
+// 模型出口转发口：引擎只拿占位 token，真实的任务级模型凭据只在这里注入。
 //
 // 搬迁自 cds/src/services/agent-workspace-session-runtime.ts 的 EGRESS_PROXY_SCRIPT（原来跑在一个单独的
 // relay 容器里，别名 map-egress:8787）。现在引擎与本服务同处一个容器，转发口改成本服务进程里的一个
 // 只监听 127.0.0.1 的 HTTP 服务。规则逐条不变：
 // - 只认 `Bearer <占位 token>`，常量时间比较；
-// - 每分钟最多 240 个请求；只放行 GET / POST，路径必须落在 MAP 模型出口的前缀之下；
+// - 每分钟最多 240 个请求；只放行 POST 到受控模型出口的 Responses 端点；
 // - 自己解析 DNS，任何一个解析结果落在私网 / 回环 / 链路本地 / 元数据等保留段即拒绝（502）；
 // - 删掉调用方带来的一切凭据头与转发头，换成真实票据；
 // - 拒绝 3xx（不跟随、不透传 Location），拒绝 CONNECT 与 upgrade。
@@ -15,6 +15,7 @@ import https from 'node:https';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 
+import { AgentWorkspaceRuntimeError } from '../errors.js';
 import { validateTransferUrl } from '../workspace/transfer.js';
 
 const DENIED_SUBNETS: ReadonlyArray<readonly [string, number, 'ipv4' | 'ipv6']> = [
@@ -53,23 +54,49 @@ const STRIPPED_REQUEST_HEADERS = [
 
 export interface EgressRelayOptions {
   modelBaseUrl: string;
-  mapModelTicket: string;
+  modelGatewayCredential: string;
   relayClientToken: string;
   port: number;
+  sourceSystem?: string;
+  appCallerCode?: string;
+  userId?: string;
+  runId?: string;
+  /** 仅供服务配置中钉死的内部 LLMGW 地址；任务自报的任意私网地址仍然拒绝。 */
+  allowPrivateTarget?: boolean;
   /** 测试注入：默认使用上面的保留段判据。生产代码不传。 */
   isDeniedAddress?: (address: string) => boolean;
   maxRequestsPerMinute?: number;
 }
 
 export interface EgressRelay {
-  /** 交给 Codex 配置的 base_url（本机地址 + MAP 出口路径）。 */
+  /** 交给 Codex 配置的 base_url（本机地址 + 受控模型出口路径）。 */
   readonly proxiedBaseUrl: string;
   readonly port: number;
   close(): Promise<void>;
 }
 
+function parseTarget(value: string, allowPrivateTarget: boolean): URL {
+  if (!allowPrivateTarget) return validateTransferUrl(value, 'modelBaseUrl');
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'modelBaseUrl must be an absolute HTTP URL');
+  }
+  if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:')
+      || parsed.username || parsed.password || parsed.hash || parsed.search) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      'modelBaseUrl must be an HTTP URL without credentials, query parameters, or fragments',
+    );
+  }
+  return parsed;
+}
+
 export async function startEgressRelay(options: EgressRelayOptions): Promise<EgressRelay> {
-  const target = validateTransferUrl(options.modelBaseUrl, 'modelBaseUrl');
+  // 内部 HTTP 只对上层已经与服务固定配置逐字匹配过的 LLMGW 地址开放。普通任务地址仍走
+  // validateTransferUrl 的 HTTPS 与 SSRF 约束，不能靠请求体自行打开私网出口。
+  const target = parseTarget(options.modelBaseUrl, options.allowPrivateTarget === true);
   const prefix = target.pathname || '/';
   const isDenied = options.isDeniedAddress ?? isDeniedEgressAddress;
   const maxRequestsPerMinute = options.maxRequestsPerMinute ?? 240;
@@ -91,7 +118,8 @@ export async function startEgressRelay(options: EgressRelayOptions): Promise<Egr
   const pathAllowed = (raw: string): boolean => {
     try {
       const pathname = new URL(raw, 'http://relay.invalid').pathname;
-      return prefix === '/' || pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`);
+      const basePath = prefix === '/' ? '' : prefix.replace(/\/$/, '');
+      return pathname === `${basePath}/responses`;
     } catch {
       return false;
     }
@@ -99,23 +127,27 @@ export async function startEgressRelay(options: EgressRelayOptions): Promise<Egr
 
   const server = http.createServer((req, res) => {
     if (req.url === '/__health') {
-      res.writeHead(options.mapModelTicket && options.relayClientToken ? 204 : 503);
+      res.writeHead(options.modelGatewayCredential && options.relayClientToken ? 204 : 503);
       res.end();
       return;
     }
     if (!authorized(req.headers.authorization)) { res.writeHead(401); res.end(); return; }
     if (!admitted()) { res.writeHead(429, { 'retry-after': '60' }); res.end(); return; }
-    if ((req.method !== 'GET' && req.method !== 'POST') || !pathAllowed(req.url || '/')) {
+    if (req.method !== 'POST' || !pathAllowed(req.url || '/')) {
       res.writeHead(403); res.end(); return;
     }
     dns.lookup(target.hostname, { all: true, verbatim: true }, (lookupError, addresses) => {
-      if (lookupError || !addresses.length || addresses.some((entry) => isDenied(entry.address))) {
+      if (lookupError || !addresses.length || (!options.allowPrivateTarget && addresses.some((entry) => isDenied(entry.address)))) {
         res.writeHead(502); res.end(); return;
       }
       const selected = addresses[0];
       const headers: http.OutgoingHttpHeaders = { ...req.headers, host: target.host };
       for (const name of STRIPPED_REQUEST_HEADERS) delete headers[name];
-      headers.authorization = `Bearer ${options.mapModelTicket}`;
+      headers.authorization = `Bearer ${options.modelGatewayCredential}`;
+      if (options.sourceSystem) headers['x-gateway-source'] = options.sourceSystem;
+      if (options.appCallerCode) headers['x-gateway-app-caller'] = options.appCallerCode;
+      if (options.userId) headers['x-gateway-user-id'] = options.userId;
+      if (options.runId) headers['x-gateway-run-id'] = options.runId;
       const transport = target.protocol === 'https:' ? https : http;
       const upstream = transport.request({
         protocol: target.protocol,

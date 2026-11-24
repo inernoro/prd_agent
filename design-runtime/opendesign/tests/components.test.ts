@@ -13,14 +13,21 @@ import { loadConfig } from '../src/config.js';
 import { probeDaemonHealth } from '../src/engine/client.js';
 import { OpenDesignDaemon, buildDaemonEnv, type DaemonExit } from '../src/engine/daemon.js';
 import { isDeniedEgressAddress, startEgressRelay, type EgressRelay } from '../src/engine/egress-relay.js';
+import {
+  OPEN_DESIGN_PRESENTATION_SKILL_FILES,
+  missingPresentationSkillSourceFiles,
+  registerPresentationSkill,
+} from '../src/engine/presentation-skill.js';
 import { listDesignSystems } from '../src/engine/self-check.js';
 import {
-  findTemplateAssertionFailure,
-  patchWebPrototypeLayouts,
-  patchWebPrototypeTemplate,
   prepareWebPrototypeResources,
 } from '../src/engine/web-prototype.js';
 import { OPEN_DESIGN_CODEX_VERSION, buildOpenDesignCodexConfig } from '../src/prompts.js';
+import {
+  probeBrowserQuality,
+  resolveBrowserExecutablePath,
+  summarizeBrowserWorkerFailure,
+} from '../src/quality/browser-runner.js';
 import { FIXTURES, waitFor } from './helpers.js';
 
 const SERVICE_ROOT = path.resolve(__dirname, '..');
@@ -200,7 +207,7 @@ describe('model egress relay', () => {
     const seen: Array<{ url: string; headers: http.IncomingHttpHeaders }> = [];
     upstream = http.createServer((req, res) => {
       seen.push({ url: req.url || '', headers: req.headers });
-      if (req.url?.endsWith('/redirect')) {
+      if (req.headers['x-test-redirect'] === '1') {
         res.writeHead(302, { Location: 'http://169.254.169.254/' });
         res.end();
         return;
@@ -212,31 +219,64 @@ describe('model egress relay', () => {
     return { origin: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, seen };
   }
 
-  it('swaps the placeholder for the real ticket and strips caller credentials', async () => {
+  it('swaps the placeholder for the task grant, strips caller credentials and overwrites gateway identity', async () => {
     const { origin, seen } = await startUpstream();
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/api/design-artifacts/runtime/run-1/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
+      sourceSystem: 'map',
+      appCallerCode: 'prd-agent-web.web-hosting.generate-html::chat',
+      userId: 'user-1',
+      runId: 'run-1',
       // 上游在回环地址上只因为这是测试；默认判据会拒绝它（见下一条用例）。
       isDeniedAddress: () => false,
     });
     expect(relay.proxiedBaseUrl).toBe(`http://127.0.0.1:${relay.port}/api/design-artifacts/runtime/run-1/llm/v1`);
     const ok = await fetch(`${relay.proxiedBaseUrl}/responses`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer placeholder', Cookie: 'session=1', 'X-Api-Key': 'caller-key', 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: 'Bearer placeholder', Cookie: 'session=1', 'X-Api-Key': 'caller-key', 'Content-Type': 'application/json',
+        'X-Gateway-Source': 'spoofed', 'X-Gateway-App-Caller': 'spoofed', 'X-Gateway-User-Id': 'spoofed', 'X-Gateway-Run-Id': 'spoofed',
+      },
       body: '{}',
     });
     expect(ok.status).toBe(200);
     expect(seen[0].headers.authorization).toBe('Bearer real-map-ticket');
     expect(seen[0].headers.cookie).toBeUndefined();
     expect(seen[0].headers['x-api-key']).toBeUndefined();
+    expect(seen[0].headers['x-gateway-source']).toBe('map');
+    expect(seen[0].headers['x-gateway-app-caller']).toBe('prd-agent-web.web-hosting.generate-html::chat');
+    expect(seen[0].headers['x-gateway-user-id']).toBe('user-1');
+    expect(seen[0].headers['x-gateway-run-id']).toBe('run-1');
     expect((await fetch(`${relay.proxiedBaseUrl}/responses`, { method: 'POST', headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
+    expect((await fetch(`${relay.proxiedBaseUrl}/chat/completions`, { method: 'POST', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
+    expect((await fetch(`${relay.proxiedBaseUrl}/responses`, { method: 'GET', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
     expect((await fetch(`http://127.0.0.1:${relay.port}/other/path`, { headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
     expect((await fetch(`${relay.proxiedBaseUrl}/x`, { method: 'DELETE', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
-    expect((await fetch(`${relay.proxiedBaseUrl}/redirect`, { headers: { Authorization: 'Bearer placeholder' }, redirect: 'manual' })).status).toBe(502);
+    expect((await fetch(`${relay.proxiedBaseUrl}/responses`, {
+      method: 'POST', headers: { Authorization: 'Bearer placeholder', 'X-Test-Redirect': '1' }, redirect: 'manual',
+    })).status).toBe(502);
     expect((await fetch(`http://127.0.0.1:${relay.port}/__health`)).status).toBe(204);
+  });
+
+  it('allows only an explicitly trusted private HTTP model target', async () => {
+    await expect(startEgressRelay({
+      modelBaseUrl: 'http://10.0.0.8/gw/v1',
+      modelGatewayCredential: 'task-grant',
+      relayClientToken: 'placeholder',
+      port: 0,
+    })).rejects.toThrow('modelBaseUrl must use HTTPS outside local tests');
+
+    relay = await startEgressRelay({
+      modelBaseUrl: 'http://10.0.0.8/gw/v1',
+      modelGatewayCredential: 'task-grant',
+      relayClientToken: 'placeholder',
+      port: 0,
+      allowPrivateTarget: true,
+    });
+    expect(relay.proxiedBaseUrl).toBe(`http://127.0.0.1:${relay.port}/gw/v1`);
   });
 
   it('closes the downstream stream as soon as the upstream drops mid-response', async () => {
@@ -250,7 +290,7 @@ describe('model egress relay', () => {
     const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
       isDeniedAddress: () => false,
@@ -275,7 +315,7 @@ describe('model egress relay', () => {
     const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
       isDeniedAddress: () => false,
@@ -295,7 +335,7 @@ describe('model egress relay', () => {
     const { origin, seen } = await startUpstream();
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
     });
@@ -314,26 +354,7 @@ describe('model egress relay', () => {
 describe('web-prototype template preparation', () => {
   const read = (relative: string) => fs.readFileSync(path.join(FIXTURES, 'web-prototype', relative), 'utf8');
 
-  it('patches the starter template into a gate-passing shape and proves it', () => {
-    const original = read('assets/template.html');
-    expect(findTemplateAssertionFailure(original)).toBe('template still contains an empty link or a bare button');
-    const patched = patchWebPrototypeTemplate(original);
-    expect(findTemplateAssertionFailure(patched)).toBeUndefined();
-    expect(patched).toContain('<a href="#hero">[REPLACE] Link 1</a>');
-    expect(patched).toContain('<section class="section hero" id="hero" data-od-id="hero">');
-    expect(patched).toContain('<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>');
-    expect(patched).toContain('[REPLACE] tagline · [REPLACE] contact');
-    expect(patchWebPrototypeLayouts(read('references/layouts.md'))).toContain('href="#content"');
-  });
-
-  it('does not accept data-od-id as a fragment target, nor placeholder emails and dates', () => {
-    expect(findTemplateAssertionFailure('<a href="#hero">x</a><section data-od-id="hero"></section>')).toBe('template anchor #hero has no matching id');
-    expect(findTemplateAssertionFailure('<p>contact@example.com</p>')).toBe('template still contains a placeholder email or date');
-    expect(findTemplateAssertionFailure('<p>2026-09</p>')).toBe('template still contains a placeholder email or date');
-    expect(findTemplateAssertionFailure('<main id="content"><a href="#content">x</a></main>')).toBeUndefined();
-  });
-
-  it('copies both skill copies, patches them, and fails closed when a resource is missing', () => {
+  it('copies both native skill copies byte-for-byte and fails closed when a resource is missing', () => {
     const root = tempDir('design-runtime-template-');
     const workspaceDir = path.join(root, 'workspace');
     fs.mkdirSync(workspaceDir);
@@ -342,7 +363,7 @@ describe('web-prototype template preparation', () => {
       () => undefined,
     );
     for (const copy of [path.join(root, 'templates/web-prototype'), path.join(workspaceDir, '.od-skills/web-prototype')]) {
-      expect(findTemplateAssertionFailure(fs.readFileSync(path.join(copy, 'assets/template.html'), 'utf8'))).toBeUndefined();
+      expect(fs.readFileSync(path.join(copy, 'assets/template.html'), 'utf8')).toBe(read('assets/template.html'));
     }
     // 新建页面不种 index.html。
     expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
@@ -360,6 +381,36 @@ describe('web-prototype template preparation', () => {
   it('lists only real design systems', () => {
     expect(listDesignSystems(path.join(FIXTURES, 'design-systems'))).toEqual(['default', 'editorial']);
     expect(listDesignSystems(path.join(FIXTURES, 'does-not-exist'))).toEqual([]);
+  });
+});
+
+describe('presentation skill registration', () => {
+  function makeSource(root: string, name = 'magazine-web-ppt') {
+    const source = path.join(root, 'source');
+    for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+      const target = path.join(source, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, relative === 'SKILL.md' ? `---\nname: ${name}\n---\n` : relative);
+    }
+    return source;
+  }
+
+  it('registers the complete official bundle byte-for-byte and rejects a wrong registry name', () => {
+    const root = tempDir('design-runtime-presentation-skill-');
+    const source = makeSource(root);
+    registerPresentationSkill({ sourceDir: source, templatesDir: path.join(root, 'templates') }, () => undefined);
+    const target = path.join(root, 'templates', 'guizang-ppt');
+    expect(missingPresentationSkillSourceFiles(target)).toEqual([]);
+    for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+      expect(fs.readFileSync(path.join(target, relative))).toEqual(fs.readFileSync(path.join(source, relative)));
+    }
+
+    const wrong = tempDir('design-runtime-presentation-skill-wrong-');
+    const wrongSource = makeSource(wrong, 'guizang-ppt');
+    expect(() => registerPresentationSkill(
+      { sourceDir: wrongSource, templatesDir: path.join(wrong, 'templates') },
+      () => undefined,
+    )).toThrow(expect.objectContaining({ code: 'workspace_design_template_init_failed' }));
   });
 });
 
@@ -395,6 +446,66 @@ describe('wiring guards', () => {
     expect(config).not.toMatch(/OPENAI_API_KEY|CODEX_API_KEY|chatgpt|api\.openai\.com/);
   });
 
+  it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
+    const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=156.0.8078.79');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_RELEASE=0');
+    expect(dockerfile).toContain('apk add --no-cache chromium="${DESIGN_RUNTIME_CHROMIUM_VERSION}-r${DESIGN_RUNTIME_CHROMIUM_RELEASE}"');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
+    expect(dockerfile).toContain('su open-design -s /bin/sh');
+    expect(dockerfile).toContain('scripts/image-browser-smoke.mjs');
+    const smoke = fs.readFileSync(path.join(SERVICE_ROOT, 'scripts/image-browser-smoke.mjs'), 'utf8');
+    expect(smoke).toContain("browser.version() !== expectedVersion");
+    expect(smoke).toContain("{ name: 'desktop', width: 1440, height: 900 }");
+    expect(smoke).toContain("{ name: 'mobile', width: 390, height: 844 }");
+    expect(dockerfile).toContain('mkdir -p /home/open-design');
+    expect(dockerfile).toContain('chown open-design:open-design /home/open-design');
+    expect(dockerfile).toContain('chmod 0700 /home/open-design');
+    expect(dockerfile).toContain('chown open-design:open-design');
+    expect(dockerfile).toContain('/var/lib/map-design-runtime/browser-quality');
+    expect(dockerfile).toContain('chmod 0711 /var/lib/map-design-runtime');
+    expect(dockerfile).toMatch(/chmod 0700 [^\n]*\/var\/lib\/map-design-runtime\/output \/var\/lib\/map-design-runtime\/browser-quality/);
+  });
+
+  it('uses the image-provided Chromium path without changing local Playwright tests', () => {
+    expect(resolveBrowserExecutablePath({
+      DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: ' /usr/bin/chromium-browser ',
+    })).toBe('/usr/bin/chromium-browser');
+    expect(resolveBrowserExecutablePath({})).toContain('chromium');
+  });
+
+  it('rejects an image whose browser HOME is absent and keeps the Chromium crash reason', () => {
+    const root = tempDir('design-runtime-browser-probe-');
+    const browser = path.join(root, 'chromium');
+    fs.writeFileSync(browser, 'binary');
+    const missingHome = path.join(root, 'missing-home');
+    expect(probeBrowserQuality({
+      env: { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: browser },
+      engineHome: missingHome,
+      engineUid: process.getuid?.(),
+      engineGid: process.getgid?.(),
+    })).toMatchObject({
+      ready: false,
+      observation: expect.stringContaining('Browser HOME is missing or not writable'),
+    });
+    fs.mkdirSync(missingHome, { mode: 0o700 });
+    expect(probeBrowserQuality({
+      env: { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: browser },
+      engineHome: missingHome,
+      engineUid: process.getuid?.(),
+      engineGid: process.getgid?.(),
+    }).ready).toBe(true);
+
+    const summary = summarizeBrowserWorkerFailure(new Error([
+      'browserType.launch: Target page, context or browser has been closed',
+      'Browser logs:',
+      '[pid=716][err] chrome_crashpad_handler: --database is required',
+      '[pid=716] <process did exit: exitCode=null, signal=SIGTRAP>',
+    ].join('\n')));
+    expect(summary).toContain('chrome_crashpad_handler: --database is required');
+    expect(summary).toContain('signal=SIGTRAP');
+  });
+
   it('keeps the production defaults on the layout the image provides', () => {
     const config = loadConfig({});
     expect(config).toMatchObject({
@@ -404,12 +515,64 @@ describe('wiring guards', () => {
       odDataDir: '/app/.od',
       templatesDir: '/app/design-templates',
       webPrototypeSourceDir: '/app/plugins/_official/examples/web-prototype',
+      presentationSkillSourceDir: '/app/plugins/_official/examples/guizang-ppt',
       odPort: 7456,
+      odStartTimeoutSeconds: 180,
       egressPort: 8787,
       engineUid: 1001,
       engineGid: 1001,
     });
     expect(config.odCommand.slice(1)).toEqual(['apps/daemon/dist/cli.js', '--no-open']);
+  });
+});
+
+describe('configured OpenDesign cold-start health deadline', () => {
+  it('loads an explicit deadline and rejects invalid environment values', () => {
+    expect(loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '90' }).odStartTimeoutSeconds).toBe(90);
+    for (const value of ['-1', '1.5', 'invalid']) {
+      expect(() => loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: value }))
+        .toThrow('DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS');
+    }
+  });
+
+  it('uses the configured deadline in the actual lifecycle before a slow child becomes healthy', async () => {
+    const root = tempDir('design-runtime-cold-deadline-');
+    const script = [
+      "const http = require('node:http');",
+      'const started = Date.now();',
+      "const server = http.createServer((req, res) => {",
+      '  const healthy = Date.now() - started >= 12000;',
+      "  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });",
+      '  res.end(JSON.stringify({ ok: healthy }));',
+      '});',
+      "server.listen(Number(process.env.OD_PORT), '127.0.0.1');",
+      "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+    ].join('\n');
+    const config: ServiceConfig = {
+      ...loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '10' }),
+      apiKey: 'cold-start-test-only',
+      workspaceDir: path.join(root, 'workspace'),
+      odDataDir: path.join(root, 'od'),
+      templatesDir: path.join(root, 'templates'),
+      outputDir: path.join(root, 'output'),
+      webPrototypeSourceDir: path.join(FIXTURES, 'web-prototype'),
+      presentationSkillSourceDir: path.join(FIXTURES, 'presentation-skill'),
+      designSystemsDir: path.join(FIXTURES, 'design-systems'),
+      odPort: await freePort(),
+      odCommand: [process.execPath, '-e', script],
+      odCwd: root,
+      engineHome: root,
+      engineUid: undefined,
+      engineGid: undefined,
+      egressPort: 0,
+    };
+    const runtime = await createDesignRuntime(config, {
+      pollIntervalMs: 20,
+      log: () => undefined,
+      selfCheck: { codexVersion: 'codex-cli 0.143.0', codexMatches: true, codexObservation: '', missingSkillFiles: [], designSystems: [] },
+    });
+    cleanups.push(() => runtime.shutdown());
+    await expect(runtime.lifecycle.reset()).rejects.toMatchObject({ code: 'open_design_not_ready' });
   });
 });
 

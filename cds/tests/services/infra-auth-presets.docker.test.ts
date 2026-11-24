@@ -199,6 +199,16 @@ describe.skipIf(!MEMCACHED_READY)('memcached 预设：真容器', () => {
     const up = waitFor(() => isRunning(name), 20);
     expect(up, `memcached 没起来：\n${logsTail(name)}`).toBe(true);
 
+    // running 只证明入口 shell 已启动；等待它写完认证文件，避免把启动窗口当成配置失败。
+    const authReady = waitFor(() => {
+      try {
+        execSync(`docker exec ${name} test -s /tmp/cds-memcached.auth`,
+          { stdio: 'ignore', timeout: 10_000 });
+        return true;
+      } catch { return false; }
+    }, 20);
+    expect(authReady, `memcached 认证文件未就绪：\n${logsCause(name)}`).toBe(true);
+
     // 认证文件真的落到了容器里，且降权后的进程读得到。
     const perm = execSync(`docker exec ${name} stat -c %a /tmp/cds-memcached.auth`,
       { encoding: 'utf8', timeout: 10_000 }).trim();

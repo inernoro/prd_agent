@@ -26,6 +26,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { monitorIncidentPath } from './monitor-incident-link.js';
+import type { MapNotifierConfig } from './map-notifier.js';
 import {
   cdsEventNoticeCopy,
   cdsEventsBus,
@@ -35,6 +37,9 @@ import {
 } from './cds-events-bus.js';
 import {
   forwardNoticeToMap,
+  resolveNoticeOutboundConfig,
+  type NoticeOutboundFallback,
+  noticeOutboundGeneration,
   type NoticeOutboundConfig,
   type FetchLike,
 } from './notice-outbound-map.js';
@@ -77,6 +82,8 @@ export interface CdsNoticeRecord {
   readAt?: string;
   dismissedAt?: string;
   outbound?: CdsNoticeOutbound;
+  /** 通用通知的外发轮次；超窗重新发生时递增，不表示故障恢复。旧账本缺省为0。 */
+  outboundGeneration?: number;
 }
 
 /** 写入一条通知所需的最小信息（渲染层产出，账本只管归并与落盘）。 */
@@ -201,6 +208,7 @@ export function mergeNotice(
     createdAt: nowIso,
     updatedAt: nowIso,
     occurrences: 1,
+    outboundGeneration: 0,
   };
 
   if (!existing) return { action: 'created', record: base };
@@ -216,6 +224,7 @@ export function mergeNotice(
         id: existing.id,
         createdAt: existing.createdAt,
         occurrences: existing.occurrences + 1,
+        outboundGeneration: noticeOutboundGeneration(existing.outboundGeneration),
         ...(existing.readAt ? { readAt: existing.readAt } : {}),
         ...(existing.dismissedAt ? { dismissedAt: existing.dismissedAt } : {}),
         ...(existing.outbound ? { outbound: existing.outbound } : {}),
@@ -224,7 +233,7 @@ export function mergeNotice(
   }
 
   // 超窗重燃：readAt / dismissedAt 一并清掉，让它重新变成一条要看的新事。
-  return { action: 'relit', record: { ...base, id: existing.id, createdAt: existing.createdAt } };
+  return { action: 'relit', record: { ...base, id: existing.id, createdAt: existing.createdAt, outboundGeneration: noticeOutboundGeneration(existing.outboundGeneration) + 1 } };
 }
 
 export interface NoticeLedgerDeps {
@@ -358,6 +367,7 @@ export class NoticeLedgerService {
         .map((item) => ({
           ...item,
           dedupeKey: typeof item.dedupeKey === 'string' && item.dedupeKey ? item.dedupeKey : item.id,
+          outboundGeneration: noticeOutboundGeneration(item.outboundGeneration),
           occurrences: Number.isFinite(item.occurrences) ? item.occurrences : 1,
           createdAt: item.createdAt || new Date(this.now()).toISOString(),
           updatedAt: item.updatedAt || item.createdAt || new Date(this.now()).toISOString(),
@@ -397,10 +407,13 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
   const copy = cdsEventNoticeCopy(envelope.type);
   if (!copy) return null;
   const data = (envelope.data ?? {}) as {
+    jobId?: string;
     projectId?: string;
     projectName?: string;
     projectSlug?: string;
     targetId?: string;
+    incidentId?: string;
+    detectedAt?: string;
     targetName?: string;
     releaseId?: string;
     branchId?: string;
@@ -412,7 +425,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
 
   // 同一目标的同一类事件归成一条。targetId 优先（发布/存活都以目标为单位），
   // 没有目标的系统级事件（infra 熔断 / 自更新）退到项目或全局。
-  const scopeKey = data.targetId || data.branchId || data.projectId || 'system';
+  const scopeKey = data.jobId || data.targetId || data.branchId || data.projectId || 'system';
   const dedupeKey = `${envelope.type}:${scopeKey}`;
 
   // 结构化摘要优先于原始 stderr。原始发布日志可能有数百行，只能去发布记录展开。
@@ -433,8 +446,15 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     if (data.commitSha) params.set('commit', data.commitSha);
     const query = params.toString();
     href = query ? `/release-center?${query}` : '/release-center';
+  } else if (copy.link === 'tasks') {
+    const query = new URLSearchParams();
+    if (data.projectId) query.set('project', data.projectId);
+    if (data.jobId) query.set('job', data.jobId);
+    href = `/task-schedule?${query}`;
   } else if (copy.link === 'status') {
-    href = '/status';
+    href = monitorIncidentPath(data.targetId, data.incidentId, data.detectedAt);
+  } else if (copy.link === 'scheduler') {
+    href = '/cds-settings#scheduler';
   } else if (copy.link === 'maintenance') {
     href = '/cds-settings';
   }
@@ -455,10 +475,26 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
   };
 }
 
+/** 有效专用配置与关闭开关不依赖另一个可损坏的加密集成。 */
+export function resolveCurrentNoticeOutbound(
+  env: NodeJS.ProcessEnv,
+  readFallback: () => NoticeOutboundFallback | null | undefined,
+  readSigning?: () => MapNotifierConfig | null | undefined,
+): NoticeOutboundConfig | null {
+  const dedicated = resolveNoticeOutboundConfig(env);
+  const enabled = (env.CDS_NOTICE_OUTBOUND_ENABLED ?? '1').trim().toLowerCase();
+  if (dedicated || enabled === '0' || enabled === 'false') return dedicated;
+  const signing = readSigning?.();
+  if (signing) return resolveNoticeOutboundConfig(env, null, signing);
+  return resolveNoticeOutboundConfig(env, readFallback());
+}
+
 export interface StartNoticeLedgerDeps {
   ledger: NoticeLedgerService;
   /** 外发配置；null = 未配置凭据，此时必须如实记 skipped，绝不假装发送成功。 */
   outbound: NoticeOutboundConfig | null;
+  /** 每次新通知读取当前配置；失败必须记账，不能复用旧授权。 */
+  getOutbound?: () => NoticeOutboundConfig | null;
   /** 记完账后回发总线，前端据此实时亮铃。传 cdsEventsBus.publish 即可。 */
   publish?: (type: CdsEventType, data: unknown) => void;
   fetchImpl?: FetchLike;
@@ -484,7 +520,15 @@ export function startNoticeLedger(deps: StartNoticeLedgerDeps): { stop(): void }
     // 窗口内的重复只累加次数，不再打扰外部系统一次。
     if (action === 'merged') return;
 
-    if (!deps.outbound) {
+    let outbound: NoticeOutboundConfig | null;
+    try { outbound = deps.getOutbound ? deps.getOutbound() : deps.outbound; }
+    catch {
+      deps.ledger.patchOutbound(record.dedupeKey, {
+        status: 'failed', at: new Date().toISOString(), reason: 'MAP 通知配置读取失败，请检查服务端接入配置',
+      });
+      return;
+    }
+    if (!outbound) {
       deps.ledger.patchOutbound(record.dedupeKey, {
         status: 'skipped',
         at: new Date().toISOString(),
@@ -493,7 +537,7 @@ export function startNoticeLedger(deps: StartNoticeLedgerDeps): { stop(): void }
       return;
     }
 
-    void forwardNoticeToMap(record, deps.outbound, deps.fetchImpl)
+    void forwardNoticeToMap(record, outbound, deps.fetchImpl)
       .then((result) => {
         deps.ledger.patchOutbound(record.dedupeKey, {
           status: result.ok ? 'sent' : 'failed',

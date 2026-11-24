@@ -8,7 +8,7 @@
 
 ---
 
-PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库索引由 DBA 使用仓库内的可执行清单手动维护，文档不再复制一千余行 DDL。
+PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库与 LLMGW 独立数据库的索引都由 DBA 使用仓库内的可执行清单手动维护，文档不再复制一千余行 DDL。
 
 ## 1. 事实源
 
@@ -20,6 +20,18 @@ PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库索引由
 | 禁止自动建索引规则 | `.claude/rules/no-auto-index.md` | 约束 PRD API 应用库 |
 
 新增或修改查询时，应先更新可执行清单，再在设计或债务文档中引用集合名和索引名；不要把完整 DDL 再粘回文档。
+
+MAP 启用 CDS 登录前，在试点应用库建立 `cds_sso_sessions` 的 `ttl_cds_sso_sessions_expires_at`。该索引清理过期的委托会话，应用每次鉴权仍实时核对有效期。
+
+OpenDesign 直连 LLMGW 使用的 `llmgw_runtime_grants` 需要三条人工维护索引：授权哈希唯一索引、
+过期时间 TTL 索引，以及租户与任务联合索引。它们只在网关库生效；首次初始化空网关库时，
+DBA 必须按脚本说明设置 `PRD_GATEWAY_DB=1` 后执行清单。API 和 LLMGW 启动过程都不会创建这些索引。
+
+网关最低消费保护的三条辅助索引也只在网关库由 DBA 按上述清单手工维护：
+`llmgw_consumption_rate_windows.ttl_llmgw_consumption_windows` 清理过期窗口，
+`llmgw_consumption_rate_windows.idx_llmgw_consumption_baseline_scope_window` 加速同范围历史基线查询，
+`llmgw_consumption_alerts.idx_llmgw_consumption_alerts_tenant_status_created` 服务告警列表。
+请求路径不创建或修改索引；计数与告警的确定性 `_id` 及 MongoDB 内建唯一索引继续保证幂等。
 
 网页托管的删除清理新增两项人工维护索引：`hosted_sites` 的
 `idx_hosted_sites_asset_cleanup_due`（只收还欠着待删对象的站点）与 `hosted_site_deletion_tasks` 的
@@ -37,6 +49,11 @@ PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库索引由
 不影响正确性。同样只通过 DBA 清单创建。
 
 ## 2. 执行
+
+多上游语音新增 `speech_runs` 的队列、租约、额度补偿和个人历史索引，以及 `speech_presets`
+的个人环境索引，索引名分别以 `idx_speech_runs_`、`idx_speech_presets_` 开头。
+配置与额度账本通过固定主键访问，幂等任务也复用唯一主键，不需要额外唯一索引。
+这些索引只通过 DBA 清单维护，语音 Worker 不会在启动时建索引。
 
 确认目标连接串和数据库名称后，由 DBA 在维护窗口执行：
 
@@ -199,7 +216,7 @@ DBA 不应对这两个索引重复执行应用库脚本。若 CDS 改变索引�
 为什么定这条线：在一个已经有数据的集合上建索引可能阻塞写入、拖慢就绪；副本集滚动重启时
 每个实例各建各的；而建失败若没被接住，整个进程起不来。这三种后果都发生在没人盯着的启动路径上。
 （历史上这几条曾在启动时自动建，2026-09-17 起改为只查不建。存量还有一批仍在启动时创建，
-见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)，逐步搬到本节。）
+见 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)，逐步搬到本节。）
 
 ### 5.1.1 待办：线路身份索引换键
 
@@ -272,3 +289,33 @@ PRD_GATEWAY_DB=1 mongosh "<connection-uri>/<网关库名>" scripts/mongodb-index
 4. 已知旧定义重建失败时先确认脚本是否已恢复旧索引；若恢复也失败，按备份中的旧定义人工重建。
 5. 恢复服务并核对查询与写入。
 6. 将未解决问题登记到对应 `debt.*`。
+
+
+模型兼容命名空间由专用人工维护脚本预检、条件回填并建立
+`llmgw_logical_models.uniq_llmgw_model_identity_namespace`。索引覆盖同租户、同用途下的公开标识、
+显式兼容标识与历史池身份，阻止并发导入占用旧调用标识。先在目标网关库 dry-run，确认无重复后
+显式执行 apply；应用启动不创建索引，不自动重命名冲突模型。删除索引不会回滚已登记别名，
+需先停用兼容写入，再按审计恢复对应模型的别名配置。
+
+## 实现来源
+
+- [模型兼容命名空间维护脚本](../scripts/migrate-gateway-model-identities.js)
+
+
+## 日志冷归档索引
+
+启用自动归档前，由运维在正确环境执行日志归档索引迁移脚本。归档策略的部署归属必须具有唯一索引，避免两个进程创建重复策略并同时处理同一范围；归档批次按部署、时间和请求标识建立检索索引。
+
+源日志的归档标记与时间组合索引必须在启用前建立，网关源还必须包含租户条件；缺少这些索引或策略唯一索引时拒绝启用。迁移脚本的源索引开关还会补齐系统日志计数、进行中筛选与筛选元数据的覆盖索引，同一集合的多项索引共用一次扫描。应在低负载窗口执行，并验证执行计划无需扫描正文。该操作不随应用启动执行，也不删除日志或冷库对象。
+
+## 完整日志与临时状态的过期边界
+
+日志、审计、影子比较和执行记录不能因为时间到期直接删除。处理存量过期索引时先暂停全局过期线程，在正确环境核对完整清单，先建立普通查询覆盖，再移除删除型索引。只保留已经明确属于限流、锁、并发槽、短期登录票据和数据库会话的过期索引；未知项阻止恢复全局线程。
+
+操作前必须已有当前三库的异机真实恢复回执，并在独立恢复副本确认日志全文哈希不变、临时状态正常过期。生产运行版本不能在启动时重建日志过期索引。回滚先暂停全局线程；恢复线程需要版本、备份新鲜度、归档指针、独立密钥与保留开关共同通过守卫。仅看到索引名称或压缩文件完整，不能代替这些条件。
+
+## 调用链排查与写入实例租约（2026-11-12）
+
+调用链通过请求、业务运行、逻辑请求、上游回执／作业及逐次尝试编号覆盖保留期内的日志。网关索引清单对 `RequestId`、`RunId`、`LogicalRequestId`、`ProviderRequestId`、`ProviderTaskId`、`ProviderAttempts.AttemptId`、`ProviderAttempts.ProviderRequestId`、`ProviderAttempts.ProviderTaskId` 分别维护 `TenantId + 字段 + StartedAt + _id` 非唯一索引，名字为 `idx_llmgw_trace_` 加字段名。三个数组字段各建独立多键索引，不将多个数组字段放入同一复合索引。必须覆盖所有 `$or` 身份分支，否则连精确业务编号查询也可能扫描租户历史；`_id` 分支使用原生主键索引。控制台启动只巡检，DBA显式执行清单；缺失时查询仍可用，但可能扫描历史日志。
+
+serving 持久化写入实例租约。`idx_llmgw_logs_writer_lifecycle` 限定需收口的实例与进行中记录，`idx_llmgw_writer_lease_scan` 支持过期实例轮转扫描；均为非唯一索引，不修改日志或历史费用，不自动执行。租约不设 TTL，以保留收口依据。

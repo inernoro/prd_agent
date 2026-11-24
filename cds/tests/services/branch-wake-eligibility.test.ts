@@ -187,7 +187,7 @@ describe('【关键】项目暂停时，访问预览域名不许把它拉起来'
     expect(runningAt, '复检必须排在标 running 之前').toBeGreaterThan(recheckAt);
     // 只是不标 running 不够：容器已经被我们拉起来了，得停回去，否则暂停项目照样在跑。
     const revert = body.slice(recheckAt, runningAt);
-    expect(revert, '暂停时必须把刚拉起来的容器停回去').toMatch(/containerService\.stop\(/);
+    expect(revert, '暂停时必须把刚拉起来的容器停回去').toMatch(/containerService\.stopRuntimeGroup\(/);
     expect(revert, '停回去要按 system 来源记账，与暂停路由那次 stop 同一档').toContain("lastStopSource = 'system'");
   });
 

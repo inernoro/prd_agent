@@ -65,7 +65,8 @@ public sealed record AppendDesignArtifactEventRequest(
     string Type,
     string? Phase = null,
     int? Progress = null,
-    DesignArtifactLifecycleExpectation? Expected = null);
+    DesignArtifactLifecycleExpectation? Expected = null,
+    string? PhaseCode = null);
 
 public sealed record StartDesignArtifactSessionRequest(
     string RunId,
@@ -99,7 +100,8 @@ public sealed record FailDesignArtifactSessionRequest(
     string RunId,
     string UserId,
     DesignArtifactLifecycleExpectation Expected,
-    string FailureCode);
+    string FailureCode,
+    DesignArtifactRuntimeFailure? RuntimeFailure = null);
 
 public sealed record RequestDesignArtifactCancellationRequest(
     string RunId,

@@ -1,3 +1,8 @@
+import { alarmNotification } from './notification-report.js';
+import { NOTIFICATION_ENVIRONMENTS, type NotificationFacts } from '../shared/notification-templates.js';
+import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
+import { classifyAlert as sharedClassifyAlert, type AlarmEventKind } from '../shared/alarm-classification.js';
+export type { AlarmEventKind } from '../shared/alarm-classification.js';
 /*
  * alarm-route —— 「哪些出问题通知谁」的判定层，纯函数。
  *
@@ -30,7 +35,6 @@ export type AlarmChannelKind = 'bark' | 'webhook' | 'map';
  * 就有 5 条推送打到手机。**合并的那一档里，业务的份额接近于零**——
  * 它名义上叫「恢复」，实际上是「分支预览重建播报」。
  */
-export type AlarmEventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered';
 
 export const ALARM_EVENT_KINDS: ReadonlyArray<AlarmEventKind> = [
   'business-down', 'business-recovered', 'infra-down', 'infra-recovered',
@@ -95,7 +99,24 @@ export interface AlarmLastDelivery {
   status?: number;
 }
 
+/** Persisted selection; an absent default preserves existing subscriptions. */
+export interface MonitorNotificationSettings {
+  defaultChannelIds?: string[];
+  overrides?: Record<string, string[]>;
+  mutedUntil?: Record<string, number>;
+  acknowledgedAt?: Record<string, number>;
+}
+
+export function notificationChannelSelected(settings: MonitorNotificationSettings | undefined, targetId: string | undefined, channelId: string, now = Date.now()): boolean {
+  if (targetId && (settings?.mutedUntil?.[targetId] ?? 0) > now) return false;
+  const selected = targetId && Object.prototype.hasOwnProperty.call(settings?.overrides ?? {}, targetId)
+    ? settings?.overrides?.[targetId] : settings?.defaultChannelIds;
+  return selected === undefined || selected.includes(channelId);
+}
+
 export interface AlarmChannelConfig {
+  /** 独立事件入口，保留目标深链。 */
+  incidentPageUrl?: string;
   id: string;
   /** 给人看的名字：「我的手机」「运维群」。出现在面板与投递记录里。 */
   name: string;
@@ -135,6 +156,24 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
+  incidentId?: string;
+  notificationFacts?: NotificationFacts;
+  reportId?: string;
+  eventId?: string;
+  firstOccurredAt?: string;
+  lastOccurredAt?: string;
+  occurrenceCount?: number;
+  /** 服务端根据已确认的生产可用性故障判定；不读取标题或推送音效。 */
+  urgency?: 'urgent' | 'normal';
+  businessName?: string;
+  correlationKey?: string;
+  recoveryConfirmed?: boolean;
+  drill?: boolean;
+  finding?: string;
+  identity?: AlarmIdentity;
+  assessment?: 'observation-unavailable' | 'check-failed';
+  affectedChecks?: number;
+  environmentLabel?: string;
   targetId?: string;
   kind: AlarmEventKind;
   projectId: string;
@@ -154,9 +193,7 @@ export interface AlarmEvent {
  * （能用状态就用状态，拿不到状态才退回匹配字符串）。
  */
 export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): AlarmEventKind {
-  const business = source === 'custom';
-  if (type === 'uptime.target.recovered') return business ? 'business-recovered' : 'infra-recovered';
-  return business ? 'business-down' : 'infra-down';
+  return sharedClassifyAlert(type, source);
 }
 
 /**
@@ -169,9 +206,10 @@ export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): 
 export function routeAlarm(
   channels: ReadonlyArray<AlarmChannelConfig>,
   event: AlarmEvent,
+  settings?: MonitorNotificationSettings,
 ): AlarmChannelConfig[] {
   return channels.filter((c) => {
-    if (!c.enabled) return false;
+    if (!c.enabled || !notificationChannelSelected(settings, event.targetId, c.id)) return false;
     // 存量订阅里可能还写着旧名字，这里归一化后再比，不要求写方先迁移。
     if (!c.events.some((e) => normalizeEventKind(e) === event.kind)) return false;
     if (c.projects.length > 0 && !c.projects.includes(event.projectId)) return false;
@@ -181,6 +219,9 @@ export function routeAlarm(
 
 /** 一条渲染好的通知。协议层只管把它变成各自的请求，不再自己拼句子。 */
 export interface AlarmMessage {
+  notificationOrigin?: Pick<NotificationFacts, 'environment' | 'system'>;
+  icon?: string;
+  group?: string;
   title: string;
   body: string;
   /** 给 Bark 这类支持分级的协议；webhook 模板也能用 */
@@ -197,37 +238,17 @@ export interface AlarmMessage {
  * 顺序写死在这里：**谁出了什么事 → 要不要紧 → 下一步**，分支只填值。
  */
 export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string } = {}): AlarmMessage {
-  const where = event.projectId ? `项目 ${event.projectId}` : '未归属项目';
-  if (event.projectId === 'cds-self-monitor') {
-    const recovered = event.kind.endsWith('-recovered');
-    return { title: `${event.targetName} ${recovered ? '已稳定恢复' : '指标异常'}`,
-      body: recovered ? '该指标已连续稳定 10 分钟，无需处理。' : `CDS 自检发现异常，需要检查；不等同于业务不可用。${event.message}`,
-      level: recovered ? 'passive' : 'active', ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
-  }
-  if (event.kind === 'business-recovered' || event.kind === 'infra-recovered') {
-    return {
-      title: `${event.targetName} 恢复了`,
-      body: `${where} · 探测已连续成功，这一条重新可用。无需处理。`,
-      level: 'passive',
-      ...(opts.boardUrl ? { url: opts.boardUrl } : {}),
-    };
-  }
-  const isBusiness = event.kind === 'business-down';
-  // 第一句就把「要不要紧」说完：业务挂了是用户现在用不了，基础设施挂了是服务本身没起来。
-  const impact = isBusiness
-    ? '用户现在用不了这条业务'
-    : '这项基础设施没通，依赖它的业务随时会跟着挂';
-  const times = event.consecutiveFailures > 1 ? `已连续 ${event.consecutiveFailures} 次` : '';
-  return {
-    title: `${event.targetName} 挂了`,
-    body: [
-      `${where} · ${impact}。`,
-      `${times}判据未通过：${event.message}`,
-      opts.boardUrl ? `去看：${opts.boardUrl}` : '',
-    ].filter(Boolean).join(' '),
-    level: isBusiness ? 'critical' : 'active',
-    ...(opts.boardUrl ? { url: opts.boardUrl } : {}),
-  };
+  const message = renderAlarmContent(event, opts);
+  if (!event.identity) return message;
+  const { observer } = event.identity;
+  return { ...message, icon: observer.iconUrl,
+    group: `${event.businessName || event.projectId} · ${NOTIFICATION_ENVIRONMENTS[message.notificationOrigin?.environment || 'unknown']}` };
+}
+function renderAlarmContent(event: AlarmEvent, opts: { boardUrl?: string }): AlarmMessage {
+  const notification = alarmNotification(event);
+  return { title: notification.title, body: notification.body, notificationOrigin: { environment: notification.facts.environment, system: notification.id === 'MON-02' ? 'cds' : notification.facts.system },
+    level: event.kind.endsWith('-recovered') ? 'passive' : 'active',
+    ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
 }
 
 /** 模板占位符。有限的一张表——模板里写别的名字就是原样留着，不静默变空。 */
@@ -237,6 +258,8 @@ export function alarmPlaceholders(event: AlarmEvent, message: AlarmMessage): Rec
     body: message.body,
     level: message.level,
     url: message.url ?? '',
+    observerName: event.identity ? identityLabel(event.identity.observer) : '未配置',
+    subjectName: event.identity ? identityLabel(event.identity.subject) : '未配置',
     projectId: event.projectId,
     targetName: event.targetName,
     message: event.message,

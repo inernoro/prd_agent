@@ -137,3 +137,13 @@ export function sendRoute(input: {
   if (input.outputForm === 'html-ppt') return input.pptHandoffReady ? 'ppt-handoff' : 'none';
   return input.hasRuntime ? 'generate' : 'none';
 }
+
+/**
+ * 设计服务尚未就绪时的拦截文案。能力接口还没回来时不能报「不可用」——那是还没查到，
+ * 不是查过了没有；先报「正在检测」，接口回来仍为空才报缺失。
+ */
+export function missingRuntimeBlocker(runtimesLoaded: boolean): string {
+  return runtimesLoaded
+    ? '设计服务暂不可用，请联系管理员检查部署状态'
+    : '正在检测设计服务…';
+}

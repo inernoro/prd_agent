@@ -1,3 +1,5 @@
+import { gatewayLoginDestination } from '@/components/entry/quickstartArrival';
+import { LogTracePage } from '@/pages/LogTracePage';
 // 独立路由（自成体系，不依赖 prd-admin）：/login 登录 + /change-password 首登强制改密 + / 控制台首页（需鉴权）。
 import { useEffect } from 'react';
 import { BrowserRouter, Link, Routes, Route, Navigate, useLocation } from 'react-router-dom';
@@ -21,7 +23,6 @@ import { ModelsPage } from '@/pages/ModelsPage';
 import { LogicalModelsPage } from '@/pages/LogicalModelsPage';
 
 import { AuditsPage } from '@/pages/AuditsPage';
-import { ShadowPage } from '@/pages/ShadowPage';
 import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
@@ -61,9 +62,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 // 改密页守卫：未登录跳登录；已登录且无需改密则不应停留在此页，回主页。
 function RequireChangePassword({ children }: { children: ReactNode }) {
-  const { authed, mustChangePassword } = useAuth();
+  const { authed, mustChangePassword, tenant } = useAuth();
   if (!authed) return <Navigate to="/login" replace />;
-  if (!mustChangePassword) return <Navigate to="/" replace />;
+  if (!mustChangePassword) return <Navigate to={gatewayLoginDestination(null, tenant)} replace />;
   return <>{children}</>;
 }
 
@@ -116,6 +117,7 @@ export function App() {
           >
             <Route path="/" element={<RequirePageAccess page="home"><OverviewPage /></RequirePageAccess>} />
             <Route path="/logs" element={<RequirePageAccess page="logs"><LogsPage /></RequirePageAccess>} />
+            <Route path="/logs/trace" element={<RequirePageAccess page="logs"><LogTracePage /></RequirePageAccess>} />
             <Route path="/logs/:id" element={<RequirePageAccess page="logs"><LogDetailPage /></RequirePageAccess>} />
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
             <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />
@@ -135,7 +137,6 @@ export function App() {
             <Route path="/quickstart" element={<RequirePageAccess page="quickstart"><QuickstartPage /></RequirePageAccess>} />
             <Route path="/learn" element={<RequirePageAccess page="learn"><LearningCenterPage /></RequirePageAccess>} />
             <Route path="/organization" element={<RequirePageAccess page="organization"><OrganizationPage /></RequirePageAccess>} />
-            <Route path="/shadow" element={<RequirePageAccess page="shadow"><ShadowPage /></RequirePageAccess>} />
             <Route path="/governance" element={<RequirePageAccess page="governance"><GovernancePage /></RequirePageAccess>} />
             <Route path="/gateway-settings" element={<RequirePageAccess page="gatewaySettings"><GatewaySettingsPage /></RequirePageAccess>} />
             <Route path="/settings" element={<RequirePageAccess page="settings"><SettingsPage /></RequirePageAccess>} />

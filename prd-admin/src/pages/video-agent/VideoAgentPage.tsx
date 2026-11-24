@@ -6,6 +6,7 @@ import {
   createVideoGenRunReal,
   createVideoProjectReal,
   getVideoGenRunReal,
+  importVideoClipsReal,
   listVideoGenRunsReal,
   listVideoModelsReal,
   listVideoProjectsReal,
@@ -27,12 +28,20 @@ const SELECTED_PROJECT_KEY = 'video-agent.selectedProjectId';
 
 export const normalizeVideoRunId = (value: string | null | undefined) => value?.trim() || null;
 
+export const normalizeVideoWorkspaceLists = (projects: unknown, runs: unknown, models: unknown): {
+  projects: VideoProject[]; runs: VideoGenRunListItem[]; models: VideoModelOption[];
+} => ({
+  projects: Array.isArray(projects) ? projects : [],
+  runs: Array.isArray(runs) ? runs : [],
+  models: Array.isArray(models) ? models : [],
+});
+
 export const buildDirectVideoRunInput = (project: VideoProject, input: VideoProjectInput) => {
   const prompt = input.sourceMarkdown?.trim() ?? '';
   const directPrompt = input.styleDescription && input.styleDescription !== '智能匹配'
     ? `${prompt}\n视觉风格：${input.styleDescription}`
     : prompt;
-  const directFirstFrameUrl = project.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const directFirstFrameUrl = project.assets?.find((asset) => asset.type !== 'audio' && asset.url)?.url;
 
   return {
     projectId: project.id,
@@ -68,15 +77,20 @@ export const VideoAgentPage: React.FC = () => {
         listVideoGenRunsReal({ limit: 50 }),
         listVideoModelsReal(),
       ]);
+      const normalized = normalizeVideoWorkspaceLists(
+        projectResponse.success ? projectResponse.data : [],
+        runResponse.success ? runResponse.data?.items : [],
+        modelResponse.success ? modelResponse.data : [],
+      );
       if (projectResponse.success) {
-        setProjects(projectResponse.data);
+        setProjects(normalized.projects);
         setSelectedProjectId((current) => {
-          if (current && projectResponse.data.some((project) => project.id === current)) return current;
-          return projectResponse.data[0]?.id ?? null;
+          if (current && normalized.projects.some((project) => project.id === current)) return current;
+          return normalized.projects[0]?.id ?? null;
         });
       }
-      if (runResponse.success) setRuns(runResponse.data.items);
-      if (modelResponse.success) setModels(modelResponse.data);
+      if (runResponse.success) setRuns(normalized.runs);
+      if (modelResponse.success) setModels(normalized.models);
     } catch (error) {
       toast.error('加载视频制作台失败', error instanceof Error ? error.message : '网络错误');
     } finally {
@@ -190,6 +204,30 @@ export const VideoAgentPage: React.FC = () => {
     }
   }, [loadWorkspace, replaceProject, selectedProject]);
 
+  const importClips = useCallback(async (input: VideoProjectInput, files: File[]) => {
+    if (files.length > 16 || files.some(file => file.size > 100 * 1024 * 1024)
+      || files.reduce((size, file) => size + file.size, 0) > 300 * 1024 * 1024) {
+      toast.error('素材超过限制', '最多16个镜头，单个不超过100MB，合计不超过300MB。');
+      return;
+    }
+    setBusy(true);
+    try {
+      const saved = selectedProject
+        ? await updateVideoProjectReal(selectedProject.id, input)
+        : await createVideoProjectReal(input);
+      if (!saved.success) { toast.error('保存项目失败', saved.error?.message); return; }
+      replaceProject(saved.data);
+      const imported = await importVideoClipsReal(saved.data.id, files);
+      if (!imported.success) { toast.error('导入镜头失败，可重新选择素材', imported.error?.message); return; }
+      setResolvedRunMode({ id: imported.data.runId, mode: 'storyboard' });
+      setActiveRunId(imported.data.runId);
+      toast.success('已有镜头已就绪', '可逐镜采用配音与字幕，再预览并导出成片。');
+      await loadWorkspace();
+    } catch (error) {
+      toast.error('导入镜头失败，可重新选择素材', error instanceof Error ? error.message : '网络错误');
+    } finally { setBusy(false); }
+  }, [loadWorkspace, replaceProject, selectedProject]);
+
   const createDirectVideo = useCallback(async (input: VideoProjectInput) => {
     const prompt = input.sourceMarkdown?.trim();
     if (!prompt) {
@@ -270,6 +308,7 @@ export const VideoAgentPage: React.FC = () => {
       onSave={saveProject}
       onAnalyze={analyzeProject}
       onCreateDirect={createDirectVideo}
+      onImportClips={importClips}
       onOpenRun={setActiveRunId}
       onOpenDemo={() => setDemoOpen(true)}
     />

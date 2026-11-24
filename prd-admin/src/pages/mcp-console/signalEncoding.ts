@@ -1,4 +1,5 @@
 import type { McpCapabilityDto, McpClientDto } from '@/services/contracts/mcpConsole';
+import { editableAuthorizationScopes } from './editAuthorization';
 import { isReadOnlyTier } from './scopePlan';
 
 /**
@@ -105,7 +106,7 @@ export function clientSignal(
       .filter((cap) => capabilityTier(cap, held) !== 'none')
       .flatMap((cap) => [cap.readScope, cap.writeScope].filter(Boolean).map((s) => s!.toLowerCase())),
   );
-  const extraScopes = (client.scopes ?? []).filter((s) => !named.has(s.toLowerCase()));
+  const extraScopes = editableAuthorizationScopes(client.scopes ?? []).filter((s) => !named.has(s.toLowerCase()));
 
   return {
     dots,

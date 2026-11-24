@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * Phase 8 — 项目导入后强制 env 配置弹窗。
  *
@@ -518,12 +519,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           className="flex-1 overflow-y-auto pr-1"
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
         >
-          {state.status === 'loading' ? (
-            <div className="flex items-center justify-center py-12 text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              正在读取环境变量...
-            </div>
-          ) : state.status === 'error' ? (
+          {state.status === 'loading' ? <ContentLoading label="读取环境变量" variant="table" /> : state.status === 'error' ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
               读取失败:{state.message}
             </div>

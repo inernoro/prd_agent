@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 分区五「证据归档」——设计稿 design_handoff_release_center §6。
  *
@@ -17,17 +18,19 @@
  *   等于把这一栏的价值全丢了。
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ChevronRight, Circle, FileText, Loader2, RotateCcw, ScrollText, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { FailureDiagnosis } from './FailureDiagnosis';
 import { formatDateTime, runTone, statusLabel } from './shared';
 import type { CenterRow, ReleaseRun, ReleaseTargetChange } from './types';
 import { RELEASE_CHANGE_KIND_LABELS, isReleaseFailed } from './types';
 
 export interface EvidenceSectionProps {
+  refreshVersion?: number;
   /** 当前选中的环境。只用于底部的配置变更历史与日志预览的默认选中。 */
   row: CenterRow;
   /**
@@ -67,7 +70,7 @@ const TEXT_TONE: Record<string, string> = {
 };
 
 export function EvidenceSection({
-  row, rows, runs, commitMeta, filter, onFilter, onRollback, onRetry, retryingRunId,
+  row, rows, runs, commitMeta, filter, onFilter, onRollback, onRetry, retryingRunId, refreshVersion = 0,
 }: EvidenceSectionProps): JSX.Element {
   const rowOf = (targetId: string): CenterRow | undefined => rows.find((item) => item.target.id === targetId);
   const [selectedId, setSelectedId] = useState('');
@@ -78,6 +81,7 @@ export function EvidenceSection({
   const [changes, setChanges] = useState<ReleaseTargetChange[]>([]);
   const [changesError, setChangesError] = useState('');
   const [changesLoading, setChangesLoading] = useState(false);
+  const loadedTarget = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,15 +90,15 @@ export function EvidenceSection({
     apiRequest<{ changes: ReleaseTargetChange[] }>(
       `/api/releases/targets/${encodeURIComponent(row.target.id)}/changes?limit=20`,
     )
-      .then((res) => { if (!cancelled) setChanges(res.changes || []); })
+      .then((res) => { if (!cancelled) { loadedTarget.current = row.target.id; setChanges(res.changes || []); } })
       .catch((err) => {
         if (cancelled) return;
-        setChanges([]);
+        if (loadedTarget.current !== row.target.id) setChanges([]);
         setChangesError(err instanceof ApiError ? err.message : String(err));
       })
       .finally(() => { if (!cancelled) setChangesLoading(false); });
     return () => { cancelled = true; };
-  }, [row.target.id]);
+  }, [row.target.id, refreshVersion]);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -170,7 +174,7 @@ export function EvidenceSection({
                         合进同一格（说明在上、操作人在下），不额外加一列破坏列宽标注。 */}
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate">{subject || `提交 ${run.commitSha.slice(0, 12)}`}</span>
-                      <span className="truncate text-[0.6875rem] text-muted-foreground">{run.operator || '-'}</span>
+                      <span className="truncate text-[0.6875rem] text-muted-foreground">{releaseActorLabel(run.operator)}</span>
                     </span>
                     <span className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:h-[1.8125rem] [&_button]:px-2.5">
                       {failed ? (
@@ -248,12 +252,8 @@ export function EvidenceSection({
         <h2 className="text-sm font-bold">配置变更历史</h2>
         <span className="text-[0.7188rem] text-muted-foreground">谁在什么时候把哪个字段改成了什么</span>
       </div>
-      {changesLoading ? (
-        <div className="flex items-center gap-2 px-[1.125rem] py-6 text-xs text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在读取变更历史
-        </div>
-      ) : changesError ? (
+      {changesError && loadedTarget.current === row.target.id ? <p role="alert" className="px-[1.125rem] py-2 text-xs text-bad">变更历史刷新失败，保留上次结果：{changesError}</p> : null}
+      {changesLoading && loadedTarget.current !== row.target.id ? <ContentLoading label="读取变更历史" variant="table" /> : changesError && loadedTarget.current !== row.target.id ? (
         <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">变更历史暂时读不到：{changesError}</p>
       ) : changes.length === 0 ? (
         <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">{row.target.name} 还没有配置变更记录。</p>

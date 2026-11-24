@@ -20,6 +20,7 @@ import { PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY, resolveBranchEntrypointsEnv,
 import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
 import { maskSecretsInObject } from '../services/secret-masker.js';
 import type { LintFinding } from '../services/topology-lint.js';
+import { canHumanAccessProject } from '../services/human-project-access.js';
 
 const MAX_YAML_BYTES = 512 * 1024;
 
@@ -38,6 +39,8 @@ export interface TopologyRouterDeps {
 
 export function createTopologyRouter(deps: TopologyRouterDeps): Router {
   const router = Router();
+  const canSeeProject = (req: Request, projectId: string): boolean =>
+    canHumanAccessProject(req, deps.stateService, projectId) && !deps.assertProjectAccess(req, projectId);
 
   router.post('/compose/lint', (req, res) => {
     const body = (req.body ?? {}) as { composeYaml?: unknown; projectId?: unknown };
@@ -132,12 +135,13 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
           rawValue: maskSecretsInObject({ [p.key]: raw })[p.key] ?? raw, source: p.source, ...(p.detail ? { detail: p.detail } : {}),
         };
         if (kind === 'cds-ref') {
-          // 项目级凭据只看得到自己的项目：跨项目引用的目标不可见时打成 restricted，不泄露别人的分支与地址
-          // （与 preview-dispatch 的可见性判据同源，都走 assertProjectAccess）
+          // 人类授权与机器作用域都必须覆盖次级目标，不只检查源分支。
           item.resolved = parseCdsRefs(raw).map((ref) => {
             const r = resolveCdsRef(refDeps, ref);
             return r.target.projectId && !canSeeProject(r.target.projectId) ? restrictResolved(r) : r;
           });
+          // 生效值也含解析后的地址；受限引用只回源项目原本配置的 token。
+          if (item.resolved.some((r) => r.status === 'restricted')) item.value = item.rawValue;
           for (const r of item.resolved) {
             if (r.status === 'running') continue;
             if (r.status === 'restricted') {
@@ -169,7 +173,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
   }
 
   router.get('/branches/:id/references', (req, res) => {
-    const collected = collectReferences(req.params.id, (pid) => !deps.assertProjectAccess(req, pid));
+    const collected = collectReferences(req.params.id, (pid) => canSeeProject(req, pid));
     if (!collected) { res.status(404).json({ error: 'not_found', message: `分支不存在: ${req.params.id}` }); return; }
     const denied = deps.assertProjectAccess(req, collected.branch.projectId);
     if (denied) { res.status(denied.status).json(denied.body); return; }
@@ -250,13 +254,13 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     res.json({ branchId: branch.id, profileId, key, value: nextValue, token: value, resolved, scope: 'branch-override', restartHint: '切换写入该服务的分支覆盖，重新部署该服务后生效（原地重启不会刷新容器环境变量）' });
   });
 
-  /** 分支服务图 + 体检 + 引用（service-graph 接口与全局概览共用同一份计算）。 */
+  /** 分支服务图 + 体检 + 引用。 */
   function buildBranchGraphPayload(branch: NonNullable<ReturnType<StateService['getBranch']>>, canSeeProject: (projectId: string) => boolean) {
     // env 用生效合并结果（与 replica-sets 的服务图同一口径），只暴露键名
     const projectEnv = deps.stateService.getCustomEnv(branch.projectId);
     const branchEnv = deps.stateService.getCustomEnvScope(branch.id);
     // 先按分支解析 profileOverrides（前缀 / 子域 / 入口 / 部署模式），再合并 env：转发器与 master 兜底
-    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、概览、cdscli topology 必须看同一份
+    // 路由用的都是 resolveEffectiveProfile 之后的 profile，图、体检、cdscli topology 必须看同一份
     const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
       .map((p) => resolveEffectiveProfile(p, branch))
       .map((p) => ({ ...p, env: { ...projectEnv, ...branchEnv, ...(p.env || {}) } }));
@@ -282,7 +286,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
     if (!branch) { res.status(404).json({ error: 'not_found', message: `分支不存在: ${req.params.id}` }); return; }
     const denied = deps.assertProjectAccess(req, branch.projectId);
     if (denied) { res.status(denied.status).json(denied.body); return; }
-    res.json(buildBranchGraphPayload(branch, (pid) => !deps.assertProjectAccess(req, pid)));
+    res.json(buildBranchGraphPayload(branch, (pid) => canSeeProject(req, pid)));
   });
 
   /**
@@ -290,7 +294,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
    * 部署的那条），给出体检结论、服务构成、跨项目引用边。只返回调用方有权限的项目。
    */
   router.get('/overview/topology', (req, res) => {
-    const projects = (deps.stateService.getState().projects ?? []).filter((p) => !deps.assertProjectAccess(req, p.id));
+    const projects = (deps.stateService.getState().projects ?? []).filter((p) => canSeeProject(req, p.id));
     const branches = deps.stateService.getAllBranches();
     const out = projects.map((project) => {
       const p = project as typeof project & { gitDefaultBranch?: string | null; defaultBranch?: string | null };
@@ -301,7 +305,7 @@ export function createTopologyRouter(deps: TopologyRouterDeps): Router {
       if (!rep) {
         return { projectId: project.id, slug: project.slug, name: project.name, branch: null, branchCount: 0, counts: { services: 0, sites: 0, apis: 0, webs: 0, workers: 0 }, lint: { errors: 0, warnings: 0, infos: 0 }, headline: '还没有分支', findings: [], edges: [] };
       }
-      const payload = buildBranchGraphPayload(rep, (pid) => !deps.assertProjectAccess(req, pid));
+      const payload = buildBranchGraphPayload(rep, (pid) => canSeeProject(req, pid));
       const services = payload.graph.nodes.filter((n) => n.kind === 'service');
       const edges: Array<{ toProjectId: string; toBranchId?: string; toBranchName?: string; kind: 'cds-ref' | 'url'; status: string; fromService: string; key: string }> = [];
       for (const r of payload.references) {

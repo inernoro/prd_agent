@@ -71,8 +71,6 @@ public sealed class DefectPolishService
                 },
                 ["temperature"] = 0.4,
                 ["max_tokens"] = 2048,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
         };
 
@@ -100,7 +98,7 @@ public sealed class DefectPolishService
             {
                 var msg = chunk.Error ?? chunk.Content ?? "LLM 网关未知错误";
                 _logger.LogWarning("DefectPolish stream error: {Error}", msg);
-                throw new InvalidOperationException(msg);
+                throw new GatewayRouteFailureException(chunk.ErrorCode, msg);
             }
         }
     }

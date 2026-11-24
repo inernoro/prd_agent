@@ -59,6 +59,13 @@ describe('CDS 系统设置深链契约', () => {
     expect(settingsSource).toContain('<TabsContent value="danger">');
   });
 
+  it('用户管理按后端能力声明展示，不再绑定 GitHub 模式', () => {
+    expect(settingsSource).toContain('authCapabilities?.userManagement === true');
+    expect(settingsSource).toContain('authCapabilities?.userActivity === true');
+    expect(settingsSource).toContain('durableUsers={authCapabilities?.durableUsers === true}');
+    expect(settingsSource).not.toContain("authMode === 'github'");
+  });
+
   it('设置搜索结果指向拆分后的页签', () => {
     expect(settingsIndexSource).toContain("'update-history': '自更新历史'");
     expect(settingsIndexSource).toContain("'docker-network': 'Docker 网络容量'");

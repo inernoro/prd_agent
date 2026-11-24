@@ -33,6 +33,19 @@ public sealed class OpenDesignFailureMessageTests
         Assert.Equal("design_output_quality_rejected", diagnostic.RemoteCode);
     }
 
+    [Theory]
+    [InlineData("design_browser_quality_rejected", "最后一版预览")]
+    [InlineData("browser_quality_unavailable", "隔离浏览器")]
+    [InlineData("workspace_quality_evidence_unsupported", "传递任务资料或结果")]
+    public void 浏览器质量失败给用户保留结果或明确恢复动作(string code, string expected)
+    {
+        var error = OpenDesignFailureMessage.Failure(OpenDesignFailureStage.RemoteRun, "internal browser detail", code);
+
+        Assert.Contains(expected, error.Message, StringComparison.Ordinal);
+        Assert.Contains("下一步：", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("internal browser detail", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void 未登记或没有错误码的远端原文也不进用户文案()
     {

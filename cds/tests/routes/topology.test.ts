@@ -9,21 +9,55 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
+import { listenLoopbackFixture, getHttpFixtureTrace } from '../helpers/loopback-http-fixture.js';
+import { execFileSync } from 'node:child_process';
 import { createTopologyRouter } from '../../src/routes/topology.js';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
-function request(server: http.Server, method: string, urlPath: string, body?: unknown): Promise<{ status: number; body: any }> {
+let diagnosticRecords = 0;
+function recordHttpTrace(record: Record<string, unknown>): void {
+  const dir = process.env.CDS_REGRESSION_EVIDENCE_DIR;
+  if (!dir || !path.isAbsolute(dir) || diagnosticRecords++ >= 128) return;
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.appendFileSync(path.join(dir, `topology-${process.pid}.jsonl`), JSON.stringify(record) + '\n', { mode: 0o600 });
+}
+
+async function request(server: http.Server, method: string, urlPath: string, body?: unknown): Promise<{ status: number; body: any }> {
+  if (!server.listening) await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve); server.once('error', reject);
+  });
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
+    const trace = getHttpFixtureTrace(server);
+    let connection: Record<string, unknown> = {};
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
-    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
+    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, agent: false,
       headers: { 'Content-Type': 'application/json', ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}) } },
     (res) => {
       let raw = '';
       res.on('data', (c: Buffer) => (raw += c.toString()));
-      res.on('end', () => { try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); } catch { resolve({ status: res.statusCode!, body: raw }); } });
+      res.on('end', () => {
+        const mismatch = !!trace && res.headers['x-cds-fixture-id'] !== trace.id;
+        let listeners = '';
+        if (mismatch) {
+          try { listeners = execFileSync('lsof', ['-nP', '-a', `-iTCP:${addr.port}`, '-sTCP:LISTEN', '-Fpcftn'],
+            { encoding: 'utf8', timeout: 2000, maxBuffer: 64 * 1024 }).trim(); } catch {}
+        }
+        const record = { at: new Date().toISOString(), method, urlPath, expected: trace, connection,
+          response: { status: res.statusCode, fixtureId: res.headers['x-cds-fixture-id'], fixturePid: res.headers['x-cds-fixture-pid'],
+            contentType: res.headers['content-type'], bytes: Buffer.byteLength(raw), sha256: createHash('sha256').update(raw).digest('hex'),
+            ...(res.statusCode === 404 && urlPath === '/api/compose/lint' ? { raw: raw.slice(0, 4096) } : {}) }, mismatch, listeners };
+        recordHttpTrace(record);
+        if (mismatch) console.error(JSON.stringify({ httpFixtureIdentityMismatch: true, expected: trace, connection,
+          status: res.statusCode, actualFixtureId: res.headers['x-cds-fixture-id'], actualFixturePid: res.headers['x-cds-fixture-pid'], listeners }));
+        if (mismatch) { reject(new Error('HTTP响应不属于当前私有监听夹具')); return; }
+        try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); } catch { resolve({ status: res.statusCode!, body: raw }); }
+      });
     });
+    req.on('socket', socket => { socket.on('connect', () => { connection = { localAddress: socket.localAddress,
+      localPort: socket.localPort, remoteAddress: socket.remoteAddress, remotePort: socket.remotePort, remoteFamily: socket.remoteFamily }; }); });
     req.on('error', reject);
     if (payload) req.write(payload);
     req.end();
@@ -66,7 +100,7 @@ describe('topology router', () => {
       stateService,
       assertProjectAccess: (_req, projectId) => (denyProject === projectId ? { status: 403, body: { error: 'forbidden' } } : null),
     }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
   });
   afterEach(async () => {
     await flushAllJsonStateStores();
@@ -87,6 +121,32 @@ describe('topology router', () => {
     expect((await request(server, 'POST', '/api/compose/lint', { composeYaml: CONFLICT_YAML, projectId: 'p-x' })).status).toBe(403);
     denyProject = null;
   });
+
+  it('GET /overview/topology 保留默认分支概览并过滤未授权项目', async () => {
+    const now = '2026-11-22T01:00:00.000Z';
+    for (const id of ['overview-project', 'overview-private', 'overview-empty']) {
+      stateService.addProject({ id, slug: id, name: id, kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now });
+    }
+    stateService.addBranch({ id: 'overview-main', projectId: 'overview-project', branch: 'main', worktreePath: tmpDir,
+      status: 'stopped', createdAt: '2026-11-21T01:00:00.000Z' });
+    stateService.addBranch({ id: 'overview-newer', projectId: 'overview-project', branch: 'preview', worktreePath: tmpDir,
+      status: 'stopped', createdAt: now });
+    stateService.addBranch({ id: 'overview-private-main', projectId: 'overview-private', branch: 'main', worktreePath: tmpDir,
+      status: 'stopped', createdAt: now });
+    denyProject = 'overview-private';
+    try {
+      const res = await request(server, 'GET', '/api/overview/topology');
+      expect(res.status).toBe(200);
+      expect(res.body.projects).toHaveLength(2);
+      expect(res.body.projects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ projectId: 'overview-project', branch: { id: 'overview-main', name: 'main', status: 'stopped' }, branchCount: 2 }),
+        expect.objectContaining({ projectId: 'overview-empty', branch: null, branchCount: 0 }),
+      ]));
+    } finally {
+      denyProject = null;
+    }
+  });
+
   it('GET /branches/:id/route-lookup 给出转发器与 master 兜底的判定并标一致性', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'proj', slug: 'demo', name: 'demo', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
@@ -105,7 +165,7 @@ describe('topology router', () => {
         { _id: 'r2', host: 'main-demo.miduo.org', pathPrefix: '/api/', upstreamPort: 9102, weight: 100, branchId: 'proj-main', profileId: 'api' },
       ],
     }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const res = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo.miduo.org&path=/api/x');
       expect(res.status).toBe(200);
@@ -139,7 +199,7 @@ describe('topology router', () => {
         { _id: 'r3', host: 'main-demo-llmgw.miduo.org', pathPrefix: '/', upstreamPort: 9103, weight: 100, branchId: 'proj-main', profileId: 'llmgw' },
       ],
     }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const named = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo-llmgw.miduo.org&path=/gw/v1/x');
       expect(named.status).toBe(200);
@@ -166,7 +226,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const res = await request(srv, 'GET', '/api/branches/md-main/references');
       expect(res.status).toBe(200);
@@ -215,7 +275,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const embedded = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_V1', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'feat/x' });
       expect(embedded.status, JSON.stringify(embedded.body)).toBe(200);
@@ -234,18 +294,13 @@ describe('topology router', () => {
     }
   });
 
-  it('GET /overview/topology 项目配置的默认分支是 CDS 分支 id 时也能认出代表分支', async () => {
-    const now = new Date().toISOString();
-    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, defaultBranch: 'md-feat' } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'] } as Parameters<typeof stateService.addBuildProfile>[0]);
-    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, lastDeployAt: '2026-09-02T10:00:00Z', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
-    stateService.addBranch({ id: 'md-feat', projectId: 'p-md', branch: 'feature/y', worktreePath: tmpDir, status: 'running', createdAt: now, lastDeployAt: '2026-09-01T10:00:00Z', services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 3, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
-    const res = await request(server, 'GET', '/api/overview/topology');
-    expect(res.status).toBe(200);
-    expect(res.body.projects[0].branch).toMatchObject({ id: 'md-feat', name: 'feature/y' });
+  it('没有可见项目时，概览返回空列表和零汇总', async () => {
+    const result = await request(server, 'GET', '/api/overview/topology');
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ projects: [], summary: { errors: 0, warnings: 0, infos: 0 } });
   });
 
-  it('目标项目对当前凭据不可见时：引用读成 restricted 不下发地址与分支，PUT 指向它被拒，概览不画到它的边', async () => {
+  it('目标项目对当前凭据不可见时：引用读成 restricted 不下发地址与分支，PUT 指向它被拒', async () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
     stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
@@ -257,7 +312,7 @@ describe('topology router', () => {
     app.use(express.json());
     // 模拟只对 mdimp 项目授权的项目级凭据
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-md' ? null : { status: 403, body: { error: 'forbidden' } }), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const refs = await request(srv, 'GET', '/api/branches/md-main/references');
       expect(refs.status).toBe(200);
@@ -274,10 +329,6 @@ describe('topology router', () => {
 
       const graph = await request(srv, 'GET', '/api/branches/md-main/service-graph');
       expect(JSON.stringify(graph.body)).not.toContain('prd-main');
-
-      const overview = await request(srv, 'GET', '/api/overview/topology');
-      expect(overview.body.projects.map((p: { slug: string }) => p.slug)).toEqual(['mdimp']);
-      expect(overview.body.projects[0].edges).toEqual([]);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }
@@ -295,7 +346,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' }, isRemoteExecutorBranch: (b) => b.id === 'md-remote' }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const body = { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'main' };
       const pinned = await request(srv, 'PUT', '/api/branches/md-pinned/references/LLMGW_BASE', body);
@@ -305,36 +356,6 @@ describe('topology router', () => {
       expect(remote.status).toBe(409);
       expect(remote.body.error).toBe('remote_executor_branch');
       expect(stateService.getBranch('md-pinned')?.profileOverrides?.['cb-web']?.env?.LLMGW_BASE).toBeUndefined();
-    } finally {
-      await new Promise<void>((r) => srv.close(() => r()));
-    }
-  });
-
-  it('GET /overview/topology 每个项目给代表分支、体检结论与跨项目引用边', async () => {
-    const now = new Date().toISOString();
-    stateService.addProject({ id: 'p-prd', slug: 'prd-agent', name: 'MAP', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now, gitDefaultBranch: 'main' } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addProject({ id: 'p-md', slug: 'mdimp', name: 'mdimp', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addProject({ id: 'p-empty', slug: 'empty', name: 'empty', kind: 'git', cloneStatus: 'ready', createdAt: now, updatedAt: now } as Parameters<typeof stateService.addProject>[0]);
-    stateService.addBuildProfile({ id: 'llmgw-serve', name: 'llmgw', projectId: 'p-prd', dockerImage: 'node:20', workDir: '.', command: 'node s.js', containerPort: 8091, subdomain: 'llmgw' } as Parameters<typeof stateService.addBuildProfile>[0]);
-    stateService.addBuildProfile({ id: 'cb-web', name: 'cb-web', projectId: 'p-md', dockerImage: 'node:20', workDir: '.', command: 'node w.js', containerPort: 3000, pathPrefixes: ['/'], env: { LLMGW_BASE: '${CDS_REF:prd-agent/llmgw-serve}' } } as Parameters<typeof stateService.addBuildProfile>[0]);
-    stateService.addBranch({ id: 'prd-main', projectId: 'p-prd', branch: 'main', worktreePath: tmpDir, status: 'stopped', createdAt: now, services: { 'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'c', hostPort: 1, status: 'stopped' } } } as Parameters<typeof stateService.addBranch>[0]);
-    stateService.addBranch({ id: 'md-main', projectId: 'p-md', branch: 'main', worktreePath: tmpDir, status: 'running', createdAt: now, services: { 'cb-web': { profileId: 'cb-web', containerName: 'c', hostPort: 2, status: 'running' } } } as Parameters<typeof stateService.addBranch>[0]);
-    const app = express();
-    app.use(express.json());
-    app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-empty' ? { status: 403, body: { error: 'forbidden' } } : null), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
-    try {
-      const res = await request(srv, 'GET', '/api/overview/topology');
-      expect(res.status).toBe(200);
-      expect(res.body.projects.map((p: { slug: string }) => p.slug).sort()).toEqual(['mdimp', 'prd-agent']);
-      const md = res.body.projects.find((p: { slug: string }) => p.slug === 'mdimp');
-      expect(md.branch).toMatchObject({ id: 'md-main', name: 'main' });
-      expect(md.edges).toEqual([expect.objectContaining({ toProjectId: 'p-prd', kind: 'cds-ref', status: 'stopped', fromService: 'cb-web', key: 'LLMGW_BASE' })]);
-      expect(md.lint.errors).toBeGreaterThanOrEqual(1);
-      expect(md.headline).toContain('LLMGW_BASE');
-      const prd = res.body.projects.find((p: { slug: string }) => p.slug === 'prd-agent');
-      expect(prd.inboundEdges).toBe(1);
-      expect(res.body.summary.errors).toBeGreaterThanOrEqual(1);
     } finally {
       await new Promise<void>((r) => srv.close(() => r()));
     }

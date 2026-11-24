@@ -153,7 +153,7 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
           你还没有创建任何 API Key
         </div>
         <div className="max-w-md text-center text-xs leading-relaxed text-token-muted opacity-70">
-          创建一个 Key，让 Cursor / Claude Code / 任意 AI Agent 能授权浏览和下载海鲜市场的技能包。
+          创建一个 Key，让 Codex / Claude Code / 任意 AI Agent 能授权浏览和下载海鲜市场的技能包。
         </div>
         <button
           type="button"

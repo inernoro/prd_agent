@@ -1,7 +1,9 @@
 namespace PrdAgent.Api.Services;
 
+using PrdAgent.Core.Models;
+
 /// <summary>一次要写进 run 的进度与阶段文案。</summary>
-public sealed record OpenDesignProgressUpdate(int Progress, string Phase);
+public sealed record OpenDesignProgressUpdate(int Progress, string PhaseCode, string Phase);
 
 /// <summary>
 /// 把 CDS 转来的 OpenDesign 阶段事件（status 事件的 reason / elapsedSeconds / attempt）
@@ -31,7 +33,9 @@ public sealed class OpenDesignStageProgress
         Starting,
         Designing,
         Reviewing,
+        ReviewConverged,
         Repairing,
+        BrowserChecking,
         Collecting,
         Committing,
     }
@@ -93,7 +97,10 @@ public sealed class OpenDesignStageProgress
 
         var target = TargetProgress(_macro, runningTick ? elapsed : 0);
         _progress = Math.Min(MaxProgress, Math.Max(_progress, target));
-        return new OpenDesignProgressUpdate(_progress, PhaseText(_macro, runningTick ? elapsed : null));
+        return new OpenDesignProgressUpdate(
+            _progress,
+            PhaseCode(_macro),
+            PhaseText(_macro, runningTick ? elapsed : null));
     }
 
     private static Macro? MacroOf(string? reason) => reason switch
@@ -105,7 +112,9 @@ public sealed class OpenDesignStageProgress
         "open_design_run_starting" => Macro.Starting,
         "open_design_running" => Macro.Designing,
         "open_design_reviewing" => Macro.Reviewing,
-        "open_design_quality_repairing" => Macro.Repairing,
+        "open_design_review_budget_exhausted" => Macro.ReviewConverged,
+        "open_design_quality_repairing" or "open_design_quality_repair_budget_exhausted" => Macro.Repairing,
+        "open_design_browser_quality_checking" or "open_design_browser_quality_checked" => Macro.BrowserChecking,
         "workspace_collecting" or "deliverable_entry_resolved" => Macro.Collecting,
         "workspace_committing" => Macro.Committing,
         _ => null,
@@ -123,7 +132,9 @@ public sealed class OpenDesignStageProgress
         Macro.Starting => 25,
         Macro.Designing => 25 + Math.Min(37, elapsed / 13),
         Macro.Reviewing => Math.Max(64, Math.Min(74, 64 + elapsed / 20)),
+        Macro.ReviewConverged => 75,
         Macro.Repairing => Math.Min(80, 75 + _repairAttempt),
+        Macro.BrowserChecking => 81,
         Macro.Collecting => 82,
         Macro.Committing => 85,
         _ => _progress,
@@ -139,14 +150,31 @@ public sealed class OpenDesignStageProgress
             Macro.Starting => _editing ? "OpenDesign 开始修改页面" : "OpenDesign 开始设计页面",
             Macro.Designing => (_editing ? "OpenDesign 正在修改页面" : "OpenDesign 正在设计并写出页面") + suffix,
             Macro.Reviewing => "OpenDesign 正在逐项自查" + suffix,
+            Macro.ReviewConverged => "模型自查已按时间预算收口，正在进入浏览器检查",
             Macro.Repairing => (_repairAttempt > 0
                 ? $"正在修复自查发现的问题（第 {_repairAttempt} 次）"
                 : "正在修复自查发现的问题") + suffix,
+            Macro.BrowserChecking => "正在检查桌面与移动端布局",
             Macro.Collecting => "正在收集并校验产物",
             Macro.Committing => "正在提交产物",
             _ => "OpenDesign 设计中",
         };
     }
+
+    private static string PhaseCode(Macro macro) => macro switch
+    {
+        Macro.Preparing => DesignArtifactPhaseCodes.PreparingWorkspace,
+        Macro.Importing => DesignArtifactPhaseCodes.ReadingSources,
+        Macro.Starting => DesignArtifactPhaseCodes.StartingDesign,
+        Macro.Designing => DesignArtifactPhaseCodes.ComposingPage,
+        Macro.Reviewing => DesignArtifactPhaseCodes.ReviewingPage,
+        Macro.ReviewConverged => DesignArtifactPhaseCodes.ReviewingPage,
+        Macro.Repairing => DesignArtifactPhaseCodes.RepairingQuality,
+        Macro.BrowserChecking => DesignArtifactPhaseCodes.ReviewingPage,
+        Macro.Collecting => DesignArtifactPhaseCodes.CollectingArtifact,
+        Macro.Committing => DesignArtifactPhaseCodes.CommittingArtifact,
+        _ => DesignArtifactPhaseCodes.PreparingWorkspace,
+    };
 
     internal static string FormatElapsed(int seconds)
         => seconds < 60 ? $"{seconds} 秒" : $"{seconds / 60} 分 {seconds % 60:D2} 秒";

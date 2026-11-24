@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import { SchedulerService, type Clock } from '../../src/services/scheduler.js';
 import type { BranchEntry, SchedulerConfig } from '../../src/types.js';
+import { DeploymentPhaseBudget, type PreviewMemoryCapacity } from '../../src/services/deployment-phase-budget.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -22,6 +23,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 class FakeClock implements Clock {
   constructor(private t: number = 0) {}
   now(): number { return this.t; }
+  monotonicNow(): number { return this.t; }
   advance(ms: number): void { this.t += ms; }
   set(ms: number): void { this.t = ms; }
 }
@@ -101,6 +103,85 @@ describe('SchedulerService', () => {
   // ── capacity and LRU eviction ──
 
   describe('capacity', () => {
+    it('wakes the 26th branch with memory available and never evicts an existing preview on admission', async () => {
+      for (let index = 0; index < 25; index++) stateService.addBranch(makeBranch(`online-${index}`));
+      let memory: PreviewMemoryCapacity | null = { scope: 'host', totalMB: 100, limitMB: 85, usedMB: 40 };
+      scheduler.setMemoryCapacityProvider(async () => memory);
+      await scheduler.wake('eligible');
+      expect(woken).toEqual(['eligible']);
+      expect(cooled).toEqual([]);
+      expect(scheduler.getSnapshot().memoryCapacity).toMatchObject({ usedMB: 40, limitMB: 85 });
+      expect(scheduler.getSnapshot().capacityUsage.max).toBeNull();
+      memory = { ...memory, usedMB: 85 };
+      await expect(scheduler.wake('wait-at-limit')).rejects.toThrow('已达容量上限');
+      memory = null;
+      await expect(scheduler.wake('wait-unknown')).rejects.toThrow('无法确认');
+      expect(cooled).toEqual([]);
+      expect(woken).toEqual(['eligible']);
+    });
+
+    it('cools only one confirmed idle and unprotected preview at a time when physical memory is tight', async () => {
+      const before = (offset: number) => new Date(clock.now() - offset).toISOString();
+      stateService.addBranch(makeBranch('never-observed'));
+      stateService.addBranch(makeBranch('fixed', 'running', { pinnedByUser: true, lastAccessedAt: before(3_000_000) }));
+      stateService.addBranch(makeBranch('idle-old', 'running', { lastAccessedAt: before(2_000_000) }));
+      stateService.addBranch(makeBranch('idle-next', 'running', { lastAccessedAt: before(1_000_000) }));
+      stateService.addBranch(makeBranch('recent', 'running', { lastAccessedAt: before(10_000) }));
+      let memory: PreviewMemoryCapacity | null = null;
+      scheduler.setMemoryCapacityProvider(async () => memory);
+      await scheduler.tick();
+      memory = { scope: 'host', totalMB: 100, limitMB: 85, usedMB: 84 };
+      await scheduler.tick();
+      expect(cooled).toEqual([]);
+      memory = { ...memory, usedMB: 86 };
+      await scheduler.tick();
+      expect(cooled).toEqual(['idle-old']);
+      memory = { ...memory, usedMB: 84 };
+      await scheduler.tick();
+      expect(cooled).toEqual(['idle-old']);
+    });
+
+    it('releases confirmed idle memory for a queued deployment before physical usage reaches the ceiling', async () => {
+      stateService.addBranch(makeBranch('idle', 'running', { lastAccessedAt: new Date(clock.now() - 2_000_000).toISOString() }));
+      stateService.addBranch(makeBranch('recent', 'running', { lastAccessedAt: new Date(clock.now()).toISOString() }));
+      const capacity: PreviewMemoryCapacity = { scope: 'host', totalMB: 8192, limitMB: 6963.2, usedMB: 6000 };
+      const budget = new DeploymentPhaseBudget(() => capacity.limitMB - capacity.usedMB);
+      scheduler.setMemoryCapacityProvider(async () => capacity, (limitMB, wakeMB) => budget.hasStartupMemoryPressure(limitMB, wakeMB));
+      const request = new AbortController();
+      const pending = budget.acquire('start', { branchId: 'queued' }, { memoryMB: 512, signal: request.signal });
+      try {
+        expect(budget.snapshot().start.queued[0]?.reason).toBe('memory-headroom');
+        await scheduler.tick();
+        expect(cooled).toEqual(['idle']);
+        expect(scheduler.getSnapshot().resourcePressure).toBe('pressure');
+        capacity.usedMB = 4000;
+        budget.pump();
+        (await pending)();
+        await scheduler.tick();
+        expect(cooled).toEqual(['idle']);
+      } finally { request.abort(); await pending.catch(() => undefined); }
+    });
+
+    it('lets a recent deferred wake request trigger idle cooling without starting a branch in the background', async () => {
+      const idleAt = new Date(clock.now() - 2_000_000).toISOString();
+      stateService.addBranch(makeBranch('idle-a', 'running', { lastAccessedAt: idleAt }));
+      stateService.addBranch(makeBranch('idle-b', 'running', { lastAccessedAt: idleAt }));
+      stateService.addBranch(makeBranch('requested', 'idle', { heatState: 'cold', lastStopSource: 'scheduler',
+        services: { api: { profileId: 'api', containerName: 'preserved', hostPort: 1024, status: 'stopped' } } }));
+      const capacity: PreviewMemoryCapacity = { scope: 'host', totalMB: 8192, limitMB: 6963.2, usedMB: 6000 };
+      const budget = new DeploymentPhaseBudget(() => capacity.limitMB - capacity.usedMB);
+      scheduler.setMemoryCapacityProvider(async () => capacity, (limitMB, wakeMB) => budget.hasStartupMemoryPressure(limitMB, wakeMB));
+      await scheduler.tick();
+      expect(cooled).toEqual([]);
+      scheduler.noteDeferredWakeMemory('requested', 512);
+      await scheduler.tick();
+      expect(cooled).toHaveLength(1);
+      expect(woken).toEqual([]);
+      clock.advance(120_001);
+      await scheduler.tick();
+      expect(cooled).toHaveLength(1);
+    });
+
     it('markHot succeeds when under capacity', () => {
       stateService.addBranch(makeBranch('a'));
       scheduler.markHot('a');
@@ -132,7 +213,7 @@ describe('SchedulerService', () => {
       expect(cooled).toEqual([]);
     });
 
-    it('maxHotBranches=0 means unlimited', async () => {
+    it('legacy maxHotBranches=0 still admits fewer than the hard ceiling', async () => {
       setup({ maxHotBranches: 0 });
       for (let i = 0; i < 10; i++) {
         stateService.addBranch(makeBranch(`b${i}`, 'running', {
@@ -142,6 +223,7 @@ describe('SchedulerService', () => {
       }
       await scheduler.evictLruIfOverCapacity();
       expect(cooled).toEqual([]);
+      expect(scheduler.getSnapshot().config.maxHotBranches).toBe(25);
     });
   });
 
@@ -235,8 +317,7 @@ describe('SchedulerService', () => {
         }));
       }
       stateService.addBranch(makeBranch('d'));
-      const count = await scheduler.evictLruIfOverCapacity('d');
-      expect(count).toBe(0);
+      await expect(scheduler.evictLruIfOverCapacity('d')).rejects.toThrow('热池已满');
       expect(cooled).toEqual([]);
     });
 
@@ -480,4 +561,76 @@ describe('SchedulerService', () => {
       expect(cooled).toContain('a');
     });
   });
+  describe('物理驻留与操作保护承接', () => {
+    it('错误状态冷分支仍占容量，停止失败保留，确认后才释放', async () => {
+      const names = new Set(['resident']);
+      stateService.addBranch(makeBranch('failed', 'error', { heatState: 'cold', services: { api: { profileId: 'api', containerName: 'resident', status: 'error' } } }));
+      scheduler.setRuntimePresenceProvider(() => names);
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+      scheduler.setCoolFn(async () => { throw new Error('unconfirmed stop'); });
+      await expect(scheduler.markCold('failed')).rejects.toThrow('unconfirmed stop');
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+      scheduler.setCoolFn(async () => { names.delete('resident'); const b = stateService.getBranch('failed')!; b.status = 'idle'; b.services.api.status = 'stopped'; });
+      await scheduler.markCold('failed');
+      expect(scheduler.getSnapshot().capacityUsage.current).toBe(0);
+    });
+
+    it('在途部署不能被降温，操作解除后仍按原空闲期限收敛', async () => {
+      stateService.addBranch(makeBranch('busy', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 1800000).toISOString() }));
+      let active = true; scheduler.setOperationProtection(() => active);
+      await scheduler.tick(); expect(cooled).toEqual([]);
+      active = false; await scheduler.tick(); expect(cooled).toEqual(['busy']);
+    });
+
+    it('touch仅持久化目标分支，不恢复全量状态保存热点', () => {
+      stateService.addBranch(makeBranch('touched'));
+      const save = vi.spyOn(stateService, 'save'); scheduler.touch('touched');
+      expect(save).toHaveBeenCalledWith([{ kind: 'branches', id: 'touched' }]);
+    });
+  });
+
+  it('cold标记但实际驻留的失败分支仍占热池，停止失败后重试', async () => {
+    const b = makeBranch('resident', 'error', { heatState: 'cold', lastAccessedAt: new Date(clock.now() - 1_000_000).toISOString(),
+      services: { api: { profileId: 'api', containerName: 'candidate', hostPort: 10001, status: 'error',
+        servingRuntime: { containerName: 'old-live', hostPort: 10002 } } } });
+    stateService.addBranch(b); const live = new Set(['old-live']); scheduler.setRuntimePresenceProvider(() => live);
+    let attempts = 0;
+    scheduler.setCoolFn(async () => { if (++attempts === 1) throw new Error('executor unavailable'); live.clear(); const current = stateService.getBranch(b.id)!; current.status = 'idle'; current.services.api.status = 'stopped'; });
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    expect(scheduler.getSnapshot().cold.some(row => row.slug === b.id)).toBe(false);
+    await scheduler.tick(); expect(stateService.getBranch('resident')!.heatState).toBe('hot');
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    await scheduler.tick(); expect(attempts).toBe(2); expect(stateService.getBranch('resident')!.heatState).toBe('cold');
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(0);
+  });
+
+  it('实际驻留和固定分支仍被保护，在途任务结束后才可降温', async () => {
+    const b = makeBranch('busy', 'error', { heatState: 'cold', lastAccessedAt: new Date(clock.now() - 1_000_000).toISOString(),
+      services: { api: { profileId: 'api', containerName: 'live', hostPort: 10001, status: 'error' } } });
+    stateService.addBranch(b); scheduler.setRuntimePresenceProvider(() => new Set(['live']));
+    let busy = true; scheduler.setOperationProtection(id => id === 'busy' && busy);
+    await scheduler.tick(); expect(cooled).toEqual([]);
+    busy = false; await scheduler.tick(); expect(cooled).toEqual(['busy']);
+  });
+
+  it('仅复制集成员仍驻留时不能把cold当作已释放容量', async () => {
+    const b = makeBranch('replica-resident', 'error', { heatState: 'cold',
+      replicaSets: { api: { profileId: 'api', members: [{ id: 'r1', containerName: 'live-replica', status: 'error' }] } } as BranchEntry['replicaSets'] });
+    stateService.addBranch(b); scheduler.setRuntimePresenceProvider(() => new Set(['live-replica']));
+    expect(scheduler.getSnapshot().capacityUsage.current).toBe(1);
+    expect(scheduler.getSnapshot().cold).toEqual([]);
+    await scheduler.markCold(b.id); expect(cooled).toEqual([b.id]);
+  });
+
+  it('重启遗留cooling可重试，同进程正在降温不会重复发停止', async () => {
+    const b = makeBranch('stale-cooling', 'stopping', { heatState: 'cooling' });
+    stateService.addBranch(b); scheduler.setRuntimePresenceProvider(() => new Set(['live']));
+    let complete!: () => void; let attempts = 0;
+    scheduler.setCoolFn(async () => { attempts++; await new Promise<void>(resolve => { complete = resolve; }); });
+    const first = scheduler.markCold(b.id); await scheduler.markCold(b.id);
+    expect(attempts).toBe(1); complete(); await first;
+    expect(stateService.getBranch(b.id)!.heatState).toBe('cold');
+  });
+
+
 });

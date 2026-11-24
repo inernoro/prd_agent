@@ -21,6 +21,7 @@ export interface WorkspaceTransferRequest {
   baseRevision: string;
   maxInputBytes: number;
   maxOutputBytes: number;
+  maxPublicOutputBytes: number;
   allowedOutputPaths: string[];
 }
 
@@ -29,6 +30,10 @@ export interface OpenDesignModelAuthority {
   protocol: 'openai';
   apiKey: string;
   model: string;
+  sourceSystem: 'map';
+  appCallerCode: string;
+  userId: string;
+  runId: string;
 }
 
 export interface WorkspacePackageFile {
@@ -101,21 +106,34 @@ function normalizeAgentWorkspaceModelBaseUrl(value: unknown): string {
 }
 
 /**
- * 模型出口必须是本次任务的 MAP 出口：OpenAI 兼容协议、带本次任务票据、与工作区传输同一个 MAP origin。
+ * 模型出口只能是配置中钉死的 LLMGW，或回滚兼容期内与工作区同源的 MAP 代理。
  * 原为 AgentWorkspaceSessionRuntime.validateModelAuthority；提交任务时与执行前共用这一份判据。
  */
-export function validateModelAuthority(model: OpenDesignModelAuthority, inputPackageUrl: string): void {
+export function validateModelAuthority(
+  model: OpenDesignModelAuthority,
+  inputPackageUrl: string,
+  trustedLlmGwBaseUrl?: string,
+): void {
   if (model.protocol !== 'openai' || !model.apiKey || !model.model.trim()) {
     throw new AgentWorkspaceRuntimeError(
       'model_authority_invalid',
       'OpenDesign requires a run-scoped MAP OpenAI-compatible base URL, API key, and model',
     );
   }
-  const parsed = new URL(normalizeAgentWorkspaceModelBaseUrl(model.baseUrl));
-  if (parsed.origin !== new URL(inputPackageUrl).origin) {
+  let parsed: URL;
+  try {
+    parsed = new URL(model.baseUrl);
+  } catch {
+    throw new AgentWorkspaceRuntimeError('model_authority_invalid', 'modelBaseUrl must be an absolute HTTP URL');
+  }
+  const directLlmGw = trustedLlmGwBaseUrl !== undefined
+    && parsed.toString().replace(/\/$/, '') === new URL(trustedLlmGwBaseUrl).toString().replace(/\/$/, '');
+  if (!directLlmGw) parsed = new URL(normalizeAgentWorkspaceModelBaseUrl(model.baseUrl));
+  const legacyMapProxy = parsed.origin === new URL(inputPackageUrl).origin;
+  if (!legacyMapProxy && !directLlmGw) {
     throw new AgentWorkspaceRuntimeError(
       'model_authority_origin_mismatch',
-      'modelBaseUrl and workspace transfer URLs must share one MAP origin',
+      'modelBaseUrl must be the configured LLMGW endpoint or the legacy same-origin MAP proxy',
     );
   }
 }
@@ -165,6 +183,16 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
       'workspaceTransfer.allowedOutputPaths must include index.html and manifest.json',
     );
   }
+  const maxOutputBytes = boundedInteger(record.maxOutputBytes, 'workspaceTransfer.maxOutputBytes', 1, 128 * 1024 * 1024);
+  const maxPublicOutputBytes = record.maxPublicOutputBytes === undefined
+    ? maxOutputBytes
+    : boundedInteger(record.maxPublicOutputBytes, 'workspaceTransfer.maxPublicOutputBytes', 1, 128 * 1024 * 1024);
+  if (maxPublicOutputBytes > maxOutputBytes) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      'workspaceTransfer.maxPublicOutputBytes must not exceed maxOutputBytes',
+    );
+  }
   return {
     schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
     inputPackageUrl: inputPackageUrl.toString(),
@@ -173,7 +201,8 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
     inputSha256: normalizeSha(record.inputSha256, 'workspaceTransfer.inputSha256'),
     baseRevision,
     maxInputBytes: boundedInteger(record.maxInputBytes, 'workspaceTransfer.maxInputBytes', 1, 64 * 1024 * 1024),
-    maxOutputBytes: boundedInteger(record.maxOutputBytes, 'workspaceTransfer.maxOutputBytes', 1, 128 * 1024 * 1024),
+    maxOutputBytes,
+    maxPublicOutputBytes,
     allowedOutputPaths: [...new Set(allowedOutputPaths)],
   };
 }
@@ -348,6 +377,7 @@ function validateDesignTaskContract(
   parseDesignDirection(task.designDirection);
   const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
   const hasKnowledge = files.some((file) => file.path.startsWith('knowledge/'));
+  const manualProposalFile = files.find((file) => file.path === 'proposal/manual-edit.html');
   const responseContract = task.responseContract;
   const input = task.input;
   const inputContract = input && typeof input === 'object' && !Array.isArray(input)
@@ -408,5 +438,27 @@ function validateDesignTaskContract(
       'workspace_package_invalid',
       'brief/task.json operation does not match the presence of current/index.html',
     );
+  }
+  const presentation = task.presentationContract;
+  const presentationContract = presentation && typeof presentation === 'object' && !Array.isArray(presentation)
+    ? presentation as Record<string, unknown>
+    : undefined;
+  const manualProposal = presentationContract?.manualEditProposal;
+  const manualProposalContract = manualProposal && typeof manualProposal === 'object' && !Array.isArray(manualProposal)
+    ? manualProposal as Record<string, unknown>
+    : undefined;
+  // Older MAP packages serialized an absent proposal as JSON null. Treat null and omission as
+  // the same absence, while keeping every non-null proposal integrity-bound to an edit package.
+  if (manualProposalFile || (manualProposal !== undefined && manualProposal !== null)) {
+    if (!hasCurrentPage
+      || !manualProposalFile
+      || manualProposalContract?.authority !== 'user-authored-untrusted-proposal'
+      || manualProposalContract.path !== manualProposalFile.path
+      || manualProposalContract.contentHash !== manualProposalFile.sha256) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_package_invalid',
+        'manual edit proposal must be an integrity-bound untrusted input for an edit operation',
+      );
+    }
   }
 }

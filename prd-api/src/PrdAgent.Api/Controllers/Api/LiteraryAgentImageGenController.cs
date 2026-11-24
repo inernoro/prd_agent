@@ -28,7 +28,6 @@ public class LiteraryAgentImageGenController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
     private readonly ILlmGateway _gateway;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<LiteraryAgentImageGenController> _logger;
 
     private const string AppKey = "literary-agent";
@@ -38,13 +37,11 @@ public class LiteraryAgentImageGenController : ControllerBase
         MongoDbContext db,
         IRunEventStore runStore,
         ILlmGateway gateway,
-        ILLMRequestContextAccessor llmRequestContext,
         ILogger<LiteraryAgentImageGenController> logger)
     {
         _db = db;
         _runStore = runStore;
         _gateway = gateway;
-        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -119,8 +116,7 @@ public class LiteraryAgentImageGenController : ControllerBase
         var appCallerCode = hasReference
             ? LiteraryAgent.Illustration.Img2Img
             : LiteraryAgent.Illustration.Text2Img;
-        var item = (await GatewayImageModelCatalog.ReadAsync(_gateway, appCallerCode, ct))
-            .FirstOrDefault(x => string.Equals(x.Model.Code, requested, StringComparison.Ordinal));
+        var item = GatewayImageModelCatalog.Select(await GatewayImageModelCatalog.ReadAsync(_gateway, appCallerCode, ct), requested);
         var info = item?.ImageCapabilities;
         if (info is null)
             return BadRequest(ApiResponse<object>.Fail("LITERARY_MODEL_CAPABILITIES_UNAVAILABLE",
@@ -193,12 +189,16 @@ public class LiteraryAgentImageGenController : ControllerBase
         var adminId = GetAdminId();
         var idemKey = (Request.Headers["Idempotency-Key"].FirstOrDefault() ?? string.Empty).Trim();
         if (idemKey.Length > 200) idemKey = idemKey[..200];
-        // 幂等键按部署作用域隔离（Codex P1，见 DeploymentScope.ScopeIdempotencyKey 注释）
-        idemKey = DeploymentScope.ScopeIdempotencyKey(idemKey);
+        // 网页恢复只观察原任务，不接管旧 revision 执行；稳定分支内重放相同请求不能再次消耗生图额度。
+        var originalRequestId = idemKey;
+        idemKey = DeploymentScope.ScopeDurableIdempotencyKey(idemKey);
 
         if (!string.IsNullOrWhiteSpace(idemKey))
         {
-            var existed = await _db.ImageGenRuns.Find(x => x.OwnerAdminId == adminId && x.IdempotencyKey == idemKey).FirstOrDefaultAsync(ct);
+            var previous = await _db.ImageGenRuns.Find(RequestLookupFilter(adminId, originalRequestId)).Limit(2).ToListAsync(ct);
+            if (previous.Count > 1)
+                return Conflict(ApiResponse<object>.Fail("IMAGE_GEN_REQUEST_AMBIGUOUS", "原请求对应多个任务，请在任务记录中核对，系统不会再次生成。"));
+            var existed = previous.SingleOrDefault();
             if (existed != null)
             {
                 PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
@@ -275,9 +275,50 @@ public class LiteraryAgentImageGenController : ControllerBase
         var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
 
+        // 这篇文章记住了风格 / 水印（智能体或网页上为这篇指定过）：网页生图同样按它来。
+        // 以前这里只认账号当前启用的那套，同一篇文章在网页上重画一张，水印就换成了账号默认，
+        // 一篇文章里出现两种水印。判据与开放接口共用 LiteraryIllustrationChoices，一处说了算。
+        var articlePrefsApplied = false;
+        string? articleReferencePrompt = null;
+        string? articleWatermarkId = null;
+        if (initImageAssetSha256 == null && workspaceId != null)
+        {
+            var prefsWs = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == workspaceId && x.ScenarioType == "article-illustration")
+                .FirstOrDefaultAsync(ct);
+            // 只有作者本人生图才套文章设定：记住的风格 / 水印 ID 属于作者账号，协作者账号里查不到，
+            // 套上去只会静默退回协作者自己的默认（水印在出图时还会因归属不符被丢掉）。协作者照旧按自己账号的设定。
+            var canUse = prefsWs != null && prefsWs.OwnerUserId == adminId;
+            if (canUse && prefsWs!.IllustrationPrefs != null)
+            {
+                var chosen = await PrdAgent.Api.Services.LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, prefsWs.IllustrationPrefs, ct);
+                articlePrefsApplied = true;
+                initImageAssetSha256 = chosen.style.Sha;
+                articleReferencePrompt = chosen.style.PromptPrefix;
+                articleWatermarkId = chosen.watermark.WatermarkId;
+                foreach (var note in chosen.notes)
+                    _logger.LogWarning("LiteraryAgent 网页生图沿用文章设定时降级：{Note} workspace={WorkspaceId}", note, workspaceId);
+
+                // 页面按「账号当前启用的风格」挑的模型池（文生图 / 图生图）。文章自己的风格让场景翻转时，
+                // 页面钉住的模型属于另一个池，不能带过去——交给 Worker 按正确场景从模型池解析。
+                var accountActive = await _db.ReferenceImageConfigs
+                    .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
+                    .FirstOrDefaultAsync(ct);
+                var accountIsImg2Img = accountActive != null && !string.IsNullOrWhiteSpace(accountActive.ImageSha256);
+                if ((initImageAssetSha256 != null) != accountIsImg2Img && (platformId != null || modelId != null || cfgModelId != null))
+                {
+                    _logger.LogInformation("LiteraryAgent 文章设定改变了生图场景，放弃页面钉住的模型 {PlatformId}/{ModelId}，改由模型池解析。workspace={WorkspaceId}",
+                        platformId, modelId, workspaceId);
+                    platformId = null;
+                    modelId = null;
+                    cfgModelId = null;
+                }
+            }
+        }
+
         // 检查是否有激活的参考图配置（必须按用户隔离）
         bool hasActiveReferenceImage = false;
-        if (initImageAssetSha256 == null)
+        if (initImageAssetSha256 == null && !articlePrefsApplied)
         {
             var activeRefConfig = await _db.ReferenceImageConfigs
                 .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
@@ -300,12 +341,21 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         // 文学创作场景：关联的配图标记索引
         var articleMarkerIndex = request?.ArticleMarkerIndex;
+        // 盖上发起时的配图方案版本：改稿 / 重新规划后，这个还在跑的旧任务不能再回填到新一版的标记上
+        // （Worker 按版本过滤回填；MCP 发起的任务一直带版本，网页这条路此前漏了）。
+        int? articleWorkflowVersion = null;
+        if (articleMarkerIndex.HasValue && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            var markerWs = await _db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).FirstOrDefaultAsync(ct);
+            if (markerWs?.ScenarioType == "article-illustration" && markerWs.ArticleWorkflow != null)
+                articleWorkflowVersion = markerWs.ArticleWorkflow.Version;
+        }
 
         // 参考图风格提示词（用于追加到生图 prompt）
-        string? referenceImagePrompt = null;
+        string? referenceImagePrompt = articleReferencePrompt;
 
-        // 若未指定参考图，自动从当前用户的配置中获取底图
-        if (initImageAssetSha256 == null)
+        // 若未指定参考图（且这篇文章没有自己的设定），自动从当前用户的配置中获取底图
+        if (initImageAssetSha256 == null && !articlePrefsApplied)
         {
             // 优先从新的 ReferenceImageConfigs 获取当前用户激活的配置
             var activeRefConfig = await _db.ReferenceImageConfigs
@@ -330,7 +380,8 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
         // DisplayPrompt 在追加前保存原始用户 prompt，避免系统提示词泄漏到消息记录
-        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
+        // 文章自己的风格可以只有文字提示词、没有参考图（与智能体那条路同一口径：有前缀就拼），不能因为没图就丢掉
+        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && (initImageAssetSha256 != null || articlePrefsApplied))
         {
             for (var i = 0; i < plan.Count; i++)
             {
@@ -339,8 +390,29 @@ public class LiteraryAgentImageGenController : ControllerBase
             }
         }
 
+        // 网页与智能体都须在入队前核对当前场景能力，不能把旧模型尺寸交给 Worker 才失败。
+        // 目录读取不占用半开线路租约；真正的调度留给 Worker 执行一次。
+        var catalog = await GatewayImageModelCatalog.ReadAsync(_gateway, resolvedAppCallerCode, ct);
+        modelId ??= catalog.FirstOrDefault(x => x.Model.IsDefault)?.Model.Code;
+        var selectedModel = GatewayImageModelCatalog.Select(catalog, modelId);
+        if (selectedModel?.ImageCapabilities is not { } capabilities)
+            return BadRequest(ApiResponse<object>.Fail("LITERARY_MODEL_CAPABILITIES_UNAVAILABLE", "无法读取当前配图模型的能力，请刷新后重新选择模型。"));
+        modelId = selectedModel.Model.Code;
+        foreach (var item in plan)
+        {
+            var selectedSize = item.Size ?? size;
+            var sizeError = PrdAgent.Api.Services.LiteraryIllustrationChoices.ValidateWebSize(selectedSize, capabilities);
+            if (sizeError != null)
+                return BadRequest(ApiResponse<object>.Fail("SIZE_NOT_SUPPORTED", sizeError));
+        }
+        platformId = "logical-model";
+        cfgModelId = null;
+
         var run = new ImageGenRun
         {
+            // _id 的唯一性是 Mongo 固有约束，不依赖历史环境是否正确建立幂等二级索引。
+            Id = RequestRunId(adminId, idemKey) ?? Guid.NewGuid().ToString("N"),
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
@@ -361,8 +433,9 @@ public class LiteraryAgentImageGenController : ControllerBase
             AppCallerCode = resolvedAppCallerCode,
             AppKey = AppKey, // 硬编码 literary-agent
             ArticleMarkerIndex = articleMarkerIndex,
+            ArticleWorkflowVersion = articleWorkflowVersion,
+            WatermarkConfigId = articleWatermarkId,
             InitImageAssetSha256 = initImageAssetSha256,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -390,6 +463,31 @@ public class LiteraryAgentImageGenController : ControllerBase
     /// <summary>
     /// 获取生图任务详情
     /// </summary>
+    [HttpGet("runs/by-request")]
+    public async Task<IActionResult> GetRunByRequest([FromQuery] string requestId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(requestId) || requestId.Length > 200)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请提供原请求标识。"));
+        var owner = GetAdminId();
+        var raw = requestId.Trim();
+        // 仅回查已存在任务，不新建任务或重发供应商请求；旧 revision 的本人任务也可只读恢复。
+        var matches = await _db.ImageGenRuns.Find(RequestLookupFilter(owner, raw)).Project(x => x.Id).Limit(2).ToListAsync(ct);
+        if (matches.Count > 1)
+            return Conflict(ApiResponse<object>.Fail("IMAGE_GEN_REQUEST_AMBIGUOUS", "原请求对应多个任务，请在任务记录中核对；系统不会再次生成。"));
+        return matches.Count == 1 ? Ok(ApiResponse<object>.Ok(new { runId = matches[0] }))
+            : NotFound(ApiResponse<object>.Fail("IMAGE_GEN_REQUEST_PENDING", "尚未查到原任务，请稍后刷新核对，避免重复生成。"));
+    }
+
+    internal static string? RequestRunId(string owner, string? scopedKey)
+        => string.IsNullOrWhiteSpace(scopedKey) ? null
+            : PrdAgent.Api.Mcp.McpIdempotency.Fingerprint("literary-web-image-run", JsonSerializer.Serialize(new[] { owner, scopedKey }));
+
+    private static FilterDefinition<ImageGenRun> RequestLookupFilter(string owner, string requestId)
+        => Builders<ImageGenRun>.Filter.Eq(x => x.OwnerAdminId, owner)
+            & Builders<ImageGenRun>.Filter.Eq(x => x.AppKey, AppKey)
+            & Builders<ImageGenRun>.Filter.Regex(x => x.IdempotencyKey,
+                new MongoDB.Bson.BsonRegularExpression("(^|::)" + System.Text.RegularExpressions.Regex.Escape(requestId) + "$"));
+
     [HttpGet("runs/{runId}")]
     [ProducesResponseType(typeof(ApiResponse<ImageGenRun>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]

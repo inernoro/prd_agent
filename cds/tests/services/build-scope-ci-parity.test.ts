@@ -134,4 +134,25 @@ describe('cds-compose 的 buildScope 与 branch-image.yml 的构建触发条件�
       expect(jobs[jobId]?.if, jobId).toContain("needs.changes.outputs.same_as_main == 'true'");
     }
   });
+  // 2026-09-29：分支没碰 prd-api、main 在分叉后改了 prd-api 时，paths-filter（对比 merge-base）
+  // 判「不用建」，CDS 回退 :branch-main 又证明不了等价（container.ts proveFallbackImage），
+  // 两边都不管，整个部署失败。CI 必须对「构建输入与 main 不一致」的组件补建本提交镜像。
+  it('每个组件的构建判定都叠加了「与 main 的构建输入差异」，且差异判据读的是同一份 filter', () => {
+    const outputs = (jobs.changes as unknown as { outputs?: Record<string, string> }).outputs || {};
+    for (const name of Object.keys(filters)) {
+      expect(outputs[name], `changes.outputs.${name} 缺失`).toBeTruthy();
+      expect(outputs[name], name).toContain(`steps.filter.outputs.${name} == 'true'`);
+      expect(outputs[name], `${name} 没有叠加 main_drift：落后于 main 的分支会两头落空`).toContain(`steps.main_drift.outputs.${name} == 'true'`);
+    }
+    const drift = (jobs.changes.steps || []).find((s) => s.id === 'main_drift');
+    expect(drift, 'changes job 缺少 main_drift 步骤').toBeTruthy();
+    const run = String(drift?.run || '');
+    // 不许另抄一份路径表：路径必须从 id=filter 那一步的 filters 读出来
+    expect(run).toContain('select(.id == "filter")');
+    expect(run).toContain('git diff --quiet origin/main HEAD');
+    // 比较需要 origin/main，它由前一步 main_equivalence 取回；两步的先后不能颠倒
+    const ids = (jobs.changes.steps || []).map((s) => s.id);
+    expect(ids.indexOf('main_equivalence')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('main_equivalence')).toBeLessThan(ids.indexOf('main_drift'));
+  });
 });

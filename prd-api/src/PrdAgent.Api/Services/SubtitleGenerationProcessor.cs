@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -23,6 +24,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class SubtitleGenerationProcessor
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     internal static readonly IReadOnlyList<string> RecordingAsrCallerChain =
     [
         AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
@@ -48,8 +50,10 @@ public class SubtitleGenerationProcessor
         IHttpClientFactory httpClientFactory,
         ILLMRequestContextAccessor llmCtx,
         ContentReprocessApplyService applyService,
-        ILogger<SubtitleGenerationProcessor> logger)
+        ILogger<SubtitleGenerationProcessor> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _modelResolver = modelResolver;
         _llmGateway = llmGateway;
         _documentService = documentService;
@@ -61,6 +65,10 @@ public class SubtitleGenerationProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 1) 读源 entry
         var entry = await db.DocumentEntries.Find(e => e.Id == run.SourceEntryId).FirstOrDefaultAsync();
         if (entry == null)
@@ -208,6 +216,10 @@ public class SubtitleGenerationProcessor
     /// </summary>
     public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 「换个整理方式」：跳过 ASR，用原 run 的转录文本按新风格重生成摘要并更新原笔记
         if (!string.IsNullOrEmpty(run.RestyleOfRunId))
         {
@@ -589,8 +601,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_TRANSCRIBE_SUMMARY]",
             RequestType: ModelTypes.Chat,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary,
@@ -1069,8 +1080,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: appCallerCode));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
 
@@ -1403,8 +1413,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: appCallerCode));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
@@ -1573,8 +1582,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR_JSON]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: appCallerCode));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
 
@@ -1802,8 +1810,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_VISION]",
             RequestType: ModelTypes.Vision,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,

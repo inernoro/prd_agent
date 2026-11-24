@@ -54,7 +54,7 @@ public class DocumentStore
     /// 缺省时前端按 tag 名哈希自动分色。详见 prd-admin/src/lib/tagPalette.ts。</summary>
     public Dictionary<string, string> TagColors { get; set; } = new();
 
-    /// <summary>空间内文档数量（冗余计数，便于列表展示）</summary>
+    /// <summary>空间内条目数量（含文件夹及订阅目录，沿用创建流程的冗余计数）</summary>
     public int DocumentCount { get; set; }
 
     /// <summary>点赞数（冗余计数，便于列表排序）</summary>
@@ -167,6 +167,15 @@ public class DocumentStore
     /// 非空时从个人知识库列表隐藏，只在 shitu-agent 内嵌知识库 tab 访问。
     /// </summary>
     public string? ShituCategoryRef { get; set; }
+
+    /// <summary>回收状态；null 为正常数据，恢复时只解除此标记。</summary>
+    public DocumentTrashState? Trash { get; set; }
+
+    /// <summary>回收操作的跨实例互斥租约，不改变正常编辑权限。</summary>
+    public string? TrashLeaseToken { get; set; }
+    public DateTime? TrashLeaseUntil { get; set; }
+    /// <summary>尚未完成的回收计数回执；与计数原子写入，完成后移除。</summary>
+    public List<string> TrashCountReceipts { get; set; } = new();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

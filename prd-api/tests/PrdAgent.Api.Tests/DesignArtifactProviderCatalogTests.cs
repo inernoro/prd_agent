@@ -514,6 +514,7 @@ public class DesignArtifactProviderCatalogTests
                 "input-sha",
                 "https://map.test/result",
                 "transfer-token",
+                "grant-id",
                 "https://map.test/llm/v1",
                 "model-token",
                 "map-managed",
@@ -644,24 +645,12 @@ public class DesignArtifactProviderCatalogTests
         Assert.DoesNotContain("entry-1", sentEnvelope);
         Assert.DoesNotContain("hash-1", sentEnvelope);
         Assert.DoesNotContain("核心价值是降低配置成本", sentEnvelope);
-        Assert.Collection(
-            chunks,
-            chunk =>
-            {
-                Assert.Equal("thinking", chunk.Type);
-                Assert.Equal("正在布局", chunk.Content);
-            },
-            chunk =>
-            {
-                Assert.Equal("thinking", chunk.Type);
-                Assert.Equal("正在生成页面文件", chunk.Content);
-            },
-            chunk =>
-            {
-                Assert.Equal("delta", chunk.Type);
-                Assert.Equal("<!doctype html>", chunk.Content);
-                Assert.Same(verifiedResultFiles, chunk.VerifiedFiles);
-            });
+        var result = Assert.Single(chunks);
+        Assert.Equal("delta", result.Type);
+        Assert.Equal("<!doctype html>", result.Content);
+        Assert.Same(verifiedResultFiles, result.VerifiedFiles);
+        Assert.DoesNotContain(chunks, chunk => chunk.Type == "thinking");
+        Assert.DoesNotContain(chunks, chunk => chunk.Content is "正在布局" or "正在生成页面文件");
         sessions.Verify(service => service.ScheduleStopAsync(
             "user-1",
             remoteSession.Id,
@@ -697,6 +686,7 @@ public class DesignArtifactProviderCatalogTests
                 "input-sha",
                 "https://map.test/result",
                 "transfer-token",
+                "grant-id",
                 "https://map.test/llm/v1",
                 "model-token",
                 "map-managed",
@@ -811,6 +801,7 @@ public class DesignArtifactProviderCatalogTests
                 "input-sha",
                 "https://map.test/result",
                 "transfer-token",
+                "grant-id",
                 "https://map.test/llm/v1",
                 "model-token",
                 "map-managed",

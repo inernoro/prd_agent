@@ -10,8 +10,14 @@ export function registerPwaServiceWorker(): void {
   if (typeof window !== 'undefined' && !window.isSecureContext) return;
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+    const onFailure = (err: unknown) => {
       console.warn('[pwa] service worker 注册失败:', err);
-    });
+    };
+    try {
+      // 不透明的沙箱中，读取 serviceWorker 本身就会同步抛出 SecurityError。
+      navigator.serviceWorker.register('/sw.js').catch(onFailure);
+    } catch (err) {
+      onFailure(err);
+    }
   });
 }

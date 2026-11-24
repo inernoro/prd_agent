@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { runInNewContext } from 'node:vm';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
 
 describe('ProxyService', () => {
   let stateFile: string;
@@ -22,6 +24,43 @@ describe('ProxyService', () => {
   function makeReq(headers: Record<string, string> = {}, url = '/'): http.IncomingMessage {
     return { headers, url } as unknown as http.IncomingMessage;
   }
+
+  it.each([
+    ['empty', '/', false], ['script', '/', false], ['style', '/', false],
+    ['document', '/', true], ['iframe', '/', true],
+    ['iframe', '/api/hosted-site-preview-files/owned/index.html', false],
+    ['document', '/api/offline-export.html', false],
+    ['', '/api/hosted-site-preview-files/owned/index.html', false],
+  ] as const)('真实 HTTP 主代理按导航目的 %s 和路径 %s 决定是否注入挂件', async (destination, requestPath, inject) => {
+    const original = '<html><body><h1>Owned HTML</h1></body></html>';
+    let forwardedHost: string | string[] | undefined;
+    const upstream = http.createServer((req, res) => {
+      forwardedHost = req.headers['x-cds-forwarded-host'];
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(original);
+    });
+    await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+    const port = (upstream.address() as { port: number }).port;
+    const server = http.createServer((req, res) => {
+      (proxy as any).proxyRequest(req, res, `http://127.0.0.1:${port}`, { branchId: 'owned', branchName: 'owned' });
+    });
+    try {
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address() as { port: number };
+      const response = await fetch(`http://127.0.0.1:${address.port}${requestPath}`, {
+        headers: { 'sec-fetch-dest': destination, 'x-cds-forwarded-host': 'client.example.test' },
+      });
+      expect(response.status).toBe(200);
+      expect(forwardedHost).toBe(`127.0.0.1:${address.port}`);
+      const body = await response.text();
+      if (inject) expect(body).toContain('data-cds-widget');
+      else expect(body).toBe(original);
+    } finally {
+      server.closeAllConnections(); upstream.closeAllConnections();
+      await Promise.all([new Promise<void>(resolve => server.close(() => resolve())),
+        new Promise<void>(resolve => upstream.close(() => resolve()))]);
+    }
+  });
 
   describe('resolveBranch', () => {
     it('should resolve from X-Branch header', () => {
@@ -234,7 +273,7 @@ describe('ProxyService', () => {
       expect(written.body).not.toContain('rings-orbit');
       expect(written.body).not.toContain('class="panel"');
       expect(written.body).toContain('/_cds/waiting-status');
-      expect(written.body).toContain('shiny-text');
+      expect(written.body).toContain('cds-waiting-gem');
       expect(written.body).not.toContain('setTimeout(function(){location.reload');
     });
 
@@ -267,6 +306,49 @@ describe('ProxyService', () => {
       expect(payload.progress.percent).toBeGreaterThan(0);
       expect(payload.waitingProfileId).toBe('admin');
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
+    });
+
+    it('等待首屏收起六个服务并保留真实明细和进度，移除重复状态与内部估算说明', () => {
+      const services = Object.fromEntries(['api', 'admin', 'llmgw', 'serve', 'web', 'design'].map(profileId =>
+        [profileId, { profileId, status: profileId === 'api' ? 'running' : 'starting' }]));
+      addBranch('compact-wait', 'starting', services, 'feature/compact-wait');
+      const { res, written } = makeRes();
+      proxy.handleRequest(makeReq({ 'x-branch': 'compact-wait', accept: 'text/html' }), res);
+      expect(written.statusCode).toBe(503);
+      expect(written.body).toContain('<details class="service-details">');
+      expect(written.body).not.toMatch(/<details[^>]*\bopen\b/);
+      expect(written.body).toContain('1 / 6 个服务已就绪');
+      expect(written.body.match(/class="svc" data-profile=/g)).toHaveLength(6);
+      expect(written.body).toContain('role="progressbar"');
+      expect(written.body).toContain('applyTiming({');
+      expect(written.body).not.toContain('置信度');
+      expect(written.body).not.toContain('分支状态 ·');
+      expect(written.body).not.toContain('构建模式 ·');
+      expect(written.body).not.toContain('CDS 小提示');
+      expect(written.body).not.toContain('非单分支');
+    });
+
+    it.each(['restarting', 'building'])('真实轮询 renderer 在 %s 状态保留摘要语义与空服务占位', (status) => {
+      addBranch('summary-poll', 'restarting', { api: { profileId: 'api', status: 'starting' } });
+      const { res, written } = makeRes();
+      proxy.handleRequest(makeReq({ 'x-branch': 'summary-poll', accept: 'text/html' }), res);
+      const renderer = written.body.match(/  function renderServices[\s\S]+?(?=  \/\/ 百分比状态)/)![0];
+      const root = { children: [] as any[], set innerHTML(_value: string) { this.children = []; }, appendChild(node: any) { this.children.push(node); } };
+      const summary = { textContent: '' };
+      const createElement = () => ({ className: '', textContent: '', style: { setProperty() {} }, setAttribute() {}, appendChild() {} });
+      const context = {
+        document: { querySelector: (selector: string) => selector.includes('service-summary') ? summary : root, createElement },
+        colors: {}, serviceText: (svc: { profileId: string }) => svc.profileId,
+        services: [{ profileId: 'api', status: 'starting' }], status,
+      };
+      runInNewContext(renderer + '\nrenderServices(services,status);', context);
+      expect(summary.textContent).toBe(status === 'restarting' ? '1 个服务重启中' : '1 个服务准备中');
+      expect(root.children).toHaveLength(1);
+      context.services = [];
+      runInNewContext(renderer + '\nrenderServices(services,status);', context);
+      expect(summary.textContent).toBe('正在准备服务');
+      expect(root.children).toHaveLength(1);
+      expect(root.children[0].textContent).toBe('服务尚未创建');
     });
 
     it('keeps waiting progress aligned with elapsed and remaining time when ETA exists', () => {
@@ -346,10 +428,12 @@ describe('ProxyService', () => {
       const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
       expect(match).not.toBeNull();
       expect(Number(match![1])).toBeGreaterThan(50);
-      // 等待页前景必须携带宝石六芒(组装-碎裂叙事,系统核心叙事,2026-07-22 定稿):
-      // 重启态矿色 = 银河 galaxy(状态设定 v2:starting/restarting → deploy)
-      expect(htmlWritten.body).toContain('cds-gem-story');
-      expect(htmlWritten.body).toContain('#22d3ee');
+      // 等待页保留品牌几何与原版动作，只将中央暗面改为纯黑。
+      expect(htmlWritten.body).toContain('cds-waiting-gem');
+      expect(htmlWritten.body).toContain('cds-waiting-core-black');
+      expect(htmlWritten.body).toContain('43%,47%{opacity:1;fill:#000000;stroke:#000000}');
+      expect(htmlWritten.body).not.toContain('cds-waiting-gem-edge');
+      expect(htmlWritten.body).not.toContain('fill="#22d3ee"');
     });
 
     it('hot restart with restart history uses elapsed/median as the real progress source', () => {
@@ -775,6 +859,23 @@ describe('ProxyService', () => {
   });
 
   describe('preview subdomain — 三档解析（v3 优先 / v1 / v2 兼容）', () => {
+    it.each(['main', 'codex/combo-gift-admin', 'feature/orders/v2', 'release/2026.10'])(
+      '改项目 slug 后 master 对 %s 的新旧主入口和命名服务解析一致', (branch) => {
+        stateService.addProject({ id: 'p1', slug: 'old-project', name: '示例', kind: 'git', createdAt: new Date().toISOString() } as any);
+        stateService.addBranch({ id: 'persisted-branch-id', projectId: 'p1', branch, worktreePath: '/tmp/slug-compat',
+          services: { web: { profileId: 'web', containerName: 'existing-container', hostPort: 9100, status: 'running' } },
+          status: 'running', createdAt: new Date().toISOString() });
+        stateService.addBuildProfile({ id: 'web', projectId: 'p1', name: 'web', subdomain: 'app' } as any);
+        stateService.updateProject('p1', { slug: 'short-project' });
+        for (const slug of ['old-project', 'short-project']) {
+          const preview = computePreviewSlug(branch, slug);
+          expect((proxy as any).resolveBranchEntry(preview)?.id).toBe('persisted-branch-id');
+          expect((proxy as any).resolvePreviewServiceSubdomain(`${preview}-app`)).toMatchObject({
+            entry: { id: 'persisted-branch-id', projectId: 'p1' }, profileId: 'web', previewSlug: preview,
+          });
+        }
+      },
+    );
     // 子域名 `<slug>.<root>` 拿到裸 slug 后，proxy 按
     // ① v3 前向匹配 → ② v1 裸 slug 直查 → ③ v2 `${projectSlug}-${slug}` 拼接
     // 的顺序解析。任何一档命中就返回，三档都 miss 才走 auto-build。

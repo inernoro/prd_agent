@@ -11,7 +11,7 @@ namespace PrdAgent.Core.Models;
 /// 里「建议 Atlas Vector Search」在这套环境上不成立，不能照抄。
 /// 实际做法：向量存 Mongo、按作用域先过滤再进程内算余弦。按真实规模（挂进来的通常是
 /// 1-3 个库、最大的 MAP 库 330 篇 4.24MB ≈ 5 千余块）这条路完全够用，且零新基建。
-/// 规模上限与迁移路径写在 doc/debt.knowledge-base.md。
+/// 规模上限与迁移路径写在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.knowledge-base.md。
 /// </summary>
 [BsonIgnoreExtraElements]
 public class DocumentEmbedding

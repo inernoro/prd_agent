@@ -12,10 +12,11 @@
  * （见 seedPreviewInstanceDemoData 的注释）。已有真实数据（例如挂了外部 mongo
  * 的实例）一律不碰。
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../types.js';
 import type { PreviewMirrorFile } from './preview-mirror.js';
+import { projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
 
 export const PREVIEW_DEMO_PROJECT_ID = 'preview-demo';
 
@@ -64,6 +65,17 @@ export function previewMirrorBlockedByRealData(state: StateService): boolean {
 
 export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMirrorFile): boolean {
   if (previewMirrorBlockedByRealData(state)) return false;
+  // Retirement must not remove audit/config before the State storage fence.
+  const retiring = state.getProjects().filter(p => p.mirror || isSnapshotProjectId(p.id));
+  const retiringIds = new Set(retiring.map(p => p.id));
+  try {
+    for (const branch of state.getAllBranches())
+      if (branch.mirror || retiringIds.has(branch.projectId || 'default')) state.assertBranchStorageRemovalAllowed(branch.id);
+    for (const project of retiring) state.assertProjectStorageRemovalAllowed(project.id);
+  } catch (error) {
+    console.warn(`[preview-mirror] retaining private-storage metadata: ${(error as Error).message}`);
+    return false;
+  }
   let changed = false;
 
   // 1. 静态快照退役：只退快照播下的那批（项目按 snap- 前缀，报告按标题在快照里），
@@ -82,6 +94,8 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   //    缺的永远补不上（Codex P2）
   const stampedProjects = state.getProjects().filter((p) => p.mirror);
   const stampedBranches = state.getAllBranches().filter((b) => b.mirror);
+  // 冲突清理后的投影既用于播种，也用于同采集时刻的幂等检查。
+  mirror = prepareMirrorSnapshot(state, mirror);
   if (mirrorFullySeeded(state, mirror, stampedProjects, stampedBranches)) return changed;
 
   // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志；部署 run 要单独删——
@@ -96,12 +110,9 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
 
   // 4. 按新镜像加。单条失败只记日志不中断：一条怪配置不该让整份镜像消失
   const warn = (what: string, err: unknown): void => console.warn(`  [preview-mirror] ${what}: ${(err as Error).message}`);
-  const existingSlugs = new Set(state.getProjects().map((p) => p.slug));
   for (const p of mirror.projects) {
     try {
-      const slug = existingSlugs.has(p.slug) ? `${p.slug}-mirror` : p.slug;
-      state.addProject({ ...p, slug, legacyFlag: undefined } as Project);
-      existingSlugs.add(slug);
+      state.addProject(p);
     } catch (err) { warn(`项目 ${p.id}`, err); }
   }
   const projectIds = new Set(state.getProjects().filter((p) => p.mirror).map((p) => p.id));
@@ -151,6 +162,47 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   return true;
 }
 
+function prepareMirrorSnapshot(state: StateService, mirror: PreviewMirrorFile): PreviewMirrorFile {
+  const reserved = new Set(state.getProjects().filter(p => !p.mirror).flatMap(projectReservedIdentifiers));
+  const projectIds = new Map<string, string>();
+  const projects = mirror.projects.map(p => {
+    let id = p.id;
+    let idSuffix = 1;
+    while (reserved.has(id)) {
+      id = `mirror-${p.id}${idSuffix === 1 ? '' : `-${idSuffix}`}`;
+      idSuffix++;
+    }
+    projectIds.set(p.id, id);
+    let slug = p.slug;
+    let suffix = 1;
+    while (reserved.has(slug)) {
+      slug = `${p.slug}-mirror${suffix === 1 ? '' : `-${suffix}`}`;
+      suffix++;
+    }
+    const prepared = { ...p, id, slug, legacyFlag: undefined, identityHistory: undefined };
+    if (p.mirror?.routingIdentity) {
+      prepared.mirror = { ...p.mirror, routingIdentity: {
+        ...p.mirror.routingIdentity,
+        historicalSlugs: projectHistoricalSlugs({ ...p, identityHistory: undefined }).filter(value => !reserved.has(value)),
+      } };
+    }
+    for (const identifier of projectReservedIdentifiers(prepared)) reserved.add(identifier);
+    return prepared;
+  });
+  // 仅映射模型的结构化关联，环境变量、日志和自由文本仍是父实例观察值。
+  const remap = <T extends { projectId?: string | null }>(item: T): T => {
+    return typeof item.projectId === 'string' ? { ...item, projectId: projectIds.get(item.projectId) || item.projectId } : { ...item };
+  };
+  return { ...mirror,
+    projects: projects.map(p => ({ ...p, ...(p.managedProfiles ? { managedProfiles: p.managedProfiles.map(remap) } : {}) })),
+    buildProfiles: mirror.buildProfiles.map(remap),
+    infraServices: mirror.infraServices?.map(remap),
+    branches: mirror.branches.map(b => ({ ...remap(b), ...(b.extraProfiles ? { extraProfiles: b.extraProfiles.map(remap) } : {}) })),
+    deploymentRuns: mirror.deploymentRuns.map(remap),
+    reports: mirror.reports.map(remap),
+  };
+}
+
 /** 同一份镜像是否已经一条不缺地在库里：capturedAt 相同，且每个集合的条数都对得上。 */
 function mirrorFullySeeded(
   state: StateService,
@@ -162,6 +214,12 @@ function mirrorFullySeeded(
   if (!stampedProjects.every((p) => p.mirror?.capturedAt === mirror.capturedAt)) return false;
   if (!stampedBranches.every((b) => b.mirror?.capturedAt === mirror.capturedAt)) return false;
   if (stampedProjects.length !== mirror.projects.length || stampedBranches.length !== mirror.branches.length) return false;
+  // 同一采集时刻的旧镜像也要升级为不含父实例审计记录的路由投影。
+  if (!stampedProjects.every(p => {
+    const source = mirror.projects.find(candidate => candidate.id === p.id);
+    return p.slug === source?.slug && p.gitRepoUrl === source?.gitRepoUrl &&
+      JSON.stringify(p.mirror?.routingIdentity) === JSON.stringify(source?.mirror?.routingIdentity);
+  })) return false;
   const projectIds = new Set(stampedProjects.map((p) => p.id));
   const branchIds = new Set(stampedBranches.map((b) => b.id));
   const expectedProfiles = mirror.buildProfiles.filter((p) => projectIds.has(p.projectId)).length;
@@ -493,14 +551,15 @@ interface PreviewDemoSnapshot {
 }
 
 /*
- * 不用 JSON ESM import：生产环境的 TypeScript 编译曾把 `with { type: 'json' }`
- * 从输出里剥掉，Node 22 启动时因此直接报 ERR_IMPORT_ATTRIBUTE_MISSING。
- * 这个相对路径从 src/services 与 dist/services 出发都会落到同一个源 JSON，
- * 所以运行不依赖 tsc 是否复制非 TypeScript 资产。
+ * 预构建资产与发出的 JS 相邻，纯产物安装不依赖源码目录。
+ * 保留旧 bare tsc + 源码 checkout 的兼容入口；source-free 导入门禁禁止靠该回退通过。
+ * readFileSync 避免 TypeScript 剥掉 JSON import attribute 后 Node 启动失败。
  */
-const snapshot = JSON.parse(
-  readFileSync(new URL('../../src/services/preview-demo-snapshot.json', import.meta.url), 'utf8'),
-) as PreviewDemoSnapshot;
+const emittedSnapshot = new URL('./preview-demo-snapshot.json', import.meta.url);
+const snapshot = JSON.parse(readFileSync(
+  existsSync(emittedSnapshot) ? emittedSnapshot : new URL('../../src/services/preview-demo-snapshot.json', import.meta.url),
+  'utf8',
+)) as PreviewDemoSnapshot;
 
 const daysAgoIso = (base: number, days: number | null): string | null =>
   days == null ? null : new Date(base - days * 86_400_000).toISOString();

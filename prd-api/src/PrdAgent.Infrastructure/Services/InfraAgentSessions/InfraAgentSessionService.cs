@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
@@ -21,6 +22,7 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private sealed class CdsMessageDispatchUncertainException : InfraAgentSessionException
     {
         public CdsMessageDispatchUncertainException()
@@ -76,8 +78,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         IInfraAgentRuntimeJobQueue runtimeJobs,
         IAgentToolRegistry toolRegistry,
         HttpClient http,
-        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null)
+        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _logger = logger;
         _connections = connections;
@@ -456,6 +460,26 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 : runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             EnsureRuntimeProfileCompatibleOrLiteFallback(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
+            var workspaceTransfer = managedLaunch?.WorkspaceTransfer;
+            if (workspaceTransfer != null)
+            {
+                // A delivery continuation keeps its original TraceId even when it needs a new session.
+                // Retain legacy receipts without a digest so CDS can apply its continuation policy.
+                var previous = await _db.InfraAgentSessions.Find(item =>
+                        item.UserId == userId && item.ConnectionId == session.ConnectionId
+                        && item.CdsProjectId == session.CdsProjectId && item.TraceId == session.TraceId
+                        && item.Runtime == InfraAgentRuntimes.OpenDesign
+                        && item.WorkloadKind == InfraAgentWorkloadKinds.DesignArtifact
+                        && item.StartedAt != null && item.CdsWorkspaceLaunchConfirmed != false)
+                    .SortByDescending(item => item.StartedAt)
+                    .Project(item => new { item.CdsWorkspaceImageDigest })
+                    .FirstOrDefaultAsync(ct);
+                workspaceTransfer = workspaceTransfer with
+                {
+                    ContinuingRun = previous != null,
+                    PreviousImageDigest = previous?.CdsWorkspaceImageDigest
+                };
+            }
             var body = new
             {
                 clientRequestId = startAttemptId,
@@ -470,7 +494,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 modelApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
                 workspaceRoot = session.WorkspaceRoot,
-                workspaceTransfer = managedLaunch?.WorkspaceTransfer,
+                workspaceTransfer,
                 gitRepository = session.GitRepository,
                 gitRef = session.GitRef,
                 resourcePolicy = new
@@ -507,7 +531,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 var cdsSessionId = GetString(item, "id")!;
                 var workerId = GetString(item, "workerId");
                 var containerName = GetString(item, "containerName");
-                var status = (createResponse.Succeeded ?? response.IsSuccessStatusCode)
+                var succeeded = createResponse.Succeeded ?? response.IsSuccessStatusCode;
+                var status = succeeded
                     ? MapCdsStatus(GetString(item, "status"))
                     : InfraAgentSessionStatuses.Failed;
                 now = DateTime.UtcNow;
@@ -530,6 +555,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     .Set(x => x.StartedAt, now)
                     .Set(x => x.UpdatedAt, now)
                     .Set(x => x.LastError, createResponse.ErrorMessage);
+                if (workspaceTransfer != null)
+                {
+                    var imageDigest = ReadCdsWorkspaceImageDigest(item);
+                    if (succeeded || imageDigest != null)
+                        update = update.Set(x => x.CdsWorkspaceLaunchConfirmed, true);
+                    else if (session.StartedAt == null)
+                        update = update.Set(x => x.CdsWorkspaceLaunchConfirmed, false);
+                    if (imageDigest != null)
+                        update = update.Set(x => x.CdsWorkspaceImageDigest, imageDigest);
+                }
                 var persistenceResult = await _db.InfraAgentSessions.UpdateOneAsync(
                     x => x.Id == id
                         && x.UserId == userId
@@ -812,7 +847,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         session.Id,
                         outboundMessage.Id,
                         request.Content.Trim(),
-                        DateTime.UtcNow),
+                        DateTime.UtcNow) { TaskPermitId = outboundMessage.TaskPermitId },
                     enqueueCt),
                 ex => _logger.LogWarning(
                     ex,
@@ -866,7 +901,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     session.Id,
                     outboundMessage.Id,
                     request.Content.Trim(),
-                    DateTime.UtcNow),
+                    DateTime.UtcNow) { TaskPermitId = outboundMessage.TaskPermitId },
                 enqueueCt),
             ex => _logger.LogWarning(
                 ex,
@@ -1008,6 +1043,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return;
+        var turn = await _db.InfraAgentMessages.Find(message => message.Id == messageId
+            && message.SessionId == id && message.Role == InfraAgentMessageRoles.User).FirstOrDefaultAsync(ct);
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, turn?.TaskPermitId, messageId);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(turn?.TaskPermitId, messageId));
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {
@@ -2725,6 +2766,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _ = RequireDispatchableCdsSessionId(sessionStatus, cdsSessionId);
         return new InfraAgentMessage
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             SessionId = sessionId,
             Role = InfraAgentMessageRoles.User,
             Content = content,
@@ -4043,7 +4085,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             MaxTokens = 4096,
             MaxTurns = ResolveMaxTurns(content),
             TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
-            AppCallerCode = "infra-agent-session::agent",
+            AppCallerCode = AppCallerRegistry.InfraAgent.Runtime.Chat,
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,
@@ -6747,6 +6789,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     internal static bool ShouldEndCdsFollowOnStatus(string mappedStatus) =>
         mappedStatus is InfraAgentSessionStatuses.Idle or InfraAgentSessionStatuses.Stopped;
+
+    internal static string? ReadCdsWorkspaceImageDigest(JsonElement item)
+    {
+        if (GetString(item, "runtimeImage") is not { } image) return null;
+        var separator = image.LastIndexOf('@');
+        if (separator <= 0) return null;
+        var digest = image[(separator + 1)..];
+        return Regex.IsMatch(digest, @"\Asha256:[a-f0-9]{64}\z", RegexOptions.CultureInvariant) ? digest : null;
+    }
 
     private static string? GetString(JsonElement element, string property)
     {

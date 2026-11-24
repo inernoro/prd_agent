@@ -111,11 +111,13 @@ export type LlmLogListItem = {
   statusCode?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  reasoningTokens?: number | null;
   tokenUsageSource?: string | null;
   imageSuccessCount?: number | null;
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  costKind?: 'provider_actual' | 'official_baseline_estimate' | 'provider_policy_estimate' | 'unpriced' | 'no_usage' | null;
   priceSnapshotHash?: string | null;
   providerRequestId?: string | null;
   providerReportedCost?: number | null;
@@ -179,6 +181,10 @@ export type LlmLogDetail = {
   toolCallCount?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  cacheCreationCountedInsideInput?: boolean | null;
   imageSuccessCount?: number | null;
   outputImages: LogImage[];
   outputImageCaptureStatus?: string | null;
@@ -197,6 +203,7 @@ export type LlmLogDetail = {
   costStatus?: string | null;
   /** 算不出钱时的人话原因。 */
   costUnpricedReason?: string | null;
+  costKind?: 'provider_actual' | 'official_baseline_estimate' | 'provider_policy_estimate' | 'unpriced' | 'no_usage' | null;
   estimatedCacheReadCost?: number | null;
   estimatedCacheWriteCost?: number | null;
   estimatedInputCost?: number | null;
@@ -286,6 +293,13 @@ export type RouterTraceStep = {
 };
 
 export type ProviderAttempt = {
+  attemptId?: string | null;
+  providerRequestId?: string | null;
+  providerTaskId?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
   order: number;
   stage: string;
   provider?: string | null;
@@ -498,6 +512,7 @@ export type SessionItem = {
   start?: string | null;
   end?: string | null;
   appCallerCode?: string | null;
+  appCallerCodeDisplayName?: string | null;
   primaryModel?: string | null;
   primaryProvider?: string | null;
   supportingModels: string[];
@@ -683,6 +698,9 @@ export type UpsertPoolModelRequest = {
 
 // ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
+  recentCallStatus?: 'quota_exhausted' | 'rate_limited' | 'rejected' | 'service_error' | 'succeeded' | 'failed' | null;
+  recentCallAt?: string | null;
+  proxy?: UpstreamProxyView | null;
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
   /** 密钥指纹（如 sk-or-…9c2a）。仅具备 config:write 时下发，其余为 null。永远不是完整密钥。 */
@@ -706,6 +724,7 @@ export type LogicalModelDeleteResult = { offeringsDeleted: number };
 export type AppCallerDeleteResult = { promptPolicyVersionsDeleted: number };
 /** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
 export type UpdatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name?: string;
   platformType?: string;
   apiUrl?: string;
@@ -714,6 +733,7 @@ export type UpdatePlatformRequest = {
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   platformType: 'openai' | 'claude';
   providerId?: string;
@@ -805,6 +825,8 @@ export type CatalogEntriesData = {
   builtin: CatalogEntryItem[];
   /** 运行时真正认的那几种用途。界面只让从这里挑，填别的当场拒。 */
   knownCapabilities: string[];
+  /** 服务端维护的有限历史能力别名；旧响应缺省时只接受规范能力。 */
+  legacyCapabilityAliases?: Record<string, string>;
 };
 
 export type UpsertCatalogEntryRequest = {
@@ -1093,6 +1115,8 @@ export type CallTraceData = {
   };
 };
 export type LogicalModelItem = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   id: string;
   publicId: string;
   name: string;
@@ -1137,6 +1161,8 @@ export type LogicalModelUsageData = {
   items: LogicalModelUsageItem[];
 };
 export type CreateLogicalModelRequest = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   publicId: string;
   name: string;
   modelType: string;
@@ -1149,7 +1175,7 @@ export type CreateLogicalModelRequest = {
   description?: string;
 };
 export type UpdateLogicalModelRequest =
-  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>
+  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType' | 'identityKind'>>
   /** 设为 true 会顶掉同用途原来的那个默认，接口会把顶掉了谁回给你。 */
   & { isDefaultForType?: boolean };
 export type CreateModelOfferingRequest = {
@@ -1163,8 +1189,10 @@ export type CreateModelOfferingRequest = {
   maxConcurrency?: number;
   rateLimitPerMinute?: number;
   notes?: string;
+  /** 未传保持默认启用；迁移工具可显式 false，避免尚未完成的线路短暂接流量。 */
+  enabled?: boolean;
 };
-export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId'>;
+export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId' | 'enabled'>;
 
 // ── Exchange（无密钥，仅 hasKey）──
 export type ExchangeModelItem = {
@@ -1175,6 +1203,7 @@ export type ExchangeModelItem = {
   enabled: boolean;
 };
 export type ExchangeItem = {
+  proxy?: UpstreamProxyView | null;
   id: string;
   name: string;
   modelAlias: string;
@@ -1183,6 +1212,7 @@ export type ExchangeItem = {
   targetUrl: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
   hasKey: boolean;
@@ -1208,16 +1238,19 @@ export type ExchangeModelWriteRequest = {
   enabled: boolean;
 };
 export type CreateExchangeRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   models: ExchangeModelWriteRequest[];
   targetUrl: string;
   apiKey: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
 };
 export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
+export type UpdateExchangeProxyRequest = { proxy: UpstreamProxyDraft; version: number };
 export type ImageLayeringCapabilityStatus = {
   capabilityId: 'image-layering';
   state: 'not-installed' | 'incomplete' | 'installed' | 'verified';
@@ -1295,33 +1328,6 @@ export type ConfigAuthorityGapItem = {
 export type ConfigAuthorityReportData = {
   summary: ConfigAuthoritySummary;
   gaps: ConfigAuthorityGapItem[];
-};
-
-export type RuntimeGateItem = {
-  id: string;
-  label: string;
-  status: string;
-  blocking: boolean;
-  detail: string;
-  evidence: string;
-  nextAction: string;
-  facts?: Record<string, string>;
-  links?: RuntimeGateLink[];
-};
-export type RuntimeGateLink = {
-  label: string;
-  to: string;
-};
-export type RuntimeGatesData = {
-  status: string;
-  releaseCommit?: string | null;
-  readyForHttpFull: boolean;
-  passed: number;
-  blocked: number;
-  waiting: number;
-  retained: number;
-  generatedAt: string;
-  items: RuntimeGateItem[];
 };
 
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers）──
@@ -1584,6 +1590,7 @@ export type CostReconciliationImportRequest = {
 };
 
 export type LegacyKeyCutoverData = {
+  policyRevision: number;
   applicable: boolean;
   status: 'not-applicable' | 'observing' | 'ready' | 'revoked';
   deadlineAt?: string | null;
@@ -1643,32 +1650,6 @@ export type UpdateMemberRequest = {
   status?: 'active' | 'disabled';
   teamIds?: string[];
 };
-
-// ── 影子比对（只读）──
-export type ShadowSnapshot = {
-  success: boolean; actualModel?: string | null; protocol?: string | null; platformType?: string | null;
-  resolutionType?: string | null; modelGroupId?: string | null; isFallback: boolean;
-};
-export type ShadowMismatch = { field: string; inproc?: string | null; http?: string | null; severity: string };
-export type ShadowItem = {
-  id: string; kind: string; requestId?: string | null; releaseCommit?: string | null; appCallerCode: string; modelType: string;
-  comparedAt?: string | null; shadowDurationMs: number; httpOk: boolean; httpError?: string | null;
-  allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
-  mismatches: ShadowMismatch[]; textMatches?: boolean | null;
-};
-export type ShadowSummary = {
-  total: number;
-  allMatch: number;
-  critical: number;
-  httpFail: number;
-  sinceHours?: number | null;
-  since?: string | null;
-  releaseCommit?: string | null;
-  firstComparedAt?: string | null;
-  lastComparedAt?: string | null;
-  coverageHours?: number;
-};
-export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };
 
 // ── 服务网关设置（系统级模型）──
 // 系统自己知道的值（serving 地址、appCaller、密钥前缀）只读回展示，不做输入。
@@ -1799,3 +1780,117 @@ export type ImageGenSyncHost = {
 };
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;
+
+export interface ConsumptionAlert {
+  metric?: string;
+  baselineAverage?: number | null;
+  baselineSamples?: number | null;
+  id: string;
+  appCallerCode: string;
+  appCallerTitle?: string | null;
+  owner?: string | null;
+  requestType: string;
+  scope: string;
+  origin: string;
+  sourceDeployment?: string | null;
+  windowStart: string;
+  windowSeconds: number;
+  count: number;
+  limit: number;
+  kind: string;
+  createdAt: string;
+  updatedAt: string;
+  restoresAt?: string | null;
+  canRequestResolution?: boolean;
+  canDecideQuota?: boolean;
+  retry?: {
+    available: number;
+    queued: number;
+    running: number;
+    completed: number;
+    failed: number;
+    expired: number;
+    completedCount: number;
+  } | null;
+  quota?: {
+    state: 'pending' | 'approved' | 'denied' | 'expired';
+    units: number;
+    used: number;
+    reason: string;
+    expiresAt: string;
+  } | null;
+}
+
+export type ConsumptionAlertAction =
+  | { action: 'retry' | 'approve-quota' | 'deny-quota' }
+  | { action: 'request-quota'; units: number; reason: string };
+
+export type UpstreamProxyMode = 'inherit' | 'direct' | 'custom';
+export type UpstreamProxyView = { mode: UpstreamProxyMode; address?: string | null; username?: string | null; hasPassword: boolean };
+export type UpstreamProxyDraft = { mode: UpstreamProxyMode; address?: string; username?: string; password?: string; clearPassword?: boolean };
+export type UpstreamNetworkTestResult = {
+  route: string; probedUrl: string; sampleCount: number; successCount: number; successRate: number;
+  averageMs: number | null; minMs: number | null; maxMs: number | null; testedAt: string;
+  samples: Array<{ attempt: number; connected: boolean; httpStatus: number | null; elapsedMs: number; message: string }>;
+};
+
+// 稳定模型升级策略：身份与历史别名由服务端维护，UI只编辑受控策略。
+export type ModelUpgradeSuccessor = {
+  providerId: string;
+  fromModel: string;
+  toModel: string;
+  documentationUrl: string;
+  capabilities: string[];
+};
+export type ModelUpgradePolicy = {
+  enabled: boolean;
+  mode: 'manual' | 'auto';
+  autoValidate: boolean;
+  checkIntervalHours: number;
+  maxValidationCostUsd: number | null;
+  canaryUnitCostUpperBoundUsd: number | null;
+  maxDailyCostUsd: number | null;
+  maxPriceIncreasePercent: number | null;
+  validationAppCallerCode: string;
+  successors: ModelUpgradeSuccessor[];
+};
+export type ModelUpgradePhase = 'idle' | 'checking' | 'candidate' | 'validating' | 'validated' | 'blocked' | 'promoting' | 'promoted' | 'rolling_back' | 'rolled_back' | 'failed';
+export type ModelUpgradeView = {
+  validationMode: 'evidence' | 'canary';
+  validationModes: ('evidence' | 'canary')[];
+  validationStatus: 'not-run' | 'pending' | 'passed' | 'failed' | 'unknown';
+  discoveries: { providerId: string; upstreamModelId: string; status: 'unconfirmed'; message: string }[];
+  identityKind: 'fixed' | 'stable';
+  logicalModelId: string;
+  publicId: string;
+  name: string;
+  aliases: string[];
+  modelType: string;
+  version: number;
+  policy: ModelUpgradePolicy;
+  phase: ModelUpgradePhase;
+  message: string;
+  current: { offeringId: string; modelId: string; providerId: string; upstreamModelId: string };
+  candidate: null | { modelId: string; providerId: string; upstreamModelId: string; documentationUrl: string; discoveredAt: string; validationRequestId: string | null; validatedAt: string | null };
+  gates: { capabilities: boolean; price: boolean; budget: boolean; validation: boolean };
+  canPromote: boolean;
+  canRollback: boolean;
+  actionDisabledReason: string | null;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  updatedAt: string | null;
+  history: { id: string; action: string; status: string; message: string; requestId: string | null; createdAt: string }[];
+};
+export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: number };
+export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
+export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
+
+export type LogTraceData = {
+  ambiguous: boolean;
+  hasMoreCandidates?: boolean;
+  candidates?: { id: string; requestId?: string; runId?: string; logicalRequestId?: string }[];
+  reference: string; anchorId: string; total: number; page: number; pageSize: number;
+  business?: { runId: string; status?: string | null; providerTaskId?: string | null; upstreamStatus?: string | null; artifactSha256?: string | null } | null;
+  items?: { log: LlmLogListItem; recordKind: 'request' | 'legacy-summary'; sameReceiptRecords: number;
+    attempts: NonNullable<LlmLogDetail['providerAttempts']>; lifecycleReason?: string | null; evidenceGap?: string | null }[];
+};

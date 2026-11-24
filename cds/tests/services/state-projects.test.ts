@@ -138,7 +138,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       expect(secondCreatedAt).toBe(firstCreatedAt);
     });
 
-    it('sets a preview alias from git origin when legacy project slug is generic workspace', () => {
+    it('migrates a generic legacy project slug from git origin with a recorded baseline', () => {
       const repoRoot = path.join(tmpDir, 'workspace');
       fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
       fs.writeFileSync(
@@ -156,8 +156,10 @@ describe('StateService — projects (P4 Part 1)', () => {
       svc.load();
 
       const legacy = svc.getLegacyProject()!;
-      expect(legacy.slug).toBe('workspace');
-      expect(legacy.aliasSlug).toBe('prd-agent');
+      expect(legacy.slug).toBe('prd-agent');
+      expect(legacy).not.toHaveProperty('aliasSlug');
+      expect(legacy.identityHistory?.[0]?.after.slug).toBe('workspace');
+      expect(legacy.identityHistory?.at(-1)?.kind).toBe('migrated');
     });
 
     it('does not set a preview alias when the legacy slug is already project-specific', () => {
@@ -179,7 +181,7 @@ describe('StateService — projects (P4 Part 1)', () => {
 
       const legacy = svc.getLegacyProject()!;
       expect(legacy.slug).toBe('prd-agent');
-      expect(legacy.aliasSlug).toBeUndefined();
+      expect(legacy).not.toHaveProperty('aliasSlug');
     });
   });
 

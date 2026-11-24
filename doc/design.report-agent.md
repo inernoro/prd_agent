@@ -264,6 +264,7 @@
 | 文档 | 关系 |
 |------|------|
 | [design.report-agent.ai-systems.md](./design.report-agent.ai-systems.md) | 市场调研 — Phase 1 前的竞品分析，为功能设计提供灵感 |
+| [design.report-agent.monthly.md](./design.report-agent.monthly.md) | 月报子功能 — 四章手写、关联周报、与周报共用评论点赞浏览 |
 | [design.executive-dashboard.md](./design.executive-dashboard.md) | 总裁面板消费周报数据，展示团队级聚合指标 |
 | [design.workflow-agent.engine.md](./design.workflow-agent.engine.md) | 工作流引擎为周报提供外部数据源采集能力 |
 

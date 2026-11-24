@@ -5,6 +5,14 @@ import type { LlmLogListItem } from './types';
 
 export const DASH = '—';
 
+export const MODEL_FALLBACK_LABEL = '模型/模型池回退';
+export const MODEL_FALLBACK_SCOPE = '模型解析回退记录；线路备用见路由尝试';
+
+/** Nullable model-resolution flag; provider-route attempts are a separate fact. */
+export function formatModelFallback(value?: boolean | null): string {
+  return value == null ? '未记录' : value ? '是' : '否';
+}
+
 // ── 数值/时间格式化 ──
 export function computeTokPerSec(outputTokens?: number | null, durationMs?: number | null): number | null {
   if (outputTokens == null || durationMs == null || durationMs <= 0) return null;
@@ -56,6 +64,29 @@ export function fmtCost(value?: number | null, currency?: string | null): string
   return `${symbol}${amount}`;
 }
 
+export function costKindLabel(kind?: string | null, provider?: string | null): string {
+  switch (kind) {
+    case 'provider_actual': return '供应商实际';
+    case 'official_baseline_estimate':
+      return provider?.toLowerCase().includes('apiyi')
+        ? 'OpenAI 官方基准价估算，经 APIYI 调用'
+        : '官方基准价估算';
+    case 'provider_policy_estimate': return '供应商策略估算';
+    case 'no_usage': return '无可计价用量';
+    case 'unpriced': return '未计价';
+    default: return '金额性质未知';
+  }
+}
+
+/**
+ * 金额列表和概览卡只需要一眼可扫的短标签；完整供应商语义仍由
+ * `costKindLabel` 提供给 title 与审计详情，避免长说明抢过金额本身。
+ */
+export function costKindBadgeLabel(kind?: string | null, provider?: string | null): string {
+  if (kind === 'official_baseline_estimate') return '官方基准价估算';
+  return costKindLabel(kind, provider);
+}
+
 export function fmtShortTime(iso?: string | null): string {
   if (!iso) return DASH;
   const d = new Date(iso);
@@ -84,9 +115,9 @@ export const TIME_RANGE_PRESETS: TimeRangePreset[] = [
   { key: '30d', label: '近 30 天', days: 30 },
 ];
 
-export function rangeFromPreset(days: number): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+export function rangeFromPreset(days: number, now = Date.now()): { from: string; to: string } {
+  const to = new Date(now);
+  const from = new Date(now - days * 24 * 60 * 60 * 1000);
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
@@ -103,6 +134,7 @@ export function statusBadgeStyle(
     return { label: code ? String(code) : '成功', color: 'var(--text-muted)', bg: 'transparent', quiet: true };
   if (status === 'failed' || code >= 400)
     return { label: code ? String(code) : '失败', color: 'var(--err)', bg: 'var(--err-bg)' };
+  if (status === 'unknown') return { label: '结果未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (status === 'running') return { label: '进行中', color: 'var(--info)', bg: 'var(--info-bg)' };
   if (status === 'cancelled') return { label: '已取消', color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
   return { label: status || DASH, color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
@@ -141,9 +173,11 @@ export function appDisplayName(item: {
   appCallerCodeDisplayName?: string | null;
   appCallerTitle?: string | null;
 }): string {
-  const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim();
-  if (displayName) return displayName;
-  return item.appCallerCode?.trim() || DASH;
+  const code = item.appCallerCode?.trim();
+  const displayName = [item.appCallerCodeDisplayName, item.appCallerTitle]
+    .map(value => value?.trim())
+    .find(value => value && value.toLowerCase() !== code?.toLowerCase());
+  return displayName || (code ? '未命名 App' : DASH);
 }
 
 // ── 仅注册后端有真实数据来源的视图 ──
@@ -188,7 +222,7 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
   { key: 'app', label: 'App', width: 'minmax(288px, 2.88fr)', tip: '点击查看 appCaller 摘要与治理入口' },
   { key: 'input', label: '输入', width: 'minmax(60px, 0.6fr)' },
   { key: 'output', label: '输出', width: 'minmax(64px, 0.64fr)' },
-  { key: 'cost', label: '费用', width: 'minmax(80px, 0.8fr)' },
+  { key: 'cost', label: '金额', width: 'minmax(112px, 1.12fr)' },
   { key: 'usage', label: '用途', width: 'minmax(84px, 0.84fr)', defaultVisible: false },
   { key: 'speed', label: '速度', width: 'minmax(88px, 0.88fr)' },
   { key: 'finish', label: '结束原因', width: 'minmax(88px, 0.88fr)', defaultVisible: false },
@@ -204,7 +238,7 @@ export const UPSTREAM_COLUMNS: ColumnDef[] = [
   { key: 'genId', label: '请求 ID', width: '1.8fr' },
   { key: 'status', label: '状态', width: '0.8fr', align: 'center' },
   { key: 'attempts', label: '尝试次数', width: '0.8fr', align: 'center', tip: '未记录每次重试历史，仅有最终回退标记' },
-  { key: 'fallback', label: '是否回退', width: '0.9fr' },
+  { key: 'fallback', label: MODEL_FALLBACK_LABEL, width: '0.9fr', tip: MODEL_FALLBACK_SCOPE },
   { key: 'latency', label: '耗时', width: '0.9fr', align: 'right' },
 ];
 
@@ -318,6 +352,7 @@ export function deriveLifecycle(it: {
   endedAt?: string | null;
 }): LifecycleInfo {
   const status = it.status || '';
+  if (status === 'unknown') return { key: 'unknown', label: '结果未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (status === 'succeeded') return { key: 'completed', label: '已完成', color: '#34d399', bg: 'rgba(52,211,153,0.15)' };
   if (status === 'failed') return { key: 'failed', label: '失败', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
   if (status === 'cancelled') return { key: 'cancelled', label: '已取消', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };

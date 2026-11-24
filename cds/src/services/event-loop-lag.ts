@@ -17,11 +17,29 @@ export interface EventLoopLagSnapshot {
   enabled: boolean;
   /** 当前窗口起点 */
   windowStartedAt: string | null;
-  current: { p50Ms: number; p99Ms: number; maxMs: number; samples: number };
-  previous: { p50Ms: number; p99Ms: number; maxMs: number; samples: number } | null;
+  current: EventLoopLagWindow;
+  previous: EventLoopLagWindow | null;
+}
+
+export interface EventLoopLagWindow {
+  p50Ms: number;
+  p99Ms: number;
+  maxMs: number;
+  samples: number;
+  /**
+   * 这个窗口里主线程被占着、计时器没能按时触发的总时长。
+   * 直方图记录的是两次采样的完整间隔（空闲时每个样本约等于 resolution，即 20ms；
+   * 2026-10-08 实测），一次 1.5 秒的同步阻塞只落一个约 1500ms 的样本。所以
+   * 被卡总时长 = 样本总和 − 样本数 × resolution。
+   * 2026-10-08 补：p99 只说明「最慢的那 1% 有多慢」，说不清「一分钟里卡了几秒」。
+   */
+  blockedMs: number;
+  /** blockedMs / 窗口时长，0~1。 */
+  blockedRatio: number;
 }
 
 const WINDOW_MS = 60_000;
+const RESOLUTION_MS = 20;
 
 let histogram: IntervalHistogram | null = null;
 let windowStartedAt: number | null = null;
@@ -32,23 +50,36 @@ function toMs(ns: number): number {
   return Number.isFinite(ns) && ns > 0 ? Number((ns / 1e6).toFixed(1)) : 0;
 }
 
-function summarize(h: IntervalHistogram): EventLoopLagSnapshot['current'] {
+export function blockedFromHistogram(
+  meanNs: number,
+  count: number,
+  windowMs: number,
+  resolutionMs = RESOLUTION_MS,
+): { blockedMs: number; blockedRatio: number } {
+  const totalMs = Number.isFinite(meanNs) && meanNs > 0 && count > 0 ? (meanNs * count) / 1e6 : 0;
+  const blockedMs = Math.max(0, totalMs - count * resolutionMs);
+  const ratio = windowMs > 0 ? Math.min(1, blockedMs / windowMs) : 0;
+  return { blockedMs: Math.round(blockedMs), blockedRatio: Number(ratio.toFixed(4)) };
+}
+
+function summarize(h: IntervalHistogram, windowMs: number): EventLoopLagWindow {
   return {
     p50Ms: toMs(h.percentile(50)),
     p99Ms: toMs(h.percentile(99)),
     maxMs: toMs(h.max),
     samples: h.count,
+    ...blockedFromHistogram(h.mean, h.count, windowMs),
   };
 }
 
 export function startEventLoopLagMonitor(): void {
   if (histogram) return;
-  histogram = monitorEventLoopDelay({ resolution: 20 });
+  histogram = monitorEventLoopDelay({ resolution: RESOLUTION_MS });
   histogram.enable();
   windowStartedAt = Date.now();
   rotateTimer = setInterval(() => {
     if (!histogram) return;
-    previous = summarize(histogram);
+    previous = summarize(histogram, windowStartedAt === null ? WINDOW_MS : Date.now() - windowStartedAt);
     histogram.reset();
     windowStartedAt = Date.now();
   }, WINDOW_MS);
@@ -71,14 +102,14 @@ export function getEventLoopLag(): EventLoopLagSnapshot {
     return {
       enabled: false,
       windowStartedAt: null,
-      current: { p50Ms: 0, p99Ms: 0, maxMs: 0, samples: 0 },
+      current: { p50Ms: 0, p99Ms: 0, maxMs: 0, samples: 0, blockedMs: 0, blockedRatio: 0 },
       previous: null,
     };
   }
   return {
     enabled: true,
     windowStartedAt: windowStartedAt === null ? null : new Date(windowStartedAt).toISOString(),
-    current: summarize(histogram),
+    current: summarize(histogram, windowStartedAt === null ? 0 : Date.now() - windowStartedAt),
     previous,
   };
 }

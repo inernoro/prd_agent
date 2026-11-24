@@ -35,7 +35,7 @@ const agentMapSource = fs.readFileSync(
   'utf8',
 );
 const agentMissionRegistrySource = fs.readFileSync(
-  path.resolve(process.cwd(), 'web/src/lib/agent-mission-registry.ts'),
+  path.resolve(process.cwd(), 'src/shared/agent-mission-registry.ts'),
   'utf8',
 );
 const agentOnboardingSource = fs.readFileSync(
@@ -68,6 +68,24 @@ const serverSource = fs.readFileSync(
 );
 
 describe('CDS 壳层用户入口与授权提醒契约', () => {
+  it('保留原主导航顺序并在审查之后追加工程规划和设计', () => {
+    const rail = shellSource.slice(shellSource.indexOf('function RailNav('), shellSource.indexOf('function RailThemeToggle('));
+    const mainItems = rail.slice(0, rail.indexOf('<div className="flex-1" />'));
+    expect([...mainItems.matchAll(/<Link\s+to="([^"]+)"/g)].map(([, href]) => href)).toEqual([
+      '/project-list', '/overview', '/release-center', '/task-schedule', '/reports', '/status',
+      '/code-reviews', '/engineering-planning', '/design',
+    ]);
+    const ownerItems = mainItems.slice(mainItems.indexOf('{canManageSettings ? <>'), mainItems.indexOf('</> : null}'));
+    expect(ownerItems).toContain('to="/overview"');
+    const overviewItem = ownerItems.slice(0, ownerItems.indexOf('</Link>'));
+    expect(overviewItem).toContain('<Waypoints />');
+    expect(overviewItem).toContain('<span>Overview</span>');
+    const planningItem = mainItems.slice(mainItems.indexOf('<Link to="/engineering-planning"'), mainItems.indexOf('<Link to="/design"'));
+    expect(planningItem).toContain('<Target />');
+    const ownerRoutes = appSource.slice(appSource.indexOf('<Route element={<OwnerConsoleRoute />}>'));
+    expect(ownerRoutes.slice(0, ownerRoutes.indexOf('</Route>'))).toContain('path="/overview"');
+  });
+
   /*
    * 2026-09-08 契约再变（用户拍板方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、
    * 紧贴账号——它们是动作不是页面，混在导航下面会被当成页面点；栏中间的空白是
@@ -155,8 +173,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMissionRegistrySource).toContain("'startup-diagnostics'");
     expect(agentMissionRegistrySource).toContain("'api-diagnostics'");
     expect(agentMissionRegistrySource).toContain("'code-review'");
-    expect(agentOnboardingSource).toContain('二、静默检查认证');
-    expect(agentOnboardingSource).toContain('全局通行证属于认证提权');
+    expect(agentOnboardingSource).toContain('buildAgentSetupUrl(');
+    expect(agentOnboardingSource).toContain('复用现有授权');
+    expect(agentDialogSource).toContain("useState<TabKey>('connect')");
     expect(globalAgentAccessSource).toContain('if (!open) return undefined');
     expect(globalAgentAccessSource).toContain('setProjects(null)');
     expect(globalAgentAccessSource).toContain('if (!nextOpen) setRequestedContextId(undefined)');
@@ -180,7 +199,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('从认证状态接口向壳层返回安全的用户展示信息', () => {
     expect(serverSource).toContain("app.get('/api/auth/status', (req, res)");
-    expect(serverSource).toContain("authMode === 'github' && sessionUser");
+    expect(serverSource).toContain("sessionUser?.authProvider");
     expect(serverSource).toContain('avatarUrl: sessionUser.avatarUrl ?? null');
     expect(serverSource).toContain("postLogoutRedirect: ssoIdentity ? '/login' : null");
     expect(shellSource).toContain('user?: ShellUser | null');
@@ -200,7 +219,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(updateIndex).toBeGreaterThan(pendingIndex);
     expect(commitIndex).toBeGreaterThan(updateIndex);
     expect(shellSource).toContain('id="cds-information-center-host"');
-    expect(shellSource).toContain('<SiteNoticeInbox />');
+    expect(shellSource).toContain('<SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}');
+    expect(informationCenterSource).toContain('运维操作待授权');
     expect(informationCenterSource).toContain('信息中心');
     expect(informationCenterSource).toContain('informationCount');
     expect(styles).not.toContain('.cds-bottom-docks');

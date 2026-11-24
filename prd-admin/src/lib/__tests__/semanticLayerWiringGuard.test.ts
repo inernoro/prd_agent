@@ -372,12 +372,12 @@ describe('上传落位：只新增、不替换，且贴着锚点对齐', () => {
   it('【关键】首页带进来的参考图先认领画布上已有的那张，不再落第二份', () => {
     // 用户在首页传一张图 + 一句话跳进画板，画布上出现两张一样的参考图。
     // 同一张图走了两条路各落一次：首页跳转前已 upload 进 workspace，新画布 boot 时
-    // 走「回退到资产列表重建画布」把它铺上去（第一张）；这里再把 messageText 里的
-    // [IMAGE src=...] 当新图加一遍（第二张）。用户只按了一次，系统落了两次。
+    // 走「回退到资产列表重建画布」把它铺上去（第一张）；这里再把交接包里的
+    // inlineImage 当新图加一遍（第二张）。用户只按了一次，系统落了两次。
     //
     // 判据钉三件事：assetId 真的被读了（首页一直在传，之前没人读，形状 2）、
     // 落地前先按身份找、找到就复用而不是新增。
-    expect(code).toMatch(/initialAssetIdRef\.current = String\(data\.assetId/);
+    expect(code).toMatch(/initialAssetIdRef\.current = handoff\.assetId/);
     const at = code.indexOf('const wantAssetId = initialAssetIdRef.current;');
     expect(at, '内联图落地前应先按 assetId 认领').toBeGreaterThan(0);
     const near = code.slice(at, at + 900);

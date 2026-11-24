@@ -87,6 +87,7 @@
 | `report_team_members` | `ReportTeamMember` | 周报团队成员 | `(teamId, userId)` 唯一；`userId` |
 | `report_templates` | `ReportTemplate` | 周报模板 | `(isDefault, createdAt)` |
 | `report_weekly_reports` | `WeeklyReport` | 周报主体 | `(userId, teamId, weekYear, weekNumber)` 唯一；`(teamId, status, periodEnd)`；`(userId, periodEnd)` |
+| `report_monthly_reports` | `MonthlyReport` | 月报主体（四章手写，不接入 AI；互动复用 report_comments / report_likes / report_view_events） | `(userId, teamId, year, month)` 唯一；`(teamId, year, month)` |
 | `report_daily_logs` | `ReportDailyLog` | 每日工作打点 | `(userId, date)` 唯一 |
 | `report_data_sources` | `ReportDataSource` | Git/SVN 数据源配置 | `teamId` |
 | `report_commits` | `ReportCommit` | 缓存的代码提交 | `(dataSourceId, commitHash)` 唯一；`(mappedUserId, committedAt)` |
@@ -134,6 +135,7 @@
 | 集合（collection） | 模型 | 用途 | 索引/TTL/唯一约束 |
 |---|---|---|---|
 | `llmgw_model_pool_types` | `BsonDocument` | 租户程序池类型注册表及默认池权威指针。关键字段为 `TenantId`、`Code`、`DefaultPoolId`、`Version`；运行时只信任同租户、同类型指针 | `(TenantId, Code)` 唯一；所有查询和更新必须包含 `TenantId` |
+| `llmgw_runtime_grants` | `GatewayRuntimeGrantRecord` | OpenDesign 单次任务访问 LLMGW 的短期授权，只保存密钥哈希与前缀，并冻结租户、任务、用户、调用方、模型策略、调用次数和到期时间 | `KeyHash` 唯一；`ExpiresAt` TTL；`(TenantId, RunId)`；只由 DBA 清单创建，应用启动不建索引 |
 | `llmgw_cost_reconciliations` | `BsonDocument` | 供应商实际账单与网关请求估算的租户级对账记录。保存原始 estimated、provider actual、币种、可选汇率快照和差额，不覆盖请求原估算；跨币种缺少 `FxSnapshotId` 时差额保持空值 | `(TenantId, Provider, ExternalRecordId)` 唯一；请求粒度 `(TenantId, Provider, ProviderRequestId)` 条件唯一，防止更换外部记录号重复计费；窗口粒度同租户、团队、供应商、service key 不允许不同账单记录时间重叠；`(TenantId, TeamId, ServiceKeyId, BilledAt desc)`；所有查询和更新必须包含 `TenantId`，团队角色查询还必须包含服务端解析的团队范围 |
 | `llmgw_cost_import_scope_locks` | `BsonDocument` | 费用导入的短租约集合，把同一服务端租户、供应商和团队的 request/window 检查与写入串行化，防止并发重叠窗口或逐请求与窗口双计费；不保存账单正文 | `(TenantId, Provider, TeamId)` 唯一；`ExpiresAt` TTL；获取、释放和过期接管都必须包含服务端解析的 `TenantId` |
 | `llmgw_legacy_key_cutovers` | `GatewayLegacyKeyCutoverRecord` | 内部 MAP legacy shared key 的截止时间、appCaller 白名单、后继 scoped key 清单及逐 key 观察计数 | `TenantId` 唯一；撤销前每个 successor 均须达到观察阈值；所有查询和更新必须包含 `TenantId` |

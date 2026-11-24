@@ -31,6 +31,34 @@ describe('http log body redaction', () => {
     expect(result.bodyPreview).not.toContain('cdsp_demo_abc123secretplaintext');
   });
 
+  it('接入提议被拒前的请求日志也按值脱敏 cdsmon_，不依赖字段名', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    const result = bodyPreviewFromUnknown({
+      agentName: '审核智能体',
+      proposals: [{ name: credential, kind: 'http', url: 'https://audit.example/health' }],
+    }, 'application/json');
+    expect(result.bodyPreview).toContain('"name":"[redacted]"');
+    expect(result.bodyPreview).toContain('https://audit.example/health');
+    expect(result.bodyPreview).not.toContain(credential);
+  });
+
+  it('纯文本中的 cdsmon_ 接入凭据脱敏且保留普通服务名称', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    expect(redactBodyText(`agent returned ${credential} for cdsmon_healthz`))
+      .toBe('agent returned [redacted] for cdsmon_healthz');
+  });
+
+  it('截断后无法解析的 JSON 捕获仍清除未知字段中的完整 cdsmon_ 凭据', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    const capture = createBodyCapture(undefined, 'application/json');
+    capture.onChunk(JSON.stringify({ proposals: [{ name: credential }], tail: 'x'.repeat(10_000) }));
+    const result = capture.snapshot('application/json');
+    expect(result.bodyBytes).toBeGreaterThan(8192);
+    expect(result.bodyPreview).toContain('"name":"[redacted]"');
+    expect(() => JSON.parse(result.bodyPreview!)).toThrow();
+    expect(result.bodyPreview).not.toContain(credential);
+  });
+
   it('keeps malformed html-like previews linear and bounded', () => {
     const hostile = `<html>${' "not-a-json-key": "'.repeat(600)}${'x'.repeat(9000)}</html>`;
     const started = performance.now();
@@ -67,6 +95,12 @@ describe('http log body redaction', () => {
     expect(selected.bodyBytes).toBe(Buffer.byteLength(canary));
     expect(selected.bodyPreview).toBe('[cds request body omitted]');
     expect(JSON.stringify(selected)).not.toContain(canary);
+  });
+
+  it('marks route-controlled omission when auth rejects before consuming the body', () => {
+    const selected = selectRequestBodyForHttpLog({ bodyBytes: 0 }, {}, true);
+    expect(selected.bodyPreview).toBe('[cds request body omitted]');
+    expect(selected.bodyBytes).toBeUndefined();
   });
 
   it('omits image body previews while preserving byte counts', () => {
@@ -270,6 +304,40 @@ describe('redactBodyText：CDS 自己签发的凭据明文不许进日志', () =
     expect(out).toContain('MAP');
     expect(out).toContain('feature/x');
     expect(out).not.toContain('[redacted]');
+  });
+
+  // 2026-10-08 事故：PUT /api/projects/:id 的响应 94KB，日志只截前 8KB，截断后的 JSON
+  // 解析不了，退到纯文本兜底；而兜底只认 key=value 写法，项目环境变量里的 JWT 密钥、数据库口令
+  // 原样落进了 HTTP 日志。下面三条都是「截断的 JSON」形态。
+  it('截断的 JSON 里，敏感键名对应的字符串值照样抹掉', () => {
+    const body = JSON.stringify({ project: { customEnv: {
+      JWT_SECRET: 'jwt-canary-value-1234567890',
+      DB_PASSWORD: 'db-canary-pass',
+      AI_ACCESS_KEY: 'ai-canary-key',
+      DB_HOST: 'cds-infra-mysql',
+    } } }) + '"padding": "' + 'x'.repeat(200);
+    const truncated = body.slice(0, body.length - 50);
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('jwt-canary-value-1234567890');
+    expect(out).not.toContain('db-canary-pass');
+    expect(out).not.toContain('ai-canary-key');
+    expect(out).toContain('cds-infra-mysql');
+    expect(out).toContain('"JWT_SECRET":"[redacted]"');
+  });
+
+  it('截断的 JSON 里，连接串的口令段照样抹掉（键名不含 password 也要抹）', () => {
+    const truncated = '{"customEnv":{"MONGODB_URI":"mongodb://imp_user:uri-canary-pass@cds-infra-mongo:27017/imp","REDIS_URL":"redis://:redis-canary@cds-infra-redis:6379"},"tail":"';
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('uri-canary-pass');
+    expect(out).not.toContain('redis-canary');
+    expect(out).toContain('mongodb://imp_user:[redacted]@cds-infra-mongo:27017/imp');
+  });
+
+  it('截断的 JSON 里，转义引号不会让抹除提前停下', () => {
+    const truncated = '{"IMP_INDEX_SECRET":"abc\\"def-canary","next":"ok","cut';
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('def-canary');
+    expect(out).toContain('"next":"ok"');
   });
 });
 

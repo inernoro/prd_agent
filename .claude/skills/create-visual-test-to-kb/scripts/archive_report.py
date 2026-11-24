@@ -2750,13 +2750,13 @@ def build_interactive_html(
         '<div class="view-switch" data-view-switch>'
         '<button type="button" class="active" data-view-mode="brief">简版<small>给你看</small></button>'
         '<button type="button" data-view-mode="full">完整版<small>给工程师看</small></button>'
-        '<span class="vs-hint">简版只留结论、缺陷和截图；完整版是全部取证过程</span>'
+        '<span class="vs-hint">简版保留结论、操作入口、缺陷和截图；完整版是全部取证过程</span>'
         '</div>'
         if has_plain_summary
         else ""
     )
     brief_sections_json = json.dumps(
-        [PLAIN_SUMMARY_SECTION, "昨日工作总结", "缺陷清单"],
+        [PLAIN_SUMMARY_SECTION, "操作入口", "验收地址与操作入口", "验收地址", "执行覆盖账本", "昨日工作总结", "缺陷清单"],
         ensure_ascii=False,
     )
     result = f"""<!doctype html>
@@ -3397,7 +3397,12 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     expandSectionForTarget(t);
     var scroll=function(){{
       t.scrollIntoView({{block:'start'}});
-      try{{if(history&&history.replaceState) history.replaceState(null,'',hash);}}catch(error){{}}
+      try{{history.replaceState(null,'',hash);}}catch(error){{
+        // 沙箱内的 srcdoc 拒绝 History API 改写地址，原生片段替换仍限于报告自身。
+        var url=new URL(location.href);
+        url.hash=hash;
+        location.replace(url.href);
+      }}
     }};
     if(isMobileNavigation()){{
       setMobileNavOpen(false);

@@ -1,7 +1,9 @@
+import { buildAskHistory } from './askHistory';
 import { useDeadline } from './useDeadline';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
+import { apiRequest } from '@/services/real/apiClient';
 import { buildApiUrl } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import type { AskMessage, AskSource, AskStatus } from './askTypes';
@@ -28,11 +30,11 @@ export function useAskStream(source: AskSource) {
   const [gateError, setGateError] = useState<
     { code: string; message: string; retryAfterMs?: number | null } | null
   >(null);
-  // 额度窗口分段等待用的心跳：等待超过一小时时靠它重排下一段（见下面那个 effect）
 
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedAtRef = useRef<number | null>(null);
+  const turnSequence = useRef(0);
 
   useEffect(() => {
     if (status !== 'connecting' && status !== 'answering') return undefined;
@@ -49,6 +51,8 @@ export function useAskStream(source: AskSource) {
     abortRef.current?.abort();
     abortRef.current = null;
   }, []);
+
+  useEffect(() => abort, [abort]);
 
   const reset = useCallback(() => {
     abort();
@@ -97,31 +101,27 @@ export function useAskStream(source: AskSource) {
   useDeadline(gateError?.retryAfterMs ?? null, () => setGateError(null));
 
   const ask = useCallback(
-    async (question: string) => {
+    async (question: string, retryId?: string) => {
       const q = question.trim();
-      if (!q || status === 'connecting' || status === 'answering') return;
-
-      abort();
+      if (!q || abortRef.current) return;
       const ac = new AbortController();
       abortRef.current = ac;
       startedAtRef.current = Date.now();
       setElapsedSeconds(0);
 
-      const userMsg: AskMessage = { id: `u-${Date.now()}`, role: 'user', content: q };
-      const assistantId = `a-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        userMsg,
-        { id: assistantId, role: 'assistant', content: '', streaming: true },
-      ]);
+      const turn = retryId ? turnSequence.current : ++turnSequence.current;
+      const assistantId = retryId ?? `a-${turn}`;
+      const assistant: AskMessage = { id: assistantId, role: 'assistant', content: '', streaming: true };
+      setMessages((prev) => retryId
+        ? prev.map((message) => message.id === retryId ? assistant : message)
+        : [...prev, { id: `u-${turn}`, role: 'user', content: q }, assistant]);
       setStatus('connecting');
       setPhaseMessage('正在读取页面内容…');
       setGateError(null);
+      setModel(null);
 
-      // 历史只带纯文本，且不含正在生成的这条
-      const history = messages
-        .filter((m) => m.content.trim().length > 0 && !m.error)
-        .map((m) => ({ role: m.role, content: m.content }));
+      // 重试复用当前轮次；历史截止于原问题之前，避免把问题发两遍。
+      const history = buildAskHistory(retryId ? messages.slice(0, -2) : messages);
 
       // 必须过 buildApiUrl：这是裸 fetch（SSE 绕开了 apiRequest），前后端分开部署时
       // 相对路径会打到前端自己身上，拿回 404 或一坨 HTML 而不是事件流。
@@ -143,11 +143,12 @@ export function useAskStream(source: AskSource) {
 
       // 是否真的收到了 done。EOF 不等于答完——代理截断 / 空闲超时都会让流静默结束，
       // 把半截答案当成功呈现出去，用户完全看不出来。
-      let sawDone = false;
+      let settled = false;
 
-      const failAssistant = (message: string) => {
+      const failAssistant = (message: string, retryable = true) => {
+        settled = true;
         setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, streaming: false, error: message } : m)),
+          prev.map((m) => (m.id === assistantId ? { ...m, streaming: false, error: message, retryable } : m)),
         );
       };
 
@@ -164,11 +165,13 @@ export function useAskStream(source: AskSource) {
           signal: ac.signal,
         });
 
+        if (ac.signal.aborted) return;
         if (!res.ok) {
           // 门禁失败走 JSON + 真实状态码（服务端刻意在写第一个 SSE 字节前判完）
           const payload = await res.json().catch(() => null);
+          if (ac.signal.aborted) return;
           const code = payload?.error?.code ?? `HTTP_${res.status}`;
-          const message = payload?.error?.message ?? `请求失败（${res.status}）`;
+          const message = payload?.error?.message ?? '未能提交问题，请稍后重试。';
           // 429 带着 Retry-After（秒）。接住它算出「几点能再问」——额度那几档拒绝是有
           // 有效期的，窗口一过就该自动恢复；没有这个值的话，面板只能等用户折叠重开或
           // 刷新页面才发现其实又能问了，他等的那段时间是白等的。
@@ -177,7 +180,7 @@ export function useAskStream(source: AskSource) {
           const retryAfterMs = Number.isFinite(sec) && sec >= 0 ? Date.now() + sec * 1000 : null;
           setGateError({ code, message, retryAfterMs });
           setStatus('error');
-          failAssistant(message);
+          failAssistant(message, res.status >= 500 || code === 'ASK_NO_CONTENT');
           return;
         }
 
@@ -186,7 +189,7 @@ export function useAskStream(source: AskSource) {
         await readSseStream(
           res,
           (evt: SseEvent) => {
-            if (!evt.data) return;
+            if (!evt.data || settled || ac.signal.aborted) return;
             let data: Record<string, unknown>;
             try {
               data = JSON.parse(evt.data) as Record<string, unknown>;
@@ -199,7 +202,7 @@ export function useAskStream(source: AskSource) {
                 if (typeof data.sessionId === 'string') sessionIdRef.current = data.sessionId;
                 break;
               case 'phase':
-                setPhaseMessage(String(data.message ?? ''));
+                setPhaseMessage(data.phase === 'waiting' ? '模型正在思考…' : String(data.message ?? ''));
                 break;
               case 'model':
                 setModel({
@@ -207,24 +210,38 @@ export function useAskStream(source: AskSource) {
                   platform: data.platform ? String(data.platform) : undefined,
                 });
                 break;
+              case 'thinking': {
+                if (typeof data.text !== 'string' || !data.text) break;
+                const text = data.text;
+                setPhaseMessage('模型正在思考…');
+                setMessages((prev) => prev.map((m) => m.id === assistantId
+                  ? { ...m, thinking: (m.thinking ?? '') + text }
+                  : m));
+                break;
+              }
               case 'typing': {
                 const text = String(data.text ?? '');
                 if (!text) break;
+                setPhaseMessage('正在回答…');
                 setMessages((prev) =>
                   prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + text } : m)),
                 );
                 break;
               }
               case 'done':
-                sawDone = true;
+                settled = true;
                 setMessages((prev) =>
-                  prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
+                  prev.map((m) => (m.id === assistantId
+                    ? { ...m, content: typeof data.text === 'string' ? data.text : m.content, streaming: false,
+                        messageId: typeof data.messageId === 'string' ? data.messageId : undefined,
+                        ratingToken: typeof data.ratingToken === 'string' ? data.ratingToken : undefined }
+                    : m)),
                 );
                 setStatus('done');
                 setPhaseMessage('');
                 break;
               case 'error':
-                failAssistant(String(data.message ?? '回答失败'));
+                failAssistant(typeof data.message === 'string' ? data.message : '回答失败，请重试。');
                 setStatus('error');
                 break;
               default:
@@ -237,13 +254,14 @@ export function useAskStream(source: AskSource) {
         // 流结束但没收到 done：这是被截断，不是答完。必须如实标成中断——
         // 之前这里无条件把 answering 改成 done，半截答案会被当成功呈现，
         // 用户既看不出少了什么，也不知道可以重试。
-        if (!sawDone) {
+        if (!settled && !ac.signal.aborted) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId && m.streaming
                 ? {
                     ...m,
                     streaming: false,
+                    retryable: true,
                     error: m.content ? '回答被中断，内容可能不完整，可以再问一次。' : '连接中断，没有收到回答。',
                   }
                 : m,
@@ -251,17 +269,36 @@ export function useAskStream(source: AskSource) {
           );
           setStatus((s) => (s === 'answering' || s === 'connecting' ? 'error' : s));
         }
-      } catch (e) {
-        if (ac.signal.aborted) return;
-        const message = e instanceof Error ? e.message : '网络请求失败';
-        failAssistant(message);
+      } catch {
+        if (settled || ac.signal.aborted) return;
+        failAssistant('网络连接失败，请稍后重试。');
         setStatus('error');
+      } finally {
+        if (abortRef.current === ac) abortRef.current = null;
       }
     },
-    [abort, messages, source, status],
+    [messages, source],
   );
 
+  const retry = useCallback(() => {
+    const assistant = messages.at(-1);
+    const question = messages.at(-2);
+    if (assistant?.role === 'assistant' && assistant.retryable && question?.role === 'user')
+      return ask(question.content, assistant.id);
+  }, [ask, messages]);
+
+  const rate = useCallback(async (answerId: string, rating: number) => {
+    const answer = messages.find((message) => message.id === answerId);
+    if (!answer?.messageId || !answer.ratingToken) throw new Error('此回答暂时无法评价。');
+    const result = await apiRequest<{ rating: number }>(api.webPages.askRating(encodeURIComponent(answer.messageId)), {
+      method: 'PUT', auth: false, body: { rating, token: answer.ratingToken },
+    });
+    if (!result.success) throw new Error(result.error?.message ?? '评分未保存，请重试。');
+    setMessages((previous) => previous.map((message) => message.id === answerId ? { ...message, rating: result.data.rating } : message));
+  }, [messages]);
+
   return {
+    rate,
     messages,
     status,
     phaseMessage,
@@ -271,6 +308,7 @@ export function useAskStream(source: AskSource) {
     clearGateError,
     isBusy: status === 'connecting' || status === 'answering',
     ask,
+    retry,
     abort,
     cancel,
     reset,

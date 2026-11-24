@@ -10,10 +10,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { REPORTS_LEDGER } from '../../web/src/components/skeletons/ReportsSkeleton';
 
 const page = readFileSync(resolve(__dirname, '../..', 'web/src/pages/ReportsPage.tsx'), 'utf8');
 const start = (() => {
-  const i = page.indexOf('<table className="w-full');
+  const i = page.indexOf('<table ', page.indexOf('<section id="reports-ledger"'));
   expect(i, '找不到台账表').toBeGreaterThan(0);
   return i;
 })();
@@ -25,19 +26,19 @@ const thead = page.slice(start, page.indexOf('</thead>', start));
 
 describe('台账列宽必须是有意分配的', () => {
   it('走 table-fixed：不许再有「谁没写宽度谁吃掉全部富余」', () => {
-    expect(tableTag, '表还是自动列宽，富余会全塞进唯一没写宽度的那列').toContain('table-fixed');
+    expect(tableTag).toContain('className={REPORTS_LEDGER.table}');
+    expect(REPORTS_LEDGER.table, '表还是自动列宽，富余会全塞进唯一没写宽度的那列').toContain('table-fixed');
   });
 
   it('每一列都在表头声明了百分比宽度，一列都不许漏', () => {
-    const headers = [...thead.matchAll(/<th className="([^"]*)"/g)].map((m) => m[1]);
+    const headers = [...thead.matchAll(/<th\b[^>]*REPORTS_LEDGER\.columnWidths\[(\d+)\]/g)].map((m) => Number(m[1]));
     expect(headers.length, '表头列数变了，这条守卫要跟着更新').toBe(7);
-    for (const [i, cls] of headers.entries()) {
-      expect(cls, `第 ${i + 1} 列没有百分比宽度：${cls}`).toMatch(/\bw-\[\d+%\]/);
-    }
+    expect(headers).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    for (const index of headers) expect(REPORTS_LEDGER.columnWidths[index], `第 ${index + 1} 列没有百分比宽度`).toMatch(/\bw-\[\d+%\]/);
   });
 
   it('百分比之和恰好 100，不多不少', () => {
-    const pct = [...thead.matchAll(/w-\[(\d+)%\]/g)].map((m) => Number(m[1]));
+    const pct = REPORTS_LEDGER.columnWidths.map(width => Number(width.match(/w-\[(\d+)%\]/)?.[1]));
     expect(pct).toHaveLength(7);
     expect(pct.reduce((a, b) => a + b, 0), `实际合计 ${pct.reduce((a, b) => a + b, 0)}%`).toBe(100);
   });
@@ -48,11 +49,14 @@ describe('台账列宽必须是有意分配的', () => {
     expect(strays, `这些 td 还写着固定宽度：${strays.join(' / ')}`).toEqual([]);
   });
 
-  it('最小宽度容得下这七列，窄屏走横向滚动而不是压扁', () => {
+  it('桌面最小宽度容得下七列，窄屏逐条纵排而不压扁内容', () => {
     // 归档时间那列是 18%，里面是 mono 的完整时间戳，min-w 太小它会被压破。
-    const m = tableTag.match(/min-w-\[(\d+)rem\]/);
+    const m = REPORTS_LEDGER.table.match(/min-w-\[(\d+)rem\]/);
     expect(m, '表没有 min-w，窄屏会把列压扁').not.toBeNull();
     expect(Number(m![1])).toBeGreaterThanOrEqual(72);
+    expect(REPORTS_LEDGER.table).toContain('lg:min-w-');
+    expect(REPORTS_LEDGER.table).toContain('block');
+    expect(REPORTS_LEDGER.table).toContain('lg:table');
   });
 
   it('标题能断行：table-fixed 下超长标题撑不破列，只能换行', () => {

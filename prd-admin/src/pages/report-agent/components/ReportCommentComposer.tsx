@@ -4,7 +4,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { toast } from '@/lib/toast';
-import { uploadReportCommentImage } from '@/services';
+import { getReportInteractionApi, type ReportKind } from '../reportInteractionApi';
 import type { ReportCommentAttachmentInfo } from '@/services/contracts/reportAgent';
 
 /** 与后端 MaxCommentImages 保持一致 */
@@ -18,6 +18,8 @@ interface PendingImage {
 
 interface ReportCommentComposerProps {
   reportId: string;
+  /** 周报（默认）或月报，决定评论图片上传到哪套接口 */
+  kind?: ReportKind;
   submitting: boolean;
   /** 发送（文字与图片至少有其一；attachmentIds 为已上传附件 ID） */
   onSubmit: (content: string, attachmentIds: string[]) => void | Promise<void>;
@@ -30,7 +32,8 @@ interface ReportCommentComposerProps {
  * - 图片统一挂在评论文字下方（方案 A），允许纯图无文字
  * - Enter 发送，Shift+Enter 换行
  */
-export function ReportCommentComposer({ reportId, submitting, onSubmit, onCancel }: ReportCommentComposerProps) {
+export function ReportCommentComposer({ reportId, kind = 'weekly', submitting, onSubmit, onCancel }: ReportCommentComposerProps) {
+  const interactionApi = getReportInteractionApi(kind);
   const [text, setText] = useState('');
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
@@ -54,7 +57,7 @@ export function ReportCommentComposer({ reportId, submitting, onSubmit, onCancel
       pendingCountRef.current += accepted.length;
       setUploadingCount((c) => c + accepted.length);
       for (const file of accepted) {
-        const res = await uploadReportCommentImage({ reportId, file });
+        const res = await interactionApi.uploadCommentImage({ reportId, file });
         if (res.success && res.data) {
           const { attachmentId, url, fileName } = res.data;
           setPendingImages((prev) => [...prev, { attachmentId, url, fileName }]);
@@ -65,7 +68,7 @@ export function ReportCommentComposer({ reportId, submitting, onSubmit, onCancel
         setUploadingCount((c) => c - 1);
       }
     },
-    [reportId]
+    [reportId, interactionApi]
   );
 
   const handlePaste = useCallback(

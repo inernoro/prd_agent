@@ -1,5 +1,6 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, Clock, Copy, ExternalLink, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -155,12 +156,7 @@ function PrimaryContainerLogPanel({
           <div className={`${emptyLogStateClass} rounded border border-dashed border-[hsl(var(--hairline))] px-3 text-center text-xs text-muted-foreground`}>
             还没有容器日志。容器进入 running 后这里会显示 docker logs 的最后若干行。
           </div>
-        ) : state.status === 'loading' ? (
-          <div className={`${emptyLogStateClass} gap-2 rounded border border-[hsl(var(--hairline))] px-3 text-xs text-muted-foreground`}>
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            正在加载容器日志…
-          </div>
-        ) : state.status === 'error' ? (
+        ) : state.status === 'loading' ? <ContentLoading label="加载容器日志" variant="log" /> : state.status === 'error' ? (
           <div className={`${emptyLogStateClass} rounded border border-destructive/30 bg-destructive/10 px-3 text-center text-xs text-destructive`}>
             {state.message || '容器日志加载失败'}
           </div>
@@ -236,12 +232,7 @@ function PrimaryContainerLogPanel({
               </div>
             ) : null}
             <div className="min-h-0 flex-1 p-4">
-              {state?.status === 'loading' ? (
-                <div className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] px-3 py-3 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  正在加载容器日志…
-                </div>
-              ) : state?.status === 'error' ? (
+              {state?.status === 'loading' ? <ContentLoading label="加载容器日志" variant="log" /> : state?.status === 'error' ? (
                 <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {state.message || '容器日志加载失败'}
                 </div>

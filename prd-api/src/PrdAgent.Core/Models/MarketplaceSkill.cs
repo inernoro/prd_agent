@@ -128,6 +128,9 @@ public class MarketplaceSkill : IMarketplaceItem
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>内容或展示元信息的最后修改时间；下载和收藏不改变此值。历史记录为空。</summary>
+    public DateTime? ContentUpdatedAt { get; set; }
+
     public string GetDisplayName() => Title;
     public string GetConfigType() => "skill";
     public string? GetOwnerUserId() => OwnerUserId;

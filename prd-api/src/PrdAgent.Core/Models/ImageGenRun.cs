@@ -10,8 +10,12 @@ namespace PrdAgent.Core.Models;
 [AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 [AppOwnership(AppNames.LiteraryAgent, AppNames.LiteraryAgentDisplay)]
 [AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
-public class ImageGenRun
+public class ImageGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string OwnerAdminId { get; set; } = string.Empty;
@@ -43,6 +47,9 @@ public class ImageGenRun
     /// </summary>
     public string? ModelId { get; set; }
 
+    /// <summary>MCP 调用方明确提交的公开标识或兼容别名；省略时为空，幂等重放保留原选择。</summary>
+    public string? RequestedModelId { get; set; }
+
     /// <summary>
     /// 用户在视觉创作模型列表中选择的逻辑模型公开 ID。
     /// 该值在任务整个生命周期内保持稳定，不得被本次命中的上游模型名覆盖；
@@ -66,6 +73,8 @@ public class ImageGenRun
     public string? ModelGroupName { get; set; }
 
     public string Size { get; set; } = "1024x1024";
+    /// <summary>文学任务认领时的模型声明比例，用于幂等重放；旧任务可为空。</summary>
+    public string? LiterarySizeAspectRatio { get; set; }
 
     /// <summary>
     /// b64_json | url
@@ -116,12 +125,6 @@ public class ImageGenRun
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
 
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
-
     // ---------------------------
     // 扩展：与业务场景绑定（可选）
     // ---------------------------
@@ -162,6 +165,12 @@ public class ImageGenRun
     public List<ImageRefInput>? ImageRefs { get; set; }
 
     /// <summary>
+    /// 用户在入口明确选择的参考图数量。Worker 必须确认最终 ImageRefs 数量与它一致；
+    /// 不一致时拒绝执行，禁止静默退化为文生图或少图生成。
+    /// </summary>
+    public int? ExpectedImageRefCount { get; set; }
+
+    /// <summary>
     /// 可选：局部重绘蒙版（base64 data URI）。
     /// 白色区域 = 要重绘的区域，黑色区域 = 保持不变。
     /// 与 InitImageAssetSha256 / ImageRefs[0] 配合使用。
@@ -183,6 +192,13 @@ public class ImageGenRun
     public int? ArticleMarkerIndex { get; set; }
     /// <summary>指定时仅向同一版配图流程回填，防止旧任务污染已经改稿的新流程。</summary>
     public int? ArticleWorkflowVersion { get; set; }
+
+    /// <summary>
+    /// 本次生图指定的水印配置 id。null = 沿用账号给该应用绑定的那套（原行为）；
+    /// <see cref="WatermarkSelection.None"/> = 这次明确不打水印。
+    /// 由入队方校验归属，Worker 经 LlmRequestContext 透传给打水印的那一层。
+    /// </summary>
+    public string? WatermarkConfigId { get; set; }
 
     /// <summary>
     /// 可选：周报海报场景下，关联的海报 ID。Worker 完成时会回填对应页面 ImageUrl。

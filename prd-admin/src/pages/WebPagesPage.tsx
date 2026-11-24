@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import '@/components/workspace/workspace.css';
+import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
+import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
+import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import { getZipEntrySelection, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
+import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
+import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
+import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
 import { Badge } from '@/components/design/Badge';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
@@ -36,9 +46,10 @@ import {
   deleteSiteGroup,
   setSiteGroup,
   copySiteToTeam,
+  listRecentWork,
 } from '@/services';
-import type { HostedSite, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
-import { getSiteAskConfig } from '@/services/real/webPages';
+import type { HostedSite, HostedSiteActivity, HostedSiteTraffic, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
+import { getSite, getSiteAskConfig } from '@/services/real/webPages';
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
@@ -56,12 +67,16 @@ import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDra
 import { isAskSupported } from '@/components/web-hosting/askAvailability';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { toOpenableUrl } from '@/components/web-hosting/siteFormat';
-import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
+import { ToolbarPopover } from '@/components/design/ToolbarPopover';
+import { ListDisplayOptions } from '@/components/design/ListDisplayOptions';
+import { SegmentPills } from '@/components/design/SegmentPills';
+import { useListDisplayPreferences } from '@/hooks/useListDisplayPreferences';
+import { readUiPreference, writeUiPreference } from '@/lib/uiPreferences';
 import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
 import { DIRECT_PREVIEW_SANDBOX } from '@/components/web-hosting/previewHtml';
-import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
+import { resolveSiteForm, siteSourceLabel, SITE_FORM_REGISTRY } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
@@ -86,21 +101,23 @@ import {
   SITE_CARD_SIZES,
   WEB_PAGE_MIME,
   type SiteCaps,
-  type SiteCardSize,
   type SiteShareStats,
 } from '@/components/web-hosting/SiteCard';
 import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
-import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
+import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail, type ShareDockUploadOutcome } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
 import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/workbench/SiteWorkbench';
 import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
 import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { listMyTeams } from '@/services/real/teams';
+import { SiteEditCount, SiteNewBadge } from '@/components/web-hosting/SiteActivityMeta';
+import { returnedSiteSpace, highlightReturnedSite, retainReturnTarget } from '@/components/web-hosting/returnToHostedSite';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
   buildWebPageGroupSlot,
@@ -192,11 +209,8 @@ function fmtSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 从分享列表（后端已过滤掉 visit 便捷链 + 已撤销）构建「已分享站点」集合。
- * 仅把"单站点分享"（siteId 或 siteIds 仅含一个）计入，使卡片标记与「只撤单站点」的取消语义一致；
- * 多站点合集分享不标记单卡。 */
 /**
- * 按站点聚合分享侧的成果数据 —— 卡片大卡的「有效链接 / 最近访问」两格。
+ * 按站点聚合分享侧的成果数据 —— 卡片分享操作的有效链接数。
  *
  * 「有效」的口径与分享档顶栏那个数字必须是同一条：**未过期且未撤销**。
  * 合集链接（一条链接指向多个站点）对它命中的每个站点都计一次——用户问的是
@@ -219,21 +233,20 @@ function buildSiteShareStats(items: ShareLinkItem[], now: number = Date.now()): 
   return map;
 }
 
+function activeSingleShareSiteId(link: ShareLinkItem, now: number): string | undefined {
+  if (link.shareType !== 'single' || !isLinkActive(link, now)) return undefined;
+  return link.siteId ?? (link.siteIds?.length === 1 ? link.siteIds[0] : undefined);
+}
+
 function buildSharedSiteIds(items: ShareLinkItem[]): Set<string> {
   const set = new Set<string>();
+  const now = Date.now();
   for (const it of items) {
-    const sid = it.siteId ?? (it.siteIds?.length === 1 ? it.siteIds[0] : undefined);
+    const sid = activeSingleShareSiteId(it, now);
     if (sid) set.add(sid);
   }
   return set;
 }
-
-const sourceTypeLabels: Record<string, string> = {
-  upload: '手动上传',
-  workflow: '工作流',
-  api: 'API',
-  'saved-share': '从分享保存',
-};
 
 /**
  * 「访问」专用地址解析 —— 与「分享」彻底分开：
@@ -257,13 +270,8 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
 /** 卡片尺寸档的唯一定义在 SiteCard 组件（宽度与设计稿绑定），这里只消费。 */
-type WebPageCardSize = SiteCardSize;
-
 const CARD_SIZE_OPTIONS = SITE_CARD_SIZES;
 
-function normalizeCardSize(v: string): WebPageCardSize {
-  return v === 'small' || v === 'large' || v === 'medium' ? v : 'medium';
-}
 
 // ─── 列表偏好持久化（排序/视图/分组/卡片尺寸）───
 // 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
@@ -275,21 +283,6 @@ const PREF_KEYS = {
   cardSize: 'webpages.pref.cardSize',
 } as const;
 
-function readPref(key: string, fallback: string): string {
-  try {
-    return localStorage.getItem(key) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writePref(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    /* 隐私模式 / 存储已满时静默降级 */
-  }
-}
 
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
 
@@ -304,60 +297,6 @@ const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'largest', label: '体积' },
 ];
 
-// ─── 分段 pill 组件：当前项 pill 高亮 + 平铺所有选项，单击即切 ───
-function SegmentPills({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: string; label: string }[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div
-      className="inline-flex max-w-full items-center gap-1 overflow-x-auto p-1 rounded-lg shrink-0"
-      style={{
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border-default)',
-        scrollbarWidth: 'none',
-      }}
-    >
-      {options.map((opt) => {
-        const active = opt.value === value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className="h-7 min-w-10 shrink-0 whitespace-nowrap px-3 rounded-md text-center text-[13px] transition-colors"
-            style={
-              active
-                ? {
-                    background: 'var(--selection-bg)',
-                    color: 'var(--selection-text)',
-                    fontWeight: 500,
-                    boxShadow: 'inset 0 0 0 1px var(--selection-border)',
-                  }
-                : {
-                    background: 'transparent',
-                    color: 'var(--text-muted)',
-                  }
-            }
-            onMouseEnter={(e) => {
-              if (!active) e.currentTarget.style.color = 'var(--text-primary)';
-            }}
-            onMouseLeave={(e) => {
-              if (!active) e.currentTarget.style.color = 'var(--text-muted)';
-            }}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 // ─── Main Page ───
 
@@ -370,10 +309,20 @@ export type { SiteCaps };
 
 export default function WebPagesPage() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const routeParams = new URLSearchParams(location.search);
+  const focusSiteId = routeParams.get('focusSite');
+  const deliveryVersion = Number(routeParams.get('mcpDelivery'));
+  const checkedRecentDelivery = useRef(Boolean(location.search));
+  const [returnTargetId, setReturnTargetId] = useState<string | null>(null);
+  const [ownerReturnSite, setOwnerReturnSite] = useState<HostedSite | null>(null);
+  const pendingReturnId = useRef<string | null>(null);
   const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
+  const seenDeliveryKey = currentUserId ? `web-hosting:mcp-delivery:${currentUserId}` : null;
   const [sites, setSites] = useState<HostedSite[]>([]);
+  const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'restricted'>('all');
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   // SaaS 空间模型：个人空间 / 团队空间（协作边界）；空间内文件夹由内容派生（纯组织）
@@ -385,22 +334,25 @@ export default function WebPagesPage() {
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   // 「从个人空间添加」复制选择器
   const [showCopyFromPersonal, setShowCopyFromPersonal] = useState(false);
-  const { teams, loadTeams } = useTeamStore();
+  const { teams, loadTeams, loaded: teamsLoaded } = useTeamStore();
   const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
+  const [siteTraffic, setSiteTraffic] = useState<Record<string, HostedSiteTraffic>>({});
+  const [siteActivity, setSiteActivity] = useState<Record<string, HostedSiteActivity>>({});
   const [siteVisitors, setSiteVisitors] = useState<Record<string, number>>({});
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
   // 团队空间下我的有效角色（owner/editor/viewer）；个人空间为 null（=自己的，全权）
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  // 来源筛选（手动上传 / 工作流生成 / API 生成 / 保存自分享）；null = 不限
+  // 来源筛选（手动上传 / 工作流生成 / MCP 生成 / 保存自分享）；null = 不限
   const [activeSource, setActiveSource] = useState<string | null>(null);
-  const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
+  const { sort, setSort, cardSize, setCardSize } = useListDisplayPreferences({
+    sortKey: PREF_KEYS.sort, cardSizeKey: PREF_KEYS.cardSize,
+    sortOptions: SORT_OPTIONS, cardSizeOptions: CARD_SIZE_OPTIONS,
+    defaultSort: 'newest', defaultCardSize: 'medium',
+  });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
-    () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
-  );
-  const [cardSize, setCardSize] = useState<WebPageCardSize>(
-    () => normalizeCardSize(readPref(PREF_KEYS.cardSize, 'medium')),
+    () => readUiPreference(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
   );
 
   // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
@@ -411,16 +363,22 @@ export default function WebPagesPage() {
     [currentSpace],
   );
   const [groupMode, setGroupMode] = useState<GroupMode>(
-    () => normalizeGroupMode(readPref(PREF_KEYS.groupMode, 'time') as GroupMode, readLastSpace().kind),
+    () => normalizeGroupMode(readUiPreference(PREF_KEYS.groupMode, 'time') as GroupMode, readLastSpace().kind),
   );
 
   // 排序/视图/分组/卡片尺寸偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
-  useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
-  useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
-  useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
-  useEffect(() => { writePref(PREF_KEYS.cardSize, cardSize); }, [cardSize]);
+  useEffect(() => { writeUiPreference(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
+  useEffect(() => { writeUiPreference(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const selectionContainer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectionMode) return;
+    const exit = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) setSelectionMode(false); };
+    window.addEventListener('keydown', exit);
+    return () => window.removeEventListener('keydown', exit);
+  }, [selectionMode]);
   // 分享链接原始列表：这一份是唯一事实源，「已分享」标记从它算出来。
   const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心。
@@ -508,6 +466,8 @@ export default function WebPagesPage() {
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
+  const [collectionInitialSites, setCollectionInitialSites] = useState<Array<{ id: string; title: string }> | null>(null);
+  const [showCollectionLibrary, setShowCollectionLibrary] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
@@ -520,11 +480,26 @@ export default function WebPagesPage() {
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
-  // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
-  const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  const [sitePreview, setSitePreview] = useState<{ site: HostedSite; openComments: boolean } | null>(null);
+  const commentSite = sitePreview?.site;
+  const relatedOpenId = new URLSearchParams(location.search).get('openSite');
+  const [relatedOpenError, setRelatedOpenError] = useState('');
+  const showSitePreview = useCallback((site: HostedSite) => setSitePreview({ site, openComments: false }), []);
+  const { open: openRelatedSite, cancel: cancelRelatedSite } = useRelatedSiteOpener(showSitePreview, setRelatedOpenError);
+  useEffect(() => {
+    if (!relatedOpenId) return;
+    void openRelatedSite(relatedOpenId);
+    return cancelRelatedSite;
+  }, [relatedOpenId, openRelatedSite, cancelRelatedSite]);
+
+  const openSiteComments = (site: HostedSite) => {
+    cancelRelatedSite();
+    setSitePreview({ site, openComments: true });
+  };
+
   // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
   const openSiteEditor = (site: HostedSite) => {
-    setCommentSite(null);
+    setSitePreview(null);
     setWorkbenchTarget({ kind: 'site', site });
   };
   // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
@@ -543,28 +518,105 @@ export default function WebPagesPage() {
    */
   const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
 
+  useEffect(() => {
+    if (checkedRecentDelivery.current || location.search || !seenDeliveryKey) return;
+    let active = true;
+    const enterLibrary = () => {
+      if (!active) return;
+      checkedRecentDelivery.current = true;
+      navigate({ pathname: location.pathname }, { replace: true, state: { webPagesEntry: 'library' } });
+    };
+    void listRecentWork({ webDeliveriesOnly: true, limit: 1 }).then((response) => {
+      if (!active) return;
+      const item = response.success ? response.data.items[0] : undefined;
+      const deliveredAt = item ? Date.parse(item.lastActiveAt) : 0;
+      const seenAt = Number(readUiPreference(seenDeliveryKey, '0')) || 0;
+      if (item && deliveredAt > Math.max(seenAt, Date.now() - 86_400_000)) {
+        checkedRecentDelivery.current = true;
+        navigate(item.route, { replace: true });
+      } else {
+        enterLibrary();
+      }
+    }).catch(enterLibrary);
+    return () => { active = false; };
+  }, [location.pathname, location.search, navigate, seenDeliveryKey]);
+
+  useEffect(() => {
+    setOwnerReturnSite(null);
+    if (!focusSiteId) { pendingReturnId.current = null; setReturnTargetId(null); return; }
+    pendingReturnId.current = focusSiteId;
+    let active = true;
+    void Promise.all([getSite(focusSiteId), listMyTeams()]).then(([siteResult, teamResult]) => {
+      if (!active) return;
+      if (!siteResult.success) throw new Error('网页不存在，或你已没有访问权限');
+      const target = siteResult.data;
+      const preferredSpace = returnedSiteSpace(target, teamResult.success ? teamResult.data.items.map((item) => item.team.id) : [], readLastSpace());
+      if (!preferredSpace && target.ownerUserId !== currentUserId) throw new Error('暂时无法进入这个网页所属的团队空间');
+      const space: Space = preferredSpace ?? { kind: 'personal' };
+      if (!preferredSpace) setOwnerReturnSite(target);
+      setKeyword(''); setActiveTag(null); setActiveSource(null);
+      setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library'); setVisibilityFilter('all');
+      setCurrentSpace(space); rememberSpace(space);
+      setSites(previous => [target, ...previous.filter(site => site.id !== target.id)]);
+      setReturnTargetId(target.id);
+    }).catch((error: unknown) => {
+      if (active) toast.error('无法定位网页', error instanceof Error ? error.message : '请稍后重试');
+    });
+    return () => { active = false; };
+  }, [focusSiteId, currentUserId]);
+
   // ─── Load ───
 
+  const loadGeneration = useRef(0);
+  const requestSites = useCallback(() => listSites({
+    keyword: keyword || undefined,
+    tag: activeTag || undefined,
+    sourceType: activeSource || undefined,
+    sort,
+    limit: 200,
+    scope: teamScope.scope,
+    teamId: teamScope.teamId,
+  }), [keyword, activeTag, activeSource, sort, teamScope]);
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setLoading(true);
-    const res = await listSites({
-      keyword: keyword || undefined,
-      tag: activeTag || undefined,
-      sourceType: activeSource || undefined,
-      sort,
-      limit: 200,
-      scope: teamScope.scope,
-      teamId: teamScope.teamId,
-    });
+    const res = await requestSites();
+    if (generation !== loadGeneration.current) return;
     if (res.success) {
-      setSites(res.data.items);
+      setSites(previous => retainReturnTarget(res.data.items, previous, keyword || activeTag || activeSource ? null : pendingReturnId.current, currentSpace));
       setTotal(res.data.total);
       setOwnerCards(res.data.owners ?? {});
       setSiteVisitors(res.data.visitors ?? {});
+      setSiteActivity(res.data.activity ?? {});
+      setSiteTraffic(res.data.traffic ?? {});
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
-  }, [keyword, activeTag, activeSource, sort, teamScope]);
+  }, [requestSites, currentSpace, keyword, activeTag, activeSource]);
+
+  useEffect(() => {
+    let active = true;
+    let requestId = 0;
+    let wasHidden = document.visibilityState === 'hidden';
+    const refresh = () => {
+      const hidden = document.visibilityState === 'hidden';
+      if (wasHidden && !hidden) {
+        const id = ++requestId;
+        const generation = loadGeneration.current;
+        // 仅更新统计；不能切换 loading 或替换站点对象，否则会重建缩略图和预览 iframe。
+        void requestSites().then(result => {
+          if (active && id === requestId && generation === loadGeneration.current && result.success) {
+            setSiteActivity(result.data.activity ?? {});
+            setSiteTraffic(result.data.traffic ?? {});
+            setSiteVisitors(result.data.visitors ?? {});
+          }
+        }).catch(() => { /* 后台刷新失败保留已有统计。 */ });
+      }
+      wasHidden = hidden;
+    };
+    document.addEventListener('visibilitychange', refresh);
+    return () => { active = false; document.removeEventListener('visibilitychange', refresh); };
+  }, [requestSites]);
 
   // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
   // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
@@ -601,7 +653,7 @@ export default function WebPagesPage() {
   const loadShares = useCallback(async () => {
     const res = await listSiteShares();
     if (res.success) {
-      // 只写这一份；「已分享」标记由它派生。卡片的「有效链接 N / 最近访问」也要按站点聚合，
+      // 只写这一份；「已分享」标记由它派生。分享操作中的有效链接数也要按站点聚合，
       // 只留一个 Set 就只能回答「有没有分享过」，回答不了「还有几条有效、上次谁打开的」
       setShareLinks(res.data.items);
     }
@@ -611,6 +663,17 @@ export default function WebPagesPage() {
   useEffect(() => { loadMeta(); }, [loadMeta]);
   useEffect(() => { loadShares(); }, [loadShares]);
   useEffect(() => { void loadTeams(); }, [loadTeams]);
+
+  useEffect(() => {
+    const refreshPermissions = () => {
+      void load();
+      void loadShares();
+      void loadMeta();
+      void loadGroups();
+    };
+    window.addEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, refreshPermissions);
+    return () => window.removeEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, refreshPermissions);
+  }, [load, loadShares, loadMeta, loadGroups]);
 
   // 把刚上传成功的站点 ID 加入 freshIds，1.3s 后自动移除（与 CSS 动画时长匹配）。
   // 仅在用户主动创建时触发；筛选/排序导致的 sites 重组不动它。
@@ -642,6 +705,7 @@ export default function WebPagesPage() {
         load();
         return;
       }
+      setReturnTargetId(prev => prev === id ? null : prev);
       setSites(prev => prev.filter(s => s.id !== id));
       setTotal(prev => prev - 1);
       loadMeta();
@@ -653,6 +717,9 @@ export default function WebPagesPage() {
     if (!confirm(`确定删除选中的 ${selectedIds.size} 个站点？`)) return;
     const res = await batchDeleteSites([...selectedIds]);
     if (res.success) {
+      setReturnTargetId(null);
+      pendingReturnId.current = null;
+      setSites(previous => previous.filter(site => !selectedIds.has(site.id)));
       setSelectedIds(new Set());
       load();
       loadMeta();
@@ -721,15 +788,13 @@ export default function WebPagesPage() {
 
   // 取消分享：撤销所有"仅指向该站点"的分享链接（单站点分享），多站点合集分享不动。
   const cancelShareForSite = useCallback(async (id: string) => {
-    const res = await listSiteShares();
+    const res = await listSiteShares(false, id);
     if (!res.success) {
       toast.error('取消分享失败', res.error?.message || '请稍后重试');
       return;
     }
-    const targets = res.data.items.filter((it) => {
-      const sid = it.siteId ?? (it.siteIds?.length === 1 ? it.siteIds[0] : undefined);
-      return sid === id;
-    });
+    const now = Date.now();
+    const targets = res.data.items.filter(link => activeSingleShareSiteId(link, now) === id);
     if (targets.length === 0) { await loadShares(); return; }
     let ok = 0;
     for (const t of targets) {
@@ -745,6 +810,13 @@ export default function WebPagesPage() {
 
   const handleConfirmReplace = useCallback(async () => {
     if (!replaceTarget || replacing) return;
+    if (replaceTarget.file.name.toLowerCase().endsWith('.zip')) {
+      setPendingExternalFile(replaceTarget.file);
+      setEditItem(replaceTarget.site);
+      setShowUploadDialog(true);
+      setReplaceTarget(null);
+      return;
+    }
     setReplacing(true);
     try {
       const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
@@ -766,8 +838,7 @@ export default function WebPagesPage() {
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
-    setShareTargetId(null);
-    setShowShareDialog(true);
+    setCollectionInitialSites(sites.filter(site => selectedIds.has(site.id)).map(site => ({ id: site.id, title: site.title })));
   };
 
   const toggleSelect = (id: string) => {
@@ -780,11 +851,17 @@ export default function WebPagesPage() {
   };
 
   // 分组：保持服务端排序顺序，仅按 first-seen 切分节（排序与分组并存）
-  // 当前空间的网页：个人空间=我拥有且未进任何团队空间的（客户端剔除）；团队空间=后端已按 Id 过滤
-  const spaceSites = useMemo(
-    () => (currentSpace.kind === 'team' ? sites : sites.filter((s) => !(s.sharedTeamIds && s.sharedTeamIds.length))),
-    [sites, currentSpace],
-  );
+  // 个人空间保留所有者当前没有可访问团队空间的网页，团队空间由服务端按 Id 过滤。
+  const spaceSites = useMemo(() => {
+    if (currentSpace.kind === 'team') return sites;
+    const teamIds = new Set(teams.map(item => item.team.id));
+    const returnSite = ownerReturnSite?.id === returnTargetId && !keyword && !activeTag && !activeSource
+      ? ownerReturnSite : null;
+    const personal = sites.filter(({ id, ownerUserId, sharedTeamIds }) => id === returnSite?.id || !sharedTeamIds?.length
+      || (teamsLoaded && ownerUserId === currentUserId && !sharedTeamIds.some(teamId => teamIds.has(teamId))));
+    if (returnSite && !personal.some(site => site.id === returnSite.id)) return [returnSite, ...personal];
+    return personal;
+  }, [sites, currentSpace, teams, teamsLoaded, currentUserId, ownerReturnSite, returnTargetId, keyword, activeTag, activeSource]);
   const spaceFolderCanonicalNames = useMemo(() => new Map(
     spaceSites
       .filter((site) => !!site.folder)
@@ -824,7 +901,7 @@ export default function WebPagesPage() {
     ),
     [folders, managedFolderCanonicalNames, managedFolders],
   );
-  const displaySites = useMemo(() => {
+  const scopedSites = useMemo(() => {
     // 团队空间按分组（专题/日常分类）过滤；个人空间沿用文件夹过滤
     if (currentSpace.kind === 'team') {
       if (activeGroupId === UNGROUPED_ID) return spaceSites.filter((s) => !s.groupId);
@@ -842,6 +919,31 @@ export default function WebPagesPage() {
       ))
       : spaceSites;
   }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind, personalFolderCanonicalNames]);
+  const displaySites = useMemo(() => scopedSites.filter(site => visibilityFilter === 'all' || (visibilityFilter === 'public' ? site.visibility === 'public' : site.visibility !== 'public')), [scopedSites, visibilityFilter]);
+  useEffect(() => {
+    if (loading || !focusSiteId || returnTargetId !== focusSiteId || !displaySites.some((site) => site.id === focusSiteId)) return;
+    const element = Array.from(document.querySelectorAll<HTMLElement>('[data-hosted-site-id]'))
+      .find((item) => item.dataset.hostedSiteId === focusSiteId);
+    if (!element) return;
+    const cleanup = highlightReturnedSite(element);
+    if (seenDeliveryKey && Number.isSafeInteger(deliveryVersion) && deliveryVersion > 0 && deliveryVersion <= Date.now()) {
+      const seenAt = Number(readUiPreference(seenDeliveryKey, '0')) || 0;
+      if (deliveryVersion > seenAt) {
+        writeUiPreference(seenDeliveryKey, String(deliveryVersion));
+        toast.info('已定位 MCP 交付', displaySites.find((site) => site.id === focusSiteId)?.title);
+      }
+    }
+    const timer = window.setTimeout(() => {
+      cleanup();
+      const query = new URLSearchParams(location.search);
+      query.delete('focusSite');
+      query.delete('mcpDelivery');
+      navigate({ pathname: location.pathname, search: query.toString() },
+        { replace: true, state: { webPagesEntry: 'delivery' } });
+    }, 2600);
+    return () => { clearTimeout(timer); cleanup(); };
+  }, [loading, focusSiteId, returnTargetId, displaySites, location.pathname, location.search, navigate, deliveryVersion, seenDeliveryKey]);
+
   // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
   const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
   // 树导航的分组计数（来自当前空间已加载的站点）
@@ -876,6 +978,10 @@ export default function WebPagesPage() {
     }
     return m;
   }, [spaceSites, personalFolderCanonicalNames, personalFolderOptions]);
+  const relatedSummaries = useRelatedSummaries(displaySites.map(site => site.id));
+  const selection = useHostedSiteSelection({ container: selectionContainer, enabled: !isMobile && workspaceTab === 'library',
+    mode: selectionMode, selected: selectedIds, onChange: setSelectedIds, visibleIds: displaySites.map(site => site.id) });
+
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
   // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销
@@ -936,14 +1042,19 @@ export default function WebPagesPage() {
     </select>
   ) : null;
 
-  /**
-   * 打开站点本体。与卡片/列表两个视图共用同一条路径：先记一次访客痕迹，
-   * 再用 /s/wp/{token} 访问链打开（同步开窗规避弹窗拦截，地址异步解析后填入）。
-   */
+  /** 卡片和列表共用访问路径，开窗成功后再记录本人访问。 */
   const handleVisitSite = useCallback((site: HostedSite) => {
-    void recordSiteView(site.id);
     const w = window.open('', '_blank');
-    void resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+    if (!w) return;
+    void resolveVisitUrl(site).then(url => {
+      if (w.closed) return;
+      w.location.href = url;
+      void recordSiteView(site.id).then(result => {
+        if (result.success) setSiteActivity(previous => previous[site.id]
+          ? { ...previous, [site.id]: { ...previous[site.id], isNew: false } }
+          : previous);
+      }).catch(() => { /* 访问记录失败不能关闭已经打开的网页。 */ });
+    }).catch(() => { w.close(); });
   }, []);
   const activeSortLabel = SORT_OPTIONS.find(o => o.value === sort)?.label ?? '最新';
   const activeSpaceLabel = currentSpace.kind === 'team'
@@ -966,8 +1077,8 @@ export default function WebPagesPage() {
     loaded: sites.length,
     recentCount: countRecent(spaceSites),
     shown: displaySites.length,
-    filtered: !!(activeFolder || activeGroupId || activeTag || activeSource || keyword.trim()),
-  }), [groupMode, currentSpace.kind, activeGroupId, activeFolderLabel, activeFolder, activeTag, activeSource, keyword, total, sites.length, spaceSites, displaySites.length]);
+    filtered: !!(activeFolder || activeGroupId || activeTag || activeSource || keyword.trim() || visibilityFilter !== 'all'),
+  }), [groupMode, currentSpace.kind, activeGroupId, activeFolderLabel, activeFolder, activeTag, activeSource, keyword, total, sites.length, spaceSites, displaySites.length, visibilityFilter]);
 
   const filterCount = [
     activeFolder != null,
@@ -977,11 +1088,13 @@ export default function WebPagesPage() {
     sort !== 'newest',
     groupMode !== 'time',
     viewMode !== 'grid',
+    visibilityFilter !== 'all',
   ].filter(Boolean).length;
 
   const enterSpace = (s: Space) => {
     // 幂等守卫：点的就是当前空间则不动（双击当前团队改名时，两次 click 不应触发整页重载）
     if (s.kind === currentSpace.kind && (s.kind === 'personal' || (currentSpace.kind === 'team' && s.teamId === currentSpace.teamId))) return;
+    setVisibilityFilter('all');
     setCurrentSpace(s);
     rememberSpace(s);
     // 档位随空间收敛：个人的「按文件夹」进团队就不成立了，落回按时间，不给一个空列表
@@ -1080,6 +1193,9 @@ export default function WebPagesPage() {
     const teamIds = targetSpace.kind === 'team' ? [targetSpace.teamId] : [];
     const r1 = await setSiteTeams(movingSite.id, teamIds);
     if (!r1.success) { toast.error('移动失败', r1.error?.message); return; }
+    // 权限归属已成功变更，不能让尚未结束的返回定位把旧归属重新补回。
+    if (pendingReturnId.current === movingSite.id) pendingReturnId.current = null;
+    setSites(previous => previous.map(site => site.id === movingSite.id ? { ...site, sharedTeamIds: teamIds } : site));
     // 同步文件夹（空间内组织）；移到个人空间也允许带文件夹名
     await updateSite(movingSite.id, { folder: folder ?? '' });
     setMovingSite(null);
@@ -1145,50 +1261,62 @@ export default function WebPagesPage() {
       <div
         className="grid"
         style={{
-          // 设计稿：minmax(236px,1fr) 拉伸铺满 + gap 14 + 左对齐。
-          // 固定轨道 + 居中会让卡片左缘与上方结论行错开、右侧留一条死区。
-          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
+          // 已确认的 Demo：桌面三档使用注册表中的实际宽度，并与内容左缘对齐。
+          // 手机沿用两列自适应；窄容器限制为可用宽度，不额外拉伸卡片。
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(0, min(100%, ${cardWidth}px)))`,
           justifyContent: isMobile ? 'stretch' : 'start',
           alignContent: 'start',
+          alignItems: 'start',
           gap: isMobile ? 12 : 14,
         }}
       >
         {items.map(site => (
-          <SiteCard
-            key={site.id}
-            site={site}
-            size={cardSize}
-            selected={selectedIds.has(site.id)}
-            fresh={freshIds.has(site.id)}
-            shared={sharedSiteIds.has(site.id)}
-            shareStats={siteShareStats.get(site.id)}
-            caps={siteCaps(site)}
-            ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
-            visitorCount={siteVisitors[site.id]}
-            onVisit={() => handleVisitSite(site)}
-            onSelect={() => toggleSelect(site.id)}
-            onTogglePublic={() => handleMakePublic(site)}
-            onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
-            onDelete={() => handleDelete(site.id)}
-            onShare={(anchor) => handleShare(site.id, anchor)}
-            onQrCode={() => setQrSite(site)}
-            onTransferToLibrary={() => setLibraryTargetSite(site)}
-            onReplaceFile={(file) => setReplaceTarget({ site, file })}
-            onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
-            onMove={() => setMovingSite(site)}
-            onComments={() => setCommentSite(site)}
-            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site)}
-          />
+          <div key={site.id} className="min-w-0">
+            <SiteCard
+              site={site}
+              size={cardSize}
+              selected={selectedIds.has(site.id)}
+              selectionMode={selectionMode}
+              fresh={freshIds.has(site.id)}
+              shared={sharedSiteIds.has(site.id)}
+              shareStats={siteShareStats.get(site.id)}
+              caps={siteCaps(site)}
+              ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
+              traffic={siteTraffic[site.id]}
+              activity={siteActivity[site.id]}
+              relatedSummary={relatedSummaries[site.id]}
+              onNavigateRelated={openRelatedSite}
+              onVisit={() => handleVisitSite(site)}
+              onSelect={() => toggleSelect(site.id)}
+              onTogglePublic={() => handleMakePublic(site)}
+              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+              onDelete={() => handleDelete(site.id)}
+              onShare={(anchor) => handleShare(site.id, anchor)}
+              onQrCode={() => setQrSite(site)}
+              onTransferToLibrary={() => setLibraryTargetSite(site)}
+              onReplaceFile={(file) => setReplaceTarget({ site, file })}
+              onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
+              onMove={() => setMovingSite(site)}
+              onComments={() => openSiteComments(site)}
+              onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+              onAiEdit={() => openSiteEditor(site)}
+            />
+          </div>
         ))}
       </div>
     ) : (
       <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
+            traffic={siteTraffic[site.id]}
+            activity={siteActivity[site.id]}
+            relatedSummary={relatedSummaries[site.id]}
+            onNavigateRelated={openRelatedSite}
+            onVisit={() => handleVisitSite(site)}
             key={site.id}
             site={site}
             selected={selectedIds.has(site.id)}
+            selectionMode={selectionMode}
             shared={sharedSiteIds.has(site.id)}
             caps={siteCaps(site)}
             onSelect={() => toggleSelect(site.id)}
@@ -1197,7 +1325,7 @@ export default function WebPagesPage() {
             onShare={(anchor) => handleShare(site.id, anchor)}
             onQrCode={() => setQrSite(site)}
             onTogglePublic={() => handleMakePublic(site)}
-            onComments={() => setCommentSite(site)}
+            onComments={() => openSiteComments(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
             onAiEdit={() => openSiteEditor(site)}
           />
@@ -1220,6 +1348,7 @@ export default function WebPagesPage() {
           网页托管
         </span>
       </div>
+      <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
                 <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
                   <button
@@ -1341,23 +1470,9 @@ export default function WebPagesPage() {
                   open={openToolbarPanel === 'display'}
                   onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
                 >
-                  <div className="space-y-3" style={{ minWidth: 260 }}>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">排序</div>
-                      <div data-tour-id="webpages-sort-pills">
-                        <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
-                      <div data-tour-id="webpages-card-size-pills">
-                        <SegmentPills
-                          options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-                          value={cardSize}
-                          onChange={(v) => setCardSize(normalizeCardSize(v))}
-                        />
-                      </div>
-                    </div>
+                  <ListDisplayOptions sortOptions={SORT_OPTIONS} sort={sort} onSortChange={setSort}
+                    cardSizeOptions={CARD_SIZE_OPTIONS} cardSize={cardSize} onCardSizeChange={setCardSize}
+                    sortTourId="webpages-sort-pills" cardSizeTourId="webpages-card-size-pills" rememberPreferences>
                     <div className="space-y-1">
                       <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -1378,8 +1493,7 @@ export default function WebPagesPage() {
                         ))}
                       </div>
                     </div>
-                    <div className="text-[11px] text-token-muted">偏好会被记住，下次进来沿用。</div>
-                  </div>
+                  </ListDisplayOptions>
                 </ToolbarPopover>
 
                 <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">
@@ -1411,6 +1525,8 @@ export default function WebPagesPage() {
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
                   <div className="ml-auto flex shrink-0 items-center gap-2">
                     {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
+                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
                       onGenerate={openGenerateDialog}
                       onOpenSettings={() => setShowGenerationSettings(true)}
@@ -1430,6 +1546,76 @@ export default function WebPagesPage() {
             </>
   );
 
+  const handleQuickUpload = async (file: File): Promise<ShareDockUploadOutcome | void> => {
+    // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
+    // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
+    const targetSpace = currentSpace;
+    // 同步快照当前选中的分组：正停留在某专题/分类视图里拖拽上传 → 新网页直接归入该分组
+    const targetGroupId = targetSpace.kind === 'team' ? activeRealGroupId : null;
+    // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
+    // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
+    // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
+    // 由后端 403 + 「归属团队失败」兜底，避免误拦正在加载的编辑者（false 无权限 toast）。
+    if (targetSpace.kind === 'team' && myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
+      toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
+      return;
+    }
+    const up = await uploadSite({ file });
+    if (!up.success || !up.data) {
+      toast.error('上传失败', up.error?.message || '请稍后重试');
+      return;
+    }
+    const site = up.data;
+    // 跟随发起时空间投送：在团队空间内拖拽上传的网页必须归属该团队，
+    // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
+    if (targetSpace.kind === 'team') {
+      const assigned = await setSiteTeams(site.id, [targetSpace.teamId]);
+      // 归属失败（网络 / 无权限 / 404）时必须告知用户：站点已上传但仍在个人空间，
+      // 不能静默报“上传成功”，否则用户以为投到团队了却找不到
+      if (!assigned.success) {
+        load();
+        loadMeta();
+        toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+        return;
+      }
+      // 正在某专题/分类视图内上传 → 顺手归入该分组（失败不阻断，仅提示）
+      if (targetGroupId) {
+        const grouped = await setSiteGroup(site.id, targetGroupId);
+        if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
+      }
+    }
+    markSiteAsFresh(site.id);
+    load();
+    loadMeta();
+    return {
+      title: '上传成功',
+      createShare: async (mode) => {
+        const pwd = mode === 'password' ? genPassword() : undefined;
+        // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
+        // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
+        // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
+        const gated = await runWithPrivateSourceGate({
+          inspect: () => getSitesPrivateSources([site.id]),
+          run: (fingerprint) => createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public', confirmedPrivateSourceFingerprint: fingerprint }),
+          actionLabel: '生成分享',
+        });
+        if (gated.status !== 'done') throw new Error('已取消分享：本页引用的私有资料没有对外发出');
+        const share = gated.res;
+        if (share.success && share.data) {
+          loadShares();
+          return {
+            title: '已生成分享',
+            shareUrl: `${window.location.origin}${share.data.shareUrl}`,
+            password: share.data.password,
+          };
+        }
+        const msg = share.error?.message || '分享码生成失败';
+        toast.error('分享码生成失败', `${msg}，可在卡片上手动分享`);
+        throw new Error(msg);
+      },
+    };
+  };
+
   return (
     <div
       data-tour-id="webpages-root"
@@ -1437,9 +1623,9 @@ export default function WebPagesPage() {
       style={{
         // 不再自刷整幅不透明深色底（会盖住应用背景、与外壳 16px 内边距形成
         // "黑框 + 内容内缩"的错位，2026-07-08 用户反馈）；仅保留顶部一缕
-        // 品牌靛蓝氛围光，透明叠加在应用背景上。p-4 同步移除——外壳已供内边距。
+        // 沿用应用背景和主题材质，外壳已供内边距。
         background:
-          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.12) 0%, transparent 55%)',
+          'transparent',
         width: '100%',
       }}
     >
@@ -1462,79 +1648,8 @@ export default function WebPagesPage() {
           compactSlots
           dropzone={{
           hint: '拖文件到此上传',
-          accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
-          // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
-          onFiles: async (files) => {
-            const f = files[0];
-            if (!f) return;
-            // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
-            // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
-            const targetSpace = currentSpace;
-            // 同步快照当前选中的分组：正停留在某专题/分类视图里拖拽上传 → 新网页直接归入该分组
-            const targetGroupId = targetSpace.kind === 'team' ? activeRealGroupId : null;
-            // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
-            // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
-            // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
-            // 由后端 403 + 「归属团队失败」兜底，避免误拦正在加载的编辑者（false 无权限 toast）。
-            if (targetSpace.kind === 'team' && myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
-              toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
-              return;
-            }
-            const up = await uploadSite({ file: f });
-            if (!up.success || !up.data) {
-              toast.error('上传失败', up.error?.message || '请稍后重试');
-              return;
-            }
-            const site = up.data;
-            // 跟随发起时空间投送：在团队空间内拖拽上传的网页必须归属该团队，
-            // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
-            if (targetSpace.kind === 'team') {
-              const assigned = await setSiteTeams(site.id, [targetSpace.teamId]);
-              // 归属失败（网络 / 无权限 / 404）时必须告知用户：站点已上传但仍在个人空间，
-              // 不能静默报“上传成功”，否则用户以为投到团队了却找不到
-              if (!assigned.success) {
-                load();
-                loadMeta();
-                toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
-                return;
-              }
-              // 正在某专题/分类视图内上传 → 顺手归入该分组（失败不阻断，仅提示）
-              if (targetGroupId) {
-                const grouped = await setSiteGroup(site.id, targetGroupId);
-                if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
-              }
-            }
-            markSiteAsFresh(site.id);
-            load();
-            loadMeta();
-            return {
-              title: '上传成功',
-              createShare: async (mode) => {
-                const pwd = mode === 'password' ? genPassword() : undefined;
-                // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
-                // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
-                // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
-                const gated = await runWithPrivateSourceGate({
-                  inspect: () => getSitesPrivateSources([site.id]),
-                  run: (fingerprint) => createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public', confirmedPrivateSourceFingerprint: fingerprint }),
-                  actionLabel: '生成分享',
-                });
-                if (gated.status !== 'done') throw new Error('已取消分享：本页引用的私有资料没有对外发出');
-                const share = gated.res;
-                if (share.success && share.data) {
-                  loadShares();
-                  return {
-                    title: '已生成分享',
-                    shareUrl: `${window.location.origin}${share.data.shareUrl}`,
-                    password: share.data.password,
-                  };
-                }
-                const msg = share.error?.message || '分享码生成失败';
-                toast.error('分享码生成失败', `${msg}，可在卡片上手动分享`);
-                throw new Error(msg);
-              },
-            };
-          },
+          accept: [...WEB_HOSTING_UPLOAD_EXTENSIONS],
+          onFiles: ([file]) => { if (file) return handleQuickUpload(file); },
         }}
           slots={[
           {
@@ -1608,6 +1723,21 @@ export default function WebPagesPage() {
                 <span className="text-[13px] font-semibold">筛选</span>
                 {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
               </button>
+              <button
+                type="button"
+                onClick={openCreateUploadDialog}
+                aria-label="上传网页"
+                title="上传网页"
+                data-tour-id="webpages-mobile-upload"
+                className="h-11 w-11 rounded-[12px] inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <Upload size={17} />
+              </button>
             </div>
             <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-token-muted">
               <span className="truncate">{activeSpaceLabel}</span>
@@ -1628,7 +1758,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
+          <MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />
         )}
 
         {/* Batch actions */}
@@ -1846,6 +1976,7 @@ export default function WebPagesPage() {
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
+                    <button type="button" onClick={() => { setShowMobileFilters(false); setShowCollectionLibrary(true); }} className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"><FolderOpen size={15} />我的合集</button>
                     {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
                       <button
                         type="button"
@@ -1871,7 +2002,7 @@ export default function WebPagesPage() {
             <span className="text-sm text-token-muted">已选 {selectedIds.size} 项</span>
             {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
-              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
+              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 创建合集</Button>
             )}
             {batchGroupPicker}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
@@ -1894,6 +2025,10 @@ export default function WebPagesPage() {
         style={!isMobile ? { border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', background: 'var(--bg-base)' } : undefined}
       >
       {!isMobile && desktopTopBar}
+      {workspaceTab === 'library' && <nav className="workspace-facets px-3 pt-2" aria-label="网页可见范围筛选">
+        <span>当前范围</span>{([{key:'all',label:'全部网页',count:scopedSites.length},{key:'public',label:'已公开',count:scopedSites.filter(site=>site.visibility==='public').length},{key:'restricted',label:'未公开',count:scopedSites.filter(site=>site.visibility!=='public').length}] as const).map(filter=><button type="button" key={filter.key} aria-pressed={visibilityFilter===filter.key} onClick={()=>setVisibilityFilter(filter.key)}>{filter.label} {loading ? '—' : filter.count}</button>)}<span>已载入范围 · 保留原分享权限</span>
+      </nav>}
+
       <div
         className={!isMobile ? 'flex items-stretch flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}
         style={{ display: workspaceTab === 'library' ? undefined : 'none' }}
@@ -1954,9 +2089,15 @@ export default function WebPagesPage() {
           </div>
         )}
         <div
+          ref={selectionContainer}
+          data-site-selection-surface
+          onPointerDownCapture={selection.onPointerDownCapture}
           className={!isMobile ? 'flex-1 min-h-0 overflow-y-auto flex flex-col' : 'flex-1 min-h-0 flex flex-col'}
           style={!isMobile ? { padding: '14px 18px', overscrollBehavior: 'contain' } : undefined}
         >
+      {selection.rectangle && createPortal(<div aria-hidden data-site-selection-rectangle className="pointer-events-none fixed z-[10000] rounded-sm"
+        style={{ left: selection.rectangle.left, top: selection.rectangle.top, width: Math.max(0, selection.rectangle.right - selection.rectangle.left),
+          height: Math.max(0, selection.rectangle.bottom - selection.rectangle.top), background: 'var(--selection-bg)', border: '1px solid var(--selection-border)' }} />, document.body)}
       {loading && sites.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-token-muted">
           加载中...
@@ -1964,7 +2105,8 @@ export default function WebPagesPage() {
       ) : displaySites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 text-token-muted">
           <UploadCloud size={48} strokeWidth={1} />
-          <p>{currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
+          <p>{visibilityFilter !== 'all' ? '当前可见范围没有匹配的网页' : currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
+          {visibilityFilter !== 'all' && <Button size="sm" variant="secondary" onClick={()=>setVisibilityFilter('all')}>清除可见范围筛选</Button>}
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
@@ -1991,6 +2133,15 @@ export default function WebPagesPage() {
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>{headline.lead}</span>
             <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>{headline.stats}</span>
+            {!isMobile && <div className="ml-auto flex items-center gap-2">
+              {selectionMode && <button type="button" className="text-[11px] text-token-secondary" onClick={() => setSelectedIds(new Set(displaySites.map(site => site.id)))}>全选当前列表</button>}
+              <button type="button" aria-label="批量选择" aria-pressed={selectionMode}
+                title="从空白处拖框；按住勾选框滑选。多选模式下可直接滑过卡片；Esc 退出"
+                onClick={() => setSelectionMode(value => !value)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px]"
+                style={{ color: selectionMode ? 'var(--accent-primary)' : 'var(--text-secondary)', background: selectionMode ? 'var(--bg-hover)' : undefined }}>
+                <CheckSquare2 size={13} />{selectionMode ? '结束多选' : '多选'}
+              </button>
+            </div>}
           </div>
           {siteGroups.map(group => (
             <div key={group.key} className="flex flex-col gap-2">
@@ -2106,7 +2257,7 @@ export default function WebPagesPage() {
         // 团队归属随请求冻结到服务端，由它建站时应用——用户中途离开时这条回调不会执行。
         // 传实时值即可：工作台在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
         destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
-        onClose={() => setWorkbenchTarget(null)}
+        onClose={() => { setWorkbenchTarget(null); void load(); }}
         onCreated={(siteId) => {
           void (async () => {
             // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。
@@ -2165,7 +2316,7 @@ export default function WebPagesPage() {
                 <Button size="sm" variant="ghost" disabled={replacing} onClick={() => setReplaceTarget(null)}>取消</Button>
                 <Button size="sm" variant="primary" disabled={replacing} onClick={handleConfirmReplace}>
                   {replacing ? <MapSpinner size={14} className="mr-1" /> : <Replace size={14} className="mr-1" />}
-                  确认替换
+                  {replaceTarget.file.name.toLowerCase().endsWith('.zip') ? '选择首页' : '确认替换'}
                 </Button>
               </div>
             </div>
@@ -2188,6 +2339,9 @@ export default function WebPagesPage() {
           />
         );
       })()}
+
+      {collectionInitialSites && <HostedCollectionEditor initialSites={collectionInitialSites} onClose={() => { setCollectionInitialSites(null); void loadShares(); }} />}
+      {showCollectionLibrary && <HostedCollectionLibrary onClose={() => { setShowCollectionLibrary(false); void loadShares(); }} />}
 
       {/* Share Dialog（高级设置 + 拖拽快速分享等非下拉路径） */}
       {showShareDialog && (
@@ -2241,20 +2395,29 @@ export default function WebPagesPage() {
         />
       )}
 
-      {/* 评论管理：站点预览 iframe + 评论面板 + 允许评论开关 */}
+      <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }} title="无法打开关联文档"
+        content={<p className="p-5 text-sm text-token-secondary" role="alert">{relatedOpenError}</p>}
+        actions={<Button onClick={() => setRelatedOpenError('')}>关闭</Button>} />
       {commentSite && (
         <SitePreviewModal
+          key={commentSite.id}
           site={commentSite}
+          initialCommentsOpen={sitePreview.openComments}
+          onNavigateRelated={openRelatedSite}
+          onSiteVersionChanged={(updated) => {
+            setSitePreview(prev => prev?.site.id === updated.id ? { ...prev, site: updated } : prev);
+            setSites(current => current.map(item => item.id === updated.id ? updated : item));
+          }}
           onEditInWorkbench={() => openSiteEditor(commentSite)}
-          onClose={() => setCommentSite(null)}
+          onClose={() => { cancelRelatedSite(); setSitePreview(null); }}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
-            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, commentsEnabled: enabled } : prev));
+            setSitePreview(prev => prev?.site.id === sid ? { ...prev, site: { ...prev.site, commentsEnabled: enabled } } : prev);
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, commentsEnabled: enabled } : x)));
           }}
           onAskEnabledChange={(sid, enabled) => {
-            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
+            setSitePreview(prev => prev?.site.id === sid ? { ...prev, site: { ...prev.site, askEnabled: enabled } } : prev);
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
           }}
         />
@@ -2915,7 +3078,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
 type MoreAction = {
   label: string;
   icon: React.ReactNode;
-  onClick: () => void;
+  onClick: (anchor: HTMLElement) => void;
   danger?: boolean;
   color?: string;
 } | null;
@@ -2960,7 +3123,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
               style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
               onClick={() => {
                 setOpen(false);
-                action.onClick();
+                if (anchorRef.current) action.onClick(anchorRef.current);
               }}
             >
               <span className="inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>
@@ -2975,11 +3138,17 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, selected, selectionMode = false, shared, caps, activity, traffic, relatedSummary, onNavigateRelated, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
+  selectionMode?: boolean;
   shared?: boolean;
   caps?: SiteCaps;
+  activity?: HostedSiteActivity;
+  traffic?: HostedSiteTraffic;
+  relatedSummary?: RelatedSummary;
+  onNavigateRelated?: (id: string) => void;
+  onVisit?: () => void;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -2993,6 +3162,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onAiEdit?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+  const [relatedMenuAnchor, setRelatedMenuAnchor] = useState<HTMLElement | null>(null);
+  const closeRelatedMenu = useCallback(() => setRelatedMenuAnchor(null), []);
   const canDrag = canDragSiteCard(c);
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
@@ -3003,22 +3174,30 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   });
   // 访问地址与 SiteCard 网格视图一致：统一走 /s/wp/{token}，避免列表/网格切换得到不同 URL
   const handleVisit = () => {
-    // 记录一次访客痕迹（fire-and-forget，不阻塞打开）
-    void recordSiteView(site.id);
+    if (onVisit) return onVisit();
     const w = window.open('', '_blank');
-    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+    if (!w) return;
+    void resolveVisitUrl(site).then(url => {
+      if (w.closed) return;
+      w.location.href = url;
+      void recordSiteView(site.id);
+    }).catch(() => { w.close(); });
   };
   return (
     <div
-      className={`group flex items-center gap-4 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
-      data-dock-draggable={canDrag ? 'true' : 'false'}
+      className={`group @container flex items-center gap-3 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${selectionMode ? 'cursor-crosshair' : canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      data-hosted-site-id={site.id}
+      data-selected={selected}
+      data-dock-draggable={!selectionMode && canDrag ? 'true' : 'false'}
       style={{
         background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
       }}
-      onPointerDown={canDrag ? onPointerDown : undefined}
+      onPointerDown={!selectionMode && canDrag ? onPointerDown : undefined}
     >
       <input
         type="checkbox"
+        data-site-select
+        aria-label={selected ? '取消选择' : '选择'}
         checked={selected}
         onChange={onSelect}
         className="shrink-0"
@@ -3026,21 +3205,22 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
       />
 
       {site.coverImageUrl ? (
-        <img src={site.coverImageUrl} alt="" className="shrink-0 w-10 h-10 rounded object-cover" />
+        <img src={site.coverImageUrl} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
       ) : isPdfSite(site) ? (
-        <PdfThumbnail className="shrink-0 w-10 h-10 rounded overflow-hidden" compact />
+        <PdfThumbnail className="shrink-0 w-8 h-8 rounded overflow-hidden" compact />
       ) : (
-        <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
+        <div className="shrink-0 w-8 h-8 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
           <SitePreview site={site} url={site.siteUrl} className="w-full h-full" />
         </div>
       )}
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+      {/* 徽标与文件字段分档展开，避免在临界宽度同时抢占标题空间。 */}
+      <div className="flex flex-1 min-w-0 items-center gap-3">
+        <div className="flex flex-1 min-w-0 items-center gap-2">
           {shared && (
             <span
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium"
-              style={{ color: 'var(--semantic-warning-text)' }}
+              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[900px]:inline-flex"
+              style={{ color: 'var(--semantic-success-text)', background: 'var(--semantic-success-soft)' }}
               title="已分享"
             >
               <Link2 size={10} /> 已分享
@@ -3048,19 +3228,24 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           )}
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
-            style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
+            title={site.title}
+            style={{ color: 'var(--text-primary)' }}
             onClick={handleVisit}
           >
             {site.title}
           </span>
+          <SiteNewBadge activity={activity} />
+          <RelatedDocumentsBar siteId={site.id} siteTitle={site.title} collectionNavigation variant="badge" summary={relatedSummary}
+            menuAnchor={relatedMenuAnchor} onMenuClose={closeRelatedMenu}
+            onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
           {site.sourceType !== 'upload' && (
-            <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
-              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+            <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
+              {siteSourceLabel(site.sourceType)}
             </Badge>
           )}
           {isPublic && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[1100px]:inline-flex"
               style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}
               title="已公开"
             >
@@ -3068,17 +3253,18 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 mt-0.5 text-xs text-token-muted">
-          <span>{site.files.length} 个文件</span>
-          <span>{fmtSize(site.totalSize)}</span>
-          <span>{site.entryFile}</span>
+        <div className="hidden shrink-0 items-center gap-3 whitespace-nowrap text-xs text-token-muted @[640px]:flex">
+          <span className="hidden @[900px]:inline">{site.files.length} 个文件</span>
+          <SiteEditCount activity={activity} />
+          <span className="w-16 text-right">{fmtSize(site.totalSize)}</span>
+          <span className="hidden w-28 truncate @[1280px]:inline" title={site.entryFile}>{site.entryFile}</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs shrink-0 text-token-muted">
-        {site.folder && <span className="flex items-center gap-1"><FolderOpen size={12} /> {site.folder}</span>}
-        <span className="flex items-center gap-1"><Eye size={12} /> {site.viewCount}</span>
-        <span>{relativeTime(site.createdAt)}</span>
+      <div className="hidden items-center gap-3 whitespace-nowrap text-xs shrink-0 text-token-muted @[480px]:flex">
+        {site.folder && <span className="hidden w-28 items-center gap-1 @[1100px]:flex" title={site.folder}><FolderOpen size={12} className="shrink-0" /> <span className="truncate">{site.folder}</span></span>}
+        <span className="hidden w-12 items-center justify-end gap-1 @[640px]:flex" title="全部访问，含作者；每30分钟时段去重"><Eye size={12} /> {traffic?.all.visits ?? '—'}</span>
+        <span className="w-20 text-right">{relativeTime(site.createdAt)}</span>
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
@@ -3093,7 +3279,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
             aria-label={shared ? '已分享' : '分享'}
           >
             {shared
-              ? <Link2 size={14} style={{ color: '#fcd34d' }} />
+              ? <Link2 size={14} style={{ color: 'var(--semantic-success-text)' }} />
               : <Share2 size={14} className="text-token-muted" />}
           </button>
         )}
@@ -3104,6 +3290,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         )}
         <MoreActionsButton
           actions={[
+            !relatedSummary?.count ? { label: '关联与合集', icon: <FolderOpen size={13} />, onClick: setRelatedMenuAnchor } : null,
             c.canEdit && onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: onAiEdit } : null,
             { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
             c.canSetVisibility
@@ -3148,6 +3335,15 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [tagInput, setTagInput] = useState('');
   const [folder, setFolder] = useState(item?.folder ?? '');
   const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const [saving, setSaving] = useState(false);
+  const zipFile = file?.name.toLowerCase().endsWith('.zip') ? file : null;
+  const [zipEntryChoice, setZipEntryChoice] = useState<ZipEntryChoice>({ mode: 'auto' });
+  const missingManualEntry = !!zipFile && zipEntryChoice.mode === 'manual' && zipEntryChoice.entryIndex === null;
+  const chooseFile = (next: File) => {
+    if (saving) return;
+    setZipEntryChoice({ mode: 'auto' });
+    setFile(next);
+  };
   // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
   const titleEditedRef = useRef(false);
   // 新增上传场景下，文件类型为 .md/.markdown 时把"文件名（去扩展名）"作为默认标题
@@ -3160,7 +3356,6 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     const stem = file.name.slice(0, file.name.lastIndexOf('.')) || file.name;
     setTitle(stem);
   }, [file, isEdit]);
-  const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -3216,7 +3411,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     e.preventDefault();
     setDragOver(false);
     const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    if (f) chooseFile(f);
   };
 
   const finishSavedSite = useCallback((saved: HostedSite) => {
@@ -3241,9 +3436,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     onSaved(saved, true, true);
   }, [file?.name, isEdit, onSaved]);
 
+  const finishRestoredSite = useRef(finishSavedSite);
+  useLayoutEffect(() => { finishRestoredSite.current = finishSavedSite; }, [finishSavedSite]);
+
   useEffect(() => {
     if (resumeCheckedRef.current || initialFile) return;
-    resumeCheckedRef.current = true;
     const controller = new AbortController();
     let active = true;
     const resume = async () => {
@@ -3261,15 +3458,19 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (pending.data.outcome === 'optimization-recommended') {
         setOptimization(pending.data);
       } else if (pending.data.site) {
-        finishSavedSite(pending.data.site);
+        finishRestoredSite.current(pending.data.site);
       }
     };
     setSaving(true);
     setOptimizationStage('正在恢复上次文件检查');
     startedAtRef.current = Date.now();
-    void resume().finally(() => { if (active) setSaving(false); });
+    void resume().finally(() => {
+      if (!active) return;
+      resumeCheckedRef.current = true;
+      setSaving(false);
+    });
     return () => { active = false; controller.abort(); };
-  }, [finishSavedSite, initialFile, item?.id]);
+  }, [initialFile, item?.id]);
 
   const discardOptimization = async () => {
     const sessionId = optimization?.sessionId;
@@ -3326,6 +3527,12 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   const handleSave = async () => {
     if (!isEdit && !file) return;
+    const sizeError = file ? getWebHostingUploadError(file) : null;
+    if (sizeError) {
+      toast.error('文件过大或为空', sizeError);
+      return;
+    }
+    if (missingManualEntry) return;
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
     const pendingTag = tagInput.trim();
     const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
@@ -3344,6 +3551,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (file && isZip) {
         const reviewed = await reviewSiteZip({
           file,
+          ...getZipEntrySelection(zipEntryChoice),
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           folder: folder.trim() || undefined,
@@ -3479,7 +3687,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   {created.title || created.entryFile}
                 </div>
                 <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  {resolveSiteForm(created).toUpperCase()} 站 · {created.files.length.toLocaleString()} 文件 · {fmtSize(created.totalSize)}
+                  {SITE_FORM_REGISTRY[resolveSiteForm(created)].label} · {created.files.length.toLocaleString()} 文件 · {fmtSize(created.totalSize)}
                 </div>
               </div>
             </div>
@@ -3519,7 +3727,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 </span>
               ) : (
                 <span>
-                  这个站点是视频，没有可供阅读的正文，
+                  这个站点是{SITE_FORM_REGISTRY[resolveSiteForm(created)].label}，当前没有可供提问的正文，
                   <span style={{ color: 'var(--text-primary)' }}>不支持提问</span>
                   ，访客不会看到提问入口，也不会产生模型消耗。
                 </span>
@@ -3799,8 +4007,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   // 虚线走 accent：设计稿这一框是橙虚线，灰虚线读起来像「禁用」
                   border: `1.5px dashed ${dragOver ? 'var(--accent-primary)' : 'rgba(var(--accent-primary-rgb), 0.45)'}`,
                 }}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                onClick={() => { if (!saving) fileInputRef.current?.click(); }}
+                onDragOver={e => { e.preventDefault(); if (!saving) setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
@@ -3813,17 +4021,19 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 ) : (
                   <div className="text-center leading-relaxed">
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
-                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
+                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，可选首页）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
-                    <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
+                    <p className="text-xs text-token-muted">图片：.png / .jpg / .jpeg / .gif / .webp / .svg / .avif / .ico / .bmp</p>
+                    <p className="text-xs text-token-muted">ZIP 包与解压总量上限 5000 MB；单个文件上限 500 MB</p>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  accept={WEB_HOSTING_UPLOAD_ACCEPT}
+                  disabled={saving}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
               </div>
             ) : (
@@ -3833,17 +4043,22 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   <p className="text-sm text-token-primary">{item.entryFile}</p>
                   <p className="text-xs text-token-muted">{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
                 </div>
-                <Button size="xs" variant="secondary" onClick={() => fileInputRef.current?.click()}>
+                <Button size="xs" variant="secondary" disabled={saving} onClick={() => fileInputRef.current?.click()}>
                   <Upload size={12} className="mr-1" /> 重新上传
                 </Button>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  accept={WEB_HOSTING_UPLOAD_ACCEPT}
+                  disabled={saving}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) chooseFile(f); }}
                 />
               </div>
+            )}
+
+            {zipFile && !getWebHostingUploadError(zipFile) && (
+              <ZipEntrySelector file={zipFile} choice={zipEntryChoice} onChange={setZipEntryChoice} />
             )}
 
             <label className="flex flex-col gap-1">
@@ -3948,7 +4163,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>封面：默认取站点首屏渲染</span>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>
-              <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+              <Button onClick={handleSave} disabled={saving || (!isEdit && !file) || missingManualEntry}>
                 {saving ? '处理中...' : isEdit ? '保存' : '开始上传'}
               </Button>
             </div>

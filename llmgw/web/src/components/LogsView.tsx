@@ -4,16 +4,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { RefreshCw, ChevronUp, Search, SlidersHorizontal } from 'lucide-react';
-import { getLogs, getLogsMeta, getLogsSessions, getLogsSummary, getLogsTimeseries } from '@/lib/api';
-import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
+import { getLogDetail, getLogs, getLogsMeta, getLogsSessions, getLogsSummary, getLogsTimeseries } from '@/lib/api';
+import type { LlmLogDetail, LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
 import { MiniBarChart } from './MiniBarChart';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
 import { LogEntityHoverCard } from './LogEntityHoverCard';
 import { LogTableSettings } from './LogTableSettings';
+import { ConsumptionAlertsPanel } from './ConsumptionAlertsPanel';
+import './LogsView.css';
+import { readLogListResume, saveLogListResume } from '@/lib/logListResume';
+import { buildLogTraceHref, withLogTaskContext, type LogTaskContext, LOG_FILTER_KEYS } from '@/lib/logNavigation';
 import {
   DASH,
+  formatModelFallback,
   LOGS_SUBTABS,
   type LogsSubTab,
   TIME_RANGE_PRESETS,
@@ -32,6 +37,8 @@ import {
   fmtMs,
   fmtCompact,
   fmtCost,
+  costKindBadgeLabel,
+  costKindLabel,
   appDisplayName,
   statusBadgeStyle,
   shortModelName,
@@ -69,12 +76,12 @@ function initialTablePreferences(): Record<LogsSubTab, LogTablePreferences> {
   }
 }
 
-// 网关传输通道（GatewayTransport）chip：这次调用走进程内 / 跨进程 HTTP / 影子 / 管理探测 / 直连。
-// 是翻 http 前后排障「这条走了哪条路」的关键标记。历史日志为 null → 不显示 chip。
+// 网关传输通道（GatewayTransport）chip：这次调用走跨进程 HTTP / 管理探测 / 直连。
+// MAP 已固定经 HTTP 调用 serving；inproc 只会出现在切流前的历史日志里，保留标签便于回看。
+// 其它历史取值走下面的兜底，原样显示。历史日志为 null → 不显示 chip。
 const TRANSPORT_META: Record<string, { label: string; color: string; bg: string }> = {
   inproc: { label: 'inproc', color: 'var(--text-muted)', bg: 'var(--bg-elevated)' },
   http: { label: 'http', color: 'var(--accent)', bg: 'var(--accent-soft)' },
-  shadow: { label: 'shadow', color: '#d29922', bg: 'rgba(210,153,34,0.14)' },
   'admin-probe': { label: 'admin-probe', color: '#6e7681', bg: 'rgba(110,118,129,0.14)' },
   direct: { label: 'direct', color: '#f85149', bg: 'rgba(248,81,73,0.14)' },
 };
@@ -117,12 +124,12 @@ function formatOutputUsage(item: LlmLogListItem) {
   return DASH;
 }
 
-function formatRecordedCost(it: LlmLogListItem) {
-  if (it.providerReportedCost != null)
-    return fmtCost(it.providerReportedCost, it.providerCostCurrency || 'USD');
-  if (it.estimatedCost != null)
-    return fmtCost(it.estimatedCost, it.estimatedCostCurrency);
-  return '未计价';
+function recordedCostAmount(it: LlmLogListItem) {
+  return it.providerReportedCost != null
+    ? fmtCost(it.providerReportedCost, it.providerCostCurrency || 'USD')
+    : it.estimatedCost != null
+      ? fmtCost(it.estimatedCost, it.estimatedCostCurrency)
+      : null;
 }
 
 function formatThroughput(item: LlmLogListItem) {
@@ -137,25 +144,21 @@ function formatThroughput(item: LlmLogListItem) {
   return DASH;
 }
 
-function initialQueryValue(key: string) {
-  if (typeof window === 'undefined') return '';
-  return new URLSearchParams(window.location.search).get(key) ?? '';
-}
-
-function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logicalModelPublicId' | 'model' | 'platformId'>) {
+function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logicalModelPublicId' | 'model' | 'platformId'>, context: LogTaskContext = {}) {
   const query = new URLSearchParams();
   if (item.logicalModelId) query.set('logicalModelId', item.logicalModelId);
   if (item.logicalModelPublicId || item.model) query.set('model', item.logicalModelPublicId || item.model);
   if (item.platformId) query.set('platformId', item.platformId);
-  return `/models/view?${query.toString()}`;
+  return withLogTaskContext('/models/view', query, context);
 }
 
 function isExchangeProvider(item: Pick<LlmLogListItem, 'platformName' | 'provider'>) {
   return /^exchange\s*:/i.test((item.platformName || item.provider || '').trim());
 }
 
-function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>) {
+function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>, context: LogTaskContext = {}) {
   const query = new URLSearchParams();
+  if (item.platformId?.startsWith('user-key:')) return `/logs?serviceKeyId=${encodeURIComponent(item.platformId)}&clientCode=cds-user-key`;
   if (isExchangeProvider(item)) {
     if (item.platformId) query.set('exchangeId', item.platformId);
     if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
@@ -163,13 +166,20 @@ function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platform
   }
   if (item.platformId) query.set('id', item.platformId);
   if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
-  return `/platforms/view?${query.toString()}`;
+  return withLogTaskContext('/platforms/view', query, context);
 }
 
-function appDetailsHref(code: string) {
-  return `/app-callers/view?code=${encodeURIComponent(code)}`;
+function appDetailsHref(code: string, requestType?: string | null, context: LogTaskContext = {}) {
+  const query = new URLSearchParams({ code });
+  if (requestType) query.set('requestType', requestType);
+  return withLogTaskContext('/app-callers/view', query, context);
 }
 
+
+function LogRowTime({ item, withResult }: { item: LlmLogListItem; withResult: boolean }) {
+  const result = deriveLifecycle(item);
+  return <span style={{ color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }} title={fmtDate(item.startedAt)}>{fmtShortTime(item.startedAt)}{withResult ? <span className="lg-log-time-result" style={{ color: item.status === 'failed' ? 'var(--err)' : 'var(--text-secondary)' }}>{item.status ? result.label : '结果未记录'}{item.statusCode != null ? ` · HTTP ${item.statusCode}` : ''}</span> : null}</span>;
+}
 
 const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
 
@@ -263,7 +273,7 @@ export function LogTable<T>({
     // observer 必须按新的 root 重建，否则会一直用旧断点算出来的那个。
   }, [hasMore, loadingMore, paused, autoLoad, isNarrowViewport]);
 
-  const visibleColumns = resolveLogTableColumns(columns, preferences);
+  const visibleColumns = resolveLogTableColumns(columns, preferences).filter(column => !(isNarrowViewport && tableKey !== 'sessions' && column.key === 'status')).map(column => isNarrowViewport && tableKey !== 'sessions' && column.key === 'date' ? { ...column, label: '时间与结果', width: 'minmax(140px, 1.4fr)' } : column);
   const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
   // 表格最小宽度必须由列自身的下限推出来，不能写死。
   // 以前这里对 generations 硬编码 1832px，无论列怎么配都强制横向滚动，
@@ -281,10 +291,11 @@ export function LogTable<T>({
     + Math.max(0, dataColumnCount - 1) * 12 // 数据列之间的 column-gap
     + 32; // 左右内边距
   const tableMinWidth = isNarrowViewport ? NARROW_TABLE_MIN_WIDTH[tableKey] : contentMinWidth;
+  const selectedAnchor = new URLSearchParams(useLocation().search).get('anchor');
   const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
 
   return (
-    <div className="lg-log-table-scroll">
+    <div className="lg-log-table-scroll" data-empty={items.length === 0 || undefined}>
       <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
         <div
           className="lg-log-table-head"
@@ -321,6 +332,8 @@ export function LogTable<T>({
             : items.map((t, idx) => (
                 <div
                   key={rowKey(t, idx)}
+                  data-log-row-id={rowKey(t, idx)}
+                  aria-current={selectedAnchor === rowKey(t, idx) ? 'true' : undefined}
                   onClick={onRow ? () => onRow(t) : undefined}
                   onKeyDown={onRow ? (event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
@@ -409,31 +422,68 @@ function LogTableFooter({ loaded, total, hasMore, busy, error, onLoadMore, onRet
 export function LogsView() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [subtab, setSubtab] = useState<LogsSubTab>('generations');
-  const [trendOpen, setTrendOpen] = useState(true);
-  const [presetKey, setPresetKey] = useState('30d');
-  const [filterModel, setFilterModel] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterProvider, setFilterProvider] = useState('');
-  const [filterAppCaller, setFilterAppCaller] = useState('');
-  const [filterTransport, setFilterTransport] = useState('');
-  const [filterRequestType, setFilterRequestType] = useState('');
-  const [filterOperation, setFilterOperation] = useState('');
-  const [filterSourceSystem, setFilterSourceSystem] = useState('');
-  const [filterIngressProtocol, setFilterIngressProtocol] = useState('');
-  const [filterModelPolicy, setFilterModelPolicy] = useState('');
-  const [filterReleaseCommit, setFilterReleaseCommit] = useState(() => initialQueryValue('releaseCommit'));
-  const [filterRunId, setFilterRunId] = useState(() => initialQueryValue('runId'));
-  const [filterRequestId, setFilterRequestId] = useState(() => initialQueryValue('requestId'));
-  const [requestIdDraft, setRequestIdDraft] = useState(() => initialQueryValue('requestId'));
-  const [filterSessionId, setFilterSessionId] = useState(() => initialQueryValue('sessionId'));
-  const [filterModelPoolId, setFilterModelPoolId] = useState(() => initialQueryValue('modelPoolId'));
-  const [filterServiceKeyId, setFilterServiceKeyId] = useState(() => initialQueryValue('serviceKeyId'));
-  const [filterClientCode, setFilterClientCode] = useState(() => initialQueryValue('clientCode'));
-  const [filterEnvironment, setFilterEnvironment] = useState(() => initialQueryValue('environment'));
-  // 按上游平台过滤：从平台页「查看日志」深链进来（?platformId=xxx），
-  // 用来回答「这条上游到底有没有在被调、报什么错」。provider 会重名，只能用 id。
-  const [filterPlatformId, setFilterPlatformId] = useState(() => initialQueryValue('platformId'));
+  const query = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const updateQuery = (key: string, value: string) => {
+    const next = new URLSearchParams(location.search);
+    if (value) next.set(key, value); else next.delete(key);
+    next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    if (next.get('liveList') === '1') {
+      for (const key of ['from', 'to', 'liveList']) next.delete(key);
+    }
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+  };
+  const subtab: LogsSubTab = query.get('view') === 'physical' ? 'upstream' : query.get('view') === 'sessions' ? 'sessions' : 'generations';
+  const setSubtab = (value: LogsSubTab) => updateQuery('view', value === 'upstream' ? 'physical' : value === 'sessions' ? 'sessions' : '');
+  const [trendOpen, setTrendOpen] = useState(false);
+  const presetKey = ['1d', '7d', '30d'].includes(query.get('range') || '') ? query.get('range')! : '30d';
+  const [refreshToken, setRefreshToken] = useState(0);
+  const setPresetKey = (value: string) => {
+    const next = new URLSearchParams(location.search);
+    next.set('range', value);
+    for (const key of ['from', 'to', 'liveList', 'transaction', 'anchor', 'openRequest']) next.delete(key);
+    setRefreshToken(Date.now());
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+  };
+  const filterModel = query.get('model') || '';
+  const setFilterModel = (value: string) => updateQuery('model', value);
+  const filterStatus = query.get('status') || '';
+  const setFilterStatus = (value: string) => updateQuery('status', value);
+  const filterProvider = query.get('provider') || '';
+  const setFilterProvider = (value: string) => updateQuery('provider', value);
+  const filterAppCaller = query.get('appCallerCode') || '';
+  const setFilterAppCaller = (value: string) => updateQuery('appCallerCode', value);
+  const filterTransport = query.get('transport') || '';
+  const setFilterTransport = (value: string) => updateQuery('transport', value);
+  const filterRequestType = query.get('requestType') || '';
+  const setFilterRequestType = (value: string) => updateQuery('requestType', value);
+  const filterOperation = query.get('operation') || '';
+  const setFilterOperation = (value: string) => updateQuery('operation', value);
+  const filterSourceSystem = query.get('sourceSystem') || '';
+  const setFilterSourceSystem = (value: string) => updateQuery('sourceSystem', value);
+  const filterIngressProtocol = query.get('ingressProtocol') || '';
+  const setFilterIngressProtocol = (value: string) => updateQuery('ingressProtocol', value);
+  const filterModelPolicy = query.get('modelPolicy') || '';
+  const setFilterModelPolicy = (value: string) => updateQuery('modelPolicy', value);
+  const filterReleaseCommit = query.get('releaseCommit') || '';
+  const setFilterReleaseCommit = (value: string) => updateQuery('releaseCommit', value);
+  const filterRunId = query.get('runId') || '';
+  const setFilterRunId = (value: string) => updateQuery('runId', value);
+  const filterRequestId = query.get('requestId') || '';
+  const setFilterRequestId = (value: string) => updateQuery('requestId', value);
+  const filterSessionId = query.get('sessionId') || '';
+  const setFilterSessionId = (value: string) => updateQuery('sessionId', value);
+  const filterModelPoolId = query.get('modelPoolId') || '';
+  const setFilterModelPoolId = (value: string) => updateQuery('modelPoolId', value);
+  const filterServiceKeyId = query.get('serviceKeyId') || '';
+  const setFilterServiceKeyId = (value: string) => updateQuery('serviceKeyId', value);
+  const filterClientCode = query.get('clientCode') || '';
+  const setFilterClientCode = (value: string) => updateQuery('clientCode', value);
+  const filterEnvironment = query.get('environment') || '';
+  const setFilterEnvironment = (value: string) => updateQuery('environment', value);
+  const filterPlatformId = query.get('platformId') || '';
+  const setFilterPlatformId = (value: string) => updateQuery('platformId', value);
+  const [requestIdDraft, setRequestIdDraft] = useState(filterRequestId);
+  useEffect(() => setRequestIdDraft(filterRequestId), [filterRequestId]);
 
   const [meta, setMeta] = useState<{
     models: string[];
@@ -483,7 +533,15 @@ export function LogsView() {
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
 
-  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const selectedLogId = query.get('transaction');
+  const anchorId = query.get('anchor');
+  const [anchorDetail, setAnchorDetail] = useState<LlmLogDetail | null>(null);
+  const [anchorError, setAnchorError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true; setAnchorDetail(null); setAnchorError(null);
+    if (anchorId && !loading && !rows.some(item => item.id === anchorId)) getLogDetail(anchorId).then(result => { if (!active) return; if (result.success) setAnchorDetail(result.data); else setAnchorError(result.error?.message || '该请求当前无法读取'); }).catch(() => { if (active) setAnchorError('该请求当前无法读取，请重新打开详情核实。'); });
+    return () => { active = false; };
+  }, [anchorId, loading, rows]);
   const [tablePreferences, setTablePreferences] = useState(initialTablePreferences);
   const [settingsOpen, setSettingsOpen] = useState<LogsSubTab | null>(null);
   const [settingsTab, setSettingsTab] = useState<'columns' | 'density'>('columns');
@@ -504,41 +562,29 @@ export function LogsView() {
     window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
   }, [tablePreferences]);
 
-  useEffect(() => {
-    const query = new URLSearchParams(location.search);
-    setSelectedLogId(query.get('transaction'));
-    setFilterSourceSystem(query.get('sourceSystem') ?? '');
-    setFilterIngressProtocol(query.get('ingressProtocol') ?? '');
-    setFilterModelPolicy(query.get('modelPolicy') ?? '');
-    setFilterReleaseCommit(query.get('releaseCommit') ?? '');
-    setFilterRunId(query.get('runId') ?? '');
-    setFilterRequestId(query.get('requestId') ?? '');
-    setRequestIdDraft(query.get('requestId') ?? '');
-    setFilterSessionId(query.get('sessionId') ?? '');
-    setFilterModelPoolId(query.get('modelPoolId') ?? '');
-    setFilterStatus(query.get('status') ?? '');
-    setFilterAppCaller(query.get('appCallerCode') ?? '');
-    setFilterServiceKeyId(query.get('serviceKeyId') ?? '');
-    setFilterClientCode(query.get('clientCode') ?? '');
-    setFilterEnvironment(query.get('environment') ?? '');
-  }, [location.search]);
-
-  const openLogDetail = useCallback((id: string) => {
-    const query = new URLSearchParams(location.search);
-    query.set('transaction', id);
-    navigate({ pathname: location.pathname, search: `?${query.toString()}` });
-  }, [location.pathname, location.search, navigate]);
-
-  const closeLogDetail = useCallback(() => {
-    const query = new URLSearchParams(location.search);
-    query.delete('transaction');
-    navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
-  }, [location.pathname, location.search, navigate]);
-
+  const fixedFrom = query.get('from');
+  const fixedTo = query.get('to');
+  const fixedRange = useMemo(() => (
+    fixedFrom && fixedTo && Number.isFinite(Date.parse(fixedFrom)) && Number.isFinite(Date.parse(fixedTo))
+      ? { from: fixedFrom, to: fixedTo }
+      : null
+  ), [fixedFrom, fixedTo]);
+  const openedFromLiveList = query.get('liveList') === '1';
+  const isHistorical = Boolean(fixedRange && !openedFromLiveList);
+  const [wasHistorical, setWasHistorical] = useState(isHistorical);
+  // 离开历史链接时推进窗口。实时列表的详情往返沿用已加载窗口。
+  if (wasHistorical !== isHistorical) {
+    setWasHistorical(isHistorical);
+    if (wasHistorical) setRefreshToken(Date.now());
+  }
+  const [initialRangeAt] = useState(Date.now);
+  const [returnRange] = useState(() => openedFromLiveList && anchorId ? fixedRange : null);
   const range = useMemo(() => {
-    const p = TIME_RANGE_PRESETS.find((x) => x.key === presetKey) ?? TIME_RANGE_PRESETS[2];
-    return rangeFromPreset(p.days);
-  }, [presetKey]);
+    if (fixedRange) return fixedRange;
+    if (!refreshToken && anchorId && returnRange) return returnRange;
+    const preset = TIME_RANGE_PRESETS.find((item) => item.key === presetKey) ?? TIME_RANGE_PRESETS[2];
+    return rangeFromPreset(preset.days, refreshToken || initialRangeAt);
+  }, [presetKey, fixedRange, refreshToken, initialRangeAt, anchorId, returnRange]);
 
   const baseParams = useMemo(
     () => ({
@@ -565,8 +611,39 @@ export function LogsView() {
       environment: filterEnvironment || undefined,
       platformId: filterPlatformId.trim() || undefined,
     }),
-    [range, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
+    [range.from, range.to, subtab, filterModel, filterStatus, filterProvider, filterAppCaller, filterTransport, filterRequestType, filterOperation, filterSourceSystem, filterIngressProtocol, filterModelPolicy, filterReleaseCommit, filterRunId, filterRequestId, filterSessionId, filterModelPoolId, filterServiceKeyId, filterClientCode, filterEnvironment, filterPlatformId],
   );
+  const listContext: LogTaskContext = {
+    source: 'logs',
+    ...Object.fromEntries(query),
+    ...range,
+    liveList: !fixedRange || openedFromLiveList ? '1' : undefined,
+  };
+  const openLogDetail = useCallback((id: string, replace = false) => {
+    const query = new URLSearchParams(location.search);
+    query.set('from', range.from); query.set('to', range.to);
+    if (!fixedRange) query.set('liveList', '1');
+    query.set('transaction', id); query.set('anchor', id); query.delete('openRequest');
+    navigate({ pathname: location.pathname, search: `?${query.toString()}` }, { replace });
+  }, [location.pathname, location.search, navigate, range.from, range.to, fixedRange]);
+
+  const closeLogDetail = useCallback(() => {
+    const query = new URLSearchParams(location.search);
+    query.delete('transaction');
+    if (openedFromLiveList) {
+      for (const key of ['from', 'to', 'liveList']) query.delete(key);
+    }
+    navigate({ pathname: location.pathname, search: query.size ? `?${query.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search, navigate, openedFromLiveList]);
+
+  const refresh = useCallback(() => {
+    if (fixedRange && !selectedLogId) {
+      const next = new URLSearchParams(location.search);
+      for (const key of ['from', 'to', 'liveList', 'anchor']) next.delete(key);
+      navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
+    }
+    setRefreshToken(Date.now());
+  }, [fixedRange, selectedLogId, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     getLogsMeta().then((res) => {
@@ -601,11 +678,8 @@ export function LogsView() {
   //     把同一页又追加了一遍，60 行刷成 90 行（另一条 P1）。
   // 现在页码只是取数的入参，刷新一律回第 1 页做替换。
   const loadedPage = useRef(0);
+  const rowsKey = useRef<string | null>(null);
   const loadedSessPage = useRef(0);
-  // 刷新令牌：refresh 时递增，驱动首页重取。不用 setPage(1) 是因为 page 已经不是 state，
-  // 而且当页码本来就是 1 时 setState 同值不会触发 effect，刷新会静默失效。
-  const [refreshToken, setRefreshToken] = useState(0);
-
   // 追加时按 id 去重。
   // 服务端分页只要排序不稳定（并列 StartedAt 跨页边界），前后两页就可能重叠；
   // 累加语义下重复行会把 rows.length 顶高，而 hasMore 判据是 `rows.length < total`,
@@ -631,6 +705,7 @@ export function LogsView() {
   const sessSeq = useRef(0);
   const insightSeq = useRef(0);
   const openedRequestIdRef = useRef('');
+  const openedExternalIntentRef = useRef('');
 
   // 瀑布加载：第 1 页替换，后续页追加。
   // 序号守卫仍然管用——切筛选/切 tab 会让 seq 前进，过期响应直接丢弃，不会把
@@ -643,6 +718,7 @@ export function LogsView() {
       if (seq !== listSeq.current) return;
       if (res.success && res.data) {
         const incoming = res.data.items ?? [];
+        rowsKey.current = JSON.stringify(baseParams);
         setRows((current) => (p === 1 ? incoming : appendUnique(current, incoming, (item) => item.id)));
         setTotal(res.data.total ?? 0);
         setListError(null);
@@ -660,6 +736,20 @@ export function LogsView() {
     },
     [baseParams],
   );
+
+  const resumeKey = JSON.stringify(baseParams);
+  const resumeRef = useRef({ key: rowsKey.current, rows, total, page: loadedPage.current, ready: false });
+  resumeRef.current = { key: rowsKey.current, rows, total, page: loadedPage.current, ready: rowsKey.current === resumeKey && !loading && !loadingMore && !listError };
+  const resumeScroll = useRef(0);
+  useEffect(() => {
+    const capture = (event: Event) => { if (event.target instanceof HTMLElement && event.target.classList.contains('lg-log-table-body')) resumeScroll.current = event.target.scrollTop; };
+    document.addEventListener('scroll', capture, true);
+    return () => {
+      document.removeEventListener('scroll', capture, true);
+      const value = resumeRef.current;
+      if (value.ready && value.key && value.rows.length) saveLogListResume({ key: value.key, rows: value.rows, total: value.total, page: value.page, scrollTop: resumeScroll.current });
+    };
+  }, []);
 
   const loadSessions = useCallback(
     async (p: number) => {
@@ -723,14 +813,39 @@ export function LogsView() {
   // 首页取数。后续页不走 effect，由 loadMore 直接调用——页码是「取到第几页」的结果，
   // 不是驱动取数的输入，把它做成 effect 依赖就会出现「失败也算数」的推进。
   useEffect(() => {
-    if (subtab === 'generations' || subtab === 'upstream') void loadList(1);
+    if (subtab === 'generations' || subtab === 'upstream') {
+      const saved = refreshToken === 0 && anchorId ? readLogListResume(JSON.stringify(baseParams)) : null;
+      if (saved) {
+        ++listSeq.current;
+        setLoading(false); setLoadingMore(false); setListError(null); setMoreError(null);
+        rowsKey.current = saved.key;
+        setRows(saved.rows); setTotal(saved.total); loadedPage.current = saved.page;
+        requestAnimationFrame(() => { const body = document.querySelector('.lg-log-table-body'); if (body) { body.scrollTop = saved.scrollTop; resumeScroll.current = saved.scrollTop; } });
+      } else void loadList(1);
+    }
   }, [subtab, loadList, refreshToken]);
   useEffect(() => {
     if (subtab === 'sessions') void loadSessions(1);
   }, [subtab, loadSessions, refreshToken]);
   useEffect(() => {
     void loadInsights();
-  }, [loadInsights]);
+  }, [loadInsights, refreshToken]);
+
+  useEffect(() => {
+    if (selectedLogId || isHistorical) return;
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => document.removeEventListener('visibilitychange', refreshOnReturn);
+  }, [isHistorical, selectedLogId, refresh]);
+
+  const requestMatches = useMemo(() => {
+    const requestId = filterRequestId.trim();
+    return requestId ? rows.filter(item => item.requestId === requestId || item.id === requestId) : [];
+  }, [filterRequestId, rows]);
+  const requestLookupReady = subtab !== 'sessions' && rowsKey.current === resumeKey && !loading && !loadingMore && !listError;
+  const ambiguousRequestLookup = requestLookupReady && !selectedLogId && !!filterRequestId.trim() && (requestMatches.length > 1 || total > 1);
 
   useEffect(() => {
     const requestId = filterRequestId.trim();
@@ -738,30 +853,23 @@ export function LogsView() {
       openedRequestIdRef.current = '';
       return;
     }
-    if (loading || openedRequestIdRef.current === requestId) return;
-    const matched = rows.find((item) => item.requestId === requestId || item.id === requestId);
-    if (!matched) return;
+    const externalIntent = query.get('openRequest') === '1' ? `${location.key}:${requestId}` : '';
+    if (selectedLogId) { openedRequestIdRef.current = requestId; if (externalIntent && openedExternalIntentRef.current !== externalIntent) { openedExternalIntentRef.current = externalIntent; openLogDetail(selectedLogId, true); } return; }
+    if (externalIntent ? openedExternalIntentRef.current === externalIntent : openedRequestIdRef.current === requestId) return;
+    // A weak requestId can cover retries/fallbacks. Only the full filtered result,
+    // not the first loaded match or a previous query's rows, establishes uniqueness.
+    if (!requestLookupReady || total !== 1 || requestMatches.length !== 1) return;
+    const matched = requestMatches[0];
     openedRequestIdRef.current = requestId;
-    openLogDetail(matched.id);
-  }, [filterRequestId, loading, openLogDetail, rows]);
-
-  // 刷新 = 回到第 1 页重新取并**替换**列表。
-  // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍
-  // （实测 60 行刷成 90 行）。刷新是「重新看一眼现在的样子」，不是「再取一次当前页」。
-  const refresh = () => {
-    void loadInsights();
-    setRefreshToken((t) => t + 1);
-  };
+    if (externalIntent) openedExternalIntentRef.current = externalIntent;
+    openLogDetail(matched.id, query.get('openRequest') === '1');
+  }, [filterRequestId, selectedLogId, query, openLogDetail, requestLookupReady, requestMatches, total, location.key]);
 
   // ── 单元格渲染 ──
   const renderGenerationCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return (
-          <span style={{ color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }} title={fmtDate(it.startedAt)}>
-            {fmtShortTime(it.startedAt)}
-          </span>
-        );
+        return <LogRowTime item={it} withResult={isNarrowViewport} />;
       case 'generation':
         return (
           <span
@@ -778,7 +886,7 @@ export function LogsView() {
         const modelName = it.logicalModelPublicId || it.model || DASH;
         return (
           <LogEntityHoverCard
-            href={modelDetailsHref(it)}
+            href={modelDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={modelName}
             subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', proto?.label, tp?.label].filter(Boolean).join(' · ')}
             description={it.logicalModelPublicId && it.model !== it.logicalModelPublicId
@@ -799,7 +907,7 @@ export function LogsView() {
         const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
-            href={providerDetailsHref(it)}
+            href={providerDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={providerName}
             subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
             description={exchangeProvider
@@ -816,25 +924,26 @@ export function LogsView() {
         );
       }
       case 'app': {
-        const title = `应用：${appDisplayName(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
         const code = it.appCallerCode?.trim();
+        const name = appDisplayName(it);
+        const title = [name, code, it.clientCode && `调用身份：${it.clientCode}`, it.environment].filter(Boolean).join(' · ');
         if (!code) {
-          return <span className="lg-log-entity" title={title}><AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{appDisplayName(it)}</span></span>;
+          return <span className="lg-log-entity" title={title}><AppEntityIcon app={name} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{name}</span></span>;
         }
         return (
           <LogEntityHoverCard
-            href={appDetailsHref(code)}
-            label={appDisplayName(it)}
+            href={appDetailsHref(code, it.requestType, { ...listContext, selectedLogId: it.id })}
+            label={name}
             subtitle={[code, it.sourceSystem || 'App', it.environment].filter(Boolean).join(' · ')}
             description={it.clientCode
               ? `调用身份 ${it.clientCode}。进入详情可查看模型路由、预算、速率治理与最近请求。`
               : '进入详情可查看调用身份、模型路由、预算、速率治理与最近请求。'}
             actionLabel="查看 App"
-            icon={<AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} size="lg" />}
+            icon={<AppEntityIcon app={name} sourceSystem={it.sourceSystem} size="lg" />}
           >
             <span className="lg-log-entity" title={title}>
-              <AppEntityIcon app={appDisplayName(it)} sourceSystem={it.sourceSystem} />
-              <span className="lg-truncate">{appDisplayName(it)}</span>
+              <AppEntityIcon app={name} sourceSystem={it.sourceSystem} />
+              <span className="lg-truncate">{name}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -849,16 +958,22 @@ export function LogsView() {
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
-      case 'cost':
+      case 'cost': {
+        const amount = recordedCostAmount(it);
+        const fullLabel = costKindLabel(it.costKind, it.platformName || it.provider);
+        const badgeLabel = costKindBadgeLabel(it.costKind, it.platformName || it.provider);
         return (
           <span
-            className="tabular"
-            style={{ color: 'var(--log-text-muted)' }}
-            title={it.providerReportedCost == null && it.estimatedCost == null ? '上游未返回费用，且当前模型尚未配置计价规则' : undefined}
+            style={{ display: 'inline-flex', minWidth: 0, flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}
+            title={fullLabel}
           >
-            {formatRecordedCost(it)}
+            <strong className="tabular" style={{ color: 'var(--text-primary)', fontWeight: 650 }}>
+              {amount ?? DASH}
+            </strong>
+            <Chip label={badgeLabel} color="var(--text-muted)" bg="var(--bg-elevated)" title={fullLabel} />
           </span>
         );
+      }
       case 'latency':
         return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
@@ -895,7 +1010,7 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <LogRowTime item={it} withResult={isNarrowViewport} />;
       case 'operation': {
         const operation = getOperationMeta(it.operation);
         return <Chip label={operation.label} color={operation.color} bg={operation.bg} />;
@@ -903,7 +1018,7 @@ export function LogsView() {
       case 'model':
         return (
           <LogEntityHoverCard
-            href={modelDetailsHref(it)}
+            href={modelDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={it.logicalModelPublicId || it.model || DASH}
             subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', it.protocol].filter(Boolean).join(' · ')}
             description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
@@ -921,7 +1036,7 @@ export function LogsView() {
         const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
-            href={providerDetailsHref(it)}
+            href={providerDetailsHref(it, { ...listContext, selectedLogId: it.id })}
             label={providerName}
             subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
             description={exchangeProvider
@@ -950,10 +1065,10 @@ export function LogsView() {
       case 'attempts':
         return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>;
       case 'fallback':
-        return it.isFallback ? (
-          <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
+        return it.isFallback === true ? (
+          <Chip label={formatModelFallback(it.isFallback)} color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>否</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{formatModelFallback(it.isFallback)}</span>
         );
       case 'latency':
         return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
@@ -977,23 +1092,25 @@ export function LogsView() {
             {it.sessionId || DASH}
           </span>
         );
-      case 'app':
+      case 'app': {
+        const name = appDisplayName(it);
         return it.appCallerCode ? (
           <LogEntityHoverCard
-            href={appDetailsHref(it.appCallerCode)}
-            label={it.appCallerCode}
-            subtitle="会话调用 App"
+            href={appDetailsHref(it.appCallerCode, undefined, listContext)}
+            label={name}
+            subtitle={it.appCallerCode}
             description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"
             actionLabel="查看 App"
-            icon={<AppEntityIcon app={it.appCallerCode} size="lg" />}
+            icon={<AppEntityIcon app={name} size="lg" />}
           >
-            <span className="lg-log-entity"><AppEntityIcon app={it.appCallerCode} /><span className="lg-truncate">{it.appCallerCode}</span></span>
+            <span className="lg-log-entity" title={it.appCallerCode}><AppEntityIcon app={name} /><span className="lg-truncate">{name}</span></span>
           </LogEntityHoverCard>
         ) : <span className="lg-log-app-label">{DASH}</span>;
+      }
       case 'primaryModel':
         return it.primaryModel ? (
           <LogEntityHoverCard
-            href={`/models/view?model=${encodeURIComponent(it.primaryModel)}`}
+            href={withLogTaskContext('/models/view', new URLSearchParams({ model: it.primaryModel }), listContext)}
             label={it.primaryModel}
             subtitle="会话主要模型"
             description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
@@ -1066,27 +1183,19 @@ export function LogsView() {
     filterEnvironment,
     filterPlatformId.trim(),
   ].filter(Boolean).length;
+  const closeFilters = (panel: HTMLDetailsElement | null) => {
+    setRequestIdDraft(filterRequestId);
+    panel?.removeAttribute('open');
+    panel?.querySelector('summary')?.focus();
+  };
   const clearFilters = () => {
-    setFilterModel('');
-    setFilterStatus('');
-    setFilterProvider('');
-    setFilterAppCaller('');
-    setFilterTransport('');
-    setFilterRequestType('');
-    setFilterOperation('');
-    setFilterSourceSystem('');
-    setFilterIngressProtocol('');
-    setFilterModelPolicy('');
-    setFilterReleaseCommit('');
-    setFilterRunId('');
-    setFilterRequestId('');
-    setRequestIdDraft('');
-    setFilterSessionId('');
-    setFilterModelPoolId('');
-    setFilterServiceKeyId('');
-    setFilterClientCode('');
-    setFilterEnvironment('');
-    setFilterPlatformId('');
+    const next = new URLSearchParams(location.search);
+    for (const key of LOG_FILTER_KEYS) next.delete(key);
+    next.delete('transaction'); next.delete('anchor'); next.delete('openRequest');
+    if (next.get('liveList') === '1') {
+      for (const key of ['from', 'to', 'liveList']) next.delete(key);
+    }
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true });
   };
   const hasMoreRows = rows.length < total;
   const hasMoreSessions = sessions.length < sessTotal;
@@ -1119,14 +1228,16 @@ export function LogsView() {
     { label: '状态查询', value: fmtCompact(summary?.statusQueries) },
     { label: '成功率', value: successRate },
     { label: 'Token', value: fmtCompact(summary?.totalTokens) },
-    { label: '费用', value: fmtCost(summary?.estimatedCostUsd, 'USD') },
+    { label: 'Gateway 估算', value: fmtCost(summary?.estimatedCostUsd, 'USD') },
   ].filter((fact) => fact.value !== DASH);
 
   return (
     <div className="lg-logs-view" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <ConsumptionAlertsPanel refreshToken={refreshToken} />
       <header className="lg-logs-heading">
         <div>
-          <h1>Logs</h1>
+          <div className="lg-logs-title-line"><h1>请求记录</h1><span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span></div>
+          <Link className="lg-secondary-link" to={buildLogTraceHref('', listContext)}>按业务操作或请求编号排查</Link>
           {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
               一排破折号既不承载信息，又和真实数字抢同样的横向位置，
               读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}
@@ -1135,21 +1246,21 @@ export function LogsView() {
               {summaryFacts.map((fact) => (
                 <span key={fact.label}>{fact.label} <strong className="tabular">{fact.value}</strong></span>
               ))}
-              {summary?.unknownCostRequests ? <span className="lg-log-summary-warn">{summary.unknownCostRequests} 条费用未知</span> : null}
+              {summary?.unknownCostRequests ? <span className="lg-log-summary-warn">{summary.unknownCostRequests} 条未计价</span> : null}
             </p>
           ) : null}
         </div>
         <div className="lg-log-page-actions">
-          <span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span>
           <Button variant="ghost" size="sm" aria-label="刷新日志" title="刷新日志" onClick={refresh} disabled={loading || sessLoading}>
             {loading || sessLoading ? <Spinner size={15} /> : <RefreshCw size={15} />}
           </Button>
-          <details className="lg-log-filters lg-log-filter-menu">
+          <details className="lg-log-filters lg-log-filter-menu" onKeyDownCapture={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeFilters(event.currentTarget); } }}>
             <summary aria-label="筛选日志" title="筛选日志">
               <SlidersHorizontal size={16} aria-hidden="true" />
               {activeFilterCount > 0 ? <span className="lg-log-filter-count">{activeFilterCount}</span> : null}
             </summary>
             <div>
+              <div className="lg-log-filter-header"><strong>筛选请求</strong><button type="button" onClick={event => closeFilters(event.currentTarget.closest('details'))}>关闭筛选</button></div>
               <form
                 className="lg-log-search"
                 onSubmit={(event) => {
@@ -1246,6 +1357,9 @@ export function LogsView() {
         <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
       </div>
 
+      {requestLookupReady && subtab === 'generations' && !selectedLogId && !!filterRequestId.trim() && total === 0 && rows.length === 0 ? <div role="status" style={{ flexShrink: 0, padding: '0 12px', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>当前时间与权限范围无 <code style={{ overflowWrap: 'anywhere' }}>{filterRequestId}</code> 的业务请求。<Button variant="ghost" size="sm" onClick={() => setSubtab('upstream')}>查看其他调用记录</Button></div> : null}
+      {ambiguousRequestLookup ? <p role="status" style={{ margin: 0, padding: '0 12px', flexShrink: 0, fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>编号 <code style={{ overflowWrap: 'anywhere' }}>{filterRequestId}</code> 对应多条记录，请选择具体记录。</p> : null}
+
       {metaError || listError ? (
         <div
           style={{
@@ -1262,7 +1376,7 @@ export function LogsView() {
         </div>
       ) : null}
 
-      <Card className="lg-log-table-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+      <Card className="lg-log-table-card" style={{ flex: '0 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
         {subtab === 'generations' && (
           <>
             {/* 趋势是余光信息：无边框、无标题、无坐标轴，直接坐在表头上方，可折叠。
@@ -1373,11 +1487,18 @@ export function LogsView() {
         )}
       </Card>
 
-      {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与费用</strong><span>有完整价格快照时显示估算；缺价格保持未知，不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
+      {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与金额口径</strong><span>明确区分实际、估算、未计价和无用量，未知不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
 
+      {anchorId && !loading && !rows.some(item => item.id === anchorId) ? <Card style={{ padding: 12 }}>
+        <strong>刚才查看的请求</strong>
+        <p>{anchorDetail ? `${fmtDate(anchorDetail.startedAt)} · ${anchorDetail.model} · ${anchorDetail.requestId || anchorId}` : anchorError || '正在核实请求…'}</p>
+        <p>该请求不在当前已加载的 {rows.length} 条记录中，原筛选条件已保留。</p>
+        <Button variant="ghost" onClick={() => openLogDetail(anchorId)}>重新打开该请求</Button>
+      </Card> : null}
       {selectedLogId ? (
         <GenerationDetailsDrawer
           logId={selectedLogId}
+          navigationContext={{ ...listContext, selectedLogId }}
           onClose={closeLogDetail}
           onPrevious={(() => {
             const index = rows.findIndex((item) => item.id === selectedLogId);

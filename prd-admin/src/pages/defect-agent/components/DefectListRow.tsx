@@ -12,7 +12,8 @@ import {
   MessageCircle, CheckCircle, Paperclip, Image,
 } from 'lucide-react';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { formatDefectTitle } from '@/lib/defectTitle';
 
 interface DefectListRowProps {
@@ -362,25 +363,23 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
 
       {/* 提交者 → 处理者 */}
       <div className="flex items-center gap-1 flex-shrink-0">
-        <img
+        <UserAvatar
           src={reporterAvatarUrl}
           alt={reporterDisplayName}
           className="h-4 w-4 rounded-full object-cover"
           style={{
             border: isReporterMe ? '1px solid var(--border-subtle)' : '1px solid var(--border-subtle)',
           }}
-          onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = resolveNoHeadAvatarUrl(); }}
           title={reporterDisplayName}
         />
         <ArrowRight size={10} className="opacity-40 flex-shrink-0" />
-        <img
+        <UserAvatar
           src={assigneeAvatarUrl}
           alt={assigneeDisplayName}
           className="h-4 w-4 rounded-full object-cover"
           style={{
             border: isAssigneeMe ? '1px solid var(--border-subtle)' : '1px solid var(--border-subtle)',
           }}
-          onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = resolveNoHeadAvatarUrl(); }}
           title={assigneeDisplayName}
         />
       </div>

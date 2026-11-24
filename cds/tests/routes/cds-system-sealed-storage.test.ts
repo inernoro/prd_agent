@@ -71,7 +71,12 @@ describe('CDS 系统级密封存储初始化', () => {
     app.use(express.json());
     app.use((req, _res, next) => {
       if (req.headers.cookie === 'cds_token=human-cookie-token') {
-        (req as Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth = true;
+        const authReq = req as Request & {
+          _cdsBasicHumanAuth?: boolean;
+          cdsUser?: { isSystemOwner: boolean; authProvider: string };
+        };
+        authReq._cdsBasicHumanAuth = true;
+        authReq.cdsUser = { isSystemOwner: true, authProvider: 'legacy' };
       }
       if (req.headers['x-test-project-key'] === '1') {
         (req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey = { projectId: 'p', keyId: 'k' };
@@ -185,7 +190,12 @@ describe('CDS 系统级密封存储初始化', () => {
     restartedApp.use(express.json());
     restartedApp.use((req, _res, next) => {
       if (req.headers.cookie === 'cds_token=human-cookie-token') {
-        (req as Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth = true;
+        const authReq = req as Request & {
+          _cdsBasicHumanAuth?: boolean;
+          cdsUser?: { isSystemOwner: boolean; authProvider: string };
+        };
+        authReq._cdsBasicHumanAuth = true;
+        authReq.cdsUser = { isSystemOwner: true, authProvider: 'legacy' };
       }
       next();
     });
@@ -280,7 +290,11 @@ describe('CDS 系统级密封存储初始化', () => {
 
 describe('全局人工管理员判定', () => {
   it('basic 模式只认独立人工 cookie，机器 token 改放 Cookie 也不能重放', () => {
-    const cookieReq = { headers: {}, _cdsBasicHumanAuth: true } as unknown as Request;
+    const cookieReq = {
+      headers: {},
+      _cdsBasicHumanAuth: true,
+      cdsUser: { isSystemOwner: true, authProvider: 'legacy' },
+    } as unknown as Request;
     const ssoReq = { headers: {}, _cdsCookieAuth: true } as unknown as Request;
     const replayReq = { headers: { cookie: 'cds_token=machine-token' } } as Request;
     const headerReq = { headers: { 'x-cds-token': 'machine-token' } } as unknown as Request;

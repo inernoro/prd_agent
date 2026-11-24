@@ -160,6 +160,90 @@ public class SiteContentSnapshotServiceTests
     }
 
     [Fact]
+    public async Task 长页面尾部的条件与例外_不在两万四千字处丢失()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = "<h1>退款说明</h1><p>" + new string('文', 30_000)
+            + "</p><h2>例外</h2><p>企业版可在付款后7天内退款，但已开票订单不支持。</p>";
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.Contains("## 例外", snap.Text);
+        Assert.Contains("企业版可在付款后7天内退款，但已开票订单不支持。", snap.Text);
+        Assert.False(snap.Truncated);
+    }
+
+    [Fact]
+    public async Task 入口页有辅助文件_仍保留入口后半段()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = new string('文', 35_000) + "最终验收条件：连续三次通过。";
+        storage.Objects["data"] = "辅助说明";
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry"), ("data.txt", "data")));
+
+        Assert.Contains("最终验收条件：连续三次通过。", snap.Text);
+        Assert.Contains("辅助说明", snap.Text);
+        Assert.False(snap.Truncated);
+    }
+
+    [Fact]
+    public async Task 超过正文硬预算_明确标注截断()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = new string('文', 70_000) + "未读取的尾部";
+
+        var snap = await NewService(storage).GetAsync(SiteWith(("index.html", "entry")));
+
+        Assert.True(snap.Truncated);
+        Assert.Equal(SiteContentSnapshotService.TotalBudget, snap.Text.Length);
+        Assert.True(snap.TotalChars > snap.Text.Length);
+        Assert.DoesNotContain("未读取的尾部", snap.Text);
+    }
+
+    [Fact]
+    public void HTML提取_保留标题表格列表和行内否定原文()
+    {
+        const string html = """
+            <h1>套餐</h1><h2>导出限制</h2>
+            <table><tr><th>版本</th><th>价格</th><th>附件</th></tr>
+            <tr><td>企业版</td><td>99元/月</td><td>不<strong>包含</strong>附件</td></tr></table>
+            <ul><li>付款后7天内申请</li><li>已开票订单不可退款</li></ul>
+            <p>第一行<br class="break" />第二行</p>
+            <script>const secret = '不要读我';</script>
+            """;
+
+        var text = SiteContentSnapshotService.HtmlToPlainText(html);
+
+        Assert.Contains("# 套餐", text);
+        Assert.Contains("## 导出限制", text);
+        Assert.Contains("版本 | 价格 | 附件", text);
+        Assert.Contains("企业版 | 99元/月 | 不包含附件", text);
+        Assert.Contains("- 付款后7天内申请", text);
+        Assert.Contains("- 已开票订单不可退款", text);
+        Assert.Contains("第一行\n第二行", text);
+        Assert.DoesNotContain("不要读我", text);
+    }
+
+    [Fact]
+    public async Task 部分文件暂时失败_恢复后立即重新读取()
+    {
+        var storage = new FakeAssetStorage();
+        storage.Objects["entry"] = "入口正文";
+        var site = SiteWith(("index.html", "entry"), ("terms.txt", "terms"));
+        var svc = NewService(storage);
+
+        var first = await svc.GetAsync(site);
+        Assert.True(first.TransientFailure);
+        storage.Objects["terms"] = "重要的例外条件";
+        var recovered = await svc.GetAsync(site);
+
+        Assert.Contains("重要的例外条件", recovered.Text);
+        Assert.False(recovered.Truncated);
+        Assert.False(recovered.TransientFailure);
+    }
+
+    [Fact]
     public async Task React单文件页面_提取模块脚本中的可见中文文案()
     {
         var storage = new FakeAssetStorage();
@@ -178,6 +262,7 @@ public class SiteContentSnapshotServiceTests
         Assert.Contains("借鉴三元决策思想", snap.Text);
         Assert.Contains("风险分 + 置信度 + 业务价值", snap.Text);
         Assert.DoesNotContain("grid gap-8", snap.Text);
+        Assert.True(snap.Truncated, "静态脚本文本不能冒充完整渲染后的页面");
     }
 
     [Fact]

@@ -258,6 +258,16 @@ describe('selectCustomProbeTargets 目标推导', () => {
 });
 
 describe('探测轮次纳入自定义监控', () => {
+  it('摘要暴露结构化指标解释，不夹带请求凭据；编辑后跟随定义刷新', async () => {
+    const definition = monitor({ kind: 'health-json', healthComponentId: 'webhook.dispatch-unresolved', healthField: 'observedValue', healthOp: 'eq', healthValue: '0', headers: { Authorization: 'private-test-value' } });
+    const svc = makeMonitor({ monitors: [definition], probe: async () => ({ up: false, ms: 1 }), now: () => MIN });
+    await svc.runCycle();
+    expect(svc.getSummary().targets.find(t => t.id === 'monitor@' + definition.id)!.healthCheck).toEqual({ componentId: 'webhook.dispatch-unresolved', field: 'observedValue', op: 'eq', value: '0' });
+    expect(JSON.stringify(svc.getSummary())).not.toContain('private-test-value');
+    definition.healthComponentId = 'api.branches-p95-ms';
+    expect(svc.getSummary().targets.find(t => t.id === 'monitor@' + definition.id)!.healthCheck?.componentId).toBe('api.branches-p95-ms');
+  });
+
   it('自定义目标走同一轮次：连续失败达阈值判 down，摘要带 source / monitorId / 探测方式', async () => {
     let now = 0;
     const probe: ProbeFn = vi.fn(async (target) => {
@@ -503,5 +513,31 @@ describe('接线守卫：index.ts 必须把自定义监控接进探测器与路�
     for (const label of ['列出自定义监控', '新增自定义监控', '试探自定义监控', '修改自定义监控', '删除自定义监控', '立即探测目标']) {
       expect(serverSource).toContain(label);
     }
+  });
+});
+
+describe('严重故障由生产可用性证据判定', () => {
+  it.each([
+    ['production', 'active', 'http', 'urgent'],
+    ['staging', 'active', 'http', 'normal'],
+    ['production', 'passive', 'http', 'normal'],
+    ['production', 'active', 'health-json', 'normal'],
+  ] as const)('%s / %s / %s 只有确认后才产生 %s 事件', async (environment, observeMode, kind, urgency) => {
+    let now = Date.UTC(2026, 9, 15); const events: unknown[] = [];
+    const mon = monitor({ environment, observeMode, kind, projectId: 'business',
+      healthComponentId: 'metric', healthField: 'observedValue', healthOp: 'eq', healthValue: '0' });
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ checks: { metric: { observedValue: 1 } } })));
+    const service = new UptimeMonitorService({
+      state: { getAllBranches: () => [], getUptimeMonitors: () => [mon] },
+      config: testConfig(), now: () => now,
+      probe: async () => ({ up: false, ms: 15_000, code: 503, err: '访问无响应' }),
+      onAlert: (_type, event) => events.push(event),
+    });
+    try {
+      await service.runCycle(); expect(events).toHaveLength(0);
+      now += MIN; await service.runCycle(); expect(events).toHaveLength(0);
+      now += MIN; await service.runCycle();
+      expect(events).toHaveLength(1); expect(events[0]).toMatchObject({ urgency });
+    } finally { fetch.mockRestore(); }
   });
 });

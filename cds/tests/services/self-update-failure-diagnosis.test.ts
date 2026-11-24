@@ -107,7 +107,7 @@ describe('diagnoseSelfUpdateFailure', () => {
 
   it('任何阶段、任何输入都同时给出中文原因和恢复动作', () => {
     const stages: SelfUpdateFailureStage[] = [
-      'concurrency', 'fetch', 'gate', 'checkout', 'reset',
+      'concurrency', 'restart-drain', 'fetch', 'gate', 'checkout', 'reset',
       'install', 'typecheck', 'build', 'swap', 'restart', 'unknown',
     ];
     for (const stage of stages) {

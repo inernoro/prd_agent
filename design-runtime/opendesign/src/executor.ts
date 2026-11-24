@@ -1,4 +1,4 @@
-// 一次设计任务的完整执行：取任务包 → 铺工作区 → 驱动 OpenDesign 设计、终审、按闸门修复 → 收产物 →
+// 一次设计任务的完整执行：取任务包 → 铺工作区 → 驱动 OpenDesign 设计与原生自查 → 收产物 →
 // 向 MAP 交结果包，运行期间推实时预览。
 //
 // 搬迁自 cds/src/services/agent-workspace-session-runtime.ts 的 create() + execute()（第 1 阶段：只改归属、
@@ -19,11 +19,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  BROWSER_QUALITY_REPORT_PATH,
   CDS_GENERATED_ARTIFACT_PATHS,
   assertPublicArtifactFileCount,
   buildGeneratedPublicArtifactPackage,
-  buildPublicArtifactManifest,
-  compareOrdinal,
   isAllowedOutput,
   mediaTypeForFile,
   MAX_OUTPUT_FILE_COUNT,
@@ -34,26 +33,29 @@ import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
+import { registerPresentationSkill } from './engine/presentation-skill.js';
 import { prepareWebPrototypeResources } from './engine/web-prototype.js';
 import { AgentWorkspaceRuntimeError, type StageReporter } from './errors.js';
 import {
   OPEN_DESIGN_CODEX_HOME_RELATIVE,
+  OPEN_DESIGN_PRESENTATION_SKILL,
   OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
   buildOpenDesignCodexConfig,
   buildPlatformRules,
-  buildRepairMessage,
   buildReviewMessage,
-  collectDesignDirection,
+  collectDesignTaskContext,
   composeOpenDesignPrompts,
 } from './prompts.js';
 import {
-  MAX_QUALITY_REPAIR_ATTEMPTS,
   canAcceptUntrackedWorkspaceEdit,
-  classifyQualityRepairReason,
-  collectArtifactQualityEvidence,
-  collectVisibleTextOccurrenceConstraints,
   createArtifactQualityGate,
 } from './quality/gate.js';
+import {
+  buildBrowserQualityEvidence,
+  summarizeAttempt,
+  type BrowserQualityAttemptEvidence,
+} from './quality/browser-contract.js';
+import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
 import { exportValidatedOutputs, readRegularFileNoFollow } from './workspace/output-preflight.js';
 import { SHA256_RE, normalizeRelativePath, sha256 } from './workspace/primitives.js';
 import {
@@ -70,6 +72,42 @@ import {
   type WorkspaceTransferRequest,
 } from './workspace/transfer.js';
 
+function validatePresentationSourcePlanIdentity(
+  workspaceDir: string,
+  declared: { path: string; contentHash: string } | undefined,
+): void {
+  if (!declared) return;
+  const planBytes = readRegularFileNoFollow(path.join(workspaceDir, ...declared.path.split('/')), 8 * 1024 * 1024);
+  if (sha256(planBytes) !== declared.contentHash) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json does not match its frozen contract');
+  }
+}
+
+function preparePresentationRepairCandidate(workspaceDir: string): string | undefined {
+  const presentation = collectDesignTaskContext(workspaceDir).presentation;
+  const declared = presentation?.repairCandidate;
+  if (!declared) return undefined;
+  if (!presentation?.sourcePlan) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation repair candidate requires a frozen source plan');
+  }
+  const candidatePath = path.join(workspaceDir, ...declared.path.split('/'));
+  const candidateBytes = readRegularFileNoFollow(candidatePath, 1024 * 1024);
+  if (sha256(candidateBytes) !== declared.contentHash) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'candidate/index.html does not match its frozen contract');
+  }
+  const candidate = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(candidateBytes);
+  if (!candidate.trim()) throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation repair candidate is empty');
+  const externalReference = /(?:\b(?:src|href|poster|action)\s*=|\burl\s*\()\s*["']?(?!#|data:)([^"')\s>]+)/gi;
+  const match = externalReference.exec(candidate);
+  if (match) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      `presentation repair candidate is not self-contained: ${match[1].slice(0, 80)}`,
+    );
+  }
+  return candidate;
+}
+
 /**
  * OpenDesign 自己认定的交付文件，不是 `index.html`（DELIVERABLE_ENTRY_NOTE）。
  *
@@ -80,12 +118,39 @@ import {
  */
 const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
 
+// 十五分钟是产品总承诺，不是每个 OpenDesign run 各自可用的预算。最后 10% 固定留给
+// 浏览器观察取证与向 MAP 提交；终审或定向修复等单轮模型质量工作最多占 1/15，且至少要有
+// 1/30 才值得启动。默认 900 秒对应 90 秒收尾、30–60 秒单轮质量工作。短任务按同一比例缩放，
+// 因硬编码分钟数失去全部执行时间。
+const FINALIZATION_RESERVE_RATIO = 0.1;
+const MIN_MODEL_QUALITY_PASS_RATIO = 1 / 30;
+const MAX_MODEL_QUALITY_PASS_RATIO = 1 / 15;
+
+interface ExecutionBudget {
+  executionDeadline: number;
+  finalizationDeadline: number;
+  minimumQualityPassMs: number;
+  maximumQualityPassMs: number;
+}
+
+function buildExecutionBudget(startedAt: number, timeoutSeconds: number): ExecutionBudget {
+  const totalMs = Math.max(1, timeoutSeconds) * 1000;
+  const finalizationReserveMs = Math.max(1, Math.floor(totalMs * FINALIZATION_RESERVE_RATIO));
+  return {
+    executionDeadline: startedAt + totalMs,
+    finalizationDeadline: startedAt + totalMs - finalizationReserveMs,
+    minimumQualityPassMs: Math.max(1, Math.floor(totalMs * MIN_MODEL_QUALITY_PASS_RATIO)),
+    maximumQualityPassMs: Math.max(1, Math.floor(totalMs * MAX_MODEL_QUALITY_PASS_RATIO)),
+  };
+}
+
 export interface ExecutorPaths {
   workspaceDir: string;
   dataDir: string;
   templatesDir: string;
   outputDir: string;
   webPrototypeSourceDir: string;
+  presentationSkillSourceDir: string;
 }
 
 export interface ExecutorOptions {
@@ -95,11 +160,15 @@ export interface ExecutorOptions {
   pollIntervalMs?: number;
   /** 转发口监听的本机端口；0 表示临时端口（测试）。 */
   relayPort: number;
+  /** MAP 与运行时共同钉住的 LLMGW 原生 Responses 基址。 */
+  llmgwBaseUrl: string;
   /** 以 root 运行时，把工作区与配置文件的属主交还给引擎用户。 */
   engineUid?: number;
   engineGid?: number;
   /** 测试注入：替换转发口的实现。 */
   startRelay?: (options: EgressRelayOptions) => Promise<EgressRelay>;
+  /** 浏览器检查在独立子进程执行；测试注入确定性 runner。 */
+  browserQualityRunner?: BrowserQualityRunner;
 }
 
 export interface DesignTaskInput {
@@ -124,15 +193,27 @@ interface PreparedWorkspace {
   inputFiles: Array<{ path: string; sha256: string; size: number }>;
 }
 
+interface PreviewPusher {
+  /** 定时轮询的完整性兜底。 */
+  poll: () => Promise<void>;
+  /** 在终止前立即推送当前最佳预览，不受轮询节流影响。 */
+  flush: () => Promise<void>;
+  /** 任务结束时必须清理监听器与 debounce 计时器。 */
+  close: () => void;
+}
+
 export class DesignTaskExecutor {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly startRelay: (options: EgressRelayOptions) => Promise<EgressRelay>;
+  private readonly browserQualityRunner: BrowserQualityRunner;
 
   constructor(private readonly options: ExecutorOptions) {
     this.fetchImpl = options.fetchImpl || fetch;
     this.pollIntervalMs = Math.max(5, options.pollIntervalMs || 750);
     this.startRelay = options.startRelay || startEgressRelay;
+    this.browserQualityRunner = options.browserQualityRunner
+      || new SubprocessBrowserQualityRunner(options.engineUid, options.engineGid);
   }
 
   async run(
@@ -244,16 +325,37 @@ export class DesignTaskExecutor {
       fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
       fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'), { mode: 0o644, flag: 'wx' });
     }
+    const repairCandidateSeed = editableSeeds.length === 0
+      ? preparePresentationRepairCandidate(workspaceDir)
+      : undefined;
+    const initialIndex = repairCandidateSeed;
+    if (initialIndex !== undefined) {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), initialIndex, { mode: 0o644, flag: 'wx' });
+    }
     this.chownForEngine(workspaceDir);
-    onStage('workspace_materialized', { fileCount: files.length });
-    prepareWebPrototypeResources(
-      {
-        sourceDir: this.options.paths.webPrototypeSourceDir,
-        templatesDir: this.options.paths.templatesDir,
-        workspaceDir,
-      },
-      (target) => this.chownForEngine(target),
-    );
+    onStage('workspace_materialized', {
+      fileCount: files.length,
+      repairCandidateRestored: repairCandidateSeed !== undefined,
+    });
+    const isPresentation = collectDesignTaskContext(workspaceDir).presentation !== undefined;
+    if (isPresentation) {
+      registerPresentationSkill(
+        {
+          sourceDir: this.options.paths.presentationSkillSourceDir,
+          templatesDir: this.options.paths.templatesDir,
+        },
+        (target) => this.chownForEngine(target),
+      );
+    } else {
+      prepareWebPrototypeResources(
+        {
+          sourceDir: this.options.paths.webPrototypeSourceDir,
+          templatesDir: this.options.paths.templatesDir,
+          workspaceDir,
+        },
+        (target) => this.chownForEngine(target),
+      );
+    }
     await this.daemonClient().waitForHealth(task.timeoutSeconds);
     if (signal.aborted) {
       throw new AgentWorkspaceRuntimeError(
@@ -278,15 +380,22 @@ export class DesignTaskExecutor {
     const { workspaceDir } = this.options.paths;
     const sessionId = task.taskId;
     const instruction = task.instruction;
-    const executionDeadline = Date.now() + Math.max(1, task.timeoutSeconds) * 1000;
+    const budget = buildExecutionBudget(Date.now(), task.timeoutSeconds);
+    const { executionDeadline } = budget;
     if (!instruction.trim() || instruction.length > 12_000) {
       throw new AgentWorkspaceRuntimeError('design_instruction_invalid', 'design instruction must contain 1 to 12000 characters');
     }
-    validateModelAuthority(model, transfer.inputPackageUrl);
+    validateModelAuthority(model, transfer.inputPackageUrl, this.options.llmgwBaseUrl);
     const transferToken = transfer.transferToken;
     if (!transferToken || transferToken.length > 8192) {
       throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
     }
+    const designContext = collectDesignTaskContext(workspaceDir);
+    const isPresentation = designContext.presentation !== undefined;
+    const requiredSkillId = isPresentation
+      ? OPEN_DESIGN_PRESENTATION_SKILL
+      : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
+    validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const daemonHandle = this.options.daemon.current();
     const client = this.daemonClient();
     onStage('open_design_importing');
@@ -295,7 +404,7 @@ export class DesignTaskExecutor {
       body: {
         baseDir: workspaceDir,
         name: `MAP design ${sessionId.slice(-12)}`,
-        skillId: OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
+        skillId: requiredSkillId,
         orchestratorWorkspace: {
           kind: 'scratch',
           sourceLabel: 'MAP design workspace',
@@ -312,28 +421,33 @@ export class DesignTaskExecutor {
     if (!projectId || !conversationId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
     }
-    if (project?.skillId !== OPEN_DESIGN_WEB_PROTOTYPE_SKILL) {
-      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required web prototype skill');
+    if (project?.skillId !== requiredSkillId) {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required task skill');
     }
     const relayClientToken = daemonHandle?.modelPlaceholderToken || '';
     if (!model.apiKey || /[\0\r\n]/.test(model.apiKey) || !relayClientToken || /[\0\r\n]/.test(relayClientToken)) {
       throw new AgentWorkspaceRuntimeError(
         'model_authority_invalid',
-        'MAP model ticket is missing or malformed',
+        'Task-scoped model gateway credential is missing or malformed',
       );
     }
     let relay: EgressRelay;
     try {
       relay = await this.startRelay({
         modelBaseUrl: model.baseUrl,
-        mapModelTicket: model.apiKey,
+        modelGatewayCredential: model.apiKey,
         relayClientToken,
         port: this.options.relayPort,
+        sourceSystem: model.sourceSystem,
+        appCallerCode: model.appCallerCode,
+        userId: model.userId,
+        runId: model.runId,
+        allowPrivateTarget: model.baseUrl.replace(/\/$/, '') === this.options.llmgwBaseUrl.replace(/\/$/, ''),
       });
     } catch (error) {
       throw new AgentWorkspaceRuntimeError(
         'workspace_egress_unavailable',
-        `MAP-only egress relay could not be started: ${error instanceof Error ? error.message.slice(0, 200) : 'unknown error'}`,
+        `Controlled model egress relay could not be started: ${error instanceof Error ? error.message.slice(0, 200) : 'unknown error'}`,
         true,
       );
     }
@@ -345,40 +459,54 @@ export class DesignTaskExecutor {
       .sort();
     const currentIndexPath = path.join(workspaceDir, 'current', 'index.html');
     const editingExistingPage = fs.existsSync(currentIndexPath);
-    // One execution owns its frozen evidence and repair-retention state. Neither
-    // a later model edit nor another session can redefine the facts being checked.
-    // 证据口径与 MAP 发布闸（HostedSiteEditRunWorker.BuildQualityEvidence）一致：用户写的标题与要求是
-    // 生成请求，不是能证明日期、联系方式、网址或数值的证据。此前这里把它们算进证据，同一页在这里通过、
-    // 到 MAP 最后一步才被拒，白等一整轮（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
-    const qualityEvidence = collectArtifactQualityEvidence(workspaceDir, false);
-    const checkArtifactQuality = createArtifactQualityGate(
-      qualityEvidence,
-      collectVisibleTextOccurrenceConstraints(workspaceDir),
-      qualityEvidence,
-    );
+    // MAP 只验证隔离交付与完整包；正文、事实和设计由原生技能自查，不触发平台修复轮。
+    const checkArtifactQuality = createArtifactQualityGate('', [], '', false);
     let activeRunId: string | undefined;
+    let previewPusher: PreviewPusher | undefined;
+    const browserEvidenceDir = path.join(
+      path.dirname(this.options.paths.outputDir),
+      'browser-quality',
+      sha256(Buffer.from(sessionId)).slice(0, 24),
+    );
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
-      const designDirection = collectDesignDirection(workspaceDir);
+      const designDirection = designContext.direction;
+      const reviewMode = designDirection?.reviewMode ?? 'light';
+      // PPT 的终审由所选 deck skill 承担，固定一轮；MAP 的 off/strict 不得跳过或叠加自研审美轮次。
+      const reviewPasses = isPresentation ? 1 : reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
+      const mainRunDeadline = reviewPasses > 0
+        ? budget.finalizationDeadline - budget.minimumQualityPassMs
+        : budget.finalizationDeadline;
       const hasReferenceImages = prepared.inputFiles.some((file) => file.path.startsWith('reference/'));
-      const platformRules = buildPlatformRules({ knowledgeFiles, editingExistingPage });
+      const platformRules = buildPlatformRules({
+        knowledgeFiles,
+        editingExistingPage,
+        presentation: designContext.presentation,
+      });
       const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
         platformRules,
-        direction: designDirection,
+        // 演示稿的视觉与检查合同由已选中的原生 deck skill 定义。目录风格仍提供
+        // designSystemId/品牌上下文，但通用网页的 generate/edit/review 提示不能叠加进来。
+        direction: isPresentation ? undefined : designDirection,
+        brief: designContext.brief,
+        brand: designContext.brand,
         editingExistingPage,
         hasReferenceImages,
       });
       // designSystemId 让 OpenDesign 把 /app/design-systems/<id> 的 DESIGN.md、tokens 与组件注入它自己的提示词。
+      let activeConversationId = conversationId;
       const buildRunBody = (message: string) => ({
         projectId,
-        conversationId,
+        conversationId: activeConversationId,
         agentId: 'codex',
         model: model.model,
         message,
         systemPrompt,
-        ...(designDirection ? { designSystemId: designDirection.designSystemId } : {}),
+        ...(designContext.brand || designDirection
+          ? { designSystemId: designContext.brand?.designSystemId ?? designDirection!.designSystemId }
+          : {}),
       });
-      const previewPusher = this.createPreviewPusher(task, executionDeadline, onStage);
+      previewPusher = this.createPreviewPusher(task, executionDeadline, onStage);
       onStage('open_design_run_starting', { projectId });
       const run = await client.odJson('/api/runs', {
         method: 'POST',
@@ -396,23 +524,57 @@ export class DesignTaskExecutor {
       }
       activeRunId = runId;
       let finalRunId = runId;
-      let runOutcome: OpenDesignRunOutcome = await client.waitForRun(runId, executionDeadline, signal, onStage, previewPusher);
+      let runOutcome: OpenDesignRunOutcome = await client.waitForRun(runId, mainRunDeadline, signal, onStage, previewPusher.poll);
       // 交付文件由 OpenDesign 指名，一轮里只有产出的那几次会带上它——终审与修复常报
       // no_artifact（它们没新建产物），那不等于上一轮指名的文件失效。所以只往前记，不清空。
       let deliverableEntryFile = runOutcome.deliverableEntryFile;
       if (Date.now() >= executionDeadline) {
         throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
       }
-      // 自查强度（MAP 设置冻结进任务书）：off 跳过模型终审，只留确定性发布闸门与修复回路；
+      // 显式冻结的上游自查配置仍生效，但不得按平台评分追加付费修复；
       // light 一轮终审；strict 在终审之后再加一轮只看视觉质量的审美复查。旧运行没有方向，按 light。
-      const reviewMode = designDirection?.reviewMode ?? 'light';
-      const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
+      if (reviewPasses > 0) {
+        // Quality work needs the same project and live workspace, but not the generation transcript.
+        // Reusing the imported conversation made every review request resend the complete generation
+        // history. A real strict run reached 132k input tokens and exhausted the 15-minute task
+        // deadline before browser quality could start. Keep review and all targeted repairs in one
+        // fresh quality conversation so they can inspect the authoritative workspace without carrying
+        // the generation tool transcript forward.
+        activeConversationId = await client.createConversation(
+          projectId,
+          `MAP quality review ${sessionId.slice(-12)}`,
+          signalForDeadline(executionDeadline, signal),
+        );
+      }
       for (let reviewPass = 0; reviewPass < reviewPasses; reviewPass += 1) {
-        assertExecutionDeadline(executionDeadline);
+        const stableRunId = finalRunId;
+        const stableOutcome = runOutcome;
+        const stableDeliverableEntryFile = deliverableEntryFile;
+        this.promoteDeliverableEntry(stableDeliverableEntryFile, (stage, detail) => {
+          onStage(stage === 'deliverable_entry_resolved' ? 'deliverable_entry_checkpointed' : stage, detail);
+        });
+        this.exportOutputs(transfer, prepared);
+        const stableOutputs = this.collectOutputs(transfer);
+        const remainingReviewMs = budget.finalizationDeadline - Date.now();
+        const allottedReviewMs = Math.min(budget.maximumQualityPassMs, remainingReviewMs);
+        if (allottedReviewMs < budget.minimumQualityPassMs) {
+          onStage('open_design_review_budget_exhausted', {
+            completedPasses: reviewPass,
+            skippedPasses: reviewPasses - reviewPass,
+            remainingSeconds: Math.max(0, Math.floor(remainingReviewMs / 1000)),
+          });
+          break;
+        }
+        const reviewDeadline = Date.now() + allottedReviewMs;
         const review = await client.odJson('/api/runs', {
           method: 'POST',
-          body: buildRunBody(buildReviewMessage({ reviewPass, editingExistingPage, reviewAddendum })),
-          signal: signalForDeadline(executionDeadline, signal),
+          body: buildRunBody(buildReviewMessage({
+            reviewPass,
+            editingExistingPage,
+            reviewAddendum,
+            presentation: designContext.presentation,
+          })),
+          signal: signalForDeadline(reviewDeadline, signal),
           acceptedStatuses: [200, 202],
         });
         finalRunId = typeof review.runId === 'string'
@@ -424,103 +586,93 @@ export class DesignTaskExecutor {
           throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
         }
         activeRunId = finalRunId;
-        onStage('open_design_reviewing', { runId: finalRunId, pass: reviewPass + 1 });
-        runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher);
-        deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
-      }
-      let collectedFiles: WorkspacePackageFile[] = [];
-      let indexFile: WorkspacePackageFile | undefined;
-      let hardenedHtml = '';
-      for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
-        onStage('workspace_collecting');
-        assertExecutionDeadline(executionDeadline);
-        // 成品未必叫 index.html：OpenDesign 在 run 状态里指名了这一轮的交付文件，按它指的搬。
-        this.promoteDeliverableEntry(deliverableEntryFile, onStage);
-        assertExecutionDeadline(executionDeadline);
-        this.exportOutputs(transfer, prepared);
-        assertExecutionDeadline(executionDeadline);
-        collectedFiles = this.collectOutputs(transfer);
-        assertExecutionDeadline(executionDeadline);
-        indexFile = collectedFiles.find((file) => file.path === 'index.html');
-        if (!indexFile) {
-          // 「没有 index.html」有好几种完全不同的成因：模型一个文件都没产出、产出了但
-          // OpenDesign 没指名、指名了但名字不在允许的输出路径里……只报一句「没有」，
-          // 读的人无从下手（`external-cause-first.md`）。所以把这一刻的现场一起交出来。
-          throw new AgentWorkspaceRuntimeError(
-            'design_output_missing',
-            'OpenDesign completed without index.html',
-            false,
-            {
-              stage: 'collect_outputs',
-              collectedPaths: collectedFiles.map((file) => file.path).slice(0, 40),
-              workspaceRootEntries: this.listWorkspaceRootEntries(),
-              deliverableValid: runOutcome.deliverableValid,
-              deliverableValidation: runOutcome.deliverableValidation || null,
-              deliverableEntryFile: deliverableEntryFile || null,
-              // 模型这一轮到底干了什么——没有这份记录，「没有 index.html」永远只能靠猜。
-              runTranscriptDigest: await client.captureRunTranscriptDigest(
-                [runId, finalRunId],
-                () => remainingExecutionMs(executionDeadline),
-              ),
-            },
-          );
-        }
-        const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
-        const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
-        if (
-          !runOutcome.deliverableValid
-          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)
-        ) {
-          throw new AgentWorkspaceRuntimeError(
-            'open_design_deliverable_invalid',
-            runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
-          );
-        }
+        onStage('open_design_reviewing', {
+          runId: finalRunId,
+          pass: reviewPass + 1,
+          allottedSeconds: Math.floor(allottedReviewMs / 1000),
+        });
         try {
-          hardenedHtml = checkArtifactQuality(
-            outputHtml.toString('utf8'),
-            collectedFiles.map((file) => file.path),
-          );
-          break;
-        } catch (error) {
-          if (
-            !(error instanceof AgentWorkspaceRuntimeError)
-            || error.code !== 'design_output_quality_rejected'
-            || qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS
-          ) {
-            throw error;
-          }
-          if (Date.now() >= executionDeadline) {
-            throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
-          }
-          const repairReason = classifyQualityRepairReason(error);
-          if (!repairReason) throw error;
-          const preserveMeasuredFacts = repairReason.code === 'measured_claim_context_unresolved'
-            || repairReason.code === 'retained_measured_claim_missing';
-          const repair = await client.odJson('/api/runs', {
-            method: 'POST',
-            body: buildRunBody(buildRepairMessage({ repairReason, preserveMeasuredFacts, knowledgeFiles, editingExistingPage })),
-            signal: signalForDeadline(executionDeadline, signal),
-            acceptedStatuses: [200, 202],
-          });
-          finalRunId = typeof repair.runId === 'string'
-            ? repair.runId
-            : typeof repair.id === 'string'
-              ? repair.id
-              : '';
-          if (!finalRunId) {
-            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign quality repair run returned no run id');
-          }
-          activeRunId = finalRunId;
-          onStage('open_design_quality_repairing', {
-            runId: finalRunId,
-            attempt: qualityRepairAttempt + 1,
-          });
-          runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher);
+          runOutcome = await client.waitForRun(finalRunId, reviewDeadline, signal, onStage, previewPusher.poll);
           deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+        } catch (error) {
+          const reviewBudgetExpired = error instanceof AgentWorkspaceRuntimeError
+            && error.code === 'open_design_run_timeout'
+            && !signal.aborted
+            && Date.now() < executionDeadline;
+          if (!reviewBudgetExpired) throw error;
+          this.restoreOutputCheckpoint(transfer, stableOutputs);
+          finalRunId = stableRunId;
+          runOutcome = stableOutcome;
+          deliverableEntryFile = stableDeliverableEntryFile;
+          onStage('open_design_review_budget_exhausted', {
+            completedPasses: reviewPass,
+            skippedPasses: reviewPasses - reviewPass,
+            allottedSeconds: Math.floor(allottedReviewMs / 1000),
+            retainedRunId: stableRunId,
+          });
+          break;
         }
+      }
+      onStage('workspace_collecting');
+      assertExecutionDeadline(executionDeadline);
+      this.promoteDeliverableEntry(deliverableEntryFile, onStage);
+      this.exportOutputs(transfer, prepared);
+      let collectedFiles = this.collectOutputs(transfer);
+      const indexFile = collectedFiles.find((file) => file.path === 'index.html');
+      if (!indexFile) {
+        throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html', false, {
+          stage: 'collect_outputs', collectedPaths: collectedFiles.map((file) => file.path).slice(0, 40),
+          workspaceRootEntries: this.listWorkspaceRootEntries(), deliverableValid: runOutcome.deliverableValid,
+          deliverableValidation: runOutcome.deliverableValidation || null, deliverableEntryFile: deliverableEntryFile || null,
+          runTranscriptDigest: await client.captureRunTranscriptDigest([runId, finalRunId], () => remainingExecutionMs(executionDeadline)),
+        });
+      }
+      const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
+      const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+      if (!runOutcome.deliverableValid
+          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)) {
+        throw new AgentWorkspaceRuntimeError('open_design_deliverable_invalid', runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable');
+      }
+      const hardenedHtml = checkArtifactQuality(outputHtml.toString('utf8'), collectedFiles.map((file) => file.path));
+      // 浏览器只提供可追溯观察，分数和布局发现不得触发额外模型调用或阻断安全成品。
+      fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
+      fs.mkdirSync(browserEvidenceDir, { recursive: true, mode: 0o700 });
+      this.chownForEngine(browserEvidenceDir);
+      const indexPath = path.join(workspaceDir, 'index.html');
+      fs.writeFileSync(indexPath, hardenedHtml);
+      this.chownForEngine(indexPath);
+      onStage('open_design_browser_quality_checking', { repairAttempt: 0, viewports: ['desktop-1440', 'mobile-390'] });
+      let browserVersion = '';
+      const browserAttempts: BrowserQualityAttemptEvidence[] = [];
+      try {
+        const checked = await this.browserQualityRunner.run({ workspaceDir, evidenceDir: browserEvidenceDir, repairAttempt: 0 }, signalForDeadline(executionDeadline, signal));
+        browserVersion = checked.browserVersion;
+        const evidence = summarizeAttempt(0, browserVersion, checked.measurements);
+        browserAttempts.push(evidence);
+        onStage('open_design_browser_quality_checked', { repairAttempt: 0, hardPassed: evidence.hardPassed, issueCodes: evidence.issueCodes, score: evidence.score });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        assertExecutionDeadline(executionDeadline);
+        if (!(error instanceof AgentWorkspaceRuntimeError) || error.code !== 'browser_quality_runtime_unavailable') throw error;
+        onStage('open_design_browser_quality_unavailable', { observationAvailable: false, reasonCode: error.code });
       }
       activeRunId = undefined;
+      const browserEvidenceFiles: WorkspacePackageFile[] = [];
+      if (browserAttempts.length > 0) {
+        const browserQuality = buildBrowserQualityEvidence(browserVersion, browserAttempts);
+        const reportBytes = Buffer.from(`${JSON.stringify(browserQuality, null, 2)}\n`);
+        browserEvidenceFiles.push({ path: BROWSER_QUALITY_REPORT_PATH, contentBase64: reportBytes.toString('base64'), sha256: sha256(reportBytes), size: reportBytes.byteLength, mediaType: mediaTypeForFile(BROWSER_QUALITY_REPORT_PATH) });
+      }
+      for (const evidenceRef of [...new Set(browserAttempts.flatMap((attempt) => attempt.evidenceRefs))]) {
+        const screenshot = fs.readFileSync(path.join(browserEvidenceDir, path.basename(evidenceRef)));
+        browserEvidenceFiles.push({
+          path: evidenceRef,
+          contentBase64: screenshot.toString('base64'),
+          sha256: sha256(screenshot),
+          size: screenshot.byteLength,
+          mediaType: mediaTypeForFile(evidenceRef),
+        });
+      }
       const hardenedBytes = Buffer.from(hardenedHtml);
       indexFile!.contentBase64 = hardenedBytes.toString('base64');
       indexFile!.sha256 = sha256(hardenedBytes);
@@ -528,14 +680,18 @@ export class DesignTaskExecutor {
       // Keep validated author assets byte-for-byte. The service alone produces its
       // reserved metadata and manifest; no author manifest is trusted.
       collectedFiles = validatePublicArtifactFiles(collectedFiles, true);
-      const files = CDS_GENERATED_ARTIFACT_PATHS.every((reportPath) => isAllowedOutput(reportPath, transfer.allowedOutputPaths))
-        ? buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles)
-        : [...collectedFiles, buildPublicArtifactManifest(collectedFiles)]
-            .sort((left, right) => compareOrdinal(left.path, right.path));
+      const generatedPaths = [...CDS_GENERATED_ARTIFACT_PATHS, ...browserEvidenceFiles.map((file) => file.path)];
+      if (!generatedPaths.every((reportPath) => isAllowedOutput(reportPath, transfer.allowedOutputPaths))) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_quality_evidence_unsupported',
+          'MAP output allowlist does not permit the versioned browser quality evidence bundle',
+        );
+      }
+      const files = buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles, browserEvidenceFiles);
       assertPublicArtifactFileCount(files.length);
       const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
-      if (totalOutputBytes > transfer.maxOutputBytes) {
-        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxOutputBytes');
+      if (totalOutputBytes > transfer.maxPublicOutputBytes) {
+        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxPublicOutputBytes');
       }
       const commitBody = {
         schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
@@ -606,8 +762,10 @@ export class DesignTaskExecutor {
         openDesignRunId: finalRunId,
       };
     } finally {
+      previewPusher?.close();
       if (activeRunId) await client.cancelRun(activeRunId);
       await relay.close().catch(() => undefined);
+      fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
     }
   }
 
@@ -712,6 +870,7 @@ export class DesignTaskExecutor {
         allowedOutputPaths: transfer.allowedOutputPaths,
         inputFiles: prepared.inputFiles,
         maxOutputBytes: transfer.maxOutputBytes,
+        maxPublicOutputBytes: transfer.maxPublicOutputBytes,
       });
     } finally {
       this.options.daemon.thaw();
@@ -749,8 +908,8 @@ export class DesignTaskExecutor {
           );
         }
         total += stat.size;
-        if (total > transfer.maxOutputBytes) {
-          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxOutputBytes');
+        if (total > transfer.maxPublicOutputBytes) {
+          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxPublicOutputBytes');
         }
         const bytes = fs.readFileSync(absolute);
         results.push({
@@ -764,6 +923,41 @@ export class DesignTaskExecutor {
     };
     walk(outputDir);
     return results.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  /**
+   * 模型终审超出它自己的预算时，不能把半写状态交给浏览器门禁。终审开始前的输出已经过
+   * output-preflight；这里冻结引擎、清空声明过的输出根，再把那份受信快照原样恢复。
+   * brief、knowledge、current、reference 等冻结输入不在输出白名单里，因此不会被触碰。
+   */
+  private restoreOutputCheckpoint(
+    transfer: WorkspaceTransferRequest,
+    checkpoint: WorkspacePackageFile[],
+  ): void {
+    const workspaceDir = this.options.paths.workspaceDir;
+    this.options.daemon.freeze();
+    try {
+      for (const allowed of transfer.allowedOutputPaths) {
+        const outputPath = allowed.endsWith('/**') ? allowed.slice(0, -3) : allowed;
+        const normalized = normalizeRelativePath(outputPath);
+        fs.rmSync(path.join(workspaceDir, ...normalized.split('/')), { recursive: true, force: true });
+      }
+      for (const file of checkpoint) {
+        const normalized = normalizeRelativePath(file.path);
+        if (!isAllowedOutput(normalized, transfer.allowedOutputPaths)) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_invalid',
+            `review checkpoint contains a path outside the output allowlist: ${normalized}`,
+          );
+        }
+        const target = path.join(workspaceDir, ...normalized.split('/'));
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'));
+      }
+      this.chownForEngine(workspaceDir);
+    } finally {
+      this.options.daemon.thaw();
+    }
   }
 
   /**
@@ -789,7 +983,7 @@ export class DesignTaskExecutor {
     task: DesignTaskInput,
     executionDeadline: number,
     onStage: StageReporter,
-  ): () => Promise<void> {
+  ): PreviewPusher {
     const previewUrl = task.previewUrl;
     const indexPath = path.join(this.options.paths.workspaceDir, 'index.html');
     let lastCheckAt = 0;
@@ -797,10 +991,21 @@ export class DesignTaskExecutor {
     let revision = 0;
     let failureReported = false;
     let disabled = !previewUrl;
-    return async () => {
+    let closed = false;
+    let debounceTimer: NodeJS.Timeout | undefined;
+    let watcher: fs.FSWatcher | undefined;
+    let pushing = false;
+    let forcedAgain = false;
+    const push = async (force = false): Promise<void> => {
       if (disabled || !previewUrl) return;
       const now = Date.now();
-      if (now - lastCheckAt < PREVIEW_CHECK_INTERVAL_MS || remainingExecutionMs(executionDeadline) < 15_000) return;
+      if (!force && now - lastCheckAt < PREVIEW_CHECK_INTERVAL_MS) return;
+      if (remainingExecutionMs(executionDeadline) < 15_000) return;
+      if (pushing) {
+        forcedAgain = forcedAgain || force;
+        return;
+      }
+      pushing = true;
       lastCheckAt = now;
       try {
         let stat: fs.Stats;
@@ -810,12 +1015,15 @@ export class DesignTaskExecutor {
           return;
         }
         if (!stat.isFile()) return;
-        // 与原 `stat -c "%Y:%s"` 同一口径：秒级修改时间 + 字节数。
-        const fingerprint = `${Math.floor(stat.mtimeMs / 1000)}:${stat.size}`;
-        if (fingerprint === lastFingerprint) return;
         if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
-        const html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
+        let html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
         if (!html.trim()) return;
+        // Preview the exact OpenDesign bytes. Presentation content and layout are authored upstream;
+        // MAP must not inject source text or require a local source-slot DOM shape before showing it.
+        // 文件监听可能在同一毫秒内收到两版同字节数内容；只看 mtime/size 会吞掉真实变化。
+        // 以正文摘要作为修订判据，轮询与 watch 共用同一条完整性口径。
+        const fingerprint = sha256(Buffer.from(html, 'utf8'));
+        if (fingerprint === lastFingerprint) return;
         // 指纹只在对端确认收下之后才记：推送失败（超时 / 5xx）时下一轮要重推同一份内容，
         // 否则页面停止变化后预览永远卡在失败前那一版。修订号照常递增，保持单调。
         revision += 1;
@@ -846,7 +1054,39 @@ export class DesignTaskExecutor {
             message: error instanceof Error ? error.message.slice(0, 200) : 'preview push failed',
           });
         }
+      } finally {
+        pushing = false;
+        if (forcedAgain && !closed) {
+          forcedAgain = false;
+          queueMicrotask(() => { void push(true); });
+        }
       }
+    };
+    if (!disabled) {
+      try {
+        watcher = fs.watch(this.options.paths.workspaceDir, { persistent: false }, (_event, filename) => {
+          if (closed || !filename || path.basename(filename.toString()) !== 'index.html') return;
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => { void push(true); }, 100);
+        });
+        watcher.on('error', () => {
+          watcher?.close();
+          watcher = undefined;
+          // 监听不可用时不停任务；waitForRun 仍会持续调 poll 作兜底。
+          onStage('open_design_preview_watch_unavailable');
+        });
+      } catch {
+        onStage('open_design_preview_watch_unavailable');
+      }
+    }
+    return {
+      poll: () => push(false),
+      flush: () => push(true),
+      close: () => {
+        closed = true;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        watcher?.close();
+      },
     };
   }
 }
@@ -862,4 +1102,3 @@ function remainingExecutionMs(deadline: number): number {
 function assertExecutionDeadline(deadline: number): void {
   remainingExecutionMs(deadline);
 }
-

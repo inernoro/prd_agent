@@ -7,7 +7,7 @@
 | OpenDesign | 0.21.1 | https://github.com/nexu-io/open-design/tree/fbd4d48ebe21b20f4a2faaad0ad5e53aaeb1dc4b | Apache-2.0 | 固定 tag `open-design-v0.21.1`；作为上游基础镜像运行，保留其镜像内许可证与归属信息 |
 | Codex CLI | 0.143.0 | https://github.com/openai/codex/tree/b213653e584580ccbb6dbd17ca1a6561e4bf065a | Apache-2.0 | 安装公开 npm 包 `@openai/codex@0.143.0`，对应 `rust-v0.143.0`；构建时核对 CLI 版本，保留包内许可证与归属信息 |
 
-Codex npm 包来源为 https://registry.npmjs.org/@openai/codex/-/codex-0.143.0.tgz ，发布完整性标识为 `sha512-6h53sNtESIYncWVwU7zEjdVajwcad/0H94MOrgGqhwBMa9RRUDVG6DU9E9euC7yRdtrsKDAkJkz/m5moZ6MU3A==`。该版本与固定 OpenDesign 的原生 Codex adapter 配套；会话配置只指向本服务的本机模型出口转发口（由它转发到 MAP 模型出口），关闭 WebSocket 状态续接，不使用个人登录凭据。
+Codex npm 包来源为 https://registry.npmjs.org/@openai/codex/-/codex-0.143.0.tgz ，发布完整性标识为 `sha512-6h53sNtESIYncWVwU7zEjdVajwcad/0H94MOrgGqhwBMa9RRUDVG6DU9E9euC7yRdtrsKDAkJkz/m5moZ6MU3A==`。该版本与固定 OpenDesign 的原生 Codex adapter 配套；会话配置只指向本服务的本机模型出口转发口（正式服务转发到 LLMGW，旧 CDS 路径可转发到 MAP 同源代理），关闭 WebSocket 状态续接，不使用个人登录凭据。
 
 本服务在运行时会把镜像内 OpenDesign 官方 `web-prototype` 技能拷贝到工作目录并做少量替换（把示范性的空链接与裸按钮改成通得过 MAP 发布闸门的写法），替换只作用于每个任务自己的拷贝，镜像内的原文件不改动。
 

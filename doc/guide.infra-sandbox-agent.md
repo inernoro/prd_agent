@@ -18,7 +18,7 @@
 | 状态 | 实现完成，待正式环境真人验收 |
 | 责任人 | Claude Code |
 | 时间 | 2026-05-07 |
-| 关联 | [doc/spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md)、[doc/design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md)、[doc/debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md)、[doc/guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md) |
+| 关联 | [doc/spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md)、[doc/design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md)、[doc/debt.cds.agent.sdk-executor.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.sdk-executor.md)、[doc/guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md) |
 
 
 ## 0. 管理摘要
@@ -355,7 +355,7 @@ npx tsx scripts/mvp-demo.ts
 
 **缓解**：spec §5 已要求 UI 二次确认 base URL；MAP 后端接 paste 时可加 HTTPS 强校验（除 localhost）。当前 v1 未加。
 
-**记录到** [doc/debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md) 待补。
+**记录到** [doc/debt.cds.agent.sdk-executor.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.sdk-executor.md) 待补。
 
 #### K-3 mapName 硬编码 "prd-agent"
 
@@ -405,7 +405,7 @@ npx tsx scripts/mvp-demo.ts
 |---|---|
 | [doc/spec.cds.map-pairing-protocol.md](./spec.cds.map-pairing-protocol.md) | 协议契约（剪贴板格式 / handshake / 安全模型 / 未来扩展） |
 | [doc/design.cds.agent.sdk-executor.md](./design.cds.agent.sdk-executor.md) | claude-sdk 执行器设计 |
-| [doc/debt.cds.agent.sdk-executor.md](./debt.cds.agent.sdk-executor.md) | claude-sdk 子模块债务台账 |
+| [doc/debt.cds.agent.sdk-executor.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.agent.sdk-executor.md) | claude-sdk 子模块债务台账 |
 | [doc/guide.cds.agent.sdk-quickstart.md](./guide.cds.agent.sdk-quickstart.md) | sidecar 三步无脑配置 + 上游切换 |
 | `cds/scripts/mvp-demo.ts` | 沙箱端到端可执行验证脚本 |
 | `claude-sdk-sidecar/README.md` | sidecar 协议详情 |

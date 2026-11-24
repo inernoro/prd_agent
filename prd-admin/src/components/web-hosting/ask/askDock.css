@@ -45,3 +45,8 @@
   .ask-dock-meta,
   .ask-dock-history { transition: none !important; }
 }
+
+.ask-resize-handle { position: absolute; inset: 18px auto 18px 0; width: 10px; z-index: 5; cursor: col-resize; touch-action: none; user-select: none; display: flex; align-items: center; justify-content: center; }
+.ask-resize-handle > span { width: 3px; height: 36px; border-radius: 3px; background: var(--border-default); transition: background 120ms; }
+.ask-resize-handle:hover > span, .ask-resize-handle.is-dragging > span, .ask-resize-handle:focus-visible > span { background: var(--accent-primary); }
+.ask-resize-handle:focus-visible { outline: 1px solid var(--border-focus); outline-offset: -1px; }

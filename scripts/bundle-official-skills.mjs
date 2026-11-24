@@ -46,6 +46,7 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.
 // 需要人工同步，已经开始漂移）。下载时只做一处替换：把 PRD_AGENT_BASE
 // 的默认值设为该实例地址。
 const INCLUDE = new Set([
+  'map-agent',               // MAP MCP 配套技能与可更新安装器
   'findmapskills',           // 海鲜市场操作技能（AI bootstrap 入口）
   'sdd-init',                // 骨架落地：把套装变成一套能用的工作方法（角色套装的入口技能）
   'phase0-guard',            // 底座阶段护栏 + 面向老板/PM 的六段式沟通规范
@@ -55,6 +56,7 @@ const INCLUDE = new Set([
   'flow-trace',              // 通用端到端链路追踪（大白话版）
   'laowang',                 // 精英·米多文化人格
   'ui-ux-pro-max',           // 通用 UI/UX 设计智能
+  'ios-style-mobile-frontend', // 通用移动端任务取舍与苹果风触屏设计
   'risk-matrix',             // 通用风险评估
   'skill-validation',        // 通用需求验证
   'human-verify',            // 通用代码人工审查方法论
@@ -70,11 +72,22 @@ const INCLUDE = new Set([
   'acceptance-checklist',    // 通用 UAT 清单
   'create-visual-test-to-kb',// 通用视觉验收取证 + 报告归档
   'task-handoff-checklist',  // 通用交接清单
+  'game-over',               // 通用 PR 评审、修复、验证与交付闭环
+  'work-budget',             // 通用开工估算与预算跟踪
+  'kill-debt',               // 通用债务核实、目标任务发收
+  'create-debt',             // 通用债务记录与关闭标准
+  'first-principles',        // 通用精简总结与第一性原理分析
 ]);
 
 // 友好显示名（key → 中文备注名）。缺省用 frontmatter name（多为英文 key）。
 // 卡片标题展示这个，像 findmapskills 那样「英文 · 中文一句话」。
 const DISPLAY_NAME = {
+  'map-agent': 'MAP 智能体接入与托管',
+  'game-over': 'game-over · PR 交付闭环',
+  'work-budget': 'work-budget · 开工预算与估算',
+  'kill-debt': 'kill-debt · 债务核实与发收',
+  'create-debt': 'create-debt · 债务入账',
+  'first-principles': 'first-principles · 精简提炼与分析',
   'acceptance-checklist': 'acceptance-checklist · 真人验收清单',
   'acceptance-scenario-orchestrator': 'acceptance-scenario-orchestrator · 验收场景编排',
   'acceptance-test-design': 'acceptance-test-design · 验收测试设计',
@@ -99,6 +112,7 @@ const DISPLAY_NAME = {
   'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',
   'theme-transition': 'theme-transition · 主题切换水波纹动效',
   'ui-ux-pro-max': 'UI/UX Pro Max · 设计智能',
+  'ios-style-mobile-frontend': 'ios-style-mobile-frontend · 苹果风移动端前端',
 };
 
 // ── 中文一句话简介（key → 用途）───────────────────────────────────────
@@ -107,6 +121,12 @@ const DISPLAY_NAME = {
 // 给中文非技术用户看一段英文等于没写。这里只覆盖对外展示的 description，
 // **不动 frontmatter**（那是 harness 的触发依据，改了会影响技能识别准确度）。
 const DISPLAY_SUMMARY = {
+  'map-agent': '连接 MAP、安装更新技能、原样托管网站并管理公开永久分享',
+  'game-over': '按本次授权跟进 PR 评论、修复和验证，通过门禁后完成交付',
+  'work-budget': '开工前估算成果与投入，执行中跟踪预算，估时失准后校准方法',
+  'kill-debt': '先核实债务是否仍成立，再生成目标任务并按交付证据收账',
+  'create-debt': '去重记录重要但暂不紧急的问题，明确证据、影响与关闭条件',
+  'first-principles': '总结材料或按需分析，默认精简关键词要点，保留事实与未知边界',
   'acceptance-checklist': '生成真人逐步打勾的验收清单，每步带预期结果和失败排查手册',
   'acceptance-test-design': '把需求或代码变化转成风险假设、融合用例和可审计证据矩阵',
   'acceptance-scenario-orchestrator': '复杂验收目标的范围编排：场景识别、结果映射、指差法清单、证据链契约',
@@ -131,7 +151,8 @@ const DISPLAY_SUMMARY = {
   'task-handoff-checklist': '把改动、用户路径、验收证据、发布风险和后续行动完整交接',
   'theme-transition': '给前端加主题切换的圆形水波纹动效，含降级方案',
   'ui-ux-pro-max': '设计智能：67 种风格、96 种配色、57 种字体搭配，覆盖 13 种技术栈',
-  'findmapskills': '搜索、下载、上传、订阅海鲜市场的技能包；搜索下载免凭据',
+  'ios-style-mobile-frontend': '先明确手机任务与取舍，再实现触屏交互、苹果风界面并检查多端表现',
+  'findmapskills': '操作海鲜市场，区分用户上传与官方目录分发，验证搜索、版本及下载内容',
 };
 
 // ── tag 分类启发式 ────────────────────────────────────────────────────────
@@ -151,6 +172,11 @@ const TAG_RULES = [
 
 // 手工覆盖：key → tags（命中即用，跳过启发式）。允许多标签。
 const TAG_OVERRIDE = {
+  'game-over': ['工具'],
+  'work-budget': ['工具'],
+  'kill-debt': ['工具'],
+  'create-debt': ['文档'],
+  'first-principles': ['分析'],
   laowang: ['精英'],
   findmapskills: ['技能', '精英'],
   'acceptance-test-design': ['分析'],
@@ -173,10 +199,12 @@ const TAG_OVERRIDE = {
   bridge: ['工具'],
   cds: ['部署'],
   'ui-ux-pro-max': ['创意'],
+  'ios-style-mobile-frontend': ['创意'],
 };
 
 // 不可移植文件排除：官方包面向外部用户，不能夹带绑定本仓库数据/第三方 URL 的临时取证 driver。
 const EXCLUDE_FILES_BY_SKILL = {
+  'map-agent': new Set(['scripts/test_skill_manager.py']),
   'create-visual-test-to-kb': new Set([
     'scripts/sv-card-view.mjs',
     'scripts/sv-driver.mjs',

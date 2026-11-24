@@ -23,8 +23,9 @@ name: Branch Image
 # 因此只要 prd-api 改动触发 api/llmgw-serve 镜像，也必须补齐 llmgw/llmgw-web 同 sha tag；
 # workflow_dispatch 仍用于人工补齐不可变镜像组。
 #
-# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）只进 CDS 分支预览，
-# 这一阶段不进正式发布清单（生产 docker-compose.yml 未引用它），所以不参与上面那组同 sha 钉版。
+# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）也进正式发布：exec_dep.sh --commit
+# 把它与上面四个镜像钉到同一 sha。main 每个提交都会构建它（见 design-opendesign-image 的 if），
+# 所以正式发布的 main 提交总有对应的 sha 镜像。
 
 on:
   push:
@@ -48,12 +49,12 @@ jobs:
     name: Detect changed components
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      admin: ${{ steps.filter.outputs.admin }}
-      llmgw: ${{ steps.filter.outputs.llmgw }}
-      llmgw_web: ${{ steps.filter.outputs.llmgw_web }}
-      llmgw_serve: ${{ steps.filter.outputs.llmgw_serve }}
-      design_opendesign: ${{ steps.filter.outputs.design_opendesign }}
+      api: ${{ steps.filter.outputs.api == 'true' || steps.main_drift.outputs.api == 'true' }}
+      admin: ${{ steps.filter.outputs.admin == 'true' || steps.main_drift.outputs.admin == 'true' }}
+      llmgw: ${{ steps.filter.outputs.llmgw == 'true' || steps.main_drift.outputs.llmgw == 'true' }}
+      llmgw_web: ${{ steps.filter.outputs.llmgw_web == 'true' || steps.main_drift.outputs.llmgw_web == 'true' }}
+      llmgw_serve: ${{ steps.filter.outputs.llmgw_serve == 'true' || steps.main_drift.outputs.llmgw_serve == 'true' }}
+      design_opendesign: ${{ steps.filter.outputs.design_opendesign == 'true' || steps.main_drift.outputs.design_opendesign == 'true' }}
       same_as_main: ${{ steps.main_equivalence.outputs.value }}
     steps:
       - name: Checkout
@@ -73,6 +74,7 @@ jobs:
               - '.github/workflows/branch-image.yml'
             llmgw:
               - 'llmgw/console-api/**'
+              - 'prd-api/src/LlmGateway.Transport/**'
               - '.github/workflows/branch-image.yml'
             llmgw_web:
               - 'llmgw/web/**'
@@ -113,6 +115,39 @@ jobs:
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # 分支落后于 main 时的镜像缺口（2026-09-29，一条只改 prd-admin 的分支部署全部失败）。
+      #
+      # 上面的 paths-filter 问的是「这条分支自己改没改这个组件」（对比 merge-base）。
+      # 但 CDS 在本提交没有 sha 镜像时，回退 `:branch-main` 之前要**证明等价**：该组件的
+      # 构建输入（cds-compose 的 buildScope，与上面的 filter 逐条对齐）在「main 镜像的提交」
+      # 与「本提交」之间必须一字不差（container.ts 的 proveFallbackImage）。
+      # 于是有一个两边都不管的缝：分支没碰 prd-api、main 在分叉之后改了 prd-api——
+      # CI 说「你没改，不用建」，CDS 说「你和 main 不一样，不许借」，整个部署红掉。
+      # CDS 这道闸是对的（放行就是拿别人的代码冒充本分支），缺的是 CI 这一侧：
+      # 凡是构建输入与 main 不一致的组件，就给它建本提交的镜像。
+      #
+      # 判据直接读上面那一份 filter（不另抄一份路径表，免得两处漂移），逐个组件做
+      # 「origin/main 与 HEAD 两棵树」的差异比较——比的是树，不是历史，所以 depth=1 就够。
+      # git 比较失败（拿不到 main 等）一律按「有差异」处理：多建一次镜像，好过部署失败。
+      - name: Detect build inputs drifted from main
+        id: main_drift
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            exit 0
+          fi
+          filters="$(yq '.jobs.changes.steps[] | select(.id == "filter") | .with.filters' .github/workflows/branch-image.yml)"
+          for name in $(printf '%s\n' "$filters" | yq 'keys | .[]'); do
+            mapfile -t scope < <(printf '%s\n' "$filters" | yq ".${name}[]")
+            if git diff --quiet origin/main HEAD -- "${scope[@]}"; then
+              value=false
+            else
+              value=true
+            fi
+            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+            echo "${name}: 构建输入与 main 不一致=${value}（${scope[*]}）"
+          done
 
   api-image:
     name: Build prd-api image
@@ -205,6 +240,9 @@ jobs:
         with:
           context: ./prd-admin
           file: ./prd-admin/Dockerfile
+          build-args: |
+            VITE_ENTRY_MEDIA_CDN_ORIGIN=${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+            VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN=${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -266,7 +304,7 @@ jobs:
         if: ${{ steps.probe.outputs.present == 'true' }}
         uses: docker/build-push-action@v5
         with:
-          context: ./llmgw/console-api
+          context: .
           file: ./llmgw/console-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -328,6 +366,9 @@ jobs:
         with:
           context: ./llmgw/web
           file: ./llmgw/web/Dockerfile
+          build-args: |
+            VITE_ENTRY_MEDIA_CDN_ORIGIN=${{ vars.VITE_ENTRY_MEDIA_CDN_ORIGIN }}
+            VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN=${{ vars.VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -396,7 +437,9 @@ jobs:
     name: Build design runtime (OpenDesign) image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    # api 有改动时也构建：正式 `exec_dep.sh --commit` 把它与 api 钉到同一 sha（与 llmgw 三个镜像同一口径），
+    # 否则只改 api 的热修分支提交会在整批拉取时找不到本镜像。
+    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -420,9 +463,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.DESIGN_OPENDESIGN_IMAGE }}
+          # latest 只在 main 上打：正式环境 `./exec_dep.sh release`（部署 latest）要拉得到它，
+          # 否则这个新增的必需服务在首次 latest 发布时没有本地镜像可退，compose up 直接失败。
           tags: |
             type=raw,value=sha-${{ github.sha }}
             type=ref,event=branch,prefix=branch-
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v5

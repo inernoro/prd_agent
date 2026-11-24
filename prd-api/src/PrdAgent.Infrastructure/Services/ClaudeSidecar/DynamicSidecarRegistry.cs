@@ -267,6 +267,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var activeCds = connections
             .Where(c => string.Equals(c.Partner, "cds", StringComparison.OrdinalIgnoreCase))
             .Where(c => string.Equals(c.Status, "active", StringComparison.OrdinalIgnoreCase))
+            .Where(c => !c.WorkspaceOnly)
             .Where(c => !string.IsNullOrWhiteSpace(c.PartnerBaseUrl))
             .Where(c => !string.IsNullOrWhiteSpace(c.InstanceDiscoveryUrl))
             .ToList();
