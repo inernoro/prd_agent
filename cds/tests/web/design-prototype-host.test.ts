@@ -14,6 +14,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
+import { readPrototypeScreen } from '../../src/services/design-framework-browser.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 import { designViewports, type DesignScreen, type DesignVersion, type DesignWorkspace } from '../../src/shared/design-workspace.js';
@@ -484,4 +485,35 @@ describe('prototype host in Chromium', () => {
       }
     }
   }, 25_000);
+
+  const captureEntry: DesignScreen = {
+    id: 'capture-entry', name: '合成取证入口', route: '#/capture-entry', viewport: 'desktop', themes: ['light'], impl: null,
+    entryActions: ['.fixture-capture-entry'], entryReadySelector: readySelector, entryTimeoutMs: 650,
+  };
+  const captureButton = '<button type="button" class="fixture-capture-entry">进入样例</button>';
+
+  it.each([
+    { scene: '重复控件', body: captureButton.repeat(2), expected: ['第 1 步', '2 个'] },
+    { scene: '关闭菜单', body: `<details><summary>更多</summary>${captureButton}</details>`, expected: ['第 1 步', '不可点击'] },
+    { scene: '遮挡控件', body: `${captureButton}<div style="position:fixed;inset:0;z-index:2"></div>`, expected: ['第 1 步', '不可点击'] },
+    { scene: '缺就绪标记', body: captureButton, expected: ['就绪'] },
+  ])('浏览器取证为$scene返回入口诊断', async ({ body, expected }) => {
+    const failures: string[] = [];
+    const result = await readPrototypeScreen(browser, `<!doctype html><html><body>${body}</body></html>`,
+      captureEntry, 'light', async () => 'entered', undefined, message => failures.push(message));
+    expect(result).toBeUndefined();
+    expect(failures).toHaveLength(1);
+    for (const text of expected) expect(failures[0]).toContain(text);
+  });
+
+  it('浏览器取证成功点击唯一控件时回读就绪内容', async () => {
+    const failures: string[] = [];
+    const html = `<!doctype html><html><body>${captureButton}<p data-fixture-ready hidden>样例已就绪</p>
+      <script>document.querySelector('.fixture-capture-entry').onclick = () => { document.querySelector('[data-fixture-ready]').hidden = false; };</script>
+    </body></html>`;
+    const result = await readPrototypeScreen(browser, html, captureEntry, 'light',
+      page => page.locator(readySelector).innerText(), undefined, message => failures.push(message));
+    expect(result).toBe('样例已就绪');
+    expect(failures).toEqual([]);
+  });
 });

@@ -105,7 +105,8 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
         const hasDemo = program && designDemoImplementationPath(row.screen);
         const action = !proof && program?.capture ? 'acceptance.capture'
           : proof && !proof.review && program?.recheck && proof.by !== program.actor ? 'acceptance.recheck' : undefined;
-        return <div className="dw-vs-row" key={row.screen.id} role="row" data-screen={row.screen.id} data-verdict={row.verdict}>
+        return <div className="dw-vs-row" key={row.screen.id} role="row" data-screen={row.screen.id} data-verdict={row.verdict}
+          data-compare-slot={objective ? slot : undefined}>
         <div role="cell" className="dw-vs-name">
           <strong>{row.screen.name}</strong><small>{slotNames[slot]} · {row.screen.impl ? <code>{row.screen.impl}</code>
             : hasDemo ? '演示数据场景' : '未绑定实现地址'}</small>

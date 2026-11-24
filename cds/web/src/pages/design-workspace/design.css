@@ -90,7 +90,7 @@
 .dw-segments button:disabled { opacity: .45; cursor: not-allowed; }
 .dw-library-bar { padding: 4px 0; }
 .dw-library-bar > .dw-row { flex-wrap: wrap; }
-.dw-library-bar select { max-width: 160px; }
+.dw-library-bar select { min-height: 32px; max-width: 160px; }
 .dw-library-heading select { max-width: min(200px, 45vw); }
 .dw-library-heading { padding-block: 4px; }
 .dw-library { padding-top: 14px; }

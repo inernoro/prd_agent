@@ -86,7 +86,7 @@ async function measureNestedScroll(session: CDPSession): Promise<DesignNestedScr
 }
 
 export async function readPrototypeScreen<T>(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
-  read: (page: Page) => Promise<T>, date?: Date): Promise<T | undefined> {
+  read: (page: Page) => Promise<T>, date?: Date, onFailure?: (message: string) => void): Promise<T | undefined> {
   const entry = new URL('/prototype', prototypeOrigin);
   entry.searchParams.set('theme', theme);
   const target = new URL(entry);
@@ -96,6 +96,8 @@ export async function readPrototypeScreen<T>(browser: Browser, html: string, scr
     ...(date ? { locale: 'zh-CN', timezoneId: 'Asia/Shanghai', reducedMotion: 'reduce' } : {}),
     deviceScaleFactor: 1, offline: true, serviceWorkers: 'block',
   });
+  let problem = '无法打开发布原型。';
+  const unavailable = () => { onFailure?.(problem); return undefined; };
   try {
     const page = await context.newPage();
     if (date) await page.clock.setFixedTime(date);
@@ -111,17 +113,25 @@ export async function readPrototypeScreen<T>(browser: Browser, html: string, scr
     await page.goto(target.href, { timeout: pageTimeout, waitUntil: 'load' });
     const deadline = Date.now() + (screen.entryTimeoutMs ?? previewContract.entryTimeoutMs);
     const remaining = () => deadline - Date.now();
-    for (const selector of screen.entryActions ?? []) {
+    for (const [index, selector] of (screen.entryActions ?? []).entries()) {
       const control = page.locator(`css=${selector}`);
+      problem = `第 ${index + 1} 步的控件不可点击。请核对进入状态和遮挡。`;
+      await control.first().waitFor({ state: 'attached', timeout: Math.max(1, remaining()) });
+      const matches = await control.count();
+      if (matches !== 1) {
+        problem = `第 ${index + 1} 步匹配 ${matches} 个控件。请声明一个可点击的控件。`;
+        return unavailable();
+      }
       const canClick = await control.evaluate(node => node.matches('button:not([type=submit]),a[href^="#"],[role=tab],[role=button],details > summary:first-of-type')
         && (!node.matches('a') || node.getAttribute('href')?.startsWith('#'))
         && !node.matches('[aria-disabled=true],:disabled'), undefined, { timeout: Math.max(1, remaining()) });
-      if (!canClick) return undefined;
+      if (!canClick) return unavailable();
       const active = await control.evaluate(node => (node.matches('details > summary:first-of-type') && node.parentElement?.hasAttribute('open'))
         || ['aria-pressed', 'aria-current', 'aria-selected']
         .some(attribute => node.getAttribute(attribute) === 'true'), undefined, { timeout: Math.max(1, remaining()) });
       if (!active) await control.click({ timeout: Math.max(1, remaining()) });
     }
+    problem = '发布原型未显示声明的就绪状态。';
     const ready = screen.entryReadySelector ?? screen.readySelector;
     if (ready) {
       const locator = page.locator(`css=${ready}`);
@@ -131,11 +141,13 @@ export async function readPrototypeScreen<T>(browser: Browser, html: string, scr
     await page.waitForFunction(() => document.body && document.fonts.status === 'loaded'
       && ![...document.querySelectorAll('[data-content-loading], [aria-busy="true"]')].some(element =>
         element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'), undefined, { timeout: pageTimeout });
-    if (!served || !expectedDocument()) return undefined;
+    problem = '发布原型离开声明的入口。';
+    if (!served || !expectedDocument()) return unavailable();
+    problem = '发布原型已就绪，读取图证或演示数据失败。';
     const result = await read(page);
-    return expectedDocument() ? result : undefined;
+    return expectedDocument() ? result : unavailable();
   } catch {
-    return undefined;
+    return unavailable();
   } finally {
     await context.close();
   }

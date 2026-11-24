@@ -65,6 +65,9 @@
   .dw-canvas-corner > .dw-canvas-tools > .dw-tools { flex-wrap: wrap; overflow: visible; }
   .dw-canvas-corner .dw-canvas-zoom { display: none; }
 }
+@media (min-width: 900px) {
+  .dw-workspace--detail:has(.dw-info[open]) .dw-sp-body { overflow-y: hidden; }
+}
 .dw-sp-group { min-width: 0; margin-block: 9px; }
 .dw-sp-group h4 { margin: 0 0 5px; color: var(--dw-muted); font-size: .8rem; }
 .dw-sp-group h4 small { margin-inline-start: 6px; }

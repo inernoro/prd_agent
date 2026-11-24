@@ -58,7 +58,11 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       .flatMap(group => dom.controlRows(group));
     const headerAlignment = headerRows.length ? Math.max(...headerRows.map(row => Math.max(dom.spread(row.map(box => box.top)),
       dom.spread(row.map(box => box.bottom)), dom.spread(row.map(box => box.height))))) : null;
-    const scrolling = Array.from(document.querySelectorAll('main,main *')).filter(element => {
+    const modal = document.body.hasAttribute('data-scroll-locked')
+      ? Array.from(document.querySelectorAll('[role="dialog"]'))
+        .find(element => dom.visible(element) && !element.closest('[aria-hidden="true"]')) : undefined;
+    const regions = modal ? [modal, ...modal.querySelectorAll('*')] : Array.from(document.querySelectorAll('main,main *'));
+    const scrolling = regions.filter(element => {
       const style = getComputedStyle(element);
       return ['scroll', 'auto'].includes(style.overflowY) && dom.visible(element) && element.scrollHeight > element.clientHeight + 1;
     });
@@ -84,7 +88,7 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
     const selectedStep = dom.find('.dw-sp-thumbs [aria-current=step]')?.getAttribute('data-screen');
     const stepNumber = Number(dom.find('[data-sec="flow"] h3 small')?.textContent?.split('/')[0] ?? 0);
     return {
-      layers, headerAlignment, width, content, vertical: scrolling.length + Number(document.documentElement.scrollHeight > innerHeight + 1),
+      layers, headerAlignment, width, content, vertical: scrolling.length + Number(!modal && document.documentElement.scrollHeight > innerHeight + 1),
       clippedControls, textControls: textControls.length, height: innerHeight,
       scrollHeight: Math.max(document.documentElement.scrollHeight, ...scrolling.map(element => element.scrollHeight)),
       raw: body.split('\n').filter(line => /^\s*(?:#{1,6}\s+|\{\s*"\w+"\s*:|Bearer\s+\S{20,})/.test(line)).length,

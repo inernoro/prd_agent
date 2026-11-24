@@ -169,10 +169,15 @@ async function readImplementation(browser: Browser, build: DesignBuild, target: 
     const entered = new URL(target);
     for (const selector of screen.entryActions ?? []) {
       const control = page.locator('css=' + selector);
-      const transition = await control.evaluate(node => ({
-        action: node.getAttribute('data-action'),
-        nextScreen: node.closest('.dw-sp-thumbs') ? node.getAttribute('data-screen') : null,
-      }), undefined, { timeout: 1800 });
+      const transition = await control.evaluate(node => {
+        const comparison = node.closest('.dw-vs-row[data-compare-slot]');
+        return {
+          action: node.getAttribute('data-action'),
+          nextScreen: node.closest('.dw-sp-thumbs') ? node.getAttribute('data-screen') : null,
+          comparedScreen: comparison?.getAttribute('data-screen'),
+          comparedSlot: comparison?.getAttribute('data-compare-slot'),
+        };
+      }, undefined, { timeout: 1800 });
       await control.click({ timeout: 1800 });
       if (transition.nextScreen) {
         entered.searchParams.set('screen', transition.nextScreen);
@@ -186,6 +191,10 @@ async function readImplementation(browser: Browser, build: DesignBuild, target: 
         await page.locator('.dw-disable-dialog').waitFor({ state: 'visible', timeout: captureTimeout });
       } else if (transition.action === 'show-demo' && target.searchParams.has('check')) {
         entered.searchParams.set('demo', target.searchParams.get('check')!);
+      } else if (transition.action === 'visual-open' && transition.comparedScreen && transition.comparedSlot) {
+        entered.searchParams.set('compare-screen', transition.comparedScreen);
+        entered.searchParams.set('compare-slot', transition.comparedSlot);
+        await page.locator('.dw-vc').waitFor({ state: 'visible', timeout: captureTimeout });
       }
     }
     const selectedTab = target.searchParams.get('tab');
@@ -253,7 +262,7 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
     };
     const overlay = (url: URL) => url.searchParams.get('full')
       ?? (url.searchParams.get('tab') === 'delivery' && url.searchParams.has('part') ? 'delivery' : null);
-    const states = ['check', 'pane', 'panel', 'part', 'view', 'mode', 'side', 'status', 'log', 'demo'];
+    const states = ['check', 'pane', 'panel', 'part', 'view', 'mode', 'side', 'status', 'log', 'demo', 'compare-screen', 'compare-slot'];
     if (bound.href !== target.href && (bound.searchParams.get('project') !== projectId
       || tab(bound) !== tab(target) || overlay(bound) !== overlay(target)
       || states.some(name => bound.searchParams.get(name) !== target.searchParams.get(name)))) {
@@ -269,13 +278,14 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
     const browser = await launchDesignBrowser(executable, evidenceRenderArgs);
     const expires = setTimeout(() => { void browser.close().catch(() => {}); }, 24_000);
     try {
+      let referenceFailure = '原型未到达声明画面。';
       const prior = await readPrototypeScreen(browser, decorateDesignPrototype(prototype.toString('utf8')), screen, theme,
         async page => {
           const fixtures = await readDemoFixtures(page, project);
           const image = await takeScreenshot(page);
           return { fixtures, observed: await measureDesignPage(page), image };
-        }, date);
-      if (!prior) return rejectPlanning(422, 'design_capture_reference_unavailable', '原型未到达声明画面。请设计方核对进入动作、就绪标记和缩略图。');
+        }, date, message => { referenceFailure = message; });
+      if (!prior) return rejectPlanning(422, 'design_capture_reference_unavailable', referenceFailure);
       const actual = await readImplementation(browser, build, target, project, input, prior.fixtures, prior.image, date);
       if (!await build.current()) return rejectPlanning(409, 'design_capture_commit_changed', '实现提交在截图时变化，请创建新的验收运行。');
       if (!actual) return rejectPlanning(422, 'design_capture_implementation_unavailable', '实现未到达同数据画面。请实现方核对路由或进入动作。');

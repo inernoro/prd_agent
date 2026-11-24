@@ -8,6 +8,7 @@ import { chromium, type Browser, type BrowserContextOptions, type Locator, type 
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignScreen, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
 import type { PlanningBoard } from '../../src/shared/engineering-planning';
+import { measureDesignPage } from '../../src/services/design-acceptance-observations';
 import { DesignWorkspacePage } from '../../web/src/pages/DesignWorkspacePage';
 import { EngineeringPlanningPage } from '../../web/src/pages/EngineeringPlanningPage';
 import { usePlanningRead } from '../../web/src/pages/engineering-planning/planning-ui';
@@ -629,6 +630,46 @@ function checkDraftInfoBounds(metrics: Awaited<ReturnType<typeof measureDraftInf
 }
 
 describe('工程规划与设计 V2 前端回归', () => {
+  it('库页搜索、筛选和动作在同排时保持对齐', async () => {
+    await withLayout(design('', libraryWorkspace), [...draftStyles, 'web/src/pages/design-workspace/design-skills.css'], async page => {
+      await page.getByRole('combobox', { name: '状态', exact: true }).waitFor();
+      for (const width of [1280, 1024, 853]) {
+        await page.setViewportSize({ width, height: 800 });
+        const measurement = await measureDesignPage(page);
+        const controls = await page.locator('.dw-library-bar .dw-tools > :is(label, select, button), .dw-library-bar .dw-tools > details > summary')
+          .evaluateAll(elements => elements.map(element => ({
+            control: element.getAttribute('aria-label') ?? element.tagName,
+            box: [element.getBoundingClientRect().top, element.getBoundingClientRect().height],
+          })));
+        const evidence = `${width}px 同排控件 ${JSON.stringify(controls)}`;
+        expect(measurement.headerAlignment, evidence).not.toBeNull();
+        expect(measurement.headerAlignment!, evidence).toBeLessThanOrEqual(1);
+      }
+    });
+  }, 15_000);
+
+  it('弹窗打开后只测活动滚动区域，并检测弹窗内部的额外滚动', async () => {
+    const page = await fixturePage();
+    try {
+      await page.setViewportSize({ width: 853, height: 533 });
+      await page.setContent(`<style>.scroll { height: 100px; overflow-y: auto; } .long { height: 250px; }</style>
+        <body data-scroll-locked="1">
+          <main aria-hidden="true"><div class="scroll"><div class="long"></div></div>
+            <aside class="scroll"><div class="long"></div></aside></main>
+          <section class="scroll" role="dialog"><div class="long" id="extra"></div></section>
+        </body>`);
+      expect((await measureDesignPage(page)).vertical).toBe(1);
+      await page.locator('#extra').evaluate(element => {
+        element.className = 'scroll';
+        (element as HTMLElement).style.height = '150px';
+        element.innerHTML = '<div class="long"></div>';
+      });
+      expect((await measureDesignPage(page)).vertical).toBe(2);
+    } finally {
+      await page.close();
+    }
+  }, 10_000);
+
   it('旧 CLI 深链和用技能深链都可打开六环节指引，普通地址保持折叠', () => {
     function skillDrawer(html: string): string {
       return html.match(/<details\b[^>]*>\s*<summary\b[^>]*data-action="design-skills"[^>]*>[\s\S]*?<\/details>/)?.[0] ?? '';

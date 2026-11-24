@@ -78,7 +78,7 @@
 .dw-overlay > header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--dw-line); background: var(--dw-pane); border-radius: 10px 10px 0 0; }
 .dw-overlay > header button { flex: none; }
-.dw-overlay-body { min-height: 0; min-width: 0; overflow: auto; padding: 0 18px 24px; }
+.dw-overlay-body { min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; padding: 0 18px 24px; }
 .dw-overlay-body > .dw-delivery-panel { padding-top: 12px; }
 .dw-deliver:has(> .dw-overlay) > :is(.dw-canvas-slot, .dw-ds, .dw-side-open) { visibility: hidden; }
 
@@ -138,6 +138,7 @@
 .dw-chain-pending { margin: 0; padding: 8px 14px; border-top: 1px solid var(--dw-line); background: hsl(var(--warn) / .08); color: var(--dw-warn); font-size: 12.5px; }
 
 @media (max-width: 899px) {
+  .cds-main:has(.dw-overlay) { overflow-y: hidden; }
   .dw-workspace--canvas.cds-workspace--fill { height: auto; }
   .dw-workspace--canvas > .dw-deliver, .dw-workspace--canvas > .dw-deliver[data-side=off] { grid-template-columns: minmax(0, 1fr); }
   .dw-canvas-slot > .dw-canvas { min-height: max(310px, min(55dvh, 545px)); }
