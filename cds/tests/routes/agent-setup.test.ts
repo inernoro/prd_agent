@@ -304,7 +304,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const root = tempRoot();
     const parentSkills = path.join(root, '.claude/skills');
     fs.mkdirSync(parentSkills, { recursive: true });
-    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url', 'cds-design', 'cds-test']) {
+    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(parentSkills, skill), { recursive: true });
     }
     const child = path.join(root, 'cds');
@@ -349,7 +349,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const upstreamRoot = tempRoot();
     const skills = path.join(upstreamRoot, '.claude/skills');
     fs.mkdirSync(skills, { recursive: true });
-    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url', 'cds-design', 'cds-test']) {
+    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
     }
     const cli = path.join(skills, 'cds/cli/cdscli.py');
@@ -368,7 +368,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const upstreamRoot = tempRoot();
     const skills = path.join(upstreamRoot, '.claude/skills');
     fs.mkdirSync(skills, { recursive: true });
-    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url', 'cds-design', 'cds-test']) {
+    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
     }
     const cli = path.join(skills, 'cds/cli/cdscli.py');

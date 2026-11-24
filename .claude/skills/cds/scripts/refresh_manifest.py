@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the public CDS skill receipt after editing the bundle."""
+"""Refresh the public five-skill receipt after editing the bundle."""
 import datetime
 import hashlib
 import json
@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
-skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url', 'cds-design', 'cds-test']
+skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']
 receipt = root / 'cds/cli/cds-skill-manifest.json'
 version = re.search(r'^VERSION = "([0-9.]+)"', (root / 'cds/cli/cdscli.py').read_text(), re.M)[1]
 files = {}

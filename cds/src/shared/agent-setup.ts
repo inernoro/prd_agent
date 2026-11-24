@@ -6,7 +6,7 @@ export const AGENT_SETUP_VERSION = 'cds-agent-setup.v1';
 export const AGENT_SETUP_MIN_CLI_VERSION = '0.17.5';
 export const AGENT_SETUP_PATH = '/api/agent/setup.md';
 export const AGENT_SETUP_MANIFEST_PATH = '/api/agent/setup.json';
-export const CDS_SKILL_KEYS = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url', 'cds-design', 'cds-test'] as const;
+export const CDS_SKILL_KEYS = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'] as const;
 export type CdsSkillKey = typeof CDS_SKILL_KEYS[number];
 export type CdsConnectTarget = { kind: 'existing'; projectId: string } | { kind: 'new' } | { kind: 'system' };
 

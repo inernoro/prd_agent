@@ -9,8 +9,6 @@ on:
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-release/**"
       - ".claude/skills/preview-url/**"
-      - ".claude/skills/cds-design/**"
-      - ".claude/skills/cds-test/**"
       - "cds-instances.json"
       - ".github/workflows/cds-skill.yml"
   pull_request:
@@ -20,8 +18,6 @@ on:
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-release/**"
       - ".claude/skills/preview-url/**"
-      - ".claude/skills/cds-design/**"
-      - ".claude/skills/cds-test/**"
       - "cds-instances.json"
       - ".github/workflows/cds-skill.yml"
   workflow_dispatch:

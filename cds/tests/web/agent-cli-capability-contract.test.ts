@@ -156,9 +156,9 @@ cli.main()
     }
   });
 
-  it('技能更新统一处理完整 CDS 技能包并保留回滚备份', () => {
+  it('技能更新统一处理完整五技能包并保留回滚备份', () => {
     expect(cliSource).toContain(
-      'bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url", "cds-design", "cds-test"]',
+      'bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]',
     );
     expect(cliSource).toContain('cds-bundle-');
     expect(cliSource).toContain('"skillsUpdated": bundle_skills');
@@ -170,7 +170,7 @@ cli.main()
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-version-manifest-'));
     const copiedCli = path.join(tempDir, 'skills', 'cds', 'cli', 'cdscli.py');
     const manifestPath = path.join(tempDir, 'skills', 'cds', 'cli', 'cds-skill-manifest.json');
-    const skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url', 'cds-design', 'cds-test'];
+    const skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
     try {
       fs.mkdirSync(path.dirname(copiedCli), { recursive: true });
       fs.copyFileSync(cliPath, copiedCli);

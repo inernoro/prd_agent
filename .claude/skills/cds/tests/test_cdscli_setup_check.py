@@ -19,7 +19,7 @@ DESIGN_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&mission=des
 DESIGN_INTAKE = "/api/projects/proj-a/design/intake"
 DESIGN_REQUEST = "/api/projects/proj-a/access-requests"
 DESIGN_POLL = DESIGN_REQUEST + "/design-request-fixture"
-SKILLS = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url", "cds-design", "cds-test")
+SKILLS = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
 
 class SetupCheckTests(unittest.TestCase):

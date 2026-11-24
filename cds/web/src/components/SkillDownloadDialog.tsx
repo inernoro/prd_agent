@@ -656,7 +656,7 @@ function ProjectInitTab(): JSX.Element {
                     ))}
                     {active.includeCdsSkills ? (
                       <li className="text-xs text-muted-foreground">
-                        另含 CDS 自己的技能：部署、扫描、排障、发布、预览地址、设计入口、测试入口
+                        另含 CDS 的五个技能：部署、扫描、排障、发布、预览地址
                       </li>
                     ) : null}
                   </ul>

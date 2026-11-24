@@ -243,7 +243,7 @@ describe('CDS Agent 接入口令', () => {
     expect(monitorOnboarding?.note).toContain('GET 只读说明和 POST 监控提议草案');
   });
 
-  it('每个任务都绑定真实能力，并声明完整 CDS 技能包', () => {
+  it('每个任务都绑定真实能力，并声明完整五技能包', () => {
     const capabilityIds = new Set(CDS_AGENT_CAPABILITY_DEFINITIONS.map((item) => item.id));
     expect(CDS_AGENT_SKILL_DEFINITIONS.map((item) => item.id)).toEqual([
       'cds',
@@ -251,8 +251,6 @@ describe('CDS Agent 接入口令', () => {
       'cds-deploy-pipeline',
       'cds-release',
       'preview-url',
-      'cds-design',
-      'cds-test',
     ]);
     for (const missionId of Object.keys(AGENT_MISSION_DEFINITIONS)) {
       const bindings = AGENT_MISSION_CAPABILITY_BINDINGS[missionId as keyof typeof AGENT_MISSION_CAPABILITY_BINDINGS];

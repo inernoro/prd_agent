@@ -196,8 +196,6 @@ describe('分发技能里不出现写死的宿主路径', () => {
     '.claude/skills/cds-deploy-pipeline',
     '.claude/skills/cds-release',
     '.claude/skills/preview-url',
-    '.claude/skills/cds-design',
-    '.claude/skills/cds-test',
   ];
 
   const walkFiles = (dir: string): string[] => {

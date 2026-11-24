@@ -23,7 +23,7 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     '## 1. 安装与按需加载',
     '只在当前仓库操作。Codex 使用 .agents/skills，Claude Code 使用 .claude/skills；已有技能先复用。',
     `已有 CLI 先运行 python3 <技能根>/cds/cli/cdscli.py --version。最低版本为 ${getAgentSetupMinCliVersion(selection)}，低于最低版本或没有 setup-check 命令时，用下面的归档更新整个技能包。`,
-    `缺少技能或需要更新时，从 ${origin}/api/skills/cds-pack/download 匿名下载完整技能归档到当前工作区的临时目录。用本机工具解压，检查 skills/ 下的全部技能目录和 cds/cli/cds-skill-manifest.json，核对清单摘要后安装到本工作区的技能根。现有项目授权可继续使用。`,
+    `缺少技能或需要更新时，从 ${origin}/api/skills/cds-pack/download 匿名下载完整技能归档到当前工作区的临时目录。用本机工具解压，检查 skills/ 下的五个技能目录和 cds/cli/cds-skill-manifest.json，核对清单摘要后安装到本工作区的技能根。现有项目授权可继续使用。`,
     ...(design ? [
       'Windows 可以使用本机 Python 启动工作区的 CLI。CLI 0.26.10 起，带 CRLF 换行的技能文本按 LF 计算后与发布摘要一致时，自检可以通过。',
     ] : [
