@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import { MongoClient, type Collection, type Sort } from 'mongodb';
 import { ensureIndexWithReconcile } from './mongo-index-reconcile.js';
+import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
 
 export interface HttpLogRecord {
   _id: string;
@@ -115,7 +116,26 @@ const HEADER_SECRET = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|
 // `authoriz` 覆盖 authorizationKey(被动授权一次性交付的 cdsp_ 明文)等字段 ——
 // 否则一次性密钥会落进 cds_http_logs 的 response body 预览、被 /api/http-logs 取回,
 // 破坏「明文只交付一次」。redactor 只动日志副本,不影响真实 HTTP 响应。
-const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential)/i;
+// `plaintext` 是身份层签发接口交付明文用的字段名（用户级 cdsu_ / 项目级 cdsp_），
+// 它一个敏感词都不含，靠上面那串正则一个都匹配不上 —— 于是一把 90 天滑动、能为
+// 主体名下所有授权换项目凭据的长期密钥，会原样落进 cds_http_logs，而 /api/http-logs
+// 把 body 预览返回给任何已鉴权调用方。按字段名列举必然漏，所以下面再加一道按
+// **值的形状**兜底：凡是长得像 CDS 凭据的串，不管挂在哪个字段名下一律抹掉。
+const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential|plaintext)/i;
+/**
+ * 截断的 JSON 里的敏感键值对（2026-10-08 事故）：响应只截前 8KB，截断后的 JSON 解析不了，
+ * 结构化脱敏用不上，退到纯文本兜底。键名判据与 BODY_SECRET_KEY 同一组词；值允许转义引号，
+ * 且允许在截断处没有闭合引号。键名两侧限长，恶意长串不会让回溯退化成平方级。
+ */
+const JSON_SECRET_PAIR = /("[^"\\]{0,80}(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential|plaintext)[^"\\]{0,80}"\s*:\s*)"(?:[^"\\]|\\.)*"?/gi;
+/** 连接串里的口令段：scheme://user:password@host —— 键名往往是 *_URI / *_URL，判不出敏感。 */
+const URL_USERINFO_PASSWORD = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"]*:)[^\s@/"]+@/gi;
+
+function redactUrlUserinfo(value: string): string {
+  return value.replace(URL_USERINFO_PASSWORD, '$1[redacted]@');
+}
+/** CDS 自己签发的凭据明文形状：cdsu_ / cdsp_ / cdsg_ / cdsmon_ / ct_ 加足够长的随机段。 */
+const CDS_CREDENTIAL_VALUE = /\b(cds(?:[upg]|mon)_[A-Za-z0-9_.~+/=-]{12,}|ct_[A-Za-z0-9_.~+/=-]{12,})/g;
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
@@ -259,6 +279,11 @@ function truncateUtf8(value: string, maxBytes: number): string {
 
 function redactStructuredValue(value: unknown, key = '', depth = 0, seen = new WeakSet<object>()): unknown {
   if (key && BODY_SECRET_KEY.test(key)) return '[redacted]';
+  // 值形状兜底：字段名没被上面认出来，但值本身就是一把 CDS 凭据时照样抹掉。
+  if (typeof value === 'string' && looksLikeCdsCredential(value)) {
+    return redactHostedSitePreviewLog(value.replace(CDS_CREDENTIAL_VALUE, '[redacted]'));
+  }
+  if (typeof value === 'string') return redactUrlUserinfo(redactHostedSitePreviewLog(value));
   if (value == null || typeof value !== 'object') return value;
   if (depth >= MAX_REDACT_DEPTH) return '[cds http log redaction depth limit]';
   if (seen.has(value)) return '[cds http log circular]';
@@ -285,20 +310,31 @@ function redactJsonText(value: string): string | null {
   }
 }
 
+/** 这串文本里有没有 CDS 凭据形状的东西。正则带 g，用前必须重置 lastIndex。 */
+function looksLikeCdsCredential(value: string): boolean {
+  CDS_CREDENTIAL_VALUE.lastIndex = 0;
+  return CDS_CREDENTIAL_VALUE.test(value);
+}
+
 export function redactBodyText(value: string): string {
   const jsonRedacted = redactJsonText(value);
   if (jsonRedacted != null) return jsonRedacted;
 
-  let out = value;
+  let out = redactHostedSitePreviewLog(value);
   out = out.replace(
     /(^|[?&\s])([A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|session|jwt|credential)[A-Za-z0-9_.-]*=)[^&\s]{1,300}/gi,
     (_match, prefix: string, key: string) => `${prefix}${key}[redacted]`,
   );
   out = out.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, 'Bearer [redacted]');
+  out = out.replace(JSON_SECRET_PAIR, (_match, prefix: string) => `${prefix}"[redacted]"`);
+  out = redactUrlUserinfo(out);
+  // 非 JSON 正文（表单、纯文本、错误页）同样按值形状兜一道。
+  out = out.replace(CDS_CREDENTIAL_VALUE, '[redacted]');
   return out;
 }
 
-function sanitizePayload(payload: HttpLogRecord['request'] | HttpLogRecord['response']): typeof payload {
+function sanitizePayload(input: HttpLogRecord['request'] | HttpLogRecord['response'], suppress = false): typeof input {
+  const payload = omitHostedSitePreviewBody({ ...input, headers: redactHeaders(input.headers) }, suppress);
   const contentType = payload.headers?.['content-type'];
   if (isBinaryContentType(contentType)) {
     const declaredBytes = parseContentLength(payload.headers?.['content-length']);
@@ -336,7 +372,7 @@ export function redactHeaders(headers: IncomingHttpHeaders | Record<string, unkn
       continue;
     }
     const value = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue);
-    out[key] = truncateUtf8(value, MAX_HEADER_VALUE);
+    out[key] = truncateUtf8(redactHostedSitePreviewLog(value), MAX_HEADER_VALUE);
   }
   return out;
 }
@@ -370,6 +406,20 @@ export function bodyPreviewFromUnknown(value: unknown, contentType?: unknown): {
   return {
     bodyPreview: truncateUtf8(redactBodyText(preview), MAX_BODY_PREVIEW_BYTES),
     bodyBytes: Buffer.byteLength(text, 'utf8'),
+  };
+}
+
+export function selectRequestBodyForHttpLog(
+  captured: { bodyPreview?: string; bodyBytes?: number },
+  parsed: { bodyPreview?: string; bodyBytes?: number },
+  suppress: boolean,
+): { bodyPreview?: string; bodyBytes?: number } {
+  if (!suppress) return (captured.bodyBytes || 0) > 0 ? captured : parsed;
+  const observedBytes = Math.max(captured.bodyBytes || 0, parsed.bodyBytes || 0);
+  return {
+    // Suppression is a route policy even if auth rejects before reading bytes.
+    bodyPreview: '[cds request body omitted]',
+    bodyBytes: observedBytes || undefined,
   };
 }
 
@@ -554,6 +604,8 @@ export class HttpLogStore {
     if (!this.shouldPersist(record)) return;
     const doc: HttpLogRecord = {
       ...record,
+      path: redactHostedSitePreviewLog(record.path),
+      upstream: record.upstream ? redactHostedSitePreviewLog(record.upstream) : record.upstream,
       requestKind: record.requestKind || classifyHttpRequestKind({
         layer: record.layer,
         method: record.method,
@@ -562,12 +614,12 @@ export class HttpLogStore {
       }),
       _id: `${record.requestId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
       ts: record.ts ? new Date(record.ts) : new Date(),
-      request: sanitizePayload(record.request),
-      response: sanitizePayload(record.response),
+      request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
+      response: sanitizePayload(record.response, isHostedSitePreviewRequest(record.path)),
       error: record.error
         ? {
           code: record.error.code,
-          message: record.error.message ? truncateUtf8(record.error.message, MAX_ERROR_MESSAGE) : undefined,
+          message: record.error.message ? (isHostedSitePreviewRequest(record.path) ? '[preview upstream error omitted]' : truncateUtf8(redactHostedSitePreviewLog(record.error.message), MAX_ERROR_MESSAGE)) : undefined,
         }
         : undefined,
     };
@@ -604,6 +656,9 @@ export class HttpLogStore {
     const id = `${record.requestId}:${startedAt.getTime()}:${Math.random().toString(16).slice(2)}`;
     this.activeRequests.set(id, {
       ...record,
+      path: redactHostedSitePreviewLog(record.path),
+      upstream: record.upstream ? redactHostedSitePreviewLog(record.upstream) : record.upstream,
+      request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
       requestKind: record.requestKind || classifyHttpRequestKind({
         layer: record.layer,
         method: record.method,
@@ -641,6 +696,10 @@ export class HttpLogStore {
     if (method === 'GET' && (path === '/api/http-logs' || path === '/api/server-events')) {
       return false;
     }
+    // 自检 P95 的原始测量不能再被轮询抽样丢掉：共享的 1:10 计数器会让
+    // master/forwarder 交替记录时长期抽不到 master。只保留这个指标端点的
+    // 成功样本，其余 GET 仍抽样，写入背压上限仍然生效。
+    if (method === 'GET' && record.layer === 'master' && path === '/api/branches') return true;
     // 成功的 GET 读请求(轮询/控制面读取/静态资源)按 1:10 采样(2026-07-21 写放大
     // 治理):dashboard 每 10s 一轮 × 多端点 × forwarder/master 两层,每请求一条
     // Mongo 文档的全量落库既是写放大也是背压源。语义敏感的记录全保留:所有

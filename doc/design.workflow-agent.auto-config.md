@@ -122,7 +122,7 @@ LLM 经常把 slotId 写错或留空。生成后由服务端按「节点声明�
 ## 九、关联文档
 
 - [design.workflow-agent.engine.md](./design.workflow-agent.engine.md)：工作流引擎本体（执行/调度/舱执行链路）
-- [debt.workflow-agent.md](./debt.workflow-agent.md)：工作流债务台账（触发舱开放属此）
+- [debt.workflow-agent.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.workflow-agent.md)：工作流债务台账（触发舱开放属此）
 - `.claude/rules/no-rootless-tree.md`：触发能力接地依据
 - `.claude/rules/llm-gateway.md`：自愈回路的 LlmRequestContext / structured output 约束
 - `.claude/rules/artifact-is-experience.md`：校验/自愈期间的等待体验

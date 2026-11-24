@@ -1,6 +1,6 @@
 # 其他项目接入 CDS 技能
 
-本文面向 Codex、Cursor、Claude Code 及其他支持 Agent Skills 的宿主。默认采用项目级安装和页面批准，不要求用户复制密钥，也不修改电脑的终端配置。
+本文面向 Codex、Claude Code 及其他支持 Agent Skills 的宿主。默认采用项目级安装和页面批准，不要求用户复制密钥，也不修改电脑的终端配置。
 
 ## 用户看到的流程
 
@@ -18,7 +18,6 @@
 | Agent | 项目级目录 |
 |------|-----------|
 | Codex / 通用 Agent Skills | `.agents/skills` |
-| Cursor | `.cursor/skills` |
 | Claude Code | `.claude/skills` |
 
 默认禁止安装到用户主目录。旧技能备份放在当前项目 `.cds/skill-backups`，禁止把 `.bak` 目录留在技能扫描目录。

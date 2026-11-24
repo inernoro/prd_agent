@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -404,7 +405,6 @@ public class AppCallersController : ControllerBase
             Source = source,
             ModelGroupId = resolution.ModelGroupId,
             ModelGroupName = resolution.ModelGroupName,
-            IsDefaultForType = resolution.ResolutionType == "DefaultPool",
             PlatformId = resolution.ActualPlatformId,
             PlatformName = resolution.ActualPlatformName ?? "",
             ModelId = resolution.ActualModel,
@@ -481,9 +481,6 @@ public class ResolvedModelInfoDto
 
     /// <summary>模型池名称（如果来自模型池）</summary>
     public string? ModelGroupName { get; set; }
-
-    /// <summary>是否为该类型的默认模型池</summary>
-    public bool IsDefaultForType { get; set; }
 
     /// <summary>平台ID</summary>
     public string PlatformId { get; set; } = string.Empty;

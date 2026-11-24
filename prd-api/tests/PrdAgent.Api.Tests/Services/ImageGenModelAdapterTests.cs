@@ -1,4 +1,5 @@
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LLM.Adapters;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -19,6 +20,10 @@ public class ImageGenModelAdapterTests
     [InlineData("flux-dev-1.2", "flux*", "Flux Pro")]
     [InlineData("nano-banana-v1", "nano-banana*", "Gemini Nano-Banana")]
     [InlineData("nano-banana", "nano-banana*", "Gemini Nano-Banana")]
+    [InlineData("gemini-3.1-flash-image", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
+    [InlineData("gemini-3.1-flash-image-preview", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
+    [InlineData("google/gemini-3.1-flash-image", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
+    [InlineData("google/gemini-3.1-flash-image-preview", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
     [InlineData("jimeng-ai-4.0", "jimeng*", "即梦 AI")]
     [InlineData("qwen-image-gen", "qwen-image*", "通义万相 qwen-image")]
     [InlineData("grok-2-image", "grok-2-image*", "Grok-2 Image")]
@@ -31,6 +36,32 @@ public class ImageGenModelAdapterTests
         Assert.NotNull(config);
         Assert.Equal(expectedPattern, config.ModelIdPattern);
         Assert.Equal(expectedDisplayName, config.DisplayName);
+    }
+
+    [Fact]
+    public void Gemini31FlashImage_UsesOfficialResolutionCatalog()
+    {
+        var config = ImageGenModelAdapterRegistry.TryMatch("gemini-3.1-flash-image-preview");
+
+        Assert.NotNull(config);
+        Assert.Contains(config.SizesByResolution["1k"], x => x.Size == "512x512");
+        Assert.Contains(config.SizesByResolution["1k"], x => x.Size == "1024x1024");
+        Assert.Contains(config.SizesByResolution["2k"], x => x.Size == "2048x2048");
+        Assert.Contains(config.SizesByResolution["4k"], x => x.Size == "4096x4096");
+        Assert.True(config.SupportsImageToImage);
+    }
+
+    [Theory]
+    [InlineData("512x512", "0.5K")]
+    [InlineData("256x1024", "0.5K")]
+    [InlineData("512x2048", "1K")]
+    [InlineData("1024x4096", "2K")]
+    [InlineData("2048x8192", "4K")]
+    public void Gemini31FlashImage_PreservesOfficialResolutionTier(string size, string expectedTier)
+    {
+        var (_, tier) = GooglePlatformAdapter.ParseSizeToGoogleParams(size);
+
+        Assert.Equal(expectedTier, tier);
     }
 
     [Theory]

@@ -55,6 +55,8 @@ public class LLMAttachment
 /// </summary>
 public class LLMStreamChunk
 {
+    public IReadOnlyList<PrdAgent.Core.LlmGateway.GatewayBillingAlert> BillingAlerts { get; set; } = [];
+
     public string Type { get; set; } = string.Empty; // start, delta, done, error
     public string? Content { get; set; }
     public int? InputTokens { get; set; }
@@ -62,4 +64,12 @@ public class LLMStreamChunk
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? Model { get; set; }
+    public string? Platform { get; set; }
+
+    /// <summary>
+    /// 结构化失败原因（`GatewayRouteFailure` 常量；未分类时为 null）。
+    /// 调用方据它区分「配置没配好」与「上游暂时抖动」，不要去猜 <see cref="ErrorMessage"/> 的措辞。
+    /// </summary>
+    public string? ErrorCode { get; set; }
 }

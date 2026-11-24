@@ -463,7 +463,7 @@ export function WebhookSettingsPanel() {
                         className="px-1.5 py-0.5 rounded text-[10px]"
                         style={{
                           background: 'rgba(59, 130, 246, 0.08)',
-                          color: 'rgba(59, 130, 246, 0.7)',
+                          color: 'var(--accent-fg-blue)',
                         }}
                       >
                         {ReportEventLabels[evt] || evt}

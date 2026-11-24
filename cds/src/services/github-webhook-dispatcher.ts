@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 /**
  * GitHubWebhookDispatcher — processes an already-verified GitHub webhook
  * and translates it into CDS state changes.
@@ -18,7 +19,10 @@
  */
 
 import type { StateService } from './state.js';
-import type { WorktreeService } from './worktree.js';
+import { WorktreeService, deploymentNeedsSourceCheckout } from './worktree.js';
+import { mergeBranchProfiles } from './branch-extra-services.js';
+import { resolveEffectiveProfile } from './container.js';
+import { worktreePathActivity } from './worktree-path-activity.js';
 import type { IShellExecutor, CdsConfig, BranchEntry, Project } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import { branchEvents, nowIso } from './branch-events.js';
@@ -26,16 +30,26 @@ import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
 import { isTrunkBranch } from './branch-protection.js';
-import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
+import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch, assertValidDefaultDeployModes } from './deploy-runtime.js';
+import { decideProjectScope, resolveProjectScope } from './project-scope.js';
 
 /**
  * 2026-06-23 极速版（CI 预构建）—— 负责构建预构建镜像的 GitHub Actions 工作流标识。
  * CDS 只在这个工作流的 workflow_run.completed 到达时才触发拉取部署,避免被 ci.yml /
  * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
- * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds.ci-prebuilt.md）。
+ * 后续可做成 project 级配置以泛化到任意 public 仓库（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.ci-prebuilt.md）。
  */
-const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
-const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+export const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
+export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+
+/** 有路径时以路径为准；仅旧回执缺少路径时才回退名称。 */
+export function isPrebuiltImageWorkflow(run: { path?: string; name?: string }): boolean {
+  const workflowPath = (run.path || '').trim();
+  return workflowPath
+    ? workflowPath.split('@', 1)[0].split('/').pop() === CI_PREBUILT_WORKFLOW_FILE
+    : (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+}
+
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
@@ -86,6 +100,84 @@ export function isAllowedCdsBranchName(ref: string): boolean {
   return true;
 }
 
+/**
+ * 把「同一个仓库下每个项目各自的 push 结果」收敛成一条主结果 + 其余挂在 fanout。
+ *
+ * 挑主结果的顺序刻意是「谁真的要干活谁当主」：先看有没有人要部署，再看有没有人
+ * 不是被忽略的，最后才退回第一条。理由是 webhook 的 HTTP 响应与投递记录只显示
+ * 主结果 —— 如果让一条 `ignored-out-of-scope` 当主，面板上就会显示「本次被忽略」，
+ * 而实际上另一个项目正在构建，看的人会以为没动。
+ *
+ * 纯函数，与调用它的类无关，可直接单测。
+ */
+/**
+ * 逐项目分发时的异常隔离（2026-09-02 Codex P1）。
+ *
+ * 一个项目处理失败（worktree 重试失败之类）不许连累其余：await 在循环里一抛，
+ * 后面的项目直接不跑，而路由捕获后**照样回 200**（GitHub 不重投），于是剩下的项目
+ * 静默错过这次事件——正是这个 PR 从头到尾在防的那种没有信号的故障。
+ *
+ * 所以每个项目单独兜住，把失败变成一条看得见的结果留在 fanout 里，循环继续。
+ */
+async function runPerProject(
+  project: { id: string; name: string },
+  run: () => Promise<WebhookDispatchResult>,
+): Promise<WebhookDispatchResult> {
+  try {
+    return await run();
+  } catch (err) {
+    const message = (err as Error)?.message || String(err);
+    // eslint-disable-next-line no-console
+    console.error(`[webhook] 项目 '${project.id}' 处理失败，其余项目继续:`, message);
+    return {
+      action: 'project-dispatch-failed',
+      message: `项目 '${project.name}' 处理失败：${message}`,
+    };
+  }
+}
+
+/** 这条结果有没有要求路由去做点什么（部署 / 停容器 / 删分支）。 */
+function carriesAction(r: WebhookDispatchResult): boolean {
+  return !!(r.deployRequest || r.stopRequest || r.branchDeleteRequest);
+}
+
+/**
+ * 把同一个仓库下各项目的处理结果合成一条对外结果。
+ *
+ * 主结果的挑法有讲究：**优先挑真的要干活的那条**。否则面板上显示「已忽略」，
+ * 而后台其实正在给另一个项目构建 —— 那种不一致比报错更难查。
+ *
+ * 挑出来之后其余的放进 `fanout`，路由必须与主结果同等对待。少了这一步，
+ * 第二个项目就是「收得到事件、没人替它干活」，而且没有任何信号。
+ */
+export function mergeFanoutResults(
+  results: WebhookDispatchResult[],
+  projects: readonly { id: string; name: string }[],
+  /** 事件名，用于凑那句可观测的后缀 */
+  eventLabel = 'push',
+): WebhookDispatchResult {
+  if (results.length === 0) {
+    return { action: 'ignored-no-project', message: `没有任何项目处理本次 ${eventLabel}` };
+  }
+  if (results.length === 1) return results[0];
+
+  let primaryIndex = results.findIndex(carriesAction);
+  if (primaryIndex < 0) primaryIndex = results.findIndex((r) => !r.action.startsWith('ignored-'));
+  if (primaryIndex < 0) primaryIndex = 0;
+
+  const primary = results[primaryIndex];
+  const others = results.filter((_, index) => index !== primaryIndex);
+  const actingCount = results.filter(carriesAction).length;
+  // 主结果的 message 要带上「这个仓库还有几个项目、其中几个真的动了」，否则投递
+  // 记录里只看得见一个项目，多项目分发等于没有可观测性。
+  const suffix = `（本仓库共 ${projects.length} 个项目，本次 ${actingCount} 个触发处理）`;
+  return {
+    ...primary,
+    message: `${primary.message}${suffix}`,
+    fanout: others,
+  };
+}
+
 export interface WebhookDispatchResult {
   /** Machine-readable outcome. */
   action:
@@ -96,6 +188,10 @@ export interface WebhookDispatchResult {
     | 'ignored-auto-deploy-off'
     | 'ignored-project-paused'
     | 'ignored-bot-push'
+    // head commit 的提交信息带 [skip ci] 一类标记：推送者明说了不要自动化
+    | 'ignored-skip-marker'
+    // 一仓多项目：该项目声明了构建输入范围，而本次改动一条都没落进去
+    | 'ignored-out-of-scope'
     | 'ignored-doc-only'
     | 'ignored-ping'
     | 'ignored-event'
@@ -116,9 +212,20 @@ export interface WebhookDispatchResult {
     | 'ci-image-failed'
     // 2026-07-09 入口校验：仓库缺 branch-image.yml，不进 waiting 直接归因失败
     | 'ci-image-workflow-missing'
-    | 'workflow-acknowledged';
+    | 'workflow-acknowledged'
+    // 2026-09-02 一仓多项目：某个项目处理时抛了异常，其余项目照常继续。
+    // 单独一个 action 而不是复用 ignored-*，是因为它绝不能被读成「按规则跳过」。
+    | 'project-dispatch-failed';
   /** Short human message for the response + logs. */
   message: string;
+  /**
+   * 一仓多项目 push 分发：除主结果之外，同一个仓库下其它项目各自的处理结果。
+   *
+   * 只在 push 事件、且该仓库确实挂着多个项目时出现。路由必须把它和主结果**同等
+   * 对待**（尤其是各自的 deployRequest），否则第二个项目又会退回到「收得到事件、
+   * 但没人替它部署」——那是比收不到事件更难发现的一种半接线。
+   */
+  fanout?: WebhookDispatchResult[];
   /** Populated when a branch was touched. */
   branchId?: string;
   /** Populated when a deploy should be fired after the dispatcher returns. */
@@ -207,6 +314,49 @@ export interface GitHubPushEvent {
  * GitHub 的 bot 账号通常同时带 type=Bot 与 `[bot]` login；两种信号都接收，
  * 兼容 webhook fixture、旧 GitHub Enterprise 和字段不完整的代理转发。
  */
+/**
+ * 提交信息里的「跳过 CI」标记。GitHub Actions / GitLab / CircleCI 都认这几种写法；
+ * 推这种提交的人已经明确说了「这次不要跑自动化」，CDS 建预览属于同一类自动化。
+ *
+ * 只看 head_commit（这次 push 落地的那个提交）——中间提交的标记不算，和 GitHub Actions 口径一致。
+ * 真实事故（2026-09-14 ~ 09-18）：myTapd 的发布工作流每次发版后用人类账号推一条
+ * `chore/archive-changelogs-<run id>` 分支，提交信息写着 `[skip ci]`。机器人过滤只认
+ * `[bot]` 账号，于是四天里建了 30 条一次性分支、每条都排队构建，把构建队列堵到 51 条。
+ */
+const SKIP_MARKERS = ['[skip ci]', '[ci skip]', '[no ci]', '[skip actions]', '[actions skip]', '[skip cds]', '[cds skip]'] as const;
+/** git trailer 行的形状：`Token: value`，token 只许字母数字和连字符（git interpret-trailers 的口径）。 */
+const TRAILER_LINE = /^[A-Za-z0-9-]+:\s*\S.*$/;
+
+/**
+ * 提交信息的 trailer 段：最后一个段落（空行分隔），且段落里每一行都是 `Token: value`。
+ * 正文里某一行碰巧长得像 trailer 不算——GitHub 也只认结尾的 trailer 块。
+ */
+function commitTrailers(message: string): Array<{ token: string; value: string }> {
+  const paragraphs = message.replace(/\r\n?/g, '\n').trimEnd().split(/\n\s*\n/);
+  const last = paragraphs[paragraphs.length - 1] ?? '';
+  const lines = last.split('\n').map((l) => l.trim()).filter(Boolean);
+  // 单段落的提交信息只有标题，没有 trailer 段
+  if (paragraphs.length < 2 || lines.length === 0 || !lines.every((l) => TRAILER_LINE.test(l))) return [];
+  return lines.map((l) => {
+    const i = l.indexOf(':');
+    return { token: l.slice(0, i).trim().toLowerCase(), value: l.slice(i + 1).trim().toLowerCase() };
+  });
+}
+
+export function findSkipMarker(message: string | null | undefined): string | null {
+  if (typeof message !== 'string' || !message) return null;
+  const lower = message.toLowerCase();
+  for (const marker of SKIP_MARKERS) {
+    if (lower.includes(marker)) return marker;
+  }
+  // GitHub 还认 git trailer `skip-checks: true`——必须在结尾 trailer 块里，且是最后一条
+  // （文档原话：If you already have other trailers in your commit message, skip-checks should be last）
+  const trailers = commitTrailers(message);
+  const last = trailers[trailers.length - 1];
+  if (last && last.token === 'skip-checks' && last.value === 'true') return 'skip-checks: true';
+  return null;
+}
+
 export function isGitHubBotSender(sender: GitHubPushEvent['sender']): boolean {
   if (!sender) return false;
   if (sender.type?.toLowerCase() === 'bot') return true;
@@ -357,6 +507,21 @@ export interface WebhookDispatcherDeps {
   shell: IShellExecutor;
   config: CdsConfig;
   githubApp?: GitHubAppClient;
+  /**
+   * 发布中心「自动发布规则」的触发钩子（ScheduledJobService.runPushRules）。
+   *
+   * 用回调而不是直接注入 ScheduledJobService：dispatcher 只负责「发生了什么事件」，
+   * 「谁该被这个事件叫醒」是发布侧的判据，两边不该互相 import。
+   * 缺省不注入时整条规则链路静默不启用——所以 server 的接线有守卫盯着。
+   */
+  runPushRules?: (ctx: {
+    projectId: string;
+    branch: string;
+    event: 'push' | 'pr-open';
+    changedPaths: string[];
+    /** 本次 push 的 commit。路径过滤按它判，发布也必须钉在它上面。 */
+    commitSha?: string;
+  }) => Promise<number>;
 }
 
 export class GitHubWebhookDispatcher {
@@ -409,8 +574,13 @@ export class GitHubWebhookDispatcher {
   // repo+sha 做键,第二条会覆盖第一条、且一次性消费会让另一分支永远认领不到
   // （Bugbot:shared CI cache single consume）。带上 branch 即可让两个分支各拿各的。
   // head_branch 缺省的旧 payload 退回 repo+sha(branch='')。
-  private recentRunKey(repoFullName: string, sha: string, branch?: string): string {
-    return `${repoFullName.toLowerCase()}::${(branch || '').toLowerCase()}::${sha.toLowerCase()}`;
+  //
+  // 还要带 projectId（2026-09-02）：一个仓库喂多个项目之后，同一条 head_branch
+  // 在每个项目下各有一条分支，它们要各自认领同一次 CI 完成。只按 repo+branch+sha
+  // 做键时是**一次性消费**——第一个项目拿走，第二个项目再也认领不到，于是永远停在
+  // 等待中且没有任何报错。这正是上面那条 Bugbot 修复在多项目下的同一形状。
+  private recentRunKey(repoFullName: string, sha: string, branch?: string, projectId?: string): string {
+    return `${(projectId || '').toLowerCase()}::${repoFullName.toLowerCase()}::${(branch || '').toLowerCase()}::${sha.toLowerCase()}`;
   }
 
   private rememberCompletedRun(
@@ -418,7 +588,8 @@ export class GitHubWebhookDispatcher {
     sha: string,
     branch: string | undefined,
     conclusion: string,
-    htmlUrl?: string,
+    htmlUrl: string | undefined,
+    projectId: string,
   ): void {
     const now = Date.now();
     // 顺手剪枝过期项,顺带把 Map 控制在上限内(超限删最旧)。
@@ -430,16 +601,20 @@ export class GitHubWebhookDispatcher {
       if (oldest === undefined) break;
       this.recentCompletedRuns.delete(oldest);
     }
-    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha, branch), { conclusion, htmlUrl, at: now });
+    this.recentCompletedRuns.set(this.recentRunKey(repoFullName, sha, branch, projectId), { conclusion, htmlUrl, at: now });
   }
 
   private takeCompletedRun(
     repoFullName: string,
     sha: string,
     branch: string,
+    projectId: string,
   ): { conclusion: string; htmlUrl?: string } | undefined {
-    // 先认领「本分支专属」键,未命中再退回旧 payload 的无分支键(branch='')。
-    for (const key of [this.recentRunKey(repoFullName, sha, branch), this.recentRunKey(repoFullName, sha, '')]) {
+    // 先认领「本项目 + 本分支专属」键,未命中再退回旧 payload 的无分支键(branch='')。
+    for (const key of [
+      this.recentRunKey(repoFullName, sha, branch, projectId),
+      this.recentRunKey(repoFullName, sha, '', projectId),
+    ]) {
       const hit = this.recentCompletedRuns.get(key);
       if (!hit) continue;
       this.recentCompletedRuns.delete(key); // 一次性消费,避免下次 push 误用陈旧结果
@@ -462,7 +637,7 @@ export class GitHubWebhookDispatcher {
     repoFullName: string,
     commitSha: string,
   ): WebhookDispatchResult | null {
-    const cached = this.takeCompletedRun(repoFullName, commitSha, branchName);
+    const cached = this.takeCompletedRun(repoFullName, commitSha, branchName, projectId);
     if (!cached) return null;
     if (cached.conclusion === 'success') {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
@@ -491,13 +666,13 @@ export class GitHubWebhookDispatcher {
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
       ciWaitingSince: '',
-      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
     });
     this.deps.stateService.save();
     this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
     return {
       action: 'ci-image-failed',
-      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
+      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -631,14 +806,27 @@ export class GitHubWebhookDispatcher {
     return [...out];
   }
 
-  private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
-    const changedPaths = this.changedPathsFromPush(event);
+  /**
+   * 这次 push 的改动清单是不是完整的。
+   *
+   * GitHub 的 push payload 会截断 commits（`size` / `distinct_size` 报的是真实
+   * 条数），截断之后 `changedPathsFromPush` 返回的是一份**非空但不全**的清单 ——
+   * 这是最危险的一种输入：它看起来像证据，实际会让任何「按改动路径下判断」的
+   * 逻辑得出反向结论。所以凡是拿改动清单做判断的地方都必须先问这一句。
+   */
+  private changedPathsComplete(event: GitHubPushEvent): boolean {
     const commits = event.commits || [];
     const reportedSize = typeof event.size === 'number' ? event.size : undefined;
     const distinctSize = typeof event.distinct_size === 'number' ? event.distinct_size : undefined;
-    if (commits.length >= 2048) return { ok: false, changedPaths };
-    if (reportedSize !== undefined && reportedSize > commits.length) return { ok: false, changedPaths };
-    if (distinctSize !== undefined && distinctSize > commits.length) return { ok: false, changedPaths };
+    if (commits.length >= 2048) return false;
+    if (reportedSize !== undefined && reportedSize > commits.length) return false;
+    if (distinctSize !== undefined && distinctSize > commits.length) return false;
+    return true;
+  }
+
+  private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
+    const changedPaths = this.changedPathsFromPush(event);
+    if (!this.changedPathsComplete(event)) return { ok: false, changedPaths };
     if (changedPaths.length === 0) return { ok: false, changedPaths };
     const impact = analyzeChangeImpact(changedPaths);
     return {
@@ -694,6 +882,12 @@ export class GitHubWebhookDispatcher {
    * stop the corresponding CDS preview container so the user deleting
    * on GitHub's side automatically cleans up CDS too.
    */
+  /**
+   * 删分支：仓库下每个项目各有一条同名预览分支，得逐个清理。
+   *
+   * 只清第一个的后果不会报错，只会留下一堆没人管的容器和分支卡 —— 而且用户
+   * 在 GitHub 上删了分支，本来预期的就是「都收拾干净」。
+   */
   private async handleDelete(event: GitHubDeleteEvent): Promise<WebhookDispatchResult> {
     if (event.ref_type !== 'branch') {
       return { action: 'ignored-event', message: `delete ref_type=${event.ref_type} ignored` };
@@ -701,15 +895,28 @@ export class GitHubWebhookDispatcher {
     if (!event.repository) {
       return { action: 'ignored-event', message: 'delete event missing repository' };
     }
-    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
-    if (!project) {
-      return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
-    }
+    // ref 合不合法是仓库级的事，不是项目级的 —— 放进循环会让一次仓库级拒绝
+    // 被报成「N 个项目各拒了一次」。
     if (!isSafeGitRef(event.ref)) {
       return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
     }
+    const projects = this.deps.stateService.findProjectsByRepoFullName(event.repository.full_name);
+    if (projects.length === 0) {
+      return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
+    }
+    const results: WebhookDispatchResult[] = [];
+    for (const project of projects) {
+      results.push(await runPerProject(project, () => this.handleDeleteForProject(event, project)));
+    }
+    return mergeFanoutResults(results, projects, 'delete');
+  }
+
+  private async handleDeleteForProject(
+    event: GitHubDeleteEvent,
+    project: Project,
+  ): Promise<WebhookDispatchResult> {
     const slugified = StateServiceClass.slugify(event.ref);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Prefer the canonical id, but fall back to a (projectId, branch)
     // lookup so a branch created under the previous legacyFlag formula
     // is still found after the flag was flipped.
@@ -720,6 +927,10 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    if (entry.archive) {
+      return { action: 'ignored-event', branchId,
+        message: `GitHub分支已删除，CDS归档仍保留至 ${entry.archive.retireAt}；到期回收由分支生命周期处理。` };
+    }
     // 主干兜底（2026-07-27 P0：CDS 把 main 回收删掉）：GitHub 上删除主干是极端事件，
     // 更常见的是 webhook 误判（ref 实为 tag、分支名匹配错、仓库刚改过默认分支）。
     // 任何情况下都不允许由一条 webhook 自动删掉主干预览 —— 拒绝停容器 + 拒绝删 entry，
@@ -779,22 +990,25 @@ export class GitHubWebhookDispatcher {
     // Try to find a project matching either the new OR the old full name
     // (renamed/transferred events pass the new name in repository but
     // include the old name in changes.repository.{name,owner}).
-    let project = this.deps.stateService.findProjectByRepoFullName(currentFullName);
-    if (!project && event.action === 'renamed') {
+    // 一仓多项目（2026-09-02 Codex P1）：仓库被改名 / 转移 / 删除时，**每一个**绑着它的
+    // 项目都得解绑。只解第一个的话，其余项目留着一条指向旧名字的死链接——改名之后
+    // 它们的推送带的是新仓库名，永远匹配不上，于是静默停止部署，没有任何信号。
+    let projects = this.deps.stateService.findProjectsByRepoFullName(currentFullName);
+    if (projects.length === 0 && event.action === 'renamed') {
       const oldName = event.changes?.repository?.name?.from;
       if (oldName) {
         const owner = event.repository.owner.login;
-        project = this.deps.stateService.findProjectByRepoFullName(`${owner}/${oldName}`);
+        projects = this.deps.stateService.findProjectsByRepoFullName(`${owner}/${oldName}`);
       }
     }
-    if (!project && event.action === 'transferred') {
+    if (projects.length === 0 && event.action === 'transferred') {
       const oldOwner = event.changes?.repository?.owner?.from?.user?.login
         || event.changes?.repository?.owner?.from?.organization?.login;
       if (oldOwner) {
-        project = this.deps.stateService.findProjectByRepoFullName(`${oldOwner}/${event.repository.name}`);
+        projects = this.deps.stateService.findProjectsByRepoFullName(`${oldOwner}/${event.repository.name}`);
       }
     }
-    if (!project) {
+    if (projects.length === 0) {
       return { action: 'ignored-event', message: `repository.${event.action} for ${currentFullName} — no linked project` };
     }
 
@@ -804,16 +1018,19 @@ export class GitHubWebhookDispatcher {
     // re-binds via the UI, avoiding silent cross-wiring.
     if (event.action === 'deleted' || event.action === 'renamed' || event.action === 'transferred') {
       if (!dryRun) {
-        this.deps.stateService.updateProject(project.id, {
-          githubRepoFullName: undefined,
-          githubInstallationId: undefined,
-          githubAutoDeploy: undefined,
-          githubLinkedAt: undefined,
-        });
+        for (const project of projects) {
+          this.deps.stateService.updateProject(project.id, {
+            githubRepoFullName: undefined,
+            githubInstallationId: undefined,
+            githubAutoDeploy: undefined,
+            githubLinkedAt: undefined,
+          }, { actor: 'system:github-webhook' });
+        }
       }
+      const names = projects.map((p) => `'${p.name}'`).join('、');
       return {
         action: event.action === 'deleted' ? 'repo-detached' : 'repo-renamed',
-        message: `${dryRun ? '[dry-run] ' : ''}Project '${project.name}' unlinked because repository.${event.action} (${currentFullName})`,
+        message: `${dryRun ? '[dry-run] ' : ''}Project ${names} unlinked because repository.${event.action} (${currentFullName})`,
       };
     }
     return { action: 'ignored-event', message: `repository.${event.action} acknowledged` };
@@ -831,12 +1048,7 @@ export class GitHubWebhookDispatcher {
 
   /** 极速版（CI 预构建）：判断 workflow_run 是否来自「构建预构建镜像」的工作流。 */
   private isPrebuiltImageWorkflow(run: NonNullable<GitHubWorkflowRunEvent['workflow_run']>): boolean {
-    // workflow_run.path 形如 `.github/workflows/branch-image.yml`。只认这个工作流,
-    // 避免 ci.yml / cds.yml 等其它工作流先完成就误触发部署（那时镜像还没 push）。
-    const base = (run.path || '').split('/').pop() || '';
-    if (base === CI_PREBUILT_WORKFLOW_FILE) return true;
-    // 兜底:按 workflow name 匹配（防止个别 GitHub 投递缺 path）。
-    return (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+    return isPrebuiltImageWorkflow(run);
   }
 
   private emitCiStatus(
@@ -875,7 +1087,7 @@ export class GitHubWebhookDispatcher {
    * 只处理 `completed` + 来自预构建镜像工作流（branch-image.yml）的 run,按
    * head_sha 找到「等待中」的极速版分支:
    *   - success → 置 ready + 返回 deployRequest（路由层触发 docker pull + 部署）
-   *   - 其它   → 置 failed（前端提示可切回源码编译,不自动回退）
+   *   - 其它   → 置 failed（前端提示修复后重试 CI,不自动回退）
    */
   private async handleWorkflowRun(event: GitHubWorkflowRunEvent, dryRun: boolean): Promise<WebhookDispatchResult> {
     const run = event.workflow_run;
@@ -888,11 +1100,29 @@ export class GitHubWebhookDispatcher {
     if (!this.isPrebuiltImageWorkflow(run)) {
       return { action: 'workflow-acknowledged', message: `workflow_run '${run.name || run.path || '?'}' 非预构建镜像工作流,已 ack` };
     }
-    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
-    if (!project) {
+    // 极速版下这一步最不能只认第一个项目：多个项目的分支都在等同一个 head_sha
+    // 的镜像，只推进第一个，其余会**永远停在等待中**，而且没有任何报错。
+    const projects = this.deps.stateService.findProjectsByRepoFullName(event.repository.full_name);
+    if (projects.length === 0) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
+    const wfResults: WebhookDispatchResult[] = [];
+    for (const project of projects) {
+      wfResults.push(await runPerProject(project, () => this.handleWorkflowRunForProject(event, project, dryRun)));
+    }
+    return mergeFanoutResults(wfResults, projects, 'workflow_run');
+  }
+
+  private async handleWorkflowRunForProject(
+    event: GitHubWorkflowRunEvent,
+    project: Project,
+    dryRun: boolean,
+  ): Promise<WebhookDispatchResult> {
+    // 编排层已经确认过这两个字段，这里收窄类型，避免每处再判一次空。
+    const run = event.workflow_run!;
+    const repoFullName = event.repository!.full_name;
     const headSha = run.head_sha;
+    // 这一条既是校验也是收窄类型，所以留在这里，不上提到编排层。
     if (typeof headSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(headSha)) {
       return { action: 'workflow-acknowledged', message: 'workflow_run head_sha 缺失/格式非法,已 ack' };
     }
@@ -921,7 +1151,7 @@ export class GitHubWebhookDispatcher {
     // ciTargetSha 可能还在,此时不该再认 CI 完成事件去自动重部署一个已退出极速版的分支。
     const wfProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
     const matchable = (b: BranchEntry): boolean =>
-      (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
+      !b.archive && (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
       && b.ciTargetSha === headSha
       && (!run.head_branch || b.branch === run.head_branch)
       && branchUsesPrebuiltMode(wfProfiles, b);
@@ -930,7 +1160,7 @@ export class GitHubWebhookDispatcher {
       // 没有分支匹配:很可能是 push webhook 还没处理到(延迟/重试),分支尚未 stamp。
       // 暂存结果,等稍后 push 把分支置 express-waiting 时认领(takeCompletedRun)。
       if (!dryRun) {
-        this.rememberCompletedRun(event.repository.full_name, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url);
+        this.rememberCompletedRun(repoFullName, headSha, run.head_branch, run.conclusion || 'unknown', run.html_url, project.id);
       }
       return {
         action: 'workflow-acknowledged',
@@ -966,7 +1196,7 @@ export class GitHubWebhookDispatcher {
       };
     }
 
-    // 失败 / cancelled / timed_out — 不自动回退,等用户手动切回源码编译。
+    // 失败 / cancelled / timed_out — 不自动回退,等待修复后重试 CI。
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'failed',
@@ -976,14 +1206,14 @@ export class GitHubWebhookDispatcher {
         // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
         // 区别于「超时无 run」的看门狗失败。
         ciWaitingSince: '',
-        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
+        ciImageError: `CI 构建未成功（${conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
     }
     return {
       action: 'ci-image-failed',
-      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,可在分支详情切回源码编译`,
+      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -1006,13 +1236,30 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: 'pull_request missing pull_request/repository' };
     }
     const repoFullName = event.repository.full_name;
-    const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
-    if (!project) {
+    // 关 PR 要把每个项目的预览都收掉。只收第一个，其余容器会一直挂着 ——
+    // 而用户关 PR 时的预期正是「相关的都停了」。
+    const prProjects = this.deps.stateService.findProjectsByRepoFullName(repoFullName);
+    if (prProjects.length === 0) {
       return { action: 'ignored-no-project', message: `No project linked to ${repoFullName}` };
     }
+    const prResults: WebhookDispatchResult[] = [];
+    for (const project of prProjects) {
+      prResults.push(await runPerProject(project, () => this.handlePullRequestForProject(event, project, dryRun)));
+    }
+    return mergeFanoutResults(prResults, prProjects, 'pull_request');
+  }
+
+  private async handlePullRequestForProject(
+    event: GitHubPullRequestEvent,
+    project: Project,
+    dryRun: boolean,
+  ): Promise<WebhookDispatchResult> {
+    // 编排层已确认过这两个字段，这里收窄一次，后面就不用每处再判空。
+    const pr = event.pull_request!;
+    const repoFullName = event.repository!.full_name;
     if (!dryRun) this.rememberProjectInstallation(project, event.installation?.id);
 
-    const branchName = event.pull_request.head.ref;
+    const branchName = pr.head.ref;
     // PR head refs come from untrusted forks too — reject shell-unsafe
     // names. Note: pull_request handler doesn't itself shell-exec, but
     // downstream paths (stop/deploy routes) may, so enforce the
@@ -1024,7 +1271,7 @@ export class GitHubWebhookDispatcher {
       };
     }
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Fall back to a (projectId, branch) lookup so a legacyFlag flip
     // doesn't hide an existing entry stored under the old id.
     const entry =
@@ -1034,7 +1281,7 @@ export class GitHubWebhookDispatcher {
 
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
-      const merged = event.pull_request.merged === true;
+      const merged = pr.merged === true;
       // 墓碑（gone 页区分「已合并 → 切主分支」vs「已放弃 → 跳 PR」）是纯展示元数据，
       // 与 prClose「是否自动停容器」策略无关，任何关闭都要记。**必须独立于 prClose 闸门**：
       // 否则 prClose=false 时不写 merged 墓碑，而随后 GitHub 删分支的 delete 事件仍写
@@ -1050,10 +1297,10 @@ export class GitHubWebhookDispatcher {
         branch: entry?.branch || branchName,
         projectId: project.id,
         reason: (merged ? 'merged' : 'abandoned') as 'merged' | 'abandoned',
-        prNumber: event.pull_request.number,
-        prUrl: event.pull_request.html_url,
-        mergeCommitSha: merged ? event.pull_request.merge_commit_sha : undefined,
-        baseRef: event.pull_request.base?.ref,
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+        mergeCommitSha: merged ? pr.merge_commit_sha : undefined,
+        baseRef: pr.base?.ref,
         aliases: entry?.subdomainAliases,
       };
 
@@ -1076,7 +1323,7 @@ export class GitHubWebhookDispatcher {
       }
       return {
         action: 'pr-branch-stopped',
-        message: `PR #${event.pull_request.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
+        message: `PR #${pr.number} ${merged ? 'merged' : 'closed'}; stopping preview`,
         branchId,
         stopRequest: { branchId },
         tombstoneRequest,
@@ -1093,7 +1340,7 @@ export class GitHubWebhookDispatcher {
       }
       if (entry && !dryRun) {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
-          githubPrNumber: event.pull_request.number,
+          githubPrNumber: pr.number,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
           githubRepoFullName: repoFullName,
           githubSenderLogin: event.sender?.login,
@@ -1102,10 +1349,10 @@ export class GitHubWebhookDispatcher {
         // 波3 配置树:PR base 分支是可靠的派生信号 → **仅回填溯源指针,不拷贝配置**
         // (分支往往已按项目模板部署,静默改写 overrides 违反最小惊讶;要拷贝走显式
         // POST /branches/:id/copy-config-from/:sourceId)。已设指针不覆盖(idempotent)。
-        const baseRef = event.pull_request.base?.ref;
+        const baseRef = pr.base?.ref;
         if (baseRef && baseRef !== branchName) {
           const baseSlug = StateServiceClass.slugify(baseRef);
-          const baseCanonicalId = project.legacyFlag ? baseSlug : `${project.slug}-${baseSlug}`;
+          const baseCanonicalId = project.legacyFlag ? baseSlug : `${projectResourceNamespace(project)}-${baseSlug}`;
           const baseEntry =
             this.deps.stateService.getBranch(baseCanonicalId) ??
             this.deps.stateService.findBranchByProjectAndName(project.id, baseRef);
@@ -1120,7 +1367,7 @@ export class GitHubWebhookDispatcher {
       }
       return {
         action: 'pr-comment-posted',
-        message: `${dryRun ? '[dry-run] ' : ''}PR #${event.pull_request.number} ${event.action}; marked branch '${branchId}' for comment`,
+        message: `${dryRun ? '[dry-run] ' : ''}PR #${pr.number} ${event.action}; marked branch '${branchId}' for comment`,
         branchId,
       };
     }
@@ -1173,13 +1420,63 @@ export class GitHubWebhookDispatcher {
     const repoFullName = event.repository.full_name;
     const receivedAt = nowIso();
 
-    const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
-    if (!project) {
+    // ── 一仓多项目分发（2026-09-01）────────────────────────────────────
+    // 一个 git 仓库可以同时喂多个 CDS 项目（本仓库就是：主项目与自托管项目共用
+    // 同一个 repo）。此前这里只取第一个匹配项目，于是第二个及以后的项目**永远
+    // 收不到 push**，只能手动建分支手动部署。判据是「取第一个」，语义却是「全部」。
+    //
+    // 现在逐个项目判定，并在分发之前先过一道项目级作用域（该项目名下全部服务
+    // buildScope 的并集）：只改 cds/** 的提交不必惊动主项目，反之亦然。未声明
+    // 作用域的项目按全通配处理，行为与启用前逐字节一致。
+    const projects = this.deps.stateService.findProjectsByRepoFullName(repoFullName);
+    if (projects.length === 0) {
       return {
         action: 'ignored-no-project',
         message: `No project linked to ${repoFullName}. Ignoring push.`,
       };
     }
+
+    // 清单被截断时当作「判不准」——传空数组进去，作用域判据据此 fail-open。
+    // 拿一份不全的清单当权威，会把某个项目判成「未被波及」而静默跳过它的部署，
+    // 而这正是本次改动最不该引入的失败模式（漏部署没有任何信号）。
+    const changedPaths = this.changedPathsComplete(event) ? this.changedPathsFromPush(event) : [];
+    const perProject: WebhookDispatchResult[] = [];
+    for (const project of projects) {
+      const scope = resolveProjectScope(this.deps.stateService.getBuildProfilesForProject(project.id));
+      // 判据在这里算（只此一处），但**不在这里出口**：范围只该拦住「建分支 / 构建」，
+      // 不该顺手把自动发布规则也拦掉。所以决定往下传，出口放在 handlePushForProject
+      // 里 firePushRules 之后（2026-09-02 Codex P1，理由见那里）。
+      const scopeDecision = decideProjectScope(scope, changedPaths);
+      perProject.push(await runPerProject(project, () => this.handlePushForProject(
+        event,
+        project,
+        { branchName, commitSha, repoFullName, receivedAt, scopeDecision },
+        dryRun,
+      )));
+    }
+    return mergeFanoutResults(perProject, projects);
+  }
+
+  /**
+   * 单个项目视角的 push 处理。
+   *
+   * 从 {@link handlePush} 原样抽出，逐字节保留原有行为；唯一的差别是项目由参数
+   * 传入而不是自己去查——因为「这个仓库对应哪些项目」现在是上一层的事。
+   */
+  private async handlePushForProject(
+    event: GitHubPushEvent,
+    project: Project,
+    ctx: {
+      branchName: string;
+      commitSha: string;
+      repoFullName: string;
+      receivedAt: string;
+      /** 本项目有没有被这次改动波及（项目级构建范围判定，由 handlePush 算好传进来） */
+      scopeDecision: { matched: boolean; reason: string };
+    },
+    dryRun: boolean,
+  ): Promise<WebhookDispatchResult> {
+    const { branchName, commitSha, repoFullName, receivedAt } = ctx;
     if (!dryRun) this.rememberProjectInstallation(project, event.installation?.id);
 
     // PR_D.2: 统一走 isEventEnabled('push')，内部已 fallback 到老的
@@ -1208,6 +1505,72 @@ export class GitHubWebhookDispatcher {
       };
     }
 
+    // 提交信息带 [skip ci] 一类标记：与机器人过滤同一层级、同一理由——推送者已经
+    // 声明这次不要自动化，在建 worktree / 写版本元数据 / 派发构建之前短路。
+    {
+      const skipMarker = findSkipMarker(event.head_commit?.message);
+      if (skipMarker) {
+        return {
+          action: 'ignored-skip-marker',
+          message: `Project '${project.name}' 的分支 '${branchName}' 提交信息带 ${skipMarker}，按推送者要求不创建 CDS 预览。`,
+        };
+      }
+    }
+
+    // 发布中心「自动发布规则」（design_handoff_release_center §4）。
+    //
+    // 位置刻意放在这里：机器人过滤之后（机器人 push 不该自动发生产），但在
+    // docs-only 提前 return **之前**——`docs/** → docs-site` 这类规则要的正好是
+    // docs-only 那种 push，放在 return 之后它永远不会被触发。
+    //
+    // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
+    // 否则 GitHub 会判超时重投，同一个 push 被处理多次。失败只记日志，绝不
+    // 影响下面的建分支 / 部署链路。
+    //
+    // 2026-08-16 修正时序（Codex P1）：原来在这里**直接触发**。但触发点在分支
+    // 创建与 `githubCommitSha` 落库之前，而 `runPushRules` 立刻按分支名去 state
+    // 里找记录、并按记录上的 commit 发布。后果两条，都静默：
+    //   - 首次推送一条新分支：记录还不存在 → 规则被跳过，只留一行 warn
+    //   - 后续推送：记录在，但 `githubCommitSha` 还是**上一个** commit → 发旧版本
+    // 所以改成先包成闭包，等分支状态落定后再点火；下面每条出口各点一次，
+    // `fired` 保证只点一次。位置约束不变：docs-only 出口也必须点，
+    // 因为 `docs/** → docs-site` 这类规则要的正好是 docs-only 那种 push。
+    let pushRulesFired = false;
+    const firePushRules = (): void => {
+      if (pushRulesFired || dryRun || !this.deps.runPushRules) return;
+      pushRulesFired = true;
+      // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
+      // 否则 GitHub 判超时重投，同一个 push 被处理多次。失败只记日志。
+      void this.deps.runPushRules({
+        projectId: project.id,
+        branch: branchName,
+        event: 'push',
+        changedPaths: this.changedPathsFromPush(event),
+        // 路径过滤读的是这个 commit 的改动清单，发布就必须发这个 commit——
+        // 否则紧挨着的第二次 push 会被第一个事件的授权发出去。
+        ...(event.after ? { commitSha: event.after } : {}),
+      }).catch((err) => {
+        console.error('[webhook] 自动发布规则执行失败:', project.id, branchName, (err as Error).message);
+      });
+    };
+
+    /*
+     * 项目级构建范围的出口刻意排在这里 —— 与 docs-only 出口同一条约束。
+     *
+     * 范围管的是「这次改动要不要重建这个项目」，而自动发布规则管的是「这次改动要不要
+     * 发布点什么」，两者是不同的问题。把范围出口放在 firePushRules 之前，`docs/** →
+     * docs-site` 这类规则要的正好是「本项目不构建」的那种 push，于是它永远不会被触发，
+     * 而且没有任何信号——上面那段注释早就为 docs-only 写下了同一条约束，我加范围判定
+     * 时把它绕过去了（2026-09-02 Codex P1）。
+     */
+    if (!ctx.scopeDecision.matched) {
+      firePushRules();
+      return {
+        action: 'ignored-out-of-scope',
+        message: `项目 '${project.name}' 未被本次改动波及：${ctx.scopeDecision.reason}`,
+      };
+    }
+
     // Ensure branch exists — auto-create a worktree when the push hits a
     // branch CDS hasn't tracked yet. Uses the same id convention as the
     // `POST /branches` route (legacy projects use the bare slug, named
@@ -1219,16 +1582,19 @@ export class GitHubWebhookDispatcher {
     // otherwise a single push would spawn a phantom duplicate (bug: same
     // repo's `main` appearing as both `main` and `<slug>-main`).
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     let entry =
       this.deps.stateService.getBranch(canonicalId) ??
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
     const branchId = entry?.id ?? canonicalId;
     let created = false;
+    if (entry?.archive) return { action: 'ignored-event', branchId,
+      message: '分支已归档，忽略自动部署；请先从归档列表恢复，再推送或部署。' };
 
     // 项目构建配置（极速版判定 + created 分支默认对齐共用）。早算一次,供下面
     // docs-only / dry-run / express 分流复用,避免散落多处重复读取。
     const profiles = this.deps.stateService.getBuildProfilesForProject(project.id);
+    if (!entry) assertValidDefaultDeployModes(project.defaultDeployModes, profiles);
     // 判定某分支(或 webhook 即将新建的分支)是否走极速版(CI 预构建)模式。
     //  - 已存在分支:直接按其 profileOverrides 判定。
     //  - 即将新建分支(existing=undefined):webhook 建分支时会 applyDefaultDeployModesToBranch
@@ -1287,6 +1653,9 @@ export class GitHubWebhookDispatcher {
             },
           });
         }
+        // docs-only 也要点火：`docs/** → docs-site` 这类规则要的正好是这种 push。
+        // 放在元数据刷新之后，规则拿到的才是本次的 commit。
+        firePushRules();
       }
       return {
         action: 'ignored-doc-only',
@@ -1333,18 +1702,8 @@ export class GitHubWebhookDispatcher {
         project.id,
         branchId,
       );
-      await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-      try {
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-      } catch (err) {
-        // A push for a branch our local clone hasn't fetched yet can fail
-        // because `git worktree add` refuses unknown refs. Try a fetch and
-        // retry once; give up if that also fails.
-        await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-        void err;
-      }
-      entry = {
+      // 在任何外部等待前冻结默认覆盖；State 不发布暂时回到源码基线的半分支。
+      const pendingEntry: BranchEntry = {
         id: branchId,
         projectId: project.id,
         branch: branchName,
@@ -1353,7 +1712,26 @@ export class GitHubWebhookDispatcher {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
-      this.deps.stateService.addBranch(entry);
+      applyDefaultDeployModesToBranch(pendingEntry, project.defaultDeployModes, profiles);
+      const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(profiles, pendingEntry)
+        .map(profile => resolveEffectiveProfile(profile, pendingEntry)));
+      entry = await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+        if (needsSource) {
+          await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
+          try {
+            await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+          } catch (err) {
+            // A push for a branch our local clone hasn't fetched yet can fail
+            // because `git worktree add` refuses unknown refs. Try a fetch and
+            // retry once; give up if that also fails.
+            await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
+            await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+            void err;
+          }
+        }
+        this.deps.stateService.addBranch(pendingEntry);
+        return pendingEntry;
+      });
       created = true;
     }
 
@@ -1385,6 +1763,9 @@ export class GitHubWebhookDispatcher {
       githubSenderAvatarUrl: event.sender?.avatar_url,
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
     });
+
+    // 分支记录与 commit 都已落定，这时候规则才能找到分支、并按**本次**的 commit 发布。
+    firePushRules();
     this.deps.stateService.save();
 
     // Live UI stream: notify any subscribed Dashboard about this change
@@ -1417,28 +1798,15 @@ export class GitHubWebhookDispatcher {
       }
     }
 
-    // ── 2026-06-23 极速版（CI 预构建）分流 ──────────────────────────────
-    // webhook 自动建分支时补回项目默认 deploy mode（与 UI 建分支一致;否则新分支
-    // 拿不到极速版 override）。已存在分支不动（其 override 已是 SSOT）。
-    // profiles 已在 handlePush 顶部 hoist。
-    if (created && project.defaultDeployModes && profiles.length > 0) {
-      const fresh = this.deps.stateService.getBranch(branchId);
-      if (fresh) {
-        applyDefaultDeployModesToBranch(fresh, project.defaultDeployModes, profiles);
-        // 显式落盘（mongo-split store 下 getBranch 可能返回副本,mutate 不持久化）
-        for (const [pid, ov] of Object.entries(fresh.profileOverrides || {})) {
-          this.deps.stateService.setBranchProfileOverride(branchId, pid, ov);
-        }
-      }
-    }
-
+    // 新分支默认已在任何工作树写入前冻结，并随 addBranch 整体发布。
+    // 已存在分支保持自己的 override，不因项目默认变化而被改写。
     // 该分支是否走预构建镜像模式？是 → 不本机编译,改为「等待 CI 镜像就绪」,
     // 等 GitHub Actions 的 workflow_run.completed 到达后再按 commit SHA 拉取部署。
     //
     // 注意（Bugbot/Codex review）：此处**不传** project.defaultDeployModes —— 部署路径
     // resolveEffectiveProfile 按 2026-05-14 产品决策**不读**项目默认（默认只在建分支时
     // 拷贝一次写进 override）。若这里用项目默认判定,则「已存在、无 override」的分支会被
-    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支上面
+    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支在创建前
     // 已 applyDefaultDeployModesToBranch 写了 override,靠 override 即可命中。
     const entryForMode = this.deps.stateService.getBranch(branchId) ?? entry;
     const isExpress = branchUsesPrebuiltMode(profiles, entryForMode);
@@ -1450,7 +1818,7 @@ export class GitHubWebhookDispatcher {
         branchId, entryForMode.projectId, branchName, repoFullName, commitSha,
       );
       if (claimed) return claimed;
-      // 入口校验（doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
+      // 入口校验（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 过期分支预览页」 #7，2026-07-09）：进 waiting 前确认
       // 仓库该 commit 下真的有 branch-image.yml。缺文件时 CI 完成事件永远不会来，
       // 与其让分支苦等 15 分钟看门狗超时，不如立即按看门狗同一失败语义归因。
       // API 失败/无凭据 = unknown → fail-open 照旧 waiting（看门狗仍兜底）。
@@ -1458,7 +1826,7 @@ export class GitHubWebhookDispatcher {
         repoFullName, branchName, commitSha, project.githubInstallationId ?? event.installation?.id,
       );
       if (workflowPresence === 'missing') {
-        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow，或在构建配置中把分支切回源码编译模式。';
+        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow 并推送，待 CI 检查通过后再部署。';
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           ciImageStatus: 'failed',
           ciTargetSha: commitSha,
@@ -1562,14 +1930,15 @@ export class GitHubWebhookDispatcher {
     // project, detach the link so webhooks for it stop triggering deploys.
     if (event.action === 'removed' && !dryRun) {
       for (const repo of event.repositories_removed || []) {
-        const project = this.deps.stateService.findProjectByRepoFullName(repo.full_name);
-        if (project && project.githubInstallationId === instId) {
+        // 同上：一个仓库可能喂着多个项目，访问权被收回时它们都得解绑
+        for (const project of this.deps.stateService.findProjectsByRepoFullName(repo.full_name)) {
+          if (project.githubInstallationId !== instId) continue;
           this.deps.stateService.updateProject(project.id, {
             githubRepoFullName: undefined,
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
     }

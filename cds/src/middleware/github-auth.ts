@@ -17,10 +17,14 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthService } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
+import { readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
+import { isPublicAgentSetupRoute } from '../shared/agent-setup.js';
 
 /** Paths that bypass the auth gate entirely. */
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
+  // CDS 自检端点：探测器从本机回环打它。与 server.ts isPublicAccessRequestRoute 保持同步。
+  '/api/self-check',
   '/login',
   '/auth/sso',
   // Compatibility URL: installSpaFallback redirects it to the React login
@@ -59,18 +63,27 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   /^\/api\/bootstrap\/[a-z0-9-]+$/,
   '/api/skills/bundles',
   /^\/api\/skills\/[a-z0-9-]+\/download$/,
+  // 凭据自检：这条端点的全部意义就是诊断一把**过不了鉴权**的凭据，挂在鉴权
+  // 后面它永远执行不到，只会再回一句「未授权」——正是它要治的病。出参不含
+  // 明文与哈希，never-issued 不透露任何项目信息（判据在
+  // services/credential-self-check.ts，有不泄密用例守着）。
+  // 与 isPublicAccessRequestRoute in server.ts（basic-auth 模式白名单）保持同步。
+  '/api/credentials/self-check',
+  // 公开状态页（2026-09-11）：token 是 16 字节随机串、不可枚举，它的全部意义
+  // 就是给没有账号的人看——挂在登录网关后面等于没做。载荷由
+  // services/public-status-board.ts 白名单构造，只有业务名 / 红黄绿 / 7 天条带 /
+  // 更新时间四样；地址、判据、日志、分支名一律不出去（有守卫盯着）。
+  // 与 isPublicAccessRequestRoute in server.ts（basic-auth 模式白名单）保持同步。
+  //
+  // 只放行读取那一条：`/api/projects/:id/status-page` 那几个开关仍然要登录。
+  /^\/api\/public\/status\/[a-f0-9]{32}$/,
+  /^\/s\/[a-f0-9]{32}$/,
   // Static assets the login page needs before a session exists.
   /^\/assets\//,
   '/style.css',
   '/favicon.svg',
   /^\/_next\//,
 ];
-
-function parseCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
-}
 
 function isPublicPath(path: string): boolean {
   return PUBLIC_PATHS.some((rule) => (typeof rule === 'string' ? rule === path : rule.test(path)));
@@ -100,16 +113,23 @@ export function createGithubAuthMiddleware(deps: {
   resolveAgentKey?: (req: Request) => unknown;
   /** HTTPS deployment flag; mirrors the value the auth routers use for Set-Cookie. */
   cookieSecure?: boolean;
+  hostSessionCookies?: boolean;
+  /** 由前置专用能力门禁验证；不授予用户/机器身份或通用内部权限。 */
+  isPendingReplay?: (req: Request) => boolean;
+  /** 与其他认证模式共用的接入白名单；路由仍核对原凭据或一次性轮询票据。 */
+  isPublicRequest?: (req: Request) => boolean;
 }) {
-  const { authService, resolveAgentKey, cookieSecure = false } = deps;
+  const { authService, resolveAgentKey, isPendingReplay, cookieSecure = false, hostSessionCookies = false } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
     // render assets before the user is authenticated.
-    if (isPublicPath(req.path)) {
+    if (isPublicAgentSetupRoute(req.method, req.path) || isPublicPath(req.path) || deps.isPublicRequest?.(req)) {
       next();
       return;
     }
+
+    if (isPendingReplay?.(req)) { next(); return; }
 
     const ssoIdentity = (req as Request & {
       cdsSsoIdentity?: {
@@ -158,7 +178,7 @@ export function createGithubAuthMiddleware(deps: {
       return;
     }
 
-    const token = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
     const result = await authService.validateSession(token ?? null);
 
     if (!result) {
@@ -184,7 +204,7 @@ export function createGithubAuthMiddleware(deps: {
     // browser copy has to move with it — otherwise the cookie dies first and the
     // user is bounced to /login while a perfectly valid session is still on file.
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, result.session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', buildSessionCookie(token, result.session.expiresAt, cookieSecure, hostSessionCookies));
     }
 
     // Attach the authenticated user onto the request for downstream handlers.

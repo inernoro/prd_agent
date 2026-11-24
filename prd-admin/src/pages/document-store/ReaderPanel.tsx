@@ -131,7 +131,7 @@ export function ReaderPanel({
   return (
     // 悬浮玻璃卡：四周留白 + 全圆角，比贴边硬面板更圆润通透
     <div
-      className="border border-token-subtle" style={{ position: 'absolute', top: 12, right: 12, bottom: 12, width: `min(${Math.round(width)}px, 94vw)`, background: 'rgba(17,18,26,0.92)', backdropFilter: 'blur(20px) saturate(130%)', WebkitBackdropFilter: 'blur(20px) saturate(130%)', borderRadius: 18, boxShadow: '0 18px 60px rgba(0,0,0,0.6)', zIndex: 20, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
+      className="surface-tone-dark border border-token-subtle" style={{ position: 'absolute', top: 12, right: 12, bottom: 12, width: `min(${Math.round(width)}px, 94vw)`, background: 'rgba(17,18,26,0.92)', backdropFilter: 'blur(20px) saturate(130%)', WebkitBackdropFilter: 'blur(20px) saturate(130%)', borderRadius: 18, boxShadow: '0 18px 60px rgba(0,0,0,0.6)', zIndex: 20, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
     >
       {/* 左缘拖拽手柄：改阅读面板宽度（投影偏移随之同步，聚焦星保持左半居中）。 */}
       <div
@@ -155,18 +155,18 @@ export function ReaderPanel({
       >
         <div style={{ minWidth: 0 }}>
           {crumbLine && (
-            <div style={{ fontSize: 11, color: '#8a8c9c', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {crumbLine}
             </div>
           )}
-          <div style={{ fontSize: 17, fontWeight: 700, color: '#f1f2f7', lineHeight: 1.35, wordBreak: 'break-word' }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.35, wordBreak: 'break-word' }}>
             {shownTitle}
           </div>
         </div>
         <button
           onClick={onClose}
           aria-label="关闭"
-          className="bg-token-nested border border-token-subtle" style={{ borderRadius: 9, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c8c8d0', cursor: 'pointer', flexShrink: 0 }}
+          className="bg-token-nested border border-token-subtle" style={{ borderRadius: 9, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0 }}
         >
           <X size={15} />
         </button>
@@ -183,10 +183,10 @@ export function ReaderPanel({
         {/* 正文限宽居中，长行不顶到边，阅读更舒适（容器仍撑满，靠 padding 收口） */}
         <div style={{ maxWidth: 720, margin: '0 auto' }}>
           {loading && <div style={{ padding: '32px 0' }}><GalaxyConstellationLoader text="正在加载文档…" size={140} /></div>}
-          {error && !loading && <div style={{ color: '#ffb0b0', fontSize: 13 }}>加载失败：{error}</div>}
+          {error && !loading && <div style={{ color: 'var(--accent-fg-danger)', fontSize: 13 }}>加载失败：{error}</div>}
           {!loading && !error && content !== null && content.trim() !== '' && <MarkdownViewer content={bodyForView ?? content} />}
           {!loading && !error && (content === null || content.trim() === '') && (
-            <div style={{ color: '#888', fontSize: 13 }}>该文档暂无可预览的正文内容。</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>该文档暂无可预览的正文内容。</div>
           )}
         </div>
       </div>

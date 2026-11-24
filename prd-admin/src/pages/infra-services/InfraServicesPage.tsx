@@ -305,7 +305,9 @@ export default function InfraServicesPage() {
       .then((res) => {
         if (res.success && res.data?.item) {
           onPasted(res.data.item);
-          toast.success('CDS 长期授权已建立', '系统互联与缺陷转发已一并启用，无需复制任何凭据');
+          toast.success('CDS 长期授权已建立', res.data.item.workspaceOnly
+            ? '已连接指定项目的 OpenDesign 工作区，可以从知识库开始生成'
+            : '系统互联与缺陷转发已启用');
           void loadConnections();
         } else {
           toast.error('CDS 授权连接失败', res.error?.message ?? '请重新发起连接');
@@ -1179,7 +1181,7 @@ export default function InfraServicesPage() {
       >
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
-            <MessageSquare size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
+            <MessageSquare size={16} style={{ color: 'var(--accent-fg-emerald)' }} />
             <h3 className="text-sm font-semibold text-token-primary">CDS Agent 测试台</h3>
             {activeSession && (
               <span className="text-xs text-token-muted">

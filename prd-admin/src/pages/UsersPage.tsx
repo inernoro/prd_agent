@@ -1,13 +1,13 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
-import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, Link2 } from 'lucide-react';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserDisplayName, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
+import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, Link2, RefreshCw } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { UserProfilePopover } from '@/components/ui/UserProfilePopover';
@@ -88,6 +88,10 @@ export default function UsersPage() {
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [observedAt, setObservedAt] = useState<number | null>(null);
+  const loadSequence = useRef(0);
+  const successfulQuery = useRef<string | null>(null);
   const [items, setItems] = useState<UserRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -111,7 +115,7 @@ export default function UsersPage() {
   const [miduoConfigLoading, setMiduoConfigLoading] = useState(false);
   const [miduoConfigSaving, setMiduoConfigSaving] = useState(false);
   const [miduoEnabled, setMiduoEnabled] = useState(false);
-  const [miduoBaseUrl, setMiduoBaseUrl] = useState('https://admin.ebcone.cn');
+  const [miduoBaseUrl, setMiduoBaseUrl] = useState('');
   const [miduoAppCode, setMiduoAppCode] = useState('');
   const [miduoAppSecret, setMiduoAppSecret] = useState('');
   const [miduoHasSecret, setMiduoHasSecret] = useState(false);
@@ -206,23 +210,49 @@ export default function UsersPage() {
     [page, search, role, status]
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    const queryIdentity = JSON.stringify(query);
+    if (successfulQuery.current !== queryIdentity) {
+      setItems([]);
+      setTotal(0);
+      setObservedAt(null);
+    }
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await getUsers(query);
+      if (sequence !== loadSequence.current) return;
       if (res.success) {
         setItems(res.data.items);
         setTotal(res.data.total);
+        setObservedAt(Date.now());
+        successfulQuery.current = queryIdentity;
+      } else {
+        setLoadError(true);
       }
+    } catch {
+      if (sequence === loadSequence.current) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  };
+  }, [query]);
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.page, query.search, query.role, query.status]);
+    const sequence = loadSequence;
+    void load();
+    return () => { ++sequence.current; };
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') void load(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [load]);
 
   const openMiduoConfig = async () => {
     const seq = miduoConfigLoadSeqRef.current + 1;
@@ -239,7 +269,7 @@ export default function UsersPage() {
         return;
       }
       setMiduoEnabled(res.data.enabled);
-      setMiduoBaseUrl(res.data.baseUrl || 'https://admin.ebcone.cn');
+      setMiduoBaseUrl(res.data.baseUrl || '');
       setMiduoAppCode(res.data.appCode || '');
       setMiduoHasSecret(res.data.hasAppSecret);
       setMiduoRedirectUri(res.data.redirectUri || '');
@@ -299,8 +329,8 @@ export default function UsersPage() {
     if (appCode) setMiduoAppCode(appCode);
     if (appSecret) setMiduoAppSecret(appSecret);
     if (appName) setMiduoLabel(appName);
-    setMiduoBaseUrl(normalizeUrl(baseUrl, 'https://admin.ebcone.cn'));
-    setMiduoRedirectUri(normalizeUrl(callbackUrl, 'https://map.ebcone.net/login', '/login'));
+    setMiduoBaseUrl(normalizeUrl(baseUrl, ''));
+    setMiduoRedirectUri(normalizeUrl(callbackUrl, `${window.location.origin}/login`, '/login'));
     setMiduoEnabled(true);
     toast.success('已识别交接信息', '请确认后保存配置');
   };
@@ -801,42 +831,6 @@ export default function UsersPage() {
     }
   };
 
-  const handleInitializeUsers = async () => {
-    const confirmed = await systemDialog.confirm({
-      title: '初始化用户',
-      message: '此操作将删除所有现有用户并创建默认管理员账号（admin/admin）和三个机器人账号。此操作不可撤销，确定继续吗？',
-      confirmText: '确定初始化',
-      cancelText: '取消',
-      tone: 'danger',
-    });
-    if (!confirmed) return;
-
-    const doubleConfirmed = await systemDialog.confirm({
-      title: '二次确认',
-      message: '再次确认：您确定要删除所有用户并重新初始化吗？',
-      confirmText: '确定',
-      cancelText: '取消',
-      tone: 'danger',
-    });
-    if (!doubleConfirmed) return;
-
-    try {
-      const res = await initializeUsers();
-
-      if (!res.success) {
-        toast.error('初始化失败', res.error?.message || '初始化用户失败');
-        return;
-      }
-
-      toast.success('初始化成功', `已删除 ${res.data.deletedCount} 个用户，创建了管理员账号（admin/admin）和 ${res.data.botUserIds.length} 个机器人账号`);
-
-      await load();
-    } catch (error) {
-      console.error('Initialize users error:', error);
-      toast.error('初始化失败', '初始化用户时发生错误');
-    }
-  };
-
   const handleForceExpireAll = async () => {
     const confirmed = await systemDialog.confirm({
       title: '一键过期所有令牌',
@@ -939,8 +933,8 @@ export default function UsersPage() {
 
       <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
         <div className={`flex ${isMobile ? 'flex-col gap-2.5' : 'flex-wrap items-center gap-2.5'}`}>
-          <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
-            <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
+          <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full flex-wrap' : 'min-w-0'}`}>
+            <div className={`${isMobile ? 'w-full min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
               <div className="relative">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
@@ -962,7 +956,7 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[72px] font-medium"
+              className={`${isMobile ? 'flex-1 min-w-0' : 'min-w-[72px]'} font-medium`}
             >
               <option value="">角色</option>
               {ALL_ROLES.map((r) => (
@@ -977,15 +971,19 @@ export default function UsersPage() {
                 setPage(1);
               }}
               uiSize="sm"
-              className="min-w-[72px] font-medium"
+              className={`${isMobile ? 'flex-1 min-w-0' : 'min-w-[72px]'} font-medium`}
             >
               <option value="">状态</option>
-              <option value="Active">正常</option>
+              <option value="Active">已启用</option>
               <option value="Disabled">禁用</option>
             </Select>
           </div>
 
           <div className={`${isMobile ? '' : 'ml-auto'} flex items-center gap-2 shrink-0 flex-wrap justify-end`}>
+            <Button variant="secondary" size="xs" disabled={loading} onClick={() => { void load(); }}>
+              <RefreshCw size={12} className="mr-1" />
+              {loading ? '读取中...' : '刷新状态'}
+            </Button>
             <Button variant="secondary" size="xs" onClick={openMiduoConfig}>
               <Link2 size={12} className="mr-1" />
               SSO 接入
@@ -998,12 +996,17 @@ export default function UsersPage() {
             <Button variant="danger" size="xs" onClick={handleForceExpireAll}>
               一键过期
             </Button>
-            <div className="mx-0.5 h-6 w-px bg-token-nested" aria-hidden />
-            <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
-              初始化
-            </Button>
           </div>
         </div>
+
+        <div className="mt-2 text-xs text-token-muted" role="status">
+          {observedAt !== null && <>状态读取于 {new Date(observedAt).toLocaleTimeString('zh-CN', { hour12: false })}。账号启用与登录临时限制分别显示。</>}
+        </div>
+        {loadError && (
+          <div className="mt-2 text-xs" role="alert" style={{ color: 'var(--semantic-danger-text)' }}>
+            用户状态更新失败，{observedAt !== null ? '当前展示上次读取结果' : '暂未读取到用户'}。请刷新重试。
+          </div>
+        )}
 
         {/* Bulk action bar */}
         {selectedUserIds.size > 0 && (
@@ -1056,11 +1059,11 @@ export default function UsersPage() {
             <MapSectionLoader />
           ) : items.length === 0 ? (
             <div className="py-12 text-center text-sm text-token-muted">
-              暂无数据
+              {loadError ? '暂未读取到用户，请刷新重试' : '暂无数据'}
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-[12px]">
+              <table className="w-full min-w-[1100px] text-[12px]">
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-primary)' }}>
                     <th className="text-left py-2 px-2 font-medium w-8" style={{ color: 'var(--text-tertiary)' }}>
@@ -1162,7 +1165,7 @@ export default function UsersPage() {
                                   {displayName}
                                 </span>
                                 {isBot && (
-                                  <span className="shrink-0 text-[9px] font-medium px-1 py-0 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}>
+                                  <span className="shrink-0 text-[9px] font-medium px-1 py-0 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)' }}>
                                     BOT
                                   </span>
                                 )}
@@ -1175,7 +1178,7 @@ export default function UsersPage() {
                         </td>
 
                         {/* 角色 */}
-                        <td className="py-2 px-2 text-center">
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
                           <span
                             className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-[4px]"
                             style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
@@ -1221,21 +1224,20 @@ export default function UsersPage() {
                           )}
                         </td>
 
-                        {/* 状态 */}
-                        <td className="py-2 px-2 text-center">
-                          {isLockedUser(u) ? (
-                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--semantic-danger-text)' }}>
-                              锁定
-                            </span>
-                          ) : u.status === 'Active' ? (
+                        {/* 账户启用状态独立于临时登录限制；两者可以同时存在。 */}
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
+                          {u.status === 'Active' ? (
                             <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--semantic-success-text)' }}>
-                              正常
+                              已启用
                             </span>
                           ) : (
                             <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(156,163,175,0.12)', color: 'var(--semantic-neutral-text)' }}>
-                              禁用
+                              已禁用
                             </span>
                           )}
+                          <div className="mt-1 text-[10px]" style={{ color: isLockedUser(u) ? 'var(--semantic-danger-text)' : 'var(--text-tertiary)' }}>
+                            {isLockedUser(u) ? '登录暂时锁定' : (u.isLocked === false || typeof u.lockoutRemainingSeconds === 'number') ? '读取时未锁定' : '登录限制未确认'}
+                          </div>
                         </td>
 
                         {/* 群组数 */}
@@ -1622,7 +1624,7 @@ export default function UsersPage() {
 
             {/* 错误提示 */}
             {!createUsernameOk && createUsername.trim().length > 0 && (
-              <div className="text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
+              <div className="text-sm" style={{ color: 'var(--accent-fg-danger)' }}>
                 用户名不合法：4-32 位，仅字母/数字/下划线
               </div>
             )}
@@ -1630,7 +1632,7 @@ export default function UsersPage() {
             {createError && (
               <div
                 className="rounded-[10px] px-3 py-2 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
               >
                 {createError}
               </div>
@@ -1720,7 +1722,7 @@ export default function UsersPage() {
                       value={miduoBaseUrl}
                       onChange={(e) => setMiduoBaseUrl(e.target.value)}
                       className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
-                      placeholder="https://admin.ebcone.cn"
+                      placeholder="https://admin.example.com"
                     />
                   </div>
                   <div>
@@ -1752,7 +1754,7 @@ export default function UsersPage() {
                     value={miduoRedirectUri}
                     onChange={(e) => setMiduoRedirectUri(e.target.value)}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
-                    placeholder="https://map.ebcone.net/login"
+                    placeholder={`${window.location.origin}/login`}
                   />
                 </div>
                 <div>
@@ -1765,7 +1767,7 @@ export default function UsersPage() {
                   />
                 </div>
                 {miduoConfigError && (
-                  <div className="rounded-[10px] px-3 py-2 text-sm" style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}>
+                  <div className="rounded-[10px] px-3 py-2 text-sm" style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>
                     {miduoConfigError}
                   </div>
                 )}
@@ -1828,11 +1830,8 @@ export default function UsersPage() {
         username={avatarTargetUser?.username}
         userType={avatarTargetUser?.userType ?? null}
         avatarFileName={avatarTargetUser?.avatarFileName ?? null}
-        onSave={async (avatarFileName) => {
-          if (!avatarTargetUser) return;
-          const res = await updateUserAvatar(avatarTargetUser.userId, avatarFileName);
-          if (!res.success) throw new Error(res.error?.message || '保存失败');
-          await load();
+        onPersisted={() => {
+          void load();
         }}
       />
 
@@ -1868,7 +1867,7 @@ export default function UsersPage() {
             {nameError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
               >
                 {nameError}
               </div>
@@ -1923,7 +1922,7 @@ export default function UsersPage() {
             {pwdSubmitError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
               >
                 {pwdSubmitError}
               </div>
@@ -1987,7 +1986,7 @@ export default function UsersPage() {
             {forceExpireError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)' }}
               >
                 {forceExpireError}
               </div>

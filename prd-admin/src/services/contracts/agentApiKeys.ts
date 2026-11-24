@@ -21,7 +21,20 @@ export interface AgentApiKeyDto {
   description?: string | null;
   /** 前 12 字符明文，仅用于展示（如 `sk-ak-abc12345`） */
   keyPrefix: string;
+  /**
+   * 它此刻**真拿得到**的能力，不是库里存了什么。
+   *
+   * 自动档的钥匙存的是空清单（清单是鉴权时现算的），手动档里被回收权限的那几项鉴权时会被剥掉 ——
+   * 两种情况照着存的显示都是假的。服务端按与鉴权同一处的判据算好再回。
+   */
   scopes: string[];
+  /** auto = 能力跟着主人的权限走，不存清单；manual = 按存的这份清单钉死 */
+  scopeMode: 'auto' | 'manual';
+  /** 跟随用户面板，或由这把密钥固定一个文学配图逻辑模型 */
+  mcpLiteraryImageModelMode: 'follow-user-panel' | 'fixed';
+  mcpLiteraryImageModelPublicId?: string | null;
+  /** 用户在 MAP 中单独授予的公开发布权限；旧密钥缺省关闭。 */
+  webPublicExposureAllowed?: boolean;
   isActive: boolean;
   createdAt: string;
   expiresAt?: string | null;
@@ -42,8 +55,14 @@ export type ListAgentApiKeysContract = () => Promise<
 export type CreateAgentApiKeyContract = (input: {
   name: string;
   description?: string;
+  /** 自动模式下传什么都会被服务端忽略（它不存清单） */
   scopes: string[];
   ttlDays?: number;
+  /**
+   * 缺省 = manual，跟老路径（密钥管理页）语义一致。
+   * 接入台默认走 'auto'：用户没动过高级设置，能力就跟着他的权限走。
+   */
+  scopeMode?: 'auto' | 'manual';
 }) => Promise<
   ApiResponse<{
     item: AgentApiKeyDto;
@@ -58,7 +77,21 @@ export type UpdateAgentApiKeyContract = (input: {
   name?: string;
   description?: string;
   scopes?: string[];
+  /** 仅更新指定平台能力，保留其他存储授权；不与 scopes 或 auto 同传。 */
+  mcpCapabilityAccess?: Record<string, 'none' | 'read' | 'write'>;
+  /** 显式切模式。不传时：**存了 scopes 就自动钉成 manual**（存清单那一刻就是动过高级设置那一刻） */
+  scopeMode?: 'auto' | 'manual';
   isActive?: boolean;
+  /** 接入台配额上限（每日生图张数，1-500） */
+  mcpDailyImageQuota?: number;
+  /** 接入台配额上限（每日写入次数，1-2000） */
+  mcpDailyWriteQuota?: number;
+  /** 接入台配额上限（每分钟调用次数，1-600） */
+  mcpRateLimitPerMin?: number;
+  mcpLiteraryImageModelMode?: 'follow-user-panel' | 'fixed';
+  mcpLiteraryImageModelPublicId?: string;
+  /** 仅用户登录态可修改的独立公开发布授权；不传表示保持原值。 */
+  webPublicExposureAllowed?: boolean;
 }) => Promise<ApiResponse<{ item: AgentApiKeyDto | null }>>;
 
 export type RenewAgentApiKeyContract = (input: {

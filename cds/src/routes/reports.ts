@@ -29,6 +29,7 @@
  * The raw HTML is therefore never executed in the CDS origin with session
  * access — only inside the no-same-origin sandbox the frontend builds.
  */
+import { parseReportClassification, matchesClassification } from '../shared/notification-templates.js';
 import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -36,6 +37,10 @@ import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
+import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
+import { buildReportsOverview, effectiveVerdict } from '../services/acceptance-overview.js';
+import { AcceptanceTaskService } from '../services/acceptance-tasks.js';
+import { assertProjectAccess } from './projects.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -78,6 +83,25 @@ export interface ReportsRouterDeps {
   githubApp?: GitHubAppClient;
 }
 
+function boundTaskReport(stateService: StateService, reportId: string): boolean {
+  return (stateService.getState().acceptanceTasks ?? []).some((task) => task.report?.id === reportId);
+}
+
+function taskOwnedReport(stateService: StateService, sourceId?: string | null): boolean {
+  return Boolean(sourceId && (stateService.getState().acceptanceTasks ?? []).some((task) => task.id === sourceId));
+}
+
+// Only structured task identities are serialized. Ordinary historical reports
+// keep their existing creation semantics; a new acceptance run always has a new id.
+const taskReportWrites = new Map<string, Promise<unknown>>();
+async function serializeTaskReport<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = taskReportWrites.get(taskId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  taskReportWrites.set(taskId, next);
+  try { return await next; }
+  finally { if (taskReportWrites.get(taskId) === next) taskReportWrites.delete(taskId); }
+}
+
 /** 验收结论 → GitHub check-run conclusion。 */
 const VERDICT_CONCLUSION: Record<'pass' | 'conditional' | 'fail', 'success' | 'neutral' | 'failure'> = {
   pass: 'success',
@@ -86,12 +110,12 @@ const VERDICT_CONCLUSION: Record<'pass' | 'conditional' | 'fail', 'success' | 'n
 };
 const VERDICT_CN: Record<'pass' | 'conditional' | 'fail', string> = {
   pass: '通过',
-  conditional: '有条件通过',
+  conditional: '原则性通过',
   fail: '不通过',
 };
 
 /** 从请求推断 CDS 对外可达基地址（PR 评论里的链接要绝对路径）。 */
-function publicBaseFromReq(req: Request): string {
+export function publicBaseFromReq(req: Request): string {
   const envBase = (process.env.CDS_PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
   if (envBase) return envBase;
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
@@ -120,13 +144,6 @@ const UPLOADABLE_IMAGE_TYPES: Record<string, { ext: string; valid: (data: Buffer
   },
 };
 
-/** Matches inline base64 image data URIs (HTML `src="data:..."` or Markdown
- *  `![](data:...)` — we operate on the data-URI substring, syntax-agnostic). */
-const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
-const MIME_EXT: Record<string, string> = {
-  png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
-};
-
 /**
  * Ingest-time normalization: pull inline `data:image/*;base64,...` images out of
  * a report body, store them content-addressed via the state layer, and rewrite
@@ -144,32 +161,7 @@ async function normalizeInlineImages(
   base: string,
   stateService: StateService,
 ): Promise<{ content: string; extracted: number }> {
-  let extracted = 0;
-  // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
-  //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
-  const pendingWrites = new Map<string, Buffer>();
-  const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
-    const clean = b64.replace(/\s+/g, '');
-    if (!clean) return whole;
-    let buf: Buffer;
-    try {
-      buf = Buffer.from(clean, 'base64');
-    } catch {
-      return whole;
-    }
-    if (!buf.length) return whole;
-    const ext = MIME_EXT[mime.toLowerCase()] || 'png';
-    const hash = createHash('sha256').update(buf).digest('hex');
-    const name = `${hash}.${ext}`;
-    pendingWrites.set(name, buf); // 内容寻址，同名去重
-    extracted += 1;
-    const rel = `/api/reports/assets/${name}`;
-    return base ? `${base}${rel}` : rel;
-  });
-  await Promise.all(
-    [...pendingWrites.entries()].map(([name, buf]) => stateService.writeReportAssetAsync(name, buf)),
-  );
-  return { content: out, extracted };
+  return stateService.normalizeReportInlineImages(content, base);
 }
 
 type ReportFormat = 'html' | 'md';
@@ -217,6 +209,7 @@ interface ParsedUpload {
   branch?: string;
   prNumber?: string;
   deployMode?: string;
+  sourceId?: string;
 }
 
 const VERDICTS = ['pass', 'conditional', 'fail'] as const;
@@ -313,6 +306,8 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.prNumber = value;
     } else if (fieldName === 'deployMode') {
       out.deployMode = value;
+    } else if (fieldName === 'sourceId') {
+      out.sourceId = value;
     } else if (fieldName === 'content' && out.content === undefined) {
       out.content = value;
     }
@@ -471,6 +466,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let rawBranch: unknown;
     let rawPrNumber: unknown;
     let rawDeployMode: unknown;
+    let rawClassification: unknown;
+    let rawSourceId: unknown;
 
     if (contentType.includes('multipart/form-data')) {
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -490,6 +487,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = parsed.branch;
       rawPrNumber = parsed.prNumber;
       rawDeployMode = parsed.deployMode;
+      rawSourceId = parsed.sourceId;
     } else if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       const body = req.body as Record<string, unknown>;
       title = typeof body.title === 'string' ? body.title : undefined;
@@ -506,6 +504,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = body.branch;
       rawPrNumber = body.prNumber;
       rawDeployMode = body.deployMode;
+      rawClassification = body.classification;
+      rawSourceId = body.sourceId;
     } else if (typeof req.body === 'string') {
       content = req.body;
     }
@@ -540,6 +540,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       // 报告，也不许挂到别的项目（PR #865 Bugbot「orphan creates」+「read global」）。
       resolvedProjectId = key.projectId;
     }
+    const structuredTask = (stateService.getState().acceptanceTasks ?? []).find((task) => task.id === normShort(rawSourceId, 120));
+    if (structuredTask && !stateService.isReportObjectStoreConfigured()) {
+      const denied = assertProjectAccess(req as Request & Parameters<typeof assertProjectAccess>[0], structuredTask.projectId);
+      if (denied) return res.status(denied.status).json(denied.body);
+      return res.status(503).json({ error: 'report_storage_unavailable', message: '任务报告未归档：请先恢复对象存储，再重试；不会回退到本地报告' });
+    }
     // 关联分支必须属于报告所属项目，避免跨项目挂分支（PR #865 Bugbot「branch ignores
     // scope」）。全局报告(null projectId，仅 owner 可建)可挂任意已存在分支。
     let resolvedBranchId: string | null = null;
@@ -548,6 +554,15 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (br && (resolvedProjectId === null || (br.projectId ?? 'default') === (resolvedProjectId ?? 'default'))) {
         resolvedBranchId = branchId;
       }
+    }
+
+    let classification;
+    try {
+      classification = rawClassification === undefined ? undefined : parseReportClassification(rawClassification);
+      // 一份明确绑定预览分支的报告不能自称正式调用；跨环境汇总不绑定单分支。
+      if (resolvedBranchId && classification) classification.environments = ['preview'];
+    } catch (error) {
+      return res.status(400).json({ error: 'invalid_classification', message: (error as Error).message });
     }
 
     // 文件夹归属（硬性要求 2026-06-26：项目 = 根目录，技能自取子文件夹路径）：
@@ -579,6 +594,24 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
 
     const verdict = normVerdict(rawVerdict);
     const tier = normShort(rawTier, 80);
+    const sourceId = normShort(rawSourceId, 120);
+    const sourceTask = (stateService.getState().acceptanceTasks ?? []).find((task) => task.id === sourceId);
+    if (sourceTask) {
+      const denied = assertProjectAccess(req as Request & Parameters<typeof assertProjectAccess>[0], sourceTask.projectId);
+      if (denied) return res.status(denied.status).json(denied.body);
+      if (sourceTask.projectId !== resolvedProjectId) {
+        return res.status(403).json({ error: 'project_mismatch', message: '任务与报告必须属于同一项目' });
+      }
+      if (sourceTask.status !== 'completed') {
+        return res.status(409).json({ error: 'task_not_completed', message: '请先结束本轮执行，再归档报告' });
+      }
+      const canonical = new AcceptanceTaskService(stateService).reportSource(sourceTask.id);
+      const counts = normDefectCounts(rawDefectCounts);
+      if (format !== canonical.format || cleanTitle !== canonical.title || content !== canonical.content
+        || verdict !== canonical.verdict || counts?.p0 !== canonical.defectCounts.p0 || counts?.p1 !== canonical.defectCounts.p1) {
+        return res.status(422).json({ error: 'task_report_mismatch', message: '报告与本轮结构化结果不一致，请重新生成报告后归档' });
+      }
+    }
     const templateGate = validateAcceptanceHtmlTemplate({
       title: cleanTitle,
       format,
@@ -592,27 +625,64 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         message: templateGate.message,
       });
     }
-    // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
-    // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
-    const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
-
-    const meta = await stateService.createAcceptanceReportAsync({
-      title: cleanTitle,
-      format,
-      content: normalizedContent,
-      projectId: resolvedProjectId,
-      branchId: resolvedBranchId,
-      folderId: resolvedFolderId,
-      verdict,
-      tier,
-      defectCounts: normDefectCounts(rawDefectCounts),
-      commitSha: resolvedCommitSha,
-      branch: resolvedBranch,
-      prNumber: normPrNumber(rawPrNumber),
-      deployMode: resolvedDeployMode,
-      createdBy: resolveActorFromRequest(req),
-    });
-    return res.status(201).json({ report: meta });
+    const scheduledJobRunId = String(req.get('X-CDS-Job-Run-Id') || req.body?.scheduledJobRunId || '').trim() || undefined;
+    if (scheduledJobRunId) {
+      const run = stateService.getState().scheduledJobRuns?.find(r => r.id === scheduledJobRunId);
+      if (!run || run.projectId !== resolvedProjectId) {
+        return res.status(400).json({ error: '报告运行标识不存在或不属于当前项目' });
+      }
+    }
+    const createReport = async () => {
+      const existing = sourceTask
+        ? stateService.listAcceptanceReports(resolvedProjectId).find((report) => report.sourceId === sourceId)
+        : undefined;
+      // 在任务归档队列内固定结构化基址；重试和绑定共用创建时的地址，不重新解释正文链接。
+      const inlineAssetBaseUrl = existing?.inlineAssetBaseUrl ?? publicBaseFromReq(req);
+      const { content: normalizedContent } = await normalizeInlineImages(content, inlineAssetBaseUrl, stateService);
+      if (sourceTask) {
+        if (existing) {
+          const storedContent = await stateService.readAcceptanceReportContentAsync(existing.id);
+          const sameContent = storedContent === normalizedContent || (existing.storage !== 'object' && storedContent === content);
+          if (existing.format !== format || !sameContent || existing.title !== cleanTitle
+            || existing.verdict !== verdict) {
+            throw new Error('已有任务报告与本轮内容或持久化存储不一致，请排查归档链路');
+          }
+          if (existing.storage !== 'object') {
+            // 未绑定的旧规范草稿在依赖恢复后迁入对象存储，保持同一身份。
+            const recovered = await stateService.updateAcceptanceReportAsync(existing.id, { content: normalizedContent, inlineAssetBaseUrl });
+            if (!recovered || recovered.storage !== 'object') throw new Error('任务报告仍未进入对象存储，请恢复存储后重试');
+            return { meta: recovered, reused: true };
+          }
+          return { meta: existing, reused: true };
+        }
+      }
+      const meta = await stateService.createAcceptanceReportAsync({
+        scheduledJobRunId,
+        reportType: 'acceptance',
+        classification,
+        title: cleanTitle,
+        format,
+        content: normalizedContent,
+        projectId: resolvedProjectId,
+        branchId: resolvedBranchId,
+        folderId: resolvedFolderId,
+        verdict,
+        tier,
+        defectCounts: normDefectCounts(rawDefectCounts),
+        commitSha: resolvedCommitSha,
+        branch: resolvedBranch,
+        prNumber: normPrNumber(rawPrNumber),
+        deployMode: resolvedDeployMode,
+        sourceId,
+        inlineAssetBaseUrl: sourceTask ? inlineAssetBaseUrl : undefined,
+        createdBy: resolveActorFromRequest(req),
+      });
+      return { meta, reused: false };
+    };
+    const { meta, reused } = sourceTask
+      ? await serializeTaskReport(sourceTask.id, createReport)
+      : await createReport();
+    return res.status(reused ? 200 : 201).json({ report: meta });
     } catch (err) {
       return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }
@@ -642,10 +712,70 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : undefined;
     const reports = stateService
       .listAcceptanceReports(projectId ?? null, folderFilter, updatedSince)
+      .filter((report) => matchesClassification(report.classification, {
+        categories: typeof req.query.categories === 'string' ? req.query.categories.split(',').filter(Boolean) : [],
+        systems: typeof req.query.systems === 'string' ? req.query.systems.split(',').filter(Boolean) : [],
+        environments: typeof req.query.environments === 'string' ? req.query.environments.split(',').filter(Boolean) : [],
+      }))
+      .filter((report) => typeof req.query.targetId !== 'string' || report.monitorEvent?.targetId === req.query.targetId)
       .filter((report) => typeof req.query.reportId !== 'string' || !req.query.reportId || report.id === req.query.reportId)
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
     res.json({ reports });
+  });
+
+  // GET /api/reports/overview — 验收主页聚合（结论优先，2026-09-08）。
+  // 纯函数在 services/acceptance-overview.ts；这里只做作用域与参数规范化。
+  // 注册在 `/reports/:id` 之前，避免 overview 被当成报告 id。
+  router.get('/reports/overview', (req: Request, res: Response) => {
+    let projectId = typeof req.query.projectId === 'string' && req.query.projectId
+      ? req.query.projectId
+      : undefined;
+    if (projectId) projectId = stateService.getProject(projectId)?.id ?? projectId;
+    const key = projectKeyOf(req);
+    if (key) projectId = key.projectId;
+    const daysRaw = Number(req.query.days);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(90, Math.floor(daysRaw)) : 7;
+    const tzRaw = Number(req.query.tzOffset);
+    const tzOffsetMinutes = Number.isFinite(tzRaw) && Math.abs(tzRaw) <= 14 * 60 ? tzRaw : 0;
+    const toRaw = typeof req.query.to === 'string' ? Date.parse(req.query.to) : Number.NaN;
+    const to = Number.isFinite(toRaw) ? new Date(toRaw) : new Date();
+    // `__self__` = 只看无项目归属（CDS 自身）的报告；这类报告没有主干合并记录。
+    const selfOnly = projectId === '__self__' && !key;
+    const reports = selfOnly
+      ? stateService.listAcceptanceReports(null).filter((r) => !r.projectId)
+      : stateService.listAcceptanceReports(projectId ?? null);
+    const tombstones = selfOnly ? [] : stateService.listRemovedBranches(projectId ?? null);
+    const overview = buildReportsOverview(reports, tombstones, { days, tzOffsetMinutes, to, projectId: selfOnly ? null : projectId ?? null });
+    res.json({ overview });
+  });
+
+  /**
+   * GET /api/reports/pipeline — 验收流水线总览（跨项目，一行一个项目）。
+   *
+   * 服务对象是老板 / 观察者 / 架构师：他们要「纵观全局和流水线」，不动手处理单条待办。
+   * 所以这里返回的是**环与环之间的落差**（漏在哪），不是报告列表，也不给通过率。
+   *
+   * 口径是「当前在途 + 最近完成」，`recentDays` 只筛后者（不给则不限）。
+   * 项目级凭证只看得到自己那个项目——可见范围等于授权范围，与 /reports/overview 同一条。
+   */
+  router.get('/reports/pipeline', (req: Request, res: Response) => {
+    const key = projectKeyOf(req);
+    const daysRaw = Number(req.query.recentDays);
+    const recentDays = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(365, Math.floor(daysRaw)) : null;
+    const scoped = key?.projectId ?? null;
+    const projects = stateService.getProjects().filter((p) => !scoped || p.id === scoped);
+    const branches = stateService.getAllBranches().filter((b) => !scoped || b.projectId === scoped);
+    const tombstones = stateService.listRemovedBranches(scoped);
+    const reports = stateService.listAcceptanceReports(scoped);
+    const pipeline = buildPipelineOverview(projects, branches, tombstones, reports, { recentDays });
+    // 走向和存量一起给：首屏两者都要，分两次请求会让曲线比数字晚到，读者看见的是半张图。
+    const seriesDaysRaw = Number(req.query.seriesDays);
+    const seriesDays = Number.isFinite(seriesDaysRaw) && seriesDaysRaw > 0
+      ? Math.min(365, Math.floor(seriesDaysRaw))
+      : 90;
+    const series = buildPipelineSeries(projects, branches, reports, { days: seriesDays });
+    res.json({ pipeline, series });
   });
 
   // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。
@@ -693,7 +823,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+        // 说清「为什么没了」：没配对象存储 / 归档于改动之前 / 对象也确实不在，
+        // 三种成因的下一步动作完全不同，压成一句「已丢失」等于什么都没说。
+        const why = stateService.describeAcceptanceReportStorage(meta, { bodyMissing: true });
+        return res.status(404).json({
+          error: 'content_missing',
+          message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
+          hint: why.durable ? undefined : '正文进对象存储后归档的报告不会再出现这种情况',
+        });
       }
       return sendReportContent(res, meta.format, content);
     } catch (err) {
@@ -710,7 +847,11 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+        const why = stateService.describeAcceptanceReportStorage(meta, { bodyMissing: true });
+        return res.status(404).json({
+          error: 'content_missing',
+          message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
+        });
       }
 
       const assetNames = new Set<string>();
@@ -797,7 +938,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       ? `${base}/reports?${meta.projectId ? `project=${encodeURIComponent(meta.projectId)}&` : ''}${meta.folderId ? `folder=${encodeURIComponent(meta.folderId)}&` : ''}report=${encodeURIComponent(meta.id)}`
       : '';
     const shareLink = base && meta.shareToken ? `${base}/r/${meta.shareToken}` : '';
-    const vCn = VERDICT_CN[meta.verdict];
+    /*
+     * 回写 GitHub 用的是**生效结论**，不是报告自己写的那个。一份标着通过却记了 P0 的报告，
+     * CDS 这边（首屏、发布闸、台账、跨项目流水线）一律按未通过算，回写却按原始 verdict 发，
+     * 结果是 PR Checks 面板挂一个绿色的「CDS 验收」，而同一份报告在 CDS 上是红的——
+     * 对外发假绿灯比内部口径不一致更糟（Codex review 抓到）。
+     */
+    const effVerdict = effectiveVerdict(meta) ?? meta.verdict;
+    const vCn = VERDICT_CN[effVerdict];
 
     // 评论正文（markdown）。HTML 注释标记便于以后识别/去重 CDS 验收评论。
     const lines: string[] = [];
@@ -832,7 +980,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
           name: 'CDS 验收',
           headSha: meta.commitSha,
           status: 'completed',
-          conclusion: VERDICT_CONCLUSION[meta.verdict],
+          conclusion: VERDICT_CONCLUSION[effVerdict],
           detailsUrl: deeplink || undefined,
           externalId: meta.id,
           completedAt: new Date().toISOString(),
@@ -885,11 +1033,35 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (Object.prototype.hasOwnProperty.call(body, 'sourcePath')) metaUpdates.sourcePath = normShort(body.sourcePath, 240);
     if (Object.prototype.hasOwnProperty.call(body, 'contentHash')) metaUpdates.contentHash = normShort(body.contentHash, 120);
     if (Object.prototype.hasOwnProperty.call(body, 'publishedAt')) metaUpdates.publishedAt = normShort(body.publishedAt, 80);
+    if (Object.prototype.hasOwnProperty.call(body, 'classification')) {
+      try {
+        metaUpdates.classification = parseReportClassification(body.classification);
+        if (existing.branchId) metaUpdates.classification.environments = ['preview'];
+      } catch (error) {
+        return res.status(400).json({ error: 'invalid_classification', message: (error as Error).message });
+      }
+    }
+    if (existing.monitorEvent && (content !== undefined || Object.keys(metaUpdates).length > 0)) {
+      return res.status(409).json({ error: 'monitor_snapshot_readonly', message: '监控事件事实由监控记录追加，不能改写历史' });
+    }
+    if (taskOwnedReport(stateService, metaUpdates.sourceId)) {
+      return res.status(409).json({ error: 'task_report_association_readonly', message: '任务报告请从执行任务生成并归档，不能通过修改报告来源关联' });
+    }
     const hasMeta = Object.keys(metaUpdates).length > 0;
     // folderId: 字符串=移入该文件夹；null / 'none' / '' = 移出文件夹；缺省=不改动。
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
+    if ((boundTaskReport(stateService, existing.id) || taskOwnedReport(stateService, existing.sourceId)) && (title !== undefined || content !== undefined || hasFormat || hasMeta)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '已绑定的任务报告不可修改，请创建新一轮验收保留历史' });
+    }
     if (title === undefined && content === undefined && !hasFormat && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
+    }
+    // 空正文与创建路由同一口径：那边拒，这边也拒。
+    // 放行的话，配了对象存储的实例上会走成「put 收不下空正文 → objectKey 被清掉 →
+    // 标成 local」——元数据还在、正文只剩一个空的本地文件，容器一重建就是又一条
+    // 点不开的幽灵记录，而接口回的是 200（Codex review 抓到）。
+    if (content !== undefined && !String(content).trim()) {
+      return res.status(400).json({ error: 'missing_content', message: '报告内容为空（请粘贴内容或上传文件）' });
     }
     if (content !== undefined && exceedsCap(content)) {
       return res.status(413).json({ error: 'content_too_large', message: `报告内容超过上限（${MAX_CONTENT_BYTES / 1024 / 1024}MB）` });
@@ -952,6 +1124,9 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     const mismatch = reportAccessDenied(req, meta.projectId);
     if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+    if (boundTaskReport(stateService, meta.id) || taskOwnedReport(stateService, meta.sourceId)) {
+      return res.status(409).json({ error: 'immutable_task_report', message: '任务报告不可删除，请创建新一轮验收保留历史' });
+    }
     const removed = stateService.deleteAcceptanceReport(req.params.id);
     if (!removed) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
     return res.json({ success: true });

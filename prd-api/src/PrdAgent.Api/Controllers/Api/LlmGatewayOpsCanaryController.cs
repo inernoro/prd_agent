@@ -1,11 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -22,6 +25,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly IAssetStorage _assetStorage;
     private readonly LlmGatewayDataContext _gatewayData;
+    private readonly ITaskExecutionAuthorizer _taskAuthorizer;
 
     public LlmGatewayOpsCanaryController(
         IHttpClientFactory httpFactory,
@@ -30,7 +34,8 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         ILogger<LlmGatewayOpsCanaryController> logger,
         ILLMRequestContextAccessor ctxAccessor,
         IAssetStorage assetStorage,
-        LlmGatewayDataContext gatewayData)
+        LlmGatewayDataContext gatewayData,
+        ITaskExecutionAuthorizer taskAuthorizer)
     {
         _httpFactory = httpFactory;
         _config = config;
@@ -39,6 +44,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         _ctxAccessor = ctxAccessor;
         _assetStorage = assetStorage;
         _gatewayData = gatewayData;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     [HttpPost("asr")]
@@ -63,6 +69,13 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         var appCallerCode = string.IsNullOrWhiteSpace(request?.AppCallerCode)
             ? DefaultAppCallerCode
             : request!.AppCallerCode.Trim();
+        var actor = User.Identity?.IsAuthenticated == true ? this.GetRequiredUserId() : "ops-canary";
+        // 既有运维密钥只证明这个已登记自测入口；只签发一次模型发送，不给予通用后台执行权。
+        using var admittedCanary = PrdAgent.Core.Security.TaskExecutionContext.Current is null
+            ? PrdAgent.Core.Security.TaskExecutionContext.Enter(await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitVerifiedIntegrationAsync(HttpContext, actor, "ops-canary:gateway-transport", ct))
+            : null;
         var requestId = string.IsNullOrWhiteSpace(request?.RequestId)
             ? "llmgw-asr-canary-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ")
             : request!.RequestId.Trim();
@@ -75,13 +88,14 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
             _gatewayLogger,
             _ctxAccessor,
             _assetStorage,
-            _gatewayData);
+            _gatewayData,
+            taskAuthorizer: _taskAuthorizer);
 
         using var scope = _ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: null,
             SessionId: null,
-            UserId: "ops-canary",
+            UserId: actor,
             ViewRole: "ops",
             DocumentChars: null,
             DocumentHash: null,
@@ -114,31 +128,66 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
                 AudioBytes: audio.Length));
         }
 
+        if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                resolution.ActualModel,
+                resolution.Protocol,
+                resolution.PlatformType,
+                resolution.OfferingEndpointPath,
+                resolution.IsExchange,
+                out var routeError))
+        {
+            return Ok(new LlmGatewayAsrCanaryResponse(
+                Success: false,
+                RequestId: requestId,
+                AppCallerCode: appCallerCode,
+                Stage: "contract",
+                Model: resolution.ActualModel,
+                StatusCode: 409,
+                ErrorCode: AsrRequestContractPolicy.InvalidRouteErrorCode,
+                ErrorMessage: Truncate(routeError, 1000),
+                ContentPreview: null,
+                ContentType: null,
+                AudioBytes: audio.Length));
+        }
+
+        var useChatAudio = AsrRequestContractPolicy.ShouldUseChatAudio(
+            resolution.ActualModel,
+            resolution.Protocol,
+            resolution.PlatformType);
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = resolution.OfferingId,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
+            EndpointPath = useChatAudio
+                ? AsrRequestContractPolicy.ChatCompletionsEndpoint
+                : AsrRequestContractPolicy.TranscriptionsEndpoint,
             ExpectedModel = resolution.ActualModel,
-            PinnedPlatformId = request?.PinnedPlatformId,
-            PinnedModelId = request?.PinnedModelId,
-            IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? request?.ExpectedModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = request?.Language ?? "",
-            },
-            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
-            {
-                ["file"] = ("llmgw-asr-canary.wav", audio, "audio/wav"),
-            },
+            PinnedPlatformId = resolution.ActualPlatformId,
+            PinnedModelId = resolution.ActualModel,
+            IsMultipart = !useChatAudio,
+            RequestBody = useChatAudio
+                ? AsrRequestContractPolicy.BuildChatAudioBody(
+                    resolution.ActualModel ?? request?.ExpectedModel,
+                    audio,
+                    "请逐字转写这段探针音频，只输出转写文字。没有人声时只输出 NO_SPEECH。")
+                : null,
+            MultipartFields = useChatAudio
+                ? null
+                : AsrRequestContractPolicy.BuildTranscriptionFields(
+                    resolution.ActualModel ?? request?.ExpectedModel,
+                    request?.Language),
+            MultipartFiles = useChatAudio
+                ? null
+                : new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["file"] = ("llmgw-asr-canary.wav", audio, "audio/wav"),
+                },
             TimeoutSeconds = timeoutSeconds,
             Context = new GatewayRequestContext
             {
                 RequestId = requestId,
-                UserId = "ops-canary",
+                UserId = actor,
                 ViewRole = "ops",
                 QuestionText = "LLM Gateway ASR canary",
                 GatewayTransport = GatewayTransports.Http,

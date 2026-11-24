@@ -14,10 +14,14 @@ export const api = {
     login: () => '/api/v1/auth/login',
     ssoOptions: () => '/api/v1/auth/miduo-planet/options',
     miduoPlanetLogin: () => '/api/v1/auth/miduo-planet/login',
+    cdsStart: () => '/api/v1/auth/cds/start',
+    cdsComplete: () => '/api/v1/auth/cds/complete',
+    syntheticLoginExchange: () => '/api/v1/auth/synthetic/exchange',
     register: () => '/api/v1/auth/register',
     refresh: () => '/api/v1/auth/refresh',
     validatePassword: () => '/api/v1/auth/validate-password',
     resetPassword: () => '/api/v1/auth/reset-password',
+    changePassword: () => '/api/v1/auth/change-password',
   },
 
   // ============ Authz 权限 ============
@@ -81,16 +85,6 @@ export const api = {
   mds: {
     models: () => '/api/mds',
     model: (id: string) => `/api/mds/${id}`,
-    test: (id: string) => `/api/mds/${id}/test`,
-    priorities: () => '/api/mds/priorities',
-    mainModel: () => '/api/mds/main-model',
-    intentModel: () => '/api/mds/intent-model',
-    visionModel: () => '/api/mds/vision-model',
-    imageGenModel: () => '/api/mds/image-gen-model',
-    adapterInfoBatch: () => '/api/mds/adapter-info/batch',
-    adapterInfo: (modelId: string) => `/api/mds/${modelId}/adapter-info`,
-    /** 根据平台侧模型ID（modelName）直接获取适配信息，无需查询数据库 */
-    adapterInfoByModelName: (modelName: string) => `/api/mds/adapter-info?modelId=${encodeURIComponent(modelName)}`,
 
     // 平台
     platforms: {
@@ -115,27 +109,6 @@ export const api = {
         `/api/mds/model-groups/${groupId}/reset-all-health`,
     },
 
-    // LLM 配置
-    llmConfigs: {
-      list: () => '/api/mds/llm-configs',
-      byId: (id: string) => `/api/mds/llm-configs/${id}`,
-      activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
-    },
-
-    // 模型中继 (Exchange)
-    exchanges: {
-      list: () => '/api/mds/exchanges',
-      byId: (id: string) => `/api/mds/exchanges/${id}`,
-      test: (id: string) => `/api/mds/exchanges/${id}/test`,
-      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
-      transformerTypes: () => '/api/mds/exchanges/transformer-types',
-      forPool: () => '/api/mds/exchanges/for-pool',
-      templates: () => '/api/mds/exchanges/templates',
-      importFromTemplate: () => '/api/mds/exchanges/import-from-template',
-      tryModel: (id: string, modelId: string) =>
-        `/api/mds/exchanges/${id}/models/${encodeURIComponent(modelId)}/try-it`,
-    },
-
     // 调度器配置
     schedulerConfig: () => '/api/mds/scheduler-config',
   },
@@ -152,6 +125,7 @@ export const api = {
         list: () => '/api/lab/model/experiments',
         byId: (id: string) => `/api/lab/model/experiments/${id}`,
       },
+      modelOptions: (purpose: string = 'chat') => `/api/lab/model/model-options?purpose=${encodeURIComponent(purpose)}`,
       modelSets: () => '/api/lab/model/model-sets',
       labGroups: {
         list: () => '/api/lab/model/lab-groups',
@@ -204,6 +178,10 @@ export const api = {
     },
   },
 
+  authorizationHealth: {
+    overview: () => '/api/authorization-health',
+  },
+
   // ============ Team Activity 团队动态 ============
   teamActivity: {
     logs: () => '/api/team-activity/logs',
@@ -222,7 +200,6 @@ export const api = {
     list: () => '/api/skills',
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
-
 
   // ============ Skill Agent 技能引导创建 ============
   skillAgent: {
@@ -307,6 +284,7 @@ export const api = {
       list: () => '/api/assets/homepage/list',
       upload: () => '/api/assets/homepage/upload',
       bySlot: (slot: string) => `/api/assets/homepage/${encodeURIComponent(slot)}`,
+      adoptImageRun: () => '/api/assets/homepage/adopt-image-run',
     },
   },
 
@@ -327,18 +305,24 @@ export const api = {
     agents: () => '/api/executive/agents',
     models: () => '/api/executive/models',
     leaderboard: () => '/api/executive/leaderboard',
+    teamInsights: () => '/api/executive/team-insights',
   },
 
   // ============ Profile 自服务 ============
   profile: {
     avatarUpload: () => '/api/profile/avatar/upload',
     avatar: () => '/api/profile/avatar',
+    avatarApplyGenerated: () => '/api/profile/avatar/apply-generated',
+    avatarGenerationRuns: () => '/api/profile/avatar/generation-runs',
+    avatarGenerationRun: (runId: string) => `/api/profile/avatar/generation-runs/${runId}`,
+    avatarGenerationRunStream: (runId: string) => `/api/profile/avatar/generation-runs/${runId}/stream`,
     publicPage: () => '/api/profile/public-page',
   },
 
   // ============ Dashboard 仪表盘 ============
   dashboard: {
     notifications: {
+      handleBatch: () => '/api/dashboard/notifications/handle-batch',
       list: () => '/api/dashboard/notifications',
       handle: (id: string) => `/api/dashboard/notifications/${id}/handle`,
       handleAll: () => '/api/dashboard/notifications/handle-all',
@@ -353,11 +337,14 @@ export const api = {
       navHidden: () => '/api/dashboard/user-preferences/nav-hidden',
       navLayout: () => '/api/dashboard/user-preferences/nav-layout',
       theme: () => '/api/dashboard/user-preferences/theme',
+      webPageAsk: () => '/api/dashboard/user-preferences/web-page-ask',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
       homeLauncher: () => '/api/dashboard/user-preferences/home-launcher',
       docStorePins: () => '/api/dashboard/user-preferences/doc-store-pins',
+      transcriptLexicon: () => '/api/dashboard/user-preferences/transcript-lexicon',
+      transcriptLexiconSystem: () => '/api/dashboard/user-preferences/transcript-lexicon/system',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -498,6 +485,37 @@ export const api = {
     },
   },
 
+  // ============ 共用 GitHub 连接中心（任何登录用户都能连自己的账号）============
+  github: {
+    auth: {
+      status: () => '/api/github/auth/status',
+      deviceStart: () => '/api/github/auth/device/start',
+      devicePoll: () => '/api/github/auth/device/poll',
+      disconnect: () => '/api/github/auth/connection',
+    },
+    repositories: (query?: string, page?: number, pageSize?: number) => {
+      const q = new URLSearchParams();
+      if (query) q.set('query', query);
+      if (page) q.set('page', String(page));
+      if (pageSize) q.set('pageSize', String(pageSize));
+      const qs = q.toString();
+      return `/api/github/repositories${qs ? `?${qs}` : ''}`;
+    },
+    branches: (owner: string, repo: string) =>
+      `/api/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`,
+    tree: (owner: string, repo: string, path?: string, branch?: string) => {
+      const q = new URLSearchParams({ owner, repo });
+      if (path) q.set('path', path);
+      if (branch) q.set('branch', branch);
+      return `/api/github/tree?${q.toString()}`;
+    },
+    docDirectories: (owner: string, repo: string, branch?: string) => {
+      const q = new URLSearchParams({ owner, repo });
+      if (branch) q.set('branch', branch);
+      return `/api/github/doc-directories?${q.toString()}`;
+    },
+  },
+
   // ============ 技术分析文档格式校验 Agent ============
   techDocFormatAgent: {
     github: {
@@ -550,6 +568,9 @@ export const api = {
       byId: (id: string) => `/api/literary-agent/workspaces/${id}`,
       detail: (id: string) => `/api/literary-agent/workspaces/${id}/detail`,
       assets: (id: string) => `/api/literary-agent/workspaces/${id}/assets`,
+      illustrationHistory: (id: string) => `/api/literary-agent/workspaces/${id}/illustration-history`,
+      restoreIllustration: (id: string, assetId: string) => `/api/literary-agent/workspaces/${id}/illustration-history/${assetId}/restore`,
+      illustrationPrefs: (id: string) => `/api/literary-agent/workspaces/${id}/illustration-prefs`,
     },
     config: {
       get: () => '/api/literary-agent/config',
@@ -586,8 +607,10 @@ export const api = {
     imageGen: {
       resolveModel: () => '/api/literary-agent/image-gen/resolve-model',
       resolveChatModel: () => '/api/literary-agent/image-gen/resolve-chat-model',
+      adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
+        byRequest: (requestId: string) => `/api/literary-agent/image-gen/runs/by-request?requestId=${encodeURIComponent(requestId)}`,
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
         stream: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/stream`,
         cancel: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}/cancel`,
@@ -716,6 +739,19 @@ export const api = {
       viewsSummary: (id: string) => `/api/report-agent/reports/${id}/views-summary`,
       planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
     },
+    monthlyReports: {
+      list: () => '/api/report-agent/monthly-reports',
+      byId: (id: string) => `/api/report-agent/monthly-reports/${id}`,
+      submit: (id: string) => `/api/report-agent/monthly-reports/${id}/submit`,
+      views: (id: string) => `/api/report-agent/monthly-reports/${id}/views`,
+      viewsSummary: (id: string) => `/api/report-agent/monthly-reports/${id}/views-summary`,
+      weeklyCandidates: () => '/api/report-agent/monthly-reports/weekly-candidates',
+      teamOverview: () => '/api/report-agent/monthly-reports/team-overview',
+      comments: (id: string) => `/api/report-agent/monthly-reports/${id}/comments`,
+      comment: (id: string, commentId: string) => `/api/report-agent/monthly-reports/${id}/comments/${commentId}`,
+      commentImages: (id: string) => `/api/report-agent/monthly-reports/${id}/comments/images`,
+      likes: (id: string) => `/api/report-agent/monthly-reports/${id}/likes`,
+    },
     dailyLogs: {
       list: () => '/api/report-agent/daily-logs',
       byDate: (date: string) => `/api/report-agent/daily-logs/${date}`,
@@ -831,6 +867,7 @@ export const api = {
     list: () => '/api/watermarks',
     byApp: (appKey: string) => `/api/watermarks/app/${appKey}`,
     byId: (id: string) => `/api/watermarks/${id}`,
+    preview: (id: string) => `/api/watermark/preview/${encodeURIComponent(id)}.png`,
     bind: (id: string, appKey: string) => `/api/watermarks/${id}/bind/${appKey}`,
     unbind: (id: string, appKey: string) => `/api/watermarks/${id}/unbind/${appKey}`,
     icons: () => '/api/watermark/icons',
@@ -869,6 +906,14 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
+  // ============ 智能体接入台（MCP）—— 给人看的那一面，智能体侧走 /api/mcp ============
+  mcpConsole: {
+    overview: () => '/api/mcp-console/overview',
+    calls: (queryString: string) => `/api/mcp-console/calls${queryString}`,
+    callDetail: (id: string) => `/api/mcp-console/calls/${id}`,
+    visibleTools: (keyId: string) => `/api/mcp-console/keys/${keyId}/visible-tools`,
+  },
+
   // ============ Infra Connections 基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任） ============
   infraConnections: {
     list: () => '/api/infra-connections',
@@ -877,6 +922,14 @@ export const api = {
     cdsAuthorizeComplete: () => '/api/infra-connections/cds/authorize/complete',
     byId: (id: string) => `/api/infra-connections/${id}`,
     probe: (id: string) => `/api/infra-connections/${id}/probe`,
+  },
+
+  // ============ 通用对话智能体（打开就能聊的多轮对话入口）============
+  chatAgent: {
+    sessions: () => '/api/chat-agent/sessions',
+    session: (id: string) => `/api/chat-agent/sessions/${id}`,
+    messages: (id: string) => `/api/chat-agent/sessions/${id}/messages`,
+    stream: (id: string) => `/api/chat-agent/sessions/${id}/stream`,
   },
 
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
@@ -975,6 +1028,9 @@ export const api = {
   settings: {
     defaultNav: () => '/api/settings/default-nav',
     applyDefaultNavToAllUsers: () => '/api/settings/default-nav/apply-to-all-users',
+    userNavLayouts: () => '/api/settings/default-nav/user-layouts',
+    removeNavTokens: () => '/api/settings/default-nav/remove-tokens',
+    userNavLayout: (userId: string) => `/api/settings/default-nav/user-layouts/${encodeURIComponent(userId)}`,
     init: {
       defaultGroups: () => '/api/settings/init/default-groups',
       migrateModels: () => '/api/settings/init/migrate-models',
@@ -1141,6 +1197,8 @@ export const api = {
       list: () => '/api/video-agent/runs',
       create: () => '/api/video-agent/runs',
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
+      download: (runId: string) => `/api/video-agent/runs/${runId}/download`,
+      downloadTicket: (runId: string) => `/api/video-agent/runs/${runId}/download-ticket`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
       export: (runId: string) => `/api/video-agent/runs/${runId}/export`,
@@ -1165,6 +1223,7 @@ export const api = {
 
   // ============ Arena 竞技场 ============
   arena: {
+    modelOptions: () => '/api/lab/arena/model-options',
     groups: {
       list: () => '/api/lab/arena/groups',
       byId: (id: string) => `/api/lab/arena/groups/${id}`,
@@ -1201,10 +1260,27 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
+    optimizationUploads: () => '/api/web-pages/optimization/uploads',
+    optimizationUploadChunk: (sessionId: string, chunkIndex: number) => `/api/web-pages/optimization/uploads/${sessionId}/chunks/${chunkIndex}`,
+    optimizationUploadComplete: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}/complete`,
+    optimizationUploadStatus: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}`,
+    optimizationPreview: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/preview`,
+    optimizationConfirm: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/confirm`,
+    optimizationCancel: (sessionId: string) => `/api/web-pages/optimization/${sessionId}`,
+    uploadProgress: (uploadId: string) => `/api/web-pages/upload-progress/${uploadId}`,
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
     content: (id: string) => `/api/web-pages/${id}/content`,
+    /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
+    pdf: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/pdf`,
+    sharePdf: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/pdf`,
+    zipHomepageAsset: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/download/zip-homepage`,
+    shareZipHomepageAsset: (token: string) => `/api/web-pages/shares/view/${encodeURIComponent(token)}/download/zip-homepage`,
+    offlineHtml: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/export/offline-html`,
+    /** 单文件离线 HTML，经分享链接（登录 + 分享门禁：撤销 / 过期 / 可见性 / 密码） */
+    shareOfflineHtml: (token: string, query: string) =>
+      `/api/web-pages/shares/view/${encodeURIComponent(token)}/export/offline-html${query}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
@@ -1221,6 +1297,8 @@ export const api = {
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
+    // 发出前私有资料核查（分享 / 设为公开前先问一次；发布草稿走 revisionPrivateSources）
+    privateSources: () => '/api/web-pages/private-sources',
     shares: () => '/api/web-pages/shares',
     revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
@@ -1230,6 +1308,46 @@ export const api = {
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
     shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
+    // 分享 token 域的正文代理：托管域名不返回 ACAO，浏览器直接 fetch 必被 CORS 拦，
+    // 预览页要拿原文注入 srcDoc 只能走服务端同源代理
+    shareContent: (token: string) => `/api/web-pages/shares/view/${token}/content`,
+    // 「向我提问」
+    askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
+    // 重新按正文生成开场问题（owner 明确要的那一次，同步等结果）
+    askRegenerateQuestions: (siteId: string) => `/api/web-pages/${siteId}/ask/questions/regenerate`,
+    askRating: (messageId: string) => `/api/web-pages/ask/messages/${messageId}/rating`,
+    askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
+    askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
+    // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一
+    askQuotaByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/quota`,
+    editRuns: (siteId: string) => `/api/web-pages/${siteId}/edits/runs`,
+    editRunById: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}`,
+    cancelEditRun: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/cancel`,
+    editRunStream: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/stream`,
+    revisions: (siteId: string) => `/api/web-pages/${siteId}/edits/revisions`,
+    revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
+    revisionPreviewAccess: '/api/hosted-site-preview-access',
+    publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
+    revisionPrivateSources: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/private-sources`,
+    rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
+    rejectRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/reject`,
+  },
+  designArtifacts: {
+    runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    // 最近 30 天真实耗时 P50/P95（按执行器 × 产物类型），给「预计还要多久」用
+    timingStats: () => '/api/design-artifacts/timing-stats',
+    // 网页生成设置：自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
+    generationSettings: () => '/api/design-artifacts/generation-settings',
+    // 「我的风格」：每人自己的风格（列表 / 新建 / 改 / 删 / 从自己的网页提取草稿）
+    personalStyles: () => '/api/design-artifacts/personal-styles',
+    personalStyle: (id: string) => `/api/design-artifacts/personal-styles/${encodeURIComponent(id)}`,
+    personalStyleDerive: () => '/api/design-artifacts/personal-styles/derive',
+    runs: () => '/api/design-artifacts/runs',
+    activeRun: () => '/api/design-artifacts/runs/active',
+    byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
+    restart: (runId: string) => `/api/design-artifacts/runs/${runId}/restart`,
+    cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,
+    stream: (runId: string) => `/api/design-artifacts/runs/${runId}/stream`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {
@@ -1278,6 +1396,10 @@ export const api = {
 
   // ============ Document Store 文档空间 ============
   documentStore: {
+    trash: {
+      list: () => '/api/document-store/stores/trash',
+      restore: (kind: 'entry' | 'store', id: string) => `/api/document-store/${kind === 'store' ? 'stores' : 'entries'}/${encodeURIComponent(id)}/restore`,
+    },
     stores: {
       list: () => '/api/document-store/stores',
       listWithPreview: () => '/api/document-store/stores/with-preview',
@@ -1327,6 +1449,8 @@ export const api = {
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      /** 跨知识库的「最近」时间线（我的空间 ∪ 团队空间） */
+      recent: (limit: number) => `/api/document-store/entries/recent?limit=${limit}`,
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
@@ -1334,11 +1458,15 @@ export const api = {
       recordingUploadStatus: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}`,
       recordingUploadChunk: (sessionId: string, index: number) => `/api/document-store/recording-uploads/${sessionId}/chunks/${index}`,
       recordingUploadComplete: (sessionId: string) => `/api/document-store/recording-uploads/${sessionId}/complete`,
+      recordingArchiveRetry: (entryId: string) => `/api/document-store/entries/${entryId}/recording-archive/retry`,
       replace: (entryId: string) => `/api/document-store/entries/${entryId}/replace`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
+      subscribeGithubBatch: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github/batch`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      knowledgeIndex: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/knowledge-index`,
+      download: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/download`,
       creativePublish: (entryId: string) => `/api/document-store/entries/${entryId}/creative-publish`,
       // 版本控制：历史版本列表 / 取某版本正文 / 恢复某版本
       versions: (entryId: string) => `/api/document-store/entries/${entryId}/versions`,

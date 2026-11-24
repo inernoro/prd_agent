@@ -18,17 +18,17 @@
 // 跨模块契约：prd-api 的 GatewayDataDomainGuardTests 逐字断言本页必须出现十个概念名。
 // 删索引条目前先读那个测试；此处刻意不复制那十个字面量——注释里再抄一份，
 // 会让守卫在界面文案被删光之后仍然误判通过。
-import type { CSSProperties, ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import {
   ArrowRight, Bot, Boxes, Building2, CircleDollarSign, Cpu, FileSearch,
   KeyRound, Rocket, Server, Shuffle, UsersRound,
 } from 'lucide-react';
-import { Card } from '@/components/ui';
-import { HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import './LearningCenterPage.css';
+import { HelpPopover, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
 import { useAuth } from '@/lib/auth';
-import { canAccessPage, type ConsolePage } from '@/lib/access';
-import { CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
+import { canAccessPage, canUseCapability, type ConsolePage } from '@/lib/access';
+import { GAP } from '@/lib/surface';
 import { BODY_TEXT, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
 
 /** 索引条目：一个概念 → 一句定位 → 控制台里对应的那一页。解释本身在教程里。 */
@@ -47,29 +47,35 @@ const TOPICS: Topic[] = [
   { id: 'team-user', title: '团队与用户', summary: '成员关系决定谁能改什么。', icon: <UsersRound size={17} />, link: '/organization', page: 'organization' },
   { id: 'app-caller', title: 'appCaller', summary: '代表哪个业务在调用模型。', icon: <Bot size={17} />, link: '/app-callers', page: 'appCallers' },
   { id: 'service-key', title: '租户接入密钥', summary: '外部系统调用网关的凭据。', icon: <KeyRound size={17} />, link: '/service-keys', page: 'serviceKeys' },
-  { id: 'model-pool', title: '模型池', summary: '一个业务需求对应一组模型。', icon: <Boxes size={17} />, link: '/pools', page: 'routeConfig' },
-  { id: 'model', title: '模型', summary: '可路由的具体模型配置。', icon: <Cpu size={17} />, link: '/models', page: 'routeConfig' },
-  { id: 'provider', title: 'Provider', summary: '请求真正发往的上游平台。', icon: <Server size={17} />, link: '/platforms', page: 'routeConfig' },
-  { id: 'exchange', title: 'Exchange', summary: '路由阶段的模型替换规则。', icon: <Shuffle size={17} />, link: '/exchanges', page: 'routeConfig' },
+  { id: 'logical-model', title: '公开模型（对外模型）', summary: '调用方使用的公开标识，关联一条或多条上游线路。', icon: <Boxes size={17} />, link: '/logical-models', page: 'routeConfig' },
+  { id: 'model', title: '上游模型', summary: '上游提供的实际型号与协议能力。', icon: <Cpu size={17} />, link: '/models', page: 'routeConfig' },
+  { id: 'provider', title: '上游（Provider）', summary: '请求实际发送到的供应方与连接配置。', icon: <Server size={17} />, link: '/platforms', page: 'routeConfig' },
+  { id: 'exchange', title: 'Exchange 映射', summary: '将非标准上游协议映射成网关可调用的接口。', icon: <Shuffle size={17} />, link: '/exchanges', page: 'routeConfig' },
   { id: 'request-log', title: '请求记录', summary: '每次调用留下的证据。', icon: <FileSearch size={17} />, link: '/logs', page: 'logs' },
-  { id: 'cost', title: '用量与费用', summary: '按 token 与可审计价格估算。', icon: <CircleDollarSign size={17} />, link: '/usage', page: 'usage' },
+  { id: 'cost', title: '用量与费用', summary: '在预算与用量中核对 Gateway 估算与供应商账单。', icon: <CircleDollarSign size={17} />, link: '/usage', page: 'usage' },
 ];
 
 export function LearningCenterPage() {
   const { tenant } = useAuth();
+  const location = useLocation();
+  useEffect(() => {
+    const id = location.hash.slice(1);
+    if (id === 'first-request' || id === 'existing-key' || TOPICS.some(topic => topic.id === id)) document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }, [location.hash]);
   const canUseQuickstart = canAccessPage(tenant, 'quickstart');
-  const canManageKeys = canAccessPage(tenant, 'serviceKeys');
+  const canManageKeys = canUseCapability(tenant?.role, 'serviceKeyWrite');
+  const canStartNew = canUseQuickstart && canManageKeys && canUseCapability(tenant?.role, 'appCallerWrite');
   const canReadLogs = canAccessPage(tenant, 'logs');
 
   return (
     <PageShell className="lg-learn-page">
       <PageHeader
         title="学习中心"
-        subtitle="按概念定位配置、记录与费用。"
+        subtitle="找到接入、请求排查与费用核对的入口。"
         actions={(
           <>
             <TutorialLink chapter="chapter-00">查看完整教程</TutorialLink>
-            {canUseQuickstart ? <Link className="lg-primary-link" to="/quickstart"><Rocket size={14} /> 直接开始接入</Link> : null}
+            {canReadLogs ? <Link className="lg-secondary-link" to="/logs"><FileSearch size={14} />排查请求</Link> : null}
           </>
         )}
       />
@@ -77,35 +83,27 @@ export function LearningCenterPage() {
       <PageBody>
         {/* id 不能删：首页的空态与费用口径注脚深链到 /learn#first-request 与各索引条目的 id。 */}
         <section id="first-request" style={anchorStyle}>
-          <Card style={cardStyle}>
             <div style={cardHeadStyle}>
-              <h2 style={SECTION_TITLE}>第一条请求</h2>
-              <TutorialLink chapter="chapter-01">查看教程：一条请求怎么穿过网关</TutorialLink>
+              <h2 style={SECTION_TITLE}>按任务开始</h2>
             </div>
             <div className="lg-learning-steps">
-              <Step index={1} title="创建租户接入密钥">
-                <small style={BODY_TEXT}>选择 appCaller、四协议和调用 scope，明文只保存到你的安全系统。</small>
-                {canManageKeys
-                  ? <Link to="/service-keys" style={stepLinkStyle}>创建密钥 <ArrowRight size={13} /></Link>
-                  : <em style={stepFallbackStyle}>由其他角色执行</em>}
+              <Step title="接入新应用">
+                <small style={BODY_TEXT}>在快速接入中一次创建调用身份与密钥，并完成不调用付费上游的安全验证。</small>
+                {canStartNew ? <Link to="/quickstart" style={stepLinkStyle}><Rocket size={13} />创建并验证接入 <ArrowRight size={13} /></Link> : <em style={stepFallbackStyle}>请由具备调用方与密钥管理权限的角色创建接入。</em>}
               </Step>
-              <Step index={2} title="选择协议并安全直测">
-                <small style={BODY_TEXT}>安全直测只验证鉴权与路由，不调用付费上游。</small>
-                {canUseQuickstart
-                  ? <Link to="/quickstart" style={stepLinkStyle}>打开 Quickstart <ArrowRight size={13} /></Link>
-                  : <em style={stepFallbackStyle}>由其他角色执行</em>}
+              <Step id="existing-key" title="使用已有密钥">
+                <small style={BODY_TEXT}>使用已安全保存的密钥在应用或现有客户端中调用；真实模型请求可能计费。</small>
+                {canManageKeys ? <Link to="/service-keys" style={stepLinkStyle}>核对权限与轮换 <ArrowRight size={13} /></Link> : <em style={stepFallbackStyle}>接入配置与授权范围请联系密钥签发人。</em>}
               </Step>
-              <Step index={3} title="用 requestId 回查">
-                <small style={BODY_TEXT}>在请求记录里核对模型、耗时、错误与费用。</small>
-                {canReadLogs
-                  ? <Link to="/logs" style={stepLinkStyle}>按 requestId 定位 <ArrowRight size={13} /></Link>
-                  : <em style={stepFallbackStyle}>由其他角色执行</em>}
+              <Step title="核对调用结果">
+                <small style={BODY_TEXT}>{canReadLogs ? '用该次 requestId 查看请求与调用链。安全验证回执不包含真实模型结果。' : '请求证据需请求读取权限；当前角色可核对聚合用量与费用。'}</small>
+                {canReadLogs ? <Link to="/logs" style={stepLinkStyle}>打开请求记录 <ArrowRight size={13} /></Link> : <Link to="/usage" style={stepLinkStyle}>查看预算与用量 <ArrowRight size={13} /></Link>}
               </Step>
             </div>
-          </Card>
+
         </section>
 
-        <Card style={cardStyle}>
+        <section className="lg-learn-index">
           <div style={cardHeadStyle}>
             <div style={titleRowStyle}>
               <h2 style={SECTION_TITLE}>概念索引</h2>
@@ -113,13 +111,11 @@ export function LearningCenterPage() {
                 <div style={{ display: 'grid', gap: GAP.normal }}>
                   <p style={popoverParaStyle}>每个条目直接跳到控制台里对应的那一页；成段的概念解释在权威教程里，点右上角的教程链接读。</p>
                   <p style={popoverParaStyle}>灰色条目对应当前角色不需要进入的页面。可见范围由租户角色决定，学习中心不改变它；需要进入时请让租户管理员调整角色。</p>
-                  <p style={popoverParaStyle}>排查请求时按索引的先后倒查：先在请求记录里拿到 requestId 与本次的路由结果，再回头看调用方、模型池、模型与上游平台的配置，最后确认替换规则。不要靠改 tenantId 或绕过网关来验证。</p>
+                  <p style={popoverParaStyle}>排查请求时按索引的先后倒查：先在请求记录里拿到 requestId 与本次的路由结果，再回头看调用方、对外模型、线路与上游平台的配置，最后确认替换规则。不要靠改 tenantId 或绕过网关来验证。</p>
                 </div>
               </HelpPopover>
             </div>
-            <TutorialLink chapter="chapter-32">查看教程：术语表</TutorialLink>
           </div>
-          <Prose style={{ margin: `0 0 ${GAP.normal}px` }}>索引按一次调用经过的先后排列。</Prose>
           <div className="lg-topic-grid">
             {TOPICS.map((topic) => {
               const open = canAccessPage(tenant, topic.page);
@@ -140,24 +136,22 @@ export function LearningCenterPage() {
               );
             })}
           </div>
-        </Card>
+        </section>
       </PageBody>
     </PageShell>
   );
 }
 
 /** 步骤卡：序号 + 标题 + 一句说明 + 一个去处。字号与内边距不再吃 theme.css 的旧值。 */
-function Step({ index, title, children }: { index: number; title: string; children: ReactNode }) {
+function Step({ id, title, children }: { id?: string; title: string; children: ReactNode }) {
   return (
-    <div style={INSET_BLOCK}>
-      <b>{index}</b>
+    <div id={id} style={{ scrollMarginTop: 24 }}>
       <span><strong style={stepTitleStyle}>{title}</strong>{children}</span>
     </div>
   );
 }
 
 /** 卡片内边距只允许 CARD_BODY(14)；这里额外声明 minWidth 防止网格子项被内容撑破。 */
-const cardStyle: CSSProperties = { ...CARD_BODY, minWidth: 0 };
 
 const cardHeadStyle: CSSProperties = {
   display: 'flex',
@@ -183,7 +177,8 @@ const stepFallbackStyle: CSSProperties = { ...HINT_TEXT, fontStyle: 'normal' };
 const anchorStyle: CSSProperties = { minWidth: 0, scrollMarginTop: 18 };
 
 const topicEntryStyle: CSSProperties = {
-  ...INSET_BLOCK,
+  padding: '12px 0',
+  borderBottom: '1px solid var(--border-subtle)',
   scrollMarginTop: 18,
   display: 'flex',
   alignItems: 'flex-start',

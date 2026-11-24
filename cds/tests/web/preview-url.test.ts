@@ -5,6 +5,7 @@ import {
   isLocalHost,
   multiPreviewUrl,
   resolvePreviewUrl,
+  resolveWebEntryUrl,
   simplePreviewUrl,
 } from '../../web/src/lib/previewUrl.js';
 
@@ -73,5 +74,29 @@ describe('previewUrl · 按模式挑一条', () => {
     expect(resolvePreviewUrl('multi', { id: 'br_1' }, config, ORIGIN)).toBe('https://br_1.preview.example.test');
     // 模式未知（老后端 / 拉取失败）时按子域推导，不因为缺一个字段就整个不给地址。
     expect(resolvePreviewUrl(undefined, { id: 'br_1' }, config, ORIGIN)).toBe('https://br_1.preview.example.test');
+  });
+});
+
+describe('previewUrl · 用户 Web 入口', () => {
+  it('simple 模式保留共享主域名，只应用 CDS 声明的页面路径', () => {
+    expect(resolveWebEntryUrl(
+      'simple',
+      'https://app.example.test',
+      { url: 'https://feature.preview.example.test/console/?tab=models' },
+    )).toBe('https://app.example.test/console/?tab=models');
+  });
+
+  it('port 模式保留运行期端口，同时应用非根落点', () => {
+    expect(resolveWebEntryUrl(
+      'port',
+      'http://localhost:61234',
+      { url: 'https://feature.preview.example.test/open/' },
+    )).toBe('http://localhost:61234/open/');
+  });
+
+  it('multi 模式和命名子域入口使用 CDS 下发的完整地址', () => {
+    const named = { subdomain: 'help', url: 'https://feature-help.preview.example.test/guide' };
+    expect(resolveWebEntryUrl('multi', 'https://feature.preview.example.test', named)).toBe(named.url);
+    expect(resolveWebEntryUrl('simple', 'https://app.example.test', named)).toBe(named.url);
   });
 });

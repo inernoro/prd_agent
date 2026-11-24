@@ -17,6 +17,7 @@ using SixLabors.ImageSharp.PixelFormats;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -546,7 +547,7 @@ public class CcasAgentController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"当前生图模型解析到开发桩（model={actualModel}, platform={actualPlatformName}），" +
-                $"无法生成真实素材图。请管理员到「模型管理 → 模型池」给 AppCallerCode " +
+                $"无法生成真实素材图。请管理员到 LLM Gateway 控制台（MAP 左下角「模型网关」→ 模型池）给 AppCallerCode " +
                 $"`{appCallerCode}` 绑定一个真实生图模型池（推荐：seedream / dall-e-3 / sd-xl 等）。"));
         }
 

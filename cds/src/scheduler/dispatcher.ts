@@ -4,34 +4,21 @@
  * Bridges the existing scheduler/executor scaffold (ExecutorRegistry) with
  * the Phase 1 per-node warm-pool scheduler. This is the **systematic**
  * integration: the Master Scheduler (running in mode=scheduler) picks an
- * executor for a new branch by reading each executor's /api/scheduler/state
- * (Phase 1 API) and choosing the one with the most headroom in its local
- * warm pool — NOT just the one with lowest aggregate memory.
- *
- * Why not just reuse ExecutorRegistry.selectExecutor('least-load')?
- *   - `least-load` uses heartbeat-reported raw memory/cpu percentages
- *   - `capacity-aware` (this file) uses Phase 1 scheduler's
- *     `capacityUsage.current / max` ratio — the actual "hot branch count"
- *     vs the configured maxHotBranches cap
- *
- * The two strategies answer different questions:
- *   - least-load: "which host has the most free RAM right now?"
- *   - capacity-aware: "which host has the most room in its warm pool?"
- *
- * For small-server clusters, capacity-aware is the right question because
- * memory usage can spike transiently during builds but the warm pool
- * is the stable long-term capacity signal.
+ * executor according to each node's /api/scheduler/state. New nodes use their
+ * memory budget and older nodes still report a branch-count limit.
  *
  * See `doc/design.cds.resilience.md` Phase 3.
  */
 
 import type { ExecutorNode } from '../types.js';
 import type { ExecutorRegistry } from './executor-registry.js';
+import type { PreviewMemoryCapacity } from '../services/deployment-phase-budget.js';
 
 /** Snapshot returned by an executor's /api/scheduler/state endpoint. */
 export interface ExecutorSchedulerSnapshot {
   enabled: boolean;
-  capacityUsage: { current: number; max: number };
+  capacityUsage: { current: number; max: number | null };
+  memoryCapacity?: PreviewMemoryCapacity | null;
   hot: Array<{ slug: string; lastAccessedAt?: string; pinned: boolean }>;
   cold: Array<{ slug: string; lastAccessedAt?: string }>;
 }
@@ -44,7 +31,7 @@ export interface ExecutorSnapshotPair {
 }
 
 export type DispatchStrategy =
-  /** Pick the executor with the lowest (hot / max) ratio. */
+  /** Pick the executor with the lowest reported capacity utilization. */
   | 'capacity-aware'
   /** Fall back to ExecutorRegistry's least-branches strategy. */
   | 'least-branches';
@@ -176,14 +163,23 @@ export class BranchDispatcher {
       };
     }
 
-    // Filter out executors with a usable snapshot (enabled AND non-empty capacity)
-    const rankable = snapshots.filter(p =>
-      p.snapshot !== null &&
-      p.snapshot.enabled === true &&
-      p.snapshot.capacityUsage.max > 0,
-    );
+    const rankable = snapshots.flatMap(pair => {
+      const snapshot = pair.snapshot;
+      if (!snapshot?.enabled) return [];
+      const memory = snapshot.memoryCapacity;
+      if (memory !== undefined) {
+        if (!memory || !Number.isFinite(memory.usedMB) || memory.usedMB < 0
+          || !Number.isFinite(memory.limitMB) || memory.usedMB >= memory.limitMB) return [];
+        return [{ pair, ratio: memory.usedMB / memory.limitMB, usage: '内存预算' }];
+      }
+      const { current, max } = snapshot.capacityUsage;
+      return typeof max === 'number' && max > 0 ? [{ pair, ratio: current / max, usage: `${current}/${max}` }] : [];
+    });
 
     if (rankable.length === 0) {
+      if (snapshots.some(({ snapshot }) => snapshot?.enabled && snapshot.memoryCapacity !== undefined)) {
+        return { executor: null, reason: '暂时没有可确认内存余量的执行器，请稍后重试。', snapshots };
+      }
       // Fallback: no executor has a usable Phase 1 snapshot (they're all
       // running disabled/unreachable) → defer to registry's branch count.
       const pick = this.registry.selectExecutor('least-branches');
@@ -196,21 +192,11 @@ export class BranchDispatcher {
       };
     }
 
-    // Score by utilization ratio; break ties by raw branch count
-    rankable.sort((a, b) => {
-      const ratioA = a.snapshot!.capacityUsage.current / a.snapshot!.capacityUsage.max;
-      const ratioB = b.snapshot!.capacityUsage.current / b.snapshot!.capacityUsage.max;
-      if (ratioA !== ratioB) return ratioA - ratioB;
-      return a.executor.branches.length - b.executor.branches.length;
-    });
-
-    const winner = rankable[0];
-    const pct = Math.round(
-      (winner.snapshot!.capacityUsage.current / winner.snapshot!.capacityUsage.max) * 100,
-    );
+    rankable.sort((a, b) => a.ratio - b.ratio || a.pair.executor.branches.length - b.pair.executor.branches.length);
+    const { pair: winner, ratio, usage } = rankable[0];
     return {
       executor: winner.executor,
-      reason: `capacity-aware: ${winner.executor.id} at ${pct}% (${winner.snapshot!.capacityUsage.current}/${winner.snapshot!.capacityUsage.max})`,
+      reason: `capacity-aware: ${winner.executor.id} at ${Math.round(ratio * 100)}% (${usage})`,
       snapshots,
     };
   }

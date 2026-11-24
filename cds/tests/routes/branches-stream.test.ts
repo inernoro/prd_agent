@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * Tests for GET /api/branches/stream (live UI stream, 2026-04-19).
  *
@@ -124,7 +125,7 @@ describe('GET /api/branches/stream', () => {
     stateService.addBranch(seed);
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    const containerService = new ContainerService(mock, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({
@@ -157,9 +158,7 @@ describe('GET /api/branches/stream', () => {
   });
 
   it('forwards emitted branch.created events to connected clients', async () => {
-    // Emit AFTER the snapshot arrives but BEFORE closing. Use a deferred
-    // emit via setTimeout so the listener is registered first.
-    setTimeout(() => {
+    const emitCreated = () => {
       branchEvents.emitEvent({
         type: 'branch.created',
         payload: {
@@ -171,11 +170,12 @@ describe('GET /api/branches/stream', () => {
           ts: nowIso(),
         },
       });
-    }, 50);
+    };
 
     const seen: any[] = [];
     await collectSseEvents(server, '/api/branches/stream', (ev) => {
       seen.push(ev);
+      if (ev.event === 'snapshot') emitCreated();
       return ev.event === 'branch.created';
     });
     const created = seen.find((e) => e.event === 'branch.created');
@@ -185,7 +185,7 @@ describe('GET /api/branches/stream', () => {
   });
 
   it('?project=X filters events to that project only', async () => {
-    setTimeout(() => {
+    const emitCreated = () => {
       branchEvents.emitEvent({
         type: 'branch.created',
         payload: {
@@ -200,11 +200,13 @@ describe('GET /api/branches/stream', () => {
           source: 'manual', ts: nowIso(),
         },
       });
-    }, 50);
+    };
 
     const seen: any[] = [];
     await collectSseEvents(server, '/api/branches/stream?project=default', async (ev) => {
       seen.push(ev);
+      // 收到快照才发送，避免连接尚未建立时 50ms 定时器先触发而丢事件。
+      if (ev.event === 'snapshot') emitCreated();
       // stop after we've seen a branch.created matching default
       return ev.event === 'branch.created' && ev.data?.branch?.id === 'default-one';
     });

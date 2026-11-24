@@ -1,0 +1,803 @@
+<!doctype html>
+<!--
+  重大改动方案预览 · 通用模板（成品级）
+  ============================================================
+  这不是空骨架，是打开就能渲染的成品：主题系统、九个章节、图表元件、
+  以及一套可复用的演示引擎（打字机 + 工具卡 + 进度推进 + 产物出现）全部就位。
+
+  用法：
+    1. 复制到 assets/prototypes/{topic}-preview.html
+    2. 全局替换 {大括号} 占位
+    3. S1 的 script 数组按本次改动改剧本，其余章节照着已有样例增删
+    4. 对照 SKILL.md 的 13 条拒收判据自检
+
+  硬约束（改的时候别破坏）：
+    - 单文件、零外链、双主题、无 emoji
+    - 演示必须可播放，等待态必须有阶段推进，产物必须真的出现
+    - 架构图三色齐全：本次新增 / 复用现有 / 明确不碰
+  ============================================================
+-->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{改动名称} · 方案预览</title>
+<style>
+:root{
+  color-scheme: dark;
+  --bg-base:#141418; --bg-elevated:#1e1e24; --bg-card:rgba(255,255,255,.06);
+  --bg-card-hover:rgba(255,255,255,.10); --bg-input:rgba(255,255,255,.07);
+  --bg-nested:rgba(255,255,255,.025);
+  --text-primary:#f7f7fb; --text-secondary:rgba(247,247,251,.80); --text-muted:rgba(247,247,251,.55);
+  --border-faint:rgba(255,255,255,.08); --border-subtle:rgba(255,255,255,.12);
+  --border-default:rgba(255,255,255,.18);
+  --accent:#D97757; --accent-soft:rgba(217,119,87,.16); --accent-border:rgba(217,119,87,.42);
+  --ok:#5FBF7F; --ok-soft:rgba(95,191,127,.14);
+  --warn:#E0A85C; --warn-soft:rgba(224,168,92,.14);
+  --bad:#D96A6A; --bad-soft:rgba(217,106,106,.14);
+  --info:#7BA7D9; --info-soft:rgba(123,167,217,.14);
+  --shadow:0 10px 30px -20px rgba(0,0,0,.85);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+[data-theme="light"]{
+  color-scheme: light;
+  --bg-base:#EEEAE3; --bg-elevated:#E4DED5; --bg-card:#F8F5EF;
+  --bg-card-hover:rgba(26,26,31,.05); --bg-input:#FBF8F3;
+  --bg-nested:rgba(26,26,31,.03);
+  --text-primary:#262029; --text-secondary:rgba(38,32,41,.78); --text-muted:rgba(38,32,41,.56);
+  --border-faint:rgba(26,26,31,.08); --border-subtle:rgba(26,26,31,.14);
+  --border-default:rgba(26,26,31,.22);
+  --accent:#A64B35; --accent-soft:rgba(166,75,53,.12); --accent-border:rgba(166,75,53,.34);
+  --ok:#3F8A5C; --ok-soft:rgba(63,138,92,.12);
+  --warn:#A9762C; --warn-soft:rgba(169,118,44,.12);
+  --bad:#B04A4A; --bad-soft:rgba(176,74,74,.12);
+  --info:#3F6E9E; --info-soft:rgba(63,110,158,.12);
+  --shadow:0 10px 26px -20px rgba(89,65,50,.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg-base);color:var(--text-primary);overflow-x:hidden;
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 100px}
+a{color:var(--accent)}
+
+header.top{position:sticky;top:0;z-index:40;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.top-inner{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:17px;font-weight:650;letter-spacing:.2px}
+.brand span{color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px}
+.top-spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12px;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary);white-space:nowrap}
+.pill.accent{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.pill.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-primary);
+  font-size:13px;font-family:inherit;transition:background .16s,border-color .16s,transform .1s}
+.btn:hover{background:var(--bg-card-hover);border-color:var(--border-default)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn[disabled]{opacity:.42;cursor:default}
+
+nav.secnav{position:sticky;top:57px;z-index:30;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.secnav-inner{max-width:1180px;margin:0 auto;padding:9px 20px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.secnav-inner::-webkit-scrollbar{display:none}
+.secnav a{flex:0 0 auto;padding:5px 11px;border-radius:8px;font-size:12.5px;text-decoration:none;
+  color:var(--text-muted);border:1px solid transparent;white-space:nowrap}
+.secnav a:hover{background:var(--bg-card);color:var(--text-primary)}
+.secnav a.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border)}
+
+section{padding-top:52px;scroll-margin-top:112px}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.sec-num{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:1.5px;padding-top:6px}
+h2{font-size:24px;margin:0;letter-spacing:-.2px}
+.sec-sub{color:var(--text-muted);font-size:13.5px;margin:0 0 22px 0}
+h3{font-size:16px;margin:26px 0 10px}
+.card{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:900px){.g3,.g5{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.g2,.g3,.g5{grid-template-columns:1fr}}
+
+.get{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:13px;padding:15px 15px 16px}
+.get .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:10px}
+.get b{display:block;font-size:14px;margin-bottom:4px}
+.get p{margin:0;font-size:12.8px;color:var(--text-muted);line-height:1.65}
+.nots{border:1px dashed var(--border-subtle);border-radius:13px;padding:15px 18px;background:var(--bg-nested)}
+.nots ul{margin:8px 0 0;padding-left:19px;color:var(--text-muted);font-size:13px}
+.nots li{margin:3px 0}
+
+/* ---------- 演示外壳：按本次改动的真实页面结构改造 ---------- */
+.demo-frame{border:1px solid var(--border-default);border-radius:16px;overflow:hidden;background:var(--bg-elevated);box-shadow:var(--shadow)}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--bg-nested);border-bottom:1px solid var(--border-faint)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--border-default)}
+.urlbar{flex:1;text-align:center;font:11.5px/1 var(--mono);color:var(--text-muted);background:var(--bg-input);
+  border:1px solid var(--border-faint);border-radius:7px;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app{display:grid;grid-template-columns:186px 214px 1fr;min-height:552px}
+@media(max-width:900px){.app{grid-template-columns:1fr}.appnav,.applist{display:none!important}}
+.appnav{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px}
+.navitem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:9px;font-size:13px;color:var(--text-muted);cursor:default;margin-bottom:2px}
+.navitem.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.navitem.new::after{content:"新";font-size:9.5px;margin-left:auto;background:var(--accent);color:#fff;padding:1px 5px;border-radius:5px;font-weight:600}
+.navgroup{font-size:10.5px;color:var(--text-muted);opacity:.65;padding:12px 10px 5px;letter-spacing:.6px}
+.applist{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px;overflow:auto}
+.newchat{width:100%;justify-content:center;margin-bottom:11px;font-size:12.5px;padding:7px}
+.sessitem{padding:9px 10px;border-radius:9px;margin-bottom:3px;cursor:default}
+.sessitem.on{background:var(--bg-card);border:1px solid var(--border-subtle)}
+.sessitem b{display:block;font-size:12.7px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sessitem span{font-size:11px;color:var(--text-muted)}
+.chat{display:flex;flex-direction:column;background:var(--bg-elevated);min-width:0}
+.chat-head{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border-faint);font-size:13.5px;font-weight:600}
+.chat-head .pill{margin-left:auto;font-size:11px;padding:3px 9px}
+.stream{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;min-height:340px;max-height:440px}
+.stream::-webkit-scrollbar{width:7px}
+.stream::-webkit-scrollbar-thumb{background:var(--border-subtle);border-radius:4px}
+.msg{display:flex;gap:11px;animation:rise .34s cubic-bezier(.2,.7,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.avatar{flex:0 0 27px;height:27px;border-radius:8px;display:grid;place-items:center;font-size:10.5px;font-weight:700;margin-top:1px}
+.msg.user .avatar{background:var(--info-soft);color:var(--info)}
+.msg.ai .avatar{background:var(--accent-soft);color:var(--accent)}
+.body{flex:1;min-width:0}
+.bubble{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:12px;padding:10px 13px;font-size:13.6px;line-height:1.72;white-space:pre-wrap}
+.msg.user .bubble{background:var(--info-soft);border-color:transparent}
+.think{font-size:12.3px;color:var(--text-muted);font-style:italic;border-left:2px solid var(--border-subtle);padding:2px 0 2px 10px;margin-bottom:7px}
+.caret{display:inline-block;width:2px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink .95s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.tool{border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;background:var(--bg-nested);margin-top:8px}
+.tool-head{display:flex;align-items:center;gap:9px;padding:9px 12px;font-size:12.6px;font-weight:600}
+.tool-head .tag{font:10.5px/1 var(--mono);padding:2px 6px;border-radius:5px;background:var(--bg-card);border:1px solid var(--border-faint);color:var(--text-muted);font-weight:400}
+.tool-state{margin-left:auto;font-size:11.5px;font-weight:500}
+.tool.run .tool-state{color:var(--accent)}
+.tool.done .tool-state{color:var(--ok)}
+.tool.fail .tool-state{color:var(--bad)}
+.tool-body{padding:0 12px 12px}
+.bar{height:4px;border-radius:3px;background:var(--border-faint);overflow:hidden;margin:2px 0 8px}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s ease}
+.steps{display:flex;gap:5px;flex-wrap:wrap;font-size:11.2px;color:var(--text-muted)}
+.steps s{text-decoration:none;padding:2px 7px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border-faint)}
+.steps s.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.steps s.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+/* 产物占位：用渐变模拟图片等视觉产物，禁止外链真实图片 */
+.artwork{height:126px;border-radius:9px;margin-top:4px;position:relative;overflow:hidden;
+  background:linear-gradient(125deg,#D97757 0%,#8E4B6E 42%,#3B4E86 100%);
+  display:grid;place-items:center;color:#fff;text-align:center;animation:fadein .55s ease both}
+@keyframes fadein{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.artwork::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 18% 8%,rgba(255,255,255,.34),transparent 55%)}
+.artwork div{position:relative;z-index:1}
+.artwork b{display:block;font-size:16px;letter-spacing:3px}
+.artwork span{font-size:10.5px;opacity:.85;letter-spacing:1.5px}
+.kbcard{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;background:var(--ok-soft);border:1px solid transparent;font-size:12.4px;margin-top:2px}
+.kbcard .btn{margin-left:auto;padding:4px 10px;font-size:11.5px}
+.cite{font-size:11.8px;color:var(--text-muted);border-left:2px solid var(--accent-border);padding-left:9px;margin-top:7px}
+.cite b{color:var(--text-secondary);font-weight:550}
+.composer{border-top:1px solid var(--border-faint);padding:11px 16px 14px;background:var(--bg-elevated)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.chip{font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary)}
+.chip:hover{border-color:var(--accent-border);color:var(--accent)}
+.inputrow{display:flex;gap:9px;align-items:center;background:var(--bg-input);border:1px solid var(--border-subtle);border-radius:11px;padding:8px 10px 8px 13px}
+.inputrow input{flex:1;background:transparent;border:0;outline:0;color:var(--text-primary);font:14px/1.5 inherit}
+.inputrow input::placeholder{color:var(--text-muted)}
+.sendbtn{width:31px;height:31px;border-radius:8px;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer}
+.playbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:14px 0 0}
+.playbar .hint{font-size:12.3px;color:var(--text-muted)}
+
+/* ---------- 图表元件 ---------- */
+.figwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:14px;background:var(--bg-card);padding:16px}
+svg .bx{fill:var(--bg-nested);stroke:var(--border-subtle)}
+svg .bx.acc{fill:var(--accent-soft);stroke:var(--accent-border)}   /* 本次新增 */
+svg .bx.ok{fill:var(--ok-soft);stroke:transparent}                 /* 复用现有 */
+svg .bx.info{fill:var(--info-soft);stroke:transparent}             /* 用户侧 */
+svg .bx.warn{fill:var(--warn-soft);stroke:transparent}
+svg .bx.bad{fill:var(--bad-soft);stroke:var(--bad);stroke-dasharray:5 4} /* 明确不碰 */
+svg text{fill:var(--text-primary);font-family:inherit}
+svg .t{font-size:12.5px;font-weight:600}
+svg .s{font-size:10.8px;fill:var(--text-muted);font-weight:400}
+svg .lbl{font-size:10.5px;fill:var(--text-muted)}
+svg .ln{stroke:var(--border-default);fill:none}
+svg .ln.acc{stroke:var(--accent)}
+svg .grp{fill:none;stroke:var(--border-faint);stroke-dasharray:4 4}
+svg .grpt{font-size:10.5px;fill:var(--text-muted);letter-spacing:1px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-muted)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+.lane{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:12px}
+.lane-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.lane-head b{font-size:14.5px}
+.lane-head .pill{font-size:11px;padding:3px 9px}
+.flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:4px}
+.step{flex:0 0 auto;min-width:126px;max-width:170px;background:var(--bg-nested);border:1px solid var(--border-faint);border-radius:10px;padding:9px 11px;font-size:12.2px}
+.step b{display:block;font-size:12.4px;margin-bottom:3px}
+.step span{color:var(--text-muted);font-size:11.3px;line-height:1.55;display:block}
+.step.end{background:var(--ok-soft);border-color:transparent}
+.step.end b{color:var(--ok)}
+.arrow{flex:0 0 auto;display:grid;place-items:center;padding:0 7px;color:var(--text-muted)}
+.endnote{margin-top:10px;font-size:12px;color:var(--text-muted);display:flex;gap:7px;align-items:flex-start}
+.endnote b{color:var(--ok)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border-faint);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.5px;color:var(--text-muted);font-weight:600;background:var(--bg-nested)}
+tbody tr:hover{background:var(--bg-card-hover)}
+td code,.mono{font:12px var(--mono);background:var(--bg-nested);padding:1px 5px;border-radius:4px}
+.tblwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:13px}
+.yes{color:var(--ok);font-weight:600}
+.no{color:var(--bad);font-weight:600}
+
+.dd{border-radius:13px;padding:16px;border:1px solid var(--border-faint)}
+.dd.do{background:var(--ok-soft)}
+.dd.dont{background:var(--bad-soft)}
+.dd h4{margin:0 0 9px;font-size:14px;display:flex;align-items:center;gap:7px}
+.dd.do h4{color:var(--ok)}
+.dd.dont h4{color:var(--bad)}
+.dd ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+.fuse{background:var(--warn-soft);border:1px solid transparent;border-radius:13px;padding:16px;margin-top:12px}
+.fuse h4{margin:0 0 8px;color:var(--warn);font-size:14px}
+.fuse ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+
+.dec{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:11px}
+.dec-q{font-size:14px;font-weight:600;margin-bottom:9px;display:flex;gap:9px}
+.dec-q em{font-style:normal;flex:0 0 auto;width:21px;height:21px;border-radius:6px;background:var(--accent-soft);
+  color:var(--accent);display:grid;place-items:center;font:600 11px/1 var(--mono);margin-top:2px}
+.opts{display:grid;gap:8px;grid-template-columns:1fr 1fr}
+@media(max-width:640px){.opts{grid-template-columns:1fr}}
+.opt{border:1px solid var(--border-faint);border-radius:9px;padding:9px 11px;font-size:12.5px;background:var(--bg-nested)}
+.opt.pick{border-color:var(--accent-border);background:var(--accent-soft)}
+.opt b{display:block;font-size:12.8px;margin-bottom:3px}
+.opt.pick b{color:var(--accent)}
+.opt span{color:var(--text-muted);font-size:11.6px;line-height:1.6}
+
+.phase{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--border-faint)}
+.phase:last-child{border-bottom:0}
+.phase .no{flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font:600 13px/1 var(--mono)}
+.phase b{font-size:14px}
+.phase p{margin:4px 0 0;font-size:12.8px;color:var(--text-muted)}
+.phase .stop{margin-top:6px;font-size:12px;color:var(--ok)}
+
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint);color:var(--text-muted);font-size:12.5px}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">{改动名称}<span>方案预览 · 决策用</span></div>
+    <div class="top-spacer"></div>
+    <span class="pill warn">状态：待决策</span>
+    <span class="pill">{日期}</span>
+    <button class="btn" id="themeBtn" type="button">切到白天</button>
+  </div>
+</header>
+
+<nav class="secnav"><div class="secnav-inner">
+  <a href="#s0" class="on">你能得到什么</a>
+  <a href="#s1">操作页面演示</a>
+  <a href="#s2">架构图</a>
+  <a href="#s3">数据流转与鉴权</a>
+  <a href="#s4">角色业务流</a>
+  <a href="#s5">验收方式</a>
+  <a href="#s6">范围契约</a>
+  <a href="#s7">要你拍板的</a>
+  <a href="#s8">成本与退出</a>
+</div></nav>
+
+<div class="wrap">
+
+<!-- ============ S0 一页结论 ============ -->
+<section id="s0">
+  <div class="sec-head"><span class="sec-num">S0</span><h2>你能得到什么</h2></div>
+  <p class="sec-sub">这一屏答一个问题：这次改动做完，你手上多了什么、少了什么麻烦。下面每一条都在后面章节有对应的验收判据。</p>
+
+  <div class="grid g5">
+    <!-- 三到五张。图标用 inline SVG，禁止 emoji -->
+    <div class="get">
+      <div class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div>
+      <b>{得到什么}</b>
+      <p>{一两句说清这条对他意味着什么，用他的语言，不用系统语言}</p>
+    </div>
+  </div>
+
+  <div class="nots" style="margin-top:14px">
+    <b style="font-size:13.5px">首版明确<span style="color:var(--bad)">不给</span>你的（写在这里就是承诺不偷偷做，也不假装有）</b>
+    <ul>
+      <li>{故意不做的能力一}</li>
+      <li>{故意不做的能力二}</li>
+    </ul>
+    <p style="margin:9px 0 0;font-size:12.5px;color:var(--text-muted)">这些不是做不了，是首版故意不做。全部进技术债务台账，等这一版被真人用起来再按真实呼声排序。</p>
+  </div>
+</section>
+
+<!-- ============ S1 操作页面演示 ============ -->
+<section id="s1">
+  <div class="sec-head"><span class="sec-num">S1</span><h2>操作页面演示</h2><span class="pill accent">可点击</span></div>
+  <p class="sec-sub">下面是你将来真正会看到的那一屏。点「播放演示」看完整一轮。这是模拟，不连真实后端，但布局、状态、文案与实现目标一致。</p>
+
+  <div class="demo-frame">
+    <div class="demo-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="urlbar">{预览地址}</span>
+    </div>
+    <!-- 下面这套三栏是「侧导航 + 列表 + 主区」的通用形态，按本次页面改造 -->
+    <div class="app">
+      <aside class="appnav">
+        <div class="navgroup">工作台</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>首页</div>
+        <div class="navitem on new"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{新入口}</div>
+        <div class="navgroup">系统</div>
+        <div class="navitem"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>设置</div>
+      </aside>
+
+      <aside class="applist">
+        <button class="btn primary newchat" type="button">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          新建
+        </button>
+        <div class="sessitem on"><b>{当前项}</b><span>刚刚</span></div>
+        <div class="sessitem"><b>{历史项}</b><span>昨天</span></div>
+      </aside>
+
+      <div class="chat">
+        <div class="chat-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          {当前项标题}
+          <span class="pill">{右上角状态}</span>
+        </div>
+        <div class="stream" id="stream"></div>
+        <div class="composer">
+          <div class="chips" id="chips">
+            <span class="chip" data-jump="0">{建议问法一}</span>
+            <span class="chip" data-jump="1">{建议问法二}</span>
+          </div>
+          <div class="inputrow">
+            <input id="fakeinput" placeholder="说点什么，回车发送" readonly>
+            <button class="sendbtn" type="button" id="sendBtn" aria-label="发送">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m22 2-7 20-4-9-9-4z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="playbar">
+    <button class="btn primary" id="playBtn" type="button">播放演示</button>
+    <button class="btn" id="stepBtn" type="button">下一步</button>
+    <button class="btn" id="resetBtn" type="button">重播</button>
+    <span class="hint" id="playHint"></span>
+  </div>
+
+  <div class="grid g3" style="margin-top:18px">
+    <div class="card"><b style="font-size:13.5px">等待期在动</b><p style="margin:6px 0 0;font-size:12.6px;color:var(--text-muted)">工具卡有阶段名和进度条，不是一个转圈图标。任何超过两秒的等待，屏幕上都得有东西在变。</p></div>
+    <div class="card"><b style="font-size:13.5px">产物就地可见</b><p style="margin:6px 0 0;font-size:12.6px;color:var(--text-muted)">产物直接出现在主区，需要跳转时给可点的链接。不做「已提交，请去别处查看」这种半截交付。</p></div>
+    <div class="card"><b style="font-size:13.5px">失败也有话说</b><p style="margin:6px 0 0;font-size:12.6px;color:var(--text-muted)">失败转红并写清原因，流程不中断，可以就地重试或换个说法继续。</p></div>
+  </div>
+</section>
+
+<!-- ============ S2 架构图 ============ -->
+<section id="s2">
+  <div class="sec-head"><span class="sec-num">S2</span><h2>架构图</h2><span class="pill accent">谁做什么</span></div>
+  <p class="sec-sub">看总体设计有没有违规。三色必须齐：本次新增 / 复用现有 / 明确不碰。虚线红框是明确不碰的部分——画出来才是承诺。</p>
+
+  <h3>先把相关的几个东西分清楚</h3>
+  <p style="margin:-4px 0 12px;font-size:13px;color:var(--text-muted)">名字容易被混着讲的，先用一张表分清职责，再看图。分不清就会误以为要重造轮子。</p>
+  <div class="tblwrap">
+  <table>
+    <thead><tr><th style="width:132px">名字</th><th style="width:220px">它到底是什么</th><th style="width:126px">跑在哪</th><th style="width:86px">对外域名</th><th>本次动它吗</th></tr></thead>
+    <tbody>
+      <tr><td><b>{部件一}</b></td><td>{一句话说清它是什么}</td><td>{哪个容器}</td><td>{有/无}</td><td><span class="yes">新增</span>：{新增了什么}</td></tr>
+      <tr><td><b>{部件二}</b></td><td>{一句话}</td><td>{哪个容器}</td><td>{有/无}</td><td><span class="yes">复用</span>：不改它的代码</td></tr>
+      <tr style="background:var(--bad-soft)"><td><b>{易混淆的那个}</b></td><td><b>是一个功能，不是一个部件</b>。{它和上面哪个部件的关系}</td><td>——</td><td>——</td><td><span class="no">不用、不改</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="figwrap" style="margin-top:16px">
+  <svg viewBox="0 0 1120 560" width="100%" style="min-width:880px" role="img" aria-label="总体架构图">
+    <defs>
+      <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker>
+      <marker id="ah2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--border-default)"/></marker>
+    </defs>
+    <!-- 用户侧 -->
+    <rect class="bx info" x="16" y="38" width="344" height="76" rx="11"/>
+    <text class="t" x="34" y="64">{用户侧入口}</text>
+    <text class="s" x="34" y="84">{一行说明}</text>
+    <!-- 分组：本次新增全在这个框里 -->
+    <rect class="grp" x="16" y="150" width="344" height="256" rx="14"/>
+    <text class="grpt" x="32" y="172">{我方主体} · 本次写的代码全在这个框里</text>
+    <rect class="bx acc" x="34" y="188" width="308" height="52" rx="10"/>
+    <text class="t" x="50" y="212">{新增部件一}</text>
+    <text class="s" x="50" y="230">{一行职责}</text>
+    <!-- 分组：复用 -->
+    <rect class="grp" x="384" y="150" width="308" height="256" rx="14"/>
+    <text class="grpt" x="400" y="172">{复用部件} · 独立容器 · {对外还是内网}</text>
+    <rect class="bx ok" x="402" y="188" width="272" height="120" rx="10"/>
+    <text class="t" x="418" y="212">{现成能力名}</text>
+    <text class="s" x="418" y="232">{它自带什么，逐行列出}</text>
+    <!-- 明确不碰 -->
+    <rect class="bx bad" x="384" y="428" width="308" height="76" rx="10"/>
+    <text class="t" x="402" y="452" style="font-size:12px">本次明确不碰</text>
+    <text class="s" x="402" y="472">{不碰的东西一}</text>
+    <text class="s" x="402" y="490">{不碰的东西二}</text>
+    <!-- 连线：ah 是橙色主链路，ah2 是灰色次链路 -->
+    <path class="ln acc" d="M120 116 L120 186" marker-end="url(#ah)"/>
+    <text class="lbl" x="128" y="152">{凭据或说明}</text>
+    <path class="ln acc" d="M344 214 L400 214" marker-end="url(#ah)"/>
+  </svg>
+  </div>
+
+  <div class="legend">
+    <span><i style="background:var(--accent-soft);border:1px solid var(--accent-border)"></i>本次新增（我们写的）</span>
+    <span><i style="background:var(--ok-soft)"></i>复用现有（别人写的，不改）</span>
+    <span><i style="background:var(--info-soft)"></i>用户侧</span>
+    <span><i style="background:var(--bad-soft);border:1px dashed var(--bad)"></i>明确不碰</span>
+  </div>
+
+  <h3>写与不写的分界线</h3>
+  <div class="grid g2">
+    <div class="dd do"><h4>别人写好的，直接用，一行不碰</h4><ul><li>{现成能力逐条列}</li></ul></div>
+    <div class="dd dont"><h4>我们只写这几样，别的一律不写</h4><ul><li>{我方职责逐条列}</li><li><b>明令禁止</b>：{不许自造的东西}。命中即熔断。</li></ul></div>
+  </div>
+</section>
+
+<!-- ============ S3 数据流转与鉴权 ============ -->
+<section id="s3">
+  <div class="sec-head"><span class="sec-num">S3</span><h2>数据流转与鉴权</h2></div>
+  <p class="sec-sub">数据从哪来、经过谁、每一跳拿什么凭据。橙色是新增执行节点，绿色是现成部件，灰底菱形是鉴权点。</p>
+
+  <div class="figwrap">
+  <svg viewBox="0 0 1200 500" width="100%" style="min-width:960px" role="img" aria-label="数据流转与鉴权图">
+    <defs><marker id="ah3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="var(--accent)"/></marker></defs>
+    <!-- 泳道：标题 + 虚线分隔，按参与方数量增删 -->
+    <text class="grpt" x="18" y="26">用户侧</text>
+    <text class="grpt" x="376" y="26">{我方}</text>
+    <text class="grpt" x="720" y="26">{外部部件}</text>
+    <path class="grp" d="M286 12 L286 486"/>
+    <path class="grp" d="M666 12 L666 486"/>
+    <!-- 步骤盒 -->
+    <rect class="bx info" x="16" y="44" width="180" height="52" rx="10"/>
+    <text class="t" x="30" y="68">1 {用户动作}</text>
+    <text class="s" x="30" y="88">{一行说明}</text>
+    <!-- 鉴权点：菱形骑在泳道边界上 -->
+    <path class="bx" d="M286 46 L330 70 L286 94 L242 70 Z"/>
+    <text class="s" x="252" y="68" style="font-size:10px">鉴权 A</text>
+    <text class="s" x="252" y="82" style="font-size:10px">{凭据}</text>
+    <rect class="bx acc" x="372" y="44" width="240" height="52" rx="10"/>
+    <text class="t" x="386" y="68">2 {我方处理}</text>
+    <text class="s" x="386" y="88">{一行说明}</text>
+    <path class="ln acc" d="M198 70 L240 70" marker-end="url(#ah3)"/>
+    <path class="ln acc" d="M332 70 L370 70" marker-end="url(#ah3)"/>
+  </svg>
+  </div>
+
+  <h3>鉴权点，一句话各自说清</h3>
+  <div class="tblwrap"><table>
+    <thead><tr><th style="width:66px">鉴权点</th><th style="width:172px">这一跳是谁在调谁</th><th>拿什么凭据</th><th style="width:196px">为什么不是新东西</th></tr></thead>
+    <tbody><tr><td><b>A</b></td><td>{谁调谁}</td><td>{凭据，用人话}</td><td>{复用了什么，答不出就是新增了认证面}</td></tr></tbody>
+  </table></div>
+
+  <h3>失败了会怎样（这一段决定它像不像个成品）</h3>
+  <div class="tblwrap"><table>
+    <thead><tr><th style="width:180px">哪里坏了</th><th>页面上你看到什么</th><th style="width:200px">数据会不会烂在半路</th></tr></thead>
+    <tbody>
+      <tr><td>{上游服务失败}</td><td>{转红 + 写清原因 + 可重试}</td><td>不会。{为什么}</td></tr>
+      <tr><td>{某个子步骤失败}</td><td>{}</td><td>不会。{}</td></tr>
+      <tr><td>用户中途离开</td><td>{}</td><td>不会。{}</td></tr>
+      <tr><td>{循环或重试停不下来}</td><td>{到硬上限自动收尾并如实说明}</td><td>不会。上限是硬的，不靠自觉</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ============ S4 角色业务流 ============ -->
+<section id="s4">
+  <div class="sec-head"><span class="sec-num">S4</span><h2>角色业务流</h2></div>
+  <p class="sec-sub">防断头用的。每条链路的终点必须是「这个人手里拿到了东西」，不能停在「系统提交成功」。终点格子是绿的才算数。至少三类角色，含最不懂技术的那一类。</p>
+
+  <div class="lane">
+    <div class="lane-head"><b>{角色名}</b><span class="pill">{他想要什么}</span></div>
+    <div class="flow">
+      <div class="step"><b>{第一步}</b><span>{说明}</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step"><b>{中间步}</b><span>{说明}</span></div>
+      <div class="arrow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      <div class="step end"><b>{拿到产物}</b><span>{产物具体是什么}</span></div>
+    </div>
+    <div class="endnote"><b>终点检查</b><span>{什么情况不算到达终点，写具体}</span></div>
+  </div>
+</section>
+
+<!-- ============ S5 验收方式 ============ -->
+<section id="s5">
+  <div class="sec-head"><span class="sec-num">S5</span><h2>验收方式</h2><span class="pill accent">你自己就能核</span></div>
+  <p class="sec-sub">防自嗨用的。每条判据写清「要证明什么、怎么亲自核、谁来核、什么算过」，不接受只有作者能核的条目。</p>
+
+  <div class="tblwrap"><table>
+    <thead><tr><th style="width:34px">#</th><th style="width:140px">要证明什么</th><th>你怎么亲自核</th><th style="width:78px">谁来核</th><th style="width:150px">什么算过</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>{能力}</td><td>{具体动作，照做即可}</td><td>你</td><td>{肉眼可判的结果}</td></tr>
+      <tr><td>2</td><td>{产物真的出来了}</td><td>{触发后一直等到底}</td><td>你</td><td><span class="yes">产物真的显示出来</span>。停在进度条上不算</td></tr>
+      <tr><td>3</td><td>没有越界</td><td>看改动文件清单</td><td>评审</td><td>{明确不碰的东西}<span class="no">一个字未碰</span></td></tr>
+      <tr><td>4</td><td>两套皮肤都行</td><td>白天黑夜各切一次，各截一张图</td><td>验收</td><td>不破版、不出现看不清的字</td></tr>
+      <tr><td>5</td><td>等待期有内容</td><td>盯着任一超过两秒的等待</td><td>验收</td><td>屏幕上一直有东西在变，不是死转圈</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="dd do"><h4>算数的证据</h4><ul>
+      <li>从真实入口点进去截的图，地址栏可见。</li>
+      <li>白天和黑夜两套各一张，部署版本标记入镜。</li>
+      <li>产物类必须拍到产物本身。</li>
+      <li>报告归档并给出能直接打开的深链。</li>
+    </ul></div>
+    <div class="dd dont"><h4>不算数的证据</h4><ul>
+      <li>接口返回成功、测试全绿——必要条件，不是验收本身。</li>
+      <li>截图里还在加载，说明文字却写「已完成」。</li>
+      <li>旧版本截图充数。</li>
+      <li>「我通读了两遍，逻辑没问题」。</li>
+      <li>只测新建的数据，不测存量兼容路径。</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- ============ S6 范围契约 ============ -->
+<section id="s6">
+  <div class="sec-head"><span class="sec-num">S6</span><h2>范围契约</h2></div>
+  <p class="sec-sub">防止做成一坨。这一节是可以拿来卡作者的：越过下面任何一条线，你有权叫停。</p>
+
+  <div class="grid g2">
+    <div class="dd do"><h4>本期做这些（就这么多）</h4><ul>
+      <li>{可数的第一件}</li>
+      <li>{可数的第二件}</li>
+    </ul></div>
+    <div class="dd dont"><h4>本期不做（想做也不做，全进债务台账）</h4><ul>
+      <li>{具体功能，不写抽象类别}</li>
+      <li>{改任何现有表结构、改任何现有鉴权}</li>
+    </ul></div>
+  </div>
+
+  <div class="fuse">
+    <h4>熔断线：命中任意一条，立刻停下来找你，不许自己往前冲</h4>
+    <ul>
+      <li>连续八个提交没有新增可用功能，只在改文档、改脚本、改计划。</li>
+      <li>{清单外的东西被接进来的具体形态}。</li>
+      <li>改动碰到了{明确不碰的部分}。</li>
+      <li>改动行数超过第一轮基线的两倍，或者文件范围扩出第一轮清单。</li>
+      <li>同一份计划文档被重写五次以上，而卡点没有消失。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ S7 决策点 ============ -->
+<section id="s7">
+  <div class="sec-head"><span class="sec-num">S7</span><h2>要你拍板的</h2><span class="pill accent">{N} 个岔路口</span></div>
+  <p class="sec-sub">每个都给了默认选项。你什么都不说，就按橙色那个走；想改哪个直接点名。</p>
+
+  <div class="dec">
+    <div class="dec-q"><em>1</em>{问题}</div>
+    <div class="opts">
+      <div class="opt pick"><b>{推荐选项}</b><span>推荐。{为什么，写具体}</span></div>
+      <div class="opt"><b>{备选}</b><span>{选它的代价，写具体，不写「有一定成本」}</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ S8 成本与退出 ============ -->
+<section id="s8">
+  <div class="sec-head"><span class="sec-num">S8</span><h2>成本与退出</h2></div>
+  <p class="sec-sub">每个阶段自己就能验收、自己就能停。任一阶段结束时叫停都能拿到完整可用的东西，不会留半截。</p>
+
+  <div class="card">
+    <div class="phase"><div class="no">一</div><div>
+      <b>{阶段名}</b><p>{做什么}</p>
+      <div class="stop">可停点：{在这里停的话你手上有什么} + 判据 {编号} 可验。</div>
+    </div></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card">
+      <h4 style="margin:0 0 9px;font-size:14px">怎么退出</h4>
+      <ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8;color:var(--text-secondary)">
+        <li>{关哪条开关，影响谁}</li>
+        <li>{要不要迁数据}</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 9px;font-size:14px">规模量级</h4>
+      <ul style="margin:0;padding-left:19px;font-size:13px;line-height:1.8;color:var(--text-secondary)">
+        <li>{后端新增什么}</li>
+        <li>{前端新增什么}</li>
+        <li>预计触及 {N} 个文件，不含测试。</li>
+        <li>超出这个量级就是走偏了，按熔断线处理。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p style="margin:0 0 6px">这份预览由「重大改动方案预览」技能产出。它规定任何重大改动在动手前必须先给出六件套：操作页面演示、架构图、数据流转与鉴权、角色业务流、验收方式、范围契约，外加决策点与退出方式。</p>
+  <p style="margin:0">页面里的界面是模拟，不连真实后端；架构与数据流表达的是实现目标，最终以验收判据为准。</p>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  /* ================= 主题与章节导航（通用，一般不用改） ================= */
+  var root=document.documentElement, tb=document.getElementById('themeBtn');
+  function setTheme(t){root.setAttribute('data-theme',t);tb.textContent=(t==='dark'?'切到白天':'切到黑夜');}
+  tb.addEventListener('click',function(){setTheme(root.getAttribute('data-theme')==='dark'?'light':'dark');});
+
+  var links=[].slice.call(document.querySelectorAll('.secnav a'));
+  var secs=links.map(function(a){return document.querySelector(a.getAttribute('href'));});
+  window.addEventListener('scroll',function(){
+    var y=window.scrollY+150,cur=0;
+    secs.forEach(function(s,i){if(s&&s.offsetTop<=y)cur=i;});
+    links.forEach(function(a,i){a.classList.toggle('on',i===cur);});
+  },{passive:true});
+
+  /* ================= 演示引擎（通用，改剧本不改引擎） =================
+     可用的原语：
+       addUser(text)                     用户气泡
+       addAi()                           新建 AI 消息体，返回容器
+       think(body, text, ms)             临时的「正在想」提示，ms 后消失
+       type(body, text, done)            打字机输出，完成后回调
+       toolCard(body, 名称, 标签, 阶段数组)  工具卡，返回卡片元素
+       runCard(card, 每阶段毫秒, onDone)  推进阶段与进度条，完成后回调并给出卡片正文容器
+       failCard(card, 原因)              把工具卡转红并写原因（演示失败态用）
+       el(html)                          从 HTML 片段建元素
+     硬要求：等待必须有阶段推进；产物必须真的出现在 onDone 里。
+  ========================================================================= */
+  var stream=document.getElementById('stream');
+  var playBtn=document.getElementById('playBtn'), stepBtn=document.getElementById('stepBtn'),
+      resetBtn=document.getElementById('resetBtn'), hint=document.getElementById('playHint'),
+      sendBtn=document.getElementById('sendBtn');
+  var timers=[], playing=false, cursor=0;
+
+  function clearTimers(){timers.forEach(clearTimeout);timers=[];}
+  function later(fn,ms){var t=setTimeout(fn,ms);timers.push(t);return t;}
+  function scroll(){stream.scrollTop=stream.scrollHeight;}
+  function el(html){var d=document.createElement('div');d.innerHTML=html.trim();return d.firstChild;}
+
+  function addUser(text){
+    var m=el('<div class="msg user"><div class="avatar">我</div><div class="body"><div class="bubble"></div></div></div>');
+    m.querySelector('.bubble').textContent=text; stream.appendChild(m); scroll(); return m;
+  }
+  function addAi(){
+    var m=el('<div class="msg ai"><div class="avatar">AI</div><div class="body"></div></div>');
+    stream.appendChild(m); scroll(); return m.querySelector('.body');
+  }
+  function think(body,text,ms){
+    var t=el('<div class="think"></div>'); t.textContent=text; body.appendChild(t); scroll();
+    later(function(){t.remove();},ms);
+  }
+  function type(body,text,done){
+    var b=el('<div class="bubble"></div>'); body.appendChild(b);
+    var caret=el('<span class="caret"></span>'); b.appendChild(caret);
+    var i=0;
+    (function tick(){
+      if(i<=text.length){
+        caret.remove(); b.textContent=text.slice(0,i); b.appendChild(caret);
+        i++; scroll(); later(tick,22);
+      } else { caret.remove(); if(done)done(); }
+    })();
+  }
+  function toolCard(body,name,tag,steps){
+    var c=el('<div class="tool run"><div class="tool-head"></div><div class="tool-body"><div class="bar"><i></i></div><div class="steps"></div></div></div>');
+    var h=c.querySelector('.tool-head');
+    h.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
+    var nm=document.createElement('span'); nm.textContent=name; h.appendChild(nm);
+    var tg=document.createElement('span'); tg.className='tag'; tg.textContent=tag; h.appendChild(tg);
+    var st=document.createElement('span'); st.className='tool-state'; st.textContent='执行中'; h.appendChild(st);
+    var sw=c.querySelector('.steps');
+    steps.forEach(function(s){var e=document.createElement('s'); e.textContent=s; sw.appendChild(e);});
+    body.appendChild(c); scroll(); return c;
+  }
+  function runCard(card,per,onDone){
+    var bar=card.querySelector('.bar i'), ss=[].slice.call(card.querySelectorAll('.steps s')), i=0;
+    (function next(){
+      if(i>0)ss[i-1].className='ok';
+      if(i<ss.length){
+        ss[i].className='on';
+        bar.style.width=Math.round((i+1)/ss.length*100)+'%';
+        i++; scroll(); later(next,per);
+      } else {
+        card.className='tool done';
+        card.querySelector('.tool-state').textContent='完成';
+        if(onDone)onDone(card.querySelector('.tool-body'));
+      }
+    })();
+  }
+  function failCard(card,reason){
+    card.className='tool fail';
+    card.querySelector('.tool-state').textContent='失败';
+    var p=el('<div style="font-size:12.2px;color:var(--bad);margin-top:4px"></div>');
+    p.textContent=reason; card.querySelector('.tool-body').appendChild(p); scroll();
+  }
+
+  /* ================= 剧本：按本次改动改这里 =================
+     每个函数演一轮，演完必须调 next()。建议三段式：
+       1 用户提出需求 -> 系统干活（含等待态）-> 产物出现
+       2 用户基于产物追加动作 -> 产物被保存或流转
+       3 用户换场景回来使用之前的产物 -> 证明闭环成立
+  ============================================================ */
+  var ROUND_NAMES=['{第一轮名}','{第二轮名}'];
+  var script=[
+    function(next){
+      addUser('{用户说的第一句话}');
+      later(function(){
+        var body=addAi();
+        think(body,'{正在想什么，一句话}',900);
+        later(function(){
+          type(body,'{先给一句回应，说明接下来要干什么}',function(){
+            var c=toolCard(body,'{工具名}','工具',['{阶段一}','{阶段二}','{阶段三}']);
+            runCard(c,760,function(tb){
+              /* 产物必须在这里真的出现，不能只写一句「已完成」 */
+              var art=el('<div class="artwork"><div><b>{产物标题}</b><span>{副标题}</span></div></div>');
+              tb.appendChild(art); scroll();
+              later(function(){ type(body,'{产物出来后的收尾说明}',next); },600);
+            });
+          });
+        },900);
+      },600);
+    },
+    function(next){
+      addUser('{用户说的第二句话}');
+      later(function(){
+        var body=addAi();
+        think(body,'{正在想什么}',800);
+        later(function(){
+          var c=toolCard(body,'{第二个工具}','工具',['{阶段一}','{阶段二}']);
+          runCard(c,700,function(tb){
+            var k=el('<div class="kbcard"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span>{已完成什么，写具体落点}</span><button class="btn" type="button">打开</button></div>');
+            tb.appendChild(k); scroll();
+            later(function(){ type(body,'{给出可点链接后的收尾说明}',next); },600);
+          });
+        },800);
+      },600);
+    }
+  ];
+
+  /* ================= 播放控制（通用，一般不用改） ================= */
+  function reset(){
+    clearTimers(); playing=false; cursor=0;
+    stream.innerHTML='';
+    var m=el('<div class="msg ai"><div class="avatar">AI</div><div class="body"><div class="bubble">{空状态的第一句话：告诉用户这里能做什么}</div></div></div>');
+    stream.appendChild(m);
+    playBtn.textContent='播放演示'; playBtn.disabled=false; stepBtn.disabled=false;
+    hint.textContent='共 '+script.length+' 轮：'+ROUND_NAMES.join(' / ')+'。';
+  }
+  function runOne(auto){
+    if(cursor>=script.length){
+      hint.textContent='演示结束。';
+      playBtn.textContent='播放演示'; playBtn.disabled=false; playing=false; return;
+    }
+    var i=cursor++;
+    hint.textContent='第 '+(i+1)+' 轮 / 共 '+script.length+' 轮 '+(ROUND_NAMES[i]||'');
+    playBtn.disabled=true; stepBtn.disabled=true;
+    script[i](function(){
+      stepBtn.disabled=false;
+      if(auto&&playing){ later(function(){runOne(true);},700); }
+      else{
+        playBtn.disabled=false;
+        if(cursor>=script.length){ hint.textContent='演示结束。'; playing=false; playBtn.textContent='播放演示'; }
+      }
+    });
+  }
+  playBtn.addEventListener('click',function(){
+    if(cursor>=script.length)reset();
+    playing=true; playBtn.textContent='播放中'; runOne(true);
+  });
+  stepBtn.addEventListener('click',function(){playing=false;runOne(false);});
+  resetBtn.addEventListener('click',reset);
+  if(sendBtn)sendBtn.addEventListener('click',function(){playing=false;runOne(false);});
+  [].slice.call(document.querySelectorAll('.chip')).forEach(function(ch){
+    ch.addEventListener('click',function(){
+      var j=parseInt(ch.getAttribute('data-jump'),10);
+      clearTimers(); playing=false; cursor=j; runOne(false);
+    });
+  });
+  reset();
+})();
+</script>
+</body>
+</html>

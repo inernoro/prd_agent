@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -71,8 +72,6 @@ public class TapdBugAgentService
                     new JsonObject { ["role"] = "user", ["content"] = BuildUserPrompt(naturalText, userDraft) },
                 },
                 ["temperature"] = 0.2,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 90,
             IncludeThinking = true,

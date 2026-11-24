@@ -17,8 +17,11 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+import { formatVideoGenerationError } from '@/lib/videoGenerationError';
+import { resolveApiUrl } from '@/services/real/apiClient';
 import {
   createVideoGenRunReal,
+  createVideoGenDownloadTicketReal,
   getVideoGenRunReal,
 } from '@/services/real/videoAgent';
 import {
@@ -42,6 +45,10 @@ const RESOLUTION_OPTIONS: Resolution[] = ['480p', '720p', '1080p'];
 
 const AUTO_MODEL = ''; // 空字符串 = 交由后端模型池自动选择
 
+// 本地取消终止生成，不代表供应商收据已就绪；详情刷新只读，不会提交或查询供应商。
+const shouldRefreshRun = (run: VideoGenRun) => !['Completed', 'Failed', 'Cancelled'].includes(run.status)
+  || (run.status === 'Cancelled' && !!run.directVideoJobId && !run.directVideoReconciledAt);
+
 export interface VideoGenDirectPanelProps {
   /** 外部已创建的 runId（纯输出模式），不传则启用完整输入模式 */
   externalRunId?: string;
@@ -63,6 +70,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
   const [currentRun, setCurrentRun] = useState<VideoGenRun | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 清理轮询
@@ -78,6 +86,36 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
   const isActive = currentRun && ['Queued', 'Rendering'].includes(currentRun.status);
   const isCompleted = currentRun?.status === 'Completed' && !!currentRun.videoAssetUrl;
   const isFailed = currentRun?.status === 'Failed' || currentRun?.status === 'Cancelled';
+  const isCancelled = currentRun?.status === 'Cancelled';
+
+  const handleDownload = useCallback(async () => {
+    if (!currentRun?.id || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const response = await createVideoGenDownloadTicketReal(currentRun.id);
+      if (!response.success || !response.data?.ticket) {
+        throw new Error(response.error?.message || '视频下载失败，请稍后重试');
+      }
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = resolveApiUrl('/api/video-download');
+      form.style.display = 'none';
+      const ticketInput = document.createElement('input');
+      ticketInput.type = 'hidden';
+      ticketInput.name = 'ticket';
+      ticketInput.value = response.data.ticket;
+      form.appendChild(ticketInput);
+      document.body.appendChild(form);
+      form.submit();
+      // Chromium 会把刚提交就移除的表单视为已取消导航；等待下载请求启动后再清理。
+      window.setTimeout(() => form.remove(), 60_000);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '视频下载失败，请稍后重试');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [currentRun?.id, isDownloading]);
 
   const startPolling = useCallback((runId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -85,7 +123,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       const res = await getVideoGenRunReal(runId);
       if (res.success && res.data) {
         setCurrentRun(res.data);
-        if (['Completed', 'Failed', 'Cancelled'].includes(res.data.status)) {
+        if (!shouldRefreshRun(res.data)) {
           if (pollRef.current) {
             clearInterval(pollRef.current);
             pollRef.current = null;
@@ -112,7 +150,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       const res = await getVideoGenRunReal(externalRunId);
       if (!cancelled && res.success && res.data) {
         setCurrentRun(res.data);
-        if (!['Completed', 'Failed', 'Cancelled'].includes(res.data.status)) {
+        if (shouldRefreshRun(res.data)) {
           startPolling(externalRunId);
         }
       }
@@ -176,13 +214,19 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
   const progressText = (() => {
     if (!currentRun) return '';
+    if (currentRun.cancelRequested && isActive) return currentRun.directVideoJobId ? '已停止后续生成，当前视频正在收尾，可能仍产生费用' : '已请求取消，正在确认处理结果';
+    if (currentRun.status === 'Cancelled') return !currentRun.directVideoJobId
+      ? '已取消，尚未提交生成'
+      : currentRun.directVideoReconciledAt ? '已取消，供应商任务已结束' : '已取消；供应商状态与费用尚未核定';
     if (currentRun.status === 'Queued') return '排队中…';
+    if (currentRun.currentPhase === 'generation-recovery-blocked') return currentRun.errorMessage || '上次生成结果待核对，未自动重新提交';
     if (currentRun.currentPhase === 'videogen-submitting') return '正在提交到模型网关…';
     if (currentRun.currentPhase === 'videogen-polling') return 'AI 正在生成视频…';
     if (currentRun.status === 'Completed') return '生成完成';
     if (currentRun.status === 'Failed') return '生成失败';
     return currentRun.currentPhase || currentRun.status;
   })();
+  const isRecoveryBlocked = currentRun?.currentPhase === 'generation-recovery-blocked';
 
   return (
     <div className="flex-1 min-h-0 flex flex-col items-center overflow-y-auto px-4 py-6" style={{ background: 'var(--bg-base)' }}>
@@ -191,7 +235,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
         <div
           className="relative w-full aspect-video rounded-[20px] overflow-hidden flex items-center justify-center"
           style={{
-            background: 'linear-gradient(135deg, #0a0c12 0%, #141823 50%, #0a0c12 100%)',
+            background: 'var(--bg-elevated)',
+            minHeight: isRecoveryBlocked ? 280 : undefined,
             border: '1px solid rgba(236, 72, 153, 0.18)',
             boxShadow: '0 10px 60px -10px rgba(236, 72, 153, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
           }}
@@ -206,9 +251,9 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               style={{ background: '#000' }}
             />
           ) : isActive ? (
-            <div className="flex flex-col items-center gap-4 text-token-primary px-6 text-center">
-              <MapSpinner size={32} />
-              <div className="text-base font-medium">{progressText}</div>
+            <div className="flex flex-col items-center gap-4 px-6 text-center" style={{ color: 'var(--text-primary)' }}>
+              {isRecoveryBlocked ? <AlertCircle size={32} /> : <MapSpinner size={32} />}
+              <div className="text-base font-medium" data-testid="video-generation-stage">{progressText}</div>
               <div className="w-64 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                 <div
                   className="h-full transition-all duration-500"
@@ -218,23 +263,20 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                   }}
                 />
               </div>
-              <div className="text-xs text-token-muted">
-                任务 ID：{currentRun?.id.slice(0, 12)}…
-                {currentRun?.directVideoJobId && <> · 上游任务：{currentRun.directVideoJobId.slice(0, 10)}…</>}
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }} data-testid="video-generation-progress">
+                {Math.max(0, Math.min(100, currentRun?.phaseProgress ?? 0))}%
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                任务编号：{currentRun?.id.slice(0, 12)}…
               </div>
             </div>
           ) : isFailed ? (
             <div className="flex flex-col items-center gap-3 text-token-secondary px-6 text-center max-w-[640px]">
-              <AlertCircle size={32} className="text-rose-400" />
-              <div className="text-base font-medium">生成失败</div>
+              <AlertCircle size={32} className={isCancelled ? 'text-token-muted' : 'text-rose-400'} />
+              <div className="text-base font-medium">{isCancelled ? '已取消' : '生成失败'}</div>
               <div className="text-xs text-token-secondary whitespace-pre-wrap">
-                {currentRun?.errorMessage || '未知错误'}
+                {isCancelled ? progressText : formatVideoGenerationError(currentRun?.errorMessage, currentRun?.errorCode)}
               </div>
-              {currentRun?.errorCode === 'OPENROUTER_NOT_CONFIGURED' && (
-                <div className="mt-2 text-[11px] text-amber-300/80 bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/30">
-                  提示：管理员需在容器环境变量中注入 <code className="font-mono">OPENROUTER_API_KEY</code>
-                </div>
-              )}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 text-token-secondary px-6 text-center">
@@ -247,9 +289,9 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           )}
 
           {/* 角标 */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] text-token-muted font-mono px-2 py-1 rounded-md" style={{ background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(8px)' }}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isActive ? '#ec4899' : (isCompleted ? '#22c55e' : '#64748b') }} />
-            {isActive ? '生成中' : isCompleted ? '已完成' : isFailed ? '失败' : '待机'}
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded-md" style={{ color: 'var(--text-muted)', background: 'var(--bg-card)', backdropFilter: 'blur(8px)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isRecoveryBlocked ? '#f59e0b' : isActive ? '#ec4899' : (isCompleted ? '#22c55e' : '#64748b') }} />
+            {isRecoveryBlocked ? '待核对' : isActive ? '生成中' : isCompleted ? '已完成' : isCancelled ? '已取消' : isFailed ? '失败' : '待机'}
           </div>
         </div>
 
@@ -429,15 +471,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </Button>
             )}
             {isCompleted && currentRun?.videoAssetUrl && (
-              <a
-                href={currentRun.videoAssetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
-                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDownload}
+                disabled={isDownloading}
               >
-                <Download size={12} /> 下载 MP4
-              </a>
+                <Download size={12} /> {isDownloading ? '下载中…' : '下载 MP4'}
+              </Button>
             )}
 
             {/* 主按钮 */}
@@ -448,7 +489,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                 onClick={handleGenerate}
                 disabled={isActive || isSubmitting || !prompt.trim()}
               >
-                {isSubmitting || isActive ? (
+                {isRecoveryBlocked ? <><AlertCircle size={12} /> 待核对</> : isSubmitting || isActive ? (
                   <><MapSpinner size={12} /> 生成中…</>
                 ) : (
                   <><Sparkles size={12} /> 立即生成</>
@@ -461,7 +502,10 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           <div className="text-[11px] text-token-muted flex items-center gap-3 flex-wrap">
             <span className="inline-flex items-center gap-1"><Clock size={11} /> 视频生成通常需要 1-3 分钟，离开页面也会继续执行</span>
             {currentRun?.directVideoCost != null && (
-              <span>本次费用：${currentRun.directVideoCost.toFixed(3)}</span>
+              <span>{currentRun.directVideoReconciledAt || currentRun.status === 'Completed' ? '本次费用' : '待核对费用'}：${currentRun.directVideoCost.toFixed(3)}</span>
+            )}
+            {isCancelled && currentRun.directVideoJobId && currentRun.directVideoCost == null && (
+              <span>供应商未返回最终费用，不代表免费</span>
             )}
           </div>
         </div>
@@ -477,8 +521,11 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
             <div className="flex-1" />
             {currentRun?.directVideoCost != null && (
               <span style={{ color: 'var(--text-muted)' }}>
-                费用 ${currentRun.directVideoCost.toFixed(3)}
+                {currentRun.directVideoReconciledAt || currentRun.status === 'Completed' ? '费用' : '待核对费用'} ${currentRun.directVideoCost.toFixed(3)}
               </span>
+            )}
+            {isCancelled && currentRun.directVideoJobId && currentRun.directVideoCost == null && (
+              <span>供应商未返回最终费用，不代表免费</span>
             )}
             {(isCompleted || isFailed) && (
               <Button size="sm" variant="ghost" onClick={handleReset}>
@@ -486,15 +533,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </Button>
             )}
             {isCompleted && currentRun?.videoAssetUrl && (
-              <a
-                href={currentRun.videoAssetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
-                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDownload}
+                disabled={isDownloading}
               >
-                <Download size={12} /> 下载 MP4
-              </a>
+                <Download size={12} /> {isDownloading ? '下载中…' : '下载 MP4'}
+              </Button>
             )}
           </div>
         )}

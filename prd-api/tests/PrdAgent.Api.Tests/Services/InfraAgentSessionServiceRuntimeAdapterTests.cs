@@ -1,4 +1,5 @@
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AgentRuntime;
 using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
@@ -9,6 +10,105 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class InfraAgentSessionServiceRuntimeAdapterTests
 {
+    [Fact]
+    public async Task RuntimeCancelFailure_ShouldBeLoggedWithoutBlockingSessionCleanup()
+    {
+        Exception? logged = null;
+
+        var result = await InfraAgentSessionService.RunBestEffortRuntimeCancelAsync(
+            () => throw new InvalidOperationException("runtime cancel rejected"),
+            ex => logged = ex);
+
+        result.ShouldBeNull();
+        logged.ShouldBeOfType<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task RuntimeCancelSuccess_ShouldRemainObservable()
+    {
+        var expected = new InfraAgentRuntimeCancelResult(true, AdapterKind: "open-design");
+
+        var result = await InfraAgentSessionService.RunBestEffortRuntimeCancelAsync(
+            () => Task.FromResult(expected),
+            _ => throw new InvalidOperationException("failure callback must not run"));
+
+        result.ShouldBeSameAs(expected);
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Idle, true)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, true)]
+    [InlineData(InfraAgentSessionStatuses.Failed, false)]
+    [InlineData(InfraAgentSessionStatuses.Running, false)]
+    public void CdsFollowWaitsForDetailedErrorAfterFailedStatus(string status, bool expected)
+    {
+        Assert.Equal(expected, InfraAgentSessionService.ShouldEndCdsFollowOnStatus(status));
+    }
+
+    [Fact]
+    public void WorkspaceTransferRequest_ShouldSerializeWithTheCdsCamelCaseContract()
+    {
+        var transfer = new InfraAgentWorkspaceTransferRequest(
+            "map-design-workspace-v1",
+            "https://map.example/workspace/input",
+            "input-sha",
+            "https://map.example/workspace/result",
+            "short-transfer-ticket",
+            "base-revision",
+            1024,
+            2048,
+            ["index.html", "manifest.json"]);
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new { workspaceTransfer = transfer }));
+        var payload = document.RootElement.GetProperty("workspaceTransfer");
+
+        payload.GetProperty("schemaVersion").GetString().ShouldBe("map-design-workspace-v1");
+        payload.GetProperty("inputPackageUrl").GetString().ShouldBe("https://map.example/workspace/input");
+        payload.GetProperty("inputSha256").GetString().ShouldBe("input-sha");
+        payload.GetProperty("resultCommitUrl").GetString().ShouldBe("https://map.example/workspace/result");
+        payload.GetProperty("transferToken").GetString().ShouldBe("short-transfer-ticket");
+        payload.GetProperty("baseRevision").GetString().ShouldBe("base-revision");
+        payload.GetProperty("maxInputBytes").GetInt64().ShouldBe(1024);
+        payload.GetProperty("maxOutputBytes").GetInt64().ShouldBe(2048);
+        payload.GetProperty("allowedOutputPaths")[0].GetString().ShouldBe("index.html");
+        payload.GetProperty("continuingRun").GetBoolean().ShouldBeFalse();
+        payload.TryGetProperty("previousImageDigest", out _).ShouldBeFalse();
+        payload.TryGetProperty("SchemaVersion", out _).ShouldBeFalse();
+
+        var digest = $"sha256:{new string('a', 64)}";
+        var continuation = transfer with { ContinuingRun = true, PreviousImageDigest = digest };
+        using var continued = JsonDocument.Parse(JsonSerializer.Serialize(continuation));
+        continued.RootElement.GetProperty("continuingRun").GetBoolean().ShouldBeTrue();
+        continued.RootElement.GetProperty("previousImageDigest").GetString().ShouldBe(digest);
+
+        using var legacy = JsonDocument.Parse(JsonSerializer.Serialize(continuation with { PreviousImageDigest = null }));
+        legacy.RootElement.GetProperty("continuingRun").GetBoolean().ShouldBeTrue();
+        legacy.RootElement.TryGetProperty("previousImageDigest", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void WorkspaceStartReceipt_ShouldPreserveTheActualFixedImageDigest()
+    {
+        var digest = $"sha256:{new string('a', 64)}";
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            runtimeImage = $"ghcr.io/example/open-design@{digest}"
+        }));
+
+        InfraAgentSessionService.ReadCdsWorkspaceImageDigest(response.RootElement).ShouldBe(digest);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("ghcr.io/example/open-design:latest")]
+    [InlineData("ghcr.io/example/open-design@sha256:invalid")]
+    public void WorkspaceStartReceipt_ShouldLeaveAnUnconfirmedImageUnknown(string? runtimeImage)
+    {
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(new { runtimeImage }));
+
+        InfraAgentSessionService.ReadCdsWorkspaceImageDigest(response.RootElement).ShouldBeNull();
+    }
+
     [Fact]
     public void ResolveSidecarRuntimeAdapter_ShouldPreferOfficialSdkByDefault()
     {

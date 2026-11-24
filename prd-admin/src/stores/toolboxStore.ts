@@ -170,6 +170,23 @@ interface ToolboxState {
 //   - 'tool'  = 能力型工具，缺少 agent 三要素中的任何一项
 //   - 'infra' = 平台级基础设施（工作流引擎、更新中心、市场、模型、团队等），不进百宝箱
 export const BUILTIN_TOOLS: ToolboxItem[] = [
+  // 通用对话智能体：先带 wip，按 CLAUDE.md 规则 #8 验收通过后再删这个字段转正式
+  {
+    id: 'builtin-chat-agent',
+    name: '通用对话智能体',
+    description: '打开就能聊的多轮对话入口，说到一半刷新页面也不会丢',
+    icon: 'MessageSquare',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'chat-agent',
+    routePath: '/chat',
+    permission: 'chat-agent.use',
+    tags: ['对话', '聊天', '通用', '智能体', 'chat'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
   // ========== 智能体（定制版，有专门页面 + 完备生命周期 + 存储）==========
   // 注：PRD 解读智能体 Web 端已下线，统一改为下载桌面端体验，不再注册到百宝箱
   {
@@ -339,7 +356,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     kind: 'agent',
     agentKey: 'product-agent',
     routePath: '/product-agent',
-    permission: 'product-agent.use',
+    permission: ['product-agent.use', 'product-agent.version-apply'],
     tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
@@ -557,6 +574,33 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  // 网页托管：先带 wip，按 CLAUDE.md 规则 #8 验收通过后再删这个字段转正式。
+  // 挂它的依据是两份计划的状态——design-generation 的产物质量与最终盲验未通过、
+  // open-design 六步全部未验收。
+  //
+  // 说清它现在管得到什么，免得下一个人高估：ToolboxItem.wip 目前**没有任何渲染方**
+  // （`prd-admin/src/pages/ai-toolbox/` 里一处都不读），所以它是登记账，不是给用户看的标。
+  // 真正会渲染「施工中」的是 navRegistry 那份 `nav.wip`（经 launcherCatalog →
+  // unifiedNavCatalog → AgentSwitcher）。而 /web-pages 在 navRegistry 里是主干上早已存在
+  // 的正式导航项，本 PR 没有创建它——要不要给一条已上线的入口打施工中标，是产品决定，
+  // 不该由这条分支顺手做。相关欠账见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md 第三十轮一节。
+  {
+    id: 'builtin-web-pages',
+    name: '网页托管',
+    description: '上传、管理和发布网页，支持评论、提问、AI 修改、版本预览与回退',
+    wip: true,
+    icon: 'Globe',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'web-pages',
+    routePath: '/web-pages',
+    permission: 'web-pages.read',
+    tags: ['网页', '托管', '发布', '版本', 'AI 修改'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    createdByName: '官方',
+  },
   {
     id: 'builtin-my-shares',
     name: '我的分享',
@@ -601,6 +645,23 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     routePath: '/tech-doc-format-agent',
     permission: 'access',
     tags: ['技术分析', '文档格式', 'PM2502', '模板校验'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    createdByName: '官方',
+    wip: true,
+  },
+  {
+    id: 'builtin-mcp-console',
+    name: '智能体接入台',
+    description: '把平台接进你自己的智能体：授权哪些能力、连着哪几台客户端、它们刚才做了什么',
+    icon: 'Plug',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'mcp-console',
+    routePath: '/mcp-console',
+    permission: 'access',
+    tags: ['MCP', '接入', '智能体', 'agent', '密钥', '连接器', 'connector'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
     createdByName: '官方',

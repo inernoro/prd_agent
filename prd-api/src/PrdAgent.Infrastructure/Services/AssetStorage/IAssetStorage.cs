@@ -1,6 +1,161 @@
 namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
-public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime);
+/// <summary>
+/// 一次保存的结果。
+///
+/// <para><b>为什么要带 <paramref name="Key"/></b>：<paramref name="Url"/> 是**本站此刻**的绝对地址
+/// （公网域名 + 本站前缀 + key）。把它当成附件的身份存进库，等于把「东西在哪」和
+/// 「这台机器叫什么」焊死在一起——换个桶、换个公网域名、或者把库搬到另一台机器，
+/// 存量地址全部指回原处（debt.platform.cross-instance-data-sync 的 DS1）。</para>
+///
+/// <para>key 才是不随部署变化的那一半。存下它，运行时用 <see cref="IAssetStorage.BuildUrlForKey"/>
+/// 拼本站前缀，地址就跟着部署走。可空只是为了兼容存量与测试替身；
+/// 真实实现必须回填，有守卫盯着。</para>
+/// </summary>
+public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime, string? Key = null)
+{
+    // 内部保存确证；未知或复用对象不得当作本次新建。生成视频仍须持有原 SHA 锁。
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool? CreatedNew { get; init; }
+}
+public record AssetReadHandle(Stream Content, string Mime, long? Length);
+
+/// <summary>
+/// 允许存储实现回收严格受约束的自服务头像单对象，不扩大通用安全删除白名单。
+/// </summary>
+public static class AssetStorageDeletePolicy
+{
+    private const string AvatarPathPrefix = "icon/backups/head/";
+
+    /// <summary>
+    /// 网页托管只允许删除一个明确归属到 32 位站点 ID 的文件对象。
+    /// 目录前缀本身、路径穿越和非标准站点 ID 均拒绝，避免把“删除站点”扩大成按前缀批量删除。
+    /// </summary>
+    public static bool IsHostedSiteFileKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        if (!normalized.StartsWith("web-hosting/sites/", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segments = normalized.Split('/', StringSplitOptions.None);
+        if (segments.Length < 4
+            || !string.Equals(segments[0], "web-hosting", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(segments[1], "sites", StringComparison.OrdinalIgnoreCase)
+            || !System.Text.RegularExpressions.Regex.IsMatch(
+                segments[2],
+                "^[0-9a-f]{32}$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        {
+            return false;
+        }
+
+        return segments.Skip(3).All(segment =>
+            !string.IsNullOrWhiteSpace(segment)
+            && segment != "."
+            && segment != ".."
+            && !segment.Any(char.IsControl));
+    }
+
+    public static bool IsVersionedUserAvatarKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        if (!normalized.StartsWith(AvatarPathPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        var fileName = normalized[AvatarPathPrefix.Length..];
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            fileName,
+            @"^u-[0-9a-f]{12}-[0-9a-f]{24}\.(png|jpg|gif|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    public static bool IsContentAddressedGeneratedVideoKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^video-agent/video/[a-z2-7]{26}\.mp4$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    public static bool IsContentAddressedGeneratedImageKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^visual-agent/img/[a-z2-7]{26}\.(png|jpg|jpeg|gif|webp)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
+    /// 设计工作区元数据是内容寻址的系统对象，可安全回收。
+    /// </summary>
+    public static bool IsContentAddressedDesignWorkspaceMetadataKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^web-hosting/meta/[a-z2-7]{26}\.json$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
+    /// 网页托管优化只允许回收系统生成的临时对象。站点 ID 必须是 32 位十六进制，
+    /// 且路径必须落在 __chunks、__source 或 __preview 下；正式站点文件永远不命中。
+    /// </summary>
+    public static bool IsHostedSiteOptimizationTemporaryKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        if (normalized.Contains("/../", StringComparison.Ordinal)
+            || normalized.EndsWith("/..", StringComparison.Ordinal)
+            || normalized.Contains("/./", StringComparison.Ordinal)
+            || normalized.EndsWith("/.", StringComparison.Ordinal))
+            return false;
+
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^web-hosting/sites/[0-9a-f]{32}/__(chunks/[0-9]{6}\.part|source/source\.zip|preview/.+)$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    private static string StripConfiguredPrefix(string? key, string? configuredPrefix)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return normalized;
+    }
+}
 
 /// <summary>
 /// 暴露运行时实际选择的存储实现，供就绪检查核对环境合同。
@@ -26,9 +181,32 @@ public interface IAssetStorage
     Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null);
 
     /// <summary>
+    /// 在实际写入前预演 <see cref="SaveAsync"/> 将返回的精确物理 key。
+    /// 需要在对象写入前持久化补偿意图的调用方使用；真实存储实现必须与 SaveAsync 共用同一套 key 规则。
+    /// 不支持预演的兼容实现返回 null。
+    /// </summary>
+    string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null) => null;
+
+    /// <summary>
     /// 按 sha256 读取 bytes（用于本地存储或兼容旧数据）。
     /// </summary>
     Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null);
+
+    /// <summary>
+    /// 按 sha256 打开顺序读取流。用于大文件响应，避免把完整对象装入托管内存。
+    /// 不支持原生流的远端实现可返回 null，由调用方使用受控 HTTP 流式代理。
+    /// </summary>
+    Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null) => Task.FromResult<AssetReadHandle?>(null);
 
     /// <summary>
     /// 按 sha256 删除底层对象（若实现支持）。
@@ -39,6 +217,13 @@ public interface IAssetStorage
     /// 按 sha256 和 mime 类型构建公开访问 URL（不下载文件）。
     /// </summary>
     string? TryBuildUrlBySha(string sha256, string mime, string? domain = null, string? type = null);
+
+    /// <summary>
+    /// 按已保存的精确 key 打开顺序流；不支持原生流的实现返回 null。
+    /// 调用者负责释放 Content，并在读取中执行自己的大小上限。
+    /// </summary>
+    Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+        => Task.FromResult<AssetReadHandle?>(null);
 
     /// <summary>
     /// 按 key 下载对象的原始 bytes（不存在返回 null）。
@@ -62,7 +247,26 @@ public interface IAssetStorage
     /// <summary>
     /// 根据 key 构建公开访问 URL。
     /// </summary>
+    /// <remarks>
+    /// 这里的 key 是**完整物理 key**：本实现原样使用，不会替你补上自己配置的前缀。
+    /// 内容寻址对象的物理 key 由 <c>SaveAsync</c> 生成、已经含前缀，所以这个方法拼得对；
+    /// 但**跨站搬来的 key 带的是源站前缀**，那种场景要用
+    /// <see cref="BuildUrlForLogicalKey"/>。
+    /// </remarks>
     string BuildUrlForKey(string key);
+
+    /// <summary>
+    /// 根据**不带前缀的逻辑 key**（`{domain}/{type}/{文件名}`）构建本站地址：先套本站前缀，再拼公网根。
+    /// </summary>
+    /// <remarks>
+    /// 跨实例同步专用。搬过来的对象 key 带的是**源站**前缀，两站前缀不一致时，
+    /// 拿它直接走 <see cref="BuildUrlForKey"/> 会拼出 `{本站根}/{源站前缀}/...`——
+    /// 一个谁家都不是的路径（DS31）。调用方先把 key 剥成逻辑 key，前缀交给本方法套。
+    ///
+    /// 默认实现等同 <see cref="BuildUrlForKey"/>：没有前缀概念的实现（本地磁盘）本就一致，
+    /// 测试替身也不必为此改签名。真正带前缀的实现（R2 / COS）必须覆写。
+    /// </remarks>
+    string BuildUrlForLogicalKey(string logicalKey) => BuildUrlForKey(logicalKey);
 
     /// <summary>
     /// 删除指定 key 的对象。
@@ -74,4 +278,3 @@ public interface IAssetStorage
     /// </summary>
     string BuildSiteKey(string siteId, string filePath);
 }
-

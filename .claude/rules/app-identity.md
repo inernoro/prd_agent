@@ -1,5 +1,6 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+paths:
+  - "prd-api/src/**/*.cs"
 ---
 
 # 应用身份隔离原则

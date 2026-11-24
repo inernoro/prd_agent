@@ -18,8 +18,9 @@
 | `LlmGateway__DatabaseName` | `llm_gateway` | GW 租户、账号、密钥、路由、治理和审计状态库 |
 | `LlmGwJwt__Secret` | `llmgw-dev-secret-change-me-please-0001`（开发占位，必须改） | HS256 密钥，>=32 字符。独立于 MAP |
 | `LlmGwJwt__Issuer` | `prdagent-llmgw` | JWT issuer |
-| `LLMGW_ADMIN_PASSWORD` | 未设置时 `admin` | 仅首次 bootstrap 或 `LLMGW_ADMIN_FORCE_RESET=1` 破玻璃时使用；已有账号以数据库哈希为权威 |
-| `LLMGW_ADMIN_FORCE_RESET` | 空 | 设为 `1`/`true`/`yes`/`on` 时显式重置 admin 口令 |
+| `LLMGW_ADMIN_PASSWORD` | 未设置时 `admin` | 首次 bootstrap、一次性破玻璃或 env authority 模式的 admin 口令；不得提交仓库 |
+| `LLMGW_ADMIN_FORCE_RESET` | 空 | 设为真值时执行一次性幂等校准；口令和状态一致时不写库、不使会话失效 |
+| `LLMGW_ADMIN_ENV_AUTHORITY` | 空 | 设为真值时由 `LLMGW_ADMIN_PASSWORD` 长期托管 admin；要求非默认强口令，只在检测到漂移时修复 |
 | `GIT_COMMIT` | `""` | 由 CI 注入，`/gw/healthz` 回显 |
 
 环境变量用 `__` 双下划线映射到配置层级里的 `:`。
@@ -29,6 +30,7 @@
 | 方法 | 路径 | 鉴权 |
 |------|------|------|
 | GET | `/gw/healthz` | 匿名 |
+| GET | `/gw/readyz` | 匿名；真实校验控制台 Mongo 持久层 |
 | POST | `/gw/auth/login` | 匿名 |
 | GET | `/gw/logs` | JWT |
 | GET | `/gw/logs/meta` | JWT |
@@ -36,7 +38,7 @@
 | GET | `/gw/logs/sessions` | JWT |
 | GET | `/gw/logs/{id}` | JWT |
 
-除 `/gw/healthz` 外，业务端点返回 `{ success, data, error }` 信封，JSON 字段 camelCase。
+除 `/gw/healthz`、`/gw/readyz` 外，业务端点返回 `{ success, data, error }` 信封，JSON 字段 camelCase。
 
 ## 本地运行
 
@@ -68,3 +70,9 @@ docker run -p 8090:8090 \
   -e LlmGwJwt__Secret="please-change-this-to-a-strong-secret-0001" \
   prdagent-llmgw
 ```
+
+## 密钥维护的并发前置条件
+
+旧共享密钥策略保存必须提交最近读取的 `expectedPolicyRevision`；GET 的新增 `policyRevision` 为策略编辑版本，业务调用观测不改变它。确认客户端切换必须提交用户实际确认的 `expectedSuccessorKeyId`。字段缺失返回 HTTP 428（`LEGACY_POLICY_REVISION_REQUIRED` / `ROTATION_EXPECTATION_REQUIRED`），旧写客户端须先读取并升级请求，服务端不会代填最新值。
+
+策略版本失配返回 `LEGACY_POLICY_CONFLICT`；后继已变化返回 `ROTATION_PAIR_CHANGED`，均在写入前拒绝。旧共享密钥的永久撤销不可被陈旧策略恢复。轮换仍沿用既有两份密钥记录的阶段校验；这项前置条件不提供跨文档事务，写后审计或部分阶段失败仍须读取核对，不能盲重提。

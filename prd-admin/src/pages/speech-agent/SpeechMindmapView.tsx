@@ -62,7 +62,7 @@ export function SpeechMindmapView({ nodes, selectedNodeId, onSelect }: Props) {
                     </ul>
                   )}
                   {expanded && (
-                    <div className="mt-2 text-[10px] text-violet-300/70">
+                    <div className="mt-2 text-[10px] text-[color:var(--accent-fg-violet)]">
                       {childrenOf.get(n.id)?.length} 个子节点
                     </div>
                   )}

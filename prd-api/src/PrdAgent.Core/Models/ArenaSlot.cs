@@ -4,6 +4,11 @@ public class ArenaSlot
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string DisplayName { get; set; } = "";    // "GPT-4o" - shown after reveal
+    public string LogicalModelId { get; set; } = ""; // Gateway 内部稳定身份
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public string? ModelReferenceStatus { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public string? ModelReferenceReason { get; set; }
     public string PlatformId { get; set; } = "";     // reference to llm_platforms
     public string ModelId { get; set; } = "";        // platform-side model identifier
     public string Group { get; set; } = "";          // group key like "global-frontier"

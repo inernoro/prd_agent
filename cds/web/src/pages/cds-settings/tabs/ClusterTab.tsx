@@ -31,6 +31,8 @@ interface TokenResponse {
   masterUrl?: string;
   expiresAt?: string;
   ttlSeconds?: number;
+  /** 主节点绑回环 + 连接码指向裸端口时的可达性告警（后端 describeBootstrapReachability）。 */
+  reachabilityWarning?: string | null;
 }
 
 interface JoinResponse {
@@ -52,7 +54,7 @@ function formatDate(value?: string | null): string {
   if (!value) return '暂无';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '暂无';
-  return date.toLocaleString();
+  return date.toLocaleString('zh-CN', { hourCycle: 'h23' });
 }
 
 function formatUptime(seconds: number): string {
@@ -216,25 +218,25 @@ export function ClusterTab(): JSX.Element {
   return (
     <Section title="集群" description="主节点、执行器与本机容量。">
       <div className="space-y-5">
-        <div className="grid gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <MetricTile label="运行模式" value={mode} />
           <MetricTile label="远端节点" value={status.remoteExecutorCount || remoteNodes.length || 0} />
           <MetricTile label="空闲容量" value={capacity?.freePercent !== undefined ? `${Math.round(capacity.freePercent)}%` : '未知'} />
           <MetricTile label="本机运行" value={formatUptime(host.uptimeSeconds)} />
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22.5rem]">
           <div className="space-y-4">
             <div className="rounded-md border border-border bg-card p-4">
-              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
+              <div className="mb-4">
+                <div className="flex items-center justify-between gap-3">
                   <h3 className="text-sm font-semibold">执行器节点</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">排空用于停止接新部署；移除只清注册表，不停止远端进程。</p>
+                  <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={() => void load()}>
+                    <RefreshCw />
+                    刷新
+                  </Button>
                 </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
-                  <RefreshCw />
-                  刷新
-                </Button>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">排空用于停止接新部署；移除只清注册表，不停止远端进程。</p>
               </div>
 
               {nodes.length === 0 ? (
@@ -294,7 +296,7 @@ export function ClusterTab(): JSX.Element {
           <aside className="space-y-4">
             <div className="rounded-md border border-border bg-card p-4">
               <div className="mb-4 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-ok" />
                 <h3 className="text-sm font-semibold">本机健康</h3>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -314,18 +316,26 @@ export function ClusterTab(): JSX.Element {
                   <h3 className="text-sm font-semibold">扩容连接码</h3>
                   <p className="mt-1 text-xs text-muted-foreground">在主节点生成，复制到另一台机器加入。</p>
                 </div>
-                <Button type="button" size="sm" onClick={() => void issueToken()} disabled={Boolean(action.issue)}>
+                <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" size="sm" onClick={() => void issueToken()} disabled={Boolean(action.issue)}>
                   {action.issue ? <Loader2 className="animate-spin" /> : <Link2 />}
                   签发
                 </Button>
               </div>
               {token ? (
                 <div className="space-y-3">
+                  {/* 拿着一个注定连不上的码去另一台机器试，那边只会看到 connection refused。
+                      所以可达性问题必须贴在码旁边，不能只落在服务端日志里。 */}
+                  {token.reachabilityWarning ? (
+                    <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+                      {token.reachabilityWarning}
+                    </p>
+                  ) : null}
                   <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-3 font-mono text-xs">
                     {token.connectionCode}
                   </pre>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
+                      className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0"
                       type="button"
                       variant="outline"
                       size="sm"
@@ -346,13 +356,14 @@ export function ClusterTab(): JSX.Element {
                 <h3 className="text-sm font-semibold">加入主节点</h3>
               </div>
               <textarea
+                aria-label="集群连接码"
                 value={joinCode}
                 onChange={(event) => setJoinCode(event.target.value)}
                 className="min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="粘贴 connection code"
               />
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button type="submit" disabled={Boolean(action.join)}>
+                <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="submit" disabled={Boolean(action.join)}>
                   {action.join ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
                   加入
                 </Button>
@@ -364,7 +375,7 @@ export function ClusterTab(): JSX.Element {
                   disabled={!canLeave}
                   onConfirm={leaveCluster}
                   trigger={
-                    <Button type="button" variant="outline" disabled={!canLeave || Boolean(action.leave)}>
+                    <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" disabled={!canLeave || Boolean(action.leave)}>
                       {action.leave ? <Loader2 className="animate-spin" /> : <Unplug />}
                       退出
                     </Button>
@@ -372,7 +383,7 @@ export function ClusterTab(): JSX.Element {
                 />
               </div>
               {joinResult?.executorId ? (
-                <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+                <div className="mt-3 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-xs text-ok">
                   已注册：{joinResult.executorId}
                 </div>
               ) : null}
@@ -405,24 +416,24 @@ function ExecutorCard({
   const memPercent = executorMemPercent(node);
   const statusClass =
     node.status === 'online'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+      ? 'border-ok/30 bg-ok-soft text-ok'
       : node.status === 'draining'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-600'
+        ? 'border-warn/30 bg-warn-soft text-warn'
         : 'border-destructive/30 bg-destructive/10 text-destructive';
 
   return (
-    <Card>
+    <Card className="border-border shadow-none" data-executor-id={node.id}>
       <CardContent className="p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="flex min-w-0 items-start gap-2">
               <Network className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="truncate text-sm font-semibold">{node.id || '?'}</span>
-              <span className={`rounded border px-1.5 py-0.5 text-xs ${statusClass}`}>
+              <span className="min-w-0 flex-1 break-all text-sm font-semibold">{node.id || '?'}</span>
+              <span className={`shrink-0 whitespace-nowrap rounded border px-1.5 py-0.5 text-xs ${statusClass}`}>
                 {actionLabel || node.status || 'unknown'}
               </span>
             </div>
-            <div className="mt-2 truncate text-xs text-muted-foreground">
+            <div className="mt-2 break-words text-xs leading-5 text-muted-foreground">
               {node.host || 'local'}{node.port ? `:${node.port}` : ''} · {node.role || 'remote'} · 心跳 {formatDate(node.lastHeartbeat)}
             </div>
           </div>
@@ -435,7 +446,7 @@ function ExecutorCard({
               pending={Boolean(actionLabel)}
               onConfirm={onDrain}
               trigger={
-                <Button type="button" variant="outline" size="sm" disabled={isEmbedded || node.status !== 'online' || Boolean(actionLabel)}>
+                <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" disabled={isEmbedded || node.status !== 'online' || Boolean(actionLabel)}>
                   <PowerOff />
                   排空
                 </Button>
@@ -454,7 +465,7 @@ function ExecutorCard({
               pending={Boolean(actionLabel)}
               onConfirm={onRemove}
               trigger={
-                <Button type="button" variant="outline" size="sm" disabled={isEmbedded || Boolean(actionLabel)}>
+                <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" disabled={isEmbedded || Boolean(actionLabel)}>
                   <Trash2 />
                   移除
                 </Button>
@@ -462,12 +473,12 @@ function ExecutorCard({
             />
           </div>
         </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-4">
-          <MetricTile label="分支" value={node.branchCount || 0} />
-          <MetricTile label="容器" value={node.runningContainers ?? '-'} />
-          <MetricTile label="CPU" value={`${node.load?.cpuPercent ?? 0}%`} />
-          <MetricTile label="内存" value={`${memPercent}%`} />
-        </div>
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3 text-sm sm:grid-cols-4">
+          <div><dt className="text-xs text-muted-foreground">分支</dt><dd className="mt-1 font-semibold">{node.branchCount || 0}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">容器</dt><dd className="mt-1 font-semibold">{node.runningContainers ?? '-'}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">CPU</dt><dd className="mt-1 font-semibold">{node.load?.cpuPercent ?? 0}%</dd></div>
+          <div><dt className="text-xs text-muted-foreground">内存</dt><dd className="mt-1 font-semibold">{memPercent}%</dd></div>
+        </dl>
       </CardContent>
     </Card>
   );
@@ -502,7 +513,7 @@ function StrategySwitcher({ current, onChange }: {
               setSubmitting(opt.value);
               try { await onChange(opt.value); } finally { setSubmitting(null); }
             }}
-            className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${
+            className={`inline-flex min-h-[3.25rem] items-center gap-1 rounded-md border px-2 py-0.5 text-xs sm:min-h-0 ${
               active
                 ? 'border-primary bg-primary/10 text-primary'
                 : 'border-border bg-card hover:border-primary/40 hover:bg-muted/30'

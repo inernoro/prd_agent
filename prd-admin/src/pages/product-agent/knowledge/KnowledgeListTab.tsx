@@ -213,7 +213,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
         )}
         <div className="ml-auto flex items-center gap-2">
           {uploading && <MapSpinner size={14} />}
-          <button onClick={() => void handleCreate()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm" data-tour-id="knowledge-create">
+          <button onClick={() => void handleCreate()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm" data-tour-id="knowledge-create">
             <Plus size={14} /> 新建文档
           </button>
           <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-token-secondary border border-token-subtle hover-bg-soft text-sm disabled:opacity-50" data-tour-id="knowledge-upload">
@@ -243,7 +243,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
             </div>
             {!hasFilter && (
               <div className="flex items-center gap-2 mt-2">
-                <button onClick={() => void handleCreate()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"><Plus size={14} /> 新建文档</button>
+                <button onClick={() => void handleCreate()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"><Plus size={14} /> 新建文档</button>
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-token-secondary border border-token-subtle hover-bg-soft text-sm"><Upload size={14} /> 上传文件</button>
               </div>
             )}
@@ -296,12 +296,12 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                         {e.title}
                       </span>
                     )}
-                    {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/90 border border-cyan-500/20 shrink-0">{e.category}</span>}
+                    {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)] border border-cyan-500/20 shrink-0">{e.category}</span>}
                     {(e.tags ?? []).slice(0, 3).map((t) => (
                       <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{t}</span>
                     ))}
                     {vIds.slice(0, 3).map((id) => (
-                      <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300/90 border border-purple-500/20 shrink-0 inline-flex items-center gap-0.5">
+                      <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-[color:var(--accent-fg-violet)] border border-purple-500/20 shrink-0 inline-flex items-center gap-0.5">
                         <GitBranch size={9} /> {versionName.get(id) ?? '已删版本'}
                       </span>
                     ))}
@@ -369,7 +369,7 @@ function MoveToFolderDialog({ entry, folders, onClose, onMove }: {
     `w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm ${on ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30' : 'text-token-secondary border-token-subtle bg-token-nested hover-bg-soft'}`;
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col" style={{ width: 400, maxWidth: '92vw', maxHeight: '70vh' }} onClick={(e) => e.stopPropagation()}>
+      <div className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] flex flex-col" style={{ width: 400, maxWidth: '92vw', maxHeight: '70vh' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
           <h2 className="text-sm font-semibold text-token-primary flex items-center gap-2"><FolderInput size={14} className="text-cyan-400" /> 移动到文件夹</h2>
           <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={16} /></button>

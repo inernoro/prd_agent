@@ -24,6 +24,7 @@ import {
 } from '@/services';
 import type { DocumentEntry, SubscriptionDetail } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
+import { subscriptionIntervalOptions } from '@/components/doc-browser/subscriptionEntryState';
 
 // ── 时间格式化辅助 ──
 
@@ -77,7 +78,7 @@ function StatusBadge({ status, paused }: { status?: string; paused: boolean }) {
   if (status === 'syncing') {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-        style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
+        style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(59,130,246,0.25)' }}>
         <MapSpinner size={10} /> 同步中
       </span>
     );
@@ -85,14 +86,14 @@ function StatusBadge({ status, paused }: { status?: string; paused: boolean }) {
   if (status === 'error') {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-        style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
+        style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.25)' }}>
         <AlertCircle size={10} /> 出错
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-      style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
+      style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.25)' }}>
       <CheckCircle2 size={10} /> 正常
     </span>
   );
@@ -234,8 +235,8 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
   const accent = isGithub ? '130,80,223' : '234,179,8';
   const Icon = isGithub ? Github : Rss;
 
-  // 间隔选项：GitHub 最小 1 小时（避免 API 限流），URL 5 分钟起
-  const intervalOptions = isGithub ? [60, 360, 720, 1440] : [15, 60, 360, 1440];
+  // 档位表与后端钳制共用一个判据：GitHub 目录后端固定每天一次，界面就不摆别的档位
+  const intervalOptions = subscriptionIntervalOptions(data?.entry.sourceType);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end"
@@ -333,7 +334,7 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
                   style={{
                     background: 'rgba(239,68,68,0.08)',
                     border: '1px solid rgba(239,68,68,0.2)',
-                    color: 'rgba(248,113,113,0.95)',
+                    color: 'var(--accent-fg-danger)',
                   }}>
                   {data.entry.syncError}
                 </div>
@@ -358,9 +359,18 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
               </div>
             </div>
 
-            {/* 间隔调整 */}
+            {/* 间隔调整。GitHub 目录没有可选档位（后端固定每天一次），改成说明而不是摆一排点了没用的按钮 */}
             <div className="mx-5 mt-4">
-              <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>调整同步间隔</p>
+              <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                {intervalOptions.length === 0 ? '同步频率' : '调整同步间隔'}
+              </p>
+              {intervalOptions.length === 0 ? (
+                <div className="px-3 py-2 rounded-[8px] text-[11px] leading-[1.7] bg-token-nested"
+                  style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                  每天自动同步一次，不可调整——一个目录几十篇文档，更快的频率会把 GitHub 的调用限额打满。
+                  想立刻拿到最新内容，用上面的「立即同步」。
+                </div>
+              ) : (
               <div className="flex gap-1.5">
                 {intervalOptions.map(m => {
                   const active = data.entry.syncIntervalMinutes === m;
@@ -378,6 +388,7 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
                   );
                 })}
               </div>
+              )}
             </div>
 
             {/* 时间线 */}

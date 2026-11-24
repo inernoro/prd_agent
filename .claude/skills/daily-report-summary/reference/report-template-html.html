@@ -128,10 +128,16 @@
   .story:last-child { border-bottom: none; }
   .story h4 { font-family: var(--serif); font-size: 18.5px; font-weight: 650; line-height: 1.5; margin-top: 6px; }
   .story .prose { margin-top: 10px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
-  .story figure { margin: 14px 0 4px; }
-  .story figure img { width: 100%; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
-  .story figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
-  .story figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+  /* 通用证据图规则（不限于 .story）：IMG 占位由 publish.py 展开成裸
+     <figure><img><figcaption></figure>，不带任何 class；若尺寸规则只挂在 .story 下，
+     （此处不能写出占位的字面写法：CSS 注释不会被剥掉，会被发布闸当成未替换的占位）
+     任何在 .story 之外插入的证据图（如附加章节里的走查截图）会拿不到 width:100%，
+     按截图的原始物理像素（deviceScaleFactor=2 时常是 2880x1800）平铺，撑破 960px 页面
+     产生巨幅横向溢出——2026-09-07 日报「视察评审」节实测踩中，故收窄为全局规则。 */
+  figure { margin: 14px 0 4px; }
+  figure img { width: 100%; max-width: 100%; height: auto; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--terra); border: 1px solid var(--terra); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
 
   /* 安全专栏印章感 */
   .security { border: 1.5px solid var(--terra); border-radius: 3px; background: rgba(192,91,60,0.04); padding: 16px 18px; margin-top: 20px; }

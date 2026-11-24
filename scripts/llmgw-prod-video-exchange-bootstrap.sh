@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Production helper for the LLM Gateway cutover: create a Volcengine Seedance
+# Production helper for the LLM Gateway: create a Volcengine Seedance
 # video ModelExchange, then optionally move video-gen pools to that exchange.
 # Dry-run is the default; execute mode takes a Mongo backup first.
 

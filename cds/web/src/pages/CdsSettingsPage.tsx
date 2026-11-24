@@ -1,38 +1,26 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-import {
-  Activity,
-  Boxes,
-  Database,
-  Github,
-  History,
-  KeyRound,
-  Monitor,
-  Network,
-  Plug,
-  Save,
-  ServerCog,
-  Settings,
-  ShieldAlert,
-  ShieldCheck,
-  TerminalSquare,
-  Timer,
-  Users,
-  Wrench,
-} from 'lucide-react';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
+import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
+import { lazy, Suspense, useContext, useEffect, useState } from 'react';
+import { SettingsLoadingContext, SettingsPageSkeleton, SystemSettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { ButtonSizeProvider } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
+import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
+const IdentityTab = lazy(() => import('@/pages/cds-settings/tabs/IdentityTab').then((m) => ({ default: m.IdentityTab })));
 const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
 const UsersTab = lazy(() => import('@/pages/cds-settings/tabs/UsersTab').then((m) => ({ default: m.UsersTab })));
 const ActivityTab = lazy(() => import('@/pages/cds-settings/tabs/ActivityTab').then((m) => ({ default: m.ActivityTab })));
 const ClusterTab = lazy(() => import('@/pages/cds-settings/tabs/ClusterTab').then((m) => ({ default: m.ClusterTab })));
 const ConnectionsTab = lazy(() => import('@/pages/cds-settings/tabs/ConnectionsTab').then((m) => ({ default: m.ConnectionsTab })));
+const AlarmNotifyTab = lazy(() => import('@/pages/cds-settings/tabs/AlarmNotifyTab').then((m) => ({ default: m.AlarmNotifyTab })));
 const ConfigSnapshotsTab = lazy(() => import('@/pages/cds-settings/tabs/ConfigSnapshotsTab').then((m) => ({ default: m.ConfigSnapshotsTab })));
 const GitHubAppTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubAppTab').then((m) => ({ default: m.GitHubAppTab })));
 const GitHubAppWhitelistTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubAppWhitelistTab').then((m) => ({ default: m.GitHubAppWhitelistTab })));
@@ -61,6 +49,7 @@ type TabValue =
   | 'users'
   | 'activity'
   | 'access-keys'
+  | 'identity'
   | 'github'
   | 'github-whitelist'
   | 'webhook-log'
@@ -69,6 +58,7 @@ type TabValue =
   | 'cluster'
   | 'remote-hosts'
   | 'connections'
+  | 'alarm-notify'
   | 'global-vars'
   | 'loading-pages'
   | 'snapshots'
@@ -84,7 +74,8 @@ interface TabItem {
 }
 
 interface TabGroup {
-  label: string;
+  /** 只能用 settingsTaxonomy 词表里的组名；写别的编译不过。 */
+  label: SettingsGroupLabel;
   items: TabItem[];
 }
 
@@ -98,47 +89,175 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'maintenance', label: 'CDS 更新', icon: Wrench },
       { value: 'update-history', label: '自更新历史', icon: History },
-      { value: 'docker-network', label: 'Docker 网络容量', icon: Network },
-      { value: 'danger', label: '危险操作', icon: ShieldAlert },
-      // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
-      // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
-      // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
-      { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
       { value: 'overview', label: '概览', icon: Settings },
     ],
   },
   {
+    // 这是谁、从哪来、谁能进：账号、密钥、权限、GitHub、外部系统
     label: '接入',
     items: [
       { value: 'auth', label: '登录与认证', icon: KeyRound },
       { value: 'users', label: '用户管理', icon: Users },
-      { value: 'activity', label: '用户痕迹', icon: Activity },
+      // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
+      // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
+      // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
+      { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
+      { value: 'identity', label: '权限总览', icon: Users },
       { value: 'github', label: 'GitHub 集成', icon: Github },
       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
-      { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
       { value: 'connections', label: '外部接入', icon: Plug },
+      { value: 'alarm-notify', label: '通知通道', icon: BellRing },
     ],
   },
   {
-    label: '运行时',
+    // 它怎么跑起来：调度、集群、主机、全局变量、加载页
+    label: '运行',
     items: [
-      { value: 'storage', label: '存储后端', icon: Database },
       { value: 'scheduler', label: '调度器', icon: Timer },
       { value: 'cluster', label: '集群', icon: Boxes },
       { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
       { value: 'loading-pages', label: '加载页预览', icon: Monitor },
+    ],
+  },
+  {
+    // 它的数据放哪：状态存储后端、配置快照
+    label: '数据',
+    items: [
+      { value: 'storage', label: '存储后端', icon: Database },
       { value: 'snapshots', label: '配置快照', icon: Save },
     ],
+  },
+  {
+    // 它跑得怎么样：痕迹、投递日志、容量
+    label: '观测',
+    items: [
+      { value: 'activity', label: '用户痕迹', icon: Activity },
+      { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
+      { value: 'docker-network', label: 'Docker 网络容量', icon: Network },
+    ],
+  },
+  {
+    label: '危险区',
+    items: [{ value: 'danger', label: '危险操作', icon: ShieldAlert }],
   },
 ];
 
 const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
-// 这两个 tab 由 auth-local 路由(仅在 authMode==='github' 时挂载)支撑。
-// basic / disabled 模式下后端根本没注册 /api/auth/users、/api/auth/activity,
-// 无条件渲染会直接 404。按运行时 authMode 门控,非 github 模式一律隐藏。
-const AUTH_GATED_TABS = new Set<TabValue>(['users', 'activity']);
+const AUTH_MODE_LABELS: Record<string, string> = {
+  github: 'GitHub OAuth',
+  basic: '账号密码',
+  sso: 'SSO',
+  disabled: '未启用',
+};
+
+/**
+ * 用户管理 / 用户痕迹两个 tab 由 auth-local 路由支撑。是否可用由后端
+ * capabilities 明确声明，前端不得再从认证模式名称推断。
+ *
+ * 2026-08-25 改法修正:此前是「非 github 模式整条 tab 从导航里消失」。用户在
+ * basic 部署上看到的现象是「用户管理不见了」,分不清是被砍了、坏了还是被藏了
+ * (expectation-management:功能不许无声消失)。现在 tab 永远在,
+ * 只是把会 404 的子组件换成这块说明:当前是什么模式、为什么用不了、怎么开。
+ */
+export function AuthModeGatedNotice({
+  feature,
+  mode,
+  onGoToAuth,
+  probeError,
+  onRetryProbe,
+}: {
+  feature: string;
+  mode: CdsAuthPublicStatus['mode'] | 'probe-failed' | null;
+  onGoToAuth: () => void;
+  probeError?: string;
+  onRetryProbe?: () => void;
+}): JSX.Element {
+  if (!mode) return <SettingsTabFallback />;
+  if (mode === 'probe-failed') {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-base font-semibold">{feature}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            没能读到这台 CDS 的当前认证模式，所以现在<strong className="text-foreground">无法判断</strong>
+            {feature}是否可用——这是探测失败，不是「认证未启用」。请稍后重试；持续失败通常说明 CDS 正在重启，或前面有网关在拦。
+          </p>
+        </div>
+        {/* 原始报错里带着方法、内部端点、状态码、requestId 和服务端返回体——那是排障
+            要用的东西，但不该是运维打开这一屏第一眼看到的内容。收进折叠区，并截断，
+            上面那句固定文案才是给人看的结论。 */}
+        {probeError ? (
+          <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs">
+            <summary className="cursor-pointer text-muted-foreground">诊断详情（排障用）</summary>
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
+              {probeError.slice(0, 400)}
+            </pre>
+          </details>
+        ) : null}
+        <div className="flex gap-2">
+          {onRetryProbe ? (
+            <button
+              type="button"
+              onClick={onRetryProbe}
+              className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+            >
+              重新探测
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onGoToAuth}
+            className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+          >
+            去「登录与认证」查看当前状态
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-base font-semibold">{feature}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          当前认证模式是 <strong className="text-foreground">{AUTH_MODE_LABELS[mode] || mode}</strong>，
+          {feature}未启用——不是被隐藏，是这台实例没有开放对应的本地用户能力。
+        </p>
+      </div>
+      {/* SSO 部署的账号在上游身份源里，让他们「改成 github 模式」等于劝人关掉 SSO —— 分开说。 */}
+      {mode === 'sso' ? (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+          <div className="font-medium">这台 CDS 的账号在上游身份源里管理</div>
+          <p className="mt-2 text-muted-foreground">
+            用户的新增、停用与密码都归发起 SSO 的那套系统管，CDS 侧不再维护第二份账号表，所以本页没有可管理的对象。
+            如需 CDS 自己管理本地账号，应另行启用账号密码能力，而不是替换现有 SSO 身份源。
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+          <div className="font-medium">要启用多用户</div>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              配置 <code className="text-foreground">CDS_USERNAME</code> /{' '}
+              <code className="text-foreground">CDS_PASSWORD</code> 启用账号密码模式；GitHub OAuth 只是可选登录方式
+            </li>
+            <li>生产环境使用持久化认证存储；原始账号登录后即为系统所有者</li>
+            <li>回到本页即可创建账号、禁用账号、重置密码，并查看用户痕迹</li>
+          </ol>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onGoToAuth}
+        className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+      >
+        去「登录与认证」查看当前状态
+      </button>
+    </div>
+  );
+}
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
@@ -152,50 +271,67 @@ function getInitialTab(): TabValue {
   return 'maintenance';
 }
 
-function SettingsTabFallback(): JSX.Element {
-  // 2026-05-28:用品牌 loader 替换裸"加载设置..." 文本,跟 CDS 视觉调性一致。
-  return (
-    <div className="flex min-h-[200px] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
-      <CdsLogoLoader size="lg" inline={false} label={<span className="text-sm text-muted-foreground">加载设置…</span>} />
-    </div>
-  );
+function SettingsTabFallback({ tab = 'auth' }: { tab?: TabValue }): JSX.Element {
+  return <SystemSettingsContentSkeleton tab={tab} />;
+}
+
+export function settingsTitleForViewer(status: ShellAuthStatus | null): string {
+  return status?.user && !canManageSystemSettings(status) ? '个人痕迹' : '系统设置';
+}
+
+export function settingsTabForViewer(requested: TabValue, canManageSettings: boolean): TabValue {
+  return canManageSettings ? requested : 'activity';
 }
 
 export function CdsSettingsPage(): JSX.Element {
-  const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const [requestedTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const { status: viewerStatus, pending: viewerPending, retry: retryViewer } = useContext(ConsoleAuthContext);
+  const canManageSettings = canManageSystemSettings(viewerStatus);
+  const activeTab = settingsTabForViewer(requestedTab, canManageSettings);
+  const tabsListRef = useSettingsTabVisibility(activeTab);
   const [toast, setToast] = useState('');
-  // null = 认证模式探测中;非 github 时隐藏用户管理/用户痕迹 tab(其后端未挂载)。
-  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | null>(null);
-  const authTabsVisible = authMode === 'github';
+  // null = 探测中;'probe-failed' = 没问出来。**探测失败不等于「认证未启用」**:
+  // 把失败当成 disabled，会让一台其实跑在 GitHub 模式的实例被告知「认证没开、去改
+  // CDS_AUTH_MODE 再重启」——拿推断出来的模式当权威结论，正是 expectation-management
+  // 要治的那种失控。所以失败单列一态，给可重试的诊断而不是编一个模式。
+  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | 'probe-failed' | null>(null);
+  const [authCapabilities, setAuthCapabilities] = useState<CdsAuthPublicStatus['capabilities'] | null>(null);
+  const [authProbeError, setAuthProbeError] = useState('');
+  const [authProbeSeq, setAuthProbeSeq] = useState(0);
+  const usersVisible = authCapabilities?.userManagement === true;
+  const activityVisible = authCapabilities?.userActivity === true;
 
   useEffect(() => {
     let alive = true;
     // /api/auth/public-status 在所有认证模式下都挂载(server.ts:1802,早于 github-only 块),
-    // 是判定当前模式的权威且安全入口。探测失败按最保守处理:隐藏 auth 相关 tab。
+    // 是判定当前模式的权威且安全入口。
+    setAuthMode(null);
+    setAuthCapabilities(null);
     fetchAuthPublicStatus()
-      .then((status) => { if (alive) setAuthMode(status.mode); })
-      .catch(() => { if (alive) setAuthMode('disabled'); });
+      .then((status) => {
+        if (alive) {
+          setAuthMode(status.mode);
+          setAuthCapabilities(status.capabilities);
+          setAuthProbeError('');
+        }
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setAuthMode('probe-failed');
+        setAuthProbeError(err instanceof Error ? err.message : String(err));
+      });
     return () => { alive = false; };
-  }, []);
+  }, [authProbeSeq]);
 
-  // 认证模式确定后,若当前停在被隐藏的 tab(如 #hash 直链到 users),回退到默认 tab,
-  // 避免右侧内容区空白 + 触发 404。
-  useEffect(() => {
-    if (authMode && authMode !== 'github' && AUTH_GATED_TABS.has(activeTab)) {
-      setActiveTab('maintenance');
-    }
-  }, [authMode, activeTab]);
-
-  const visibleTabGroups = tabGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((tab) => authTabsVisible || !AUTH_GATED_TABS.has(tab.value)),
-    }))
-    .filter((group) => group.items.length > 0);
+  // 所有者保留原模式提示；成员只能看自己的痕迹，深链也不能挂载维护页。
+  const visibleTabGroups = canManageSettings ? tabGroups : [
+    { label: '观测', items: tabs.filter(tab => tab.value === 'activity') },
+  ];
 
   useEffect(() => {
-    window.history.replaceState(null, '', `#${activeTab}`);
-  }, [activeTab]);
+    if (!viewerStatus) return;
+    window.history.replaceState(window.history.state, '', `#${activeTab}`);
+  }, [activeTab, viewerStatus]);
 
   useEffect(() => {
     const syncFromHash = () => setActiveTab(getInitialTab());
@@ -218,23 +354,41 @@ export function CdsSettingsPage(): JSX.Element {
             <Crumb
               items={[
                 { label: 'CDS', href: '/project-list' },
-                { label: '系统设置' },
+                { label: settingsTitleForViewer(viewerStatus) },
               ]}
             />
           }
         />
       }
     >
-      <Workspace className="cds-workspace-settings">
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-          <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-            <TabsList
-              aria-label="CDS 系统设置分区"
-              className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
-            >
+      {/* 与项目设置页同一套满铺外壳：两个设置页此前一个 1440 居中、一个 1240 居中，
+          宽度本来就不一致；项目设置改成满铺后若只搬一半，反而更割裂。 */}
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {authMode === 'probe-failed' ? (
+          <AuthModeGatedNotice feature="设置页面" mode="probe-failed" probeError={authProbeError}
+            onRetryProbe={() => setAuthProbeSeq(n => n + 1)} onGoToAuth={() => setActiveTab('auth')} />
+        ) : !viewerPending && !viewerStatus ? (
+          <section role="alert" className="space-y-3 p-6 text-sm">
+            <p>登录状态暂时无法确认，请重试。</p>
+            <button type="button" className="text-primary underline" onClick={retryViewer}>重新检查登录状态</button>
+          </section>
+        ) : viewerPending || !viewerStatus || !authCapabilities ? <SettingsPageSkeleton personal={!!viewerStatus && !canManageSettings} systemTab={activeTab} /> : (
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as TabValue)}
+          className="cds-settings-shell"
+        >
+          <div className="cds-settings-layout">
+            <SettingsDirectory groups={visibleTabGroups} value={activeTab} label="CDS 系统设置目录" onChange={value => setActiveTab(value as TabValue)} />
+              <div className="cds-settings-desktop-directory">
+              <TabsList ref={tabsListRef} aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
+              <div className="cds-settings-rail-head">
+                <div className="text-sm font-semibold">{canManageSettings ? 'CDS 系统设置' : '个人痕迹'}</div>
+                <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{canManageSettings ? 'system' : 'account'}</div>
+              </div>
               {visibleTabGroups.map((group, groupIdx) => (
-                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
-                  <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
+                  <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {group.label}
                   </div>
                   {group.items.map((tab) => {
@@ -249,9 +403,13 @@ export function CdsSettingsPage(): JSX.Element {
                 </div>
               ))}
             </TabsList>
+              </div>
 
-            <div className="cds-settings-content cds-surface-raised cds-hairline min-w-0 p-5">
-              <Suspense fallback={<SettingsTabFallback />}>
+            <div className="cds-settings-content min-w-0">
+              <ButtonSizeProvider value="sm">
+              <div className="cds-settings-section-body">
+              <SettingsLoadingContext.Provider value={true}>
+              <Suspense fallback={<SettingsTabFallback tab={activeTab} />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
                 </TabsContent>
@@ -259,13 +417,41 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'auth' ? <AuthTab /> : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab === 'users' && authTabsVisible ? <UsersTab onToast={setToast} /> : null}
+                  {activeTab !== 'users' ? null : usersVisible ? (
+                    <UsersTab
+                      onToast={setToast}
+                      durableUsers={authCapabilities?.durableUsers === true}
+                    />
+                  ) : (
+                    <AuthModeGatedNotice
+                      feature="用户管理"
+                      mode={authMode}
+                      probeError={authProbeError}
+                      onRetryProbe={() => setAuthProbeSeq((n) => n + 1)}
+                      onGoToAuth={() => setActiveTab('auth')}
+                    />
+                  )}
                 </TabsContent>
                 <TabsContent value="activity">
-                  {activeTab === 'activity' && authTabsVisible ? <ActivityTab /> : null}
+                  {activeTab !== 'activity' ? null : activityVisible ? (
+                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings} />
+                  ) : !canManageSettings ? (
+                    <p className="text-sm text-muted-foreground">当前认证方式不提供个人操作记录，请联系系统所有者。</p>
+                  ) : (
+                    <AuthModeGatedNotice
+                      feature="用户痕迹"
+                      mode={authMode}
+                      probeError={authProbeError}
+                      onRetryProbe={() => setAuthProbeSeq((n) => n + 1)}
+                      onGoToAuth={() => setActiveTab('auth')}
+                    />
+                  )}
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="identity">
+                  {activeTab === 'identity' ? <IdentityTab onToast={setToast} /> : null}
                 </TabsContent>
                 <TabsContent value="github">
                   {activeTab === 'github' ? <GitHubAppTab onToast={setToast} /> : null}
@@ -291,6 +477,9 @@ export function CdsSettingsPage(): JSX.Element {
                 <TabsContent value="connections">
                   {activeTab === 'connections' ? <ConnectionsTab onToast={setToast} /> : null}
                 </TabsContent>
+                <TabsContent value="alarm-notify">
+                  {activeTab === 'alarm-notify' ? <AlarmNotifyTab /> : null}
+                </TabsContent>
                 <TabsContent value="global-vars">
                   {activeTab === 'global-vars' ? <GlobalVarsTab onToast={setToast} /> : null}
                 </TabsContent>
@@ -302,7 +491,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="maintenance">
                   {activeTab === 'maintenance' ? (
-                    <div className="space-y-5">
+                    <div className="space-y-3">
                       <MaintenanceTab onToast={setToast} />
                       <DisclosurePanel title="镜像与外观" subtitle="镜像加速和浏览器标签设置">
                         <MirrorTab />
@@ -320,9 +509,13 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
+              </SettingsLoadingContext.Provider>
+              </div>
+              </ButtonSizeProvider>
             </div>
           </div>
         </Tabs>
+        )}
 
         {toast ? (
           <div

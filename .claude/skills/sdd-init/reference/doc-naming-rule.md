@@ -31,7 +31,8 @@
 | `rule.` | 为什么不能那样做 | 规范约定、红线、审计口径 |
 | `guide.` | 怎么操作 | 操作手册、上手指南、排障备忘 |
 | `report.` | 做了什么 | 周报、复盘、阶段总结 |
-| `debt.` | 欠了什么 | 已知边界、后续可补、TODO 留尾、不确定风险 |
+
+项目的已知边界、暂缓风险与偿还条件登记到 CDS 工程规划，文档引用实际债务编号。
 
 ## 命名示例
 
@@ -40,7 +41,6 @@
   spec.checkout.md                 结算功能整体规格
   spec.checkout.coupon.md          结算-优惠券子模块
   design.checkout.payment-flow.md  支付流程技术设计
-  debt.checkout.md                 结算模块的债务台账
 
 错误：
   spec.checkout-coupon.md    领域名和子模块黏死，应点分

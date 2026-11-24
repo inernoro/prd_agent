@@ -13,12 +13,29 @@
  *   3. 任何对外的时序输出都先降采样到固定桶数，禁止一次吐几万点。
  */
 
+/** A scalar actually returned by the configured health-json check. */
+export interface UptimeMeasurement {
+  name: string;
+  field: 'status' | 'observedValue';
+  actual: string | number | boolean | null;
+  expected: string;
+  op: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  unit?: string;
+}
+
 /** 单次探测采样。字段用短名，因为要按 target 存上千条并落盘。 */
 export interface UptimeSample {
+  exchange?: { request: { method: string; url: string }; response?: { status: number; contentType?: string; excerpt?: unknown }; note: string };
+
+  measurement?: UptimeMeasurement;
+  /** 已脱离协议语法的指标读数说明。 */
+  finding?: string;
   /** 采样时刻（epoch ms） */
   t: number;
   /** 该次探测是否判定为存活 */
   up: boolean;
+  /** 明确无观测样本；不计可用率、不推动故障或恢复。 */
+  noData?: boolean;
   /** 响应耗时（毫秒）。探测未发出时为 0。 */
   ms: number;
   /** HTTP 状态码（HTTP 探测才有） */
@@ -49,6 +66,18 @@ export interface UptimeIncident {
   endedAt: number | null;
   /** 触发原因（首次失败的 err / HTTP 状态） */
   cause: string;
+  startedSample?: UptimeSample;
+  endedSample?: UptimeSample;
+  /** Bounded trigger-time evidence; delivery state remains in channel history. */
+  notificationSamples?: UptimeSample[];
+}
+
+/** Decouple evidence from mutable probe records and future samples. */
+export function snapshotUptimeSample(sample: UptimeSample): UptimeSample {
+  const { t, up, ms, noData, code, err, finding, measurement } = sample;
+  return { t, up, ms, ...(noData === undefined ? {} : { noData }), ...(code === undefined ? {} : { code }),
+    ...(err === undefined ? {} : { err }), ...(finding === undefined ? {} : { finding }),
+    ...(measurement ? { measurement: { ...measurement } } : {}) };
 }
 
 /** 存活状态。paused = 分支被调度器降温或未运行，不计故障。 */
@@ -200,6 +229,7 @@ export function availabilityFromSamples(
   let sumMs = 0;
   let msCount = 0;
   for (const s of samples) {
+    if (s.noData) continue;
     if (s.t < fromMs || s.t > toMs) continue;
     if (s.up) {
       upCount += 1;
@@ -295,6 +325,25 @@ export interface UptimeBucket {
   down: number;
   avgLatencyMs: number | null;
   status: 'up' | 'down' | 'partial' | 'none';
+  /** Average of actual numeric health readings, not round-trip latency or a window P95. */
+  measurement?: UptimeMeasurement & { aggregation: 'average'; sampleCount: number };
+  /**
+   * 桶内**第一次**失败的缩写日志，给柱条悬浮用（「当时到底炸了什么」）。
+   * 只在原始采样带 err / code 时才有：按天聚合（7d / 30d）不保留原始失败原因，
+   * 那里一律缺省 —— 宁可没有，也不拿桶级统计编一条像日志的话。
+   */
+  fail?: UptimeBucketFailure;
+}
+
+export interface UptimeBucketFailure {
+  /** 失败采样的时刻 */
+  at: number;
+  /** 缩写日志：探测器当时给出的原因短语 */
+  err: string;
+  /** HTTP 状态码（HTTP 探测才有） */
+  code?: number;
+  /** 该桶内失败次数，等于 bucket.down；放这里让悬浮层不必再算一次 */
+  count: number;
 }
 
 /** 把请求的桶数收敛到 [1, MAX_HISTORY_POINTS]，非法值回落到 fallback。 */
@@ -302,6 +351,17 @@ export function resolveBucketCount(requested: unknown, fallback: number): number
   const n = typeof requested === 'number' ? requested : Number(requested);
   if (!Number.isFinite(n) || n <= 0) return Math.min(fallback, MAX_HISTORY_POINTS);
   return Math.min(Math.floor(n), MAX_HISTORY_POINTS);
+}
+
+/**
+ * 失败采样的缩写日志。探测器已经写好人话（`用户视角 HTTP 502` / `探测超时`），
+ * 这里只做兜底：连 err 都没有就退回状态码，两样都没有就返回 null —— 不编。
+ */
+function failureReason(sample: UptimeSample): string | null {
+  const err = sample.err?.trim();
+  if (err) return err;
+  if (sample.code !== undefined) return `HTTP ${sample.code}`;
+  return null;
 }
 
 /**
@@ -320,6 +380,8 @@ export function bucketizeSamples(
   const buckets: UptimeBucket[] = [];
   const sums: number[] = [];
   const msCounts: number[] = [];
+  const metric: Array<{ identity: string; reading: UptimeMeasurement; mean: number; count: number } | undefined> = [];
+  const metricInvalid: boolean[] = [];
   for (let i = 0; i < count; i++) {
     buckets.push({
       from: Math.round(fromMs + i * width),
@@ -331,25 +393,53 @@ export function bucketizeSamples(
     });
     sums.push(0);
     msCounts.push(0);
+    metricInvalid.push(false);
   }
   for (const s of samples) {
+    if (s.noData) continue;
     if (s.t < fromMs || s.t >= toMs) continue;
     const idx = Math.min(count - 1, Math.max(0, Math.floor((s.t - fromMs) / width)));
+    const reading = s.measurement;
+    const numeric = reading && (typeof reading.actual === 'number' ? reading.actual
+      : typeof reading.actual === 'string' && reading.actual.trim() ? Number(reading.actual) : Number.NaN);
+    if (!reading || numeric === undefined || !Number.isFinite(numeric)) metricInvalid[idx] = true;
+    else {
+      const identity = JSON.stringify([reading.name, reading.field, reading.op, reading.expected, reading.unit ?? '']);
+      const previous = metric[idx];
+      if (!previous) metric[idx] = { identity, reading, mean: numeric, count: 1 };
+      else if (previous.identity !== identity) metricInvalid[idx] = true;
+      else {
+        const n = previous.count + 1;
+        previous.mean = previous.mean * (previous.count / n) + numeric / n;
+        previous.count = n;
+      }
+    }
     if (s.up) {
       buckets[idx].up += 1;
       sums[idx] += s.ms;
       msCounts[idx] += 1;
     } else {
       buckets[idx].down += 1;
+      // 只留桶内**最早**那次失败：故障是从它开始的，后面往往是同一个原因的回声。
+      // 采样不保证按 t 有序，所以比时刻而不是「有没有填过」。
+      const reason = failureReason(s);
+      if (reason && (!buckets[idx].fail || s.t < (buckets[idx].fail as UptimeBucketFailure).at)) {
+        buckets[idx].fail = { at: s.t, err: reason, ...(s.code !== undefined ? { code: s.code } : {}), count: 0 };
+      }
     }
   }
   for (let i = 0; i < count; i++) {
+    const reading = metric[i];
+    if (reading && !metricInvalid[i] && Number.isFinite(reading.mean)) buckets[i].measurement = {
+      ...reading.reading, actual: reading.mean, sampleCount: reading.count, aggregation: 'average',
+    };
     const b = buckets[i];
     b.avgLatencyMs = msCounts[i] === 0 ? null : Math.round(sums[i] / msCounts[i]);
     if (b.up === 0 && b.down === 0) b.status = 'none';
     else if (b.down === 0) b.status = 'up';
     else if (b.up === 0) b.status = 'down';
     else b.status = 'partial';
+    if (b.fail) b.fail.count = b.down;
   }
   return buckets;
 }
@@ -362,7 +452,7 @@ export function bucketizeSamples(
 export function applyIncidentTransition(
   incidents: UptimeIncident[],
   transition: 'to-down' | 'to-up' | null,
-  ctx: { targetId: string; at: number; cause?: string },
+  ctx: { targetId: string; at: number; cause?: string; sample?: UptimeSample },
   maxIncidents: number = MAX_INCIDENTS_PER_TARGET,
 ): UptimeIncident[] {
   if (transition === 'to-down') {
@@ -374,6 +464,7 @@ export function applyIncidentTransition(
       startedAt: ctx.at,
       endedAt: null,
       cause: ctx.cause || '探测连续失败',
+      ...(ctx.sample ? { startedSample: snapshotUptimeSample(ctx.sample) } : {}),
     }, maxIncidents);
     return incidents;
   }
@@ -381,6 +472,7 @@ export function applyIncidentTransition(
     for (let i = incidents.length - 1; i >= 0; i--) {
       if (incidents[i].endedAt === null) {
         incidents[i].endedAt = ctx.at;
+        if (ctx.sample) incidents[i].endedSample = snapshotUptimeSample(ctx.sample);
         break;
       }
     }

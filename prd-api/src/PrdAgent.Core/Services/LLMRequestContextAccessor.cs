@@ -14,10 +14,6 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
     public IDisposable BeginScope(LlmRequestContext context)
     {
         var prev = _current.Value;
-        if (prev?.ForceFullShadowSample == true && !context.ForceFullShadowSample)
-        {
-            context = context with { ForceFullShadowSample = true };
-        }
         if (prev?.IsHealthProbe == true && context.IsHealthProbe != true)
         {
             context = context with { IsHealthProbe = true };
@@ -40,6 +36,20 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
             && string.IsNullOrWhiteSpace(context.LogicalModelPublicId))
         {
             context = context with { LogicalModelPublicId = prev.LogicalModelPublicId };
+        }
+        // 网关核验后的来源在嵌套日志作用域继续保留，不能被业务上下文遗漏或自报值改写。
+        if (!string.IsNullOrWhiteSpace(prev?.TaskPermitId))
+        {
+            context = context with
+            {
+                TaskPermitId = prev.TaskPermitId,
+                ExecutionOrigin = prev.ExecutionOrigin,
+                TriggerCredentialId = prev.TriggerCredentialId,
+                TriggerActorUserId = prev.TriggerActorUserId,
+                SourceDeployment = prev.SourceDeployment,
+                SourceTask = prev.SourceTask,
+                SourceSystem = prev.SourceSystem,
+            };
         }
         _current.Value = context;
         return new Scope(() => _current.Value = prev);

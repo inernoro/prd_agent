@@ -7,6 +7,7 @@ import {
   isBinaryContentType,
   isTextualContentType,
   redactBodyText,
+  selectRequestBodyForHttpLog,
 } from '../../src/services/http-log-store.js';
 
 describe('http log body redaction', () => {
@@ -28,6 +29,34 @@ describe('http log body redaction', () => {
     const result = bodyPreviewFromUnknown({ status: 'approved', authorizationKey: 'cdsp_demo_abc123secretplaintext' });
     expect(result.bodyPreview).toContain('"authorizationKey":"[redacted]"');
     expect(result.bodyPreview).not.toContain('cdsp_demo_abc123secretplaintext');
+  });
+
+  it('接入提议被拒前的请求日志也按值脱敏 cdsmon_，不依赖字段名', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    const result = bodyPreviewFromUnknown({
+      agentName: '审核智能体',
+      proposals: [{ name: credential, kind: 'http', url: 'https://audit.example/health' }],
+    }, 'application/json');
+    expect(result.bodyPreview).toContain('"name":"[redacted]"');
+    expect(result.bodyPreview).toContain('https://audit.example/health');
+    expect(result.bodyPreview).not.toContain(credential);
+  });
+
+  it('纯文本中的 cdsmon_ 接入凭据脱敏且保留普通服务名称', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    expect(redactBodyText(`agent returned ${credential} for cdsmon_healthz`))
+      .toBe('agent returned [redacted] for cdsmon_healthz');
+  });
+
+  it('截断后无法解析的 JSON 捕获仍清除未知字段中的完整 cdsmon_ 凭据', () => {
+    const credential = 'cdsmon_' + 'AuditCanary_0123456789-abcdefghijklmnopqrstuv';
+    const capture = createBodyCapture(undefined, 'application/json');
+    capture.onChunk(JSON.stringify({ proposals: [{ name: credential }], tail: 'x'.repeat(10_000) }));
+    const result = capture.snapshot('application/json');
+    expect(result.bodyBytes).toBeGreaterThan(8192);
+    expect(result.bodyPreview).toContain('"name":"[redacted]"');
+    expect(() => JSON.parse(result.bodyPreview!)).toThrow();
+    expect(result.bodyPreview).not.toContain(credential);
   });
 
   it('keeps malformed html-like previews linear and bounded', () => {
@@ -53,6 +82,25 @@ describe('http log body redaction', () => {
   it('redacts bearer tokens in plain text', () => {
     expect(redactBodyText('Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456'))
       .toBe('Authorization: Bearer [redacted]');
+  });
+
+  it('route-controlled omission keeps byte count but drops an arbitrary canary', () => {
+    const canary = 'arbitrary-client-canary';
+    const selected = selectRequestBodyForHttpLog(
+      { bodyPreview: canary, bodyBytes: Buffer.byteLength(canary) },
+      { bodyPreview: canary, bodyBytes: Buffer.byteLength(canary) },
+      true,
+    );
+
+    expect(selected.bodyBytes).toBe(Buffer.byteLength(canary));
+    expect(selected.bodyPreview).toBe('[cds request body omitted]');
+    expect(JSON.stringify(selected)).not.toContain(canary);
+  });
+
+  it('marks route-controlled omission when auth rejects before consuming the body', () => {
+    const selected = selectRequestBodyForHttpLog({ bodyBytes: 0 }, {}, true);
+    expect(selected.bodyPreview).toBe('[cds request body omitted]');
+    expect(selected.bodyBytes).toBeUndefined();
   });
 
   it('omits image body previews while preserving byte counts', () => {
@@ -208,4 +256,104 @@ describe('http log body redaction', () => {
     store.completeActive(activeId);
     expect(store.findActive()).toHaveLength(0);
   });
+});
+
+/**
+ * 身份层签发接口交付明文用的字段名叫 `plaintext` —— 一个敏感词都不含，按字段名
+ * 列举的那串正则一个都匹配不上。于是一把 90 天滑动、能为主体名下所有授权换项目
+ * 凭据的长期密钥，会原样落进 cds_http_logs，而 /api/http-logs 把 body 预览返回给
+ * 任何已鉴权调用方 —— 一把项目级凭据就能捞到刚签出的用户级凭证（Codex P1）。
+ *
+ * 按字段名列举必然漏下一个字段名，所以判据钉两层：字段名认得出 `plaintext`，
+ * 以及**不管挂在哪个字段名下**，长得像 CDS 凭据的值一律抹掉。
+ */
+describe('redactBodyText：CDS 自己签发的凭据明文不许进日志', () => {
+  const userCred = 'cdsu_' + 'A1b2C3d4E5f6G7h8I9j0K1l2';
+  const projCred = 'cdsp_demo_' + 'Z9y8X7w6V5u4T3s2R1q0P9o8';
+
+  it('字段名 plaintext 被认出来（身份层签发接口就用这个名字）', () => {
+    const out = redactBodyText(JSON.stringify({ ok: true, plaintext: userCred }));
+    expect(out).not.toContain(userCred);
+    expect(out).toContain('[redacted]');
+  });
+
+  it('换个无辜字段名照样抹掉 —— 按字段名列举必然漏下一个', () => {
+    for (const field of ['value', 'result', 'note', 'data']) {
+      const out = redactBodyText(JSON.stringify({ [field]: userCred }));
+      expect(out, `字段 ${field}`).not.toContain(userCred);
+    }
+  });
+
+  it('项目级凭据明文同样抹掉（自愈接口返回的就是它）', () => {
+    const out = redactBodyText(JSON.stringify({ credential: { id: 'x' }, plaintext: projCred }));
+    expect(out).not.toContain(projCred);
+  });
+
+  it('嵌套结构里的也抹得掉', () => {
+    const out = redactBodyText(JSON.stringify({ a: { b: [{ c: userCred }] } }));
+    expect(out).not.toContain(userCred);
+  });
+
+  it('非 JSON 正文（表单 / 纯文本 / 错误页）同样兜住', () => {
+    const out = redactBodyText(`issued=${userCred}&ok=1`);
+    expect(out).not.toContain(userCred);
+  });
+
+  it('不误伤正常内容（判据不是把什么都抹了）', () => {
+    const out = redactBodyText(JSON.stringify({ projectName: 'MAP', branch: 'feature/x', count: 3 }));
+    expect(out).toContain('MAP');
+    expect(out).toContain('feature/x');
+    expect(out).not.toContain('[redacted]');
+  });
+
+  // 2026-10-08 事故：PUT /api/projects/:id 的响应 94KB，日志只截前 8KB，截断后的 JSON
+  // 解析不了，退到纯文本兜底；而兜底只认 key=value 写法，项目环境变量里的 JWT 密钥、数据库口令
+  // 原样落进了 HTTP 日志。下面三条都是「截断的 JSON」形态。
+  it('截断的 JSON 里，敏感键名对应的字符串值照样抹掉', () => {
+    const body = JSON.stringify({ project: { customEnv: {
+      JWT_SECRET: 'jwt-canary-value-1234567890',
+      DB_PASSWORD: 'db-canary-pass',
+      AI_ACCESS_KEY: 'ai-canary-key',
+      DB_HOST: 'cds-infra-mysql',
+    } } }) + '"padding": "' + 'x'.repeat(200);
+    const truncated = body.slice(0, body.length - 50);
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('jwt-canary-value-1234567890');
+    expect(out).not.toContain('db-canary-pass');
+    expect(out).not.toContain('ai-canary-key');
+    expect(out).toContain('cds-infra-mysql');
+    expect(out).toContain('"JWT_SECRET":"[redacted]"');
+  });
+
+  it('截断的 JSON 里，连接串的口令段照样抹掉（键名不含 password 也要抹）', () => {
+    const truncated = '{"customEnv":{"MONGODB_URI":"mongodb://imp_user:uri-canary-pass@cds-infra-mongo:27017/imp","REDIS_URL":"redis://:redis-canary@cds-infra-redis:6379"},"tail":"';
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('uri-canary-pass');
+    expect(out).not.toContain('redis-canary');
+    expect(out).toContain('mongodb://imp_user:[redacted]@cds-infra-mongo:27017/imp');
+  });
+
+  it('截断的 JSON 里，转义引号不会让抹除提前停下', () => {
+    const truncated = '{"IMP_INDEX_SECRET":"abc\\"def-canary","next":"ok","cut';
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('def-canary');
+    expect(out).toContain('"next":"ok"');
+  });
+});
+
+
+it('P95 原始样本不被其它轮询占走抽样槽，其余 GET 继续抽样', async () => {
+  const docs: any[] = [];
+  const store = new HttpLogStore({ uri: 'mongodb://unused' });
+  (store as any).collection = { insertOne: async (doc: unknown) => { docs.push(doc); }, countDocuments: async () => docs.length };
+  const record = (path: string, requestId: string, layer: 'master' | 'forwarder' = 'master') => store.record({
+    layer, requestId, method: 'GET', path, status: 200, durationMs: 72, outcome: 'ok', request: {}, response: {},
+  });
+  for (let i = 0; i < 10; i++) {
+    record('/api/branches?projectId=test', `p95-${i}`);
+    record('/api/projects', `poll-${i}`, 'forwarder');
+  }
+  await store.flush();
+  expect(docs.filter(r => r.requestId.startsWith('p95-'))).toHaveLength(10);
+  expect(docs.filter(r => r.requestId.startsWith('poll-'))).toHaveLength(1);
 });

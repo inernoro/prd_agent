@@ -10,10 +10,43 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class OfficialSkillCatalogTests
 {
+    [Theory]
+    [InlineData("game-over")]
+    [InlineData("work-budget")]
+    [InlineData("kill-debt")]
+    [InlineData("create-debt")]
+    [InlineData("first-principles")]
+    public void DeliverySkills_AreOfficialAndDownloadable(string key)
+    {
+        var entry = OfficialSkillCatalog.Find(key);
+        Assert.NotNull(entry);
+        Assert.False(string.IsNullOrWhiteSpace(entry.Version));
+        Assert.NotEmpty(entry.Roles);
+
+        var response = OfficialMarketplaceSkillInjector.BuildForkResponseById(
+            $"official-{key}", BuildRequest("https://map.example.test"),
+            new ConfigurationBuilder().Build(), currentUserId: "user-1");
+        Assert.NotNull(response);
+        Assert.Equal($"https://map.example.test/api/official-skills/{key}/download",
+            Read<string>(response!, "downloadUrl"));
+
+        var result = BuildOfficialSkillsController().Download(key);
+        var file = Assert.IsType<FileContentResult>(result);
+        using var stream = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+        foreach (var source in entry.Files)
+        {
+            var packed = zip.GetEntry($"{key}/{source.Path}");
+            Assert.NotNull(packed);
+            using var reader = new StreamReader(packed.Open());
+            Assert.Equal(source.Content, reader.ReadToEnd());
+        }
+    }
+
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.9.1", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.9.2", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("自主三档边界", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("五层自治回路", OfficialSkillTemplates.AiDefectResolveSkillMd);
@@ -46,7 +79,7 @@ public class OfficialSkillCatalogTests
 
         Assert.NotNull(entry);
         Assert.Equal("create-visual-test-to-kb", entry.Key);
-        Assert.Equal("1.0.0", entry.Version);
+        Assert.Equal("1.0.3", entry.Version);
 
         var paths = entry.Files.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
         Assert.Contains("SKILL.md", paths);
@@ -66,7 +99,7 @@ public class OfficialSkillCatalogTests
 
         var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
         Assert.Contains("name: create-visual-test-to-kb", skillMd);
-        Assert.Contains("version: 1.0.0", skillMd);
+        Assert.Contains($"version: {entry.Version}", skillMd);
     }
 
     [Fact]
@@ -110,7 +143,7 @@ public class OfficialSkillCatalogTests
 
         var item = ReadObject(response!, "item");
         Assert.Equal("official-create-visual-test-to-kb", Read<string>(item, "Id"));
-        Assert.Equal("1.0.0", Read<string>(item, "version"));
+        Assert.Equal("1.0.3", Read<string>(item, "version"));
     }
 
     [Fact]
@@ -241,8 +274,9 @@ public class OfficialSkillCatalogTests
         var install = ReadZipText(zip, "INSTALL.md");
         // 装项目级不装用户主目录：技能跟着项目版本库走，团队 clone 下来都有
         Assert.DoesNotContain("~/.claude/skills", install);
-        // 三个宿主都要遍历（目录名由 $h/skills 拼出，所以断言宿主名 + 兜底目录）
-        Assert.Contains("for h in .claude .cursor .agents", install);
+        // 两个宿主都要遍历（目录名由 $h/skills 拼出，所以断言宿主名 + 兜底目录）
+        Assert.Contains("for h in .claude .agents", install);
+        Assert.DoesNotContain(".cursor", install);
         Assert.Contains(".agents/skills", install);
         // 装到全部存在的宿主，不是只装第一个命中的
         Assert.Contains("for d in $SKILLS_DIRS", install);
@@ -346,8 +380,9 @@ public class OfficialSkillCatalogTests
 
         // 装到用户主目录的话技能不跟项目走，团队 clone 下来少一半
         Assert.DoesNotContain("-d ~/.claude/skills", skillMd);
-        // 三个宿主都要遍历（目录名由 $h/skills 拼出，所以断言宿主名 + 兜底目录）
-        Assert.Contains("for h in .claude .cursor .agents", skillMd);
+        // 两个宿主都要遍历（目录名由 $h/skills 拼出，所以断言宿主名 + 兜底目录）
+        Assert.Contains("for h in .claude .agents", skillMd);
+        Assert.DoesNotContain(".cursor", skillMd);
         Assert.Contains(".agents/skills", skillMd);
         // 装到全部存在的宿主，不是只装第一个命中的：同时装了多个 Agent 的仓库里，
         // 只装第一个会让当前 Agent 一个技能都看不见

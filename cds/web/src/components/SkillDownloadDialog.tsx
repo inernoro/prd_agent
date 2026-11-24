@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Package, Rocket, ShieldCheck } from 'lucide-react';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Loader2, Package, Rocket, ShieldCheck } from 'lucide-react';
 
 import {
   AgentAccessMap,
@@ -8,20 +9,31 @@ import {
 } from '@/components/AgentAccessMap';
 import { AgentStarterTab } from '@/components/AgentStarterTab';
 import { Button } from '@/components/ui/button';
+import { AGENT_ROLE_PROFILES } from '@/lib/agent-starter';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   buildCdsAgentPrompt,
   chooseAgentProjectId,
   createAgentMissionContext,
   getAgentMissionScope,
+  initialAgentConnectSelection,
   PROJECT_SKILL_PATHS,
+  resolveAgentConnectTarget,
   resolveAgentMissionContextForTarget,
   type AgentPageContext,
   type AgentPageContextId,
   type CdsConnectTarget,
 } from '@/lib/agent-onboarding';
 
-const MARKETPLACE_URL = 'https://miduo.org/marketplace?type=skill&keyword=cds';
+const MARKETPLACE_URL = String(import.meta.env.VITE_SKILL_MARKETPLACE_URL || '').trim();
+
+export interface AgentProjectAgentProfile {
+  role: string;
+  experience: string;
+  skills?: string[];
+  cardTitle?: string;
+  declaredAt?: string;
+}
 
 export interface AgentProjectOption {
   id: string;
@@ -30,51 +42,53 @@ export interface AgentProjectOption {
   branchCount?: number;
   runningBranchCount?: number;
   runningServiceCount?: number;
+  /** 项目已声明的 Agent 角色。由 /api/projects 带出，仅作展示。 */
+  agentProfile?: AgentProjectAgentProfile;
 }
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projects: AgentProjectOption[];
+  projectsLoading?: boolean;
+  projectsError?: string;
+  onReloadProjects?: () => void;
   context?: AgentPageContext;
 }
 
 type TabKey = 'starter' | 'init' | 'connect' | 'manual' | 'marketplace';
 
-// 「项目初始化」排在第一位：从零建项目是新用户最常见的入口，
-// 藏在第四个 tab 等于没有。详见 doc/design.cds.project-bootstrap.md。
+// 接入默认只复制短口令；角色方法论与项目初始化仍可独立选择。
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: boolean }> = [
-  { key: 'starter', label: '上手助手', icon: GraduationCap, recommended: true },
+  { key: 'connect', label: '自动接入', icon: Bot, recommended: true },
+  { key: 'starter', label: '上手助手', icon: GraduationCap },
   { key: 'init', label: '快速初始化', icon: Rocket },
-  { key: 'connect', label: '自动接入', icon: Bot },
   { key: 'manual', label: '手动安装', icon: Package },
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
-function initialMapSelection(
-  projects: AgentProjectOption[],
-  context: AgentPageContext,
-): AgentAccessMapSelection {
-  if (getAgentMissionScope(context.id) === 'system') return { kind: 'system' };
-  const selectedProjectId = chooseAgentProjectId(projects, context);
-  return selectedProjectId
-    ? { kind: 'project', projectId: selectedProjectId }
-    : { kind: 'new' };
-}
-
-export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
-  const [active, setActive] = useState<TabKey>('starter');
+export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, projectsError = '', onReloadProjects, context }: Props): JSX.Element {
+  const [active, setActive] = useState<TabKey>('connect');
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
-    () => initialMapSelection(projects, sourceContext),
+    () => initialAgentConnectSelection(projects, sourceContext),
   );
   const [missionId, setMissionId] = useState<AgentPageContextId>(sourceContext.id);
+  const initializedContext = useRef<string | null>(null);
+  const explicitSelection = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
-    setMapSelection(initialMapSelection(projects, sourceContext));
+    if (!open) { initializedContext.current = null; explicitSelection.current = false; return; }
+    const key = `${sourceContext.id}:${sourceContext.pagePath}`;
+    if (initializedContext.current !== key) {
+      initializedContext.current = key;
+      explicitSelection.current = false;
+    }
+    // Allow the first project response to resolve the page target, then retain explicit choices.
+    if (explicitSelection.current || projectsLoading) return;
+    setMapSelection(initialAgentConnectSelection(projects, sourceContext));
     setMissionId(sourceContext.id);
-  }, [open, projects, context?.id, context?.pagePath]);
+  }, [open, projects, projectsLoading, context?.id, context?.pagePath]);
 
   const systemProjectId = chooseAgentProjectId(
     projects,
@@ -91,18 +105,26 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     projects,
     effectiveProjectId,
   );
-  const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
-  const target: CdsConnectTarget = mapSelection.kind === 'new'
-    ? { kind: 'new' }
-    : effectiveProjectId
-      ? { kind: 'existing', projectId: effectiveProjectId }
-      : { kind: 'system' };
+  const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://cds.invalid';
+  // 页签切换保持明确目标；统一解析收在 agent-onboarding 里，
+  // 由 agent-onboarding.test.ts 直接断言行为，避免这段判断只能靠扫源码验证。
+  const target: CdsConnectTarget = resolveAgentConnectTarget({
+    tab: active,
+    selection: mapSelection,
+    effectiveProjectId,
+  });
   const targetKind = target.kind;
+  const setupError = target.kind === 'system' ? '' : projectsError || (
+    !projectsLoading && target.kind === 'existing' && !projects.some((project) => project.id === target.projectId)
+      ? '当前项目不在可见列表中，请重新读取或明确选择目标；尚未生成接入口令。'
+      : ''
+  );
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
     [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
   );
   const handleMapSelection = (selection: AgentAccessMapSelection): void => {
+    explicitSelection.current = true;
     setMapSelection(selection);
     const selectedScope = getAgentMissionScope(missionId);
     const nextScope = selection.kind === 'system' ? 'system' : selection.kind === 'project' ? 'project' : 'system';
@@ -123,12 +145,12 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="max-w-none"
-        style={{ width: 'min(1080px, calc(100vw - 32px))' }}
+        style={{ width: 'min(67.5rem, calc(100vw - 2rem))' }}
       >
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
           <DialogDescription>
-            选择项目和任务后，Agent 会获得可执行步骤、安全边界与完成标准。
+            选择项目和任务，复制短口令。Agent 会按需读取说明，并实际验证接入。
             已有项目权限会静默复用，只有缺少权限或明确提权时才需要批准。
           </DialogDescription>
         </DialogHeader>
@@ -139,10 +161,12 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           context={selectedContext}
           sourceContextId={sourceContext.id}
           onSelectionChange={handleMapSelection}
-          onMissionChange={setMissionId}
+          onMissionChange={(nextMission) => { explicitSelection.current = true; setMissionId(nextMission); }}
         /> : null}
 
-        {active === 'connect' ? <div className="grid gap-2 sm:grid-cols-2">
+        {/* 目标选择在「上手助手」上同样要给：口令里嵌的是新建项目还是已有项目，
+            决定了 Agent 走不走一次性创建授权，用户必须看得见、改得动。 */}
+        {active === 'connect' || active === 'starter' ? <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
             onClick={chooseExistingTarget}
@@ -170,7 +194,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </button>
         </div> : null}
 
-        {active === 'connect' && targetKind === 'existing' ? (
+        {(active === 'connect' || active === 'starter') && targetKind === 'existing' ? (
           <label className="space-y-1 text-sm">
             <span className="text-xs font-medium text-foreground">选择项目</span>
             <select
@@ -178,6 +202,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
               onChange={(event) => chooseProject(event.target.value)}
               className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 text-sm text-foreground"
             >
+              {target.kind === 'existing' && !projects.some((project) => project.id === target.projectId) ? (
+                <option value={target.projectId}>当前项目暂不可用</option>
+              ) : null}
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>{project.name} ({project.slug})</option>
               ))}
@@ -201,7 +228,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
                 <Icon className="hidden h-4 w-4 sm:block" />
                 <span>{tab.label}</span>
                 {tab.recommended ? (
-                  <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary">
                     推荐
                   </span>
                 ) : null}
@@ -211,10 +238,43 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           })}
         </nav>
 
-        <div className="min-h-[260px]">
-          {active === 'starter' ? <AgentStarterTab cdsPrompt={prompt} /> : null}
+        <div className="min-h-[16.25rem]">
+          {/*
+           * 上手助手切走时只藏不卸：卸载会把用户在向导里选的技能、交付方式连同
+           * 所在步骤一起丢掉，回来直接退回步骤 01。而「去技能市场」这个入口正好
+           * 开在完成页——那一屏的状态最贵，用户可能还没把结果抄走。
+           * starter 本来就是默认 tab、进弹窗即挂载，藏起来不额外产生开销。
+           */}
+          <div
+            /*
+             * 这一层是「只藏不卸」的容器，但它同时是移动端高度链上的一环：
+             * 窄屏那套把弹窗全屏化的规则靠 height:100% 一层层往下传，传到这里
+             * 断了——它没有任何高度声明，height:auto 让子元素的 100% 无从解析，
+             * 于是面板长成内容自然高（实测 1009px > 视口 844px），底栏连同
+             * 「确认这些技能」被外层的 overflow:clip 裁在屏幕外，且全链没有
+             * 一个可滚容器，滚都滚不到。给它一个标记，让窄屏规则认得它，
+             * 不再靠 `> div:first-child > :last-child` 这种数位置的选择器。
+             *
+             * 标记只在这个 tab 激活时挂：窄屏那条规则带 `display: flex !important`，
+             * 打得过 `hidden` 的 `display: none`。标记要是常驻，切到别的 tab 时
+             * 上手助手藏不掉，会和新 tab 一起铺在屏幕上（Codex P1，真机 390px 量到
+             * 加了 hidden 之后 display 仍是 flex、高度仍有 826px）。所以标记表达的是
+             * 「当前激活的 starter slot」，不是「这里有个 slot」。
+             */
+            data-agent-starter-slot={active === 'starter' ? 'true' : undefined}
+            className={active === 'starter' ? undefined : 'hidden'}
+          >
+            {setupError ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} /> : <AgentStarterTab
+              active={active === 'starter'}
+              cdsPrompt={prompt}
+              projectId={targetKind === 'existing' ? effectiveProjectId : ''}
+              onOpenMarketplace={() => setActive('marketplace')}
+            />}
+          </div>
           {active === 'init' ? <ProjectInitTab /> : null}
-          {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
+          {active === 'connect' ? setupError
+            ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} />
+            : <ConnectTab prompt={prompt} loading={projectsLoading} onCopied={() => { explicitSelection.current = true; }} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
           {active === 'marketplace' ? <MarketplaceTab /> : null}
         </div>
@@ -223,12 +283,20 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
   );
 }
 
-function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
+function ProjectScopeError({ message, onRetry }: { message: string; onRetry?: () => void }): JSX.Element {
+  return <div role="alert" className="space-y-3 rounded-md border border-[hsl(var(--hairline))] p-3 text-sm">
+    <p>{message}</p>
+    {onRetry ? <Button variant="outline" onClick={onRetry}>重新读取项目</Button> : null}
+  </div>;
+}
+
+function ConnectTab({ prompt, loading, onCopied }: { prompt: string; loading: boolean; onCopied: () => void }): JSX.Element {
   const [copied, setCopied] = useState(false);
 
   const copy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(prompt);
+      onCopied();
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -240,17 +308,22 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
     <div className="space-y-3">
       <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <span>口令不含密钥。Agent 会先静默检查当前项目权限；检查通过就直接工作，缺少权限才会在 CDS 右下角申请批准。</span>
+        <span>口令不含密钥。Agent 先读取接入说明，按当前任务加载技能，再验证凭据与目标项目。已有权限直接复用，缺少权限才在 CDS 页面申请批准。</span>
       </div>
       <div className="cds-surface-raised cds-hairline relative rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
-        <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words pr-12 font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
+        <div className="mb-2 flex justify-end">
+          <Button size="sm" disabled={loading} variant={copied ? 'default' : 'outline'} onClick={() => void copy()}>
+            {loading ? <Loader2 className="animate-spin" /> : copied ? <Check /> : <Copy />}
+            {loading ? '正在确认项目范围' : copied ? '已复制' : '复制短接入口令'}
+          </Button>
+        </div>
+        {loading ? <ContentLoading label="读取项目接入说明" /> : <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
           {prompt}
-        </pre>
-        <Button size="sm" variant={copied ? 'default' : 'outline'} className="absolute right-2 top-2" onClick={() => void copy()}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? '已复制' : '复制接入口令'}
-        </Button>
+        </pre>}
       </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        把口令发给当前项目里的 Agent。它会回报 setup-check 的阶段结果；只有实际读取目标成功才算接入完成。技能完整安装，正文按任务加载。
+      </p>
     </div>
   );
 }
@@ -261,7 +334,7 @@ function ManualTab(): JSX.Element {
       <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的五个目录复制到当前项目对应的技能目录。</p>
       <Button asChild>
         <a href="/api/export-skill" download>
-          <Download className="h-4 w-4" />
+          <Download />
           下载技能包
         </a>
       </Button>
@@ -293,9 +366,9 @@ function MarketplaceTab(): JSX.Element {
     let alive = true;
     fetch('/api/skills/bundles')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: { data?: { items?: BundleView[] } }) => {
+      .then((payload: unknown) => {
         if (!alive) return;
-        setBundles(data?.data?.items || []);
+        setBundles(normalizeBundleViews(payload));
         setState('ready');
       })
       .catch(() => { if (alive) setState('error'); });
@@ -303,18 +376,20 @@ function MarketplaceTab(): JSX.Element {
   }, []);
 
   if (state === 'loading') {
-    return <p className="text-sm text-muted-foreground">正在读取技能清单…</p>;
+    return <ContentLoading label="读取技能清单" variant="rows" />;
   }
   if (state === 'error') {
     return (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>技能来源当前不可达，清单暂时列不出来。「项目初始化」里的安装命令仍可使用（会走本地缓存）。</p>
-        <Button asChild variant="outline">
-          <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
-            <ExternalLink className="h-4 w-4" />
-            在浏览器打开来源站点
-          </a>
-        </Button>
+        {MARKETPLACE_URL ? (
+          <Button asChild variant="outline">
+            <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
+              <ExternalLink />
+              在浏览器打开来源站点
+            </a>
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -357,6 +432,43 @@ interface BundleView {
   skills: BundleSkillView[];
 }
 
+/**
+ * 把 `/api/skills/bundles` 的响应读成界面要的形状。
+ *
+ * 两处调用方原先各写一份 `data?.data?.items`，而这个端点从来返回的是
+ * `{ bundles: [{ key, label, skills: [{ key, name, description }] }] }`——
+ * 于是两处都恒定拿到空数组：技能市场 tab 渲染出一片空白、项目初始化里的
+ * 「这套装里有什么」永远列不出来，全程无报错。收成一个函数，别再有第二份。
+ */
+export function normalizeBundleViews(payload: unknown): BundleView[] {
+  const value = payload as any;
+  const bundles = value?.data?.bundles ?? value?.bundles;
+  if (!Array.isArray(bundles)) return [];
+  const roleLabel = (id: unknown): string =>
+    AGENT_ROLE_PROFILES.find((profile) => profile.id === id)?.label ?? String(id ?? '');
+  return bundles.flatMap((bundle: any) => {
+    const key = typeof bundle?.key === 'string' ? bundle.key : '';
+    if (!key) return [];
+    const rawSkills = Array.isArray(bundle?.skills) ? bundle.skills : [];
+    const skills: BundleSkillView[] = rawSkills.flatMap((skill: any) => {
+      const skillKey = typeof skill === 'string' ? skill : skill?.key;
+      if (typeof skillKey !== 'string' || !skillKey) return [];
+      return [{
+        key: skillKey,
+        title: typeof skill?.name === 'string' ? skill.name : skillKey,
+        description: typeof skill?.description === 'string' ? skill.description : '',
+      }];
+    });
+    return [{
+      key,
+      title: typeof bundle?.label === 'string' ? bundle.label : key,
+      roleLabels: (Array.isArray(bundle?.roles) ? bundle.roles : []).map(roleLabel).filter(Boolean),
+      skillCount: skills.length,
+      skills,
+    }];
+  });
+}
+
 interface BootstrapPresetView {
   key: string;
   label: string;
@@ -397,8 +509,8 @@ function ProjectInitTab(): JSX.Element {
       .catch(() => { if (alive) setLoadError('预设清单暂时读不到，请稍后重试。'); });
     fetch('/api/skills/bundles')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((data: { data?: { items?: BundleView[] } }) => {
-        if (alive) setBundles(data?.data?.items || []);
+      .then((payload: unknown) => {
+        if (alive) setBundles(normalizeBundleViews(payload));
       })
       // 技能清单拉不到不阻塞安装：命令照给，只是列不出明细
       .catch(() => { if (alive) setBundles([]); });
@@ -481,7 +593,7 @@ function ProjectInitTab(): JSX.Element {
                 className="absolute right-2 top-2"
                 onClick={() => void copy(twoStep, 'two')}
               >
-                {copied === 'two' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied === 'two' ? <Check /> : <Copy />}
               </Button>
             </div>
             <button
@@ -500,7 +612,7 @@ function ProjectInitTab(): JSX.Element {
                   className="absolute right-2 top-2"
                   onClick={() => void copy(oneLine, 'one')}
                 >
-                  {copied === 'one' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copied === 'one' ? <Check /> : <Copy />}
                 </Button>
               </div>
             ) : null}
@@ -516,7 +628,7 @@ function ProjectInitTab(): JSX.Element {
                 className="absolute right-2 top-2"
                 onClick={() => void copy(active.nextStep, 'next')}
               >
-                {copied === 'next' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied === 'next' ? <Check /> : <Copy />}
               </Button>
             </div>
           </div>
@@ -554,7 +666,7 @@ function ProjectInitTab(): JSX.Element {
           ) : null}
 
           <p className="text-xs text-muted-foreground">
-            会装到当前项目的技能目录（自动识别 .claude / .cursor / .agents），跟着项目的版本库走，
+            会装到当前项目的技能目录（自动识别 .claude / .agents），跟着项目的版本库走，
             团队每个人拉下来都有。
           </p>
         </>

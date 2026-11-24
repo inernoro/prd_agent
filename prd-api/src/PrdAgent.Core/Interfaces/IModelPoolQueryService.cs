@@ -1,14 +1,14 @@
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 模型池查询服务 — 三级互斥解析（专属池 > 默认池 > 传统配置）
-/// 供各应用 Controller 在自己的路由下暴露模型列表，而非直接调用管理端点。
+/// 业务模型目录兼容接口。
+/// 供旧 Controller 在自己的路由下暴露模型列表；返回 DTO 沿用“模型池”命名，数据权威已是
+/// LLM Gateway 对外逻辑模型目录。
 /// </summary>
 public interface IModelPoolQueryService
 {
     /// <summary>
-    /// 根据 appCallerCode 与 modelType 查询可用模型池列表。
-    /// 返回结果按照优先级互斥：专属池 > 默认池 > 传统配置。
+    /// 根据 appCallerCode 与 modelType 查询运行时对外模型目录；暂不可用项保留并下发健康状态。
     /// </summary>
     /// <param name="appCallerCode">应用标识（如 visual-agent.image.text2img::generation），可为 null</param>
     /// <param name="modelType">模型类型（如 generation、chat、intent、vision）</param>
@@ -24,6 +24,9 @@ public class ModelPoolForAppResult
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
+    /// <summary>网关明确登记的继承标识，供旧页面提交前核对。</summary>
+    public List<string> Aliases { get; set; } = new();
+    public List<string> LegacyPoolIds { get; set; } = new();
     public int Priority { get; set; }
     public string ModelType { get; set; } = string.Empty;
     public bool IsDefaultForType { get; set; }
@@ -38,6 +41,14 @@ public class ModelPoolForAppResult
     public bool IsDefault { get; set; }
     /// <summary>是否为传统配置模型</summary>
     public bool IsLegacy { get; set; }
+    public long? AverageDurationMs { get; set; }
+    public int RecentTenRequests { get; set; }
+    public decimal? RecentTenSuccessRatePercent { get; set; }
+    /// <summary>
+    /// 网关声明的能力标签。前端据此二次确认「这条能不能拿来生图」——
+    /// 后端已经过滤过一遍，这个字段是给旧后端 + 新前端那种组合兜底的。
+    /// </summary>
+    public List<string> Capabilities { get; set; } = new();
 }
 
 /// <summary>
@@ -47,6 +58,12 @@ public class ModelPoolModelItem
 {
     public string ModelId { get; set; } = string.Empty;
     public string PlatformId { get; set; } = string.Empty;
+    /// <summary>目录生成时固化的实际供应商型号；只用于诊断同一物理线路被多个逻辑模型重复暴露。</summary>
+    public string? ActualModelId { get; set; }
+    /// <summary>实际供应商平台快照；与 <see cref="ActualModelId"/> 组成物理线路身份。</summary>
+    public string? ActualPlatformId { get; set; }
     public int Priority { get; set; }
     public string HealthStatus { get; set; } = "Healthy";
+    /// <summary>允许用户发起恢复试探；不代表线路已经恢复健康。</summary>
+    public bool IsRecoveryProbeAvailable { get; set; }
 }

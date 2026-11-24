@@ -22,6 +22,27 @@ public class AdminNotification
     public string Level { get; set; } = "info";
     public string Status { get; set; } = "open";
 
+    // 通知确认状态与故障事实分离；缺失字段表示历史数据没有证据，不能推断恢复。
+    public string? IncidentId { get; set; }
+    public string? IncidentState { get; set; }
+    public string? RequestOutcome { get; set; }
+    public long OccurrenceCount { get; set; } = 1;
+    public DateTime? FirstOccurredAt { get; set; }
+    public DateTime? LastOccurredAt { get; set; }
+    public DateTime? RecoveredAt { get; set; }
+    public string? EvidenceRequestId { get; set; }
+
+    /// <summary>
+    /// 故障关闭后重新打开的投递代次。存量通知为 0，持续故障不递增。
+    /// </summary>
+    public long PushEpisode { get; set; }
+
+    /// <summary>本代次实际建立的 UTC ticks；只在创建/重开时写入，不随持续故障刷新。</summary>
+    public long? PushEpisodeStartedAtUtcTicks { get; set; }
+
+    /// <summary>网关已应用信号的单调顺序键；存量缺失，在首次新代码观察时建立。</summary>
+    public string? GatewaySignalVersion { get; set; }
+
     public string? ActionLabel { get; set; }
     public string? ActionUrl { get; set; }
     public string? ActionKind { get; set; }

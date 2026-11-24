@@ -401,6 +401,84 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task ArchiveClaim_ShouldMigrateCompatibleLegacyOwnerToCurrentDeployment()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        const string legacyOwner = "codex/example";
+        const string currentOwner = "prd-agent:production::codex/example";
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session("legacy-owner-session", legacyOwner, DocumentRecordingArchiveStatus.Pending));
+
+        var claimed = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            currentOwner,
+            "current-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            [currentOwner, legacyOwner]);
+
+        claimed.ShouldNotBeNull();
+        claimed!.OwnerInstanceId.ShouldBe(currentOwner);
+        claimed.ArchiveLeaseId.ShouldBe("current-lease");
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == claimed.Id)
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(currentOwner);
+    }
+
+    [Fact]
+    public async Task ArchiveClaim_AuthorizedProductionShouldAtomicallyAdoptHistoricalBranchOwner()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        const string historicalOwner = "codex/retired-preview";
+        const string activeOwner = "codex/active-preview";
+        const string currentOwner = "prd-agent:production::main";
+        var historicalCreatedAt = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        var adoptionCutoff = historicalCreatedAt.AddDays(1);
+        var historicalSession = Session(
+            "historical-owner-session",
+            historicalOwner,
+            DocumentRecordingArchiveStatus.Pending);
+        historicalSession.CreatedAt = historicalCreatedAt;
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            historicalSession);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session("active-owner-session", activeOwner, DocumentRecordingArchiveStatus.Pending));
+
+        var cdsClaim = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            "prd-agent:cds::main",
+            "cds-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            ["prd-agent:cds::main"],
+            retiredLegacyOwnerIds: []);
+        cdsClaim.ShouldBeNull();
+
+        var productionClaim = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            currentOwner,
+            "production-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            [currentOwner, "main"],
+            retiredLegacyOwnerIds: [historicalOwner],
+            legacyOwnerCreatedBeforeUtc: adoptionCutoff);
+
+        productionClaim.ShouldNotBeNull();
+        productionClaim!.OwnerInstanceId.ShouldBe(currentOwner);
+        productionClaim.ArchiveLeaseId.ShouldBe("production-lease");
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == productionClaim.Id)
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(currentOwner);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == "active-owner-session")
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(activeOwner);
+    }
+
+    [Fact]
     public async Task LegacyUnownedArchive_ShouldBeAdoptedByOnlyOneExplicitRequester()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -461,6 +539,43 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .SingleAsync();
         untouchedMain.ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Archiving);
         untouchedMain.ArchiveLeaseId.ShouldBe("main-old");
+    }
+
+    [Theory]
+    [InlineData(DocumentRecordingArchiveStatus.Pending)]
+    [InlineData(DocumentRecordingArchiveStatus.Archiving)]
+    public async Task ManualArchiveRetry_ShouldTakeOverRecoverableSession(
+        string archiveStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+
+        var now = DateTime.UtcNow;
+        var session = Session("manual-retry", "old-instance", archiveStatus);
+        session.EntryId = "recording-pending-manual-retry";
+        session.ArchiveLeaseId = "stale-lease";
+        session.ArchiveError = "previous failure";
+        session.ArchiveNextAttemptAt = now.AddHours(2);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        var result = await DocumentStoreController.QueueRecordingArchiveRetryAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.EntryId,
+            session.UserId,
+            "current-instance",
+            now,
+            CancellationToken.None);
+
+        result.ModifiedCount.ShouldBe(1);
+        var retried = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(item => item.Id == session.Id)
+            .SingleAsync();
+        retried.OwnerInstanceId.ShouldBe("current-instance");
+        retried.ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Pending);
+        retried.ArchiveLeaseId.ShouldBeNull();
+        retried.ArchiveError.ShouldBeNull();
+        retried.ArchiveNextAttemptAt.ShouldNotBeNull();
+        (retried.ArchiveNextAttemptAt!.Value - now).Duration()
+            .ShouldBeLessThan(TimeSpan.FromMilliseconds(1));
     }
 
     [Fact]
@@ -1511,7 +1626,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(0, 1)]
     [InlineData(3, 8)]
-    [InlineData(20, 256)]
+    [InlineData(20, 15)]
     public void ComputeBackoff_ShouldBeBounded(int attempts, int expectedMinutes)
     {
         DocumentRecordingArchiveWorker.ComputeBackoff(attempts)

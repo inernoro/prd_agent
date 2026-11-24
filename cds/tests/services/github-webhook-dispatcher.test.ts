@@ -230,6 +230,82 @@ describe('GitHubWebhookDispatcher', () => {
       expect(stateService.findBranchByProjectAndName('p1', 'dependabot/npm_and_yarn/react-19')).toBeUndefined();
     });
 
+    it('skips a push whose head commit message carries [skip ci], even from a human account', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      // 2026-09-18 真实形状：发布工作流用人类账号推一次性归档分支，提交信息写 [skip ci]
+      const result = await d.handle('push', {
+        ref: 'refs/heads/chore/archive-changelogs-35330217990',
+        before: '0000000000000000000000000000000000000000',
+        after: '038fcd2cd15ed1001c4b6e0e40822c942b86e0e0',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        head_commit: { id: '038fcd2cd15ed1001c4b6e0e40822c942b86e0e0', message: 'chore: archive changelogs after production release [skip ci]' },
+        sender: { login: 'miduo4960', type: 'User' },
+      });
+
+      expect(result.action).toBe('ignored-skip-marker');
+      expect(result.message).toContain('[skip ci]');
+      expect(result.deployRequest).toBeUndefined();
+      expect(worktree.createdWorktrees).toHaveLength(0);
+      expect(stateService.findBranchByProjectAndName('p1', 'chore/archive-changelogs-35330217990')).toBeUndefined();
+    });
+
+    it('recognises every GitHub skip spelling, including the skip-checks trailer, and not look-alikes', async () => {
+      const { findSkipMarker } = await import('../../src/services/github-webhook-dispatcher.js');
+      for (const m of ['[skip ci]', '[CI SKIP]', '[no ci]', '[skip actions]', '[actions skip]', '[skip cds]', '[cds skip]']) {
+        expect(findSkipMarker(`chore: something ${m}`), m).not.toBeNull();
+      }
+      expect(findSkipMarker('feat: x\n\nskip-checks: true')).toBe('skip-checks: true');
+      expect(findSkipMarker('feat: x\n\nSkip-Checks: TRUE')).toBe('skip-checks: true');
+      expect(findSkipMarker('feat: x\r\n\r\nSigned-off-by: a <a@b.c>\r\nskip-checks: true\r\n')).toBe('skip-checks: true');
+      // GitHub：已有其它 trailer 时 skip-checks 必须是最后一条，放前面不算
+      expect(findSkipMarker('feat: x\n\nskip-checks: true\nSigned-off-by: a <a@b.c>')).toBeNull();
+      // 不是结尾 trailer 块里的行不算：正文里提到、后面还跟着散文、值不是 true、只有标题一段
+      expect(findSkipMarker('feat: mention skip-checks: true in docs')).toBeNull();
+      expect(findSkipMarker('docs: explain the option\n\nskip-checks: true\nadditional prose')).toBeNull();
+      expect(findSkipMarker('docs: x\n\nskip-checks: true\n\nmore prose after the would-be trailer')).toBeNull();
+      expect(findSkipMarker('feat: x\n\nskip-checks: false')).toBeNull();
+      expect(findSkipMarker('skip-checks: true')).toBeNull();
+      expect(findSkipMarker('feat: skip ci integration')).toBeNull();
+      expect(findSkipMarker('')).toBeNull();
+      expect(findSkipMarker(undefined)).toBeNull();
+    });
+
+    it('only honours the skip marker on the head commit, not on earlier commits in the push', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/feature/x',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        head_commit: { id: 'abc123def456789012345678901234567890aaaa', message: 'feat: real change' },
+        commits: [{ id: '111', modified: ['a.ts'] }, { id: 'abc123def456789012345678901234567890aaaa', modified: ['b.ts'] }],
+        sender: { login: 'someone', type: 'User' },
+      });
+
+      expect(result.action).not.toBe('ignored-skip-marker');
+    });
+
     it('filters Bot sender type even when the login has no bot suffix', async () => {
       stateService.addProject({
         id: 'p1',
@@ -585,6 +661,10 @@ describe('GitHubWebhookDispatcher', () => {
       const updated = stateService.getProject('p1')!;
       expect(updated.githubRepoFullName).toBeUndefined();
       expect(updated.githubInstallationId).toBeUndefined();
+      const record = updated.identityHistory!.at(-1)!;
+      expect(record.actor).toBe('system:github-webhook');
+      expect(record.before?.githubRepository).toBe('octocat/repo');
+      expect(record.after.githubRepository).toBeUndefined();
     });
   });
 
@@ -1061,6 +1141,10 @@ describe('GitHubWebhookDispatcher', () => {
       expect(r.action).toBe('repo-detached');
       const p = stateService.getProject('p1')!;
       expect(p.githubRepoFullName).toBeUndefined();
+      const record = p.identityHistory!.at(-1)!;
+      expect(record.actor).toBe('system:github-webhook');
+      expect(record.before?.githubRepository).toBe('octocat/repo');
+      expect(record.after.githubRepository).toBeUndefined();
     });
 
     it('detaches link on repository.renamed using changes.repository.name.from', async () => {
@@ -1082,6 +1166,46 @@ describe('GitHubWebhookDispatcher', () => {
         repository: { full_name: 'stranger/thing', name: 'thing', owner: { login: 'stranger' } },
       });
       expect(r.action).toBe('ignored-event');
+    });
+  });
+
+  /**
+   * 自动发布规则拿到的必须是**这次 push 的 commit**（payload 的 `after`）。
+   *
+   * 规则的路径过滤按这个 commit 的改动清单判；不把它带下去，发布只能去读分支的
+   * 当前状态——两次 push 挨得近时，第一个事件会把第二个 commit 发出去，
+   * 而后者的路径过滤从没被评估过（Codex review P1，2026-08-16）。
+   */
+  describe('push 规则钩子', () => {
+    const SHA = 'abc123def456789012345678901234567890aaaa';
+
+    function linkProject(): void {
+      stateService.addProject({
+        id: 'p1', slug: 'proj', name: 'Proj', kind: 'git',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+      });
+    }
+
+    it('把 payload 的 after 作为 commitSha 传给规则钩子', async () => {
+      linkProject();
+      const seen: Array<Record<string, unknown>> = [];
+      const d = new GitHubWebhookDispatcher({
+        stateService, worktreeService: worktree, shell, config: buildConfig(),
+        runPushRules: async (ctx) => { seen.push(ctx as unknown as Record<string, unknown>); return 1; },
+      });
+
+      await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: SHA,
+        repository: { id: 1, full_name: 'octocat/repo' },
+        commits: [{ added: [], removed: [], modified: ['src/index.ts'] }],
+      });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0].commitSha).toBe(SHA);
+      expect(seen[0].branch).toBe('main');
+      expect(seen[0].changedPaths).toEqual(['src/index.ts']);
     });
   });
 

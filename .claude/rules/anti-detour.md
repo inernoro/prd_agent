@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.tsx"
+  - "cds/web/src/**/*.tsx"
+---
+
 # 少绕路原则（Anti-Detour）
 
 **一句话**：要用户给数据的地方默认给一个能就地编辑的入口，别逼他先去别处准备一个文件再回来。

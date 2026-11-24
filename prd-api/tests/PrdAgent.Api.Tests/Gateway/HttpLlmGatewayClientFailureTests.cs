@@ -7,12 +7,13 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.ModelPool;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>
 /// HTTP 模式故障面守卫：serving 不可达或鉴权失败时，MAP 侧 HttpLlmGatewayClient
-/// 必须显式失败，不得伪装成成功、空池或回退到 inproc。
+/// 必须显式失败，不得伪装成成功或空池；MAP 没有其它路径可退。
 /// </summary>
 public class HttpLlmGatewayClientFailureTests
 {
@@ -25,6 +26,22 @@ public class HttpLlmGatewayClientFailureTests
         await client.SendAsync(Request());
 
         factory.RequestUri.ShouldBe(new Uri("http://gateway/gw/v1/send"));
+    }
+
+    [Fact]
+    public async Task LegacyAutomaticScope_CannotOverrideVerifiedTaskIdentity()
+    {
+        var factory = new RecordingHttpClientFactory();
+        var client = BuildClient(factory);
+        using (PrdAgent.Infrastructure.Security.AutomaticTaskExecutionContext.Enter("authorized-deployment"))
+        {
+            await client.SendAsync(Request());
+            factory.ExecutionOrigin.ShouldBe("interactive");
+            factory.SourceDeployment.ShouldBe("transport-test-deployment");
+        }
+        await client.SendAsync(Request());
+        factory.ExecutionOrigin.ShouldBe("interactive");
+        factory.SourceDeployment.ShouldBe("transport-test-deployment");
     }
 
     [Fact]
@@ -175,18 +192,38 @@ public class HttpLlmGatewayClientFailureTests
         raw.ErrorCode.ShouldBe("LLM_QUOTA_EXCEEDED");
         notifier.Verify(x => x.NotifyQuotaExceededAsync(
                 "openrouter.ai",
-                It.Is<string>(message => message.Contains("额度已用尽")),
+                "openai/gpt-audio",
                 CancellationToken.None),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData("user quota is not enough", true)]
+    [InlineData("rate limit exceeded", false)]
+    public async Task StructuredRawProviderFailure_OnlyExplicitQuotaFailureNotifiesAdmin(string message, bool expectedNotice)
+    {
+        var body = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Success = false, StatusCode = 403, ErrorCode = "UPSTREAM_ERROR", ErrorMessage = message,
+        });
+        var notifier = new Mock<IPoolFailoverNotifier>();
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.Forbidden, body),
+            failoverNotifier: notifier.Object);
+        await client.SendRawWithResolutionAsync(RawRequest(), new GatewayModelResolution
+        {
+            Success = true, ActualModel = "gemini-3-pro-image-preview", ActualPlatformName = "apiyi-gemini",
+        });
+        notifier.Verify(x => x.NotifyQuotaExceededAsync("apiyi-gemini", "gemini-3-pro-image-preview",
+            CancellationToken.None), expectedNotice ? Times.Once() : Times.Never());
     }
 
     [Fact]
     public async Task ClientStreamQuotaFailure_NotifiesAdminInHttpMode()
     {
-        const string body = "{\"ErrorCode\":\"LLM_QUOTA_EXCEEDED\",\"ErrorMessage\":\"Key limit exceeded (total limit)\"}";
+        const string body = "data: {\"Type\":\"error\",\"ErrorCode\":\"LLM_QUOTA_EXCEEDED\",\"ErrorMessage\":\"Key limit exceeded (total limit)\",\"Model\":\"anthropic/claude-sonnet\",\"Platform\":\"openrouter.ai\"}\n\n";
         var notifier = new Mock<IPoolFailoverNotifier>();
         var client = BuildClient(
-            new StaticResponseHttpClientFactory(HttpStatusCode.PaymentRequired, body),
+            new StaticResponseHttpClientFactory(HttpStatusCode.OK, body),
             failoverNotifier: notifier.Object);
 
         var chunks = await CollectAsync(client.CreateClient("demo.app::chat", "chat").StreamGenerateAsync(
@@ -196,10 +233,53 @@ public class HttpLlmGatewayClientFailureTests
         chunks.Count.ShouldBe(1);
         chunks[0].Type.ShouldBe("error");
         notifier.Verify(x => x.NotifyQuotaExceededAsync(
-                "独立 LLM 网关",
-                It.Is<string>(message => message.Contains("Key limit exceeded")),
+                "openrouter.ai",
+                "anthropic/claude-sonnet",
                 CancellationToken.None),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BillingCause_CrossesSendRawProfileImageAndBothStreams(bool fallbackSucceeded)
+    {
+        const string code = GatewayBillingFailure.AccountOverdue;
+        var resolution = new GatewayModelResolution { Success = true, ActualModel = "backup", ActualPlatformName = "backup-platform",
+            BillingAlerts = [new(code, "overdue-platform", "primary")] };
+        var envelope = System.Text.Json.JsonSerializer.Serialize(new GatewayResponse
+        {
+            Success = fallbackSucceeded, StatusCode = fallbackSucceeded ? 200 : 403,
+            ErrorCode = fallbackSucceeded ? null : code,
+            ErrorMessage = fallbackSucceeded ? null : GatewayBillingFailure.FromCode(code)!.UserMessage,
+            Resolution = resolution, Content = "completed",
+        });
+        var notifier = new Mock<IPoolFailoverNotifier>();
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK, envelope), failoverNotifier: notifier.Object);
+        var send = await client.SendAsync(Request());
+        var raw = await client.SendRawWithResolutionAsync(RawRequest(), resolution);
+        var profile = await client.TestUpstreamProfileAsync(ProfileRequest());
+        var image = await client.GenerateImageAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "demo.app::generation", ModelType = "generation",
+            RequiredLogicalModelPublicId = "image-fixture",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest { Prompt = "fixed fixture" },
+        }, CancellationToken.None);
+        Assert.Equal(fallbackSucceeded, image.Success);
+        Assert.Equal(fallbackSucceeded, send.Success); Assert.Equal(fallbackSucceeded, raw.Success); Assert.Equal(fallbackSucceeded, profile.Success);
+        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(4));
+
+        var chunk = new GatewayStreamChunk { Type = fallbackSucceeded ? GatewayChunkType.Start : GatewayChunkType.Error,
+            Resolution = resolution, ErrorCode = fallbackSucceeded ? null : code };
+        var streamBody = "data: " + System.Text.Json.JsonSerializer.Serialize(chunk) + "\n\n";
+        client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK, streamBody), failoverNotifier: notifier.Object);
+        var chunks = await CollectAsync(client.StreamAsync(Request()));
+        Assert.Equal(chunk.Type, Assert.Single(chunks).Type);
+        var legacyChunk = new LLMStreamChunk { Type = fallbackSucceeded ? "start" : "error", BillingAlerts = resolution.BillingAlerts };
+        client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK,
+            "data: " + System.Text.Json.JsonSerializer.Serialize(legacyChunk) + "\n\n"), failoverNotifier: notifier.Object);
+        await CollectAsync(client.CreateClient("demo.app::chat", "chat").StreamGenerateAsync("sys", [new() { Role = "user", Content = "hi" }]));
+        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(6));
     }
 
     private static HttpLlmGatewayClient BuildClient(
@@ -217,7 +297,7 @@ public class HttpLlmGatewayClientFailureTests
             factory,
             config,
             NullLogger<HttpLlmGatewayClient>.Instance,
-            failoverNotifier: failoverNotifier);
+            failoverNotifier: failoverNotifier, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
     }
 
     private static GatewayRequest Request() => new()
@@ -288,18 +368,24 @@ public class HttpLlmGatewayClientFailureTests
         private readonly RecordingHandler _handler = new();
 
         public Uri? RequestUri => _handler.RequestUri;
+        public string? ExecutionOrigin => _handler.ExecutionOrigin;
+        public string? SourceDeployment => _handler.SourceDeployment;
 
         public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
 
         private sealed class RecordingHandler : HttpMessageHandler
         {
             public Uri? RequestUri { get; private set; }
+            public string? ExecutionOrigin { get; private set; }
+            public string? SourceDeployment { get; private set; }
 
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
                 RequestUri = request.RequestUri;
+                ExecutionOrigin = request.Headers.TryGetValues("X-Gateway-Execution-Origin", out var origins) ? origins.Single() : null;
+                SourceDeployment = request.Headers.TryGetValues("X-Gateway-Source-Deployment", out var sources) ? sources.Single() : null;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
                 {
                     Content = new StringContent("{\"error\":\"test\"}"),

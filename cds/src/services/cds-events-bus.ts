@@ -41,6 +41,7 @@ export type CdsEventType =
   | 'access-request.created'
   | 'access-request.decided'
   | 'access-request.count'
+  | 'access-request.progress'
   // 2026-05-29:项目虚拟 cds-compose.yml 变更(approve/手动编辑/repo 同步)
   | 'project.config.changed'
   // 2026-05-28:infra flap 熔断告警(watchdog 自动停掉烂配置容器)
@@ -80,6 +81,11 @@ export type CdsEventType =
   | 'uptime.target.recovered'
   // 2026-07-29:服务端通知账本记下一条新站内信。**必须 alert=false**,
   // 否则账本订阅到自己发的事件会无限递归记账。
+  | 'scheduled-job.unhealthy'
+  | 'capacity.risk'
+  | 'capacity.recovered'
+  | 'capacity.observation.risk'
+  | 'capacity.observation.recovered'
   | 'notice.created'
   | 'heartbeat';
 
@@ -95,7 +101,7 @@ export interface CdsEventEnvelope<T = unknown> {
  * 告警级事件白名单 —— 「哪些事件够格在没人盯屏时叫醒人」的唯一判定源。
  *
  * 为什么先立这张表、而不是等真接通道时再说:CDS 至今**没有**任何告警外发
- * (站内通知 / Webhook / 邮件),`doc/debt.cds.md「CDS 存活监控（uptime-monitor）」` 债务 2-1 把
+ * (站内通知 / Webhook / 邮件),`https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 存活监控（uptime-monitor）」` 债务 2-1 把
  * 「无告警外发」登记为 open。发布失败同样无外发。这两件事必须共用一条通道,
  * 否则会长出「存活监控一套、发布一套」两条各判各的分发逻辑 —— 那正是本仓库
  * 反复栽跟头的形状。所以先把判定收敛到这里,将来的分发器只需
@@ -106,6 +112,10 @@ export interface CdsEventEnvelope<T = unknown> {
  * 恰恰是最难被发现的缺陷 —— 没人会注意到「没有响过的铃」。
  */
 const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
+  'capacity.observation.risk': true,
+  'capacity.observation.recovered': false,
+  'capacity.risk': true,
+  'capacity.recovered': false,
   'self.status': false,
   'self.refresh.started': false,
   'self.refresh.done': false,
@@ -127,6 +137,7 @@ const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
   'access-request.created': false,
   'access-request.decided': false,
   'access-request.count': false,
+  'access-request.progress': false,
   'project.config.changed': false,
   'infra.flap.circuit-breaker': true,
   'preview.canary.alert': true,
@@ -149,6 +160,7 @@ const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
   // 恢复是好消息,不叫醒人。
   'uptime.target.recovered': false,
   // 账本自己发的事件绝不能是告警级 —— 否则订阅方记一条又发一条,无限递归。
+  'scheduled-job.unhealthy': true,
   'notice.created': false,
   heartbeat: false,
 };
@@ -177,8 +189,8 @@ export interface CdsEventNoticeCopy {
   /** 来源标签,前端据此选图标:release / uptime / drift / system */
   source: string;
   level: 'info' | 'warning' | 'danger';
-  /** 深链类别。release=发布中心;status=状态页;maintenance=系统维护;none=不给链接 */
-  link: 'release' | 'status' | 'maintenance' | 'none';
+  /** 深链类别。release=发布中心;status=状态页;maintenance=系统维护;scheduler=磁盘治理;none=不给链接 */
+  link: 'release' | 'status' | 'maintenance' | 'scheduler' | 'tasks' | 'none';
   actionLabel?: string;
 }
 
@@ -187,6 +199,11 @@ export interface CdsEventNoticeCopy {
  * 「这条要不要进站内信」。null = 不进账本。
  */
 const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
+  'capacity.observation.risk': { title: '宿主容量增长预警', source: 'system', level: 'warning', link: 'scheduler', actionLabel: '查看容量治理' },
+  'capacity.observation.recovered': { title: '宿主增长检查恢复', source: 'system', level: 'info', link: 'scheduler', actionLabel: '查看容量治理' },
+  'capacity.risk': { title: '宿主容量与回收风险', source: 'system', level: 'warning', link: 'scheduler', actionLabel: '查看容量治理' },
+  'capacity.recovered': { title: '回收与水位检查恢复', source: 'system', level: 'info', link: 'scheduler', actionLabel: '查看容量治理' },
+  'scheduled-job.unhealthy': { title: '自动化任务异常', source: 'system', level: 'warning', link: 'tasks', actionLabel: '查看任务与产物' },
   'self.status': null,
   'self.refresh.started': null,
   'self.refresh.done': null,
@@ -207,6 +224,7 @@ const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
   'access-request.created': null,
   'access-request.decided': null,
   'access-request.count': null,
+  'access-request.progress': null,
   'project.config.changed': null,
   'infra.flap.circuit-breaker': { title: '基础设施反复重启已熔断', source: 'system', level: 'danger', link: 'status', actionLabel: '查看状态页' },
   'preview.canary.alert': { title: '预览入口探测失败', source: 'uptime', level: 'warning', link: 'status', actionLabel: '查看状态页' },
@@ -221,7 +239,7 @@ const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
   'release.drift-cleared': null,
   'release.schedule.approval-required': { title: '定时发布待人工确认', source: 'release', level: 'warning', link: 'release', actionLabel: '前往发布中心' },
   'release.schedule.disabled': { title: '定时发布已自动停用', source: 'release', level: 'danger', link: 'release', actionLabel: '查看发布中心' },
-  'uptime.target.down': { title: '生产服务健康掉线', source: 'uptime', level: 'danger', link: 'status', actionLabel: '查看状态页' },
+  'uptime.target.down': { title: '监控目标健康掉线', source: 'uptime', level: 'danger', link: 'status', actionLabel: '打开监控中心' },
   'uptime.target.recovered': null,
   'notice.created': null,
   heartbeat: null,

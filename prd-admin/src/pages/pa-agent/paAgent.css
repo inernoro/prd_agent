@@ -86,8 +86,16 @@
     0 6px 20px -8px rgba(99, 102, 241, 0.5),
     0 0 0 1px rgba(99, 102, 241, 0.15) inset;
 }
+/*
+ * 与 .pa-toolbar-btn[data-active] 同一形状（共享规则里浅色前景压同色调淡底）：
+ * #c7d2fe 压 22% 靛底，默认/gemini 是浅底档 → 1.04:1。基础规则给深靛，山蓝那档留浅靛。
+ * 基础规则带 !important，覆盖也必须带，否则选择器再具体也压不过。
+ */
 .pa-quick-cmd:hover > span:first-child {
   background: rgba(99, 102, 241, 0.22) !important;
+  color: #4338ca !important;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-quick-cmd:hover > span:first-child {
   color: #c7d2fe !important;
 }
 .pa-quick-cmd:active {
@@ -124,10 +132,14 @@
 .pa-task-action-danger {
   transition: transform 180ms var(--pa-ease-spring), background-color 180ms var(--pa-ease-emphasized), color 180ms;
 }
+/* 同上：#f87171 压 13% 红底，浅底档 2.13:1 → 深红 5.00:1，山蓝留 400 档 */
 .pa-task-action-danger:hover {
   background-color: rgba(239, 68, 68, 0.13) !important;
-  color: #f87171 !important;
+  color: #b91c1c !important;
   transform: scale(1.1);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-task-action-danger:hover {
+  color: #f87171 !important;
 }
 
 /* =======================================================================
@@ -534,6 +546,19 @@
   background: var(--pa-bg-base, var(--bg-base));
   box-shadow: 0 2px 16px -8px rgba(15, 23, 42, 0.12);
 }
+/*
+ * 顶栏必须自带实底：::before/::after 两层呼吸渐变带 7s/9s 动画，
+ * saturate/brightness 关键帧让底色亮度在一屏内来回摆（实测同一处从 (153,192,253)
+ * 摆到 (129,127,166)）。文字直接压在这种会动的底上，对比度是不确定的——
+ * 全站审计在 dark×/pa-agent 抓到 2.94 与 1.99 两处正是摆到暗端时取的样。
+ * 顶栏改铺 --pa-bg-base（不带呼吸层的纯底）并抬到渐变之上，把顶栏文字的底色钉死。
+ */
+.pa-agent-topbar {
+  position: relative;
+  z-index: 1;
+  background: var(--pa-bg-base, var(--bg-base));
+}
+
 .pa-agent-root[data-sidebar-open="false"] .pa-agent-main {
   margin-left: 8px;
   border-radius: 18px;
@@ -566,7 +591,7 @@
   --pa-border-default: rgba(190, 197, 208, 0.58);
   --pa-text-primary: #30343b;
   --pa-text-secondary: #454b54;
-  --pa-text-muted: #6b7280;
+  --pa-text-muted: #4b5563;   /* 4.47:1 → 6.99:1（呼吸渐变上 3.58:1） */
   --pa-accent-strong: #4285f4;
   --pa-accent-soft: #93c5fd;
   --pa-md-code-bg: rgba(149, 157, 169, 0.12);
@@ -974,8 +999,20 @@
 }
 .pa-toolbar-btn[data-active="true"] {
   background: rgba(37, 99, 235, 0.14);
-  color: #93c5fd;
+  /* #93c5fd 压在 14% 蓝底上只有 1.51:1 —— 浅底浅字 */
+  color: #1d4ed8;
   border-color: rgba(56, 189, 248, 0.35);
+}
+/*
+ * 山蓝是深底主题，必须保留浅色前景。
+ * 上面那条基础规则把字改成深蓝 #1d4ed8 是为浅底档（默认 / gemini，实测 5.11:1）修的，
+ * 但它同样命中 mountain —— 深蓝压在 14% 蓝调的深蓝底上只剩 2.16:1，
+ * 而改之前的浅蓝有 8.03:1，等于把一处修好、另一处修坏
+ * （Codex 在 PR #1374 第二十八轮抓到）。改共享规则时必须逐个主题核对，
+ * 不能只顾自己盯着的那一档。
+ */
+.pa-agent-root[data-pa-theme="mountain"] .pa-toolbar-btn[data-active="true"] {
+  color: #93c5fd;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-toolbar-btn[data-active="true"] {
   background: rgba(74, 124, 111, 0.12);
@@ -1003,8 +1040,12 @@
 }
 
 /* 快捷指令图标底色 */
+/* 同上：#67e8f9 压 12% 蓝底，浅底档 1.12:1 → 深青 5.62:1，山蓝留 300 档 */
 .pa-quick-cmd-icon {
   background: rgba(37, 99, 235, 0.12);
+  color: #155e75;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-quick-cmd-icon {
   color: #67e8f9;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd-icon {
@@ -1021,11 +1062,19 @@
     border-color 200ms var(--pa-ease-emphasized),
     transform 180ms var(--pa-ease-spring);
 }
+/*
+ * 与上面 .pa-toolbar-btn[data-active] 完全同一个形状：共享规则里浅蓝压 10% 蓝调淡底，
+ * 默认/gemini 是浅底档 → 约 1.5:1。修法照抄：基础规则给深蓝，山蓝那档单独留浅蓝。
+ * 上一轮只修了工具条那一处，同文件二十行外的这处原样留着 —— 同形状要一次扫干净。
+ */
 .pa-learn-more:hover {
   background: rgba(37, 99, 235, 0.1);
-  color: #93c5fd;
+  color: #1d4ed8;
   border-color: rgba(56, 189, 248, 0.5);
   transform: translateY(-1px);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-learn-more:hover {
+  color: #93c5fd;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-learn-more {
   border-color: rgba(74, 124, 111, 0.28);

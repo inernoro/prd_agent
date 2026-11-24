@@ -97,6 +97,36 @@ export interface SkillFetchResult {
   source: 'upstream' | 'cache' | 'local';
 }
 
+/**
+ * 技能清单的自述。上手助手的「技能来源」面板照它渲染，所以每个字段都必须是
+ * 服务端当场查得到的事实——不放版本号、不放「最后同步时间」这类没有真实来源的字段。
+ */
+export interface StarterBundleSource {
+  /** 清单出处。目前恒为随 CDS 版本发布的内置常量，不是从上游拉的。 */
+  kind: 'builtin';
+  bundleCount: number;
+  skillCount: number;
+  /** 本机技能目录里真实存在、断网也装得上的数量。 */
+  localSkillCount: number;
+  /**
+   * 本机目录里没有、但缓存目录里有现成 zip 的数量。
+   *
+   * 这一档同样断网可装：fetchSkill 命中未过期缓存直接返回，过期缓存在上游取
+   * 失败时也会作为陈旧回退返回。所以它不能被算进「必须回源」里——算进去，
+   * 面板就会对着一个其实装得上的技能说「装它会失败」。
+   */
+  cachedSkillCount: number;
+  /** 本机没有、缓存也没有，只能回源 MAP 才装得上的数量。 */
+  upstreamSkillCount: number;
+  /** 上游是否配置。没配又存在回源技能时，面板要如实告警而不是假装能装。 */
+  upstreamConfigured: boolean;
+}
+
+export interface StarterBundlesResponse {
+  bundles: typeof STARTER_SKILL_BUNDLES.bundles;
+  source: StarterBundleSource;
+}
+
 export class SkillProxyError extends Error {
   constructor(message: string, readonly status: number, readonly hint: string) {
     super(message);
@@ -456,9 +486,78 @@ export class SkillProxy {
   /**
    * 取角色套装清单。启动目录属于 CDS 发布契约，不依赖需要 Key 的市场搜索接口，
    * 也不请求 MAP 中不存在的 `/official-skills/bundles`。
+   *
+   * 除了清单本身，还要如实报出「这份清单哪来的、里面有几个是本机自带的」——
+   * 上手助手的技能来源面板拿它回答用户，而不是把这个端点的裸 JSON 甩给人看。
+   * 这里只报**查得到**的事实：清单出处、条数、本机命中数、上游配没配。
+   * 没有版本号就不编版本号。
    */
-  async fetchBundles(): Promise<unknown> {
-    return STARTER_SKILL_BUNDLES;
+  async fetchBundles(): Promise<StarterBundlesResponse> {
+    const keys = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills.map((skill) => skill.key));
+    const offline = await Promise.all(keys.map(async (key) => {
+      if (await this.hasLocalSkill(key)) return 'local' as const;
+      // 缓存不看新鲜度：过期缓存在上游取失败时仍会作为陈旧回退返回，
+      // 所以「有 zip」就等于「断网也装得上」。
+      if (await this.hasCachedSkill(key)) return 'cache' as const;
+      return 'upstream' as const;
+    }));
+    const localSkillCount = offline.filter((x) => x === 'local').length;
+    const cachedSkillCount = offline.filter((x) => x === 'cache').length;
+    return {
+      bundles: STARTER_SKILL_BUNDLES.bundles,
+      source: {
+        kind: 'builtin',
+        bundleCount: STARTER_SKILL_BUNDLES.bundles.length,
+        skillCount: keys.length,
+        localSkillCount,
+        cachedSkillCount,
+        upstreamSkillCount: keys.length - localSkillCount - cachedSkillCount,
+        upstreamConfigured: this.mapBase.length > 0,
+      },
+    };
+  }
+
+  /**
+   * 本机技能目录里有没有这个 key。
+   *
+   * 只 stat 目录，不打包——面板要的是「能不能离线装」这一位信息，
+   * 为它把 19 个技能全压成 zip 是把一次读清单变成一次全量构建。
+   */
+  private async hasLocalSkill(key: string): Promise<boolean> {
+    for (const root of this.localSkillRoots) {
+      const stat = await fs.promises.stat(path.join(root, key)).catch(() => null);
+      if (stat?.isDirectory()) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 缓存目录里有没有这个 key 的**可用**包。
+   *
+   * 判据必须和真正做决定的那个一致：readCache 要求非空 + 真的是 zip（旧版本
+   * 写进来的 HTML 错误页会被它判为未命中）。只查文件在不在，就会对着一个空
+   * 文件或一张错误页说「断网也装得上」，而下载路径转头把它当没有。
+   *
+   * 但不能直接调 readCache：它 readFileSync 整个档案，而这条路挂在匿名的
+   * `/api/skills/bundles` 上、每个技能走一次——几十个缓存包就是一次请求同步
+   * 读掉几百 MB，把唯一的事件循环按住。所以只异步读**前 4 个字节**验魔数，
+   * 判据仍然是同一个 looksLikeZip，只是不把整包搬进内存。
+   */
+  private async hasCachedSkill(key: string): Promise<boolean> {
+    const cachePath = path.join(this.cacheDir, `${key}.zip`);
+    let handle: fs.promises.FileHandle | null = null;
+    try {
+      const stat = await fs.promises.stat(cachePath);
+      if (!stat.isFile() || stat.size === 0) return false;
+      handle = await fs.promises.open(cachePath, 'r');
+      const header = Buffer.alloc(4);
+      const { bytesRead } = await handle.read(header, 0, 4, 0);
+      return bytesRead === 4 && looksLikeZip(header);
+    } catch {
+      return false;
+    } finally {
+      await handle?.close().catch(() => { /* best-effort */ });
+    }
   }
 
   private localSkill(key: string): Promise<Buffer | null> {

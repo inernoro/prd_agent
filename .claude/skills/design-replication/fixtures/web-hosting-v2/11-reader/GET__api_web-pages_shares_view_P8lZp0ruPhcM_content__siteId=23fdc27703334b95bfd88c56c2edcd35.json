@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:7801/api/web-pages/shares/view/P8lZp0ruPhcM/content?siteId=23fdc27703334b95bfd88c56c2edcd35",
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "body": "{\"success\": true, \"data\": {\"siteId\": \"23fdc27703334b95bfd88c56c2edcd35\", \"title\": \"[每日验收] Markdown 站\", \"contentType\": \"text/html\", \"siteUrl\": \"https://cfi.miduo.org/data/web-hosting/sites/23fdc27703334b95bfd88c56c2edcd35/index.html?v=639232483949906659\", \"html\": \"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><style>\\nbody{margin:0;padding:28px 32px;background:#0f0f13;color:#f7f7fb;font-family:Inter,system-ui,sans-serif;line-height:1.7}\\nh1{font-size:22px;margin:0 0 6px}h2{font-size:15px;margin:26px 0 8px}\\n.meta{font-size:12px;opacity:.6;margin-bottom:20px}\\n.shot{margin:12px 0;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:9px;font-size:12px;opacity:.75}\\n.tag{display:inline-block;padding:2px 8px;border-radius:6px;background:rgba(251,146,60,.12);color:#fb923c;font-size:11px}\\n</style></head><body>\\n<h1>客户端首页改版 · 视觉验收</h1>\\n<div class=\\\"meta\\\">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>\\n<h2>一、首屏与信息层级</h2>\\n<p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>\\n<div class=\\\"shot\\\">截图 01 · 首屏</div>\\n<div class=\\\"shot\\\">截图 02 · 导航</div>\\n<h2>二、搜索入口</h2>\\n<p>搜索从抽屉提到常驻，但移动端触达仍偏低，<span class=\\\"tag\\\">待二轮走查</span>。</p>\\n<p style=\\\"font-size:12px;opacity:.55\\\">已加载 3 / 34 张截图，滚动位置不会被后台加载打断</p>\\n</body></html>\"}, \"error\": null}"
+}

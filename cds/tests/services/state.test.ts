@@ -22,6 +22,20 @@ describe('StateService', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('新 push 与完成回执清空旧 CI 诊断，null 可随 SSE 序列化', () => {
+    service.load();
+    service.addBranch({ id: 'diagnosis', branch: 'feature/diagnosis', worktreePath: '/tmp/diagnosis',
+      services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    const diagnosis = { code: 'cancelled' as const, title: 'CI 已取消', message: 'cancelled', targetSha: 'a'.repeat(40),
+      checkedAt: new Date().toISOString(), actionUrl: '', actionLabel: '' };
+    for (const update of [{ ciImageStatus: 'waiting' as const, ciTargetSha: 'b'.repeat(40) }, { ciImageStatus: 'ready' as const }]) {
+      service.updateBranchGithubMeta('diagnosis', { ciDiagnosis: diagnosis });
+      service.updateBranchGithubMeta('diagnosis', update);
+      expect(service.getBranch('diagnosis')?.ciDiagnosis).toBeNull();
+      expect(JSON.stringify(service.getBranch('diagnosis'))).toContain('"ciDiagnosis":null');
+    }
+  });
+
   describe('initialization', () => {
     it('should create empty state when file does not exist', () => {
       service.load();
@@ -71,7 +85,7 @@ describe('StateService', () => {
       }
     });
 
-    it('should migrate legacy /data cache mounts to the active cache base', () => {
+    it('retires known legacy compiler binds as metadata without moving cache files or regenerating mounts', async () => {
       const oldCdsCacheBase = process.env.CDS_CACHE_BASE;
       const repoRoot = path.join(path.dirname(stateFile), 'prd_agent');
       const cacheRoot = path.join(path.dirname(stateFile), 'local-cache', '{projectSlug}');
@@ -117,10 +131,15 @@ describe('StateService', () => {
         const scoped = new StateService(stateFile, repoRoot);
         scoped.load();
         const profiles = scoped.getBuildProfiles();
-        const expectedBase = path.join(path.dirname(stateFile), 'local-cache', 'prd-agent');
-        expect(profiles[0].cacheMounts?.[0].hostPath).toBe(path.join(expectedBase, 'nuget'));
-        expect(profiles[1].cacheMounts?.[0].hostPath).toBe(path.join(expectedBase, 'pnpm'));
-        expect(profiles[1].cacheMounts?.[0].containerPath).toBe('/pnpm/store');
+        expect(profiles[0].cacheMounts).toEqual([]);
+        expect(profiles[1].cacheMounts).toEqual([]);
+        expect(profiles[0].retiredCatalogCacheMounts).toEqual([{hostPath:'/data/cds/prd-agent/cache/nuget',containerPath:'/root/.nuget/packages'}]);
+        expect(profiles[1].retiredCatalogCacheMounts).toEqual([{hostPath:'pnpm',containerPath:'/root/.local/share/pnpm/store'}]);
+        expect(fs.existsSync(path.join(path.dirname(stateFile),'local-cache'))).toBe(false);
+        await scoped.flush(); const restored=new StateService(stateFile,repoRoot);restored.load();
+        expect(restored.getBuildProfiles().map(p=>p.cacheMounts)).toEqual([[],[]]);
+        expect(restored.getBuildProfiles().map(p=>p.retiredCatalogCacheMounts)).toEqual(profiles.map(p=>p.retiredCatalogCacheMounts));
+        await restored.flush();
       } finally {
         if (oldCdsCacheBase === undefined) delete process.env.CDS_CACHE_BASE;
         else process.env.CDS_CACHE_BASE = oldCdsCacheBase;

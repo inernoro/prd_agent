@@ -29,7 +29,13 @@ export type LoginResult = {
 export type TenantSession = { id: string; name: string; isInternal: boolean; role: string; teamIds: string[] };
 
 // ── 改密 ──
-export type ChangePasswordRequest = { oldPassword: string; newPassword: string };
+export type ChangePasswordRequest = {
+  /** 联邦账号首次设置本地口令时留空——它的旧口令是建号时随机生成的，没人知道。 */
+  oldPassword?: string;
+  newPassword: string;
+  /** 可选的新登录名；留空表示保持现有用户名。 */
+  username?: string;
+};
 export type ChangePasswordResult = {
   /** 改密后重新签发的 token（不再带 mcp 标记）。 */
   token: string;
@@ -37,6 +43,30 @@ export type ChangePasswordResult = {
   displayName?: string | null;
   expiresAt?: string | null;
   identityProvider?: string | null;
+  tenant?: TenantSession | null;
+  /**
+   * 口令确实改成功了，但会话在这中间到期了，服务端签不出新 token。
+   * 这种情况后端回的是 success（不是失败）——报失败会让用户拿着已经作废的旧口令反复重试。
+   * 前端要做的是：告诉他改成功了，然后请他重新登录。
+   */
+  requiresRelogin?: boolean;
+};
+
+/** 「账号与安全」页的数据源：我的登录名是什么、有没有可用的本地口令、改密要不要填旧口令。 */
+export type AccountProfile = {
+  username: string;
+  displayName?: string | null;
+  /** map 表示由 MAP 一键登录自动建号，空表示独立口令账号。 */
+  identityProvider?: string | null;
+  hasLocalPassword: boolean;
+  requiresOldPassword: boolean;
+  /** 当前用户名是否为自动生成（map-xxxx），据此提示用户改成记得住的名字。 */
+  usernameIsGenerated: boolean;
+  /** 建议的登录名（MAP 用户名），用于预填输入框；为空表示没有可用建议。 */
+  suggestedUsername?: string | null;
+  /** 建议登录名已被别人占用——必须明说，否则用户会照着填再撞一次。 */
+  suggestedUsernameTaken?: boolean;
+  minPasswordLength: number;
   tenant?: TenantSession | null;
 };
 
@@ -81,11 +111,13 @@ export type LlmLogListItem = {
   statusCode?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  reasoningTokens?: number | null;
   tokenUsageSource?: string | null;
   imageSuccessCount?: number | null;
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  costKind?: 'provider_actual' | 'official_baseline_estimate' | 'provider_policy_estimate' | 'unpriced' | 'no_usage' | null;
   priceSnapshotHash?: string | null;
   providerRequestId?: string | null;
   providerReportedCost?: number | null;
@@ -149,6 +181,10 @@ export type LlmLogDetail = {
   toolCallCount?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  cacheCreationCountedInsideInput?: boolean | null;
   imageSuccessCount?: number | null;
   outputImages: LogImage[];
   outputImageCaptureStatus?: string | null;
@@ -156,8 +192,20 @@ export type LlmLogDetail = {
   outputImageCapturedAt?: string | null;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  cachedInputPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   pricePerCall?: number | null;
   priceCurrency?: string | null;
+  /** 价格来源：upstream / admin / migrated。 */
+  priceSource?: string | null;
+  priceObservedAt?: string | null;
+  /** 这次到底算没算出钱：priced / unpriced / stale_currency / no_usage。 */
+  costStatus?: string | null;
+  /** 算不出钱时的人话原因。 */
+  costUnpricedReason?: string | null;
+  costKind?: 'provider_actual' | 'official_baseline_estimate' | 'provider_policy_estimate' | 'unpriced' | 'no_usage' | null;
+  estimatedCacheReadCost?: number | null;
+  estimatedCacheWriteCost?: number | null;
   estimatedInputCost?: number | null;
   estimatedOutputCost?: number | null;
   estimatedCallCost?: number | null;
@@ -245,6 +293,13 @@ export type RouterTraceStep = {
 };
 
 export type ProviderAttempt = {
+  attemptId?: string | null;
+  providerRequestId?: string | null;
+  providerTaskId?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  providerReportedCost?: number | null;
+  providerCostCurrency?: string | null;
   order: number;
   stage: string;
   provider?: string | null;
@@ -281,6 +336,14 @@ export type LogsMeta = {
   operations: string[];
 };
 
+/** 一条缺价模型漏掉了多少次调用，以及为什么算不出钱。 */
+export type UnpricedModelBucket = {
+  model: string;
+  provider?: string | null;
+  requests: number;
+  status: 'unpriced' | 'stale_currency';
+  reason?: string | null;
+};
 export type LogsBucketItem = {
   key: string;
   count: number;
@@ -303,6 +366,16 @@ export type LogsSummaryData = {
   pricedRequests: number;
   unknownCostRequests: number;
   priceCoveragePercent: number;
+  /** 缓存命中省下的钱（按输入全价与缓存价的差额算）。没有缓存命中时为 null。 */
+  cacheSavingsUsd?: number | null;
+  /** 有用量但模型没配价，这些调用没计上钱。 */
+  unpricedRequests?: number;
+  /** 模型价格不是美金口径，不敢记账。 */
+  staleCurrencyRequests?: number;
+  /** 上游没返回 token 用量，无从计价。 */
+  noUsageRequests?: number;
+  /** 按漏掉的调用次数排的缺价模型清单。 */
+  topUnpricedModels?: UnpricedModelBucket[];
   estimatedCosts: { currency: string; amount: number; requests: number }[];
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
@@ -417,6 +490,8 @@ export type LogsListParams = {
   environment?: string;
   operation?: string;
   view?: 'logical' | 'physical';
+  /** 按上游平台过滤。provider 是厂商类型会重名，只有 platformId 能精确定位到某一条上游。 */
+  platformId?: string;
 };
 
 export type LogsListData = {
@@ -437,6 +512,7 @@ export type SessionItem = {
   start?: string | null;
   end?: string | null;
   appCallerCode?: string | null;
+  appCallerCodeDisplayName?: string | null;
   primaryModel?: string | null;
   primaryProvider?: string | null;
   supportingModels: string[];
@@ -453,6 +529,21 @@ export type SessionsData = {
 export type PoolModelInfo = {
   modelId: string; platformId: string; priority: number; protocol?: string | null;
   healthStatus: number; healthStatusLabel: string;
+  /**
+   * 不可用的原因，只有「不是因为调用失败」时才有值：
+   * `upstream-missing` 上游已不存在；`model-missing` 上游还在但模型没了；
+   * `upstream-disabled` 上游还在、只是被停用；`model-disabled` 模型还在、只是被停用。
+   * 两个 `-missing` 是死成员（该摘除），两个 `-disabled` 是临时状态（启用即恢复）。
+   * 为空表示走的是常规健康判定，由 consecutiveFailures 一路解释。
+   * 有它文案才不会写出「不可用（连续失败 0 次）」这种自相矛盾的归因。
+   */
+  unavailableReason?: string | null;
+  /**
+   * 能不能摘除。由后端与成员删除端点**同一个判据**算出，直接用，不要自己拼条件去猜——
+   * 猜的那一版连续三轮 review 各漏一处（停用 / 中继 / 事先就不健康），
+   * 每处都表现为「按钮亮着、点下去 409」。
+   */
+  removable?: boolean;
   lastFailedAt?: string | null; lastSuccessAt?: string | null;
   consecutiveFailures: number; consecutiveSuccesses: number;
   enablePromptCache?: boolean | null; maxTokens?: number | null;
@@ -469,6 +560,7 @@ export type ModelPool = {
   boundAppCallers: Array<{ id: string; appCallerCode: string; title?: string | null; status: string }>;
   recentRequests: number; recentSucceeded: number; recentFailed: number;
   recentSuccessRatePercent?: number | null; lastRequestAt?: string | null; trafficWindowHours: number;
+  averageDurationMs?: number | null; recentTenRequests: number; recentTenSuccessRatePercent?: number | null;
   health: 'healthy' | 'degraded' | 'unavailable' | 'empty';
   healthyMembers: number; degradedMembers: number; unavailableMembers: number;
   managedByRegistry: boolean; appendOnly: boolean; poolRole?: string | null;
@@ -604,15 +696,44 @@ export type UpsertPoolModelRequest = {
   capabilities?: ModelCapability[];
 };
 
-// ── 平台（无密钥，仅 hasKey）──
+// ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
+  recentCallStatus?: 'quota_exhausted' | 'rate_limited' | 'rejected' | 'service_error' | 'succeeded' | 'failed' | null;
+  recentCallAt?: string | null;
+  proxy?: UpstreamProxyView | null;
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
+  /** 密钥指纹（如 sk-or-…9c2a）。仅具备 config:write 时下发，其余为 null。永远不是完整密钥。 */
+  keyFingerprint?: string | null;
+  /** missing 没配 / ok 能解开 / unreadable 密文在但当前 ApiKeyCrypto:Secret 解不开 */
+  keyStatus: 'missing' | 'ok' | 'unreadable';
   sourceCollection: string; authority: string; claimedAt?: string | null;
   createdAt?: string | null; updatedAt?: string | null;
 };
+/** 删除上游被挡下时回来的占用清单：先摘掉这些才能删。 */
+export type PlatformDeleteBlockers = { models: string[]; pools: string[]; totalCount: number };
+/** 删除模型被挡下时回来的占用清单。 */
+export type ModelDeleteBlockers = { pools: string[]; totalCount: number };
+/** 删除模型池被挡下时回来的占用清单；isCurrentDefault 是「删了那个类型没默认可用」这类阻挡。 */
+export type PoolDeleteBlockers = { isCurrentDefault: boolean; appCallers: string[]; totalCount: number };
+/** 删除交换所被挡下时回来的占用清单。 */
+export type ExchangeDeleteBlockers = { pools: string[]; totalCount: number };
+/** 删除逻辑模型的结果：名下 offering 作为从属子项一并删除。 */
+export type LogicalModelDeleteResult = { offeringsDeleted: number };
+/** 删 appCaller 连带删掉的提示词策略版本数（0 表示它本来就没配过策略）。 */
+export type AppCallerDeleteResult = { promptPolicyVersionsDeleted: number };
+/** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
+export type UpdatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
+  name?: string;
+  platformType?: string;
+  apiUrl?: string;
+  maxConcurrency?: number;
+  remark?: string;
+};
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   platformType: 'openai' | 'claude';
   providerId?: string;
@@ -620,6 +741,145 @@ export type CreatePlatformRequest = {
   apiKey: string;
   maxConcurrency?: number;
   remark?: string;
+};
+
+// ── 内置上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）──
+// 这些类型的唯一数据源是后端 /gw/provider-presets，前端不另维护一份上游清单。
+export type ProviderPresetItem = {
+  key: string;
+  name: string;
+  platformType: 'openai' | 'claude';
+  apiUrl: string;
+  providerId?: string | null;
+  maxConcurrency: number;
+  keyConsoleUrl: string;
+  keyPrefixHint: string;
+  supportsModelDiscovery: boolean;
+  supportsUpstreamPricing: boolean;
+  summary: string;
+  searchTerms: string[];
+  /** 非空 = 该上游不校验密钥，前端替用户预填这个占位值 */
+  keylessPlaceholder?: string;
+};
+export type ProviderPresetsData = { items: ProviderPresetItem[] };
+
+export type PlatformTestResult = {
+  reachable: boolean;
+  httpStatus?: number | null;
+  elapsedMs: number;
+  probedUrl: string;
+  modelCount?: number | null;
+  failureKind?: string | null;
+  message: string;
+  nextStep?: string | null;
+};
+
+export type UpstreamModelItem = {
+  modelId: string;
+  displayName?: string | null;
+  inferredCapabilities: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+  priceSource?: string | null;
+  alreadyImported: boolean;
+  /** 已登上白名单：有线路指向它，调用方按公开模型名请求找得到。与「已导入」是两件事 */
+  alreadyPublished: boolean;
+  /** 用途来源：catalog = 内置名录查到的、upstream = 上游声明的、guess = 按标识猜的。 */
+  capabilitySource: string;
+  /** 是否在内置名录里。不在名录的要显式放行才准导入。 */
+  inCatalog: boolean;
+  catalogDisplayName?: string | null;
+  catalogVendor?: string | null;
+  acceptsImageInput: boolean;
+  requiresImageInput: boolean;
+};
+/**
+ * 模型名录里的一条登记：这个模型「是什么」（算哪几种用途、能不能吃图）。
+ *
+ * 代码内置那张表只有二十来条，上游一出新模型就得改代码发版。补登让同一件事
+ * 变成在控制台填一次——同一个标识补登的赢，补登里没有的回落到内置那张表。
+ */
+export type CatalogEntryItem = {
+  /** 内置那份没有 id（它不可编辑，只能「照这条建一份」）。 */
+  id?: string;
+  canonicalId: string;
+  displayName: string;
+  vendor: string;
+  capabilities: string[];
+  acceptsImageInput: boolean;
+  requiresImageInput: boolean;
+  /** 等价写法：厂商前缀、日期快照、各网关的改名。命中任一即认作同一个模型。 */
+  aliases: string[];
+  notes?: string | null;
+  enabled?: boolean;
+  updatedAt?: string | null;
+};
+
+export type CatalogEntriesData = {
+  items: CatalogEntryItem[];
+  total: number;
+  /** 代码内置那张表。补登 0 条不等于系统什么都不认识。 */
+  builtinCount: number;
+  builtin: CatalogEntryItem[];
+  /** 运行时真正认的那几种用途。界面只让从这里挑，填别的当场拒。 */
+  knownCapabilities: string[];
+  /** 服务端维护的有限历史能力别名；旧响应缺省时只接受规范能力。 */
+  legacyCapabilityAliases?: Record<string, string>;
+};
+
+export type UpsertCatalogEntryRequest = {
+  canonicalId?: string;
+  displayName?: string;
+  vendor?: string;
+  capabilities?: string[];
+  acceptsImageInput?: boolean;
+  requiresImageInput?: boolean;
+  aliases?: string[];
+  notes?: string | null;
+  enabled?: boolean;
+};
+
+export type UpstreamModelsData = {
+  probedUrl: string;
+  total: number;
+  alreadyImportedCount: number;
+  pricingProvided: boolean;
+  /** 上游实际返回了多少个——仅在被截断时非空，必须显示出来 */
+  truncatedFromTotal?: number | null;
+  /** 这份清单与价格的拉取时间（服务端 UTC）。面板可能开着不动，用户要能分辨新鲜度 */
+  fetchedAt: string;
+  items: UpstreamModelItem[];
+};
+
+export type ImportUpstreamModelEntry = {
+  modelId: string;
+  capabilities?: string[];
+  /** 管理员对名录外模型的显式放行；会进审计。 */
+  allowOutsideCatalog?: boolean;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+};
+export type ImportUpstreamModelsResult = {
+  requested: number;
+  created: number;
+  skipped: number;
+  skippedModelIds: string[];
+  createdModelIds: string[];
+  /** 因为不在名录、又没显式放行被拦下的模型（与「已存在」分开列）。 */
+  blockedOutsideCatalog?: string[];
+  /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
+  poolSyncFailed?: boolean;
+  message?: string;
+  /** 这次新登上白名单的公开模型名。 */
+  whitelistedPublicIds?: string[];
+  /** 挂到已有公开模型名下的线路数——「一个模型多个来源」就是这么长出来的。 */
+  linkedToExistingCount?: number;
+  /** 白名单登记失败的原因。模型已入库、只是没登上名单，不许报成全绿。 */
+  whitelistMessage?: string | null;
 };
 
 // ── 模型（无密钥，仅 hasKey）──
@@ -647,17 +907,79 @@ export type ModelItem = {
   sourceCollection: string; authority: string; claimedAt?: string | null;
   callCount: number; successCount: number; failCount: number; totalDuration: number;
   capabilities: ModelCapability[];
+  imageSizeControlMode?: ImageSizeControlMode;
+  imageSizeFieldFormat?: ImageSizeFieldFormat | null;
   inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
+  /** 缓存命中输入单价。null 表示没配——计价时按输入全价算，不当免费。 */
+  cachedInputPricePerMillion?: number | null;
+  /** 写入缓存输入单价，Anthropic 一类按溢价收费的协议才用得上。 */
+  cacheWritePricePerMillion?: number | null;
   pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
+  /** 价格来源：upstream 上游返回 / admin 人工录入 / migrated 由历史价换算。null 表示没有来源可考。 */
+  priceSource?: PriceSource | null;
+  priceObservedAt?: string | null;
+  priceUpdatedBy?: string | null;
+  /** 价格已到复核期（超过 30 天没看过，或压根没有观测时间）。 */
+  priceStale?: boolean;
+  priceAgeDays?: number | null;
+  /** 这份价格能不能用来记账：有价且币种是美金。false 的模型调用不会计入用量与限额。 */
+  priceBillable?: boolean;
   createdAt?: string | null; updatedAt?: string | null;
 };
+export type PriceSource = 'upstream' | 'admin' | 'migrated';
 export type ModelsData = { items: ModelItem[]; total: number };
+
+/** 一条模型被某个模型池引用的情况：继承档案价，还是用了自己的覆盖价。 */
+export type ModelPoolUsageItem = {
+  poolId: string;
+  poolName: string;
+  modelType?: string | null;
+  inherits: boolean;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  cachedInputPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: 'CNY' | 'USD' | null;
+  priceSource?: PriceSource | null;
+  priceObservedAt?: string | null;
+  priceUpdatedBy?: string | null;
+  /** 托管的只追加池，不接受从模型页改价。 */
+  managed: boolean;
+};
+export type ModelPoolUsageData = {
+  pools: ModelPoolUsageItem[];
+  inheritingCount: number;
+  overridingCount: number;
+};
+/**
+ * 改一条已有模型。真正参与计费的是模型池成员里的那份价格，所以改价时要一并交代
+ * 哪些池跟着改（syncPoolIds）；不在表里的池保留它自己的覆盖价。
+ */
+export type UpdateModelRequest = {
+  name?: string;
+  protocol?: string;
+  maxTokens?: number;
+  remark?: string;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
+  cachedInputPricePerMillion?: number;
+  cacheWritePricePerMillion?: number;
+  pricePerCall?: number;
+  priceCurrency?: 'USD';
+  clearPricing?: boolean;
+  /** true 表示清掉最大输出 token 限制（改回不限制）；不能靠传 null，JSON 会把它省掉。 */
+  clearMaxTokens?: boolean;
+  syncPoolIds?: string[];
+};
 export type CreateModelRequest = {
   platformId: string;
   name?: string;
   modelName: string;
   protocol?: 'inherit' | 'openai' | 'claude';
   capabilities: string[];
+  imageSizeControlMode?: ImageSizeControlMode;
+  imageSizeFieldFormat?: ImageSizeFieldFormat;
   apiKey?: string;
   timeout?: number;
   maxRetries?: number;
@@ -665,15 +987,29 @@ export type CreateModelRequest = {
   maxTokens?: number;
   inputPricePerMillion?: number;
   outputPricePerMillion?: number;
+  cachedInputPricePerMillion?: number;
+  cacheWritePricePerMillion?: number;
   pricePerCall?: number;
   priceCurrency?: 'CNY' | 'USD';
   remark?: string;
+};
+export type ImageSizeControlMode = 'inherit' | 'field' | 'prompt' | 'field_and_prompt' | 'none';
+export type ImageSizeFieldFormat = 'size' | 'width_height' | 'aspect_ratio' | 'image_config.aspect_ratio';
+export type UpdateModelImageSizeControlRequest = {
+  mode: ImageSizeControlMode;
+  fieldFormat?: ImageSizeFieldFormat;
 };
 export type CreateModelResult = {
   item: ModelItem;
   poolTypesCreated: number;
   poolsCreated: number;
   modelsAppended: number;
+  /** 登上白名单后的公开模型名——调用方按它请求。为空表示没登上，模型在库里但调不通 */
+  publicId?: string | null;
+  /** 公开名已存在，这次是给它多挂了一条线路，不是新建了一个对外模型 */
+  linkedToExistingPublicId: boolean;
+  /** 没登上白名单时的原因与下一步；为空表示登上了 */
+  whitelistMessage?: string | null;
 };
 
 export type ModelOfferingItem = {
@@ -695,8 +1031,92 @@ export type ModelOfferingItem = {
   maxConcurrency?: number | null;
   rateLimitPerMinute?: number | null;
   notes?: string | null;
+  /** 为什么不参与这次排队；null 表示参与。服务端按唯一判据算好，前端不再自己判。 */
+  skipReason?: string | null;
+  /**
+   * 它指向的上游模型与所属 Provider 都还启用着吗。
+   * 分「熔断」与「上游被停用」两种状态要用它，而不是去匹配 skipReason 那句中文——
+   * 匹配文案的话，文案一改判据就悄悄失灵（用状态，不用渲染好的句子）。
+   */
+  targetUsable?: boolean;
+  /** 排队名次，1 就是这次会落到的那一条；0 表示不参与。 */
+  queuePosition: number;
+};
+
+/** 「不点名时会不会落到这个模型」在某一个调用方身上的答案。 */
+export type CallTraceUnnamedCaller = {
+  appCallerCode: string;
+  /** UsesModelCatalog 认对外模型目录 / TrafficRejected 不放行 */
+  reach: 'UsesModelCatalog' | 'TrafficRejected';
+  reachesThisModel: boolean;
+  verdict: string;
+};
+
+/** 判定流程图上的一条岔路。状态由后端下发，前端不推断。 */
+export type CallTraceFlowBranch = {
+  label: string;
+  outcome: string;
+  /** taken 确定走这支 / possible 取决于请求或调用方 / blocked 当前走不到 */
+  state: 'taken' | 'possible' | 'blocked';
+  note?: string | null;
+};
+
+/** 判定流程图上的一个节点；question 为空表示顺序节点，不分叉。 */
+export type CallTraceFlowNode = {
+  id: string;
+  question: string;
+  branches: CallTraceFlowBranch[];
+};
+
+/** 一个对外模型的调用全貌：点名它之后会发生什么，用当前真实状态回答。 */
+export type CallTraceData = {
+  publicId: string;
+  name: string;
+  modelType: string;
+  enabled: boolean;
+  isDefaultForType: boolean;
+  routingStrategy: string;
+  /** 第一屏那句结论。 */
+  conclusion: string;
+  gate: { enabled: boolean; openToAllCallers: boolean; allowedAppCallerCodes: string[]; summary: string };
+  unnamed: {
+    /** 模型这一侧的条件（是本用途的默认、启用着、有一条能接的线路）。不是「会落到它」的完整答案。 */
+    servesUnnamed: boolean;
+    currentDefaultPublicId?: string | null;
+    currentDefaultName?: string | null;
+    summary: string;
+    /** 这句话的主语：逐个调用方的结论。后端算好下发，前端不推断。 */
+    callers: CallTraceUnnamedCaller[];
+    callerCount: number;
+    reachingCallerCount: number;
+  };
+  routes: ModelOfferingItem[];
+  /** 判定流程图：架构文档第 3 节那张图，按这个模型此刻的状态点亮。 */
+  flow: CallTraceFlowNode[];
+  routeExtras: Array<{
+    offeringId: string;
+    weightPercent?: number | null;
+    priceSummary?: string | null;
+    lastFailedAt?: string | null;
+    /**
+     * 这条已摘掉的线路，下一条请求有没有可能被拿去做半开试探。
+     *
+     * 运行时在挑常规队列之前会先试着认领一条不可用线路顶到队首，所以「不参与」不等于
+     * 「这次一定用不到它」——不标出来，面板就在指着队首说「下一跳是它」而实际先打了别处。
+     */
+    halfOpenProbe?: boolean;
+  }>;
+  ledger: {
+    windowDays: number;
+    calls: number;
+    costUsd: number;
+    unpricedCalls: number;
+    lastCallAt?: string | null;
+  };
 };
 export type LogicalModelItem = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   id: string;
   publicId: string;
   name: string;
@@ -705,6 +1125,13 @@ export type LogicalModelItem = {
   allowedAppCallerCodes: string[];
   routingStrategy: 'priority' | 'weighted';
   enabled: boolean;
+  /** 这个用途没点名模型时用它。同租户同用途最多一个——原来的「模型池默认池」就是它。 */
+  isDefaultForType: boolean;
+  /**
+   * 「对这些调用方而言，我是默认」——不点名时优先于 isDefaultForType。
+   * 授权名单回答「能不能点名我」，这一份回答「不点名时是不是我」，是两件事。
+   */
+  defaultForAppCallerCodes: string[];
   displayOrder: number;
   description?: string | null;
   createdAt?: string | null;
@@ -712,17 +1139,45 @@ export type LogicalModelItem = {
   offerings: ModelOfferingItem[];
 };
 export type LogicalModelsData = { items: LogicalModelItem[]; total: number };
+
+/** 逻辑模型近 N 天用量。白名单列表的趋势线与花费列都读它。 */
+export type LogicalModelUsageItem = {
+  publicId: string;
+  /** 日期刻度，与 dailyCalls 一一对应。 */
+  days: string[];
+  /** 每天的调用次数，没调用的那天是 0 而不是缺项——曲线才不会把空档画成连线。 */
+  dailyCalls: number[];
+  totalCalls: number;
+  totalTokens: number;
+  /** 只累加算得出钱的部分，缺价的不按零成本混进来。 */
+  totalCostUsd: number;
+  /** 缺价调用次数。大于零要在列表上标出来，否则花费会看着莫名其妙地低。 */
+  unpricedCalls: number;
+};
+export type LogicalModelUsageData = {
+  days: number;
+  from: string;
+  to: string;
+  items: LogicalModelUsageItem[];
+};
 export type CreateLogicalModelRequest = {
+  identityKind?: 'fixed' | 'stable';
+  aliases?: string[];
   publicId: string;
   name: string;
   modelType: string;
   capabilities: string[];
   allowedAppCallerCodes: string[];
+  /** 「对这些调用方而言我是默认」，不点名时优先于用途默认。 */
+  defaultForAppCallerCodes?: string[];
   routingStrategy: 'priority' | 'weighted';
   displayOrder?: number;
   description?: string;
 };
-export type UpdateLogicalModelRequest = Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>;
+export type UpdateLogicalModelRequest =
+  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType' | 'identityKind'>>
+  /** 设为 true 会顶掉同用途原来的那个默认，接口会把顶掉了谁回给你。 */
+  & { isDefaultForType?: boolean };
 export type CreateModelOfferingRequest = {
   targetKind: 'model' | 'exchange';
   targetId: string;
@@ -734,8 +1189,10 @@ export type CreateModelOfferingRequest = {
   maxConcurrency?: number;
   rateLimitPerMinute?: number;
   notes?: string;
+  /** 未传保持默认启用；迁移工具可显式 false，避免尚未完成的线路短暂接流量。 */
+  enabled?: boolean;
 };
-export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId'>;
+export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId' | 'enabled'>;
 
 // ── Exchange（无密钥，仅 hasKey）──
 export type ExchangeModelItem = {
@@ -746,6 +1203,7 @@ export type ExchangeModelItem = {
   enabled: boolean;
 };
 export type ExchangeItem = {
+  proxy?: UpstreamProxyView | null;
   id: string;
   name: string;
   modelAlias: string;
@@ -754,6 +1212,7 @@ export type ExchangeItem = {
   targetUrl: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
   hasKey: boolean;
@@ -779,16 +1238,32 @@ export type ExchangeModelWriteRequest = {
   enabled: boolean;
 };
 export type CreateExchangeRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   models: ExchangeModelWriteRequest[];
   targetUrl: string;
   apiKey: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
 };
 export type UpdateExchangeRequest = Omit<CreateExchangeRequest, 'apiKey'> & { version: number };
+export type UpdateExchangeProxyRequest = { proxy: UpstreamProxyDraft; version: number };
+export type ImageLayeringCapabilityStatus = {
+  capabilityId: 'image-layering';
+  state: 'not-installed' | 'incomplete' | 'installed' | 'verified';
+  installed: boolean;
+  verified: boolean;
+  hasKey: boolean;
+  exchangeId?: string | null;
+  logicalModelId?: string | null;
+  offeringId?: string | null;
+  modelId: string;
+  publicId: string;
+  lastVerifiedAt?: string | null;
+};
 
 // ── GW-owned API key 健康自检 ──
 export type KeyHealthSummary = {
@@ -855,33 +1330,6 @@ export type ConfigAuthorityReportData = {
   gaps: ConfigAuthorityGapItem[];
 };
 
-export type RuntimeGateItem = {
-  id: string;
-  label: string;
-  status: string;
-  blocking: boolean;
-  detail: string;
-  evidence: string;
-  nextAction: string;
-  facts?: Record<string, string>;
-  links?: RuntimeGateLink[];
-};
-export type RuntimeGateLink = {
-  label: string;
-  to: string;
-};
-export type RuntimeGatesData = {
-  status: string;
-  releaseCommit?: string | null;
-  readyForHttpFull: boolean;
-  passed: number;
-  blocked: number;
-  waiting: number;
-  retained: number;
-  generatedAt: string;
-  items: RuntimeGateItem[];
-};
-
 // ── GW appCaller 注册表（llm_gateway.llmgw_app_callers）──
 export type GatewayAppCaller = {
   id: string;
@@ -897,6 +1345,9 @@ export type GatewayAppCaller = {
   title?: string | null;
   status: string;
   modelPoolId?: string | null;
+  allowedModelPoolIds?: string[];
+  defaultModelPoolId?: string | null;
+  allowCrossPoolFallback?: boolean;
   modelPolicy?: string | null;
   parameterPolicy?: string | null;
   lastObservedModelPoolId?: string | null;
@@ -931,6 +1382,9 @@ export type CreateGatewayAppCallerRequest = {
 export type UpdateGatewayAppCallerRequest = {
   status?: string;
   modelPoolId?: string;
+  allowedModelPoolIds?: string[];
+  defaultModelPoolId?: string;
+  allowCrossPoolFallback?: boolean;
   modelPolicy?: string;
   parameterPolicy?: string;
   owner?: string;
@@ -1136,6 +1590,7 @@ export type CostReconciliationImportRequest = {
 };
 
 export type LegacyKeyCutoverData = {
+  policyRevision: number;
   applicable: boolean;
   status: 'not-applicable' | 'observing' | 'ready' | 'revoked';
   deadlineAt?: string | null;
@@ -1158,7 +1613,22 @@ export type OrganizationData = {
 };
 
 export type CreatedTenant = { id: string; name: string; slug: string; defaultTeamId: string };
+/** 删除团队前的占用清单。 */
+export type TeamDeleteBlockers = { members: string[]; serviceKeys: number; appCallers: number; totalCount: number };
+/** 删除租户前的剩余内容清单：每一项非零都会挡下删除，同时就是「还要清什么」的待办。 */
+export type TenantDeleteBlockers = {
+  otherMembers: number; platforms: number; models: number; pools: number;
+  exchanges: number; logicalModels: number; serviceKeys: number; appCallers: number; totalCount: number;
+};
 export type CreatedTeam = { id: string; name: string; status: string };
+/** PUT /gw/teams/{id} 的返回体：只有 id 与连带影响计数，不回读团队名。 */
+export type TeamUpdateResult = {
+  id: string;
+  updated: boolean;
+  invalidatedMemberships: number;
+  revokedServiceKeys: number;
+  disabledAppCallers: number;
+};
 export type CreateMemberRequest = {
   username: string;
   displayName?: string;
@@ -1181,28 +1651,246 @@ export type UpdateMemberRequest = {
   teamIds?: string[];
 };
 
-// ── 影子比对（只读）──
-export type ShadowSnapshot = {
-  success: boolean; actualModel?: string | null; protocol?: string | null; platformType?: string | null;
-  resolutionType?: string | null; modelGroupId?: string | null; isFallback: boolean;
+// ── 服务网关设置（系统级模型）──
+// 系统自己知道的值（serving 地址、appCaller、密钥前缀）只读回展示，不做输入。
+export type SystemGatewaySettings = {
+  /** auto：网关自己挑；pool：钉一个模型池；model：钉一个模型。 */
+  modelSource: 'auto' | 'pool' | 'model';
+  modelGroupId: string | null;
+  modelName: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  /** true = 归属团队是系统自己的「系统内部」团队，消耗单独计费、不可改。 */
+  teamIsSystemOwned: boolean;
+  servingBaseUrl: string;
+  servingReachable: boolean;
+  appCallerCode: string;
+  /** ready 已就绪 / will-issue 首次调用时自动签发 / will-reissue 旧的失效了会自动重签。 */
+  credentialState: 'ready' | 'will-issue' | 'will-reissue';
+  credentialPrefix: string | null;
+  credentialIssuedAt: string | null;
+  pools: Array<{ id: string; name: string; isDefault: boolean }>;
+  // publicId 是提交给后端的值（解析器只认它），name 只做显示。
+  models: Array<{ id: string; publicId: string; name: string }>;
+  /** 本次清单用的筛选关键字（服务端回显，空串表示没筛）。 */
+  modelQuery: string;
+  /** 满足条件的模型总数：大于 models.length 就说明被截断了，得靠关键字够剩下那些。 */
+  modelTotal: number;
+  /** 单次最多回多少条。 */
+  modelPageSize: number;
+  consumers: Array<{ feature: string; appCallerCode: string }>;
 };
-export type ShadowMismatch = { field: string; inproc?: string | null; http?: string | null; severity: string };
-export type ShadowItem = {
-  id: string; kind: string; requestId?: string | null; releaseCommit?: string | null; appCallerCode: string; modelType: string;
-  comparedAt?: string | null; shadowDurationMs: number; httpOk: boolean; httpError?: string | null;
-  allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
-  mismatches: ShadowMismatch[]; textMatches?: boolean | null;
+
+export type UpdateSystemSettingsRequest = {
+  modelSource: 'auto' | 'pool' | 'model';
+  modelGroupId?: string;
+  modelName?: string;
+  // 没有 teamId：归属团队由后端钉死在「系统内部」团队上，单独计费。
 };
-export type ShadowSummary = {
+
+export type UpdateSystemSettingsResult = {
+  modelSource: string;
+  modelGroupId: string;
+  modelName: string;
+};
+
+export type SystemGatewayTestResult = {
+  ok: boolean;
+  stage: 'credential' | 'invoke' | 'done';
+  elapsedMs: number;
+  servedModel?: string;
+  message: string;
+};
+
+// ── 生图模型契约（配在控制台，不用改代码不用发版）──────────────────────────────
+//
+// 这份契约（尺寸档位、参数格式、重命名映射）此前写死在 prd-api 的 ImageGenModelConfigs.cs 里，
+// 上游每出一个新生图模型就要改代码、发一次版。现在它是数据：这里配的赢，没配的回落到代码内置那份。
+
+export interface ImageGenConfigItem {
+  id: string;
+  /** 模型名匹配模式，通配符只能放结尾，如 nano-banana* */
+  modelIdPattern: string;
+  /** 匹配顺序，小的先匹配；同序时模式长的先匹配（长的更具体） */
+  matchOrder: number;
+  enabled: boolean;
+  displayName: string;
+  provider: string;
+  platformType?: string | null;
+  officialDocUrl?: string | null;
+  sizeConstraintType: string;
+  sizeConstraintDescription: string;
+  /** 键是 1k / 2k / 4k，值是该档位下的尺寸，写成「宽x高」 */
+  sizesByResolution: Record<string, string[]>;
+  /** 这个模型压根没有「选尺寸」这件事；勾了它就不能再配尺寸档位 */
+  sizesNotApplicable: boolean;
+  sizeParamFormat: string;
+  injectSizePrompt: boolean;
+  mustBeDivisibleBy?: number | null;
+  maxWidth?: number | null;
+  maxHeight?: number | null;
+  minWidth?: number | null;
+  minHeight?: number | null;
+  maxPixels?: number | null;
+  paramRenames: Record<string, string>;
+  requiresResolutionParam: boolean;
+  supportsImageToImage: boolean;
+  supportsInpainting: boolean;
+  supportsResponseFormat: boolean;
+  notes: string[];
+  updatedAt?: string | null;
+}
+
+export interface ImageGenConfigsData {
+  items: ImageGenConfigItem[];
   total: number;
-  allMatch: number;
-  critical: number;
-  httpFail: number;
-  sinceHours?: number | null;
-  since?: string | null;
-  releaseCommit?: string | null;
-  firstComparedAt?: string | null;
-  lastComparedAt?: string | null;
-  coverageHours?: number;
+  /** 代码内置的条数。配 0 条不等于没有契约 */
+  builtinCount: number;
+  /** 内置那份的完整内容，由 prd-api 启动时发布；用来显示与「照这条建一份」 */
+  builtin: ImageGenConfigItem[];
+  builtinPublishedAt?: string | null;
+  /** 改完多久生效。界面要如实写出来，别让人保存完盯着屏幕猜 */
+  refreshSeconds: number;
+  /** 一个进程多久没回写就判「没跟上」。停掉的 Worker 的陈年状态行不能替现在作答 */
+  staleAfterSeconds: number;
+  /** 承载本租户契约的那些进程里**最旧**的同步时间；有任一个没跟上时为空 */
+  syncedAt?: string | null;
+  /** 那些进程都认到的模式（交集）。只报数字答不出「生效的是不是我刚改的那条」 */
+  syncedPatterns: string[];
+  /** 逐个消费进程的同步状态——界面要能答「是哪个进程没跟上」 */
+  syncHosts: ImageGenSyncHost[];
+}
+
+/** 一个消费进程的同步状态。生图契约是进程全局的注册表，prd-api 与 llmgw-serving 各跑一份。 */
+export type ImageGenSyncHost = {
+  hostRole: string;
+  syncedAt?: string | null;
+  overrideCount: number;
+  /** 这个进程服务几个租户：SingleTenant / MultiTenant。 */
+  hostTenancy?: string | null;
+  /** 它因为「服务多个租户」跳过了几条带租户的契约。大于 0 必须显示，否则「生效 0 条」无处可查。 */
+  skippedTenantScopedCount: number;
+  /** 它这一轮翻不过去、因而没装上的契约（模式名）。与「按租户跳过」的下一步不同，要分开说。 */
+  unusablePatterns?: string[];
+  /**
+   * 跟上了没有，由服务端判好：never 从没回写过 / stale 太久没动（Worker 多半停了）
+   * / behind 还活着但装的不是当前这一版 / current 装的就是当前这一版。
+   */
+  syncState: 'never' | 'stale' | 'behind' | 'current' | string;
 };
-export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };
+
+export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;
+
+export interface ConsumptionAlert {
+  metric?: string;
+  baselineAverage?: number | null;
+  baselineSamples?: number | null;
+  id: string;
+  appCallerCode: string;
+  appCallerTitle?: string | null;
+  owner?: string | null;
+  requestType: string;
+  scope: string;
+  origin: string;
+  sourceDeployment?: string | null;
+  windowStart: string;
+  windowSeconds: number;
+  count: number;
+  limit: number;
+  kind: string;
+  createdAt: string;
+  updatedAt: string;
+  restoresAt?: string | null;
+  canRequestResolution?: boolean;
+  canDecideQuota?: boolean;
+  retry?: {
+    available: number;
+    queued: number;
+    running: number;
+    completed: number;
+    failed: number;
+    expired: number;
+    completedCount: number;
+  } | null;
+  quota?: {
+    state: 'pending' | 'approved' | 'denied' | 'expired';
+    units: number;
+    used: number;
+    reason: string;
+    expiresAt: string;
+  } | null;
+}
+
+export type ConsumptionAlertAction =
+  | { action: 'retry' | 'approve-quota' | 'deny-quota' }
+  | { action: 'request-quota'; units: number; reason: string };
+
+export type UpstreamProxyMode = 'inherit' | 'direct' | 'custom';
+export type UpstreamProxyView = { mode: UpstreamProxyMode; address?: string | null; username?: string | null; hasPassword: boolean };
+export type UpstreamProxyDraft = { mode: UpstreamProxyMode; address?: string; username?: string; password?: string; clearPassword?: boolean };
+export type UpstreamNetworkTestResult = {
+  route: string; probedUrl: string; sampleCount: number; successCount: number; successRate: number;
+  averageMs: number | null; minMs: number | null; maxMs: number | null; testedAt: string;
+  samples: Array<{ attempt: number; connected: boolean; httpStatus: number | null; elapsedMs: number; message: string }>;
+};
+
+// 稳定模型升级策略：身份与历史别名由服务端维护，UI只编辑受控策略。
+export type ModelUpgradeSuccessor = {
+  providerId: string;
+  fromModel: string;
+  toModel: string;
+  documentationUrl: string;
+  capabilities: string[];
+};
+export type ModelUpgradePolicy = {
+  enabled: boolean;
+  mode: 'manual' | 'auto';
+  autoValidate: boolean;
+  checkIntervalHours: number;
+  maxValidationCostUsd: number | null;
+  canaryUnitCostUpperBoundUsd: number | null;
+  maxDailyCostUsd: number | null;
+  maxPriceIncreasePercent: number | null;
+  validationAppCallerCode: string;
+  successors: ModelUpgradeSuccessor[];
+};
+export type ModelUpgradePhase = 'idle' | 'checking' | 'candidate' | 'validating' | 'validated' | 'blocked' | 'promoting' | 'promoted' | 'rolling_back' | 'rolled_back' | 'failed';
+export type ModelUpgradeView = {
+  validationMode: 'evidence' | 'canary';
+  validationModes: ('evidence' | 'canary')[];
+  validationStatus: 'not-run' | 'pending' | 'passed' | 'failed' | 'unknown';
+  discoveries: { providerId: string; upstreamModelId: string; status: 'unconfirmed'; message: string }[];
+  identityKind: 'fixed' | 'stable';
+  logicalModelId: string;
+  publicId: string;
+  name: string;
+  aliases: string[];
+  modelType: string;
+  version: number;
+  policy: ModelUpgradePolicy;
+  phase: ModelUpgradePhase;
+  message: string;
+  current: { offeringId: string; modelId: string; providerId: string; upstreamModelId: string };
+  candidate: null | { modelId: string; providerId: string; upstreamModelId: string; documentationUrl: string; discoveredAt: string; validationRequestId: string | null; validatedAt: string | null };
+  gates: { capabilities: boolean; price: boolean; budget: boolean; validation: boolean };
+  canPromote: boolean;
+  canRollback: boolean;
+  actionDisabledReason: string | null;
+  lastCheckedAt: string | null;
+  nextCheckAt: string | null;
+  updatedAt: string | null;
+  history: { id: string; action: string; status: string; message: string; requestId: string | null; createdAt: string }[];
+};
+export type UpdateModelUpgradePolicyRequest = ModelUpgradePolicy & { version: number };
+export type ModelUpgradeAction = 'check' | 'validate' | 'promote' | 'rollback';
+export type ModelUpgradeActionRequest = { version: number; requestId?: string; mode?: 'evidence' | 'canary' };
+
+export type LogTraceData = {
+  ambiguous: boolean;
+  hasMoreCandidates?: boolean;
+  candidates?: { id: string; requestId?: string; runId?: string; logicalRequestId?: string }[];
+  reference: string; anchorId: string; total: number; page: number; pageSize: number;
+  business?: { runId: string; status?: string | null; providerTaskId?: string | null; upstreamStatus?: string | null; artifactSha256?: string | null } | null;
+  items?: { log: LlmLogListItem; recordKind: 'request' | 'legacy-summary'; sameReceiptRecords: number;
+    attempts: NonNullable<LlmLogDetail['providerAttempts']>; lifecycleReason?: string | null; evidenceGap?: string | null }[];
+};

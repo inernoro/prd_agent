@@ -1,4 +1,5 @@
 import type { ToolboxItem } from '@/services';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 
 /**
  * 首页/启动器的「静态入口」单一数据源（SSOT）。
@@ -16,7 +17,6 @@ import type { ToolboxItem } from '@/services';
  */
 
 export interface LauncherPerms {
-  canReadModels: boolean;
   canReadUsers: boolean;
   canReadPrompts: boolean;
   canReadLab: boolean;
@@ -26,17 +26,23 @@ export interface LauncherPerms {
   canManageOpenPlatform: boolean;
 }
 
-/** 从权限串解析启动器入口的权限门（桌面/移动共用，口径唯一） */
-export function deriveLauncherPerms(permissions: string[]): LauncherPerms {
+/**
+ * 从权限串解析启动器入口的权限门（桌面/移动共用，口径唯一）。
+ *
+ * 走 hasEffectivePermission 而不是 includes：路由守卫与 launcherCatalog 都把 `super`
+ * 当万能钥匙，这里若只认字面权限，一个只有 `super` 的账号能打开页面、能在 Cmd+K 与
+ * 移动抽屉里看到入口，桌面首页搜索却报「无匹配」（Codex review P2，#1479）。
+ */
+export function deriveLauncherPerms(permissions: string[], isRoot = false): LauncherPerms {
+  const can = (required: string | string[]) => hasEffectivePermission(permissions, required, isRoot);
   return {
-    canReadPrompts: permissions.includes('prompts.read') || permissions.includes('prompts.write'),
-    canReadLab: permissions.includes('lab.read') || permissions.includes('lab.write'),
-    canManageAutomations: permissions.includes('automations.manage'),
-    canReadLogs: permissions.includes('logs.read'),
-    canReadModels: permissions.includes('mds.read') || permissions.includes('mds.write'),
-    canReadUsers: permissions.includes('users.read') || permissions.includes('users.write'),
-    canReadTeamActivity: permissions.includes('team-activity.read'),
-    canManageOpenPlatform: permissions.includes('open-platform.manage'),
+    canReadPrompts: can(['prompts.read', 'prompts.write']),
+    canReadLab: can(['lab.read', 'lab.write']),
+    canManageAutomations: can('automations.manage'),
+    canReadLogs: can('logs.read'),
+    canReadUsers: can(['users.read', 'users.write']),
+    canReadTeamActivity: can('team-activity.read'),
+    canManageOpenPlatform: can('open-platform.manage'),
   };
 }
 
@@ -108,6 +114,16 @@ export function buildStaticUtilities(p: LauncherPerms): ToolboxItem[] {
       tags: ['日志', 'logs', '审计'],
       routePath: '/logs',
     } as ToolboxItem);
+    // 与 navRegistry 同一道权限门（logs.read）。此前只登记在 NAV_REGISTRY，
+    // 首页搜索「授权健康」显示「无匹配」（#1479）。
+    items.push({
+      id: '__authorization-health__',
+      name: '授权健康中心',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      routePath: '/authorization-health',
+    } as ToolboxItem);
   }
 
   return items;
@@ -116,6 +132,14 @@ export function buildStaticUtilities(p: LauncherPerms): ToolboxItem[] {
 /** 基础设施：平台级能力，用户即使隐藏了侧边栏也必须稳定出现（知识库置首） */
 export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
   const items: ToolboxItem[] = [
+    {
+      id: '__bookshelf__',
+      name: '公共藏书阁',
+      description: '从新手到高手的心路历程书目，七卷 + 结业考，开发与产品各一条线',
+      icon: 'Library',
+      tags: ['书单', '成长', '读书', '考试', '新人', '规范'],
+      routePath: '/bookshelf',
+    } as ToolboxItem,
     {
       id: '__document-store__',
       name: '知识库',
@@ -130,7 +154,7 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       description: '图片、附件、素材等个人资源统一管理',
       icon: 'FolderHeart',
       tags: ['资源', '素材', '附件'],
-      routePath: '/visual-agent?tab=assets',
+      routePath: '/my-assets',
     } as ToolboxItem,
     {
       id: '__marketplace__',
@@ -155,6 +179,16 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       icon: 'Globe',
       tags: ['托管', '网页', 'hosting'],
       routePath: '/web-pages',
+    } as ToolboxItem,
+    {
+      // 权限门交给路由（navRegistry 上是 access，后端再判管理员），这里不再加第二道
+      // 判据——两处各判一次迟早会漂移，而这份清单本来就已经和 navRegistry 分家了。
+      id: '__data-sync__',
+      name: '数据同步',
+      description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
+      icon: 'ArrowRightLeft',
+      tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
+      routePath: '/data-sync',
     } as ToolboxItem,
     {
       id: '__changelog__',
@@ -199,16 +233,6 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
     } as ToolboxItem);
   }
 
-  if (p.canReadModels) {
-    items.push({
-      id: '__models__',
-      name: '模型中心',
-      description: '大模型与模型池配置、健康监控',
-      icon: 'Cpu',
-      tags: ['模型', 'LLM', '模型池', '调度'],
-      routePath: '/mds',
-    } as ToolboxItem);
-  }
   if (p.canReadUsers) {
     items.push({
       id: '__teams__',

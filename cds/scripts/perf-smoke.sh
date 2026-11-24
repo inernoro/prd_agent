@@ -11,7 +11,7 @@
 #
 # Usage:
 #   cds/scripts/perf-smoke.sh [host]
-#   CDS_HOST=cds.miduo.org cds/scripts/perf-smoke.sh
+#   CDS_HOST=cds.example.com cds/scripts/perf-smoke.sh
 #
 # Exit code is non-zero if any budget/assertion fails — safe to wire into CI
 # or to run by hand after a deploy.

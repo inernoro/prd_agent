@@ -1,3 +1,5 @@
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.ImageGen;
 namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 /// <summary>

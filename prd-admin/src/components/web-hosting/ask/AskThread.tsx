@@ -1,0 +1,186 @@
+import { useLayoutEffect, useRef } from 'react';
+import { StreamingText } from '@/components/streaming/StreamingText';
+import { RotateCcw, Square } from 'lucide-react';
+import { askStreamingText } from './askStreamingText';
+import { AskMarkdown } from './AskMarkdown';
+import { AskAnswerFooter } from './AskAnswerFooter';
+import { AskRefusalCard, type AskRefusalKey } from './askRefusal';
+import type { AskMessage } from './askTypes';
+import './askThread.css';
+
+interface Props {
+  messages: AskMessage[];
+  onRate?: (answerId: string, rating: number) => Promise<void>;
+  /** 一条都还没问时的开场白；空则用站点标题兜底 */
+  welcome?: string | null;
+  title: string;
+  /** 开场问题。起手长条已经把它们浮在上方时传空数组——同一批问题铺两遍是噪音 */
+  openingQuestions: string[];
+  onPick: (question: string) => void;
+  refusal: AskRefusalKey | null;
+  /** 后端这次给的原话（带真实数字），只在它确实对应当前这一档时才传进来 */
+  refusalServerMessage?: string | null;
+  onLogin: () => void;
+  onRetry: () => void;
+  isBusy: boolean;
+  phaseMessage: string;
+  elapsedSeconds: number;
+  onCancel: () => void;
+  /** 起手态（长条）下不渲染开场白那段引导——长条自己已经写了「只依据本页正文」 */
+  hideIntro?: boolean;
+}
+
+/**
+ * 对话流本体：开场白、开场问题、拒绝卡、消息、等待态。
+ *
+ * 从 AskPanel 里抽出来，是因为它现在有两个宿主——嵌在预览弹窗右侧的面板，
+ * 和访客页那个会形变的浮层坞。抄两份的下场在 predicate-and-wiring-discipline
+ * 形状 3 里写着：同一个渲染分裂成两份，改一处忘一处。
+ *
+ * 滚动容器由本组件持有：贴底逻辑（有新内容就贴住底部，用户正在往上翻时不抢）
+ * 和消息列表是同一件事，拆开两边都要重写一遍。
+ */
+export default function AskThread({
+  messages, welcome, title, openingQuestions, onPick, onRate,
+  refusal, refusalServerMessage, onLogin, onRetry,
+  isBusy, phaseMessage, elapsedSeconds, onCancel, hideIntro,
+}: Props) {
+  const innerRef = useRef<HTMLDivElement>(null);
+
+  const followsBottom = useRef(true);
+
+  useLayoutEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    // 在 DOM 增长前记录用户是否贴底，避免完成区突然增高后误判为用户正在上翻。
+    if (messages.length > 0 && followsBottom.current) el.scrollTop = el.scrollHeight;
+  }, [messages, openingQuestions, isBusy]);
+
+  const empty = messages.length === 0;
+  const showOpening = empty && openingQuestions.length > 0 && !refusal;
+  const latest = messages.at(-1);
+  const completedAnswer = !isBusy && latest?.role === 'assistant'
+    && !latest.streaming && !latest.error && latest.content.trim() ? latest : null;
+
+  return (
+    <div
+      ref={innerRef}
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        followsBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      }}
+      style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14, display: 'flex', flexDirection: 'column' }}
+    >
+      {empty && !hideIntro && (
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+          {welcome?.trim() || `关于「${title}」，有什么想了解的？`}
+          {/* 「只依据本页正文」是个约束，光说约束等于让人自己去猜后果。
+              把后果写出来（问到没写的会直说没提到），他才知道该期待什么。 */}
+          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            回答<strong style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>只依据本页正文</strong>
+            。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。
+          </div>
+        </div>
+      )}
+
+      {showOpening && (
+        <div style={{ marginTop: hideIntro ? 0 : 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* 没有这行标题时，几个按钮看着像 AI 现编的推荐；标明来自站点题库，
+              用户才知道这是作者预备好的问题，点下去大概率有答案。 */}
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>开场问题 · 来自站点题库</div>
+          {openingQuestions.map((q) => (
+            <button
+              key={q}
+              type="button"
+              onClick={() => onPick(q)}
+              style={{
+                textAlign: 'left', padding: '9px 12px', borderRadius: 10,
+                border: '1px solid var(--border-subtle)', background: 'var(--bg-card)',
+                color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', lineHeight: 1.5,
+              }}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {refusal && (
+        <AskRefusalCard
+          refusal={refusal}
+          serverMessage={refusalServerMessage}
+          onLogin={onLogin}
+          onRetry={onRetry}
+        />
+      )}
+
+      <div style={{ flexShrink: 0 }}>
+      {messages.map((m) => (
+        // id 给历史面板做锚点：点一条历史要能滚回那一轮，而不是只把面板关掉
+        <div key={m.id} id={`ask-msg-${m.id}`} style={{ marginTop: 16 }}>
+          {m.role === 'user' ? (
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div
+                style={{
+                  maxWidth: '85%', padding: '8px 12px', borderRadius: 12,
+                  background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
+                  fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}
+              >
+                {m.content}
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+              {m.thinking && <AskThinking text={m.thinking} streaming={!!m.streaming && !m.content} />}
+              <StreamingText
+                text={m.streaming ? askStreamingText(m.content) : m.content}
+                streaming={!!m.streaming}
+                markdown
+                cursor={false}
+                // 错误提示不能覆盖已收到的正文；中断内容仍可读，但不标成回答完成。
+                renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} streaming={!!m.streaming} />}
+              />
+              {m.error && <div className="ask-response-error">
+                <span role="alert">{m.error}</span>
+                {m === latest && m.retryable && !refusal && !isBusy &&
+                  <button type="button" onClick={onRetry}><RotateCcw size={13} aria-hidden="true" />重试回答</button>}
+              </div>}
+            </div>
+          )}
+        </div>
+      ))}
+      </div>
+
+      {isBusy && <div role="status" aria-live="polite"
+        style={{ marginTop: 10, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 11 }}>
+        <span>{phaseMessage || '正在思考…'}{elapsedSeconds > 0 ? ` · 已等待 ${elapsedSeconds} 秒` : ''}</span>
+        <button type="button" onClick={onCancel} aria-label="停止回答"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, marginLeft: 'auto' }}>
+          <Square size={10} fill="currentColor" />停止
+        </button>
+      </div>}
+      {completedAnswer && <AskAnswerFooter key={completedAnswer.id} answer={completedAnswer}
+        messages={messages} openingQuestions={openingQuestions} blocked={!!refusal} onAsk={onPick} onRate={onRate} />}
+    </div>
+  );
+}
+
+function AskThinking({ text, streaming }: { text: string; streaming: boolean }) {
+  const windowRef = useRef<HTMLDivElement>(null);
+  const followsEnd = useRef(true);
+  useLayoutEffect(() => {
+    const element = windowRef.current;
+    if (element && followsEnd.current) element.scrollTop = element.scrollHeight;
+  }, [text]);
+
+  return <details className="ask-thinking" open>
+    <summary>模型思考</summary>
+    <div className="ask-thinking-scroll" role="region" aria-label="模型思考内容" tabIndex={0} ref={windowRef}
+      onScroll={({ currentTarget }) => {
+        followsEnd.current = currentTarget.scrollHeight - currentTarget.scrollTop - currentTarget.clientHeight < 24;
+      }}>
+      <StreamingText text={text} streaming={streaming} cursor={false} />
+    </div>
+  </details>;
+}

@@ -19,6 +19,37 @@ public class VisionResponseImageExtractionTests
     private static string J(string template) =>
         template.Replace("__DATA__", DataUri).Replace("__URL__", HttpsUrl);
 
+    // ---------- 优先级 0：专用图片 API data[] ----------
+
+    [Fact]
+    public void DedicatedImageData_Base64AndMime_Extracted()
+    {
+        var json = """
+        {"data":[{"b64_json":"iVBORw0KGgo=","media_type":"image/webp"}]}
+        """;
+
+        var ok = VisionChatCompletionImageExtractor.TryExtractImages(json, out var images, out _, out var diagnostics);
+
+        Assert.True(ok);
+        Assert.Single(images);
+        Assert.Equal("data:image/webp;base64,iVBORw0KGgo=", images[0]);
+        Assert.Contains("data[]=1", diagnostics);
+    }
+
+    [Fact]
+    public void DedicatedImageData_Url_Extracted()
+    {
+        var json = J("""
+        {"data":[{"url":"__URL__"}]}
+        """);
+
+        var ok = VisionChatCompletionImageExtractor.TryExtractImages(json, out var images, out _, out _);
+
+        Assert.True(ok);
+        Assert.Single(images);
+        Assert.Equal(HttpsUrl, images[0]);
+    }
+
     // ---------- 优先级 1：message.images[]（OpenRouter / LiteLLM 风格） ----------
 
     [Fact]

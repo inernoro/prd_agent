@@ -15,6 +15,7 @@ import { CalendarRange, X } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getTeamActivityExperienceTrend } from '@/services';
 import type { ExperienceTrendBucket } from '@/services/contracts/teamActivity';
+import { ACTIVITY_REQUEST_TIMEOUT_MS } from './useActivityResource';
 
 const TEAL = '#2dd4bf';
 const TEAL_SOFT = '#5eead4';
@@ -139,17 +140,25 @@ type AnchorRect = { left: number; top: number; bottom: number; width: number };
 export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChange: (next: TeamRange) => void }) {
   const isMobile = useIsMobile();
   const [days, setDays] = useState<DensityDay[]>([]);
+  const [densityRequested, setDensityRequested] = useState(false);
+  const [densityLoaded, setDensityLoaded] = useState(false);
+  const [densityError, setDensityError] = useState<string | null>(null);
   const fetchIdRef = useRef(0);
 
-  // 近 90 天密度序列（复用 experience-trend 天桶），用于预设微预览数字 + sparkline + 刷选条背景柱
+  // Only load the 90-day preview when the user opens a preview or custom range.
   useEffect(() => {
+    if (!densityRequested || densityLoaded) return;
     const id = ++fetchIdRef.current;
+    const controller = new AbortController();
     const from = new Date(Date.now() - DENSITY_DAYS * 86_400_000).toISOString();
-    void getTeamActivityExperienceTrend({ from }).then((res) => {
-      if (fetchIdRef.current !== id) return;
+    void getTeamActivityExperienceTrend({ from }, { signal: controller.signal, timeoutMs: ACTIVITY_REQUEST_TIMEOUT_MS }).then((res) => {
+      if (controller.signal.aborted || fetchIdRef.current !== id) return;
+      setDensityLoaded(true);
       if (res.success) setDays(buildDensity(res.data.buckets));
+      else setDensityError(res.error?.message ?? '密度预览暂不可用');
     });
-  }, []);
+    return () => controller.abort();
+  }, [densityRequested, densityLoaded]);
 
   const todayMs = startOfDay(new Date()).getTime();
 
@@ -189,6 +198,7 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     const r = el.getBoundingClientRect();
     hoverTimer.current = setTimeout(() => {
+      setDensityRequested(true);
       setHoverKey(key);
       setHoverAnchor({ left: r.left, top: r.top, bottom: r.bottom, width: r.width });
     }, 160);
@@ -205,6 +215,7 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
   const customBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const openBrush = useCallback(() => {
+    setDensityRequested(true);
     closeHover();
     const el = customBtnRef.current;
     if (!el) return;
@@ -262,7 +273,8 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
               label={PRESET_OPTIONS.find((p) => p.key === hoverKey)?.label ?? ''}
               summary={presetSummary[hoverKey]}
               seg={presetSeg(hoverKey)}
-              loading={days.length === 0}
+              loading={!densityLoaded}
+              error={densityError}
             />,
             document.body
           )
@@ -275,6 +287,9 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
               anchor={brushAnchor}
               isMobile={isMobile}
               days={days}
+              loading={!densityLoaded}
+              error={densityError}
+              onRetry={() => { setDensityError(null); setDensityLoaded(false); }}
               initial={value}
               onClose={() => setBrushOpen(false)}
               onApply={(from, to) => {
@@ -296,12 +311,14 @@ function MicroPreview({
   summary,
   seg,
   loading,
+  error,
 }: {
   anchor: AnchorRect;
   label: string;
   summary: { signal: number; pain: number };
   seg: number[];
   loading: boolean;
+  error?: string | null;
 }) {
   const width = 188;
   // 默认锚定胶囊下方居中；越界时夹回视口
@@ -321,17 +338,17 @@ function MicroPreview({
       }}
     >
       <style>{`@keyframes voc-micro-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-      <div className="text-[11px] text-token-muted mb-2">{label} · 真实聚合</div>
+      <div className="text-[11px] text-token-muted mb-2">{label} · {error ? '预览暂不可用' : loading ? '正在加载密度' : '真实聚合'}</div>
       <div className="flex gap-3.5 mb-2">
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: TEAL_SOFT }}>
-            {loading ? '—' : summary.signal.toLocaleString()}
+            {loading || error ? '—' : summary.signal.toLocaleString()}
           </div>
           <div className="text-[10px] text-token-muted">信号</div>
         </div>
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: ROSE }}>
-            {loading ? '—' : summary.pain.toLocaleString()}
+            {loading || error ? '—' : summary.pain.toLocaleString()}
           </div>
           <div className="text-[10px] text-token-muted">痛点</div>
         </div>
@@ -356,6 +373,9 @@ function BrushPopover({
   anchor,
   isMobile,
   days,
+  loading,
+  error,
+  onRetry,
   initial,
   onClose,
   onApply,
@@ -363,6 +383,9 @@ function BrushPopover({
   anchor: AnchorRect;
   isMobile: boolean;
   days: DensityDay[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   initial: TeamRange;
   onClose: () => void;
   onApply: (from: string, to: string) => void;
@@ -529,6 +552,12 @@ function BrushPopover({
       onClick={(e) => e.stopPropagation()}
     >
       <style>{`@keyframes voc-brush-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+      {loading || error ? (
+        <div role="status" className="flex items-center justify-center gap-2 text-[12px] text-token-muted py-2">
+          {loading ? '正在加载活动密度…' : '活动密度预览暂不可用'}
+          {error ? <button type="button" onClick={onRetry} className="text-semantic-cyan underline">重试密度预览</button> : null}
+        </div>
+      ) : null}
       {/* 点外关闭遮罩（透明，捕获页面其它点击） */}
       {createPortal(
         <div style={{ position: 'fixed', inset: 0, zIndex: 10029 }} onClick={onClose} />,

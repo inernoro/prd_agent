@@ -1,6 +1,28 @@
+/*
+ * 两款自托管字体（都是可变字重，各一个 woff2）。
+ *
+ * 必须自托管、不能只在 font-family 里写名字：仓库此前点名 Inter / JetBrains Mono
+ * 却从没加载过任何一个，于是每台机器各凭系统兜底，英文字形是「看运气」——
+ * 用户看到的像素点就是他那台机器的兜底字体。
+ *
+ * 分工：Inter 管正文（比例字，中英混排的默认），JetBrains Mono 只管标识符
+ * （分支名 / sha / 域名 / 时间戳）。上一轮把等宽当成全站默认，导致整页横向
+ * 撑大约 10%、中文观感也被带坏，已回退成这个分工。
+ *
+ * 两款字体都没有汉字字形，中文一律落到 --cds-font-cjk，不受影响。
+ */
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 父 CDS 注入的诊断浮标层级高于应用弹窗；模态操作期间让出操作区，关闭后恢复。 */
+body:has([role='dialog'][data-state='open'], dialog[open], [aria-modal='true']) #cds-widget[data-cds-widget-root] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 
 /*
  * CDS design tokens — single source of truth.
@@ -19,7 +41,27 @@
  * Rule mapping: see .claude/rules/cds-theme-tokens.md.
  */
 @layer base {
+  /* 2026-09-08 用户拍板：整站按 85% 呈现（用户实测浏览器缩放 80–85% 最好看）。
+     实现走根字号而不是 CSS zoom：Chromium 141 实测 zoom 会让 h-screen 只铺 85% 视口、
+     Radix 浮层定位偏移一百多像素。根字号缩放要求全站尺寸用 rem——本次已把 ≥4px 的
+     字面量全部转成 rem，1–3px 的细线 / 竖条保留 px 以保证像素级清晰；
+     媒体查询与 Tailwind 断点同步乘 0.85，让「多少内容触发几栏」和浏览器缩放一致。
+     三档由账号浮层「界面尺度」切换（lib/uiScale.ts）：80 紧凑 / 85 标准（默认，不写属性）/
+     100 宽松。改档只动这一个数，全站跟着走——这就是「全局设计尺度」，不逐处微调。 */
+  html {
+    font-size: 85%;
+  }
+
+  html[data-ui-scale='80'] {
+    font-size: 80%;
+  }
+
+  html[data-ui-scale='100'] {
+    font-size: 100%;
+  }
+
   [data-theme='dark'] {
+    --cds-select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='hsl(240,4%25,60%25)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
     --background: 240 5% 8%;
     --foreground: 240 6% 90%;
 
@@ -27,7 +69,8 @@
     --card-foreground: 240 6% 90%;
 
     --primary: 24 100% 60%;
-    --primary-foreground: 0 0% 100%;
+    --primary-hover: 24 100% 55%;
+    --primary-foreground: 222 24% 8%;
 
     --secondary: 240 4% 16%;
     --secondary-foreground: 240 6% 90%;
@@ -38,8 +81,9 @@
     --accent: 240 4% 18%;
     --accent-foreground: 240 6% 95%;
 
-    --destructive: 0 70% 55%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 0 70% 59%;
+    --destructive-hover: 0 70% 64%;
+    --destructive-foreground: 0 50% 5%;
 
     --border: 240 4% 18%;
     --input: 240 4% 16%;
@@ -63,11 +107,87 @@
       0 0 0 1px hsl(var(--hairline)),
       inset 0 1px 0 hsl(0 0% 100% / 0.06),
       0 1px 2px rgb(0 0 0 / 0.32),
-      0 12px 28px -12px rgb(0 0 0 / 0.5),
-      0 40px 80px -32px rgb(0 0 0 / 0.6);
+      0 0.75rem 1.75rem -0.75rem rgb(0 0 0 / 0.5),
+      0 2.5rem 5rem -2rem rgb(0 0 0 / 0.6);
+
+    /* chip / 小控件的抬升配方（--shadow-card 的轻量版）。
+       暗色里靠顶边白高光把 chip 从凹陷带上"托"起来。 */
+    --shadow-chip: inset 0 1px 0 hsl(0 0% 100% / 0.05);
+
+    /* ── 语义状态色 ────────────────────────────────────────────────
+       组件侧已统一用 ok / warn / bad / info（1291 处，见 palette-contrast-guard），
+       这一层只决定它们**长什么颜色**。这里的值刻意对齐改配色之前的观感：
+       暗色取 Tailwind 的 -400（原来 `dark:text-x-400` 的实际取值），
+       soft 对应原来 `bg-x-500/[0.06]` 那层淡底。
+       换句话说：token 化保留了，颜色回到你熟悉的那套。 */
+    --ok: 158 64% 52%;
+    --ok-soft: 160 40% 10%;
+    --warn: 43 96% 56%;
+    --warn-soft: 38 45% 10%;
+    --bad: 0 91% 71%;
+    --bad-soft: 0 45% 12%;
+    --info: 199 95% 74%;
+    --info-soft: 199 45% 11%;
+    --express-full: 48 96% 60%;
+    --express-partial: 217 90% 75%;
+    /* 服务关系图：角色徽标与线色（双主题各自成立，组件里只许 hsl(var(--...)) 引用） */
+    --role-web: 158 64% 52%;
+    --role-api: 199 95% 74%;
+    --role-worker: 258 90% 66%;
+    /* 分支自定义分组的五个色块（2026-09-29）：有限枚举，两个主题各调过一遍对比度。 */
+    --group-orange: 24 95% 62%;
+    --group-blue: 205 90% 66%;
+    --group-green: 158 60% 50%;
+    --group-purple: 268 70% 72%;
+    --group-gray: 220 8% 58%;
+    --graph-call: 239 84% 67%;
+    --graph-external: 258 90% 66%;
+    /* 关系图角色徽标：实色底 + 墨色字。不直接用 --role-*：暗色下 API 徽标白字只有 1.3 的对比度、
+       白天 GW 只有 1.95（2026-10-03 relation-visual-audit T1 实测）。下面每一对都验过 ≥ 6。 */
+    --badge-web: 158 64% 52%;
+    --badge-api: 199 95% 74%;
+    --badge-job: 258 90% 74%;
+    --badge-gw: 239 84% 74%;
+    --badge-ext: 258 90% 74%;
+    --badge-db: 200 90% 58%;
+    --badge-r: 333 80% 66%;
+    --badge-ink: 222 24% 8%;
+    /* 写成文字时用的警告 / 正常色（暗色下与 --warn / --ok 相同） */
+    --warn-ink: 43 96% 56%;
+    --ok-ink: 158 64% 52%;
+
+    /* 实色状态底上的字色。bad 单独配对，因为它在白天主题中底色较深。 */
+    --status-ink: 222 24% 8%;
+    --bad-foreground: var(--status-ink);
+
+    /* 系列色（图表专用，2026-09-01）。语义四色 ok/warn/bad/info 是**保留**的状态色，
+       不参与系列配色，否则「第 4 个服务」会跟「警告」撞成同一个红。
+       这一组按 dataviz 六项校验选出来：亮度带 / 彩度下限 / 色盲相邻可分（最差
+       ΔE 20.5 protan）/ 常视相邻可分（最差 ΔE 24.4）/ 对底对比 ≥3:1，
+       **暗色与白天用同一组值**都通过，所以两个主题不分叉。
+       赋色按服务在列表里的固定次序，不循环；第 6 个及以后归入「其他」。 */
+    --series-1: 21 90% 48%;
+    --series-2: 200 98% 39%;
+    --series-3: 85 85% 35%;
+    --series-4: 258 90% 66%;
+    --series-5: 333 71% 51%;
+    /* 网络吞吐专用：收/发的主编码是基线上下的位置，色相只是辅助。
+       单独一档而不复用具名服务的五色，避免同屏里「蓝色=cloudbridge-web」
+       与「蓝色=入站」打架；也不用语义四色（那四档保留给状态）。
+       #0891b2，与五色同验：双主题六项全 PASS（deutan 最差邻对 ΔE 10.3）。 */
+    --series-net: 192 91% 36%;
+
+    /* 主色的两个补充档。暗色下 ink 与 primary 同值（橙字在深底上够清楚）；
+       白天必须分开，见 light 块的说明。 */
+    --primary-soft: 24 60% 12%;
+    --primary-ink: 24 100% 60%;
+    --foreground-muted: 240 5% 74%;
+    --code-bg: 222 16% 4%;
+    --code-fg: 240 6% 86%;
   }
 
   [data-theme='light'] {
+    --cds-select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='hsl(24,10%25,40%25)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
     --background: 30 30% 95%;
     --foreground: 24 20% 15%;
 
@@ -75,7 +195,8 @@
     --card-foreground: 24 20% 15%;
 
     --primary: 24 90% 50%;
-    --primary-foreground: 0 0% 100%;
+    --primary-hover: 24 90% 47%;
+    --primary-foreground: 222 24% 8%;
 
     --secondary: 30 20% 90%;
     --secondary-foreground: 24 20% 15%;
@@ -87,11 +208,12 @@
     --accent-foreground: 24 20% 15%;
 
     --destructive: 0 65% 50%;
+    --destructive-hover: 0 65% 45%;
     --destructive-foreground: 0 0% 100%;
 
     --border: 30 15% 82%;
     --input: 30 15% 88%;
-    --ring: 24 90% 50%;
+    --ring: var(--primary-ink);
 
     --radius: 0.625rem;
 
@@ -108,16 +230,108 @@
       0 0 0 1px hsl(30 15% 86%),
       inset 0 1px 0 hsl(0 0% 100% / 0.9),
       0 1px 2px hsl(24 30% 20% / 0.05),
-      0 8px 24px -12px hsl(24 30% 20% / 0.12),
-      0 32px 64px -32px hsl(24 30% 20% / 0.15);
+      0 0.5rem 1.5rem -0.75rem hsl(24 30% 20% / 0.12),
+      0 2rem 4rem -2rem hsl(24 30% 20% / 0.15);
+
+    /* 白天的 chip 抬升：白高光落在白 chip 上等于没有（Codex P1，2026-09-01），
+       所以这一档改由接触影承担，观感上仍是"从凹陷带里浮起来"。 */
+    --shadow-chip: 0 1px 2px hsl(24 30% 20% / 0.07);
+
+    /* 白天取 Tailwind 的 -600（原来 `text-x-600` 的实际取值），soft 是极淡同色底。 */
+    --ok: 161 94% 30%;
+    --ok-soft: 160 60% 95%;
+    --warn: 32 95% 44%;
+    --warn-soft: 38 90% 95%;
+    --bad: 0 74% 42%;
+    --bad-soft: 0 85% 96%;
+    --info: 201 98% 39%;
+    --info-soft: 199 85% 95%;
+    --express-full: 48 96% 28%;
+    --express-partial: 217 80% 40%;
+    /* 服务关系图：角色徽标与线色（白天用更深的同色系保证对比） */
+    --role-web: 160 84% 34%;
+    --role-api: 201 98% 39%;
+    --role-worker: 262 83% 50%;
+    /* 分支自定义分组的五个色块（2026-09-29）：有限枚举，两个主题各调过一遍对比度。 */
+    --group-orange: 24 90% 44%;
+    --group-blue: 205 85% 38%;
+    --group-green: 160 80% 28%;
+    --group-purple: 268 55% 46%;
+    --group-gray: 220 8% 44%;
+    --graph-call: 239 84% 55%;
+    --graph-external: 262 83% 50%;
+    /* 关系图角色徽标（白天：深一档的实色底 + 白字，每一对验过 ≥ 5.3） */
+    --badge-web: 160 84% 26%;
+    --badge-api: 201 98% 31%;
+    --badge-job: 262 83% 50%;
+    --badge-gw: 239 84% 55%;
+    --badge-ext: 262 83% 50%;
+    --badge-db: 200 98% 31%;
+    --badge-r: 333 71% 42%;
+    --badge-ink: 0 0% 100%;
+    /* 写成文字时用的警告 / 正常色：--warn（44% 亮度）当字落在淡黄底上只有 2.92，这里压到 32%（5.07） */
+    --warn-ink: 32 95% 32%;
+    --ok-ink: 161 94% 22%;
+
+    --status-ink: 0 0% 3%;
+    --bad-foreground: 0 0% 100%;
+
+    /* 系列色（图表专用，2026-09-01）。语义四色 ok/warn/bad/info 是**保留**的状态色，
+       不参与系列配色，否则「第 4 个服务」会跟「警告」撞成同一个红。
+       这一组按 dataviz 六项校验选出来：亮度带 / 彩度下限 / 色盲相邻可分（最差
+       ΔE 20.5 protan）/ 常视相邻可分（最差 ΔE 24.4）/ 对底对比 ≥3:1，
+       **暗色与白天用同一组值**都通过，所以两个主题不分叉。
+       赋色按服务在列表里的固定次序，不循环；第 6 个及以后归入「其他」。 */
+    --series-1: 21 90% 48%;
+    --series-2: 200 98% 39%;
+    --series-3: 85 85% 35%;
+    --series-4: 258 90% 66%;
+    --series-5: 333 71% 51%;
+    /* 网络吞吐专用：收/发的主编码是基线上下的位置，色相只是辅助。
+       单独一档而不复用具名服务的五色，避免同屏里「蓝色=cloudbridge-web」
+       与「蓝色=入站」打架；也不用语义四色（那四档保留给状态）。
+       #0891b2，与五色同验：双主题六项全 PASS（deutan 最差邻对 ΔE 10.3）。 */
+    --series-net: 192 91% 36%;
+
+    /* 白天的橙色主色（24 90% 50%）当文字落在浅底上对比度约 3:1，偏弱，
+       所以 ink 压深两档专供文字用；填充仍用 primary 那一档。
+       这一层是上一轮唯一值得留下的东西——它治的是「按钮看不清」。 */
+    --primary-soft: 30 80% 94%;
+    --primary-ink: 24 85% 38%;
+    --foreground-muted: 24 12% 32%;
+    --code-bg: 30 24% 93%;
+    --code-fg: 24 20% 20%;
   }
 
   :root {
     /* Workspace 宽度三档(主题无关)。语义见 @layer components 里
        .cds-workspace 处的"宽度秩序"注释;新页面只允许引用这两个 token
        或 fluid(去上限),禁止再写第四种 max-width。 */
-    --workspace-standard: 1240px;
-    --workspace-wide: 1440px;
+    --workspace-standard: 77.5rem;
+    --workspace-wide: 90rem;
+
+    /*
+     * 全站英文字形的**唯一来源**。
+     *
+     * 2026-08-15 用户：「把分支列表中分支名字的字体作为 CDS 的默认英文字体，
+     * 现在的字体很别扭，有像素点，整个站都是像素点。」
+     *
+     * 根因不是审美偏好，是一个真实缺陷：body 此前首选 `Inter`，而这个仓库
+     * **从来没有加载过 Inter**——没有 @font-face、没有 CDN link、没有
+     * @fontsource 依赖。于是每台机器都掉进各自的兜底字体（Windows 落
+     * Segoe UI、Linux 落随机 DejaVu 一类），站点的英文字形一直是「看运气」。
+     * 用户看到的像素点就是他那台机器的兜底字体。
+     *
+     * 现在统一成**自托管**的 JetBrains Mono（见文件顶部的 @import）：字体文件
+     * 打进包里，每台机器渲染完全一致，不再有「声明了却没加载」这种事。
+     * 后面的系统等宽栈只作字体还没下载完时的兜底（font-display: swap）。
+     *
+     * CJK 不受影响：等宽栈里没有汉字字形，中文会自然落到后面的中文栈。
+     * 这正是「英文换字形、中文照旧」的实现方式，不需要 unicode-range。
+     */
+    --cds-font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --cds-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --cds-font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   }
 
   html,
@@ -138,16 +352,20 @@
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
   }
+  :where(select) {
+    min-width: 0;
+    max-width: 100%;
+  }
   ::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+    width: 0.75rem;
+    height: 0.75rem;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
     background: hsl(var(--muted-foreground) / 0.45);
-    border-radius: 7px;
+    border-radius: 0.4375rem;
     border: 3px solid transparent;
     background-clip: content-box;
   }
@@ -158,18 +376,90 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    /* CJK 栈显式声明(否则中文落到系统随机字体,与 Inter 混排粗细不齐);
-       cv11/ss01 开 Inter 变体字形,数字 1 与小写 l 区分。 */
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-    font-feature-settings: 'cv11' 1, 'ss01' 1;
+    /* 英文走 --cds-font-sans（自托管 Inter），中文走 CJK 栈。
+       Inter 没有汉字字形，中文自然掉到后面，不需要 unicode-range。
+       等宽只留给标识符（.cds-ident），不做全站默认——那样会把页面横向撑大约 10%。 */
+    font-family: var(--cds-font-sans), var(--cds-font-cjk);
+    /* 正文**不设** letter-spacing。上一轮为了收紧等宽英文加了 -0.015em，
+       它对中文同样生效——汉字本来就不需要负字距，被收紧后整段中文发挤，
+       这是「中文完全不能看」的直接原因。负字距只留给 .cds-ident 那一档。 */
     text-rendering: optimizeLegibility;
     background-color: hsl(var(--surface-base));
   }
 
-  ::view-transition-old(root),
+}
+
+/* Keep the arrow inside the field across platform-native select renderers.
+   Unlayered so page background/padding shorthands cannot erase the affordance.
+   Custom icon selects and listboxes retain their own presentation. */
+html select:not([multiple]):not([size]):not(.appearance-none) {
+  appearance: none;
+  padding-inline-end: 2.25rem;
+  background-image: var(--cds-select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 0.625rem center;
+  background-size: 1rem 1rem;
+  text-overflow: ellipsis;
+}
+
+html select:not([multiple]):not([size]):not(.appearance-none):dir(rtl) {
+  background-position: left 0.625rem center;
+}
+
+@media (forced-colors: active) {
+  html select:not([multiple]):not([size]):not(.appearance-none) {
+    appearance: auto;
+    background-image: none;
+  }
+}
+
+/*
+ * 主题切换水波纹（View Transition API）。
+ *
+ * 迁移欠账（2026-08-05 补齐）：这套效果原本活在 legacy 栈 `cds/web-legacy/app.js`
+ * + `style.css`，dashboard 迁到 React 新栈时**只搬了「关掉默认淡入淡出」那一半**
+ * （`animation: none`），扩散动画那一半没搬过来，于是主题切换退化成瞬间硬切。
+ * 只留前半条比两条都不留更糟——它把浏览器默认的交叉淡入也一并干掉了。
+ *
+ * 故意不放进 @layer：view transition 伪元素是文档级的，不参与组件层叠讨论，
+ * 放在层外避免被任何未分层规则意外压过。
+ */
+.vt-snapshotting,
+.vt-snapshotting *,
+.vt-snapshotting *::before,
+.vt-snapshotting *::after {
+  /* 捕快照期间冻结全局 micro-motion：否则「新」快照会捕到过渡中途的颜色，
+     波纹扫过时卡片会短暂显示错误皮肤。 */
+  transition-duration: 0s !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+
+/* 旧主题作为背景静止不动，新主题以圆形从按钮位置扩散覆盖上去 */
+::view-transition-old(root) {
+  animation: none;
+  z-index: 1;
+}
+
+:root.cds-theme-motion::view-transition-new(root) {
+  z-index: 9999;
+  clip-path: circle(0% at var(--ripple-x, 50%) var(--ripple-y, 0));
+  animation: cds-theme-ripple-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes cds-theme-ripple-in {
+  to {
+    clip-path: circle(var(--ripple-radius, 150%) at var(--ripple-x, 50%) var(--ripple-y, 0));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   ::view-transition-new(root) {
     animation: none;
-    mix-blend-mode: normal;
+    clip-path: none;
   }
 }
 
@@ -218,15 +508,34 @@
      auto-fill 自适应列,超宽屏应继续加列;若折叠到 wide(1440) 会在
      4K 屏右侧再造"大片留白"——正是 audit-cds-ui-regressions 守卫
      诞生时要防的回归(2026-07-05 三档归一时曾误折叠,CI 抓回)。 */
-  .cds-workspace.cds-branch-list-workspace {
-    max-width: none;
+  /*
+   * 卡片网格的唯一契约。列数由可用宽度算出来，不写死 `xl:grid-cols-3`——
+   * 写死列数的页面在宽屏上只会把卡片撑得越来越胖，或者干脆在中间留一条，
+   * 两侧空着（用户 2026-08-13 指着项目列表说的就是这个）。
+   *
+   * `min(100%, Npx)` 是窄屏兜底：容器比 N 还窄时列宽退成 100%，不会横向溢出。
+   */
+  .cds-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 23.75rem)), 1fr));
+    align-items: start;
+    gap: 1.25rem;
   }
 
+  /* 分支卡网格的列数契约（2026-09-08 用户拍板「一排五个」）：
+     列宽下限是布局 token（rem，跟着界面尺度走），列数由它推导，封顶五列——
+     再宽也不多排，卡片随之变宽，而不是变成七八列的碎片。
+     封顶不走媒体查询（断点读不到根字号，三档尺度下会错位），而是把「五等分宽度」
+     也算进列宽下限：min = max(token, (100% - 4 gap) / 5)，auto-fill 自然最多五列。
+     不用 zoom 凑五列：Chromium 实测子树 zoom 会让 Radix 菜单飘到别的卡上。 */
   .cds-branch-card-grid {
+    --cds-branch-card-min: 20.5rem;
+    --cds-branch-card-gap: 1rem;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
-    align-items: start;
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--cds-branch-card-min), calc((100% - 4 * var(--cds-branch-card-gap)) / 5))), 1fr));
+    /* 同一视觉行按真实内容自然拉齐，不给少量内容强制补整页空槽。 */
+    align-items: stretch;
+    gap: var(--cds-branch-card-gap);
   }
 
   /* 2026-07-09 性能：离屏卡片跳过 layout/paint（大列表不引虚拟化库的轻量替代，
@@ -235,7 +544,7 @@
      卡片开着 tag 编辑器 / AI 面板 / commit 菜单或 error 态时由 JSX 侧不加本类。 */
   .cds-cv-auto {
     content-visibility: auto;
-    contain-intrinsic-size: auto 240px;
+    contain-intrinsic-size: auto 15.25rem;
   }
 
   /*
@@ -247,7 +556,7 @@
     border-color: hsl(var(--primary) / 0.65) !important;
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.35),
-      0 18px 42px -30px hsl(var(--primary) / 0.75) !important;
+      0 1.125rem 2.625rem -1.875rem hsl(var(--primary) / 0.75) !important;
   }
   @keyframes cds-card-selected-flash {
     0% {
@@ -255,21 +564,21 @@
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.35),
         0 0 0 0 hsl(var(--primary) / 0.48),
-        0 18px 42px -30px hsl(var(--primary) / 0.75);
+        0 1.125rem 2.625rem -1.875rem hsl(var(--primary) / 0.75);
     }
     45% {
       transform: translateY(-2px);
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.55),
-        0 0 0 5px hsl(var(--primary) / 0.16),
-        0 22px 46px -28px hsl(var(--primary) / 0.9);
+        0 0 0 0.3125rem hsl(var(--primary) / 0.16),
+        0 1.375rem 2.875rem -1.75rem hsl(var(--primary) / 0.9);
     }
     100% {
       transform: translateY(0);
       box-shadow:
         0 0 0 1px hsl(var(--primary) / 0.35),
         0 0 0 0 hsl(var(--primary) / 0),
-        0 18px 42px -30px hsl(var(--primary) / 0.75);
+        0 1.125rem 2.625rem -1.875rem hsl(var(--primary) / 0.75);
     }
   }
   .cds-card-selected-flash {
@@ -286,7 +595,7 @@
   @keyframes cds-branch-card-enter {
     0% {
       opacity: 0;
-      transform: translateY(10px) scale(0.97);
+      transform: translateY(0.625rem) scale(0.97);
     }
     100% {
       opacity: 1;
@@ -294,23 +603,36 @@
     }
   }
   .cds-branch-card-enter {
-    animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    /* 同 .cds-finish-ring：卡片根的 duration-150 会经 tailwindcss-animate 把它截成 150ms。 */
+    animation-duration: 440ms !important;
+  }
+  /* 关系流向条的 chip 错峰淡入（2026-09-16）：每枚延迟 40ms，尊重「减少动态效果」。 */
+  @keyframes cds-relation-chip-in {
+    0% { opacity: 0; transform: translateY(0.25rem); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .cds-relation-chip-in {
+    animation: cds-relation-chip-in 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cds-relation-chip-in { animation: none; }
   }
   @keyframes cds-branch-card-leave {
     0% {
       opacity: 1;
       transform: translateY(0) scale(1);
-      max-height: 520px;
+      max-height: 32.5rem;
       min-height: 0;
       margin-bottom: 0;
     }
     35% {
       opacity: 0;
-      transform: translateY(-6px) scale(0.95);
+      transform: translateY(-0.375rem) scale(0.95);
     }
     100% {
       opacity: 0;
-      transform: translateY(-6px) scale(0.95);
+      transform: translateY(-0.375rem) scale(0.95);
       max-height: 0;
       min-height: 0;
       margin-bottom: -1rem;
@@ -327,6 +649,7 @@
   .cds-branch-card-leave {
     pointer-events: none;
     animation: cds-branch-card-leave 340ms cubic-bezier(0.4, 0, 1, 1) forwards;
+    animation-duration: 340ms !important;
   }
   /* 尊重系统「减少动态效果」偏好:不播过渡,直接给最终「收起」态(高度归零),
    * 否则卡片只是透明但仍占满布局空间,要等 ~360ms 移除定时器才让位。
@@ -362,16 +685,24 @@
       z-index: 20;
       display: flex !important;
       flex-direction: row !important;
-      gap: 0.5rem;
+      align-items: center;
+      align-self: start;
+      gap: 0.25rem;
+      min-height: 0;
       max-width: 100%;
       overflow-x: auto;
+      overflow-y: hidden;
+      border-bottom: 1px solid hsl(var(--hairline));
+      background: hsl(var(--surface-base));
+      padding: 0.375rem 0.75rem;
+      scroll-padding-inline: 0.75rem;
       overscroll-behavior-x: contain;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
       /* Right-edge fade hints the tab strip is horizontally scrollable instead
          of hard-clipping the next tab (mobile-layout-fallback.md §6 cue). */
-      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
-      mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+      -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.375rem), transparent);
+      mask-image: linear-gradient(to right, #000 calc(100% - 1.375rem), transparent);
     }
 
     .cds-settings-nav::-webkit-scrollbar {
@@ -390,12 +721,13 @@
     .cds-settings-nav-trigger {
       width: auto !important;
       min-width: max-content;
-      min-height: 2.5rem !important;
+      height: 2.75rem;
+      min-height: 2.75rem !important;
       flex: 0 0 auto;
       gap: 0.5rem !important;
       white-space: nowrap;
-      border: 1px solid hsl(var(--hairline));
-      background: hsl(var(--surface-sunken) / 0.56);
+      border: 0;
+      background: transparent;
       padding-inline: 0.75rem !important;
       font-size: 0.8125rem !important;
     }
@@ -465,11 +797,6 @@
     }
   }
 
-  body[data-cds-branch-drawer-open='true'] .cds-theme-toggle,
-  body:has(.cds-branch-detail-drawer) .cds-theme-toggle {
-    display: none;
-  }
-
   /*
    * BranchCard busy rim. Deliberately subtle: no large conic sweep across
    * the content area, only a quiet edge pulse while deployments are polling.
@@ -479,7 +806,7 @@
     border-color: rgb(14 165 233 / 0.36) !important;
     box-shadow:
       0 0 0 1px rgb(14 165 233 / 0.12),
-      0 16px 36px -30px rgb(14 165 233 / 0.7);
+      0 1rem 2.25rem -1.875rem rgb(14 165 233 / 0.7);
   }
 
   .cds-branch-card-busy::after {
@@ -492,15 +819,219 @@
     border: 1px solid rgb(56 189 248 / 0.38);
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.08),
-      0 0 14px -9px rgb(56 189 248 / 0.8);
+      0 0 0.875rem -0.5625rem rgb(56 189 248 / 0.8);
     animation: cds-branch-busy-rim 1.8s ease-in-out infinite;
+  }
+
+  /* 分支卡构建阶段条（2026-09-29 改版，取代 2026-09-08 方案 B 的整条背景填充）。
+     页脚顶边一条细线，分成「排队 / 等镜像 / 启动容器 / 就绪探测」几段（源码版三段）：
+     走完的段实心、当前段流光（段内进度后端没有，不编百分比）、排队只放斜纹。
+     超过历史中位转 warn，失败停在出事那一段转红，完成时整条补满转成功色。
+     颜色全走 token，双主题各自成立。判定源：lib/branchCardPhase.ts。 */
+/* 分支自定义分组：被拎起的卡原位变淡加虚线框；拖影副本倾斜、主色边框、投影（2026-09-29）。 */
+.cds-branch-card-grid [data-dragging='true'] {
+  opacity: 0.45;
+  outline: 2px dashed hsl(var(--primary) / 0.7);
+  outline-offset: 2px;
+}
+.cds-branch-drag-ghost {
+  position: fixed;
+  top: -62.5rem;
+  left: -62.5rem;
+  transform: rotate(-2deg);
+  border-color: hsl(var(--primary)) !important;
+  box-shadow: 0 1.125rem 2.5rem hsl(0 0% 0% / 0.45);
+  pointer-events: none;
+}
+
+  .cds-phase-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -1px;
+    z-index: 1;
+    display: flex;
+    gap: 3px;
+    height: 3px;
+    pointer-events: none;
+  }
+  .cds-phase-seg {
+    position: relative;
+    flex: 1 1 0;
+    overflow: hidden;
+    background: hsl(var(--hairline-strong));
+  }
+  .cds-phase-seg--done {
+    background: hsl(var(--info));
+  }
+  .cds-phase-seg--current {
+    background: hsl(var(--info) / 0.3);
+  }
+  .cds-phase-seg--current::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, hsl(var(--info)), transparent);
+    animation: cds-phase-shimmer 1.4s linear infinite;
+  }
+  .cds-phase-seg--waiting {
+    background: repeating-linear-gradient(-45deg, hsl(var(--info) / 0.8) 0 0.25rem, hsl(var(--info) / 0.2) 0.25rem 0.5rem);
+    background-size: 0.7071rem 100%;
+    animation: cds-phase-stripe 1s linear infinite;
+  }
+  .cds-phase-bar--overdue .cds-phase-seg--done {
+    background: hsl(var(--warn));
+  }
+  .cds-phase-bar--overdue .cds-phase-seg--current {
+    background: hsl(var(--warn) / 0.3);
+  }
+  .cds-phase-bar--overdue .cds-phase-seg--current::after {
+    background: linear-gradient(90deg, transparent, hsl(var(--warn)), transparent);
+  }
+  .cds-phase-bar--failed .cds-phase-seg--done {
+    opacity: 0.45;
+  }
+  .cds-phase-seg--failed {
+    background: hsl(var(--destructive));
+  }
+  @keyframes cds-phase-shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
+  }
+  @keyframes cds-phase-stripe {
+    to { background-position: 0.7071rem 0; }
+  }
+
+  /* 构建完成的一次性收尾（约 1.2s，只在「构建中 → 运行中」翻转时播一次）：
+     0–300ms 阶段条补满并转成功色 → 300–700ms 高光扫过页脚、文字上下交叉换成「部署成功」
+     → 700–1000ms 端口标签依次点亮、预览按钮放大淡入 → 1000ms 起一次成功色外圈脉冲。 */
+  .cds-phase-bar--finish .cds-phase-seg {
+    background: hsl(var(--info));
+    animation: cds-phase-to-ok 300ms ease-out forwards;
+  }
+  .cds-phase-bar--finish {
+    animation: cds-phase-settle 400ms 1200ms ease-out forwards;
+  }
+  /* 收尾动效播完后的静态终态（见卡片里的 finishAnimating：重排不会让它重播）。 */
+  .cds-phase-bar--done {
+    opacity: 0.5;
+  }
+  .cds-phase-bar--done .cds-phase-seg {
+    background: hsl(var(--ok));
+  }
+  .cds-finish-sweep {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    background: linear-gradient(100deg, transparent, hsl(var(--ok) / 0.3), transparent);
+    transform: translateX(-110%);
+    animation: cds-finish-sweep 520ms 300ms ease-out forwards;
+  }
+  .cds-finish-text-out {
+    animation: cds-finish-text-out 160ms 300ms ease-in forwards;
+  }
+  .cds-finish-text-in {
+    opacity: 0;
+    animation: cds-finish-text-in 320ms 460ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .cds-finish-chip {
+    animation: cds-finish-chip 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .cds-finish-pop {
+    opacity: 0;
+    animation: cds-finish-pop 300ms 820ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  /* 卡片根上挂着 Tailwind 的 duration-150（给 hover 过渡用），而 tailwindcss-animate 让 duration-*
+     同时改写 animation-duration，且 utilities 层压过这里——不加 !important，780ms 的脉冲会被
+     静默截成 150ms（2026-09-29 取证脚本量出来的：动画名在、时长被改）。 */
+  .cds-finish-ring {
+    animation: cds-finish-ring 780ms 1000ms cubic-bezier(0.16, 1, 0.3, 1);
+    animation-duration: 780ms !important;
+  }
+  .cds-finish-note {
+    opacity: 0;
+    animation: cds-finish-text-in 320ms 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .cds-finish-note-out {
+    animation: cds-finish-text-out 160ms 820ms ease-in forwards;
+  }
+  @keyframes cds-phase-to-ok {
+    to { background: hsl(var(--ok)); }
+  }
+  @keyframes cds-phase-settle {
+    to { opacity: 0.5; }
+  }
+  @keyframes cds-finish-sweep {
+    to { transform: translateX(260%); }
+  }
+  @keyframes cds-finish-text-out {
+    to { opacity: 0; transform: translateY(-0.375rem); }
+  }
+  @keyframes cds-finish-text-in {
+    from { opacity: 0; transform: translateY(0.375rem); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes cds-finish-chip {
+    from { opacity: 0.4; }
+    to { opacity: 1; }
+  }
+  @keyframes cds-finish-pop {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes cds-finish-ring {
+    0% { box-shadow: 0 0 0 0 hsl(var(--ok) / 0); }
+    40% { box-shadow: 0 0 0 1px hsl(var(--ok) / 0.7), 0 0 0 0.5rem hsl(var(--ok) / 0.16); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--ok) / 0); }
+  }
+
+  /* 排队位次变化时新数字从下方滚进来（旧数字随 key 卸载），让「前面的人走了」看得见。 */
+  .cds-roll-in {
+    display: inline-block;
+    animation: cds-roll-in 420ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes cds-roll-in {
+    from { opacity: 0; transform: translateY(70%); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-phase-seg--current::after,
+    .cds-phase-seg--waiting,
+    .cds-roll-in,
+    .cds-finish-chip,
+    .cds-finish-ring {
+      animation: none;
+    }
+    .cds-phase-bar--finish,
+    .cds-phase-bar--finish .cds-phase-seg {
+      animation: none;
+      background: hsl(var(--ok));
+      opacity: 0.5;
+    }
+    .cds-phase-bar--finish {
+      background: transparent;
+    }
+    .cds-finish-sweep,
+    .cds-finish-text-out,
+    .cds-finish-note-out {
+      display: none;
+    }
+    .cds-finish-text-in,
+    .cds-finish-pop,
+    .cds-finish-note {
+      animation: none;
+      opacity: 1;
+    }
   }
 
   [data-theme='light'] .cds-branch-card-busy {
     border-color: rgb(2 132 199 / 0.42) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.12),
-      0 16px 34px -28px rgb(2 132 199 / 0.45);
+      0 1rem 2.125rem -1.75rem rgb(2 132 199 / 0.45);
   }
 
   /*
@@ -516,7 +1047,7 @@
     border-color: rgb(56 189 248 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.18),
-      0 0 18px -10px rgb(56 189 248 / 0.9),
+      0 0 1.125rem -0.625rem rgb(56 189 248 / 0.9),
       inset 0 1px 0 rgb(255 255 255 / 0.08);
     animation: cds-ai-beacon-body 1.9s ease-in-out infinite;
   }
@@ -551,8 +1082,8 @@
     z-index: 0;
     border: 1px solid rgb(125 211 252 / 0.2);
     box-shadow:
-      inset 0 0 10px rgb(125 211 252 / 0.2),
-      0 0 10px rgb(56 189 248 / 0.16);
+      inset 0 0 0.625rem rgb(125 211 252 / 0.2),
+      0 0 0.625rem rgb(56 189 248 / 0.16);
     opacity: 0.72;
     animation: cds-ai-beacon-halo 1.9s ease-in-out infinite;
   }
@@ -560,16 +1091,16 @@
   .cds-ai-preview-beacon svg {
     position: relative;
     z-index: 1;
-    filter: drop-shadow(0 0 6px rgb(125 211 252 / 0.55));
+    filter: drop-shadow(0 0 0.375rem rgb(125 211 252 / 0.55));
     animation: cds-ai-beacon-icon 1.65s ease-in-out infinite;
   }
 
   .cds-site-notice-trigger--active {
     border-color: hsl(var(--primary) / 0.58);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.18),
-      0 0 20px -10px hsl(var(--primary) / 0.88);
+      0 0 1.25rem -0.625rem hsl(var(--primary) / 0.88);
   }
 
   /* AI 正在操作的分支卡:标题扫光是唯一主动态。卡片只保留静态边框和
@@ -579,22 +1110,14 @@
     border-color: rgb(56 189 248 / 0.42) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.1),
-      0 16px 34px -28px rgb(56 189 248 / 0.62);
-  }
-
-  .cds-ai-active-rail {
-    box-shadow:
-      0 0 12px rgb(56 189 248 / 0.42),
-      0 0 24px rgb(56 189 248 / 0.2);
-    transform-origin: left center;
-    animation: cds-ai-rail-breathe 2.8s ease-in-out infinite;
+      0 1rem 2.125rem -1.75rem rgb(56 189 248 / 0.62);
   }
 
   .cds-actor-name-glow {
     animation: cds-actor-name-breathe 1.85s ease-in-out infinite;
     text-shadow:
-      0 0 8px var(--cds-actor-name-glow),
-      0 0 18px var(--cds-actor-name-glow-soft);
+      0 0 0.5rem var(--cds-actor-name-glow),
+      0 0 1.125rem var(--cds-actor-name-glow-soft);
   }
 
   .cds-actor-name-glow--build {
@@ -619,7 +1142,7 @@
     border-color: rgb(2 132 199 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(2 132 199 / 0.16),
-      0 0 18px -8px rgb(2 132 199 / 0.7),
+      0 0 1.125rem -0.5rem rgb(2 132 199 / 0.7),
       inset 0 1px 0 rgb(255 255 255 / 0.72);
   }
 
@@ -639,15 +1162,17 @@
   [data-theme='light'] .cds-ai-preview-beacon::after {
     border-color: rgb(2 132 199 / 0.18);
     box-shadow:
-      inset 0 0 10px rgb(2 132 199 / 0.14),
-      0 0 10px rgb(2 132 199 / 0.12);
+      inset 0 0 0.625rem rgb(2 132 199 / 0.14),
+      0 0 0.625rem rgb(2 132 199 / 0.12);
   }
 
+  /* 白天靠「边界清晰」而不是「整体发光」来表达选中/占用：白底上柔和外发光会糊，
+     所以收紧内描边、压掉大范围投影，边框本身加深一档。 */
   [data-theme='light'] .cds-ai-active-card {
-    border-color: rgb(2 132 199 / 0.46) !important;
+    border-color: rgb(2 132 199 / 0.62) !important;
     box-shadow:
-      0 0 0 1px rgb(2 132 199 / 0.08),
-      0 16px 34px -28px rgb(2 132 199 / 0.42);
+      0 0 0 1px rgb(2 132 199 / 0.14),
+      0 0.625rem 1.375rem -1.25rem rgb(2 132 199 / 0.34);
   }
 
   @keyframes cds-ai-beacon-body {
@@ -687,29 +1212,278 @@
     }
   }
 
-  @keyframes cds-ai-rail-breathe {
-    0%, 100% {
-      opacity: 0.46;
-      transform: scaleY(0.84);
-    }
-    50% {
-      opacity: 0.92;
-      transform: scaleY(1);
-    }
+  /* ---------- AI 进度轨（分支卡左轨 + 页脚活动条共用） ----------
+     段数一律来自数据，绝不写常量。没有总量时**不许画分段**——分段这个形状
+     本身在向用户承诺「共 N 步」，他会据此估还要等多久，估错就是预期失控。
+     形态三档：staged（部署，唯一有阶段的路径）/ indeterminate（只知道在做
+     什么）/ heartbeat（只有心跳）。 */
+  .cds-ai-rail,
+  .cds-ai-activity {
+    --cds-rail: 56 189 248;
+    --cds-rail-hi: 125 211 252;
+  }
+
+  [data-theme='light'] .cds-ai-rail,
+  [data-theme='light'] .cds-ai-activity {
+    --cds-rail: 2 132 199;
+    --cds-rail-hi: 3 105 161;
+  }
+
+  .cds-ai-rail {
+    display: flex;
+    pointer-events: none;
+  }
+
+  .cds-ai-rail--v {
+    position: absolute;
+    inset-block: 0.75rem;
+    left: 0;
+    width: 0.25rem;
+    flex-direction: column;
+    gap: 0.3125rem;
+  }
+
+  .cds-ai-rail--h {
+    width: 3.375rem;
+    height: 3px;
+    flex: none;
+    gap: 3px;
+  }
+
+  .cds-ai-rail > i {
+    display: block;
+    flex: 1 1 0;
+    border-radius: 2px;
+    background: rgb(var(--cds-rail) / 0.16);
+    transition: background 320ms ease, box-shadow 320ms ease;
+  }
+
+  .cds-ai-rail--v > i { border-radius: 3px; }
+
+  .cds-ai-rail > i[data-seg='done'] {
+    background: rgb(var(--cds-rail) / 0.55);
+  }
+
+  /* 进行中段必须带静态特征（亮度 + 光晕）：reduced-motion 下流动被关掉，
+     只靠流动区分 done / running 的话，这类用户读不出进度停在哪一段。 */
+  .cds-ai-rail--v > i[data-seg='running'] {
+    background:
+      linear-gradient(rgb(var(--cds-rail-hi) / 0.35), rgb(var(--cds-rail-hi) / 0.35)),
+      repeating-linear-gradient(
+        180deg,
+        transparent 0 0.625rem,
+        rgb(var(--cds-rail-hi)) 0.875rem,
+        rgb(var(--cds-rail-hi)) 1.5rem,
+        transparent 1.75rem 2.75rem
+      );
+    background-size: 100% 100%, 100% 2.75rem;
+    box-shadow: 0 0 0.625rem rgb(var(--cds-rail) / 0.55);
+    animation: cds-ai-rail-stream 1.1s linear infinite;
+  }
+
+  .cds-ai-rail--h > i[data-seg='running'] {
+    background: linear-gradient(
+      90deg,
+      rgb(var(--cds-rail-hi) / 0.45),
+      rgb(var(--cds-rail-hi)),
+      rgb(var(--cds-rail-hi) / 0.45)
+    );
+    background-size: 220% 100%;
+    box-shadow: 0 0 0.4375rem rgb(var(--cds-rail) / 0.75);
+    animation: cds-ai-track-stream 1.1s linear infinite;
+  }
+
+  /* 不定量：单条不分段，不承诺任何总量，只表达「在跑」 */
+  .cds-ai-rail--v > i[data-seg='indeterminate'] {
+    background:
+      linear-gradient(rgb(var(--cds-rail) / 0.2), rgb(var(--cds-rail) / 0.2)),
+      linear-gradient(180deg, transparent 0%, rgb(var(--cds-rail-hi)) 45%, transparent 78%);
+    background-size: 100% 100%, 100% 42%;
+    background-repeat: no-repeat;
+    animation: cds-ai-rail-indeterminate 2.1s ease-in-out infinite;
+  }
+
+  .cds-ai-rail--h > i[data-seg='indeterminate'] {
+    background:
+      linear-gradient(rgb(var(--cds-rail) / 0.2), rgb(var(--cds-rail) / 0.2)),
+      linear-gradient(90deg, transparent 0%, rgb(var(--cds-rail-hi)) 45%, transparent 78%);
+    background-size: 100% 100%, 62% 100%;
+    background-repeat: no-repeat;
+    animation: cds-ai-track-indeterminate 1.5s ease-in-out infinite;
+  }
+
+  /* 只有心跳：呼吸，不画任何进度形状。只调透明度，横竖两个方向都成立。 */
+  .cds-ai-rail > i[data-seg='heartbeat'] {
+    background: rgb(var(--cds-rail) / 0.8);
+    animation: cds-ai-rail-heartbeat 2.8s ease-in-out infinite;
+  }
+
+  .cds-ai-activity-text {
+    color: rgb(var(--cds-rail-hi));
+  }
+
+  /* 次要信息（最近一次 AI 活动多久前）压到 muted，让主文案不被稀释 */
+  .cds-ai-activity-meta {
+    color: hsl(var(--muted-foreground));
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* heartbeat 档的形态：一颗带光晕的脉冲点。什么进度都不知道时不画条，
+     只表达「还活着」——横线会被读成进度，而它并不表示任何进度。 */
+  .cds-ai-pulse-dot {
+    position: relative;
+    flex: none;
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border-radius: 624.9375rem;
+    background: rgb(var(--cds-rail-hi));
+    box-shadow: 0 0 0.5rem rgb(var(--cds-rail) / 0.7);
+    animation: cds-ai-rail-heartbeat 2.8s ease-in-out infinite;
+  }
+
+  .cds-ai-pulse-dot::before {
+    content: '';
+    position: absolute;
+    inset: -0.25rem;
+    border-radius: 624.9375rem;
+    border: 1px solid rgb(var(--cds-rail) / 0.6);
+    animation: cds-ai-pulse-halo 2.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  }
+
+  @keyframes cds-ai-pulse-halo {
+    0% { opacity: 0.8; transform: scale(0.75); }
+    70% { opacity: 0; transform: scale(1.5); }
+    100% { opacity: 0; transform: scale(1.5); }
+  }
+
+  /* 标识符字形（分支名、commit sha、主机名、releaseId…）。
+     与 llmgw 日志同一套英文字形（llmgw/web/src/theme.css --font-mono）。
+     标识符不是散文，等宽下 claude/ai-animation-demos-u7uvyr 这类串的
+     断字和数字对齐都更稳；-0.015em 把等宽天然偏松的字距收回来。
+
+     刻意**不走** Tailwind 的 `font-mono`：那个栈把 `JetBrains Mono` 排在第一位，
+     而本仓库从没打包过它——装了它的机器和没装的机器会看到两种英文字形。
+     所有标识符统一用这个类，页面之间的英文字形才是同一套。
+
+     `.cds-branch-name` 是历史名字，保留给分支卡；新代码用 `.cds-ident`。 */
+  .cds-ident,
+  .cds-branch-name {
+    font-family: var(--cds-font-mono);
+    letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 徽章环形巡光：只转渐变角度，不转元素。徽章是 52x27 的扁矩形，
+     transform: rotate() 会让它的对角线扫到 59px 开外，光带直接甩出徽章。 */
+  @property --cds-ai-ring-angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+  }
+
+  .cds-ai-badge-ring::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 0.5rem;
+    padding: 1.5px;
+    background: conic-gradient(
+      from var(--cds-ai-ring-angle),
+      transparent 0 62%,
+      rgb(125 211 252 / 0.9) 82%,
+      transparent 100%
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: cds-ai-ring-sweep 3.1s linear infinite;
+    pointer-events: none;
+  }
+
+  [data-theme='light'] .cds-ai-badge-ring::before {
+    background: conic-gradient(
+      from var(--cds-ai-ring-angle),
+      transparent 0 62%,
+      rgb(3 105 161 / 0.9) 82%,
+      transparent 100%
+    );
+  }
+
+  /* 整卡环境光：一道极淡的光带缓慢斜掠，表达「这张工位被接管了」。
+     自带 overflow-hidden，卡片因浮层打开切到 overflow-visible 时也不外溢。 */
+  .cds-ai-card-sweep > span {
+    position: absolute;
+    inset: 0;
+    display: block;
+    background: linear-gradient(
+      104deg,
+      transparent 38%,
+      rgb(56 189 248 / 0.14) 48%,
+      rgb(56 189 248 / 0.05) 55%,
+      transparent 64%
+    );
+    animation: cds-ai-card-sweep 5.6s ease-in-out infinite;
+  }
+
+  /* 白天主题：同样的光带在白底上会读成「脏」而不是「亮」——降到刚好可见，
+     让「被接管」的表达主要由边框和进度轨承担，而不是给整卡蒙一层灰蓝雾。 */
+  [data-theme='light'] .cds-ai-card-sweep > span {
+    background: linear-gradient(
+      104deg,
+      transparent 40%,
+      rgb(2 132 199 / 0.055) 48%,
+      rgb(2 132 199 / 0.022) 55%,
+      transparent 62%
+    );
+  }
+
+  @keyframes cds-ai-rail-stream {
+    to { background-position: 0 0, 0 2.75rem; }
+  }
+
+  @keyframes cds-ai-track-stream {
+    to { background-position: 220% 0; }
+  }
+
+  @keyframes cds-ai-rail-indeterminate {
+    0% { background-position: 0 0, 0 -50%; }
+    100% { background-position: 0 0, 0 150%; }
+  }
+
+  @keyframes cds-ai-track-indeterminate {
+    0% { background-position: 0 0, -70% 0; }
+    100% { background-position: 0 0, 170% 0; }
+  }
+
+  @keyframes cds-ai-rail-heartbeat {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes cds-ai-ring-sweep {
+    to { --cds-ai-ring-angle: 360deg; }
+  }
+
+  @keyframes cds-ai-card-sweep {
+    0% { transform: translateX(-58%); opacity: 0; }
+    12% { opacity: 1; }
+    78% { opacity: 1; }
+    100% { transform: translateX(58%); opacity: 0; }
   }
 
   @keyframes cds-actor-name-breathe {
     0%, 100% {
       opacity: 0.74;
       text-shadow:
-        0 0 4px var(--cds-actor-name-glow),
-        0 0 12px var(--cds-actor-name-glow-soft);
+        0 0 0.25rem var(--cds-actor-name-glow),
+        0 0 0.75rem var(--cds-actor-name-glow-soft);
     }
     50% {
       opacity: 1;
       text-shadow:
-        0 0 9px var(--cds-actor-name-glow),
-        0 0 22px var(--cds-actor-name-glow-soft);
+        0 0 0.5625rem var(--cds-actor-name-glow),
+        0 0 1.375rem var(--cds-actor-name-glow-soft);
     }
   }
 
@@ -718,7 +1492,9 @@
     .cds-ai-preview-beacon::before,
     .cds-ai-preview-beacon::after,
     .cds-ai-preview-beacon svg,
-    .cds-ai-active-rail,
+    .cds-ai-rail > i,
+    .cds-ai-badge-ring::before,
+    .cds-ai-card-sweep > span,
     .cds-actor-name-glow {
       animation: none;
     }
@@ -788,7 +1564,7 @@
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
     /* rail 宽度是壳层网格的 SSOT，移动端断点会将其归零。 */
-    --cds-rail-w: 72px;
+    --cds-rail-w: 4.5rem;
     grid-template-columns: var(--cds-rail-w) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
@@ -808,7 +1584,7 @@
   }
 
   .cds-rail {
-    @apply flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-4;
+    @apply flex min-h-0 flex-col gap-3 overflow-y-auto px-2 py-2.5;
     grid-column: 1;
     grid-row: 2;
     background-color: hsl(var(--surface-sunken));
@@ -824,7 +1600,7 @@
      而是导航列里第一块磁贴。 */
   .cds-rail-avatar {
     @apply relative flex h-12 w-12 shrink-0 items-center justify-center;
-    border-radius: 14px;
+    border-radius: 0.875rem;
     background-color: hsl(var(--surface-raised));
     border: 1px solid hsl(var(--hairline));
     /* 品牌磁贴呼吸辉光:柔和的品牌色外发光每 4.2s 起落一次,让磁贴"活着"
@@ -846,7 +1622,7 @@
       box-shadow:
         inset 0 1px 0 hsl(0 0% 100% / 0.05),
         0 1px 2px rgb(0 0 0 / 0.18),
-        0 0 16px -3px hsl(255 90% 66% / 0.5);
+        0 0 1rem -3px hsl(255 90% 66% / 0.5);
     }
   }
 
@@ -870,7 +1646,7 @@
   }
 
   .cds-gem--glow {
-    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.18));
+    filter: drop-shadow(0 0 0.625rem hsl(var(--primary) / 0.18));
   }
 
   /* 小尺寸清晰档:**非品牌** simple 切面永远满亮度(状态指示器不发虚)。
@@ -973,7 +1749,7 @@
     align-items: center;
     justify-content: center;
     color: currentColor;
-    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.16));
+    filter: drop-shadow(0 0 0.625rem hsl(var(--primary) / 0.16));
   }
 
   .cds-rail-brand-title {
@@ -1164,11 +1940,23 @@
   }
 
   .cds-rail-section {
-    @apply flex flex-col gap-1 border-t border-[hsl(var(--hairline))] pt-4;
+    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
   }
 
+  /* 首段上方没有内容，那根分割线是悬空的——栏顶已经有顶栏的边界了。 */
+  .cds-rail > .cds-rail-section:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  /* 工具组与 footer 同一段落语言；区别只在「工具跟着导航贴顶、footer 贴栏底」。 */
+  .cds-rail-tools,
   .cds-rail-footer {
-    @apply flex flex-col gap-1 border-t border-[hsl(var(--hairline))] pt-3;
+    @apply flex flex-col gap-0.5 border-t border-[hsl(var(--hairline))] pt-3;
+  }
+
+  .cds-rail-tools {
+    @apply mt-3;
   }
 
   .cds-rail-item {
@@ -1193,11 +1981,14 @@
     flex-shrink: 0;
   }
 
-  /* 左侧栏里的全局操作使用 24px SVG，44px 点击区内图标占比清晰可辨。 */
-  .cds-rail-action-entry svg {
-    width: 1.5rem;
-    height: 1.5rem;
+  /* 短标签只服务桌面栏，抽屉里显示完整中文名。 */
+  .cds-rail-short {
+    display: none;
   }
+
+  /* 2026-08-31 起底部动作不再比导航项大一档：同一根栏里出现 19.2 / 24 / 16
+     三种图标尺寸正是「怎么调都不协调」的来源。尺寸统一交给
+     .cds-rail .cds-rail-item svg（桌面栏 20px）与基础的 1.2rem（抽屉）。 */
 
   .cds-rail-item:hover {
     background-color: hsl(var(--surface-raised) / 0.7);
@@ -1213,7 +2004,7 @@
     border: 1px solid hsl(var(--primary) / 0.28) !important;
     background:
       linear-gradient(135deg, hsl(var(--primary) / 0.12), hsl(var(--primary) / 0.04)) !important;
-    color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-ink)) !important;
     box-shadow: inset 0 1px 0 hsl(var(--primary) / 0.12);
   }
 
@@ -1238,7 +2029,7 @@
   .cds-bug-report-entry:hover {
     border-color: hsl(var(--primary) / 0.38) !important;
     background-color: hsl(var(--surface-raised)) !important;
-    color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-ink)) !important;
   }
 
   .cds-bug-report-entry:focus-visible {
@@ -1249,8 +2040,8 @@
   .cds-agent-route-trigger {
     display: grid;
     width: 100%;
-    min-height: 104px;
-    grid-template-columns: 42px minmax(0, 1fr) auto 18px;
+    min-height: 6.5rem;
+    grid-template-columns: 2.625rem minmax(0, 1fr) auto 1.125rem;
     align-items: center;
     gap: 0.75rem;
     border: 1px solid hsl(var(--primary) / 0.32);
@@ -1274,7 +2065,7 @@
     background-color: hsl(var(--primary) / 0.075);
     box-shadow:
       inset 0 1px 0 hsl(var(--foreground) / 0.05),
-      0 12px 28px -24px hsl(var(--primary) / 0.65);
+      0 0.75rem 1.75rem -1.5rem hsl(var(--primary) / 0.65);
   }
 
   .cds-agent-route-trigger:focus-visible {
@@ -1284,13 +2075,13 @@
 
   .cds-agent-route-trigger-icon {
     display: grid;
-    width: 42px;
-    height: 42px;
+    width: 2.625rem;
+    height: 2.625rem;
     place-items: center;
     border: 1px solid hsl(var(--primary) / 0.24);
     border-radius: 0.65rem;
     background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-route-trigger-icon svg {
@@ -1309,7 +2100,7 @@
   }
 
   .cds-agent-route-trigger-kicker {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -1339,7 +2130,7 @@
   }
 
   .cds-agent-route-trigger-route small {
-    max-width: 160px;
+    max-width: 10rem;
     overflow: hidden;
     font-size: 0.6875rem;
     text-overflow: ellipsis;
@@ -1348,10 +2139,10 @@
 
   .cds-agent-route-trigger-route span {
     border: 1px solid hsl(var(--primary) / 0.25);
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(var(--surface-raised) / 0.72);
     padding: 0.24rem 0.55rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 650;
   }
@@ -1375,7 +2166,7 @@
     background:
       radial-gradient(circle at 82% 0%, hsl(var(--primary) / 0.08), transparent 34%),
       hsl(var(--card));
-    box-shadow: 0 30px 80px -28px hsl(220 32% 4% / 0.64);
+    box-shadow: 0 1.875rem 5rem -1.75rem hsl(220 32% 4% / 0.64);
   }
 
   .cds-agent-world-dialog > div {
@@ -1384,7 +2175,7 @@
 
   .cds-agent-world-header {
     display: grid !important;
-    grid-template-columns: 42px minmax(0, 1fr);
+    grid-template-columns: 2.625rem minmax(0, 1fr);
     align-items: center;
     gap: 0.75rem;
     text-align: left !important;
@@ -1392,13 +2183,13 @@
 
   .cds-agent-world-title-icon {
     display: grid;
-    width: 42px;
-    height: 42px;
+    width: 2.625rem;
+    height: 2.625rem;
     place-items: center;
     border: 1px solid hsl(var(--primary) / 0.28);
     border-radius: 0.75rem;
     background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-world-title-icon svg {
@@ -1414,19 +2205,19 @@
 
   .cds-agent-world-step-heading {
     display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-columns: 1.75rem minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.65rem;
   }
 
   .cds-agent-world-step-heading > span {
     display: grid;
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
     place-items: center;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(var(--primary) / 0.11);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 750;
   }
@@ -1456,9 +2247,9 @@
   .cds-agent-continent {
     position: relative;
     display: grid;
-    min-width: 178px;
-    min-height: 68px;
-    grid-template-columns: 30px minmax(0, 1fr);
+    min-width: 11.125rem;
+    min-height: 4.25rem;
+    grid-template-columns: 1.875rem minmax(0, 1fr);
     grid-template-rows: auto auto;
     align-items: center;
     gap: 0.1rem 0.5rem;
@@ -1484,7 +2275,7 @@
     background-image:
       linear-gradient(90deg, transparent 48%, hsl(188 100% 68% / 0.08) 50%, transparent 52%),
       linear-gradient(transparent 48%, hsl(188 100% 68% / 0.08) 50%, transparent 52%);
-    background-size: 18px 18px;
+    background-size: 1.125rem 1.125rem;
     content: '';
     opacity: 0.42;
     mask-image: linear-gradient(110deg, transparent 4%, black 62%, transparent);
@@ -1506,7 +2297,7 @@
       linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.055));
     box-shadow:
       inset 0 0 0 1px hsl(var(--primary) / 0.14),
-      inset 0 -18px 30px hsl(188 100% 48% / 0.055);
+      inset 0 -1.125rem 1.875rem hsl(188 100% 48% / 0.055);
   }
 
   .cds-agent-continent[data-selected='true']::after {
@@ -1518,19 +2309,19 @@
 
   .cds-agent-continent-marker {
     display: grid;
-    width: 30px;
-    height: 30px;
+    width: 1.875rem;
+    height: 1.875rem;
     grid-row: 1 / 3;
     place-items: center;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(var(--surface-sunken));
     color: hsl(var(--muted-foreground));
   }
 
   .cds-agent-continent[data-selected='true'] .cds-agent-continent-marker {
     background: hsl(var(--primary) / 0.14);
-    color: hsl(var(--primary));
-    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.07);
+    color: hsl(var(--primary-ink));
+    box-shadow: 0 0 0 0.25rem hsl(var(--primary) / 0.07);
   }
 
   .cds-agent-continent-marker svg {
@@ -1565,12 +2356,12 @@
 
   .cds-agent-world-current-continent {
     display: grid;
-    max-width: 210px;
+    max-width: 13.125rem;
     justify-items: end;
   }
 
   .cds-agent-world-current-continent small {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.5625rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -1578,7 +2369,7 @@
 
   .cds-agent-world-current-continent strong,
   .cds-agent-world-current-continent code {
-    max-width: 210px;
+    max-width: 13.125rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1599,7 +2390,7 @@
     position: relative;
     --map-cyan: 188 100% 62%;
     --map-blue: 207 100% 64%;
-    min-height: 300px;
+    min-height: 18.75rem;
     overflow: hidden;
     border: 1px solid hsl(var(--map-cyan) / 0.28);
     border-radius: 0.9rem;
@@ -1610,9 +2401,9 @@
       linear-gradient(155deg, hsl(209 63% 8%), hsl(196 70% 5%));
     box-shadow:
       inset 0 1px 0 hsl(var(--map-cyan) / 0.16),
-      inset 0 -80px 120px hsl(220 78% 2% / 0.5),
-      0 0 28px hsl(188 100% 44% / 0.08);
-    animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      inset 0 -5rem 7.5rem hsl(220 78% 2% / 0.5),
+      0 0 1.75rem hsl(188 100% 44% / 0.08);
+    animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
 
   .cds-agent-world-stage::before {
@@ -1620,14 +2411,14 @@
     inset: 0;
     z-index: 3;
     background:
-      linear-gradient(90deg, hsl(var(--map-cyan) / 0.54), transparent 18px) left 13px top 13px / 56px 1px no-repeat,
-      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 18px) left 13px top 13px / 1px 56px no-repeat,
-      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.54), transparent 18px) right 13px top 13px / 56px 1px no-repeat,
-      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 18px) right 13px top 13px / 1px 56px no-repeat,
-      linear-gradient(90deg, hsl(var(--map-cyan) / 0.38), transparent 18px) left 13px bottom 13px / 56px 1px no-repeat,
-      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 18px) left 13px bottom 13px / 1px 56px no-repeat,
-      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.38), transparent 18px) right 13px bottom 13px / 56px 1px no-repeat,
-      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 18px) right 13px bottom 13px / 1px 56px no-repeat;
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.54), transparent 1.125rem) left 0.8125rem top 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 1.125rem) left 0.8125rem top 0.8125rem / 1px 3.5rem no-repeat,
+      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.54), transparent 1.125rem) right 0.8125rem top 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 1.125rem) right 0.8125rem top 0.8125rem / 1px 3.5rem no-repeat,
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) left 0.8125rem bottom 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) left 0.8125rem bottom 0.8125rem / 1px 3.5rem no-repeat,
+      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) right 0.8125rem bottom 0.8125rem / 3.5rem 1px no-repeat,
+      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 1.125rem) right 0.8125rem bottom 0.8125rem / 1px 3.5rem no-repeat;
     content: '';
     pointer-events: none;
   }
@@ -1658,8 +2449,8 @@
       linear-gradient(155deg, hsl(207 56% 11%), hsl(194 62% 7%));
     box-shadow:
       inset 0 1px 0 hsl(var(--map-cyan) / 0.18),
-      inset 0 -80px 120px hsl(220 78% 2% / 0.42),
-      0 10px 30px hsl(196 42% 16% / 0.16);
+      inset 0 -5rem 7.5rem hsl(220 78% 2% / 0.42),
+      0 0.625rem 1.875rem hsl(196 42% 16% / 0.16);
   }
 
   .cds-agent-world-ocean-grid {
@@ -1671,16 +2462,16 @@
       linear-gradient(hsl(var(--map-cyan) / 0.075) 1px, transparent 1px),
       linear-gradient(90deg, hsl(var(--map-cyan) / 0.075) 1px, transparent 1px),
       radial-gradient(circle, hsl(var(--map-cyan) / 0.24) 1px, transparent 1.5px),
-      repeating-radial-gradient(circle at 50% 44%, transparent 0 44px, hsl(var(--map-cyan) / 0.055) 45px 46px);
+      repeating-radial-gradient(circle at 50% 44%, transparent 0 2.75rem, hsl(var(--map-cyan) / 0.055) 2.8125rem 2.875rem);
     background-position: center;
-    background-size: 28px 28px, 28px 28px, 72px 72px, auto;
+    background-size: 1.75rem 1.75rem, 1.75rem 1.75rem, 4.5rem 4.5rem, auto;
     mask-image: radial-gradient(ellipse at center, black 12%, transparent 92%);
   }
 
   .cds-agent-world-svg {
     display: block;
     width: 100%;
-    height: 300px;
+    height: 18.75rem;
   }
 
   .cds-agent-world-hud path {
@@ -1693,8 +2484,8 @@
 
   .cds-agent-world-hud text {
     fill: hsl(var(--map-cyan) / 0.42);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 8px;
+    font-family: var(--cds-font-mono);
+    font-size: 0.5rem;
     letter-spacing: 0.08em;
   }
 
@@ -1729,7 +2520,7 @@
   .cds-agent-world-region {
     cursor: pointer;
     opacity: 0;
-    animation: cds-agent-world-region-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-agent-world-region-enter 360ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
     animation-delay: calc(var(--region-order) * 42ms);
   }
 
@@ -1768,7 +2559,7 @@
   .cds-agent-world-region:hover .cds-agent-world-region-fill {
     fill: hsl(var(--region-hue) 90% 52% / 0.21);
     stroke: hsl(var(--map-cyan) / 0.94);
-    filter: drop-shadow(0 0 7px hsl(var(--map-cyan) / 0.34));
+    filter: drop-shadow(0 0 0.4375rem hsl(var(--map-cyan) / 0.34));
   }
 
   .cds-agent-world-region:focus {
@@ -1785,8 +2576,8 @@
     stroke: hsl(var(--primary));
     stroke-width: 3;
     filter:
-      drop-shadow(0 0 5px hsl(var(--primary) / 0.56))
-      drop-shadow(0 0 14px hsl(var(--primary) / 0.2));
+      drop-shadow(0 0 0.3125rem hsl(var(--primary) / 0.56))
+      drop-shadow(0 0 0.875rem hsl(var(--primary) / 0.2));
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-grid {
@@ -1811,7 +2602,7 @@
 
   .cds-agent-world-data-node circle:nth-child(2) {
     fill: currentColor;
-    filter: drop-shadow(0 0 4px currentColor);
+    filter: drop-shadow(0 0 0.25rem currentColor);
   }
 
   .cds-agent-world-data-node path {
@@ -1821,7 +2612,7 @@
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-data-node {
-    color: hsl(var(--primary) / 0.78);
+    color: hsl(var(--primary-ink) / 0.78);
   }
 
   .cds-agent-world-region-feature {
@@ -1854,7 +2645,7 @@
     fill: hsl(190 84% 48% / 0.12);
     stroke: currentColor;
     stroke-width: 1.8;
-    filter: drop-shadow(0 0 5px hsl(var(--map-cyan) / 0.34));
+    filter: drop-shadow(0 0 0.3125rem hsl(var(--map-cyan) / 0.34));
   }
 
   .cds-agent-world-island path:nth-child(2) {
@@ -1866,13 +2657,13 @@
 
   .cds-agent-world-island circle {
     fill: hsl(var(--map-cyan));
-    filter: drop-shadow(0 0 5px hsl(var(--map-cyan) / 0.72));
+    filter: drop-shadow(0 0 0.3125rem hsl(var(--map-cyan) / 0.72));
   }
 
   .cds-agent-world-region-label {
     display: grid;
-    height: 64px;
-    grid-template-columns: 28px minmax(0, 1fr);
+    height: 4rem;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
     grid-template-rows: auto auto;
     align-content: center;
     align-items: center;
@@ -1880,14 +2671,14 @@
     color: hsl(0 0% 98%);
     font-family: inherit;
     text-shadow:
-      0 1px 5px hsl(220 38% 4% / 0.9),
-      0 0 8px hsl(var(--map-cyan) / 0.16);
+      0 1px 0.3125rem hsl(220 38% 4% / 0.9),
+      0 0 0.5rem hsl(var(--map-cyan) / 0.16);
   }
 
   .cds-agent-world-region-label > span {
     display: grid;
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
     grid-row: 1 / 3;
     place-items: center;
     border: 1px solid hsl(var(--map-cyan) / 0.3);
@@ -1895,13 +2686,13 @@
     background:
       linear-gradient(135deg, hsl(var(--map-cyan) / 0.14), transparent),
       hsl(220 52% 5% / 0.64);
-    backdrop-filter: blur(5px);
+    backdrop-filter: blur(0.3125rem);
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-label > span {
     border-color: hsl(var(--primary) / 0.74);
     background: hsl(var(--primary) / 0.24);
-    box-shadow: 0 0 0 5px hsl(var(--primary) / 0.11);
+    box-shadow: 0 0 0 0.3125rem hsl(var(--primary) / 0.11);
   }
 
   .cds-agent-world-region-label svg {
@@ -1949,7 +2740,7 @@
     pointer-events: none;
     filter:
       drop-shadow(0 0 3px hsl(var(--primary) / 0.8))
-      drop-shadow(0 0 8px hsl(var(--primary) / 0.28));
+      drop-shadow(0 0 0.5rem hsl(var(--primary) / 0.28));
     animation: cds-agent-world-route-flow 900ms ease-out both;
   }
 
@@ -1977,7 +2768,7 @@
   .cds-agent-world-compass {
     fill: hsl(0 0% 100% / 0.55);
     color: hsl(0 0% 100% / 0.55);
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: 700;
     text-anchor: middle;
   }
@@ -1994,12 +2785,12 @@
     display: flex;
     gap: 0.7rem;
     border: 1px solid hsl(0 0% 100% / 0.08);
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background: hsl(220 36% 6% / 0.42);
     padding: 0.3rem 0.55rem;
     color: hsl(0 0% 100% / 0.68);
     font-size: 0.5625rem;
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(0.5rem);
   }
 
   [data-theme='light'] .cds-agent-world-map-caption {
@@ -2015,14 +2806,14 @@
   }
 
   .cds-agent-world-map-caption i {
-    width: 7px;
-    height: 7px;
-    border-radius: 999px;
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border-radius: 62.4375rem;
   }
 
   .cds-agent-world-map-caption i[data-kind='land'] {
     background: hsl(var(--map-cyan));
-    box-shadow: 0 0 7px hsl(var(--map-cyan) / 0.54);
+    box-shadow: 0 0 0.4375rem hsl(var(--map-cyan) / 0.54);
   }
 
   .cds-agent-world-map-caption i[data-kind='route'] {
@@ -2046,18 +2837,18 @@
   .cds-agent-world-route-summary {
     display: grid;
     min-width: 0;
-    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-columns: 2.125rem minmax(0, 1fr);
     align-items: center;
     gap: 0.6rem;
   }
 
   .cds-agent-world-route-summary > svg {
-    width: 34px;
-    height: 34px;
+    width: 2.125rem;
+    height: 2.125rem;
     border-radius: 0.6rem;
     background: hsl(var(--primary) / 0.1);
     padding: 0.55rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-world-route-summary small,
@@ -2067,7 +2858,7 @@
   }
 
   .cds-agent-world-route-summary small {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.5625rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -2088,7 +2879,7 @@
   @keyframes cds-agent-world-arrive {
     from {
       opacity: 0;
-      transform: translateY(7px) scale(0.992);
+      transform: translateY(0.4375rem) scale(0.992);
     }
     to {
       opacity: 1;
@@ -2099,7 +2890,7 @@
   @keyframes cds-agent-world-region-enter {
     from {
       opacity: 0;
-      transform: translateY(9px);
+      transform: translateY(0.5625rem);
     }
     to {
       opacity: 1;
@@ -2151,18 +2942,18 @@
 
   @media (max-width: 640px) {
     .cds-agent-world-dialog {
-      width: calc(100vw - 20px) !important;
-      max-width: calc(100vw - 20px) !important;
+      width: calc(100vw - 1.25rem) !important;
+      max-width: calc(100vw - 1.25rem) !important;
     }
 
     .cds-agent-route-trigger {
-      grid-template-columns: 38px minmax(0, 1fr) 16px;
+      grid-template-columns: 2.375rem minmax(0, 1fr) 1rem;
       padding: 0.75rem;
     }
 
     .cds-agent-route-trigger-icon {
-      width: 38px;
-      height: 38px;
+      width: 2.375rem;
+      height: 2.375rem;
     }
 
     .cds-agent-route-trigger-route {
@@ -2174,7 +2965,7 @@
     }
 
     .cds-agent-world-step-heading {
-      grid-template-columns: 28px minmax(0, 1fr);
+      grid-template-columns: 1.75rem minmax(0, 1fr);
     }
 
     .cds-agent-world-current-continent {
@@ -2182,18 +2973,18 @@
     }
 
     .cds-agent-continent {
-      min-width: 160px;
+      min-width: 10rem;
     }
 
     .cds-agent-world-stage {
-      min-height: 270px;
+      min-height: 16.875rem;
       overflow-x: auto;
       overflow-y: hidden;
     }
 
     .cds-agent-world-svg {
-      width: 680px;
-      height: 310px;
+      width: 42.5rem;
+      height: 19.375rem;
       max-width: none;
     }
 
@@ -2231,7 +3022,7 @@
   }
 
   .cds-account-trigger {
-    min-height: 44px;
+    min-height: 2.75rem;
   }
 
   .cds-user-avatar {
@@ -2243,7 +3034,7 @@
     justify-content: center;
     overflow: hidden;
     border: 1px solid hsl(var(--hairline-strong));
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background:
       linear-gradient(145deg, hsl(var(--primary) / 0.22), hsl(var(--surface-raised)));
     color: hsl(var(--foreground));
@@ -2272,19 +3063,19 @@
   .cds-account-menu {
     position: fixed;
     z-index: 110;
-    width: min(272px, calc(100vw - 24px));
+    width: min(17rem, calc(100vw - 1.5rem));
     overflow: hidden;
     border: 1px solid hsl(var(--hairline-strong));
-    border-radius: 10px;
+    border-radius: 0.625rem;
     background-color: hsl(var(--surface-raised));
-    box-shadow: 0 18px 48px rgb(0 0 0 / 0.34);
+    box-shadow: 0 1.125rem 3rem rgb(0 0 0 / 0.34);
     animation: cds-account-menu-enter 160ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   @keyframes cds-account-menu-enter {
     from {
       opacity: 0;
-      transform: translateY(6px) scale(0.98);
+      transform: translateY(0.375rem) scale(0.98);
     }
     to {
       opacity: 1;
@@ -2304,14 +3095,14 @@
 
   .cds-account-menu-item {
     display: flex;
-    min-height: 44px;
+    min-height: 2.75rem;
     width: calc(100% - 0.5rem);
     align-items: center;
     gap: 0.625rem;
     margin: 0.25rem;
     padding: 0 0.625rem;
     border: 0;
-    border-radius: 7px;
+    border-radius: 0.4375rem;
     background: transparent;
     color: hsl(var(--foreground));
     font-size: 0.8125rem;
@@ -2335,7 +3126,7 @@
   .cds-account-menu-item--danger {
     cursor: pointer;
     border-top: 1px solid hsl(var(--hairline));
-    border-radius: 0 0 7px 7px;
+    border-radius: 0 0 0.4375rem 0.4375rem;
   }
 
   .cds-account-menu-item--danger:hover {
@@ -2355,16 +3146,21 @@
     border-bottom: 1px solid hsl(var(--hairline));
   }
 
+  /* 尺度块紧接主题块：去掉自己的上边线，两块之间只留一条。 */
+  .cds-account-scale {
+    border-top: 0;
+  }
+
   .cds-account-theme-button {
     position: relative;
     display: flex;
-    min-height: 52px;
+    min-height: 3.25rem;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 0.25rem;
     border: 1px solid transparent;
-    border-radius: 7px;
+    border-radius: 0.4375rem;
     background: transparent;
     color: hsl(var(--muted-foreground));
     font-size: 0.6875rem;
@@ -2395,7 +3191,7 @@
     right: 0.25rem;
     width: 0.75rem;
     height: 0.75rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   /*
@@ -2411,16 +3207,16 @@
     z-index: 190;
     display: inline-flex;
     max-width: calc(100vw - 2rem);
-    min-height: 44px;
+    min-height: 2.75rem;
     align-items: center;
     gap: 0.625rem;
     border: 1px solid hsl(var(--primary) / 0.42);
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background:
       linear-gradient(135deg, hsl(var(--primary) / 0.18), hsl(var(--surface-raised) / 0.96));
     padding: 0.625rem 1rem;
     color: hsl(var(--foreground));
-    box-shadow: 0 12px 30px hsl(var(--background) / 0.32), inset 0 1px 0 hsl(var(--primary) / 0.16);
+    box-shadow: 0 0.75rem 1.875rem hsl(var(--background) / 0.32), inset 0 1px 0 hsl(var(--primary) / 0.16);
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 600;
@@ -2436,7 +3232,7 @@
   .cds-agent-access-floating svg {
     width: 1.125rem;
     height: 1.125rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-access-floating:hover {
@@ -2467,11 +3263,159 @@
    * 之内,保留文字标签。每个 item 已有 aria-label + title,隐藏文字后无障碍 + 悬停提示不丢。
    */
   .cds-rail .cds-rail-item {
-    @apply justify-center gap-0 px-0;
+    /* 2026-09-01 定档（两位设计评审独立比对 60/64/68/72 四稿后一致选 72 这一档）：
+       上一版收到 60px 栏 / 44px 项是矫枉过正——47px 的项装进 60px 的栏，
+       左右只剩 6.5px，选中的实心块贴着栏边像「把栏染了一段色」，
+       容器反而比内容窄；标签 9.5px 已经在汉字的渲染下限以下，
+       「报」「缺」「设」的笔画并成灰块，那才是「失真」的来源。
+       现在：栏 72 ⊃ 项 56 ⊃ 内容，三层包含关系正过来；竖向 10+20+4+14+4=52。 */
+    @apply h-[3.25rem] flex-col justify-center gap-1 rounded-xl px-1;
   }
-  .cds-rail .cds-rail-item > span {
+
+  /* 图标：全栏一档 20px + 描边 1.7。lucide 把 stroke-width 写成表现属性，
+     CSS 声明压得过它，所以不用改任何组件调用点。 */
+  /* 2026-09-08 用户拍板（方案 S1）：项距 2px → 6px，五个导航项从「一根柱子」变成五个块；
+     工具组沉到栏底贴账号，上方不再画分割线——栏中间的空白就是页面与动作的边界。 */
+  .cds-rail .cds-rail-section,
+  .cds-rail .cds-rail-tools,
+  .cds-rail .cds-rail-footer {
+    gap: 0.375rem;
+  }
+
+  .cds-rail .cds-rail-tools {
+    margin-top: 0;
+    padding-top: 0;
+    padding-bottom: 0.75rem;
+    border-top: 0;
+  }
+
+  .cds-rail .cds-rail-item svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    /* lucide 默认 2 是照 24px 画的；20px 上用 2 会让「缺陷」「Agent」这类密纹图标糊成块。 */
+    stroke-width: 1.75;
+  }
+
+  /* 抽屉用完整中文名，桌面栏用两字短名；两边共用同一个 RailNav。 */
+  .cds-rail .cds-rail-item > span:not(.cds-rail-short) {
     display: none;
   }
+  /* 11px 是两个汉字在桌面端有余量的第一档：10.5 勉强立住、10 在临界、9.5 已经糊。 */
+  .cds-rail .cds-rail-item > .cds-rail-short {
+    display: block;
+    /* 11px 在 85% 基准下是 9.35px，低于「10px 临界、9.5 已糊」的实测下限：
+       保底 10 物理像素，只有这一处允许字号不随根字号一起缩。 */
+    font-size: max(0.625rem, 0.6875rem);
+    font-weight: 500;
+    line-height: 0.875rem;
+    letter-spacing: 0.02em;
+  }
+
+  /* 图标与标签在选中态分主辅：图标转主色、标签转满墨加粗。
+     两者不再同色同权重地说同一件事——这正是「图标 + 标签冗余」的由来。
+     标签**不能**跟着 item 染成主色：2026-08-31 否掉的那一档就是标签用
+     primary-ink 落在栏底，实测 4.24:1。 */
+  .cds-rail .cds-rail-item[data-active='true'] > .cds-rail-short {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+  }
+
+  /* 非活动项走 --foreground-muted 而不是 --muted-foreground：
+     白天那一档从 4.72:1 抬到 6.43:1（对栏底 #EEE8E3），暗色 10.3:1。 */
+  .cds-rail .cds-rail-item {
+    color: hsl(var(--foreground-muted));
+  }
+
+  /* 当前页（2026-09-02 改为「竖条」，四稿比对后用户选定方向 A）：
+     一根 3px 竖条 + 抬升底 + 主色图标 + 满墨标签。
+
+     此前是整项实心橙。它的问题从来不是看不清（实心那档白天 5.13:1、暗色 7.67:1，
+     都过 AA），是**太清楚**：一个只表示「你在这」的指示物，主色铺了约 3400px²，
+     抢在页面上所有真正的操作前面；而底部的「接入 Agent」又是第二块橙，
+     同一根栏里两种高亮在互相抢。现在主色只剩竖条约 60px² 加图标描边，
+     是全栏唯一的彩色。
+
+     再往前一档（2026-08-31 之前）是「淡橙底 + 橙字」，白天 4.25:1，比非活动的
+     还低——那一档已经否掉，不要回去：判据见 palette-contrast-guard。
+
+     现在这一档的数值：图标对抬升底白天 5.13:1、暗色 6.74:1；标签走满墨
+     白天 15.04:1、暗色 12.91:1；竖条不是文字，判据取非文字构件的 3:1，
+     白天 4.22:1、暗色 8.16:1。 */
+  .cds-rail .cds-rail-item[data-active='true'] {
+    position: relative;
+    background-color: hsl(var(--surface-raised));
+    color: hsl(var(--primary-ink));
+    box-shadow: none;
+  }
+
+  .cds-rail .cds-rail-item[data-active='true']::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 1.25rem;
+    transform: translateY(-50%);
+    border-radius: 0 3px 3px 0;
+    background-color: hsl(var(--primary-ink));
+  }
+
+  /* 底部动作在栏里不再各自带盒子：强调只留颜色，边框与底色交给 hover/active，
+     否则「主导航是纯图标、底部动作是小按钮」两套语言会拼在同一根栏里。 */
+  .cds-rail .cds-agent-access-entry,
+  .cds-rail .cds-bug-report-entry {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  /* 2026-09-02：接入 Agent 在栏里不再用橙字。
+     它是一个入口，不是当前页；用主色写它，就是在和「你在这」抢同一种语言——
+     一根栏里两处橙，眼睛不知道该看哪个。强调改为图标右上一颗 5px 的点：
+     位置压在 20px 图标的右上角（图标顶边距项顶 7px、水平居中）。
+     抽屉里保留原来的主色文字，那里没有这场竞争。 */
+  .cds-rail .cds-agent-access-entry {
+    position: relative;
+    color: hsl(var(--foreground-muted)) !important;
+  }
+
+  .cds-rail .cds-agent-access-entry::after {
+    content: '';
+    position: absolute;
+    top: 0.375rem;
+    left: calc(50% + 0.375rem);
+    width: 0.3125rem;
+    height: 0.3125rem;
+    border-radius: 62.4375rem;
+    background-color: hsl(var(--primary-ink));
+  }
+
+  .cds-rail .cds-agent-access-entry:hover {
+    color: hsl(var(--foreground)) !important;
+  }
+
+  .cds-rail .cds-bug-report-entry {
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
+  .cds-rail .cds-agent-access-entry:hover,
+  .cds-rail .cds-bug-report-entry:hover {
+    background-color: hsl(var(--surface-raised) / 0.7) !important;
+    border: 0 !important;
+  }
+
+  /* 头像跟着图标的节奏走，不再是 32px 的第三档。 */
+  .cds-rail .cds-user-avatar {
+    width: 1.375rem;
+    height: 1.375rem;
+    font-size: 0.5625rem;
+  }
+
+  .cds-rail .cds-user-avatar svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
   .cds-rail .cds-rail-brand-title {
     display: none;
   }
@@ -2544,14 +3488,16 @@
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(82vw, 300px);
+    width: min(82vw, 18.75rem);
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
     padding: 1.25rem 1rem;
+    overflow: hidden auto;
+    overscroll-behavior-y: contain;
     background-color: hsl(var(--surface-sunken));
     border-right: 1px solid hsl(var(--hairline));
-    box-shadow: 0 12px 40px hsl(var(--foreground) / 0.18);
+    box-shadow: 0 0.75rem 2.5rem hsl(var(--foreground) / 0.18);
     transform: translateX(-100%);
     transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -2582,7 +3528,7 @@
        且因为是共享 header，所有页面一样(2026-06-26 用户反馈"一样的")。锁 shrink 即恒 56px。 */
     @apply sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 px-6;
     background-color: hsl(var(--surface-base) / 0.92);
-    backdrop-filter: saturate(180%) blur(10px);
+    backdrop-filter: saturate(180%) blur(0.625rem);
     border-bottom: 1px solid hsl(var(--hairline));
   }
 
@@ -2653,7 +3599,7 @@
   .cds-topbar-sheet {
     position: fixed;
     z-index: 45;
-    min-width: 200px;
+    min-width: 12.5rem;
     max-width: 78vw;
     max-height: 70vh;
     overflow-y: auto;
@@ -2665,7 +3611,7 @@
     border-radius: 0.625rem;
     border: 1px solid hsl(var(--hairline));
     background-color: hsl(var(--surface-raised));
-    box-shadow: 0 12px 40px hsl(var(--foreground) / 0.2);
+    box-shadow: 0 0.75rem 2.5rem hsl(var(--foreground) / 0.2);
   }
 
   /* sheet 内按钮全宽、左对齐,呈菜单行;尺寸放大到舒适可点。
@@ -2693,7 +3639,7 @@
   @keyframes cds-page-enter {
     from {
       opacity: 0;
-      transform: translateY(6px);
+      transform: translateY(0.375rem);
     }
     to {
       opacity: 1;
@@ -2701,8 +3647,32 @@
     }
   }
 
+  /*
+   * fill-mode 必须是 backwards，不能是 both/forwards。
+   *
+   * 本类挂在 .cds-main 上（AppShell.tsx），而 .cds-main 同时是页面滚动容器
+   * （overflow-y: auto）。这条动画 animates transform，用 forwards 填充时动画
+   * 结束后元素仍处于填充态，Chrome 据此把 .cds-main 当成 position: fixed 的
+   * **包含块**——于是 main 里所有 fixed 浮层（分支详情抽屉等）不再钉在视口上，
+   * 而是跟着内容滚动并被 overflow 裁掉：滚下去之后抽屉只剩下半截。
+   *
+   * 关键点：to 帧是 transform: none，孤立地看「动画结束后没有 transform」，
+   * 所以从代码上完全看不出问题——只有真在滚动容器里滚一次才暴露。
+   *
+   * backwards 只在 delay 阶段应用 from 帧；本动画无 delay，入场观感与 both
+   * 完全一致，但动画结束后不再保留填充态，包含块随之消失。
+   *
+   * 同源事故：AppShell.tsx 里 topbar 的 backdrop-filter 抢走包含块，导致全屏
+   * backdrop 只盖住顶栏（Bugbot #741），修法是 portal 到 body。
+   */
   .cds-page-enter {
-    animation: cds-page-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: cds-page-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  /* Aligned list skeletons swap directly to content without a second page entrance. */
+  .cds-page-enter:has(.cds-card-grid),
+  .cds-page-enter:has(.cds-branch-card-grid) {
+    animation: none;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -2712,7 +3682,15 @@
   }
 
   .cds-main {
-    @apply min-w-0 px-8 pb-12 pt-6;
+    /* 横向留白按视口分档：窄屏 16 / 常规 32 / 超宽 48。满铺不等于顶到边，
+       2000px 以上还贴着 32px 边会显得局促。
+       写成变量是为了让 .cds-workspace--bleed 能精确抵消，而不是再抄一份数值
+       ——抄一份就是下一次「改了一处忘了另一处」。 */
+    --cds-main-px: 2rem;
+    --cds-main-pt: 1.5rem;
+    --cds-main-pb: 3rem;
+    @apply min-w-0;
+    padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb);
     /*
      * flex-grow + min-height:0 让 main 填满 topbar 之下的列高。2026-06-23 起壳改为
      * h-screen 固定高,本列(grid item)被 stretch 成视口高,main = flex:1 拿到确定高度,
@@ -2726,11 +3704,19 @@
     scrollbar-gutter: stable;
   }
 
-  @media (max-width: 767px) {
+  @media (min-width: 1536px) {
     .cds-main {
-      @apply px-4 pt-4;
+      --cds-main-px: 3rem;
     }
   }
+
+  @media (max-width: 767px) {
+    .cds-main {
+      --cds-main-px: 1rem;
+      --cds-main-pt: 1rem;
+    }
+  }
+
 
   /*
    * Workspace 宽度秩序(2026-07-02 布局归一) —— 全站只允许三档:
@@ -2745,7 +3731,7 @@
    */
   .cds-workspace {
     width: 100%;
-    max-width: var(--workspace-standard, 1240px);
+    max-width: var(--workspace-standard, 77.5rem);
     margin-left: auto;
     margin-right: auto;
   }
@@ -2765,8 +3751,121 @@
     flex-direction: column;
   }
 
+  /*
+   * 满铺到边：参考稿的左右两栏是**贴边的整块面板**，用一条 1px 边框分隔，
+   * 不是浮在底色上、四周留缝的圆角卡。这里抵消 .cds-main 的内边距，
+   * 值取自同一组 --cds-main-* 变量，不另抄一份。
+   *
+   * 两个坑，都是实测撞出来的：
+   * 1. 必须排在 .cds-workspace 之后。同为 (0,1,0) 特异性，写在前面时
+   *    `.cds-workspace { margin-left:auto; margin-right:auto }` 后写的赢，
+   *    横向抵消会被静默吃掉——上下缩了、左右没动，看着像「只生效了一半」。
+   * 2. 高度要加回内边距。负 margin 不改变元素自身高度，配 --fill 的
+   *    height:100%（解析的是 .cds-main 的**内容盒**）时，底部仍会短一截 pb。
+   */
+  .cds-workspace--bleed {
+    margin: calc(var(--cds-main-pt) * -1) calc(var(--cds-main-px) * -1) calc(var(--cds-main-pb) * -1);
+    width: auto;
+    max-width: none;
+  }
+
+  .cds-workspace--bleed.cds-workspace--fill {
+    height: calc(100% + var(--cds-main-pt) + var(--cds-main-pb));
+  }
+
+  /*
+   * 满铺页不需要给滚动条留位：它自己不滚（--fill 是固定外壳 + 各栏内滚）。
+   * 留着 scrollbar-gutter 会让右栏离视口右边差 10px，贴边就贴不到底。
+   */
+  .cds-main:has(> .cds-workspace--bleed) {
+    scrollbar-gutter: auto;
+  }
+
+  /* ══ 发布控制台的节奏 ══════════════════════════════════════════════
+   *
+   * 参考稿 f8d4af4b 跑起来的时候是有节拍的：进度条在流、状态图标在呼吸、
+   * 日志一行行落下来。首版只搬了静态版式，一根实心条 + 一个转圈图标，
+   * 于是「在动」变成了「卡着」——用户原话「节奏性差很多」。
+   *
+   * 三条都只在进行中出现，终态一律静止：动效是用来表达「还在跑」的，
+   * 跑完了还在动就是噪音。全部走 prefers-reduced-motion 兜底。
+   */
+
+  /* 进度条：跑动时是流动的斜纹（参考稿 background-size:40px + barFlow）。
+     斜纹用白色低透明度叠在已经有颜色的填充条上，两个主题都成立，
+     所以不需要一对 token —— 它叠的是明度，不是自己定一个底色。 */
+  .cds-progress-fill {
+    transition: width 400ms ease;
+  }
+
+  .cds-progress-fill--running {
+    background-image: linear-gradient(
+      45deg,
+      hsl(0 0% 100% / 0.20) 25%,
+      transparent 25%,
+      transparent 50%,
+      hsl(0 0% 100% / 0.20) 50%,
+      hsl(0 0% 100% / 0.20) 75%,
+      transparent 75%,
+      transparent
+    );
+    background-size: 2.5rem 2.5rem;
+    animation: cds-progress-flow 1s linear infinite;
+  }
+
+  @keyframes cds-progress-flow {
+    from { background-position: 0 0; }
+    to { background-position: 2.5rem 0; }
+  }
+
+  /* 状态图标：进行中时向外扩一圈光晕（参考稿 pulseRing）。
+     只有进行中会用到，所以颜色直接锁 primary，不做多态。 */
+  .cds-status-pulse {
+    animation: cds-status-pulse 2s ease-out infinite;
+  }
+
+  @keyframes cds-status-pulse {
+    0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45); }
+    70% { box-shadow: 0 0 0 0.75rem hsl(var(--primary) / 0); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+  }
+
+  /* 日志：新的一行落下来，不是整块突然变长。
+     key 是 seq，已有行不会重挂，所以只有真正的新行会播这 180ms。 */
+  .cds-log-line {
+    animation: cds-log-line-in 180ms ease-out both;
+  }
+
+  @keyframes cds-log-line-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* 发布中心监控条的状态点：有事要处理时透明度呼吸一下（设计稿 softPulse）。
+     全绿时不动——一直在闪就变成背景噪音，看久了反而没人注意。 */
+  .cds-verdict-pulse {
+    animation: cds-verdict-pulse 2.2s ease-in-out infinite;
+  }
+
+  @keyframes cds-verdict-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-progress-fill,
+    .cds-progress-fill--running,
+    .cds-status-pulse,
+    .cds-log-line,
+    .cds-verdict-pulse {
+      animation: none;
+      transition: none;
+    }
+  }
+
+
   .cds-workspace-wide {
-    max-width: var(--workspace-wide, 1440px);
+    max-width: var(--workspace-wide, 90rem);
   }
 
   /*
@@ -2780,98 +3879,295 @@
 
   /* 历史别名 → 三档映射(页面零改动),禁止再新增专属宽度。 */
   .cds-workspace-settings {
-    max-width: var(--workspace-wide, 1440px);
+    max-width: var(--workspace-wide, 90rem);
   }
 
-  .cds-workspace-project-list {
-    max-width: var(--workspace-standard, 1240px);
+  /* ══ 项目设置页：贴边导航 + 铺满内容区（方向 A）══════════════════════
+   *
+   * 改之前是 workspace 1240 居中 + 导航白卡 + 内容白卡：1680 视口下左右各空
+   * 170px，页面像两张便签贴在全屏外壳上；而卡片内部的输入框又拉到 770px 装
+   * 一个项目名，「缩在中间」和「内部空旷」同时成立。
+   *
+   * 方向 A 不再靠 workspace 的宽度上限做可读性，而是把可读宽度下沉给表单列
+   * 自己（--settings-form-max），外壳走既有的 --bleed + --fill 满铺词汇表。
+   */
+  .cds-settings-shell {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
   }
 
-  .cds-project-card {
-    --project-node-size: 3.5rem;
-    --project-node-icon-size: 1.75rem;
-    --project-node-gap: 0.875rem;
-    --project-node-radius: 0.625rem;
+  .cds-settings-layout {
+    display: grid;
+    min-height: 0;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Phones: shrink the tech-stack dock so the typical 4-6 glyphs fit centred
-     instead of getting hard-cut mid-icon; `safe center` keeps it centred when
-     it fits and falls back to scrollable (not clipped) for the rare 7-stack
-     project. The hover-magnify dock is desktop-only, so static sizing is fine. */
-  @media (max-width: 640px) {
-    .cds-project-card {
-      --project-node-size: 2.6rem;
-      --project-node-gap: 0.55rem;
+  @media (min-width: 901px) {
+    .cds-settings-layout {
+      grid-template-columns: 15.25rem minmax(0, 1fr);
     }
-    .cds-project-node-row {
-      justify-content: safe center;
-      overflow-x: auto;
-      scrollbar-width: none;
+
+    /* 导航贴边：不是卡片，只有右侧一条 hairline，从顶通到底，自身内滚。 */
+    .cds-settings-rail {
+      min-height: 0;
+      height: 100%;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 0;
+      overflow-y: auto;
+      border-right: 1px solid hsl(var(--hairline));
+      background: hsl(var(--surface-base));
+      padding: 1.25rem 0.75rem 1.5rem 1.25rem;
     }
-    .cds-project-node-row::-webkit-scrollbar {
+
+    .cds-settings-rail-head {
+      display: grid;
+      gap: 0.125rem;
+      padding: 0 0.5rem 1rem;
+    }
+  }
+
+  /* 窄屏保持既有的横向 tab 条兜底（mobile-layout-fallback），
+     所以 rail 的竖排样式整条收在 min-width: 901px 里。 */
+  @media (max-width: 900px) {
+    /* 导航只占自身高度，剩余空间交给内容；隐式 auto 行会把横排标签拉成高卡片。 */
+    .cds-settings-layout {
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .cds-settings-rail-head {
       display: none;
     }
   }
 
-  .cds-project-node-row {
-    min-height: 6.5rem;
-    gap: var(--project-node-gap);
-    padding-block: 0.75rem;
-    isolation: isolate;
+  .cds-settings-content {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
   }
 
-  .cds-project-node {
-    width: var(--project-node-size);
-    height: var(--project-node-size);
-    border-radius: var(--project-node-radius);
-    transform-origin: center bottom;
-    background-clip: padding-box;
-    box-shadow:
-      0 16px 34px -25px rgb(0 0 0 / 0.85),
-      0 1px 0 rgb(255 255 255 / 0.04) inset,
-      0 0 0 1px rgb(255 255 255 / 0.035) inset;
-    transition:
-      box-shadow 180ms ease,
-      border-color 180ms ease,
-      background-color 180ms ease,
-      filter 180ms ease;
-    will-change: transform;
+  /* 分区页头：钉在内容区顶部，标题 + 一句话说明 + 右侧动作。 */
+  .cds-settings-section-head {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.5rem;
+    border-bottom: 1px solid hsl(var(--hairline));
+    padding: 1rem 1.25rem .75rem;
   }
 
-  .cds-project-node-icon {
-    width: var(--project-node-icon-size);
-    height: var(--project-node-icon-size);
-    transition: width 120ms ease, height 120ms ease, filter 160ms ease;
+  .cds-settings-section-body {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 1rem 1.25rem 1.5rem;
   }
 
-  @media (hover: hover) and (pointer: fine) {
-    .cds-project-node-row .cds-project-node:hover {
-      z-index: 3;
-      box-shadow:
-        0 26px 54px -28px rgb(0 0 0 / 0.88),
-        0 0 0 1px hsl(var(--foreground) / 0.08),
-        0 0 28px -18px currentColor,
-        inset 0 1px 0 rgb(255 255 255 / 0.16);
-      filter: saturate(1.12) brightness(1.05);
+  /*
+   * 窄屏不叠两层横向内边距：`.cds-settings-content` 在 max-width:900px 那一档
+   * 已经用 `padding: 1rem !important` 给了 16px 边距，这里再加 24px 就变成每侧
+   * 40px——320px 的屏只剩 240px 装表单。横向留给外层，这里只保留纵向节奏。
+   */
+  @media (max-width: 900px) {
+    .cds-settings-section-body {
+      padding: .5rem 0 1.5rem;
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .cds-project-node,
-    .cds-project-node-icon {
-      transition: none;
-      will-change: auto;
-    }
+  /*
+   * 表单列锁可读宽度，右列放「当前生效 / 改动影响 / 相关设置」——把宽屏的
+   * 富余变成信息而不是留白。没有副列内容的分区自然退化成单列，不留空槽。
+   */
+  .cds-settings-columns {
+    display: grid;
+    align-items: start;
+    gap: 1rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-    .cds-project-node-row .cds-project-node:hover {
-      filter: none;
+  .cds-settings-form-col {
+    min-width: 0;
+    max-width: var(--settings-form-max, 38.75rem);
+  }
+
+  /*
+   * 表单列必须是**被定尺的那一轨**，不能是 1fr 里再套 max-width：
+   * 后者在 1680 视口下让 1fr 轨道拿到 1004px、里面的表单只占 620px，
+   * 中间空出 384px 的洞——「把富余变成信息」反而变成了一条更显眼的留白带。
+   * 真机量出来才看见（设计稿按 1440 画，差额小到看不出）。
+   */
+  @media (min-width: 1280px) {
+    .cds-settings-columns:has(> .cds-settings-aside-col) {
+      grid-template-columns: minmax(0, var(--settings-form-max, 38.75rem)) minmax(17.5rem, 22.5rem);
+      justify-content: start;
+      gap: 2.5rem;
     }
   }
 
-  .cds-project-node-badge {
-    @apply absolute bottom-1 right-1 rounded px-1.5 font-mono text-[11px] font-extrabold leading-4 shadow-sm;
-    background-color: hsl(var(--surface-sunken));
+  /* 超宽屏把可读上限抬一档，剩余空间用在字段上而不是继续摊成留白。 */
+  @media (min-width: 1600px) {
+    .cds-settings-columns:has(> .cds-settings-aside-col) {
+      --settings-form-max: 47.5rem;
+    }
   }
+
+  .cds-settings-aside-col {
+    display: grid;
+    gap: 0.875rem;
+    min-width: 0;
+  }
+
+  /* The chunk skeleton is already visible; replaying main's entrance moves the same layout again. */
+  .cds-page-enter:has(> .cds-project-inventory-workspace) { animation: none; }
+  .cds-project-inventory-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.75rem; }
+  .cds-project-inventory-title { display: flex; align-items: center; gap: 0.75rem; }
+  .cds-project-inventory-title h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.025em; }
+  .cds-project-inventory-title > span { padding: 0 0.375rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.25rem; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
+  .cds-project-inventory-heading p { margin: 0.5rem 0 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; }
+  .cds-project-inventory-actions { display: flex; gap: 0.625rem; flex-shrink: 0; }
+  .cds-project-inventory-actions button svg { width: 1.125rem; height: 1.125rem; }
+  .cds-project-inventory-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-width: 0; padding-bottom: 0.75rem; margin-bottom: 1.375rem; border-bottom: 1px solid hsl(var(--hairline)); }
+  .cds-project-status-filters { display: flex; align-self: stretch; gap: 1.5rem; flex-shrink: 0; }
+  .cds-project-status-filters > button { display: inline-flex; position: relative; align-items: center; gap: 0.5rem; min-height: 2.25rem; color: hsl(var(--muted-foreground)); font-size: 0.875rem; white-space: nowrap; }
+  .cds-project-status-filters > button > span { padding: 0 0.3125rem; border-radius: 0.1875rem; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
+  .cds-project-status-filters > button[aria-pressed='true'] { color: hsl(var(--foreground)); }
+  .cds-project-status-filters > button[aria-pressed='true']::after { content: ''; position: absolute; height: 2px; background: hsl(var(--primary)); bottom: -0.8125rem; inset-inline: 0; }
+  .cds-project-inventory-tools { display: flex; min-width: 0; align-items: center; gap: 0.625rem; }
+  .cds-project-inventory-search { display: flex; align-items: center; gap: 0.5rem; height: 2.25rem; min-width: 0; width: 15rem; padding: 0 0.625rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; background: hsl(var(--surface-sunken)); color: hsl(var(--muted-foreground)); }
+  .cds-project-inventory-search svg { height: 1rem; width: 1rem; flex-shrink: 0; }
+  .cds-project-inventory-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: hsl(var(--foreground)); font-size: 0.8125rem; }
+  .cds-project-inventory-tools select { height: 2.25rem; min-width: 0; max-width: 12rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; padding: 0 0.5rem; background: hsl(var(--surface-raised)); color: hsl(var(--foreground-muted)); font-size: 0.8125rem; }
+  .cds-project-inventory-tools select:disabled { opacity: 0.65; }
+  .cds-project-view-switch { display: inline-flex; height: 2.25rem; padding: 0.125rem; flex-shrink: 0; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; }
+  .cds-project-view-switch button { display: grid; place-items: center; width: 2rem; border-radius: 0.1875rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-view-switch button svg { width: 1.1875rem; height: 1.1875rem; }
+  .cds-project-view-switch button[aria-pressed='true'] { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+  .cds-project-inventory-search:focus-within, .cds-project-inventory-tools select:focus-visible, .cds-project-view-switch button:focus-visible, .cds-project-status-filters > button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+  .cds-project-repository-import { display: flex; align-items: center; gap: 0.625rem; min-width: 0; margin-bottom: 1.375rem; }
+  .cds-project-inventory-grid { --cds-card-min: 20.5rem; gap: 1.125rem; }
+  .cds-project-inventory-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 1.375rem; color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
+  .cds-project-inventory-empty { display: flex; min-height: 12rem; align-items: center; justify-content: center; flex-direction: column; gap: 0.75rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-inventory-empty h2 { color: hsl(var(--foreground)); font-size: 1rem; font-weight: 500; }
+  .cds-project-inventory-empty p { font-size: 0.875rem; }
+  .cds-project-inventory--list { grid-template-columns: minmax(0, 1fr); gap: 0.625rem; }
+  .cds-project-inventory--list .cds-project-card { content-visibility: visible; contain-intrinsic-size: none; }
+  .cds-project-inventory--list .cds-project-card-link { display: grid; grid-template-columns: 1.15fr 1.1fr 1fr 0.9fr; align-items: center; gap: 1.25rem; padding: 0.875rem 3.25rem 0.875rem 1rem; }
+  .cds-project-inventory--list .cds-project-card-heading { padding: 0; }
+  .cds-project-inventory--list .cds-project-services { height: 4rem; margin: 0; }
+  .cds-project-inventory--list .cds-project-service-focus { flex-direction: row; gap: 0.5rem; }
+  .cds-project-inventory--list .cds-project-service-list { grid-auto-rows: minmax(1rem, 1fr); gap: 0.125rem; }
+  .cds-project-inventory--list .cds-project-service-item { padding-block: 0.125rem; }
+  .cds-project-inventory--list .cds-project-service-list[data-service-count='1'] .cds-project-service-item { flex-direction: row; gap: 0.5rem; }
+  .cds-project-inventory--list .cds-project-service-list[data-service-count='1'] .cds-project-service-glyph { width: 1.1875rem; height: 1.1875rem; }
+  .cds-project-inventory--list .cds-project-metrics { min-height: 2.625rem; padding: 0; gap: 0.375rem 0.75rem; }
+  .cds-project-inventory--list .cds-project-build-rate { margin-left: 0; }
+  .cds-project-inventory--list .cds-project-card-footer { margin: 0; padding: 0; border: 0; flex-wrap: wrap; gap: 0.375rem 0.75rem; }
+  .cds-project-inventory--list .cds-project-card-footer time { margin-left: 0; }
+  .cds-project-inventory--list .cds-project-clone-error { grid-column: 1 / -1; margin: 0; }
+  @media (max-width: 68.75rem) {
+    .cds-project-inventory-toolbar { flex-wrap: wrap; gap: 1.25rem; }
+    .cds-project-inventory-tools { width: 100%; }
+    .cds-project-inventory-search { flex: 1; }
+    .cds-project-inventory--list .cds-project-card-link { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+  }
+  @media (max-width: 640px) {
+    .cds-project-inventory-heading { align-items: flex-start; gap: 0.625rem; margin-bottom: 1rem; }
+    .cds-project-inventory-title h1 { font-size: 1.5rem; }
+    .cds-project-inventory-heading p { max-width: 12rem; font-size: 0.75rem; line-height: 1.6; }
+    .cds-project-inventory-actions { gap: 0.375rem; }
+    .cds-project-inventory-actions button { padding-inline: 0.625rem; }
+    .cds-project-status-filters { width: 100%; min-width: 0; overflow-x: auto; gap: 1.25rem; padding-bottom: 0.25rem; }
+    .cds-project-status-filters > button { font-size: 0.8125rem; }
+    .cds-project-status-filters > button[aria-pressed='true']::after { bottom: 0; }
+    .cds-project-inventory-toolbar { gap: 0.5rem; margin-bottom: 1rem; }
+    .cds-project-inventory-tools { flex-wrap: wrap; gap: 0.5rem; }
+    .cds-project-inventory-search { flex-basis: 100%; width: 100%; }
+    .cds-project-inventory-tools select { flex: 1; max-width: none; }
+    .cds-project-repository-import { flex-wrap: wrap; }
+    .cds-project-repository-import > div { flex-basis: 100%; }
+    .cds-project-inventory--list .cds-project-services { display: none; }
+    .cds-project-inventory--list .cds-project-card-link { grid-template-columns: minmax(0, 1fr); padding-right: 3rem; }
+  }
+
+  /* Compact project inventory. Every surface and status follows the CDS theme. */
+  .cds-project-card {
+    contain-intrinsic-size: auto 16.5rem;
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid hsl(var(--hairline));
+    border-radius: 0.4375rem;
+    background: hsl(var(--surface-raised));
+    transition: border-color 150ms ease;
+  }
+  .cds-project-card:hover { border-color: hsl(var(--hairline-strong)); }
+  .cds-project-card[data-paused='true'] { background: hsl(var(--surface-raised) / 0.55); border-color: hsl(var(--hairline) / 0.6); }
+  .cds-project-card[data-paused='true'] .cds-project-card-heading,
+  .cds-project-card[data-paused='true'] .cds-project-card-footer { opacity: 0.65; }
+  .cds-project-card[data-paused='true'] .cds-project-services { opacity: 0.45; }
+  .cds-project-card[data-paused='true'] .cds-project-online,
+  .cds-project-card[data-paused='true'] .cds-project-build-rate,
+  .cds-project-card[data-paused='true'] .cds-project-cpu:not(.text-warn):not(.text-bad) { opacity: 0.6; }
+  .cds-project-card-link { display: flex; min-width: 0; height: 100%; flex-direction: column; }
+  .cds-project-card-link:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; border-radius: inherit; }
+  .cds-project-card-heading { display: flex; align-items: center; gap: 0.625rem; min-width: 0; padding: 1rem 3.25rem 0 1rem; }
+  .cds-project-monogram { display: grid; place-items: center; width: 2.125rem; height: 2.125rem; flex-shrink: 0; border: 1px solid hsl(var(--hairline-strong) / 0.65); border-radius: 0.3125rem; background: hsl(var(--muted)); color: hsl(var(--foreground-muted)); font-size: 0.6875rem; font-weight: 600; }
+  .cds-project-card-heading h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-weight: 600; letter-spacing: -0.015em; }
+  .cds-project-pin { width: 0.875rem; height: 0.875rem; flex-shrink: 0; color: hsl(var(--muted-foreground)); }
+  .cds-project-state { display: inline-flex; align-items: center; gap: 0.3125rem; flex-shrink: 0; white-space: nowrap; font-size: 0.6875rem; }
+  .cds-project-state i { width: 0.3125rem; height: 0.3125rem; border-radius: 50%; background: currentColor; }
+  .cds-project-services { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.35fr); gap: 0.625rem; height: 6.25rem; margin: 0.875rem 1rem 0; }
+  .cds-project-service-focus { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.625rem; min-width: 0; padding: 0.5rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; background: hsl(var(--accent) / 0.5); }
+  .cds-project-service-focus strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--foreground)); font-size: 0.8125rem; font-weight: 500; }
+  .cds-project-service-copy { display: flex; flex-direction: column; min-width: 0; max-width: 100%; gap: 0.375rem; }
+  .cds-project-service-copy small { color: hsl(var(--muted-foreground)); font-size: 0.6875rem; }
+  .cds-project-service-glyph { display: grid; place-items: center; flex-shrink: 0; width: 2rem; height: 2rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-node-icon { width: 100%; height: 100%; object-fit: contain; }
+  .cds-project-service-list { display: grid; grid-auto-rows: minmax(1.625rem, 1fr); gap: 0.25rem; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .cds-project-service-item { display: flex; align-items: center; gap: 0.5rem; min-width: 0; padding: 0.25rem 0.625rem; border-radius: 0.25rem; background: hsl(var(--surface-sunken) / 0.65); color: hsl(var(--foreground-muted)); font-size: 0.75rem; }
+  .cds-project-service-item .cds-project-service-glyph { width: 1.1875rem; height: 1.1875rem; }
+  .cds-project-service-dot { width: 0.25rem; height: 0.25rem; margin-left: auto; flex-shrink: 0; border-radius: 50%; }
+  .cds-project-service-list[data-service-count='1'] .cds-project-service-item { flex-direction: column; justify-content: center; gap: 0.625rem; position: relative; }
+  .cds-project-service-list[data-service-count='1'] .cds-project-service-glyph { width: 1.75rem; height: 1.75rem; }
+  .cds-project-service-list[data-service-count='1'] .cds-project-service-dot { position: absolute; top: 0.625rem; right: 0.625rem; }
+  .cds-project-services--single { display: flex; align-items: center; padding: 0.875rem 1.25rem; gap: 1rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; background: hsl(var(--accent) / 0.3); }
+  .cds-project-services--single .cds-project-service-focus { flex: 1; flex-direction: row; justify-content: flex-start; gap: 1rem; padding: 0; background: none; border: 0; }
+  .cds-project-service-caption { color: hsl(var(--muted-foreground)); font-size: 0.6875rem; }
+  .cds-project-service-caption b { display: block; color: hsl(var(--foreground-muted)); font-size: 1.125rem; font-weight: 500; text-align: center; }
+  .cds-project-services--repository { display: flex; align-items: center; gap: 0.875rem; overflow: hidden; border-radius: 0.3125rem; background: hsl(var(--surface-sunken) / 0.65); }
+  .cds-project-repository-mark { display: grid; place-items: center; align-self: stretch; width: 5rem; flex-shrink: 0; background: hsl(var(--accent) / 0.5); color: hsl(var(--foreground-muted)); }
+  .cds-project-repository-mark svg { width: 2.25rem; height: 2.25rem; }
+  .cds-project-repository-label, .cds-project-repository-provider { display: block; font-size: 0.6875rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-repository-name { display: block; max-width: 100%; padding-right: 0.75rem; margin: 0.4375rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; font-weight: 500; }
+  .cds-project-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 0.375rem 0.875rem; min-height: 2.5rem; padding: 0.5rem 1rem; color: hsl(var(--muted-foreground)); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+  .cds-project-online, .cds-project-cpu { display: inline-flex; align-items: center; gap: 0.3125rem; white-space: nowrap; }
+  .cds-project-online { color: hsl(var(--foreground-muted)); }
+  .cds-project-metrics svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+  .cds-project-build-rate { margin-left: auto; white-space: nowrap; }
+  .cds-project-card-footer { display: flex; align-items: center; gap: 0.75rem; min-width: 0; min-height: 2.5rem; margin-top: auto; padding: 0.625rem 1rem; border-top: 1px solid hsl(var(--hairline) / 0.65); color: hsl(var(--muted-foreground)); font-size: 0.6875rem; }
+  .cds-project-environment { min-width: 0; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cds-project-branch { display: flex; align-items: center; gap: 0.3125rem; min-width: 0; }
+  .cds-project-branch svg { width: 0.8125rem; height: 0.8125rem; flex-shrink: 0; }
+  .cds-project-branch span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--cds-font-mono); }
+  .cds-project-branch-count { flex-shrink: 0; white-space: nowrap; }
+  .cds-project-card-footer time { flex-shrink: 0; margin-left: auto; }
+  .cds-project-actions { position: absolute; top: 0.9375rem; right: 0.75rem; }
+  .cds-project-actions [role='menuitem'] svg { width: 1.125rem; height: 1.125rem; }
+  .cds-project-clone-error { margin: 0 1rem 0.875rem; padding: 0.5rem 0.75rem; border-radius: 0.3125rem; background: hsl(var(--bad-soft)); color: hsl(var(--bad)); font-size: 0.75rem; line-height: 1.5; overflow-wrap: anywhere; }
+  @media (max-width: 640px) {
+    .cds-project-card-heading { padding-inline-start: 0.875rem; gap: 0.5rem; }
+    .cds-project-card-heading h2 { font-size: 0.9375rem; }
+    .cds-project-services { margin-inline: 0.875rem; }
+    .cds-project-metrics, .cds-project-card-footer { padding-inline: 0.875rem; }
+    .cds-project-metrics { gap: 0.375rem 0.625rem; }
+    .cds-project-services--single { padding-inline: 0.875rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { .cds-project-card { transition: none; } }
 
   /*
    * Surface tiers. Use these instead of `bg-card border-border` ad-hoc piles.
@@ -3008,7 +4304,7 @@
     pointer-events: none;
     z-index: 0;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    background-size: 160px 160px;
+    background-size: 10rem 10rem;
     opacity: 0.05;
     mix-blend-mode: overlay;
   }
@@ -3029,15 +4325,15 @@
     50% {
       transform: scale(1.15);
       opacity: 1;
-      box-shadow: 0 0 10px 0 currentColor;
+      box-shadow: 0 0 0.625rem 0 currentColor;
     }
   }
 
   .cds-auth-pulse {
-    width: 6px;
-    height: 6px;
+    width: 0.375rem;
+    height: 0.375rem;
     flex: none;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     background-color: currentColor;
     animation: cds-auth-pulse 1.7s ease-in-out infinite;
   }
@@ -3108,12 +4404,12 @@
   /* 未登录页的主题切换:36px 容器 + 20px icon(比例 >=55%,见 cds/CLAUDE.md 规则 1)。 */
   .cds-auth-theme {
     margin-left: auto;
-    width: 36px;
-    height: 36px;
+    width: 2.25rem;
+    height: 2.25rem;
     display: grid;
     place-items: center;
     border: 1px solid hsl(var(--hairline));
-    border-radius: 10px;
+    border-radius: 0.625rem;
     background-color: hsl(var(--surface-raised) / 0.6);
     color: hsl(var(--muted-foreground));
     cursor: pointer;
@@ -3126,8 +4422,8 @@
   }
 
   .cds-auth-theme svg {
-    width: 20px;
-    height: 20px;
+    width: 1.25rem;
+    height: 1.25rem;
   }
 
   /*
@@ -3152,7 +4448,7 @@
   @media (min-width: 1024px) {
     .cds-auth-stage {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 400px;
+      grid-template-columns: minmax(0, 1fr) 25rem;
       align-items: center;
       gap: clamp(3rem, 8vw, 8rem);
       padding: 2.5rem 4rem 4.5rem;
@@ -3167,7 +4463,7 @@
 
   /* 故事从用户自己的动作开始:一行命令。 */
   .cds-auth-cmd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.8125rem;
     color: hsl(var(--muted-foreground));
   }
@@ -3175,11 +4471,11 @@
   .cds-auth-cmd::before {
     content: '';
     display: inline-block;
-    width: 20px;
+    width: 1.25rem;
     height: 1px;
     background: hsl(var(--primary));
-    vertical-align: 4px;
-    margin-right: 12px;
+    vertical-align: 0.25rem;
+    margin-right: 0.75rem;
   }
 
   .cds-auth-display {
@@ -3216,7 +4512,7 @@
     align-items: center;
     gap: 0.45rem;
     border: 1px solid hsl(var(--hairline));
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     padding: 0.3rem 0.75rem;
     font-size: 0.75rem;
     color: hsl(var(--muted-foreground));
@@ -3225,9 +4521,9 @@
 
   .cds-auth-proof span::before {
     content: '';
-    width: 4px;
-    height: 4px;
-    border-radius: 999px;
+    width: 0.25rem;
+    height: 0.25rem;
+    border-radius: 62.4375rem;
     background-color: hsl(var(--primary) / 0.85);
   }
 
@@ -3248,7 +4544,7 @@
   .cds-auth-line-m::before {
     content: '';
     position: absolute;
-    left: 4px;
+    left: 0.25rem;
     top: 2px;
     bottom: 2px;
     width: 1px;
@@ -3263,12 +4559,12 @@
 
   .cds-auth-line-m-beam {
     position: absolute;
-    left: 4px;
+    left: 0.25rem;
     top: 0;
     width: 1px;
-    height: 56px;
+    height: 3.5rem;
     background: linear-gradient(180deg, transparent, hsl(var(--primary) / 0.95), transparent);
-    box-shadow: 0 0 10px 0 hsl(var(--primary) / 0.35);
+    box-shadow: 0 0 0.625rem 0 hsl(var(--primary) / 0.35);
     opacity: 0;
     animation: cds-auth-beam-m 6.5s cubic-bezier(0.3, 0, 0.5, 1) infinite;
   }
@@ -3293,16 +4589,16 @@
     position: absolute;
     left: -1.25rem;
     top: 0.15em;
-    width: 9px;
-    height: 9px;
-    border-radius: 999px;
+    width: 0.5625rem;
+    height: 0.5625rem;
+    border-radius: 62.4375rem;
     border: 1px solid hsl(var(--foreground) / 0.35);
     background-color: hsl(var(--surface-base));
   }
 
   .cds-auth-line-m-station b {
     min-width: 2.9rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -3312,7 +4608,7 @@
   .cds-auth-line-m-station em {
     min-width: 2rem;
     font-style: normal;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     color: hsl(var(--muted-foreground) / 0.75);
     font-variant-numeric: tabular-nums;
@@ -3382,10 +4678,10 @@
     position: absolute;
     top: 0;
     left: 0;
-    width: 160px;
+    width: 10rem;
     height: 1px;
     background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.95), transparent);
-    box-shadow: 0 0 12px 0 hsl(var(--primary) / 0.35);
+    box-shadow: 0 0 0.75rem 0 hsl(var(--primary) / 0.35);
     opacity: 0;
     animation: cds-auth-beam 6.5s cubic-bezier(0.3, 0, 0.5, 1) infinite;
   }
@@ -3405,21 +4701,21 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    transform: translateX(-4px);
+    transform: translateX(-0.25rem);
   }
 
   .cds-auth-station-dot {
-    width: 9px;
-    height: 9px;
-    margin-top: -4px;
-    border-radius: 999px;
+    width: 0.5625rem;
+    height: 0.5625rem;
+    margin-top: -0.25rem;
+    border-radius: 62.4375rem;
     border: 1px solid hsl(var(--foreground) / 0.35);
     background-color: hsl(var(--surface-base));
   }
 
   .cds-auth-station b {
     margin-top: 0.75rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -3429,7 +4725,7 @@
   .cds-auth-station em {
     margin-top: 0.125rem;
     font-style: normal;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     color: hsl(var(--muted-foreground) / 0.7);
     font-variant-numeric: tabular-nums;
@@ -3443,7 +4739,7 @@
   @keyframes cds-auth-station-glow {
     0%, 100% { filter: none; }
     8% {
-      filter: drop-shadow(0 0 6px hsl(var(--primary) / 0.55));
+      filter: drop-shadow(0 0 0.375rem hsl(var(--primary) / 0.55));
     }
     16% { filter: none; }
   }
@@ -3464,7 +4760,7 @@
     position: relative;
     z-index: 1;
     width: 100%;
-    max-width: 400px;
+    max-width: 25rem;
     margin: 0 auto;
   }
 
@@ -3477,7 +4773,7 @@
     /* 顶部 2px 光线下方要有"被照亮"的落光,否则光源感是假的。 */
     background-image: radial-gradient(120% 64% at 50% 0%, hsl(var(--primary) / 0.06), transparent 58%);
     border: 0;
-    border-radius: 14px;
+    border-radius: 0.875rem;
     padding: 2rem 1.75rem;
     /* 五层影配方(ring/inset 高光/接触/中距/氛围),见 :root --shadow-card。 */
     box-shadow: var(--shadow-card);
@@ -3491,7 +4787,7 @@
   @keyframes cds-auth-rise {
     from {
       opacity: 0;
-      transform: translateY(6px);
+      transform: translateY(0.375rem);
     }
     to {
       opacity: 1;
@@ -3516,8 +4812,8 @@
   @keyframes cds-auth-shake {
     10%, 90% { transform: translateX(-1px); }
     20%, 80% { transform: translateX(2px); }
-    30%, 50%, 70% { transform: translateX(-4px); }
-    40%, 60% { transform: translateX(4px); }
+    30%, 50%, 70% { transform: translateX(-0.25rem); }
+    40%, 60% { transform: translateX(0.25rem); }
   }
 
   .cds-auth-card--shake {
@@ -3574,13 +4870,13 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     letter-spacing: 0.02em;
     color: hsl(var(--muted-foreground));
     border: 1px solid hsl(var(--hairline));
     background-color: transparent;
-    border-radius: 999px;
+    border-radius: 62.4375rem;
     padding: 0.25rem 0.625rem;
   }
 
@@ -3637,7 +4933,7 @@
   .cds-auth-input {
     height: 2.5rem;
     width: 100%;
-    border-radius: 8px;
+    border-radius: 0.5rem;
     border: 1px solid hsl(var(--hairline));
     background-color: hsl(var(--surface-sunken) / 0.6);
     box-shadow: 0 0 0 0 hsl(var(--ring) / 0);
@@ -3667,7 +4963,7 @@
 
   /* Chrome autofill 会刷成默认黄底,暗色主题下极其破相 —— 用 token 压回去。 */
   .cds-auth-input:-webkit-autofill {
-    -webkit-box-shadow: 0 0 0 1000px hsl(var(--surface-sunken)) inset;
+    -webkit-box-shadow: 0 0 0 62.5rem hsl(var(--surface-sunken)) inset;
     -webkit-text-fill-color: hsl(var(--foreground));
     caret-color: hsl(var(--foreground));
     transition: background-color 9999s ease-out;
@@ -3684,15 +4980,15 @@
 
   .cds-auth-eye {
     position: absolute;
-    right: 6px;
+    right: 0.375rem;
     top: 50%;
     transform: translateY(-50%);
-    width: 28px;
-    height: 28px;
+    width: 1.75rem;
+    height: 1.75rem;
     display: grid;
     place-items: center;
     border: 0;
-    border-radius: 6px;
+    border-radius: 0.375rem;
     background: transparent;
     color: hsl(var(--muted-foreground));
     cursor: pointer;
@@ -3705,8 +5001,8 @@
   }
 
   .cds-auth-eye svg {
-    width: 16px;
-    height: 16px;
+    width: 1rem;
+    height: 1rem;
   }
 
   .cds-auth-error {
@@ -3714,7 +5010,7 @@
     border: 1px solid hsl(var(--destructive) / 0.35);
     background-color: hsl(var(--destructive) / 0.08);
     color: hsl(var(--destructive));
-    border-radius: 8px;
+    border-radius: 0.5rem;
     padding: 0.625rem 0.75rem;
     font-size: 0.8125rem;
     line-height: 1.5;
@@ -3730,20 +5026,20 @@
     gap: 0.5rem;
     font-size: 0.875rem;
     background: hsl(var(--primary));
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 6px 16px -10px hsl(24 100% 55% / 0.45);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.375rem 1rem -0.625rem hsl(24 100% 55% / 0.45);
     transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
   }
 
   .cds-auth-submit:hover:not(:disabled) {
     background: hsl(var(--primary));
     filter: brightness(1.05);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 8px 20px -10px hsl(24 100% 55% / 0.55);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.22), 0 0.5rem 1.25rem -0.625rem hsl(24 100% 55% / 0.55);
   }
 
   .cds-auth-submit:active:not(:disabled) {
     transform: translateY(1px) scale(0.99);
     transition-duration: 80ms;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 10px -8px hsl(24 100% 55% / 0.4);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 3px 0.625rem -0.5rem hsl(24 100% 55% / 0.4);
   }
 
   .cds-auth-submit svg {
@@ -3832,13 +5128,13 @@
     align-items: baseline;
     gap: 0.5rem;
     min-width: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     color: hsl(var(--muted-foreground));
   }
 
   .cds-auth-ticker-k {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-weight: 700;
   }
 
@@ -3857,7 +5153,7 @@
   @keyframes cds-auth-feed-in {
     from {
       opacity: 0;
-      transform: translateY(6px);
+      transform: translateY(0.375rem);
     }
     to {
       opacity: 1;
@@ -3867,8 +5163,8 @@
 
   .cds-auth-ticker-caret {
     display: inline-block;
-    width: 6px;
-    height: 11px;
+    width: 0.375rem;
+    height: 0.6875rem;
     margin-left: 2px;
     vertical-align: -1px;
     background: currentColor;
@@ -3884,6 +5180,32 @@
   }
 
   @media (max-width: 640px) {
+    /*
+     * 手机先完成主任务：登录卡排在品牌故事之前并独立滚动。
+     * 390×664 下主按钮必须留在首屏，营销叙事继续保留在卡片下方。
+     */
+    .cds-auth-page {
+      height: 100vh;
+      height: 100dvh;
+    }
+
+    .cds-auth-stage {
+      justify-content: flex-start;
+      min-height: 0;
+      gap: 1.5rem;
+      padding: 0.75rem 1rem 1.5rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    .cds-auth-card-wrap {
+      order: -1;
+    }
+
+    .cds-auth-copy {
+      width: 100%;
+    }
+
     .cds-auth-footer-tag {
       display: none;
     }
@@ -3912,14 +5234,14 @@
   .cds-loading-preview-rings-dark {
     background:
       conic-gradient(from 20deg at 58% 48%, transparent 0 22%, rgba(255, 255, 255, 0.26) 28%, transparent 42%, rgba(255, 255, 255, 0.18) 58%, transparent 74%),
-      repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(255, 255, 255, 0.24) 76px 78px, transparent 80px 118px);
+      repeating-radial-gradient(circle at 58% 48%, transparent 0 4.625rem, rgba(255, 255, 255, 0.24) 4.75rem 4.875rem, transparent 5rem 7.375rem);
     filter: blur(0.4px);
   }
 
   .cds-loading-preview-rings-light {
     background:
       conic-gradient(from 20deg at 58% 48%, transparent 0 22%, rgba(24, 24, 27, 0.14) 28%, transparent 42%, rgba(24, 24, 27, 0.1) 58%, transparent 74%),
-      repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(24, 24, 27, 0.16) 76px 78px, transparent 80px 118px);
+      repeating-radial-gradient(circle at 58% 48%, transparent 0 4.625rem, rgba(24, 24, 27, 0.16) 4.75rem 4.875rem, transparent 5rem 7.375rem);
     filter: blur(0.2px);
   }
 
@@ -3927,25 +5249,14 @@
   .cds-loading-skeleton-panel {
     position: relative;
     overflow: hidden;
-    background:
-      linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.035), transparent),
-      hsl(var(--surface-raised) / 0.74);
-    background-size: 220% 100%, 100% 100%;
-    border: 1px solid hsl(var(--hairline) / 0.42);
-    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.035);
-    animation: cds-loading-skeleton-shimmer 2.4s ease-in-out infinite;
+    background: hsl(var(--foreground) / 0.12);
+    /* Preserve the existing box size while removing the washed-out outline. */
+    border: 1px solid transparent;
+    animation: cds-loading-skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
   .cds-loading-skeleton-line {
-    border-radius: 10px;
-  }
-
-  .cds-loading-skeleton-panel {
-    background:
-      radial-gradient(circle at 22% 12%, hsl(var(--foreground) / 0.04), transparent 28%),
-      linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.035), transparent),
-      hsl(var(--surface-raised) / 0.74);
-    background-size: 100% 100%, 220% 100%, 100% 100%;
+    border-radius: 0.375rem;
   }
 }
 
@@ -3954,13 +5265,13 @@
     opacity: 0.42;
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.06),
-      0 0 10px -8px rgb(56 189 248 / 0.65);
+      0 0 0.625rem -0.5rem rgb(56 189 248 / 0.65);
   }
   50% {
     opacity: 0.88;
     box-shadow:
       inset 0 0 0 1px rgb(56 189 248 / 0.14),
-      0 0 16px -7px rgb(56 189 248 / 0.9);
+      0 0 1rem -0.4375rem rgb(56 189 248 / 0.9);
   }
 }
 
@@ -3973,12 +5284,12 @@
   }
 }
 
-@keyframes cds-loading-skeleton-shimmer {
+@keyframes cds-loading-skeleton-pulse {
   0%, 100% {
-    background-position: 160% 0, 0 0, 0 0;
+    opacity: 1;
   }
   50% {
-    background-position: -60% 0, 0 0, 0 0;
+    opacity: 0.72;
   }
 }
 
@@ -4040,24 +5351,24 @@
   box-shadow:
     inset 0 0 0 1px hsl(var(--hairline-strong)),
     0 1px 2px hsl(24 20% 15% / 0.06),
-    0 6px 16px -8px hsl(24 20% 15% / 0.12);
+    0 0.375rem 1rem -0.5rem hsl(24 20% 15% / 0.12);
 }
 
 /* Agent 真实地理地图：地图表达空间，右侧目录保证文字可读。 */
 .cds-agent-world-stage {
   --map-cyan: 188 84% 58%;
-  min-height: 326px;
+  min-height: 20.375rem;
   overflow: hidden;
   border-color: hsl(var(--map-cyan) / 0.34);
   background: hsl(208 55% 7%);
   box-shadow:
     inset 0 0 0 1px hsl(var(--map-cyan) / 0.05),
-    0 12px 30px hsl(220 50% 3% / 0.18);
+    0 0.75rem 1.875rem hsl(220 50% 3% / 0.18);
 }
 
 .cds-agent-world-map-loading {
   display: grid;
-  min-height: 326px;
+  min-height: 20.375rem;
   place-items: center;
   border: 1px solid hsl(188 84% 58% / 0.28);
   border-radius: 0.9rem;
@@ -4069,10 +5380,10 @@
 .cds-agent-world-stage::before {
   z-index: 4;
   background:
-    linear-gradient(90deg, hsl(var(--map-cyan) / 0.65), transparent 26px) left 12px top 12px / 64px 1px no-repeat,
-    linear-gradient(hsl(var(--map-cyan) / 0.65), transparent 26px) left 12px top 12px / 1px 64px no-repeat,
-    linear-gradient(-90deg, hsl(var(--map-cyan) / 0.65), transparent 26px) right 12px bottom 12px / 64px 1px no-repeat,
-    linear-gradient(0deg, hsl(var(--map-cyan) / 0.65), transparent 26px) right 12px bottom 12px / 1px 64px no-repeat;
+    linear-gradient(90deg, hsl(var(--map-cyan) / 0.65), transparent 1.625rem) left 0.75rem top 0.75rem / 4rem 1px no-repeat,
+    linear-gradient(hsl(var(--map-cyan) / 0.65), transparent 1.625rem) left 0.75rem top 0.75rem / 1px 4rem no-repeat,
+    linear-gradient(-90deg, hsl(var(--map-cyan) / 0.65), transparent 1.625rem) right 0.75rem bottom 0.75rem / 4rem 1px no-repeat,
+    linear-gradient(0deg, hsl(var(--map-cyan) / 0.65), transparent 1.625rem) right 0.75rem bottom 0.75rem / 1px 4rem no-repeat;
 }
 
 .cds-agent-world-stage::after {
@@ -4084,15 +5395,15 @@
   background: hsl(208 55% 7%);
   box-shadow:
     inset 0 0 0 1px hsl(var(--map-cyan) / 0.05),
-    0 10px 26px hsl(204 32% 24% / 0.18);
+    0 0.625rem 1.625rem hsl(204 32% 24% / 0.18);
 }
 
 .cds-agent-world-canvas {
   display: grid;
   width: 100%;
   min-width: 0;
-  height: 326px;
-  grid-template-columns: minmax(0, 1fr) 272px;
+  height: 20.375rem;
+  grid-template-columns: minmax(0, 1fr) 17rem;
 }
 
 .cds-agent-world-map-surface {
@@ -4111,7 +5422,7 @@
   background-image:
     linear-gradient(hsl(var(--map-cyan) / 0.035) 1px, transparent 1px),
     linear-gradient(90deg, hsl(var(--map-cyan) / 0.035) 1px, transparent 1px);
-  background-size: 32px 32px;
+  background-size: 2rem 2rem;
   content: '';
   pointer-events: none;
 }
@@ -4120,7 +5431,7 @@
   position: relative;
   z-index: 1;
   width: 100%;
-  height: 326px;
+  height: 20.375rem;
 }
 
 .cds-agent-world-graticule {
@@ -4133,7 +5444,7 @@
 
 .cds-agent-world-hud text {
   fill: hsl(var(--map-cyan) / 0.56);
-  font-size: 9px;
+  font-size: 0.5625rem;
   font-weight: 650;
   letter-spacing: 0.08em;
 }
@@ -4142,7 +5453,7 @@
   cursor: pointer;
   opacity: 1;
   outline: none;
-  animation: cds-agent-geo-region-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: cds-agent-geo-region-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: calc(var(--region-order) * 32ms);
 }
 
@@ -4200,7 +5511,7 @@
 
 .cds-agent-world-territory-marker text {
   fill: currentColor;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 750;
   text-anchor: middle;
 }
@@ -4220,12 +5531,12 @@
   align-items: center;
   gap: 0.35rem;
   border: 1px solid hsl(var(--map-cyan) / 0.17);
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(207 58% 6% / 0.88);
   padding: 0.3rem 0.55rem;
   color: hsl(0 0% 100% / 0.62);
   font-size: 0.625rem;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(0.5rem);
 }
 
 .cds-agent-world-map-source strong {
@@ -4260,8 +5571,8 @@
 }
 
 .cds-agent-territory-legend-heading strong {
-  color: hsl(var(--primary));
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: hsl(var(--primary-ink));
+  font-family: var(--cds-font-mono);
   font-size: 0.6875rem;
 }
 
@@ -4277,8 +5588,8 @@
 .cds-agent-territory-option {
   display: grid;
   width: 100%;
-  min-height: 50px;
-  grid-template-columns: 24px 20px minmax(0, 1fr) 16px;
+  min-height: 3.125rem;
+  grid-template-columns: 1.5rem 1.25rem minmax(0, 1fr) 1rem;
   align-items: center;
   gap: 0.45rem;
   border: 1px solid transparent;
@@ -4314,10 +5625,10 @@
 
 .cds-agent-territory-option-index {
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 1.375rem;
+  height: 1.375rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--region-hue) 46% 32% / 0.28);
   color: hsl(var(--region-hue) 88% 78%);
   font-size: 0.625rem;
@@ -4337,7 +5648,7 @@
 .cds-agent-territory-option > svg:last-child {
   width: 0.875rem;
   height: 0.875rem;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-territory-option strong,
@@ -4374,7 +5685,7 @@
 @keyframes cds-agent-geo-region-enter {
   from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(0.3125rem);
   }
   to {
     opacity: 1;
@@ -4395,20 +5706,20 @@
 
 @media (max-width: 640px) {
   .cds-agent-world-stage {
-    min-height: 310px;
+    min-height: 19.375rem;
     overflow-x: auto;
     overflow-y: hidden;
   }
 
   .cds-agent-world-canvas {
-    width: 850px;
-    height: 310px;
-    grid-template-columns: 590px 260px;
+    width: 53.125rem;
+    height: 19.375rem;
+    grid-template-columns: 36.875rem 16.25rem;
   }
 
   .cds-agent-world-svg {
     width: 100%;
-    height: 310px;
+    height: 19.375rem;
   }
 
   .cds-agent-territory-legend {
@@ -4446,7 +5757,7 @@
   border-color: hsl(var(--map-line));
   background: hsl(var(--map-shell));
   color: hsl(var(--map-text));
-  box-shadow: 0 12px 32px hsl(var(--map-shadow) / 0.12);
+  box-shadow: 0 0.75rem 2rem hsl(var(--map-shadow) / 0.12);
 }
 
 .cds-agent-world-stage[data-map-skin='mist'] {
@@ -4470,7 +5781,7 @@
   --map-text: 210 28% 94%;
   --map-muted: 211 15% 66%;
   --map-shadow: 220 55% 3%;
-  box-shadow: 0 14px 34px hsl(var(--map-shadow) / 0.34);
+  box-shadow: 0 0.875rem 2.125rem hsl(var(--map-shadow) / 0.34);
 }
 
 .cds-agent-world-stage::before,
@@ -4482,7 +5793,7 @@
   position: relative;
   z-index: 5;
   display: flex;
-  min-height: 58px;
+  min-height: 3.625rem;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -4519,8 +5830,8 @@
 
 .cds-agent-map-skin-picker button {
   display: inline-flex;
-  min-width: 44px;
-  height: 44px;
+  min-width: 2.75rem;
+  height: 2.75rem;
   align-items: center;
   justify-content: center;
   gap: 0.3rem;
@@ -4552,7 +5863,7 @@
   border-color: hsl(var(--map-line));
   background: hsl(var(--map-panel));
   color: hsl(var(--map-text));
-  box-shadow: 0 2px 7px hsl(var(--map-shadow) / 0.12);
+  box-shadow: 0 2px 0.4375rem hsl(var(--map-shadow) / 0.12);
 }
 
 .cds-agent-map-skin-picker svg {
@@ -4561,19 +5872,19 @@
 }
 
 .cds-agent-world-map-loading {
-  min-height: 384px;
+  min-height: 24rem;
   border-color: hsl(var(--border));
   background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
 }
 
 .cds-agent-world-canvas {
-  height: 350px;
-  grid-template-columns: minmax(0, 1fr) 284px;
+  height: 21.875rem;
+  grid-template-columns: minmax(0, 1fr) 17.75rem;
 }
 
 .cds-agent-world-map-surface {
-  height: 350px;
+  height: 21.875rem;
   border-color: hsl(var(--map-line));
   background:
     radial-gradient(circle at 51% 48%, hsl(var(--map-panel) / 0.92), transparent 54%),
@@ -4587,7 +5898,7 @@
 }
 
 .cds-agent-world-svg {
-  height: 350px;
+  height: 21.875rem;
 }
 
 .cds-agent-world-grid {
@@ -4604,7 +5915,7 @@
   fill: hsl(var(--map-shadow) / 0.11);
   stroke: hsl(var(--map-line) / 0.64);
   stroke-width: 8;
-  transform: translateY(7px);
+  transform: translateY(0.4375rem);
 }
 
 .cds-agent-world-region-fill {
@@ -4673,7 +5984,7 @@
 }
 
 .cds-agent-territory-legend {
-  height: 350px;
+  height: 21.875rem;
   min-height: 0;
   overflow: hidden;
   background: hsl(var(--map-panel));
@@ -4693,8 +6004,8 @@
 }
 
 .cds-agent-territory-option {
-  min-height: 44px;
-  height: 44px;
+  min-height: 2.75rem;
+  height: 2.75rem;
   color: hsl(var(--map-muted));
 }
 
@@ -4722,7 +6033,7 @@
 
 .cds-agent-territory-option[data-selected='true'] .cds-agent-territory-option-index {
   background: hsl(var(--map-accent));
-  color: white;
+  color: hsl(var(--primary-foreground));
 }
 
 .cds-agent-territory-option > svg:last-child {
@@ -4739,7 +6050,7 @@
 
 .cds-agent-territory-explainer {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 1.125rem minmax(0, 1fr);
   gap: 0.45rem;
   border: 1px solid hsl(var(--map-line));
   border-radius: 0.6rem;
@@ -4779,7 +6090,7 @@
   .cds-agent-world-map-surface,
   .cds-agent-world-svg,
   .cds-agent-territory-legend {
-    height: 326px;
+    height: 20.375rem;
   }
 }
 
@@ -4813,7 +6124,7 @@
   .cds-agent-world-map-surface,
   .cds-agent-world-svg {
     width: 100%;
-    height: 286px;
+    height: 17.875rem;
   }
 
   .cds-agent-world-map-surface {
@@ -4823,13 +6134,13 @@
 
   .cds-agent-territory-legend {
     height: auto;
-    min-height: 350px;
+    min-height: 21.875rem;
     overflow: visible;
     padding: 0.75rem;
   }
 
   .cds-agent-territory-option {
-    min-height: 52px;
+    min-height: 3.25rem;
     height: auto;
   }
 }
@@ -4841,12 +6152,12 @@
   border-radius: 0.9rem;
   background: hsl(var(--surface-raised));
   padding: 0.75rem;
-  box-shadow: 0 8px 22px hsl(var(--foreground) / 0.045);
+  box-shadow: 0 0.5rem 1.375rem hsl(var(--foreground) / 0.045);
 }
 
 .cds-agent-mission-list-meta {
   display: flex;
-  min-height: 44px;
+  min-height: 2.75rem;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
@@ -4874,11 +6185,52 @@
   white-space: nowrap;
 }
 
+/* 任务地图里的角色选择器：在这里就能设角色，不必先走完上手助手向导。 */
+.cds-agent-role-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+}
+
+/* 覆盖 meta small 的单行截断：这一行会换行，不能被省略号吃掉。 */
+.cds-agent-role-picker small {
+  overflow: visible;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.6875rem;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.cds-agent-role-picker button {
+  border: 1px solid hsl(var(--border));
+  border-radius: 62.4375rem;
+  background: hsl(var(--card));
+  padding: 0.15rem 0.55rem;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.6875rem;
+  font-weight: 620;
+  line-height: 1.5;
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+
+.cds-agent-role-picker button:hover {
+  border-color: hsl(var(--ring));
+  color: hsl(var(--foreground));
+}
+
+.cds-agent-role-picker button[data-selected='true'] {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--foreground));
+}
+
 .cds-agent-mission-list-meta > svg {
   width: 1rem;
   height: 1rem;
   flex: 0 0 auto;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-mission-categories {
@@ -4893,12 +6245,12 @@
 
 .cds-agent-mission-categories button {
   display: inline-flex;
-  min-height: 44px;
+  min-height: 2.75rem;
   flex: 0 0 auto;
   align-items: center;
   gap: 0.45rem;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: transparent;
   padding: 0.45rem 0.7rem;
   color: hsl(var(--muted-foreground));
@@ -4927,12 +6279,22 @@
   color: hsl(var(--foreground));
 }
 
+/* 角色常用分类：排在最前之外还要看得出来，否则用户只会以为顺序随机。 */
+.cds-agent-mission-categories button[data-role-focused='true']::before {
+  width: 0.35rem;
+  height: 0.35rem;
+  flex: 0 0 auto;
+  border-radius: 62.4375rem;
+  background: hsl(var(--primary));
+  content: '';
+}
+
 .cds-agent-mission-categories button small {
   display: grid;
   min-width: 1.25rem;
   height: 1.25rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   font-size: 0.625rem;
@@ -4956,16 +6318,16 @@
 }
 
 .cds-agent-mission-strip[data-single='true'] {
-  grid-template-columns: minmax(220px, 320px) !important;
+  grid-template-columns: minmax(13.75rem, 20rem) !important;
 }
 
 .cds-agent-mission-card {
   position: relative;
   display: grid;
   min-width: 0;
-  min-height: 112px;
-  grid-template-columns: 28px minmax(0, 1fr) 18px;
-  grid-template-rows: 30px 1fr;
+  min-height: 7rem;
+  grid-template-columns: 1.75rem minmax(0, 1fr) 1.125rem;
+  grid-template-rows: 1.875rem 1fr;
   align-items: center;
   gap: 0.4rem 0.5rem;
   overflow: hidden;
@@ -4986,7 +6348,7 @@
 .cds-agent-mission-card:hover {
   border-color: hsl(var(--primary) / 0.42);
   background: hsl(var(--primary) / 0.035);
-  box-shadow: 0 5px 14px hsl(var(--foreground) / 0.06);
+  box-shadow: 0 0.3125rem 0.875rem hsl(var(--foreground) / 0.06);
 }
 
 .cds-agent-mission-card:focus-visible {
@@ -4999,15 +6361,15 @@
   background: hsl(var(--primary) / 0.075);
   box-shadow:
     inset 3px 0 0 hsl(var(--primary)),
-    0 5px 15px hsl(var(--primary) / 0.1);
+    0 0.3125rem 0.9375rem hsl(var(--primary) / 0.1);
 }
 
 .cds-agent-mission-card-index {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 1.625rem;
+  height: 1.625rem;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 62.4375rem;
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   font-size: 0.6875rem;
@@ -5021,8 +6383,8 @@
 
 .cds-agent-mission-card-icon {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 1.875rem;
+  height: 1.875rem;
   place-items: center;
   border: 1px solid hsl(var(--border));
   border-radius: 0.55rem;
@@ -5038,7 +6400,7 @@
 .cds-agent-mission-card[data-selected='true'] .cds-agent-mission-card-icon {
   border-color: hsl(var(--primary) / 0.3);
   background: hsl(var(--primary) / 0.1);
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-mission-card-copy {
@@ -5072,7 +6434,7 @@
 .cds-agent-mission-card-check {
   width: 0.95rem;
   height: 0.95rem;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
   opacity: 0;
 }
 
@@ -5104,7 +6466,7 @@
   }
 
   .cds-agent-mission-card {
-    min-height: 108px;
+    min-height: 6.75rem;
   }
 }
 
@@ -5126,7 +6488,10 @@
   position: relative;
   isolation: isolate;
   transform: none !important;
+  /* 这颗按钮的底色不跟主题走（两个主题都用同一枚深橙），所以它的**文字色也归这里管**。
+     组件里写 text-white 会被中性色守卫当成漏网之鱼，而且底色一旦改深浅就没人记得改字色。 */
   background-color: rgb(194 65 12) !important;
+  color: rgb(255 255 255) !important;
 }
 
 [data-agent-starter='true'] .agent-starter-copy:hover {
@@ -5136,12 +6501,12 @@
 [data-agent-starter='true'] .agent-starter-copy::after {
   content: '';
   position: absolute;
-  inset: -8px;
+  inset: -0.5rem;
   z-index: -1;
   pointer-events: none;
   border: 2px solid rgb(234 88 12 / 0.42);
   border-radius: 1.25rem;
-  box-shadow: 0 0 30px rgb(234 88 12 / 0.32);
+  box-shadow: 0 0 1.875rem rgb(234 88 12 / 0.32);
   animation: cds-agent-starter-copy-halo 1.8s ease-in-out infinite;
 }
 
@@ -5182,7 +6547,14 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
     flex-direction: column !important;
     gap: 0 !important;
     min-height: 0 !important;
-    overflow: clip !important;
+    /*
+     * 横向照旧裁死（弹窗全屏，不该出现横向滚动），纵向留 auto 当兜底：
+     * 高度链完好时内容不溢出、这里根本不会滚；一旦哪天再断一环，用户至少
+     * 还能滚到主操作，而不是像 2026-09-03 那样面对一屏没有出口的卡片。
+     */
+    overflow-x: clip !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
     padding: 0 !important;
   }
 
@@ -5190,8 +6562,19 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
     display: none !important;
   }
 
-  [role='dialog']:has([data-agent-starter='true']) > div:first-child > :last-child {
+  /*
+   * 高度链的最后两环。断一环，面板就长成内容自然高、突破视口，底栏被上面那条
+   * overflow:clip 裁掉——而链上没有任何可滚容器，用户连滚过去都做不到。
+   *
+   * `> div:first-child > :last-child` 是按位置数出来的，tab 区一旦多插一层
+   * 或换顺序就静默失效（正是 2026-09-03 那次移动端「没有下一步」的形态）。
+   * 所以 slot 那一环改认标记 data-agent-starter-slot，不认位置。
+   */
+  [role='dialog']:has([data-agent-starter='true']) > div:first-child > :last-child,
+  [data-agent-starter-slot='true'] {
+    display: flex !important;
     flex: 1 1 auto !important;
+    flex-direction: column !important;
     min-height: 0 !important;
     height: 100% !important;
   }
@@ -5243,3 +6626,31 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
     opacity: 0.4;
   }
 }
+
+/* Route snapshots share the monitor camera; native chrome and live fixed layers stay still. */
+:root.cds-surface-motion .cds-main { view-transition-name: cds-content; }
+.cds-branch-detail-drawer { view-transition-name: cds-detail; }
+:root.cds-surface-motion::view-transition-new(root),
+:root.cds-surface-motion::view-transition-old(root),
+:root.cds-surface-motion::view-transition-new(cds-content),
+:root.cds-surface-motion::view-transition-old(cds-content),
+:root.cds-surface-motion::view-transition-new(cds-detail),
+:root.cds-surface-motion::view-transition-old(cds-detail) { animation: none; mix-blend-mode: normal; }
+:root.cds-surface-motion::view-transition-group(cds-content),
+:root.cds-surface-motion::view-transition-group(cds-detail) { animation-duration: 0s; }
+:root.cds-surface-motion::view-transition-old(cds-content),
+:root.cds-surface-motion::view-transition-new(cds-content),
+:root.cds-surface-motion::view-transition-old(cds-detail),
+:root.cds-surface-motion::view-transition-new(cds-detail) { transform-origin: 0 0; }
+.cds-surface-motion .cds-page-enter, .cds-surface-motion .cds-drawer-anim { animation: none !important; }
+[data-cds-surface-entered] { animation: none !important; }
+
+.cds-theme-motion .cds-main, .cds-theme-motion .cds-branch-detail-drawer { view-transition-name: none; }
+
+.cds-reduced-motion .cds-page-enter, .cds-reduced-motion .cds-drawer-anim { animation: none !important; }
+
+:root.cds-surface-motion::view-transition-old(root) { opacity: 0; z-index: 0; }
+:root.cds-surface-motion::view-transition-new(root) { z-index: 1; }
+
+/* 关系画布保留可用空间；共享Dialog末尾关闭按钮在此工作区提供44px触区。 */
+.cds-relation-sheet > button:last-child { min-width: 3.25rem; min-height: 3.25rem; right: .5rem; top: .5rem; display: inline-flex; align-items: center; justify-content: center; }

@@ -38,12 +38,15 @@ describe('全局操作与信息中心', () => {
   const css = readWeb('index.css');
 
   it('提交缺陷固定在接入 Agent 后方，并通过全局事件打开弹窗', () => {
-    const footerIndex = shell.indexOf('<div className="cds-rail-footer">');
-    const agentIndex = shell.indexOf('aria-label="接入 Agent"', footerIndex);
-    const bugIndex = shell.indexOf('aria-label="提交缺陷"', footerIndex);
-    const settingsIndex = shell.indexOf('aria-label="CDS 系统设置"', footerIndex);
+    // 2026-09-02：这三项从 cds-rail-footer 移到了 cds-rail-tools（工具组跟着导航贴顶，
+    // 栏底只留主题与账号）。钉的从来是**顺序**，不是那个容器名，所以锚点换成工具组。
+    const toolsIndex = shell.indexOf('<div className="cds-rail-tools">');
+    const agentIndex = shell.indexOf('aria-label="接入 Agent"', toolsIndex);
+    const bugIndex = shell.indexOf('aria-label="提交缺陷"', toolsIndex);
+    const settingsIndex = shell.indexOf('aria-label="CDS 系统设置"', toolsIndex);
 
-    expect(agentIndex).toBeGreaterThan(footerIndex);
+    expect(toolsIndex, '工具组没了？三个全局动作应当在同一段里').toBeGreaterThan(-1);
+    expect(agentIndex).toBeGreaterThan(toolsIndex);
     expect(bugIndex).toBeGreaterThan(agentIndex);
     expect(settingsIndex).toBeGreaterThan(bugIndex);
     expect(shell).toContain('new Event(OPEN_BUG_REPORT_EVENT)');
@@ -52,7 +55,7 @@ describe('全局操作与信息中心', () => {
   });
 
   it('普通提醒在信息中心聚合，授权申请同时保留右下角决策浮窗', () => {
-    expect(shell).toContain('<SiteNoticeInbox />');
+    expect(shell).toContain('<SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}');
     expect(shell).toContain('id="cds-information-center-host"');
     expect(informationCenter).toContain('<AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />');
     expect(informationCenter).toContain('<AccessRequestInbox />');
@@ -65,7 +68,7 @@ describe('全局操作与信息中心', () => {
     expect(css).not.toContain('.cds-bottom-left-dock');
     const access = readWeb('components/AccessRequestInbox.tsx');
     expect(access).toContain('data-testid="cds-access-request-floating"');
-    expect(access).toContain('fixed bottom-[84px] right-5');
+    expect(access).toContain('fixed bottom-[5.25rem] right-5');
     expect(access).toContain('createPortal');
   });
 
@@ -84,7 +87,7 @@ describe('全局操作与信息中心', () => {
 
 describe('页面级 toast', () => {
   it('使用右下角标准留白，不再为已移除的缺陷浮标预留高度', () => {
-    expect(bottomRightToastStyle).toEqual({ bottom: '20px', right: '20px' });
+    expect(bottomRightToastStyle).toEqual({ bottom: '1.25rem', right: '1.25rem' });
   });
 });
 

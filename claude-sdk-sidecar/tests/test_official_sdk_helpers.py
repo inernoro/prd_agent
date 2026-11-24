@@ -46,6 +46,7 @@ class FakeAssistantMessage:
         FakeTextBlock(),
         FakeToolUseBlock(),
         {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
+        {"type": "tool_result", "tool_use_id": "toolu_2", "content": "boom", "is_error": True},
     ]
 
 
@@ -118,11 +119,18 @@ class SdkEventHelperTests(unittest.TestCase):
         state = SdkEventAccumulator()
 
         events = handle_sdk_message(FakeAssistantMessage(), FakeResultMessage, state, cancelled=False)
-        self.assertEqual([event.type for event in events], ["text_delta", "tool_use", "tool_result"])
+        self.assertEqual(
+            [event.type for event in events],
+            ["text_delta", "tool_use", "tool_result", "tool_result"],
+        )
         self.assertEqual(events[0].text, "hello ")
         self.assertEqual(events[1].tool_name, "repo_read")
         self.assertEqual(events[1].tool_input, {"path": "README.md"})
         self.assertEqual(events[2].content, "ok")
+        # 工具成败必须进事件：只留在给模型看的历史里，消费方会把失败画成完成。
+        self.assertIsNone(events[2].is_error)
+        self.assertEqual(events[3].content, "boom")
+        self.assertTrue(events[3].is_error)
 
         result_events = handle_sdk_message(FakeResultMessage(), FakeResultMessage, state, cancelled=False)
         self.assertEqual(result_events, [])

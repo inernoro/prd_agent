@@ -86,6 +86,8 @@ export type VisualAgentWorkspace = {
   folderName?: string | null;
   /** 风格统一提示词（设置后生图时自动拼接） */
   stylePrompt?: string | null;
+  /** 工作区是否禁止生成完成后自动投稿；用户仍可手动确认投稿 */
+  suppressAutoSubmit?: boolean;
   /** 最新生成的配图 URL（列表接口返回，用于卡片封面） */
   latestIllustrationUrl?: string | null;
 };
@@ -111,6 +113,7 @@ export type ListVisualAgentWorkspacesContract = (input?: { limit?: number; skip?
 export type CreateVisualAgentWorkspaceContract = (input: { title?: string; scenarioType?: string; idempotencyKey?: string }) => Promise<ApiResponse<{ workspace: VisualAgentWorkspace }>>;
 export type UpdateVisualAgentWorkspaceContract = (input: {
   id: string;
+  suppressAutoSubmit?: boolean;
   title?: string;
   memberUserIds?: string[];
   coverAssetId?: string | null;
@@ -173,6 +176,14 @@ export type UploadVisualAgentWorkspaceAssetContract = (input: {
 // -------- VisualAgent：生图任务化（服务端后台执行） --------
 
 export type CreateWorkspaceImageGenRunInput = {
+  /**
+   * generate（默认，文生图/图生图）或 layering（语义分层）。
+   * 分层此前只有同步端点，模型本身要二三十秒，实测稳定撞上边缘网关的 30 秒超时，
+   * 结果永远拿不到；走这条异步任务后产物与 HTTP 连接的存活时间脱钩。
+   */
+  operation?: 'generate' | 'layering';
+  /** 分层要拆成几层（1-10，仅 operation=layering 时有意义）。 */
+  layerCount?: number;
   prompt: string;
   targetKey: string;
   x?: number;
@@ -188,6 +199,8 @@ export type CreateWorkspaceImageGenRunInput = {
   initImageAssetSha256?: string;
   /** 多图引用列表（新架构） */
   imageRefs?: ImageRefForBackend[];
+  /** 用户明确选择的参考图数量；所有入口必填，后端用它阻止丢图后静默降级。 */
+  expectedImageRefCount: number;
   /** 局部重绘蒙版（data URI，白色=重绘区域，黑色=保持） */
   maskBase64?: string;
   /** 用户消息内容（后端自动存入 image_master_messages，含标签/引用等完整文案） */

@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 // 波5 无 Agent 接入 —— 已 clone 空项目的「检测技术栈」对话框。
 //
 // 面向纯 UI 用户(产品经理):项目已克隆但没有构建配置时(webhook 自动 clone /
@@ -116,15 +117,10 @@ export function DetectStackDialog({
         </DialogHeader>
 
         <div
-          className="min-h-[120px] max-h-[50vh] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40"
+          className="min-h-[7.5rem] max-h-[50vh] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40"
           style={{ overscrollBehavior: 'contain' }}
         >
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 px-4 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              正在扫描代码仓库…
-            </div>
-          ) : error ? (
+          {loading ? <ContentLoading label="扫描代码仓库" variant="panel" /> : error ? (
             <div className="flex items-start gap-2 px-4 py-6 text-sm text-destructive">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
@@ -149,15 +145,15 @@ export function DetectStackDialog({
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium text-foreground">{svc.name || svc.id || '应用服务'}</span>
-                        <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">
                           {RUNTIME_LABEL[svc.runtime] || svc.runtime}
                         </span>
                         {svc.port ? (
-                          <span className="text-[11px] text-muted-foreground">端口 {svc.port}</span>
+                          <span className="text-[0.6875rem] text-muted-foreground">端口 {svc.port}</span>
                         ) : null}
                       </span>
                       {svc.command ? (
-                        <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground" title={svc.command}>
+                        <span className="mt-1 block truncate font-mono text-[0.6875rem] text-muted-foreground" title={svc.command}>
                           {svc.command}
                         </span>
                       ) : null}

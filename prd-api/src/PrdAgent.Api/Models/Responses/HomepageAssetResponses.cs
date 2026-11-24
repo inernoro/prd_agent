@@ -8,4 +8,7 @@ public class HomepageAssetDto
     public string Mime { get; set; } = string.Empty;
     public long SizeBytes { get; set; }
     public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>生成这张图用的提示词（手工上传的为 null）。管理端用它回填生成弹窗。</summary>
+    public string? Prompt { get; set; }
 }

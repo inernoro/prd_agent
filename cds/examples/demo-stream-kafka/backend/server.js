@@ -19,9 +19,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// broker 侧的客户端监听器是 SASL_PLAINTEXT/PLAIN（CDS 的基础设施认证门禁不再接受
+// 裸 PLAINTEXT）。凭据从环境变量来；没配就退回无认证连接，这样把这份示例搬去别处
+// 也还能跑，而不是直接连不上。
+const saslUsername = (process.env.KAFKA_SASL_USERNAME || '').trim();
+const saslPassword = (process.env.KAFKA_SASL_PASSWORD || '').trim();
 const kafka = new Kafka({
   clientId: 'demo-stream-backend',
   brokers,
+  ...(saslUsername && saslPassword
+    ? { sasl: { mechanism: 'plain', username: saslUsername, password: saslPassword } }
+    : {}),
   logLevel: logLevel.NOTHING,
   retry: { initialRetryTime: 1000, retries: 12 },
 });

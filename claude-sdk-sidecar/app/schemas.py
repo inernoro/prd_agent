@@ -22,6 +22,8 @@ class SidecarRunRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     run_id: str = Field(..., alias="runId")
+    # 已批准的网关业务编号；run_id 保持为工具回调/sidecar 会话编号。
+    gateway_run_id: Optional[str] = Field(None, alias="gatewayRunId")
     model: str = "claude-opus-4-5"
     system_prompt: str = Field("", alias="systemPrompt")
     messages: list[SidecarMessage] = Field(default_factory=list)
@@ -62,6 +64,13 @@ class SidecarRunRequest(BaseModel):
     git_repository: Optional[str] = Field(None, alias="gitRepository")
     git_ref: Optional[str] = Field(None, alias="gitRef")
 
+    # Per-run override for the SDK's own built-in tools (Read/Grep/Glob/...).
+    # None keeps the process-wide CLAUDE_AGENT_SDK_ALLOWED_TOOLS default, so every
+    # existing caller behaves exactly as before. An empty list means "no built-in
+    # tools at all" — used by general chat, which must not carry repository read
+    # access just because code review happens to need it.
+    builtin_tools: Optional[list[str]] = Field(None, alias="builtinTools")
+
 
 class SidecarEvent(BaseModel):
     """SSE 事件载荷，type 与 prd-api 的 ToolboxRunEventType 协议保持兼容映射"""
@@ -77,3 +86,6 @@ class SidecarEvent(BaseModel):
     error_code: Optional[str] = None
     message: Optional[str] = None
     turn: Optional[int] = None
+    # 工具结果是成是败。历史上这个信息只进了给模型看的历史，没进 SSE 事件，
+    # 于是消费方无从分辨——失败的工具会被当成成功展示。
+    is_error: Optional[bool] = None

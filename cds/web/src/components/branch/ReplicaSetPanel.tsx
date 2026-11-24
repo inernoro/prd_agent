@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ReplicaSetPanel — 复制集双画布（草稿预期管理版，2026-07-25 用户拍板）。
  *
@@ -64,9 +65,17 @@ export interface ProfileReplicaSetView {
 
 interface ReplicaCandidateView { versionId: string; commitSha: string; image: string; createdAt: string; isCurrent: boolean }
 
-interface GraphNodeView { id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string }
+type ServiceRoleView = 'web' | 'api' | 'worker';
+interface GraphNodeView {
+  id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string;
+  /** 角色由服务端判定（声明 > 路由事实 > 服务名 > 默认），前端只消费，不再自己按名字猜。 */
+  role?: ServiceRoleView; roleSource?: 'declared' | 'route' | 'name' | 'default'; roleReason?: string;
+}
 interface GraphEdgeView { from: string; to: string; envKeys: string[]; dependsOn: boolean }
-interface ServiceGraphView { nodes: GraphNodeView[]; edges: GraphEdgeView[]; layers: string[][] }
+interface GraphSiteMemberView { id: string; prefixes: string[]; viaConvention?: boolean }
+/** 站点 = 一个公网 host：壳（承载根路径的静态站）+ 按前缀挂在它下面的成员。与 forwarder 发布规则同源。 */
+interface GraphSiteView { id: string; kind: 'main' | 'subdomain'; subdomain?: string; shellId?: string; shellSource?: 'declared' | 'convention'; members: GraphSiteMemberView[]; conflicts: Array<{ prefix: string; ids: string[] }> }
+interface ServiceGraphView { nodes: GraphNodeView[]; edges: GraphEdgeView[]; layers: string[][]; sites?: GraphSiteView[]; internal?: string[] }
 
 type ReplicaMode = 'container' | 'project';
 
@@ -144,12 +153,12 @@ const KIND_LABEL: Record<PlanStepKind, string> = {
 };
 const STEP_STATUS_META: Record<PlanStep['status'], { text: string; cls: string }> = {
   pending: { text: '待执行', cls: 'text-muted-foreground' },
-  running: { text: '执行中', cls: 'text-amber-600 dark:text-amber-400' },
-  done: { text: '完成', cls: 'text-emerald-600 dark:text-emerald-400' },
+  running: { text: '执行中', cls: 'text-warn' },
+  done: { text: '完成', cls: 'text-ok' },
   error: { text: '失败', cls: 'text-destructive' },
   skipped: { text: '已跳过', cls: 'text-muted-foreground' },
   cancelled: { text: '已取消', cls: 'text-muted-foreground' },
-  'rolled-back': { text: '已回滚', cls: 'text-sky-600 dark:text-sky-400' },
+  'rolled-back': { text: '已回滚', cls: 'text-info' },
 };
 const PLAN_STATUS_LABEL: Record<Plan['status'], string> = {
   running: '执行中', done: '全部完成', error: '有失败(已停止)', cancelled: '已取消', 'rolled-back': '失败并已回滚',
@@ -311,11 +320,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
   }, '变更计划已保存，开始按序执行'), [branchId, draft, onFailure, tab, call]);
 
   if (state.status === 'loading') {
-    return (
-      <section className="cds-surface-raised cds-hairline flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />正在加载复制集配置…
-      </section>
-    );
+    return <ContentLoading label="加载复制集配置" variant="rows" />;
   }
   if (state.status === 'error') {
     return (
@@ -439,7 +444,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
         </>
       ) : null}
       {activePlan ? (
-        <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/50 bg-warn-soft px-3 py-1.5 text-xs font-semibold text-warn">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           执行中 {activePlan.steps.filter((s) => s.status === 'done').length}/{activePlan.steps.length}
         </span>
@@ -589,10 +594,10 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
       {activePlan ? (
         <div className="mt-3 grid gap-1.5">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-warn" />
             <b>执行中</b>
             <span className="text-muted-foreground">失败策略：{activePlan.onFailure === 'rollback' ? '停止并回滚' : '仅停止'}</span>
-            <ConfirmAction title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
+            <ConfirmAction scopeKey={`${branchId}:${activePlan.id}`} title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
               trigger={<Button type="button" size="sm" variant="ghost" disabled={busy}><X />取消剩余</Button>}
               onConfirm={() => onCall(async () => { await apiRequest(api(`/${encodeURIComponent(activePlan.id)}/cancel`), { method: 'POST' }); }, '剩余步骤已取消')} />
           </div>
@@ -613,9 +618,9 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
       ) : draft.length > 0 ? (
         <div className="mt-3 grid gap-1.5">
           {draft.map((a, i) => (
-            <div key={a.key} className="flex items-center gap-2 rounded-md border border-dashed border-amber-500/50 bg-amber-500/[.06] px-2.5 py-1.5 text-xs">
+            <div key={a.key} className="flex items-center gap-2 rounded-md border border-dashed border-warn/50 bg-warn/[.06] px-2.5 py-1.5 text-xs">
               <span className="w-5 text-right font-mono text-[11px] text-muted-foreground">{i + 1}.</span>
-              <span className="rounded border border-amber-500/50 px-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">{actionKinds(a)}</span>
+              <span className="rounded border border-warn/50 px-1.5 text-[10px] font-semibold text-warn">{actionKinds(a)}</span>
               <span className="min-w-0 flex-1 truncate">{a.label}</span>
               <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{a.steps.length} 步</span>
               <button type="button" className="rounded p-0.5 text-muted-foreground hover:text-primary" title="上移" onClick={() => move(i, -1)}><ArrowUp className="h-3.5 w-3.5" /></button>
@@ -662,8 +667,8 @@ function StepLine({ step, controls }: { step: PlanStep; controls?: JSX.Element }
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center gap-2">
-        {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-500" /> : (
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${step.status === 'done' ? 'bg-emerald-500' : step.status === 'error' ? 'bg-destructive' : step.status === 'rolled-back' ? 'bg-sky-500' : 'bg-[hsl(var(--muted-foreground))]/50'}`} />
+        {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-warn" /> : (
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${step.status === 'done' ? 'bg-ok' : step.status === 'error' ? 'bg-destructive' : step.status === 'rolled-back' ? 'bg-info' : 'bg-[hsl(var(--muted-foreground))]/50'}`} />
         )}
         <span className="rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-semibold">{KIND_LABEL[step.kind]}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{step.profileId}{step.params?.memberId ? ` · ${step.params.memberId}` : ''}{typeof step.params?.weight === 'number' ? ` · 权重 ${step.params.weight}` : ''}</span>
@@ -682,7 +687,7 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
     <div className={`rounded-md border px-3 py-2 text-xs ${bad ? 'border-destructive/40 bg-destructive/[.04]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35'}`}>
       <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen(!open)}>
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-        <b className={bad ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}>{PLAN_STATUS_LABEL[plan.status]}</b>
+        <b className={bad ? 'text-destructive' : 'text-ok'}>{PLAN_STATUS_LABEL[plan.status]}</b>
         <span className="text-muted-foreground">{plan.steps.length} 步 · {new Date(plan.createdAt).toLocaleString()}</span>
         {bad ? <span className="min-w-0 flex-1 truncate text-destructive">{plan.steps.find((s) => s.error)?.error}</span> : null}
       </button>
@@ -690,8 +695,8 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
         <div className="mt-2 grid gap-1">
           {plan.steps.map((s) => <StepLine key={s.id} step={s} />)}
           {plan.rollbackLog?.length ? (
-            <div className="mt-1 rounded-md border border-sky-500/30 bg-sky-500/[.05] px-2.5 py-1.5 text-[11px]">
-              <b className="text-sky-600 dark:text-sky-400">回滚日志</b>
+            <div className="mt-1 rounded-md border border-info/30 bg-info/[.05] px-2.5 py-1.5 text-[11px]">
+              <b className="text-info">回滚日志</b>
               {plan.rollbackLog.map((line, i) => <p key={i} className="mt-0.5 text-muted-foreground">{line}</p>)}
             </div>
           ) : null}
@@ -803,7 +808,7 @@ function ProbeModal({ probe }: { probe: ReturnType<typeof useProbe> }): JSX.Elem
     <CanvasModal wide title={`分流实测 · ${probe.probeFor}`} onClose={probe.close}>
       <div className="max-h-52 overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] text-muted-foreground" style={{ overscrollBehavior: 'contain' }}>
         {probe.log.map((line, i) => <div key={i}>{line}</div>)}
-        {probe.probing.current ? <div className="mt-1 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin text-amber-500" />请求进行中…</div> : null}
+        {probe.probing.current ? <div className="mt-1 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin text-warn" />请求进行中…</div> : null}
       </div>
       {probe.probeRes ? <div className="mt-3"><ProbeDashboard result={probe.probeRes} /></div> : null}
       {probe.probeRes ? (
@@ -848,11 +853,11 @@ function useIsolationAudit(branchId: string, onToast?: (m: string) => void) {
 }
 
 const AUDIT_VERDICT_STYLE: Record<string, string> = {
-  pass: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  fail: 'border-red-500/60 bg-red-500/10 text-red-600 dark:text-red-400',
-  boundary: 'border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  pass: 'border-ok/50 bg-ok-soft text-ok',
+  fail: 'border-bad/60 bg-bad-soft text-bad',
+  boundary: 'border-warn/60 bg-warn-soft text-warn',
   skip: 'border-[hsl(var(--hairline))] bg-muted/40 text-muted-foreground',
-  info: 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  info: 'border-info/40 bg-info-soft text-info',
 };
 const AUDIT_VERDICT_LABEL: Record<string, string> = { pass: '通过', fail: '失效', boundary: '已知边界', skip: '不适用', info: '观测' };
 
@@ -864,7 +869,7 @@ function IsolationAuditModal({ audit }: { audit: ReturnType<typeof useIsolationA
     <CanvasModal wide title={`隔离审计（MECE 实测）· ${audit.auditFor}`} onClose={audit.close}>
       {!r ? (
         <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+          <Loader2 className="h-4 w-4 animate-spin text-warn" />
           正在实测：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证…
         </div>
       ) : (
@@ -912,8 +917,14 @@ function useMeasuredWidth(): [React.RefObject<HTMLDivElement>, number] {
   return [hostRef, w];
 }
 
-const isWebLike = (node: GraphNodeView | undefined, id: string): boolean =>
-  /web|admin|front|console|ui/i.test(id) || (node?.pathPrefixes ?? []).includes('/');
+/** 角色徽标文案：服务端判定的 role → 三字母。角色缺失（旧服务端）按 API 显示，不在前端补猜。 */
+const ROLE_BADGE: Record<ServiceRoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
+const roleBadge = (node: GraphNodeView | undefined): string => ROLE_BADGE[node?.role ?? 'api'];
+const roleTitle = (node: GraphNodeView | undefined): string => {
+  if (!node?.role) return '角色未知（服务端未返回）';
+  const base = `${ROLE_BADGE[node.role]} · ${node.roleReason || ''}`.trim();
+  return node.roleSource === 'declared' ? base : `${base}（推断，可在 cds-compose 里用 cds.role 声明覆盖）`;
+};
 
 /* ── 数据层（两个画布共用）：左框共享基础设施（主库）+ 右框隔离区（统一战线）── */
 function DataLayerSvg({ geo, fy, fh, iso, draftIsoCount, mainDbX, transferActive }: {
@@ -981,7 +992,7 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
                 status={i === mainDbIdx && !isRedis ? `隔离副本库 · 待保存（${draftIsoCount} 服务切换）` : '隔离副本 · 待保存'}
                 foot={`${s.id}-isolated`}
                 extra={(
-                  <button type="button" className="absolute right-1.5 top-1.5 rounded border border-amber-500/60 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                  <button type="button" className="absolute right-1.5 top-1.5 rounded border border-warn/60 bg-background p-0.5 text-warn hover:text-destructive "
                     title="撤销复制隔离草稿" onClick={onRemoveIsoDrafts}>
                     <X className="h-3 w-3" />
                   </button>
@@ -991,7 +1002,7 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
         </>
       ) : iso.state === 'idle' ? (
         <button type="button"
-          className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
+          className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-ok/50 bg-ok/[.06] text-xs font-semibold text-ok transition-colors hover:border-ok hover:bg-ok-soft "
           style={{ left: geo.rightX + (geo.rightFrameW - geo.dbCW) / 2, top: dbY, width: geo.dbCW, height: 92 }}
           title={`统一战线（分支级）：把主库整库克隆进专用隔离实例，${isolateTargets.length || '所有有副本的'} 个服务的副本改连隔离库（可回切）。先进变更清单，保存后执行`}
           onClick={onIsolateAll}>
@@ -1009,15 +1020,15 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
           extra={(
             <span className="absolute bottom-1.5 right-1.5 flex gap-1">
               {(iso.state === 'done' || iso.state === 'partial') && onAudit ? (
-                <button type="button" className="rounded border border-sky-500/50 bg-background px-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                <button type="button" className="rounded border border-info/50 bg-background px-1.5 text-[10px] text-info"
                   title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证，弹窗显示五面矩阵" onClick={onAudit}>隔离审计</button>
               ) : null}
               {iso.state === 'partial' && isolateTargets.length > 0 ? (
-                <button type="button" className="rounded border border-amber-500/60 bg-background px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                <button type="button" className="rounded border border-warn/60 bg-background px-1.5 text-[10px] text-warn"
                   title="把尚未隔离的服务也加入隔离草稿，对齐统一战线" onClick={onIsolateAll}>补齐隔离</button>
               ) : null}
               {(iso.state === 'done' || iso.state === 'partial') && revertTargets.length > 0 ? (
-                <button type="button" className="rounded border border-emerald-500/50 bg-background px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
+                <button type="button" className="rounded border border-ok/50 bg-background px-1.5 text-[10px] text-ok"
                   title="全部已隔离服务回切主库（隔离库转快照保留）" onClick={onRevertAll}>回切主库</button>
               ) : null}
             </span>
@@ -1055,11 +1066,40 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const nodeById = new Map(graph.nodes
     .filter((n) => n.kind === 'service')
     .map((n) => [n.rawId ?? n.id.replace(/^service:/, ''), n]));
+  // 站点分组（入口 → 站点 → 壳 → 前缀成员）由服务端给出；旧服务端没有 sites 时整体退回调用深度分层。
+  const sites = (graph.sites ?? []).filter((site) => site.shellId ? profileIds.includes(site.shellId) : site.members.some((m) => profileIds.includes(m.id)));
+  const sitedIds = new Set<string>();
+  for (const site of sites) {
+    if (site.shellId) sitedIds.add(site.shellId);
+    for (const m of site.members) sitedIds.add(m.id);
+  }
+  // 壳可能同时是别的站点的成员（子域服务又在主域名声明了前缀）：卡片只画一次，归第一个用到它的站点
+  const placed = new Set<string>();
+  const edgeSvcId = (endpoint: string): string => endpoint.replace(/^service:/, '');
+  const siteBlocks = sites.map((site) => {
+    const shell = site.shellId && profileIds.includes(site.shellId) && !placed.has(site.shellId) ? site.shellId : undefined;
+    if (shell) placed.add(shell);
+    const members = site.members.filter((m) => profileIds.includes(m.id) && !placed.has(m.id)).map((m) => m.id);
+    for (const m of members) placed.add(m);
+    return { site, shell, members, attached: [] as string[] };
+  }).filter((b) => b.shell || b.members.length > 0);
+  // 没有公网路由、只被本站服务经容器网络调用的服务（静态站背后的 API）：挂进同一个站点框，
+  // 落在调用它的服务正下方——静态站在上、API 在下、箭头指向被调方，不平铺到画布底部。
+  const internalIds = (graph.internal ?? profileIds.filter((id) => !sitedIds.has(id))).filter((id) => profileIds.includes(id) && !placed.has(id));
+  for (const id of internalIds) {
+    const callers = graph.edges.filter((e) => e.from.startsWith('service:') && edgeSvcId(e.to) === id).map((e) => edgeSvcId(e.from));
+    if (callers.length === 0) continue;
+    const owner = siteBlocks.find((b) => callers.every((c) => c === b.shell || b.members.includes(c)));
+    if (!owner) continue;
+    owner.attached.push(id);
+    placed.add(id);
+  }
   const layered = new Set(graph.layers.flat());
-  const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id)));
-  const missing = profileIds.filter((p) => !layered.has(p));
+  const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id) && !placed.has(id)));
+  const missing = profileIds.filter((p) => !layered.has(p) && !placed.has(p));
   if (missing.length) layers.push(missing);
   const rows = layers.filter((l) => l.length > 0);
+  const conflictsOf = (pid: string): string[] => sites.flatMap((site) => site.conflicts.filter((c) => c.ids.includes(pid)).map((c) => c.prefix));
 
   const boxRowsOf = (pid: string): number => {
     const members = replicaSets[pid]?.enabled ? replicaSets[pid].members : [];
@@ -1074,21 +1114,84 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
 
   // gap 留出盒外右侧的加号小按钮（Railway 风：加号不进盒内）
   const gap = 52, layerGap = 66, layerTop = 150;
-  const maxRowW = Math.max(0, ...rows.map((l) => l.length * BOX_W + (l.length - 1) * gap));
+  // 站点块：壳在上、成员一排在下；块宽取两行较宽者。块外留 sitePad 画虚线框，块间 siteGap
+  const sitePad = 14, siteGap = 36, siteLabelH = 22;
+  const rowWidth = (n: number): number => (n <= 0 ? 0 : n * BOX_W + (n - 1) * gap);
+  const blockW = (b: typeof siteBlocks[number]): number => Math.max(b.shell ? BOX_W : 0, rowWidth(b.members.length), rowWidth(b.attached.length));
+  const sitesRowW = siteBlocks.length > 0
+    ? siteBlocks.reduce((sum, b) => sum + blockW(b) + sitePad * 2, 0) + (siteBlocks.length - 1) * siteGap
+    : 0;
+  const maxRowW = Math.max(0, sitesRowW, ...rows.map((l) => rowWidth(l.length)));
   const canvasW = Math.max(w, maxRowW + 24, geoProbe.minWidth);
   const geo = dataGeo(canvasW, Math.max(dbInfra.length, 1));
   const entryX = (canvasW - CW) / 2, entryY = 14;
 
   const pos = new Map<string, { x: number; cx: number; y: number; h: number }>();
+  const frames: Array<{ site: GraphSiteView; x: number; y: number; w: number; h: number; shell?: string; members: string[]; attached: string[] }> = [];
   let cursorY = layerTop;
+  if (siteBlocks.length > 0) {
+    const shellY = cursorY + siteLabelH;
+    const shellRowH = Math.max(0, ...siteBlocks.filter((b) => b.shell).map((b) => boxH(b.shell!)));
+    const memberY = shellY + (shellRowH > 0 ? shellRowH + layerGap : 0);
+    // 三行：壳 / 前缀成员 / 站内内网服务。各站的行高对齐，站点框各自只包到自己最后一行
+    const memberRowH = Math.max(0, ...siteBlocks.flatMap((b) => b.members.map(boxH)));
+    const attachedRowH = Math.max(0, ...siteBlocks.flatMap((b) => b.attached.map(boxH)));
+    let x = Math.max(8, (canvasW - sitesRowW) / 2);
+    for (const b of siteBlocks) {
+      const bw = blockW(b);
+      const innerX = x + sitePad;
+      if (b.shell) {
+        const h = boxH(b.shell);
+        const sx = innerX + (bw - BOX_W) / 2;
+        pos.set(b.shell, { x: sx, cx: sx + BOX_W / 2, y: shellY, h });
+      }
+      const placeRow = (ids: string[], y: number): void => {
+        const rw = rowWidth(ids.length);
+        const start = innerX + (bw - rw) / 2;
+        ids.forEach((id, i) => {
+          const mx = start + i * (BOX_W + gap);
+          pos.set(id, { x: mx, cx: mx + BOX_W / 2, y, h: boxH(id) });
+        });
+      };
+      placeRow(b.members, memberY);
+      // 没有前缀成员的站点，内网服务紧贴壳下方，不为别的站点的成员行留空
+      const attachedY = b.members.length > 0 ? memberY + memberRowH + layerGap : shellY + shellRowH + layerGap;
+      // 站内内网服务尽量对齐到调用它的那一列（单个时直接居中在调用方正下方）
+      if (b.attached.length === 1 && b.members.length <= 1) {
+        const id = b.attached[0];
+        const caller = graph.edges.find((e) => e.from.startsWith('service:') && edgeSvcId(e.to) === id);
+        const callerPos = caller ? pos.get(edgeSvcId(caller.from)) : undefined;
+        const ax = callerPos ? callerPos.x : innerX + (bw - BOX_W) / 2;
+        pos.set(id, { x: ax, cx: ax + BOX_W / 2, y: attachedY, h: boxH(id) });
+      } else {
+        placeRow(b.attached, attachedY);
+      }
+      const lastY = b.attached.length > 0 ? attachedY + attachedRowH : b.members.length > 0 ? memberY + memberRowH : shellY + (b.shell ? boxH(b.shell) : 0);
+      frames.push({ site: b.site, x, y: cursorY, w: bw + sitePad * 2, h: lastY + sitePad - cursorY, shell: b.shell, members: b.members, attached: b.attached });
+      x += bw + sitePad * 2 + siteGap;
+    }
+    const bottom = Math.max(...frames.map((f) => f.y + f.h));
+    cursorY = bottom + layerGap;
+  }
+  // 无公网路由的服务：尽量落在调用它的服务正下方（同列即同链路），没人调用的居中；同排按目标 x 排序后左右推开避免重叠
+  const callerCxOf = (id: string): number | null => {
+    const callers = graph.edges
+      .filter((e) => e.to.replace(/^service:/, '') === id && e.from.startsWith('service:'))
+      .map((e) => pos.get(e.from.replace(/^service:/, ''))?.cx)
+      .filter((cx): cx is number => typeof cx === 'number');
+    return callers.length ? callers.reduce((a, b) => a + b, 0) / callers.length : null;
+  };
   rows.forEach((ids) => {
-    const rowW = ids.length * BOX_W + (ids.length - 1) * gap;
-    const startX = Math.max(8, (canvasW - rowW) / 2);
+    const rowW = rowWidth(ids.length);
+    const want = ids.map((id) => ({ id, cx: callerCxOf(id) ?? canvasW / 2 })).sort((a, b) => a.cx - b.cx);
     let rowMaxH = 0;
-    ids.forEach((id, i) => {
+    let minX = Math.max(8, Math.min((canvasW - rowW) / 2, (want[0]?.cx ?? canvasW / 2) - BOX_W / 2));
+    want.forEach(({ id, cx }) => {
       const h = boxH(id);
       rowMaxH = Math.max(rowMaxH, h);
-      pos.set(id, { x: startX + i * (BOX_W + gap), cx: startX + i * (BOX_W + gap) + BOX_W / 2, y: cursorY, h });
+      const x = Math.max(minX, Math.min(cx - BOX_W / 2, canvasW - BOX_W - 8));
+      pos.set(id, { x, cx: x + BOX_W / 2, y: cursorY, h });
+      minX = x + BOX_W + gap;
     });
     cursorY += rowMaxH + layerGap;
   });
@@ -1098,11 +1201,18 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const mainDbIdx = Math.max(dbInfra.findIndex((s) => /mongo|mysql|mariadb|postgres/i.test(s.dockerImage || s.id)), 0);
   const mainDbX = geo.dbX(mainDbIdx);
 
-  const entryFacing = profileIds.filter((p) => {
-    const n = nodeById.get(p);
-    return (n?.pathPrefixes?.length ?? 0) > 0 || !!n?.subdomain;
-  });
+  // 入口只连每个站点的壳（一个 host 一条线）；成员由壳下面的前缀线承接。旧服务端无 sites 时退回「有路由的都连」
+  const entryFacing = frames.length > 0
+    ? frames.map((f) => f.shell ?? f.members[0]).filter((id): id is string => !!id)
+    : profileIds.filter((p) => {
+      const n = nodeById.get(p);
+      return (n?.pathPrefixes?.length ?? 0) > 0 || !!n?.subdomain;
+    });
   const entryTargets = entryFacing.length > 0 ? entryFacing : (rows[0] ?? []);
+  const prefixEdges = frames.flatMap((f) => (f.shell ? f.members.map((id) => {
+    const m = f.site.members.find((x) => x.id === id);
+    return { from: f.shell!, to: id, prefixes: m?.prefixes ?? [], viaConvention: !!m?.viaConvention };
+  }) : []));
   const edgeSvc = (endpoint: string): string => endpoint.replace(/^service:/, '');
   const svcEdges = graph.edges
     .map((e) => ({ ...e, from: edgeSvc(e.from), to: edgeSvc(e.to) }))
@@ -1129,10 +1239,10 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-2.5">
         {headerLeft}
-        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 边=环境变量引用</span>
-        {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
-        {draftActions.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftActions.length} 项变更待保存</span> : null}
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 虚线框=同一 host · 边=环境变量引用</span>
+        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
+        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
 
@@ -1143,6 +1253,40 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               <marker id="rsArr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker>
               <marker id="rsArrAmber" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#f59e0b" /></marker>
             </defs>
+            {frames.map((f) => {
+              const touching = selected === null || selected === 'entry' || selected === f.shell || f.members.includes(selected) || f.attached.includes(selected);
+              const label = f.site.kind === 'main' ? `主域名 ${entryHost}` : `子域 ${f.site.subdomain}`;
+              const sub = f.site.kind === 'main'
+                ? (f.site.shellSource === 'convention' ? '默认站按名兜底 · 前缀分流' : '按前缀分流')
+                : '整站归壳';
+              return (
+                <g key={`frame-${f.site.id}`} opacity={touching ? 1 : 0.35}>
+                  <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill="hsl(var(--surface-raised))" fillOpacity="0.35"
+                    stroke="hsl(var(--hairline))" strokeWidth="1.2" strokeDasharray="6 5" />
+                  <text x={f.x + 12} y={f.y + 15} fontSize="10" fontWeight="700" fill="hsl(var(--muted-foreground))">{label}</text>
+                  <text x={f.x + f.w - 12} y={f.y + 15} fontSize="9" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{sub}</text>
+                </g>
+              );
+            })}
+            {prefixEdges.map((e, idx) => {
+              const a = pos.get(e.from), b = pos.get(e.to);
+              if (!a || !b) return null;
+              const text = e.prefixes.join(' ');
+              const label = (text.length > 26 ? `${text.slice(0, 25)}…` : text) + (e.viaConvention ? ' · 按名约定' : '');
+              // 标签沿线错开三档，避免同一排成员的前缀标签叠在一条水平线上
+              const t = 0.42 + (idx % 3) * 0.16;
+              const lx = a.cx + (b.cx - a.cx) * t, ly = (a.y + a.h) + (b.y - (a.y + a.h)) * t + 3;
+              return (
+                <g key={`prefix-${e.from}-${e.to}`} opacity={dimIf(selected === e.from || selected === e.to || selected === 'entry')}>
+                  <path d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke={e.viaConvention ? '#f59e0b' : 'hsl(var(--muted-foreground))'} strokeWidth="1.4" strokeDasharray="2 4" opacity="0.8"
+                    markerEnd={e.viaConvention ? 'url(#rsArrAmber)' : 'url(#rsArr)'}>
+                    <title>{`同一 host：forwarder 按最长前缀把 ${e.prefixes.join('、')} 直接转给 ${e.to}，${e.from} 的静态容器不经手这些请求${e.viaConvention ? '\n无人声明 /api/，由「服务名含 api/backend」的约定接管；建议显式写 cds.path-prefix' : ''}`}</title>
+                  </path>
+                  <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
+                  <text x={lx} y={ly} textAnchor="middle" fontSize="9" fill={e.viaConvention ? '#f59e0b' : 'hsl(var(--muted-foreground))'} className="font-mono">{label}</text>
+                </g>
+              );
+            })}
             {entryTargets.map((id) => {
               const p = pos.get(id);
               if (!p) return null;
@@ -1206,9 +1350,10 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           </div>
           <EntryLinks x={entryX + CW + 12} y={entryY + 4} entries={entries} />
 
-          {rows.flatMap((ids) => ids).map((pid) => {
+          {[...frames.flatMap((f) => [...(f.shell ? [f.shell] : []), ...f.members, ...f.attached]), ...rows.flatMap((ids) => ids)].map((pid) => {
             const p = pos.get(pid)!;
             const node = nodeById.get(pid);
+            const conflicts = conflictsOf(pid);
             const color = profileColor(pid);
             const rs = replicaSets[pid];
             const members = rs?.enabled ? rs.members : [];
@@ -1227,8 +1372,17 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   title="点击高亮与它相连的线"
                   style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : selected === pid ? color : `${color}59`, boxShadow: selected === pid ? `0 0 0 2px ${color}55` : undefined }}>
                   <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white" style={{ background: color }}>{isWebLike(node, pid) ? 'WEB' : 'API'}</span>
+                    <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white ${node?.roleSource && node.roleSource !== 'declared' ? 'border border-dashed border-white/70' : ''}`}
+                      style={{ background: color }} title={roleTitle(node)} data-role={node?.role ?? ''} data-role-source={node?.roleSource ?? ''}>{roleBadge(node)}</span>
                     <span className="min-w-0 flex-1 truncate" title={pid}>{node?.name || pid}</span>
+                    {node?.subdomain && !frames.some((f) => f.site.kind === 'subdomain' && f.shell === pid) ? (
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-[hsl(var(--hairline))] px-1.5 text-[10px] text-muted-foreground"
+                        title={`除了主域名上的前缀，它还独占子域 ${node.subdomain}（整站归它）；卡片只画一次，归主域名站点`}>子域</span>
+                    ) : null}
+                    {conflicts.length > 0 ? (
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[10px] font-semibold text-warn"
+                        title={`前缀冲突：${conflicts.join('、')} 被多个服务同时声明，forwarder 只能按 id 字典序二选一。请在 cds-compose 里只保留一个声明方`}>冲突</span>
+                    ) : null}
                     {members.length > 0 ? (
                       <span className="inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-[10px] font-bold text-white" style={{ background: color }} title={`1 主 + ${members.length} 副本`}>
                         x{1 + members.length}
@@ -1279,7 +1433,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   {draftAdds.map((d, i) => (
                     <ChipRow key={`${d.actionKey}-${i}`} color="#f59e0b" mono={`副本(草稿${i + 1})`} sub={d.params?.versionId ? '历史版本 · 待保存' : '当前版本 · 待保存'} ghost
                       actions={(
-                        <button type="button" className="rounded border border-amber-500/50 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                        <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                           title="撤销这条草稿（不影响其他草稿）" onClick={() => onRemoveAction(d.actionKey)}>
                           <X className="h-3 w-3" />
                         </button>
@@ -1354,7 +1508,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           onClick={() => onOpenLoadTest(profileIds.find((pid) => (replicaSets[pid]?.members.length ?? 0) > 0) || profileIds[0])}>
           <Activity />压测
         </Button>
-        <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 连线 = 环境变量引用（悬停看键名）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
+        <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 虚线框 = 同一 host，上面是壳（静态站），下面按前缀分流 · 连线 = 环境变量引用（悬停看键名）· 徽标虚边 = 角色是推断的（cds.role 可声明）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>
@@ -1367,8 +1521,8 @@ function ChipRow({ color, mono, sub, weight, onWeightClick, weightInput, actions
   actions?: JSX.Element; danger?: boolean; boot?: boolean; ghost?: boolean; dim?: boolean;
 }): JSX.Element {
   return (
-    <div className={`flex h-[22px] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[10px] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'bg-amber-500/[.06] text-amber-600 dark:text-amber-400' : ''} ${dim ? 'opacity-50' : ''}`}>
-      {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : (
+    <div className={`flex h-[22px] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[10px] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'bg-warn/[.06] text-warn' : ''} ${dim ? 'opacity-50' : ''}`}>
+      {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-warn" /> : (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : ghost ? '#f59e0b' : color }} />
       )}
       <span className={`min-w-0 flex-1 truncate font-mono ${danger ? 'text-destructive' : ''}`} title={sub ? `${mono} · ${sub}` : mono}>
@@ -1550,10 +1704,10 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
         {headerLeft}
         <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />入口 → 项目 → 基础设施</span>
         {groupCount > 0 ? <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] text-indigo-500">整组副本 x{groupCount}</span> : null}
-        {uneven ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">各容器副本数不齐</span> : null}
-        {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
-        {draftActions.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftActions.length} 项变更待保存</span> : null}
+        {uneven ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">各容器副本数不齐</span> : null}
+        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
+        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
 
@@ -1604,7 +1758,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                     <span className="min-w-0 flex-1 truncate">项目</span>
                   </div>
                   <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-muted-foreground">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                     {profileIds.length} 容器 · 主实例组
                   </div>
                   {/* 容器 chips：与分支卡左上角的 chip 同一视觉语言（2026-07-25 用户拍板，样式不另造） */}
@@ -1636,7 +1790,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                     </button>
                   </div>
                   <div className={`flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
-                    {st.boot > 0 ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />}
+                    {st.boot > 0 ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-warn" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />}
                     <span className="min-w-0 flex-1 truncate">{st.boot > 0 ? '创建中…' : danger ? `${st.bad} 个容器副本异常` : st.missing > 0 ? `覆盖 ${profileIds.length - st.missing}/${profileIds.length} 容器` : '复制集成员 · 已负载'}</span>
                     {weightFor === k ? (
                       <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitGroupWeight(k)} onCancel={() => setWeightFor(null)} />
@@ -1670,25 +1824,25 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               // 预期管理：幽灵节点 = 项目节点的同样式黄色拷贝——保存后长成什么样，现在就画什么样
               const num = groupCount + (n.node.gi ?? 0) + 1;
               return (
-                <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-amber-500/60 bg-amber-500/[.04] text-xs shadow-md"
+                <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-warn/60 bg-warn/[.04] text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-amber-600 dark:text-amber-400">
-                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-amber-500 text-[10px] font-extrabold text-white">PRJ</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-warn">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-status-ink">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目-复制集-{num}</span>
-                    <button type="button" className="rounded border border-amber-500/50 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                    <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                       title="撤销这条整组副本草稿" onClick={() => onRemoveAction(n.node.actionKey!)}>
                       <X className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-amber-600/90 dark:text-amber-400/90">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-warn/90 /90">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
                     <span className="truncate">待保存 · 保存后每容器各创建 1 个副本</span>
                   </div>
                   <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => (
-                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/[.06] px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-warn/40 bg-warn/[.06] px-1.5 text-[10px] text-warn"
                         title={`${pid}：保存后创建副本实例`}>
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/80" />
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn/80" />
                         <span className="min-w-0 flex-1 truncate font-mono">{pid}</span>
                         <span className="shrink-0 font-mono opacity-70">待建</span>
                       </span>
@@ -1796,7 +1950,7 @@ function EntryLinks({ x, y, entries }: { x: number; y: number; entries: Array<{ 
         <a key={e.url} href={e.url} target="_blank" rel="noreferrer"
           onClick={(ev) => ev.stopPropagation()}
           title={'打开 ' + e.name + '：' + e.url}
-          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/[.08] px-2 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/20 dark:text-emerald-400">
+          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md border border-ok/40 bg-ok/[.08] px-2 text-[11px] font-medium text-ok transition-colors hover:bg-ok-soft ">
           <span className="truncate">{e.name}</span>
           <ExternalLink className="h-3 w-3 shrink-0" />
         </a>
@@ -1814,18 +1968,18 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
 }): JSX.Element {
   return (
     <>
-      <div className={`absolute rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : draftStyle ? 'border-[1.5px] border-dashed border-amber-500/60 bg-amber-500/[.04]' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
+      <div className={`absolute rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : draftStyle ? 'border-[1.5px] border-dashed border-warn/60 bg-warn/[.04]' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
         style={{ left: x, top: y, width: w, ...(boot ? { animation: 'rscolorin 2.4s forwards' } : {}), ...(locked ? { filter: 'grayscale(0.9)', opacity: 0.65 } : {}) }}>
         {locked ? (
           <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[hsl(var(--hairline))] bg-background text-muted-foreground" title="副本请求已（或保存后将）转移到隔离区，回切主库可解锁">
             <Lock className="h-3 w-3" />
           </span>
         ) : null}
-        <div className={`flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[13px] font-bold ${draftStyle ? 'text-amber-600 dark:text-amber-400' : ''}`}>
+        <div className={`flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[13px] font-bold ${draftStyle ? 'text-warn' : ''}`}>
           <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[10px] font-extrabold text-white" style={{ background: color }}>{ico}</span>
           <span className="truncate">{name}</span>
         </div>
-        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[11px] ${danger ? 'font-semibold text-destructive' : draftStyle ? 'text-amber-600/90 dark:text-amber-400/90' : 'text-muted-foreground'}`}>
+        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[11px] ${danger ? 'font-semibold text-destructive' : draftStyle ? 'text-warn/90 /90' : 'text-muted-foreground'}`}>
           <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : draftStyle ? '#f59e0b' : ok ? '#10b981' : 'hsl(var(--muted-foreground))' }} />
           <span className="truncate" title={status}>{status}</span>
         </div>

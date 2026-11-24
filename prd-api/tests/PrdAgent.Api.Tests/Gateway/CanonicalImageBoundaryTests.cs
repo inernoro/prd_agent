@@ -1,0 +1,271 @@
+using System.Net;
+using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Gateway;
+
+public sealed class CanonicalImageBoundaryTests
+{
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Seedream5UsesGenerationJsonForTextSingleAndMultipleReferenceImages(int imageCount)
+    {
+        const string image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        var request = LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.VisualAgent.Image.Img2Img,
+            ModelType = ModelTypes.ImageGen,
+            CanonicalImageRequest = new()
+            {
+                Prompt = "保留参考图商品", Size = "1024x1024", Count = 1,
+                Images = Enumerable.Repeat(image, imageCount).ToList(),
+            },
+        }, new ModelResolutionResult
+        {
+            ActualModel = "doubao-seedream-5-0-pro-260628",
+            ApiUrl = "https://ark.cn-beijing.volces.com/api/v3",
+            PlatformType = "openai", Protocol = "openai",
+        });
+
+        Assert.Equal("images/generations", request.EndpointPath);
+        Assert.False(request.IsMultipart);
+        var body = request.RequestBody!;
+        Assert.Equal("1024x1024", body["size"]!.GetValue<string>());
+        Assert.False(body.ContainsKey("n"));
+        Assert.False(body.ContainsKey("sequential_image_generation"));
+        Assert.False(body.ContainsKey("stream"));
+        if (imageCount == 0) Assert.False(body.ContainsKey("image"));
+        else if (imageCount == 1) Assert.Equal(image, body["image"]!.GetValue<string>());
+        else Assert.Equal(imageCount, body["image"]!.AsArray().Count);
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo("doubao-seedream-5-0-pro-260628");
+        Assert.NotNull(info);
+        Assert.NotEmpty(info.SizesByResolution["1k"]);
+        Assert.NotEmpty(info.SizesByResolution["2k"]);
+        Assert.Empty(info.SizesByResolution["4k"]);
+        Assert.NotNull(GatewayImageModelCatalog.ValidateSize("4096x4096", info));
+    }
+
+    [Fact]
+    public void CanaryFinalWire_PreservesPinnedOfferingAndLowQualityEnvelope()
+    {
+        var request = LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.VisualAgent.Image.Text2Img,ModelType=ModelTypes.ImageGen,
+            RequiredLogicalModelPublicId="fixed-version",RequiredOfferingId="frozen-route",
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:request" },
+            CanonicalImageRequest=new() { Prompt="A blue circle.",Count=1,Size="1024x1024",Quality="low" }
+        }, new ModelResolutionResult { ActualModel="gpt-image-2",ApiUrl="https://api.openai.com/v1",PlatformType="openai",Protocol="openai" });
+        Assert.Equal("frozen-route",request.RequiredOfferingId);
+        Assert.Equal("low",request.RequestBody!["quality"]!.GetValue<string>());
+        Assert.Equal(1,request.RequestBody["n"]!.GetValue<int>());
+        Assert.Equal("1024x1024",request.RequestBody["size"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("high",1,"route")]
+    [InlineData("low",2,"route")]
+    [InlineData("low",1,"")]
+    public void CanaryFinalWire_RejectsExpandedEnvelope(string quality,int count,string route)
+        => Assert.Throws<InvalidOperationException>(()=>LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.VisualAgent.Image.Text2Img,ModelType=ModelTypes.ImageGen,
+            RequiredLogicalModelPublicId="fixed-version",RequiredOfferingId=route,
+            Context=new GatewayRequestContext { SourceTask="ModelUpgradeCanaryWorker:request" },
+            CanonicalImageRequest=new() { Prompt="A blue circle.",Count=count,Size="1024x1024",Quality=quality }
+        },new ModelResolutionResult { ActualModel="gpt-image-2",ApiUrl="https://api.openai.com/v1",PlatformType="openai",Protocol="openai" }));
+
+    [Fact]
+    public void ExplicitQuality_OnUnsupportedAdapter_IsRejected()
+        => Assert.Throws<InvalidOperationException>(()=>LlmGateway.RebuildCanonicalImageRequest(new GatewayRawRequest {
+            AppCallerCode=AppCallerRegistry.VisualAgent.Image.Text2Img,ModelType=ModelTypes.ImageGen,
+            CanonicalImageRequest=new() { Prompt="A circle.",Quality="low" }
+        },new ModelResolutionResult { ActualModel="gemini-image",ApiUrl="https://example.test",PlatformType="google",Protocol="google" }));
+
+    private sealed class Transport : HttpMessageHandler, IHttpClientFactory
+    {
+        public List<string> Paths { get; } = [];
+        public JsonObject? Body { get; private set; }
+        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Paths.Add(request.RequestUri!.AbsolutePath);
+            Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"Success\":true,\"StatusCode\":200,\"Content\":\"{}\"}") };
+        }
+    }
+
+    [Fact]
+    public async Task MapSendsOnlyCanonicalParameters_NoPreResolveOrWireParameters()
+    {
+        var transport = new Transport();
+        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
+        var result = await client.GenerateImageAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, ModelType = ModelTypes.ImageGen,
+            ExpectedModel = "image1", RequiredLogicalModelPublicId = "image1",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest { Prompt = "白桃", Size = "1024x1024" },
+        }, CancellationToken.None);
+        Assert.True(result.Success);
+        Assert.Equal(new[] { "/gw/v1/raw" }, transport.Paths);
+        Assert.Equal("image1", transport.Body!["RequiredLogicalModelPublicId"]!.GetValue<string>());
+        Assert.False(transport.Body.ContainsKey("RequestBody"));
+        Assert.False(transport.Body.ContainsKey("EndpointPath"));
+        Assert.Equal("1024x1024", transport.Body["CanonicalImageRequest"]!["Size"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("{\"data\":[{\"b64_json\":\"abc\"}]}")]
+    [InlineData("{\"data\":[{\"url\":\"data:image/png;base64,abc\"}]}")]
+    [InlineData("{\"choices\":[{\"message\":{\"images\":[{\"image_url\":{\"url\":\"data:image/png;base64,abc\"}}]}}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"abc\"}}]}}]}")]
+    public void GatewayNormalizesVendorResults(string wire)
+    {
+        var response = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse { Success = true, StatusCode = 200, Content = wire });
+        Assert.True(response.Success);
+        Assert.Equal("abc", JsonNode.Parse(response.Content!)!["data"]![0]!["b64_json"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"data\":[{}]}")]
+    [InlineData("invalid-json")]
+    public void Http200WithoutImageIsNotSuccess(string wire)
+        => Assert.False(GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse { Success = true, StatusCode = 200, Content = wire }).Success);
+
+    [Fact]
+    public void GoogleImageRecitationPreservesRequestRejectedAcrossCanonicalBoundary()
+    {
+        const string wire = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION","finishMessage":"provider detail"}]}
+            """;
+
+        var response = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = wire,
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, response.ErrorCode);
+        Assert.Contains("调整需求", response.ErrorMessage);
+        Assert.Contains("有权使用的参考图", response.ErrorMessage);
+        Assert.DoesNotContain("IMAGE_RECITATION", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider detail", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GoogleImageRecitationPreservesRequestRejectedThroughMapConsumer()
+    {
+        const string wire = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION","finishMessage":"provider secret detail"}]}
+            """;
+
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = wire,
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.False(normalized.Success);
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, consumed.Code);
+        Assert.Contains("调整需求", consumed.Message);
+        Assert.Contains("有权使用的参考图", consumed.Message);
+        Assert.DoesNotContain("IMAGE_RECITATION", consumed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
+
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(
+            ImageGenRunStatus.Failed,
+            new ImageGenRunItem
+            {
+                Status = ImageGenRunItemStatus.Error,
+                ErrorCode = consumed.Code,
+                ErrorMessage = consumed.Message,
+            });
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, terminal.ErrorCode);
+        Assert.Equal(consumed.Message, terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void CompletedRunDoesNotCopyStaleItemFailure()
+    {
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(
+            ImageGenRunStatus.Completed,
+            new ImageGenRunItem
+            {
+                Status = ImageGenRunItemStatus.Error,
+                ErrorCode = ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
+                ErrorMessage = "旧错误",
+            });
+
+        Assert.Null(terminal.ErrorCode);
+        Assert.Null(terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void FailedRunWithoutItemReasonGetsStableFallback()
+    {
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(ImageGenRunStatus.Failed, null);
+
+        Assert.Equal(ErrorCodes.LLM_ERROR, terminal.ErrorCode);
+        Assert.Equal("生图失败，请重试。", terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void UnknownMissingImageRemainsUnavailableThroughMapConsumer()
+    {
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = "{\"candidates\":[{\"finishReason\":\"UNKNOWN\"}]}",
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, consumed.Code);
+        Assert.Contains("暂时不可用", consumed.Message);
+    }
+
+    [Fact]
+    public void UpstreamServiceFailureRemainsUnavailableThroughMapConsumer()
+    {
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = false,
+            StatusCode = 500,
+            ErrorCode = "PROVIDER_INTERNAL",
+            ErrorMessage = "provider secret detail",
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, consumed.Code);
+        Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NormalizedImagePreservesActualExecutionAndRequestedLogicalIdentity()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true, LogicalModelPublicId = "image1", ActualModel = "gpt-image-1",
+            ModelGroupName = "image-channel",
+        };
+        var result = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true, Content = "{\"data\":[{\"b64_json\":\"abc\"}]}", Resolution = resolution,
+        });
+        Assert.Same(resolution, result.Resolution);
+        Assert.Equal("image1", result.Resolution!.LogicalModelPublicId);
+        Assert.Equal("gpt-image-1", result.Resolution.ActualModel);
+    }
+}

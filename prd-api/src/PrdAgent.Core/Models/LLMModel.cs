@@ -121,6 +121,43 @@ public class LLMModel
     
     /// <summary>失败次数</summary>
     public long FailCount { get; set; } = 0;
+
+    // ---- 价格 ----
+    //
+    // 控制台的模型价格抽屉写的就是 llmgw_models 这几个字段（弱类型 BsonDocument 写入）。
+    // 这里补上强类型的对应属性：不补的话读方看不见它们——价格写进去了、读出来是空，
+    // 而且不报错（predicate-and-wiring-discipline 形状 2：写读两侧字段没对齐，链路只建一半）。
+    //
+    // 池退场之前这不成问题：价格挂在池成员上，解析走池成员那条路。改走对外模型线路之后
+    // 价格的唯一载体就是这里，读不到就等于每次调用都没有单价——账单、成本统计、预算
+    // 全部按「没配价」处理，而日志里一个字都不会说。
+    //
+    // 字段名与 ModelGroupItem 上那套逐字一致（同一份数据搬了个家），改名会让存量文档读空。
+
+    /// <summary>输入单价（每百万 token）。null 代表没配，不代表免费。</summary>
+    public decimal? InputPricePerMillion { get; set; }
+
+    /// <summary>输出单价（每百万 token）。</summary>
+    public decimal? OutputPricePerMillion { get; set; }
+
+    /// <summary>缓存命中的输入单价。null 时这部分按 <see cref="InputPricePerMillion"/> 全价算。</summary>
+    public decimal? CachedInputPricePerMillion { get; set; }
+
+    /// <summary>缓存写入单价。</summary>
+    public decimal? CacheWritePricePerMillion { get; set; }
+
+    /// <summary>按次计价的单价（生图等按张/次计费的模型用它）。</summary>
+    public decimal? PricePerCall { get; set; }
+
+    /// <summary>价格币种。缺失时记账侧会判为币种过期，不许靠默认值糊过去。</summary>
+    public string? PriceCurrency { get; set; }
+
+    /// <summary>价格来源：人工填的还是从上游抓的。</summary>
+    public string? PriceSource { get; set; }
+
+    /// <summary>这个价格是什么时候看到的。</summary>
+    public DateTime? PriceObservedAt { get; set; }
+
     
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

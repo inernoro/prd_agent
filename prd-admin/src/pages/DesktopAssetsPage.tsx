@@ -1,10 +1,10 @@
+import { AssetSourceFilter } from '@/components/workspace/AssetSourceFilter';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FolderOpen,
   Image,
   FileText,
   Paperclip,
-  Globe,
   Search,
   LayoutGrid,
   List,
@@ -32,23 +32,22 @@ import { getMobileAssets } from '@/services';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import { lazy, Suspense } from 'react';
-import type { MobileAssetItem } from '@/services/contracts/mobile';
+import type { AssetCategory, MobileAssetItem } from '@/services/contracts/mobile';
+import { ASSET_CATEGORIES, ASSET_CATEGORY_REGISTRY as TYPE_CONFIG, isAudioAsset } from '@/lib/assetCategories';
+import { AudioAssetPlayer } from '@/components/assets/AudioAssetPlayer';
 
 // 「分享」tab 走独立内容组件，按用户诉求在「我的资产」下统一管理
 const MySharesEmbedded = lazy(() => import('@/pages/labs/MySharesPage'));
 
 /* ── Types ── */
-type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage' | 'shares';
+type AssetTab = 'all' | AssetCategory | 'shares';
 type SortBy = 'date' | 'size' | 'name';
 type ViewMode = 'grid' | 'list';
 
 /* ── Constants ── */
 const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
   { key: 'all', label: '全部', icon: FolderOpen },
-  { key: 'image', label: '图片', icon: Image },
-  { key: 'document', label: '文档', icon: FileText },
-  { key: 'attachment', label: '附件', icon: Paperclip },
-  { key: 'webpage', label: '网页', icon: Globe },
+  ...ASSET_CATEGORIES.map((key) => ({ key, label: TYPE_CONFIG[key].label, icon: TYPE_CONFIG[key].icon })),
   { key: 'shares', label: '分享', icon: Share2 },
 ];
 
@@ -87,20 +86,9 @@ function formatShortDate(iso: string): string {
   }
 }
 
-const TYPE_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  image: { label: '图片', bg: 'rgba(251,146,60,0.15)', text: 'var(--semantic-orange-text)' },
-  document: { label: '文档', bg: 'rgba(129,140,248,0.15)', text: 'var(--semantic-indigo-text)' },
-  attachment: { label: '附件', bg: 'var(--bg-input)', text: 'var(--text-muted)' },
-  webpage: { label: '网页', bg: 'rgba(34,197,94,0.15)', text: 'var(--semantic-success-text)' },
-};
-
 /** 判断是否为图片：type 为 image 或 MIME 以 image/ 开头 */
 function isImageAsset(asset: MobileAssetItem): boolean {
   return asset.type === 'image' || (!!asset.mime && asset.mime.startsWith('image/'));
-}
-
-function isAudioAsset(asset: MobileAssetItem): boolean {
-  return !!asset.mime && asset.mime.startsWith('audio/');
 }
 
 function isVideoAsset(asset: MobileAssetItem): boolean {
@@ -302,7 +290,9 @@ function AssetListRow({
         {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
           <img src={asset.thumbnailUrl || asset.url || ''} alt="" loading="lazy" className="w-full h-full object-cover" />
         ) : (
-          <FileText size={14} style={{ color: 'var(--text-muted)' }} />
+          isAudioAsset(asset)
+            ? <Music size={14} style={{ color: 'var(--text-muted)' }} />
+            : <FileText size={14} style={{ color: 'var(--text-muted)' }} />
         )}
       </div>
 
@@ -411,15 +401,15 @@ function DetailPanel({
 
       {/* Actions */}
       <div className="px-4 py-4 flex flex-col gap-2" style={{ borderTop: '1px solid var(--border-faint)' }}>
-        {asset.url && (
+        {asset.url && !isAudioAsset(asset) && (
           <>
             <button
               type="button"
               onClick={() => asset.url && window.open(asset.url, '_blank', 'noopener,noreferrer')}
               className="flex items-center justify-center gap-2 w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
               style={{
-                background: 'var(--accent-primary, #818CF8)',
-                color: '#fff',
+                background: 'var(--button-primary-bg)',
+                color: 'var(--button-primary-fg)',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = '0.85';
@@ -517,11 +507,7 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
         style={{ ...containerBase, aspectRatio: '3/1' }}
       >
         <Music size={28} style={{ color: 'var(--text-muted)' }} />
-        <audio
-          src={asset.url}
-          controls
-          style={{ width: '100%', height: '32px', opacity: 0.85 }}
-        />
+        <AudioAssetPlayer url={asset.url} title={asset.title} />
       </div>
     );
   }
@@ -648,10 +634,10 @@ function StatsPanel({
       <div className="flex-1 overflow-auto px-4 py-4 space-y-5">
         {/* Summary cards */}
         <div className="grid grid-cols-2 gap-2.5">
-          <StatCard icon={<FolderOpen size={14} />} label="总数" value={String(allTotal)} color="#818CF8" />
-          <StatCard icon={<Database size={14} />} label="总存储" value={formatBytes(totalSizeBytes)} color="#22c55e" />
-          <StatCard icon={<Image size={14} />} label="图片" value={String(categoryCounts['image'] ?? 0)} color="#FB923C" />
-          <StatCard icon={<FileText size={14} />} label="文档" value={String(categoryCounts['document'] ?? 0)} color="#818CF8" />
+          <StatCard icon={<FolderOpen size={14} />} label="总数" value={String(allTotal)} color="var(--accent-fg-violet)" />
+          <StatCard icon={<Database size={14} />} label="总存储" value={formatBytes(totalSizeBytes)} color="var(--accent-fg-success)" />
+          <StatCard icon={<Image size={14} />} label="图片" value={String(categoryCounts['image'] ?? 0)} color="var(--accent-fg-warning)" />
+          <StatCard icon={<FileText size={14} />} label="文档" value={String(categoryCounts['document'] ?? 0)} color="var(--accent-fg-violet)" />
         </div>
 
         {/* Latest activity */}
@@ -715,7 +701,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
       style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
     >
       <div className="flex items-center gap-1.5">
-        <span style={{ color, opacity: 0.8 }}>{icon}</span>
+        <span style={{ color }}>{icon}</span>
         <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
       </div>
       <div className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>
@@ -746,8 +732,7 @@ export default function DesktopAssetsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = (() => {
     const t = searchParams.get('tab');
-    if (t === 'all' || t === 'image' || t === 'document' || t === 'attachment' || t === 'webpage' || t === 'shares') return t;
-    return 'all';
+    return TABS.find((tab) => tab.key === t)?.key ?? 'all';
   })();
   const [activeTab, setActiveTabRaw] = useState<AssetTab>(initialTab);
   const setActiveTab = (t: AssetTab) => {
@@ -761,8 +746,7 @@ export default function DesktopAssetsPage() {
   // 否则从其它页跳 /my-assets?tab=shares 不会切到分享 tab
   useEffect(() => {
     const t = searchParams.get('tab');
-    const valid: AssetTab[] = ['all', 'image', 'document', 'attachment', 'webpage', 'shares'];
-    const next = (valid as string[]).includes(t ?? '') ? (t as AssetTab) : 'all';
+    const next = TABS.find((tab) => tab.key === t)?.key ?? 'all';
     setActiveTabRaw((prev) => (prev === next ? prev : next));
   }, [searchParams]);
   const [loading, setLoading] = useState(true);
@@ -778,6 +762,7 @@ export default function DesktopAssetsPage() {
   const [latestActivity, setLatestActivity] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
   const [sortBy, setSortBy] = useState<SortBy>('date');
   const [sortDesc, setSortDesc] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -804,7 +789,7 @@ export default function DesktopAssetsPage() {
     setError(null);
     try {
       const res = await getMobileAssets({
-        category: (category === 'all' || !category) ? undefined : (category as 'image' | 'document' | 'attachment' | 'webpage'),
+        category: (category === 'all' || !category) ? undefined : category,
         limit: PAGE_SIZE,
         skip: 0,
       });
@@ -831,7 +816,7 @@ export default function DesktopAssetsPage() {
     setLoadingMore(true);
     try {
       const res = await getMobileAssets({
-        category: activeTab === 'all' ? undefined : (activeTab as 'image' | 'document' | 'attachment' | 'webpage'),
+        category: activeTab === 'all' ? undefined : activeTab,
         limit: PAGE_SIZE,
         skip: assets.length,
       });
@@ -847,6 +832,7 @@ export default function DesktopAssetsPage() {
   useEffect(() => {
     fetchAssets(activeTab);
     setSelectedId(null);
+    setSourceFilter('');
   }, [activeTab, fetchAssets]);
 
   // Infinite scroll
@@ -865,7 +851,7 @@ export default function DesktopAssetsPage() {
 
   // Filter + sort
   const filtered = useMemo(() => {
-    let list = assets;
+    let list = sourceFilter ? assets.filter(asset => (asset.source || '未标注来源') === sourceFilter) : assets;
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -880,7 +866,7 @@ export default function DesktopAssetsPage() {
     });
 
     return list;
-  }, [assets, searchQuery, sortBy, sortDesc]);
+  }, [assets, searchQuery, sortBy, sortDesc, sourceFilter]);
 
   const selectedAsset = useMemo(
     () => (selectedId ? assets.find((a) => a.id === selectedId) ?? null : null),
@@ -1059,6 +1045,7 @@ export default function DesktopAssetsPage() {
         </div>
       </div>
 
+      {activeTab !== 'shares' && <AssetSourceFilter items={assets} value={sourceFilter} onChange={setSourceFilter} />}
       {/* ── Content ── */}
       {activeTab === 'shares' ? (
         // 「分享」tab：跨 4 类聚合管理，复用 MySharesPage 完整组件

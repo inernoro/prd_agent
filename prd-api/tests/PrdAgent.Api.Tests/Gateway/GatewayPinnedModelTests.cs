@@ -9,6 +9,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -138,6 +139,9 @@ public class GatewayPinnedModelTests
             chunks.Add(chunk);
         }
 
+        var start = chunks.Single(x => x.Type == "start");
+        start.Model.ShouldBe(PinnedModel);
+        start.Platform.ShouldBe(PinnedPlatformId);
         chunks.Any(x => x.Type == "done").ShouldBeTrue();
         gateway.CapturedRequest.ShouldNotBeNull();
         gateway.CapturedRequest!.ExpectedModel.ShouldBe(PinnedModel);
@@ -161,7 +165,7 @@ public class GatewayPinnedModelTests
                 };
             }))),
             Config("http://llmgw-serve.test"),
-            NullLogger<HttpLlmGatewayClient>.Instance);
+            NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
 
         var client = httpGateway.CreateClient(
             AppCallerRegistry.Desktop.Arena.BattleChat,
@@ -272,6 +276,7 @@ public class GatewayPinnedModelTests
         {
             CapturedRequest = request;
             await Task.Yield();
+            yield return GatewayStreamChunk.Start(Resolution());
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Done, Seq = 1 };
         }
 

@@ -7,8 +7,10 @@ git 只能回答「改了什么代码」，回答不了老板/产品经理真正
   2. 做完的东西验没验、验没验过（-> CDS 验收中心的 verdict）
   3. 质量在变好还是变差（-> 缺陷台账）
   4. 有没有真的发到线上（-> CDS 正式发布台账 /api/releases/runs，注意不是分支部署版本）
+  5. 谁在做、团队健不健康、AI 花了多少钱（-> MAP 团队洞察 /api/executive/team-insights）
+  6. 前几周说上线的能力，这一周到底有没有人用（-> /api/executive/adoption + 周报里的用量口径标签）
 
-本脚本把这四类「非 git 事实」按周聚合成一份 JSON，供周报正文引用。
+本脚本把这六类「非 git 事实」按周聚合成一份 JSON，供周报正文引用。
 所有来源都独立降级：任一来源不可达只把该段标 available=false，绝不让整份周报生不出来。
 
 用法：
@@ -339,6 +341,118 @@ def collect_defects(base, H, start, end):
     }
 
 
+# ── 来源 5：团队与用量（谁在做 / 团队健不健康 / AI 花了多少钱） ────────────
+# 前四源全是交付侧事实：做了什么、验没验、发没发、每天忙什么。
+# 「谁做的」「团队健康吗」「AI 成本多少」四源一个都答不上——那半边事实在 MAP 的团队洞察里。
+# 注意时间窗：这里必须传 from/to 精确区间，不能用 days 滚动窗。周一跑上周的周报时，
+# 滚动窗会把本周的数据一起卷进去，直接违反纪律 1。
+def collect_team_insights(base, H, start, end):
+    q = f"from={_urlquote(start)}&to={_urlquote(end)}"
+    res = _curl(H + [f"{base}/api/executive/team-insights?{q}"])
+    if not res.get("success"):
+        err = (res.get("error") or {}).get("message") or "success=false"
+        return {"available": False, "reason": f"团队洞察端点不可用：{err}"}
+    d = res.get("data") or {}
+    meta = d.get("meta") or {}
+    # 成本拿不到时**不许写成 0**：0 元和「模型组没配单价所以算不出来」是两件事，
+    # 混写等于用一句确定的假话替换一个诚实的空白（同 releases 段的 available/0 之别）。
+    return {
+        "available": True,
+        "headline": d.get("headline"),
+        "pulse": d.get("pulse"),
+        "attention": d.get("attention"),
+        "members": d.get("members"),
+        "flow": d.get("flow"),
+        "meta": meta,
+        "costAvailable": bool(meta.get("costAvailable")),
+        "note": "窗口与本周 ISO 周严格对齐（from/to 精确区间）；缺陷积压为此刻快照，不随窗口回溯，详见 meta.sources",
+    }
+
+
+# ── 来源 6：上线 → 采用（前几周说上线的能力，这一周有没有人用） ────────────
+# 只认周报能力条目里那一行机器可读的「用量口径」标签。没有标签的周次一律进 unlabeled，
+# 报「无标签」而不是报 0 —— 把「没测」讲成「没人用」是最恶劣的一种假结论。
+_TOKEN_LINE_RE = re.compile(r"\*\*用量口径\*\*\s*[：:]\s*(.+)")
+_TITLE_RE = re.compile(r"^#{2,4}\s+(?:\d+[.、]\s*)?(.+?)\s*$")
+
+
+def _week_label(iso_date, weeks_back):
+    import datetime as dt
+    d = dt.date.fromisoformat(iso_date) - dt.timedelta(days=7 * weeks_back)
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _parse_capability_tokens(path):
+    """从一份周报底稿里抽出 [(能力标题, [token…])]。抽不到返回空列表。"""
+    out, title = [], ""
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        m = _TITLE_RE.match(line)
+        if m:
+            title = m.group(1).strip()
+            continue
+        m = _TOKEN_LINE_RE.search(line)
+        if not m:
+            continue
+        body = m.group(1)
+        toks = re.findall(r"`([^`]+)`", body)
+        if not toks:
+            toks = [t for t in body.replace("、", " ").split() if ":" in t]
+        if toks:
+            out.append({"title": title or "（未命名能力）", "tokens": toks})
+    return out
+
+
+def collect_adoption(base, H, start, end, doc_dir, lookback_weeks):
+    entries, unlabeled = [], []
+    for back in range(1, lookback_weeks + 1):
+        label = _week_label(start, back)
+        path = os.path.join(doc_dir, f"report.{label}.md")
+        if not os.path.exists(path):
+            continue
+        caps = _parse_capability_tokens(path)
+        if not caps:
+            unlabeled.append(label)
+            continue
+        for c in caps:
+            entries.append({"week": label, "title": c["title"], "tokens": c["tokens"]})
+
+    if not entries:
+        return {
+            "available": False,
+            "reason": "回溯窗口内没有任何一份周报带「用量口径」标签，无法度量采用度",
+            "unlabeledWeeks": unlabeled,
+            "lookbackWeeks": lookback_weeks,
+        }
+
+    all_tokens = sorted({t for e in entries for t in e["tokens"]})
+    q = f"tokens={_urlquote(','.join(all_tokens))}&from={_urlquote(start)}&to={_urlquote(end)}"
+    res = _curl(H + [f"{base}/api/executive/adoption?{q}"])
+    if not res.get("success"):
+        err = (res.get("error") or {}).get("message") or "success=false"
+        return {"available": False, "reason": f"采用度端点不可用：{err}", "unlabeledWeeks": unlabeled}
+
+    d = res.get("data") or {}
+    by_token = {i["token"]: i for i in (d.get("items") or [])}
+    for e in entries:
+        e["measurements"] = [by_token.get(t, {"token": t, "status": "unknown-key",
+                                              "note": "端点未返回该 token"}) for t in e["tokens"]]
+    return {
+        "available": True,
+        "lookbackWeeks": lookback_weeks,
+        "entries": entries,
+        "summary": d.get("summary") or {},
+        "behaviorCollectedFrom": d.get("behaviorCollectedFrom"),
+        # 没有标签的周次必须显式列出。它们不是「采用率 0」，是「这几周还没开始标」。
+        "unlabeledWeeks": unlabeled,
+        "note": "度量的是「前几周周报声明上线的能力，在本周的用量」；status 五态见端点说明",
+    }
+
+
 # ── 来源 4：线上发布（正式发布台账，回答「有没有真的发出去」） ────────────
 # 注意：不能用 deployment-version。任何分支部署成功后 CDS 都会生成不可变部署版本
 # （cds/src/routes/branches.ts 的 version-create），分支预览也算在内——拿它当
@@ -594,21 +708,111 @@ def collect_prev_weekly(base, H, prev_title_hint):
             "prevEntry": {"title": hit.get("title"), "entryId": hit.get("id")} if hit else None}
 
 
+def assert_not_shallow():
+    """浅克隆会让本周提交统计少算，且不会报错——只会安静地少。
+
+    W33/W34/W35/W36 连续四周踩同一个坑：容器里的 clone 只有几百个提交，
+    正文数字先按截断值写出来，事后靠人工发现再 git fetch --unshallow 重算。
+    每一期的报告正文都写下「下期应该断言」，但写进报告正文的待办没人执行，
+    所以这一次写进采集脚本——采集是数字的唯一入口，在这里挡住才算数。
+    """
+    try:
+        r = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        return {"checked": False, "reason": f"无法判定：{e}"}
+
+    # git 失败时 stdout 是空串，而空串 != "true"，直接比字符串会把「没查成」
+    # 判成「不是浅克隆」，发出一份假的合格证明——守卫自己不会红，正是
+    # predicate-and-wiring-discipline 形状 4b。所以先看返回码。
+    if r.returncode != 0:
+        return {"checked": False,
+                "reason": f"git rev-parse 退出码 {r.returncode}：{(r.stderr or '').strip()[:120]}"}
+
+    out = r.stdout.strip()
+    if out not in ("true", "false"):
+        return {"checked": False, "reason": f"git rev-parse 返回了预期外的值：{out!r}"}
+    if out == "false":
+        return {"checked": True, "shallow": False}
+    n = subprocess.run(["git", "rev-list", "--count", "HEAD"],
+                       capture_output=True, text=True).stdout.strip() or "?"
+    sys.stderr.write(
+        "\n[采集中止] 当前仓库是浅克隆（本地仅 %s 个提交），"
+        "本周提交数与逐日分布都会少算，且不会报错。\n"
+        "  先跑：git fetch --unshallow\n"
+        "  确有理由在浅克隆上采集时，加 --allow-shallow 显式放行（报告需注明数字为下限）。\n" % n)
+    sys.exit(2)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--week-start", required=True)
-    p.add_argument("--week-end", required=True)
+    p.add_argument("--week-start")
+    p.add_argument("--week-end")
     p.add_argument("--base", default="https://main-prd-agent.miduo.org")
     p.add_argument("--impersonate", default="inernoro")
     p.add_argument("--project", default="prd-agent")
     p.add_argument("--prev-week-hint", default="", help="上周周报标题片段，如 2026-W29")
     p.add_argument("--deeplinks", action="store_true", help="逐条取验收报告 CDS 深链（慢）")
+    p.add_argument("--doc-dir", default="doc", help="周报底稿所在目录，采用度回溯要读它")
+    p.add_argument("--adoption-lookback", type=int, default=4,
+                   help="上线→采用回溯几周（默认 4：本周之前的 4 份周报）")
     p.add_argument("--out", default="")
     p.add_argument("--human", action="store_true")
+    p.add_argument("--allow-shallow", action="store_true",
+                   help="放行浅克隆采集（数字会少算，报告须注明为下限）")
+    p.add_argument("--check-shallow-only", action="store_true",
+                   help="只跑浅克隆断言就退出（Phase 2.0 在任何 git 统计之前调它），"
+                        "非浅克隆退 0，浅克隆退 2")
     a = p.parse_args()
 
+    # 只做断言：供 Phase 2 在 git 统计（2.0-2.6）之前调用。走的是同一个
+    # assert_not_shallow()，不另写一份判据——两份判据必然漂移（形状 3）。
+    #
+    # 退出码三分，调用方据此分流。关键是「没查成」必须和「查过没问题」分开：
+    # 混成同一个 0，这道闸就会在查不动的时候安静放行——那正是它要防的东西。
+    #   0 = 已查明非浅克隆，或 --allow-shallow 显式放行 → 可以开始 git 统计
+    #   2 = 已查明是浅克隆                             → 先 git fetch --unshallow
+    #   3 = 没查成（git 失败 / 超时 / 老于 2.15 不认这个 flag）→ 深度未知，人来判
+    if a.check_shallow_only:
+        if a.allow_shallow:
+            # 逃生阀在这一步也必须管用：它只在 Phase 2.7 生效、而 2.0 是强制步骤，
+            # 等于把「明知是浅克隆也要采」这条正式支持的路径堵死了。
+            sys.stderr.write("[仓库深度] --allow-shallow 显式放行，不做断言；"
+                             "本次报告的提交类数字须注明为下限。\n")
+            return
+        st = assert_not_shallow()  # 浅克隆在这里 exit 2
+        if not st.get("checked"):
+            sys.stderr.write(
+                "\n[无法判定] 仓库深度没查成：%s\n"
+                "  深度未知等于「可能在少算而且不报错」，所以这里不放行。\n"
+                "  查清楚再跑；确实要在深度未知的情况下采集，加 --allow-shallow 显式担责"
+                "（报告须注明提交类数字为下限）。\n" % st.get("reason", "原因未知"))
+            sys.exit(3)
+        sys.stderr.write("[仓库深度] 非浅克隆，可以开始 git 统计。\n")
+        return
+
+    if not a.week_start or not a.week_end:
+        p.error("--week-start 与 --week-end 必填（除非只跑 --check-shallow-only）")
+
+    shallow_state = {"checked": True, "shallow": False}
+    if a.allow_shallow:
+        shallow_state = {"checked": False, "reason": "--allow-shallow 显式放行"}
+    else:
+        shallow_state = assert_not_shallow()
+        if not shallow_state.get("checked"):
+            # 这里「没查成」只警告不中止，和 --check-shallow-only 的 exit 3 有意不同：
+            # 本采集器自己产出的六段（日报/验收/缺陷/团队/采用/上周周报）都不依赖仓库深度，
+            # 依赖深度的是手工跑的 Phase 2.0-2.6，那道闸在它们之前已按 exit 3 拦过一次了。
+            # 在这里也硬失败，只会让老版本 git 的环境连不依赖深度的数据都采不到。
+            # 判定结果照样写进 repoDepth，谁读输出谁看得见。
+            sys.stderr.write(
+                "[提醒] 未能判定仓库深度（%s）。本采集器的各段不依赖深度，照常继续；"
+                "但若本次实际是浅克隆，Phase 2.0-2.6 的提交类数字会少算且不报错，请自行核对。\n"
+                % shallow_state.get("reason", "原因未知"))
+
     base, start, end = a.base.rstrip("/"), a.week_start, a.week_end
-    ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project}
+    ctx = {"weekStart": start, "weekEnd": end, "base": base, "project": a.project,
+           "repoDepth": shallow_state}
 
     try:
         H = _headers(a.impersonate)
@@ -620,6 +824,8 @@ def main():
         ("dailyReports", lambda: collect_daily_reports(base, H, start, end)),
         ("defects",      lambda: collect_defects(base, H, start, end)),
         ("prevWeekly",   lambda: collect_prev_weekly(base, H, a.prev_week_hint)),
+        ("teamInsights", lambda: collect_team_insights(base, H, start, end)),
+        ("adoption",     lambda: collect_adoption(base, H, start, end, a.doc_dir, a.adoption_lookback)),
     ]:
         if H is None:
             ctx[name] = {"available": False, "reason": "MAP 鉴权缺失"}

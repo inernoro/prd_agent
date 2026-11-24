@@ -9,6 +9,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
 using PrdAgent.Api.Controllers.Api.MarketplaceSkills;
 using PrdAgent.Api.Controllers.Api.OfficialSkills;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -419,6 +420,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             .Set(x => x.EntryPoint, meta.EntryPoint)
             .Set(x => x.Slug, finalSlug)
             .Set(x => x.Version, finalVersion)
+            .Set(x => x.ContentUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
         await _db.MarketplaceSkills.UpdateOneAsync(x => x.Id == existing.Id, update, cancellationToken: ct);
 
@@ -620,10 +622,20 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         return s.Length <= maxLen ? s : s[..maxLen];
     }
 
+    /// <summary>
+    /// 这条地址是要交到外部智能体手里、由它自己去下载的，所以必须是**外部可达**的那个来源。
+    ///
+    /// 不能用 Request.Scheme / Request.Host：MCP 网关调这个端点时走的是回环
+    /// （127.0.0.1:5000），于是 fork 的 downloadUrl 与列表里的 zipUrl 会变成
+    /// http://127.0.0.1:5000/... —— 远端的 Claude / Codex 一个字节也下不下来，
+    /// 而这条地址的全部意义就是「能下载」。
+    /// ResolveExternalBaseUrl 只在这一跳凭进程内令牌自证是网关续跳时才采信转发头，
+    /// 直连时照旧取被 nginx 清洗过的 Request.Host。
+    /// </summary>
     private string BuildPublicDownloadUrl(string id)
     {
         var pathBase = Request.PathBase.HasValue ? Request.PathBase.Value : string.Empty;
-        return $"{Request.Scheme}://{Request.Host}{pathBase}/api/open/marketplace/skills/{Uri.EscapeDataString(id)}/download";
+        return $"{Request.ResolveExternalBaseUrl()}{pathBase}/api/open/marketplace/skills/{Uri.EscapeDataString(id)}/download";
     }
 
     private object ToDto(MarketplaceSkill s, string currentUserId)
@@ -650,7 +662,8 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             slug = s.Slug,
             version = s.Version,
             createdAt = s.CreatedAt,
-            updatedAt = s.UpdatedAt
+            updatedAt = s.UpdatedAt,
+            contentUpdatedAt = s.ContentUpdatedAt
         };
     }
 }

@@ -16,7 +16,7 @@ CDS 中有三类容易混淆的信息：CDS 服务自身配置、业务应用运
 | --- | --- | --- | --- |
 | CDS 系统配置 | CDS 服务本身 | 管理员初始化和系统设置 | 否 |
 | 项目运行变量 | 某个项目的应用 | 项目设置 > 环境变量 | 是 |
-| Agent 项目凭据 | 当前项目中的 Codex、Cursor 或 Claude Code | CDS 页面批准 | 否 |
+| Agent 项目凭据 | 当前项目中的 Codex 或 Claude Code | CDS 页面批准 | 否 |
 
 新版 Agent 接入不依赖 Shell 环境变量。不要为了接入 Agent 修改 `.zshrc`、`.bashrc`、系统环境变量或全局 PATH。
 
@@ -52,6 +52,30 @@ cd cds
 - 不放进业务项目仓库；
 - 修改后按配置类型重启 CDS；
 - 生产环境的密码和签名密钥必须使用安全随机值。
+
+### 托管站点免密登录
+
+托管站点免密登录默认关闭，现有 HTTPS 会话沿用原有 Cookie。启用时，在使用 MongoDB 持久化账号的 CDS 控制面设置 `CDS_PASSKEYS_ENABLED=1`，并用 `CDS_PUBLIC_BASE_URL` 指定登录页的 HTTPS 源地址。OpenID Connect 签发服务使用 Node 22 LTS 或更新的 LTS。项目必须由 CDS 实际发布，项目入口和 CDS 登录页使用同一注册域下的独立 HTTPS 主机。
+
+项目实现自己的登录入口与回调后，由 CDS 系统所有者在「CDS 系统设置 → 登录与认证 → CDS 托管站点登录」登记已发布入口及两个路径。保存前用通行密钥重新验证。CDS 核对托管路由和项目授权，返回标准的用户标识 `sub`。项目负责验证签发方、受众、签名、有效期、nonce、授权码和 PKCE，并把已核实的标识绑定到自己的账号，判定访问权限和建立本地会话。
+
+分支诊断面板可打开项目登录入口并发起 CDS 换号。用户在 CDS 选择账号，CDS 按项目记住选择。启用通行密钥后，会话切换到 CDS 登录主机专属的 Cookie，使用旧会话的用户需要重新登录一次。停用登记、移除实际托管路由或结束 CDS 会话时，CDS 撤销对应授权，接入项目通过 UserInfo 核对授权状态。项目自己的页面和接口始终由项目决定是否需要登录。
+
+### 系统登录密码审批
+
+系统账号的网页登录密码由指定的系统所有者使用通行密钥逐次批准。在已启用通行密钥且使用持久化账号的 HTTPS 控制面，由系统所有者绑定自己的通行密钥。运维确认绑定及账号归属后，在 CDS 启动环境设置 `CDS_SYSTEM_PASSWORD_APPROVER_IDS`，填写受信凭据的 ID，多个 ID 用逗号分隔。缺少该配置时，系统账号仍可正常登录，网页暂停提供系统改密。普通本地账号仍可修改自己的密码。
+
+系统账号在「CDS 系统设置 → 用户管理 → 我的登录密码」发起改密，由指定管理员在设备上确认本次操作。系统所有者可在「用户操作痕迹」查看批准账号和时间。批准记录随系统配置原子保存，配置备份应保留这些记录。
+
+### MAP 接入
+
+MAP 试点使用已发布的同域预览。设置 `CdsSso__Enabled=true`、`CdsSso__Issuer`、`CdsSso__ClientId` 和 `CdsSso__RedirectUri`。签发方和客户端标识来自 CDS 登记。回调使用 MAP 预览的 HTTPS 地址与 `/api/v1/auth/cds/callback`，项目登录入口登记 `/api/v1/auth/cds/start`。
+
+如果 CDS 代理将 `Host` 改写为服务地址，在 MAP 用 `CdsSso__TrustedProxyIps__0`、`CdsSso__TrustedProxyIps__1` 等登记直连 API 的 CDS 代理 IP。限制 API 上游端口的访问范围，只登记由运维独占的代理地址。MAP 只从这些代理接收由 CDS 覆盖写入的 `X-CDS-Forwarded-Host`，并与配置的回调主机和端口逐一核对。
+
+在 MAP 部署中通过 `CdsSso__Accounts__<CDS用户ID>` 填入经核实的 MAP 本地用户 ID。更改绑定随 MAP 配置生效。停用账号、机器人、破窗账号和未完成首次改密的账号无法通过此入口。MAP 按本地角色授权，并在处理受保护请求前核对 CDS 授权。实验室身份切换和跨系统控制台票据使用 MAP 自有登录。过期会话的清理索引见 [MongoDB 索引指南](guide.platform.mongodb-indexes.md)。
+
+回退时可以暂停该站点的 CDS 登记，并关闭 MAP 的 CDS 登录开关。随后核对 MAP 的项目登录与本地权限。
 
 ## 项目运行变量
 
@@ -115,7 +139,7 @@ Agent 项目凭据只用于让当前项目中的 Agent 操作 CDS，不属于业
 
 ### 项目技能文件与凭据不同
 
-Codex、Cursor 和 Claude Code 的项目级技能文件不包含凭据，用于告诉 Agent 如何调用 CDS。它们可能出现在 `git status`，是否提交由团队决定。
+Codex 和 Claude Code 的项目级技能文件不包含凭据，用于告诉 Agent 如何调用 CDS。它们可能出现在 `git status`，是否提交由团队决定。
 
 `.cds/credentials.json` 包含项目凭据，不能进入 `git status` 和 Git 提交。
 
@@ -189,3 +213,7 @@ GitHub App 授权也不是项目运行变量。
 - [GitHub App 接入](guide.cds.github-app.md)
 - [双层认证诊断](guide.cds.ai-auth.md)
 - [部署方式选择](guide.cds.deploy-three-paths.md)
+
+## 跨项目引用变量
+
+要调用别的项目的服务，不要手写它的预览域名。值里写 `${CDS_REF:项目/服务}`（可加 `@分支`），CDS 在部署时换成目标的公网入口，并在分支「配置 → 引用」分区显示目标现在活没活、可以切换指向哪条分支。手写的网址会被标为「建议改成引用变量」。

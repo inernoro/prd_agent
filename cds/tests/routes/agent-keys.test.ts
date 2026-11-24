@@ -244,6 +244,28 @@ describe('Agent Keys (project-scoped)', () => {
     expect(res.body.expected).toBe('default');
     expect(res.body.got).toBe('alt-proj-id');
 
+    // Read routes must use the same scope guard. Filtering only the project
+    // list is insufficient because callers can address a known id directly.
+    const getRes = await request(
+      server,
+      'GET',
+      '/api/projects/alt-proj-id',
+      undefined,
+      { 'X-AI-Access-Key': plaintext },
+    );
+    expect(getRes.status).toBe(403);
+    expect(getRes.body.error).toBe('project_mismatch');
+
+    const listOtherKeysRes = await request(
+      server,
+      'GET',
+      '/api/projects/alt-proj-id/agent-keys',
+      undefined,
+      { 'X-AI-Access-Key': plaintext },
+    );
+    expect(listOtherKeysRes.status).toBe(403);
+    expect(listOtherKeysRes.body.error).toBe('project_mismatch');
+
     // And DELETE of the other project's keys is equally blocked.
     const delRes = await request(
       server,

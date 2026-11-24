@@ -3,7 +3,7 @@
 > **版本**：v2.0 | **日期**：2026-06-02 | **状态**：已落地
 
 > **关联实现**：`prd-api/.../Models/AgentUniverse/AgentCapability.cs`、`AgentCapabilityRegistry.cs`、`prd-api/.../Controllers/Api/AgentUniverseController.cs`、`prd-admin/.../services/real/agentUniverse.ts`、`prd-admin/.../pages/document-store/ReprocessChatDrawer.tsx`
-> **关联设计**：`.claude/rules/app-identity.md`（应用身份）、`.claude/rules/llm-gateway.md`（网关）、[debt.agent-universe.md](./debt.agent-universe.md)（债务台账）
+> **关联设计**：`.claude/rules/app-identity.md`（应用身份）、`.claude/rules/llm-gateway.md`（网关）、[debt.agent-universe.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.agent-universe.md)（债务台账）
 > **一句话**：把"每个智能体各搞各的调用方式、再加工还把视觉创作降级成假聊天"升级为"一套能力契约 + 一套调用信封，让所有智能体像漫威宇宙那样按统一标准互通"。
 > **谁该读**：要新增智能体能力的工程师。
 > **读完能做什么**：按能力契约把自己的智能体接进去。
@@ -189,7 +189,7 @@ flowchart TD
 - **缺陷智能体「创建缺陷」**：抽取的结构化缺陷一键建入缺陷库（复用 `POST /api/defect-agent/defects`，标题后端归一）。
 - **智能体接力（文学→视觉 配图，E9）**：文学产出旁「为这段配图」→ 前端编排两次 `invoke`：literary `generate_illustration`（构思插画描述）→ visual `text2img`（据描述生图）→ 图片可一键插文档。这是"一个智能体的输出成为另一个智能体的输入"的首个落地（§2 互通愿景）。
 
-其余出站/接力波次（批量缺陷+指派、@艾特、出站预填、工作流节点等）见 [debt.agent-universe.md](./debt.agent-universe.md) §四。
+其余出站/接力波次（批量缺陷+指派、@艾特、出站预填、工作流节点等）见 [debt.agent-universe.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.agent-universe.md) §四。
 
 ## 6. 接口设计
 
@@ -224,13 +224,13 @@ SSE 事件：
 - `.claude/rules/app-identity.md`：应用身份隔离（控制器硬编码 appKey）
 - `.claude/rules/llm-gateway.md`：所有 LLM 调用必须过 Gateway
 - `.claude/rules/compute-then-send.md`：生图适配器已遵循"先 resolve 后 send"
-- [debt.agent-universe.md](./debt.agent-universe.md)：本期未还的工程债（见下）
+- [debt.agent-universe.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.agent-universe.md)：本期未还的工程债（见下）
 
 ## 8. 风险与边界
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
-| 后端无本地 SDK 验证 | 开发环境无 dotnet | 走 CDS 自动部署编译验证（`cds-first-verification.md`）|
+| 后端编译与测试怎么算验过 | 编译在 GitHub Actions、运行在 CDS 预览；Branch Image 不覆盖测试项目，CI 在 feature 分支不自动跑 | 按 `cds-first-verification.md` 的权威位置表逐项引判据 |
 | 生图依赖模型池 | 视觉创作需 ImageGen 模型池可用 | 池不可用时适配器返回 error，前端展示失败 |
 | 契约与适配器漂移 | generation 智能体若无对应适配器 | 控制器降级 chat + 告警日志；后续补注册表适配器一致性测试（见 debt）|
 | 多入口尚未接入 | 当前仅再加工抽屉接入信封 | @艾特 / 工作流节点为后续波次（见 debt）|

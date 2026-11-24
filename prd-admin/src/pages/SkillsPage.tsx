@@ -51,7 +51,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: false,
     promptTemplate: '请对当前 PRD 文档进行全面审查，包括：\n1. 需求完整性检查\n2. 逻辑一致性验证\n3. 技术可行性评估\n4. 边界条件分析\n5. 改进建议',
     outputMode: 'chat',
-    color: { bg: 'rgba(99, 102, 241, 0.12)', text: 'rgba(99, 102, 241, 0.95)', border: 'rgba(99, 102, 241, 0.25)' },
+    color: { bg: 'rgba(99, 102, 241, 0.12)', text: 'var(--accent-fg-blue)', border: 'rgba(99, 102, 241, 0.25)' },
   },
   {
     title: '测试用例生成',
@@ -64,7 +64,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: true,
     promptTemplate: '根据当前 PRD 内容，生成完整的测试用例，包括：\n1. 正向功能测试\n2. 边界值测试\n3. 异常场景测试\n4. 兼容性测试\n5. 性能测试建议\n\n输出格式：表格（编号/模块/测试点/步骤/预期结果/优先级）',
     outputMode: 'chat',
-    color: { bg: 'rgba(34, 197, 94, 0.12)', text: 'rgba(34, 197, 94, 0.95)', border: 'rgba(34, 197, 94, 0.25)' },
+    color: { bg: 'rgba(34, 197, 94, 0.12)', text: 'var(--accent-fg-success)', border: 'rgba(34, 197, 94, 0.25)' },
   },
   {
     title: '技术方案评估',
@@ -77,7 +77,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: true,
     promptTemplate: '请从技术角度分析当前 PRD，包括：\n1. 技术复杂度评估（高/中/低）\n2. 推荐技术架构方案\n3. 数据模型设计建议\n4. API 接口设计\n5. 潜在技术风险\n6. 工作量估算（人天）',
     outputMode: 'chat',
-    color: { bg: 'rgba(59, 130, 246, 0.12)', text: 'rgba(59, 130, 246, 0.95)', border: 'rgba(59, 130, 246, 0.25)' },
+    color: { bg: 'rgba(59, 130, 246, 0.12)', text: 'var(--accent-fg-blue)', border: 'rgba(59, 130, 246, 0.25)' },
   },
   {
     title: '用户故事拆分',
@@ -90,7 +90,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: false,
     promptTemplate: '将当前 PRD 拆分为用户故事：\n1. 按功能模块分组\n2. 每个故事包含：标题、As a/I want/So that 描述、验收标准\n3. 标注优先级（P0/P1/P2）\n4. 估算故事点\n5. 标注依赖关系',
     outputMode: 'chat',
-    color: { bg: 'rgba(168, 85, 247, 0.12)', text: 'rgba(168, 85, 247, 0.95)', border: 'rgba(168, 85, 247, 0.25)' },
+    color: { bg: 'rgba(168, 85, 247, 0.12)', text: 'var(--accent-fg-violet)', border: 'rgba(168, 85, 247, 0.25)' },
   },
   {
     title: 'API 文档生成',
@@ -103,7 +103,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: true,
     promptTemplate: '根据 PRD 生成 RESTful API 文档：\n1. 接口列表（路径/方法/描述）\n2. 请求参数（Query/Body/Path）\n3. 响应结构（JSON Schema）\n4. 错误码定义\n5. 认证方式说明\n\n格式：Markdown，每个接口一个章节',
     outputMode: 'chat',
-    color: { bg: 'rgba(236, 72, 153, 0.12)', text: 'rgba(236, 72, 153, 0.95)', border: 'rgba(236, 72, 153, 0.25)' },
+    color: { bg: 'rgba(236, 72, 153, 0.12)', text: 'var(--accent-fg-danger)', border: 'rgba(236, 72, 153, 0.25)' },
   },
   {
     title: '竞品对比分析',
@@ -116,7 +116,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: true,
     promptTemplate: '基于当前 PRD 进行竞品分析：\n1. 核心功能对比矩阵\n2. 差异化优势识别\n3. 功能缺口分析\n4. 用户体验对比\n5. 改进建议（优先级排序）\n\n{{userInput}}',
     outputMode: 'chat',
-    color: { bg: 'rgba(245, 158, 11, 0.12)', text: 'rgba(245, 158, 11, 0.95)', border: 'rgba(245, 158, 11, 0.25)' },
+    color: { bg: 'rgba(245, 158, 11, 0.12)', text: 'var(--accent-fg-warning)', border: 'rgba(245, 158, 11, 0.25)' },
   },
   {
     title: '数据库设计',
@@ -129,7 +129,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: false,
     promptTemplate: '根据 PRD 设计数据库结构：\n1. 实体识别与关系分析（ER 图描述）\n2. 集合/表结构设计（字段名/类型/说明/索引）\n3. 数据关联关系\n4. 索引设计建议\n5. 数据迁移注意事项',
     outputMode: 'chat',
-    color: { bg: 'rgba(20, 184, 166, 0.12)', text: 'rgba(20, 184, 166, 0.95)', border: 'rgba(20, 184, 166, 0.25)' },
+    color: { bg: 'rgba(20, 184, 166, 0.12)', text: 'var(--accent-fg-blue)', border: 'rgba(20, 184, 166, 0.25)' },
   },
   {
     title: '风险评估报告',
@@ -142,7 +142,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: false,
     promptTemplate: '对当前 PRD 进行风险评估：\n1. 风险识别（技术/业务/资源/时间）\n2. 风险矩阵（概率 × 影响程度）\n3. 每个风险的应对策略\n4. 关键里程碑风险预警\n5. 风险监控建议',
     outputMode: 'chat',
-    color: { bg: 'rgba(239, 68, 68, 0.12)', text: 'rgba(239, 68, 68, 0.95)', border: 'rgba(239, 68, 68, 0.25)' },
+    color: { bg: 'rgba(239, 68, 68, 0.12)', text: 'var(--accent-fg-danger)', border: 'rgba(239, 68, 68, 0.25)' },
   },
   {
     title: '验收标准生成',
@@ -155,7 +155,7 @@ const SKILL_TEMPLATES: SkillTemplate[] = [
     acceptsUserInput: false,
     promptTemplate: '为 PRD 中每个功能模块生成验收标准（Definition of Done）：\n1. 功能验收标准（可测试的条目）\n2. 性能验收标准（响应时间/吞吐量）\n3. 安全验收标准\n4. 兼容性验收标准\n5. 文档验收标准\n\n格式：复选框列表，每个条目可直接用于验收',
     outputMode: 'chat',
-    color: { bg: 'rgba(16, 185, 129, 0.12)', text: 'rgba(16, 185, 129, 0.95)', border: 'rgba(16, 185, 129, 0.25)' },
+    color: { bg: 'rgba(16, 185, 129, 0.12)', text: 'var(--accent-fg-success)', border: 'rgba(16, 185, 129, 0.25)' },
   },
 ];
 
@@ -812,7 +812,7 @@ export default function SkillsPage() {
                             style={{
                               background: 'rgba(99, 102, 241, 0.15)',
                               border: '1px solid rgba(99, 102, 241, 0.3)',
-                              color: 'rgba(99, 102, 241, 0.95)',
+                              color: 'var(--accent-fg-violet)',
                             }}
                           >
                             浏览模板市场 →
@@ -915,7 +915,7 @@ export default function SkillsPage() {
                       {selected && !isCreating && (
                         <button
                           onClick={handleDelete}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30 transition"
+                          className="text-xs px-3 py-1.5 rounded-lg bg-red-500/20 text-[color:var(--accent-fg-danger)] hover:bg-red-500/30 transition"
                         >
                           删除
                         </button>
@@ -1187,7 +1187,7 @@ export default function SkillsPage() {
                   <Sparkles size={14} /> 重新优化
                 </button>
                 <button onClick={cancelOptimize} disabled={!optBusy}
-                  className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5 bg-red-500/20 text-red-300">
+                  className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5 bg-red-500/20 text-[color:var(--accent-fg-danger)]">
                   <Square size={14} /> 停止
                 </button>
                 <button onClick={applyOptimized} disabled={optBusy || !optText.trim()}
@@ -1348,7 +1348,7 @@ function TemplateCard({
             style={{
               background: 'rgba(59, 130, 246, 0.1)',
               border: '1px solid rgba(59, 130, 246, 0.2)',
-              color: 'rgba(59, 130, 246, 0.8)',
+              color: 'var(--accent-fg-blue)',
             }}
           >
             支持输入

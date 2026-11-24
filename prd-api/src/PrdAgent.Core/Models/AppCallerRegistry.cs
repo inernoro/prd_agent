@@ -10,6 +10,20 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public static class AppCallerRegistry
 {
+    public static class CdsCodeReview
+    {
+        public const string AppName = "CDS 代码审查";
+        [AppCallerMetadata("代码审查-用户 Key", "使用任务绑定的用户 Key 执行静态代码审查", ModelTypes = new[] { ModelTypes.Chat }, Category = "Chat")]
+        public const string Analyze = "cds.code-review::chat";
+    }
+
+    public static class McpSpeech
+    {
+        public const string AppName = "MCP 基础语音能力";
+        [AppCallerMetadata("MCP-文生语音", "使用已授权的语音模型与音色生成音频资产", ModelTypes = new[] { ModelTypes.Tts }, Category = "Audio")]
+        public const string Synthesize = "mcp-speech.synthesize::tts";
+    }
+
 /// <summary>
 /// Desktop 桌面客户端
 /// </summary>
@@ -113,6 +127,22 @@ public static class Desktop
 }
 
 /// <summary>
+/// 公共藏书阁。刻意不放进 Desktop —— 它是 Web 侧的功能，
+/// 上一版顺手插在 Skill 后面就成了 Desktop 的嵌套类，编译直接报
+/// 「AppCallerRegistry 不含 Bookshelf」。
+/// </summary>
+public static class Bookshelf
+{
+    [AppCallerMetadata(
+        "公共藏书阁-精读稿",
+        "给书单里的一本书生成精读稿：核心论点、怎么用在我们身上、我们在哪条规则上栽过",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Bookshelf"
+    )]
+    public const string Digest = "prd-agent.bookshelf.digest::chat";
+}
+
+/// <summary>
 /// 产品管理智能体
 /// </summary>
 public static class Product
@@ -205,6 +235,14 @@ public static class VisualAgent
             Category = "Image"
         )]
         public const string VisionGen = "visual-agent.image.vision::generation";
+
+        [AppCallerMetadata(
+            "图片语义分层",
+            "把单张图片拆解为可独立编辑的 RGBA 图层",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Image"
+        )]
+        public const string Layering = "visual-agent.image.layering::generation";
 
         [AppCallerMetadata(
             "图片分析",
@@ -515,7 +553,7 @@ public static class OpenPlatform
 /// 这里是真正贴近真实开放平台的对外 LLM 网关（借鉴 OpenRouter 的 OpenAI 兼容风格），外部调用方用标准 OpenAI
 /// 请求方式（顶层 /api/v1/chat/completions 等）接入。
 ///
-/// 设计要点（见 .claude/rules + doc/debt.open-platform.open-api.md）：
+/// 设计要点（见 .claude/rules + https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.open-platform.open-api.md）：
 /// - 所有开放接口流量走这里的固定伞形 code（不为每个 Key 派生动态 code，
 ///   否则会被 LlmGateway.TryValidateAppCaller 的静态注册表门禁拦下）。
 /// - 每个 Key 的「固定模型 / 小模型池」绑定通过 expectedModel 通道下发：
@@ -1032,6 +1070,12 @@ public static class DocumentStoreAgent
         public const string Vision = "document-store.subtitle::vision";
     }
 
+    public static class Writing
+    {
+        [AppCallerMetadata("知识库按模版成文", "关联资料、识别缺口并生成可审核的结构化草稿", ModelTypes = new[] { ModelTypes.Chat }, Category = "DocumentStore")]
+        public const string Generate = "document-store.writing::chat";
+    }
+
     public static class Reprocess
     {
         [AppCallerMetadata(
@@ -1078,11 +1122,91 @@ public static class DocumentStoreAgent
 }
 
 /// <summary>
+/// 通用对话智能体（面向全体用户的对聊入口）
+/// </summary>
+public static class ChatAgent
+{
+    public const string AppName = "通用对话智能体";
+
+    [AppCallerMetadata(
+        "通用对话-多轮会话",
+        "面向全体用户的通用对话入口。对话循环由 agent 运行时的官方 SDK 执行，本 caller 仅用于关联日志与配额",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Chat"
+    )]
+    public const string Conversation = "chat-agent.conversation::chat";
+
+    [AppCallerMetadata(
+        "通用对话-对话内出图",
+        "用户在对话里说「画一张」时触发，转发给平台已有的出图流水线",
+        ModelTypes = new[] { ModelTypes.ImageGen },
+        Category = "Chat"
+    )]
+    public const string ImageGeneration = "chat-agent.image-gen::generation";
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin
 {
     public const string AppName = "PRD Agent Web";
+
+    /// <summary>知识库语义检索：文档切块与提问的向量化。</summary>
+    public static class KnowledgeBase
+    {
+        [AppCallerMetadata(
+            "知识库-文档向量化",
+            "给知识库文档切块建索引时调用向量模型（批量、离线）",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Document"
+        )]
+        public const string Index = "prd-agent-web.knowledge-base.index::embedding";
+
+        [AppCallerMetadata(
+            "知识库-检索向量化",
+            "把用户的提问转成向量以检索知识库（在线、单条、低延迟）",
+            ModelTypes = new[] { ModelTypes.Embedding },
+            Category = "Document"
+        )]
+        public const string Query = "prd-agent-web.knowledge-base.query::embedding";
+    }
+
+    /// <summary>网页托管「向我提问」：访客对着托管页面提问，上下文是该页面正文。</summary>
+    public static class WebHosting
+    {
+        [AppCallerMetadata(
+            "网页托管-向我提问",
+            "访客在托管页面右下角提问，模型只依据该页面正文回答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Ask = "prd-agent-web.web-hosting.ask::chat";
+
+        [AppCallerMetadata(
+            "网页托管-开场问题生成",
+            "上传/开启提问后读一遍页面正文，写出访客最可能问的几句，落成站点题库",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Chat"
+        )]
+        public const string AskOpeners = "prd-agent-web.web-hosting.ask-openers::intent";
+
+        [AppCallerMetadata(
+            "网页托管-帮我修改",
+            "根据用户要求修改托管站点的入口 HTML，先生成可预览草稿，再由用户发布",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string EditHtml = "prd-agent-web.web-hosting.edit-html::chat";
+
+        [AppCallerMetadata(
+            "网页托管-知识生成",
+            "根据用户选择的知识快照与补充要求生成可托管、可继续微调的完整网页",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string GenerateHtml = "prd-agent-web.web-hosting.generate-html::chat";
+    }
 
     public static class Lab
     {
@@ -1291,6 +1415,25 @@ public static class ReviewAgent
             Category = "Review"
         )]
         public const string Chat = "review-agent.review::chat";
+    }
+
+    public static class RequirementAssessment
+    {
+        [AppCallerMetadata(
+            "需求评估-批量评分",
+            "按产品研发管理规范八因子规则对 Excel 需求表逐条评估打分",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "review-agent.requirement-assessment::chat";
+
+        [AppCallerMetadata(
+            "需求评估-列映射识别",
+            "识别需求表表头与八因子评估维度的对应关系",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string ColumnMapping = "review-agent.requirement-assessment.column-mapping::chat";
     }
 }
 
@@ -1853,6 +1996,17 @@ public static class InfraAgent
 {
     public const string AppName = "CDS Agent 工作台";
 
+    public static class Runtime
+    {
+        [AppCallerMetadata(
+            "CDS Agent运行对话",
+            "已授权的基础设施任务通过平台网关执行对话，来源与额度关联到实际任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Infrastructure"
+        )]
+        public const string Chat = "infra-agent.runtime::chat";
+    }
+
     /// <summary>
     /// Lite 只读审查降级路径：当默认 runtime profile 不是 Claude/Anthropic 兼容
     /// （R1 未闭合）时，会话不再硬卡，改走本调用经现有 LLM Gateway 做只读代码审查。
@@ -1939,6 +2093,36 @@ public static class MdToPptAgent
             Category = "Document"
         )]
         public const string Extract = "md-to-ppt-agent.template-extract::vision";
+    }
+}
+
+/// <summary>
+/// 活动任务清单 —— 一键导入：把一段自由文本拆成一条条任务
+/// </summary>
+public static class ActiveTasks
+{
+    public const string AppName = "任务台";
+
+    public static class Import
+    {
+        [AppCallerMetadata(
+            "任务台-一键导入",
+            "把会议纪要、聊天记录、需求段落这类自由文本拆成一条条任务，并认出每条的截止时间",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string Split = "active-tasks.import::chat";
+    }
+
+    public static class Absorb
+    {
+        [AppCallerMetadata(
+            "任务台-吸取建议",
+            "把别人提的几条建议（可叠加知识库上下文）整理成收件人自己的一条条待办",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string Suggestions = "active-tasks.absorb::chat";
     }
 }
 }

@@ -1,6 +1,6 @@
 # LLM 网关测试矩阵 · 规格
 
-> **版本**：v1.0 | **日期**：2026-06-29 | **状态**：已落地
+> **版本**：v1.1 | **日期**：2026-08-12 | **状态**：开发中
 
 **一句话**：网关测试怎么分层与怎么覆盖：按「在哪一层能判定」切四层，再按互不重叠的维度铺矩阵。
 **谁该读**：给网关补测试的工程师；判断某次发布证据够不够的评审人。
@@ -8,7 +8,7 @@
 
 ---
 
-> 关联: [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
+> 关联: [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)、
 > [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、`prd-api/tests/PrdAgent.Api.Tests/Gateway/`、`scripts/gw-smoke.py`
 
 AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维度不漏不叠地覆盖每个真实调用入口与协议边界，
@@ -46,9 +46,26 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 | D9 上下文 | 系统提示词 / 多轮 messages / 文档注入 / ImageReferences | A(流到日志) + D(多轮真打) | 字段不丢、UserId 非空 | Context 缺 UserId → 日志 UserId 空被发现 |
 | D10 环境 | 正常 / 实验室 `prd-agent-web.lab::*` / 模型实验室 `model-lab.run` / 竞技场 `arena.battle` | A + D | 各入口能解析、不串 | lab 单模型却落默认池 → 报 |
 | D11 上游中断 | 500 / 超时 / 连接重置 / 畸形SSE / 空响应 | B(解析健壮) + C(→Fail) | 不崩，归一为失败且可观测(blackhole/failed) | **主 canary**：桩必返错 → 断言 Success=false 且被记 |
-| D12 负载/极速 | 并发 N / inproc vs http / keepalive / 断开不取消(server-authority) | C(并发) + D(真并发) | 并发不串租户、断开不取消上游 | 并发下 resolve 串号 → 报 |
+| D12 负载/极速 | 并发 N / keepalive / 断开不取消(server-authority) | C(并发) + D(真并发) | 并发不串租户、断开不取消上游 | 并发下 resolve 串号 → 报 |
 | D13 演示/桩 | StubOpenAIController chat / stub-image / 确定性返回 | C/D 用桩平台 | 桩稳定可重放 | 桩平台未注册 → 用例报缺前置 |
 | D14 一平台多请求方式 | per-pool-item / per-model protocol 覆盖同 platform | A | 同 platform 出不同 protocol | 覆盖被忽略仍用 platformType → 报 |
+| D15 AppCaller 多池边界 | 获准池 / 默认池 / 未知池 / 越权池 / 类型错误 | A + C + D | 只解析获准池；未知和越权 fail-closed | 用户选 A 实际落 B → critical |
+| D16 跨池代选授权 | 默认关闭 / 显式开启 / 到期关闭 / 候选越权 | A + C + D | 关闭时池耗尽直接失败；开启时只落显式候选并记录原因 | 缺配置时仍跨池 → critical |
+| D17 熔断与零探测恢复 | Healthy / Degraded / Open / HalfOpen × 成功 / 失败 / 用户错误 / 取消 | A + C + D | 真实流量受限半开；无合成付费探测；用户错误不污染健康 | Open 永久无法恢复或探活持续扣费 → critical |
+| D18 MAP 故障不扩散 | 单成员失败 / 全池 Open / 目录失败 / 通知失败 / 全部池不可用 | C + D + 页面验收 | 页面与目录入口保留；指标和风险提示真实；恢复入口可达 | 单池故障使全部模型消失 → critical |
+
+## 职责边界专项门禁
+
+以下断言是发布门禁，不得被“总体成功率较高”抵消：
+
+| 断言 | 证据 | 通过条件 |
+|---|---|---|
+| 用户选择不被越权替换 | 严格模式路由合同 + 真实解析 | 选择池 A 的全部样本实际池均为 A；池 A 耗尽时结构化失败 |
+| 跨池代选是显式能力 | 授权开关、候选集合、到期测试 | 缺失配置等同关闭；开启后只命中显式候选；到期自动关闭 |
+| 故障停在最小域 | 成员、池、目录、通知独立故障注入 | 任一辅助链路或单池失败不关闭 MAP 页面和其他池 |
+| 恢复不消耗合成额度 | HalfOpen 状态机和请求来源审计 | 没有定时模型请求；只允许受限真实业务请求作为默认恢复证据 |
+| 用户得到真实决策信息 | MAP 页面验收 | 展示平均耗时、最近 10 次成功率、样本数、更新时间和风险建议 |
+| 人工止血可回滚 | 控制台操作与审计 | 隔离、恢复、临时跨池、默认池切换均能看到前后差异并回滚 |
 
 ## canary 原则（贯穿每层）
 
@@ -62,6 +79,6 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 
 - `ModelTestStub.FailureMode` 当前**未接入** serving 路径（resolver/gateway 不查 `model_test_stubs`）——
   canary 不依赖它，改用桩上游错误端点 / 坏 URL 模型（真实失败路径）。让 FailureMode 生效是独立改动，记
-  [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)。
+  [doc/debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)。
 - D8 生图走 `ImageGenGateway`/`OpenAIImageClient`，不经 chat 适配器；图片格式还原在 `LlmRequestLogWriter`。
 - 不覆盖计费、不重写调度算法。

@@ -138,7 +138,7 @@ describe('StateService — projects (P4 Part 1)', () => {
       expect(secondCreatedAt).toBe(firstCreatedAt);
     });
 
-    it('sets a preview alias from git origin when legacy project slug is generic workspace', () => {
+    it('migrates a generic legacy project slug from git origin with a recorded baseline', () => {
       const repoRoot = path.join(tmpDir, 'workspace');
       fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
       fs.writeFileSync(
@@ -156,8 +156,10 @@ describe('StateService — projects (P4 Part 1)', () => {
       svc.load();
 
       const legacy = svc.getLegacyProject()!;
-      expect(legacy.slug).toBe('workspace');
-      expect(legacy.aliasSlug).toBe('prd-agent');
+      expect(legacy.slug).toBe('prd-agent');
+      expect(legacy).not.toHaveProperty('aliasSlug');
+      expect(legacy.identityHistory?.[0]?.after.slug).toBe('workspace');
+      expect(legacy.identityHistory?.at(-1)?.kind).toBe('migrated');
     });
 
     it('does not set a preview alias when the legacy slug is already project-specific', () => {
@@ -179,7 +181,7 @@ describe('StateService — projects (P4 Part 1)', () => {
 
       const legacy = svc.getLegacyProject()!;
       expect(legacy.slug).toBe('prd-agent');
-      expect(legacy.aliasSlug).toBeUndefined();
+      expect(legacy).not.toHaveProperty('aliasSlug');
     });
   });
 
@@ -439,6 +441,15 @@ describe('StateService — projects (P4 Part 1)', () => {
 
     it('refuses to remove the legacy project', () => {
       expect(() => svc.removeProject('default')).toThrow(/legacy default/);
+    });
+
+    it('cascade 也清掉该项目的数据台账条目（删项目后台账里不留指向空气的记录）', () => {
+      svc.upsertDbLedgerEntry({ id: 'led-1', projectId: 'second', kind: 'isolated', engine: 'mongo', dbName: 'cat_rs_1', infraContainer: 'cds-infra-mongo', dedicatedContainer: 'cds-rsdb-x-cat_rs_1', origin: 'cds', status: 'orphaned', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', backups: [] });
+      svc.upsertDbLedgerEntry({ id: 'led-keep', projectId: 'default', kind: 'per-branch', engine: 'mysql', dbName: 'shop_x', infraContainer: 'cds-infra-mysql', origin: 'cds', status: 'active', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', backups: [] });
+      const summary = svc.removeProject('second');
+      expect(summary.dbLedgerEntries).toEqual(['led-1']);
+      expect(svc.getDbLedgerEntry('led-1')).toBeUndefined();
+      expect(svc.getDbLedgerEntry('led-keep')).toBeDefined();
     });
 
     it('is a no-op when the id does not exist', () => {

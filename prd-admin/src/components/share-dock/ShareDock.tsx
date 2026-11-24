@@ -72,6 +72,11 @@ export interface ShareDockProps {
   footerHref?: string;
   /** 底部链接文案 */
   footerText?: string;
+  /**
+   * 首次进入该页时是否折叠（用户显式展开/收起过就以用户的选择为准）。
+   * 给右侧本来就有常驻栏的页面用：投放面板默认展开会正好盖住那一栏。
+   */
+  defaultCollapsed?: boolean;
   /** 持久化 key，用于记忆位置/折叠态，不同页面传不同 key */
   persistKey?: string;
   /** 默认吸附位置，未持久化时使用 */
@@ -107,6 +112,7 @@ export function ShareDock({
   defaultAnchor = 'right-middle',
   dropzone,
   compactSlots,
+  defaultCollapsed = false,
 }: ShareDockProps) {
   const storageKey = persistKey ? `share-dock:${persistKey}` : null;
   // 有 dropzone 或显式 compactSlots 时使用较宽的方形布局
@@ -137,8 +143,10 @@ export function ShareDock({
   });
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (!storageKey) return false;
-    return sessionStorage.getItem(storageKey + ':collapsed') === '1';
+    if (!storageKey) return defaultCollapsed;
+    // 用户手动收起/展开过就听用户的；没动过才用页面给的默认值
+    const saved = sessionStorage.getItem(storageKey + ':collapsed');
+    return saved === null ? defaultCollapsed : saved === '1';
   });
 
   const [dragging, setDragging] = useState(false);       // 被拖对象拖入状态

@@ -37,7 +37,7 @@
 
 ### B. 注册表 / 索引（SSOT）
 
-- [ ] `CLAUDE.md` 质量保障技能链表格：删行
+- [ ] ~~`CLAUDE.md` 技能表：删行~~（该表 2026-08-04 已整体删除，技能发现改走 SKILL.md frontmatter，本项作废）
 - [ ] [doc/guide.skill.catalog.md](./guide.skill.catalog.md)：删技能总览行（注意重编号）+ 补「已删除/裁剪」说明
 - [ ] [doc/guide.skill.workflow.md](./guide.skill.workflow.md)：删触发词速查行
 - [ ] [doc/guide.platform.agent-onboarding.md](./guide.platform.agent-onboarding.md)：删/改新手引导里的技能行与示例（改指替代技能）

@@ -85,3 +85,18 @@ export function useIsMobile(): boolean {
     () => false
   );
 }
+
+/**
+ * 只取 isDesktop 布尔的轻量选择器：≥1024px 才为 true。
+ * 录音结果页的三栏形态（设计稿 D1/D2）靠它决定「右栏是分页签，还是随主栏往下铺」——
+ * 这件事 CSS 断点做不到（两种形态渲染的节点不一样），只能在渲染时判。
+ */
+export function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => current.isDesktop,
+    // 服务端/静态渲染取 false：宽屏形态往往「一次只挂一块」，
+    // 拿不准宽度时按窄屏渲染，最差也只是多铺几块内容；反过来会静默少渲染。
+    () => false
+  );
+}

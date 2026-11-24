@@ -275,8 +275,11 @@ export function FrontEndAgentPage() {
 
   const ActiveIcon = activeTask.icon;
 
+  // surface-tone-dark：本页是钉死的暗色创作画布（bg-#0a0a0c），但文字此前走全局
+  // token —— 浅色主题下变成深字压深底，实测 1.08:1。用 tokens.css 提供的暗色画布
+  // 容器类让内部 token 整体切暗。
   return (
-    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#0a0a0c]">
+    <div className="fea-page surface-tone-dark h-full min-h-0 flex flex-col overflow-hidden relative bg-[#0a0a0c]">
       <FrontEndCosmosBackground />
 
       <header className="relative shrink-0 px-6 pt-5 pb-3 fea-fade-up">
@@ -323,7 +326,7 @@ export function FrontEndAgentPage() {
                   selected ? 'fea-task-pill-active' : 'fea-task-pill-idle'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${selected ? 'text-indigo-200' : 'text-indigo-200/45'}`} />
+                <Icon className={`w-3.5 h-3.5 ${selected ? 'text-indigo-200' : 'text-indigo-200/75'}`} />
                 <span className="text-xs font-medium">{task.shortTitle}</span>
               </button>
             );
@@ -428,7 +431,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleAbort}
-                className="fea-btn fea-btn-danger w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-rose-100 inline-flex items-center justify-center gap-2"
+                className="fea-btn fea-btn-danger w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-[color:var(--accent-fg-danger)] inline-flex items-center justify-center gap-2"
               >
                 <StopCircle className="w-4 h-4" />
                 中止
@@ -472,7 +475,7 @@ export function FrontEndAgentPage() {
 
           <div className="flex-1 min-h-0 p-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {errorMsg ? (
-              <div className="rounded-xl border border-rose-400/20 bg-rose-500/10 p-4 text-sm text-rose-100 flex gap-2">
+              <div className="rounded-xl border border-rose-400/20 bg-rose-500/10 p-4 text-sm text-[color:var(--accent-fg-danger)] flex gap-2">
                 <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>{errorMsg}</span>
               </div>

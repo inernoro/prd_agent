@@ -18,6 +18,8 @@ cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 #!/bin/bash
 # Pre-commit hook: 快速验证
 
+set -o pipefail
+
 echo "[pre-commit] 开始检查..."
 
 # 获取暂存的文件

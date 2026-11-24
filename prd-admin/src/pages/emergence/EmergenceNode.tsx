@@ -65,9 +65,9 @@ const dimensionConfig: Record<number, {
 
 const statusConfig: Record<string, { icon: typeof CheckCircle2; label: string; color: string; bg: string; next: string }> = {
   idea: { icon: Lightbulb, label: '想法', color: 'rgba(255,255,255,0.5)', bg: 'rgba(255,255,255,0.04)', next: 'planned' },
-  planned: { icon: Clock, label: '计划中', color: 'rgba(59,130,246,0.85)', bg: 'rgba(59,130,246,0.08)', next: 'building' },
-  building: { icon: Pencil, label: '开发中', color: 'rgba(234,179,8,0.85)', bg: 'rgba(234,179,8,0.08)', next: 'done' },
-  done: { icon: CheckCircle2, label: '已完成', color: 'rgba(34,197,94,0.85)', bg: 'rgba(34,197,94,0.08)', next: 'idea' },
+  planned: { icon: Clock, label: '计划中', color: 'var(--accent-fg-blue)', bg: 'rgba(59,130,246,0.08)', next: 'building' },
+  building: { icon: Pencil, label: '开发中', color: 'var(--accent-fg-amber)', bg: 'rgba(234,179,8,0.08)', next: 'done' },
+  done: { icon: CheckCircle2, label: '已完成', color: 'var(--accent-fg-success)', bg: 'rgba(34,197,94,0.08)', next: 'idea' },
 };
 
 function StarRating({ score, max = 5 }: { score: number; max?: number }) {
@@ -255,7 +255,7 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
                   style={{
                     background: 'rgba(34,197,94,0.08)',
                     border: '1px solid rgba(34,197,94,0.18)',
-                    color: 'rgba(34,197,94,0.85)',
+                    color: 'var(--accent-fg-success)',
                     maxWidth: '100%',
                   }}>
                   <CheckCircle2 size={9} className="flex-shrink-0" />
@@ -398,9 +398,9 @@ function EmergenceNodeInner(props: EmergenceNodeType) {
         <div className="mb-2 p-1.5 rounded-[6px]"
           style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
           <div className="flex items-start gap-1.5">
-            <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" style={{ color: 'rgba(234,179,8,0.8)' }} />
+            <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--accent-fg-amber)' }} />
             <div>
-              <p className="text-[9px] font-semibold mb-0.5" style={{ color: 'rgba(234,179,8,0.8)' }}>需外部支持</p>
+              <p className="text-[9px] font-semibold mb-0.5" style={{ color: 'var(--accent-fg-amber)' }}>需外部支持</p>
               {data.missingCapabilities.slice(0, 2).map((mc, i) => (
                 <p key={i} className="text-[9px] leading-[1.4]" style={{ color: 'var(--text-muted)' }}>{mc}</p>
               ))}
@@ -431,7 +431,7 @@ function EmergenceNodeInner(props: EmergenceNodeType) {
               style={{
                 background: 'rgba(234,179,8,0.08)',
                 border: '1px solid rgba(234,179,8,0.2)',
-                color: 'rgba(234,179,8,0.9)',
+                color: 'var(--accent-fg-amber)',
                 opacity: data.isExploring ? 0.4 : 1,
                 cursor: data.isExploring ? 'not-allowed' : 'pointer',
               }}

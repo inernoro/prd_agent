@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Adapters;
 using PrdAgent.Infrastructure.ModelPool.Models;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Adapters;
 
 namespace PrdAgent.Infrastructure.ModelPool;
 

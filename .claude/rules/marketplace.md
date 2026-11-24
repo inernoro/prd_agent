@@ -1,5 +1,8 @@
 ---
-globs: ["prd-admin/src/lib/marketplaceTypes.tsx", "prd-api/src/**/IMarketplaceItem.cs", "prd-api/src/**/ForkService.cs", "prd-api/src/**/IForkable.cs"]
+paths:
+  - "prd-admin/src/lib/marketplaceTypes.tsx"
+  - "prd-api/src/**/IMarketplaceItem.cs"
+  - "prd-api/src/**/ForkService.cs"
 ---
 
 # 海鲜市场 (Configuration Marketplace) 扩展指南

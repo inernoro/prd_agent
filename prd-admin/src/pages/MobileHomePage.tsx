@@ -1,15 +1,17 @@
+import { Badge } from '@/components/design/Badge';
 /**
  * 移动端首页（<768px）—— 「摘要」仪表盘（iOS 健康摘要风,2026-07-15 定稿）。
  *
  * 设计决策（用户拍板）:
- *  - 视觉语言 = Apple（iOS 系统色 / SF / 纯黑#000·白#f2f2f7 双皮肤 / 白卡 / squircle）
+ *  - 视觉语言 = Apple 版式骨架（SF / 双皮肤 / 白卡 / squircle）+ 米多墨系配色
+ *    （2026-08-02 起色板换成 lib/tileAccent 同源的八色墨带，紫/靛/品红退出）
  *  - 布局 = 工具的脸,不是商店的脸:无海报大卡、无页内大标题/日期（AppShell 已有顶栏,不重复 chrome）
  *  - 内容排序 = 你的工作优先:继续上次 → 常用应用 → 近7日 → 动态;智能体降级为底部紧凑货架
  * 全部真实数据（useMobileHomeData / BUILTIN_TOOLS）;近7日无按日序列,只展示聚合数,不编造迷你图。
  */
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTrackedNavigate } from '@/lib/useTrackedNavigate';
 import {
   BookOpen,
   Bug,
@@ -20,6 +22,7 @@ import {
   GraduationCap,
   Image as ImageIcon,
   Landmark,
+  Library,
   Megaphone,
   Moon,
   Newspaper,
@@ -31,7 +34,7 @@ import {
 import { accentFor, iconFor } from '@/lib/agentAccent';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 import {
   formatCompactNumber,
@@ -50,14 +53,17 @@ import { transitionThemeMode } from '@/lib/themeTransition';
 type Grad = { from: string; to: string };
 
 const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideIcon; accent: Grad }> = [
-  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, accent: { from: AS_COLOR.orange, to: '#FFB340' } },
+  { key: 'document-store', title: '知识库', route: '/document-store', Icon: BookOpen, accent: { from: AS_COLOR.orange, to: '#9BA85E' } },
   { key: 'report-agent', title: '周报', route: '/report-agent', Icon: FileText, accent: { from: AS_COLOR.blue, to: AS_COLOR.indigo } },
   { key: 'visual-agent', title: '生图', route: '/visual-agent', Icon: ImageIcon, accent: { from: AS_COLOR.purple, to: AS_COLOR.indigo } },
   { key: 'defect-agent', title: '缺陷', route: '/defect-agent', Icon: Bug, accent: { from: AS_COLOR.red, to: AS_COLOR.pink } },
   { key: 'literary-agent', title: '文学创作', route: '/literary-agent', Icon: Feather, accent: { from: AS_COLOR.green, to: AS_COLOR.teal } },
-  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, accent: { from: '#32ADE6', to: AS_COLOR.teal } },
-  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, accent: { from: '#C05B3C', to: AS_COLOR.orange } },
+  { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, accent: { from: '#3B7A75', to: AS_COLOR.teal } },
+  { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, accent: { from: '#C8623A', to: AS_COLOR.orange } },
   { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, accent: { from: AS_COLOR.indigo, to: AS_COLOR.purple } },
+  // 藏书阁此前只在桌面「全部能力 · 底座」里，手机首页既没有它也没有搜索框 ——
+  // 手机用户只能靠别人发链接进来（2026-09-11 视觉验收记的 P1）。
+  { key: 'bookshelf', title: '藏书阁', route: '/bookshelf', Icon: Library, accent: { from: AS_COLOR.green, to: '#4E7E6A' } },
 ];
 
 /** 沉淀与档案：历史与个人资产类入口 */
@@ -65,15 +71,17 @@ const ARCHIVE_ROWS: Array<{ key: string; title: string; desc: string; route: str
   { key: 'library', title: '智识殿堂', desc: '团队公开知识库与文章', route: '/library', Icon: Landmark, accent: { from: AS_COLOR.purple, to: AS_COLOR.indigo } },
   { key: 'learning-center', title: '学习中心', desc: '页面教程与掌握度', route: '/learning-center', Icon: GraduationCap, accent: { from: AS_COLOR.green, to: AS_COLOR.teal } },
   { key: 'my-assets', title: '我的资产', desc: '图片、文档与附件', route: '/my-assets', Icon: FolderOpen, accent: { from: AS_COLOR.blue, to: AS_COLOR.teal } },
-  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, accent: { from: '#32ADE6', to: AS_COLOR.blue } },
+  { key: 'my-shares', title: '我的分享', desc: '发出的分享链接管理', route: '/my/shares', Icon: Share2, accent: { from: '#3B7A75', to: AS_COLOR.blue } },
 ];
 
 export default function MobileHomePage() {
-  const navigate = useNavigate();
+  // 打开智能体一律走带记账的出口，否则手机上的启动不计入「你常用的」
+  const openRoute = useTrackedNavigate();
   const data = useMobileHomeData();
-  const themeMode = useMobileThemeStore((st) => st.mode);
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
-  const isDark = themeMode === 'dark';
+  // 用解析后的明暗，不用偏好本身：选了「随系统」时 mode === 'dark' 永远为 false，
+  // 皮肤对象会挑成浅色而 DOM 已经是暗色。
+  const isDark = useResolvedThemeMode() === 'dark';
   const C = useAppStoreColors();
 
   const headline = data.recentWork[0] ?? null;
@@ -95,11 +103,11 @@ export default function MobileHomePage() {
     accent: a.accent,
     label: a.title,
     badge: a.key === 'changelog' && data.changelogUnread > 0 ? data.changelogUnread : undefined,
-    onClick: () => navigate(a.route),
+    onClick: () => openRoute(a.route, { id: a.key, agentKey: a.key, name: a.title }),
   }));
 
   const feedTint = (type: string): string =>
-    type === 'visual-workspace' ? C.purple : type === 'defect' ? C.red : C.blue;
+    type === 'visual-workspace' ? C.purple : type === 'literary-workspace' ? C.blue : type === 'defect' ? C.red : C.blue;
 
   // 近7日:聚合大数 + 真实按日序列(后端 /api/mobile/stats 的 daily,按用户时区切日)。
   // 指标口径 2026-07-15 用户拍板:会话/消息是桌面 PRD 解读时代的死指标(恒 0),
@@ -112,7 +120,22 @@ export default function MobileHomePage() {
     { label: 'Token', value: data.stats?.totalTokens ?? 0, color: C.orange, series: daily.map((d) => d.tokens) },
   ];
 
-  const cardStyle = { background: C.card, border: `1px solid ${C.hairline}`, borderRadius: 16 } as const;
+  // 取不到 ≠ 为零。服务挂了还显示四个 0 + 「使用后动态会出现在这里」，
+  // 等于当着老用户面说他什么都没干过（同桌面首页，判据在 lib/homePulse）。
+  const statsUnavailable = data.statsFailed && !data.stats;
+  // 三种"不正常"各有出口，且都不能被说成空态（同桌面首页，判据在 lib/homePulse）
+  const feedNotice = data.feedFailed
+    ? (data.feed.length === 0 ? '动态暂时取不到（网络或服务不可用）。' : '没能刷新，这份是上一次取到的。')
+    : data.feedDegraded
+      ? (data.feed.length === 0 ? '动态暂时取不到（部分来源不可用）。' : '有来源没取到，这份可能不全。')
+      : null;
+  const statText = (value: number) => {
+    if (data.loading && !data.stats) return '—';
+    if (statsUnavailable) return '--';
+    return formatCompactNumber(value);
+  };
+
+  const cardStyle = { background: C.card, border: `1px solid ${C.hairline}`, borderRadius: 12 } as const;
 
   return (
     <div
@@ -168,7 +191,7 @@ export default function MobileHomePage() {
             <div style={{ ...cardStyle, padding: 14 }}>
               <button
                 type="button"
-                onClick={() => navigate(headline.route)}
+                onClick={() => openRoute(headline.route, { id: headline.agentKey, agentKey: headline.agentKey, name: recentAgentMetaFor(headline.agentKey).label })}
                 className="w-full flex items-center gap-3 text-left active:opacity-60 transition-opacity"
               >
                 <AppStoreAppIcon
@@ -177,12 +200,15 @@ export default function MobileHomePage() {
                   size={46}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate" style={{ ...AS_TYPE.itemTitle, color: C.label }}>
-                    {headline.title || '未命名工作'}
+                  <span className="flex items-center gap-1.5" style={{ ...AS_TYPE.itemTitle, color: C.label }}>
+                    <span className="min-w-0 truncate">{headline.title || '未命名工作'}</span>
+                    {headline.agentKey === 'web-pages' && headline.progressLabel && (
+                      <Badge size="sm" className="shrink-0">{headline.progressLabel}</Badge>
+                    )}
                   </span>
                   <span className="block truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, marginTop: 2 }}>
                     {recentAgentMetaFor(headline.agentKey).label}
-                    {headline.progressLabel ? ` · ${headline.progressLabel}` : ''} · {formatRelativeTime(headline.lastActiveAt)}
+                    {headline.agentKey !== 'web-pages' && headline.progressLabel ? ` · ${headline.progressLabel}` : ''} · {formatRelativeTime(headline.lastActiveAt)}
                   </span>
                   {/* 诚实进度条:仅带状态机的实体有 progress(如缺陷),没有就不画 */}
                   {headline.progress != null && (
@@ -204,15 +230,15 @@ export default function MobileHomePage() {
                   )}
                 </span>
                 {/* span 版药丸:外层整卡已是 button,内部不得再嵌 button(Codex P2,非法 DOM) */}
-                <AppStorePillLabel label="继续" />
+                <AppStorePillLabel label={headline.agentKey === 'web-pages' ? '查看' : '继续'} />
               </button>
               {restRecent.map((item) => {
                 const meta = recentAgentMetaFor(item.agentKey);
                 return (
                   <button
-                    key={`${item.route}-${item.lastActiveAt}`}
+                    key={`${item.route}-${item.lastActiveAt}-${item.progressLabel ?? ''}`}
                     type="button"
-                    onClick={() => navigate(item.route)}
+                    onClick={() => openRoute(item.route, { id: item.agentKey, agentKey: item.agentKey, name: meta.label })}
                     className="w-full flex items-center gap-2.5 text-left active:opacity-60 transition-opacity"
                     style={{ padding: '10px 2px 0', marginTop: 10, borderTop: `1px solid ${C.separator}` }}
                   >
@@ -220,10 +246,13 @@ export default function MobileHomePage() {
                     <span className="min-w-0 flex-1 truncate" style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary }}>
                       {item.title || '未命名工作'}
                     </span>
-                    {/* 右侧只留相对时间——真实标题偏长,带上 agent 名会把标题挤没(demo 差距复盘) */}
-                    <span style={{ ...AS_TYPE.caption, color: C.labelTertiary, flex: 'none' }}>
-                      {formatRelativeTime(item.lastActiveAt)}
-                    </span>
+                    {item.agentKey === 'web-pages' && item.progressLabel ? (
+                      <Badge size="sm" className="shrink-0">{item.progressLabel}</Badge>
+                    ) : (
+                      <span style={{ ...AS_TYPE.caption, color: C.labelTertiary, flex: 'none' }}>
+                        {formatRelativeTime(item.lastActiveAt)}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -233,11 +262,13 @@ export default function MobileHomePage() {
         })()}
 
         {/* ── 常用应用 ── */}
-        <Section C={C} title="常用应用" action={{ label: '全部', onClick: () => navigate('/ai-toolbox') }}>
+        <Section C={C} title="常用应用" action={{ label: '全部', onClick: () => openRoute('/ai-toolbox') }}>
           <div style={{ ...cardStyle, padding: '16px 0' }}>
             <AppStoreGrid items={gridItems} columns={4} />
           </div>
         </Section>
+
+
 
         {/* ── 近 7 日（健康摘要式:大数 + 真实七日迷你柱） ── */}
         <Section C={C} title="近 7 日">
@@ -253,32 +284,58 @@ export default function MobileHomePage() {
                       letterSpacing: '-0.02em',
                       lineHeight: 1,
                       // 0 值不上鲜艳色——亮蓝色的"0"比灰色的"0"更扎眼
-                      color: s.value > 0 ? s.color : C.labelTertiary,
+                      color: statsUnavailable ? C.labelTertiary : s.value > 0 ? s.color : C.labelTertiary,
                       fontVariantNumeric: 'tabular-nums',
                     }}
+                    title={statsUnavailable ? '用量数据没取到，不代表用量为零' : undefined}
                   >
-                    {data.loading ? '—' : formatCompactNumber(s.value)}
+                    {statText(s.value)}
                   </span>
                   {s.series.length > 0 && <MiniBars series={s.series} color={s.color} trackColor={C.pillBg} />}
                 </div>
               </div>
             ))}
+            {/* 说明和重试必须看得见：title 只在悬停时出现，手机上等于没有。
+                两个端点各自成败，用量单独挂了也要能自己救回来。 */}
+            {data.statsFailed && (
+              <div style={{ ...AS_TYPE.caption, gridColumn: '1 / -1', color: C.labelSecondary }}>
+                {statsUnavailable ? '用量暂时取不到（网络或服务不可用）。' : '这份用量可能不是最新。'}
+                <button
+                  type="button"
+                  onClick={data.reload}
+                  style={{ marginLeft: 6, color: C.blue, fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  重试
+                </button>
+              </div>
+            )}
           </div>
         </Section>
 
         {/* ── 我的动态 ── */}
-        <Section C={C} title="我的动态" action={{ label: '全部', onClick: () => navigate('/my-assets') }}>
+        <Section C={C} title="我的动态" action={{ label: '全部', onClick: () => openRoute('/my-assets') }}>
           <div style={{ ...cardStyle, padding: '4px 14px' }}>
-            {data.feed.length === 0 ? (
+            {data.feed.length === 0 && feedNotice ? (
               <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
-                使用知识库、周报、生图或缺陷后，动态会出现在这里
+                {feedNotice}
+                <button
+                  type="button"
+                  onClick={data.reload}
+                  style={{ marginLeft: 6, color: C.blue, fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  重试
+                </button>
+              </div>
+            ) : data.feed.length === 0 ? (
+              <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
+                {data.loading ? '正在读取你的动态…' : '生成配图、创作文章或提交缺陷后，动态会出现在这里'}
               </div>
             ) : (
               data.feed.slice(0, 6).map((item, idx) => (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => navigate(item.navigateTo)}
+                  onClick={() => openRoute(item.navigateTo)}
                   className="w-full flex items-center text-left active:opacity-60 transition-opacity"
                   style={{ gap: 10, padding: '12px 0', borderTop: idx > 0 ? `1px solid ${C.separator}` : undefined }}
                 >
@@ -292,6 +349,20 @@ export default function MobileHomePage() {
                 </button>
               ))
             )}
+            {/* 留着上一轮的列表时也得说清它是旧的：默不作声地把过期数据当现状
+                展示，和显示 0 是同一类谎话，只是更难被发现。 */}
+            {feedNotice && data.feed.length > 0 && (
+              <div style={{ ...AS_TYPE.caption, color: C.labelSecondary, padding: '10px 0 12px' }}>
+                {feedNotice}
+                <button
+                  type="button"
+                  onClick={data.reload}
+                  style={{ marginLeft: 6, color: C.blue, fontWeight: 600, textDecoration: 'underline' }}
+                >
+                  重试
+                </button>
+              </div>
+            )}
           </div>
         </Section>
 
@@ -300,12 +371,12 @@ export default function MobileHomePage() {
           <>
             <div
               className="flex items-end justify-between"
-              style={{ padding: `28px ${AS_SPACE.gutter}px 10px`, gap: 12 }}
+              style={{ padding: `20px ${AS_SPACE.gutter}px 8px`, gap: 12 }}
             >
-              <span style={{ ...AS_TYPE.itemTitle, color: C.labelSecondary }}>试试这些智能体</span>
+              <span style={{ ...AS_TYPE.itemTitle, fontSize: 15, color: C.labelSecondary }}>试试这些智能体</span>
               <button
                 type="button"
-                onClick={() => navigate('/ai-toolbox')}
+                onClick={() => openRoute('/ai-toolbox')}
                 className="active:opacity-60 transition-opacity"
                 style={{ ...AS_TYPE.itemSubtitle, color: C.blue }}
               >
@@ -330,14 +401,14 @@ export default function MobileHomePage() {
                   <button
                     key={t.id}
                     type="button"
-                    onClick={() => navigate(t.routePath ?? `/ai-toolbox?item=${t.id}`)}
+                    onClick={() => openRoute(t.routePath ?? `/ai-toolbox?item=${t.id}`, { id: t.id, agentKey: t.agentKey, name: t.name, icon: t.icon })}
                     className={`group relative shrink-0 overflow-hidden text-left active:opacity-60 transition-opacity ${hasArtwork ? 'flex flex-col justify-between' : 'flex items-center'}`}
                     style={hasArtwork
                       ? {
                           width: 196,
                           height: 126,
                           padding: 11,
-                          borderRadius: 16,
+                          borderRadius: 12,
                           border: '1px solid var(--media-card-border)',
                           background: 'var(--media-card-base)',
                         }
@@ -394,7 +465,7 @@ export default function MobileHomePage() {
               <button
                 key={row.key}
                 type="button"
-                onClick={() => navigate(row.route)}
+                onClick={() => openRoute(row.route)}
                 className="w-full flex items-center text-left active:opacity-60 transition-opacity"
                 style={{ gap: 12, padding: '10px 0', borderTop: idx > 0 ? `1px solid ${C.separator}` : undefined }}
               >
@@ -467,9 +538,9 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section style={{ padding: `0 ${AS_SPACE.gutter}px`, marginTop: 24 }}>
+    <section style={{ padding: `0 ${AS_SPACE.gutter}px`, marginTop: 18 }}>
       <div className="flex items-end justify-between" style={{ marginBottom: 10, gap: 12 }}>
-        <span style={{ ...AS_TYPE.groupTitle, color: C.label }}>{title}</span>
+        <span style={{ ...AS_TYPE.groupTitle, fontSize: 17, color: C.label }}>{title}</span>
         {action && (
           <button
             type="button"

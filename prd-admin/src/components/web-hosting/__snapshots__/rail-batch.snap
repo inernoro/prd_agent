@@ -1,0 +1,16 @@
+aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:10px;overscroll-behavior:contain;padding:14px;width:300px}
+  div
+    "批量操作"
+  div
+    "3"
+    span {margin-left:6px}
+      "个站点已选"
+  button .gap-2.inline-flex.items-center.justify-center {height:38px} [type=button]
+    svg
+    "分享成一个合集"
+  button .gap-2.inline-flex.items-center.justify-center {height:36px} [type=button]
+    svg
+    "删除（危险 · 需二次确认）"
+  div .flex-1
+  button {height:32px} [type=button]
+    "取消选择"

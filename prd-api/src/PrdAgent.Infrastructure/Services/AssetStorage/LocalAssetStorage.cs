@@ -32,7 +32,8 @@ public class LocalAssetStorage : IAssetStorage
         Directory.CreateDirectory(dir);
         var filePath = Path.Combine(dir, $"{sha}.{ext}");
 
-        if (!File.Exists(filePath))
+        var existed = File.Exists(filePath);
+        if (!existed)
         {
             await File.WriteAllBytesAsync(filePath, bytes, ct);
         }
@@ -41,7 +42,25 @@ public class LocalAssetStorage : IAssetStorage
         // 不能复用 image-master 的按 SHA 路由：它只扫描少数图片域，文档、音频等
         // 其他 domain/type 会保存成功但读取 404。
         var url = BuildUrlForPath(filePath);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime);
+        var key = Path.GetRelativePath(_baseDir, filePath).Replace(Path.DirectorySeparatorChar, '/');
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = !existed };
+    }
+
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null)
+    {
+        if (bytes == null || bytes.Length == 0) return null;
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
+        var sha = Sha256Hex(bytes);
+        var dir = ResolveDir(domain, type);
+        var filePath = Path.Combine(dir, $"{sha}.{ext}");
+        return Path.GetRelativePath(_baseDir, filePath).Replace(Path.DirectorySeparatorChar, '/');
     }
 
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
@@ -84,6 +103,49 @@ public class LocalAssetStorage : IAssetStorage
             }
         }
         return null;
+    }
+
+    public Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null)
+    {
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (sha.Length < 16 || !IsHex(sha)) return Task.FromResult<AssetReadHandle?>(null);
+
+        var dirs = new List<string>();
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(domain) && !string.IsNullOrWhiteSpace(type))
+                dirs.Add(ResolveDir(domain, type));
+        }
+        catch
+        {
+            // ignore
+        }
+        dirs.Add(_baseDir);
+
+        foreach (var dir in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(dir)) continue;
+            string? filePath;
+            try { filePath = Directory.GetFiles(dir, $"{sha}.*").FirstOrDefault(); }
+            catch { continue; }
+            if (filePath == null) continue;
+
+            var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var mime = ExtToMime(Path.GetExtension(filePath).TrimStart('.'));
+            return Task.FromResult<AssetReadHandle?>(new AssetReadHandle(stream, mime, stream.Length));
+        }
+        return Task.FromResult<AssetReadHandle?>(null);
     }
 
     public Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
@@ -154,6 +216,17 @@ public class LocalAssetStorage : IAssetStorage
         }
 
         return BuildUrlForPath(Path.Combine(dir, $"{sha}.{ext}"));
+    }
+
+    public Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var filePath = ResolveKeyPath(key);
+        if (!File.Exists(filePath)) return Task.FromResult<AssetReadHandle?>(null);
+        var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        return Task.FromResult<AssetReadHandle?>(new AssetReadHandle(stream,
+            ExtToMime(Path.GetExtension(filePath).TrimStart('.')), stream.Length));
     }
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
@@ -331,6 +404,7 @@ public class LocalAssetStorage : IAssetStorage
             "audio/webm" => "weba",
             // 视频
             "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
             "video/webm" => "webm",
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
@@ -370,6 +444,7 @@ public class LocalAssetStorage : IAssetStorage
             "weba" => "audio/webm",
             // 视频
             "mp4" => "video/mp4",
+            "m4v" => "video/x-m4v",
             "webm" => "video/webm",
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",

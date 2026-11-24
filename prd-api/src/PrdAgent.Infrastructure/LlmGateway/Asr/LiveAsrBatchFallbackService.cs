@@ -7,6 +7,9 @@ using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Asr;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 
@@ -43,7 +46,10 @@ public sealed class LiveAsrBatchFallbackService
         ChannelReader<LiveAsrAudioFrame> frames,
         Func<LiveAsrEvent, Task> emit,
         Action? onUpstreamRequest,
-        GatewayRequestContext requestContext)
+        GatewayRequestContext requestContext,
+        CancellationToken platformCancellationToken = default,
+        Func<CancellationToken, Task>? beforeFallbackSend = null,
+        string appCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio)
     {
         string? provider = null;
         string? model = null;
@@ -54,7 +60,7 @@ public sealed class LiveAsrBatchFallbackService
             // 首个成功窗口开始写入 partial/final 与会话结果。
             Provider = null,
             Model = null,
-            Message = "流式供应商不可用，已切换到滚动窗口实时转写",
+            Message = "已启用分段实时转写，约 5 秒后显示第一段；录音仍会安全保存，结束后将用完整音频自动校准。",
         });
 
         // 候选状态属于整个录音会话，不属于单个五秒窗口。某候选完整失败后从
@@ -67,7 +73,7 @@ public sealed class LiveAsrBatchFallbackService
         var completeAudioCoverage = true;
         var receivedFinalFrame = false;
 
-        await foreach (var frame in frames.ReadAllAsync(CancellationToken.None))
+        await foreach (var frame in frames.ReadAllAsync(platformCancellationToken))
         {
             if (frame.IsFinal)
             {
@@ -92,7 +98,9 @@ public sealed class LiveAsrBatchFallbackService
                     windowIndex,
                     emit,
                     onUpstreamRequest,
-                    requestContext);
+                    requestContext,
+                    platformCancellationToken,
+                    beforeFallbackSend, appCallerCode);
                 if (!window.Succeeded)
                 {
                     return new LiveAsrSessionResult
@@ -137,7 +145,9 @@ public sealed class LiveAsrBatchFallbackService
                 windowIndex,
                 emit,
                 onUpstreamRequest,
-                requestContext);
+                requestContext,
+                platformCancellationToken,
+                beforeFallbackSend, appCallerCode);
             if (!window.Succeeded)
             {
                 return new LiveAsrSessionResult
@@ -210,7 +220,10 @@ public sealed class LiveAsrBatchFallbackService
         int windowIndex,
         Func<LiveAsrEvent, Task> emit,
         Action? onUpstreamRequest,
-        GatewayRequestContext requestContext)
+        GatewayRequestContext requestContext,
+        CancellationToken platformCancellationToken,
+        Func<CancellationToken, Task>? beforeFallbackSend,
+        string appCallerCode)
     {
         // 纯静音窗口不发给多模态模型。否则部分模型会把静音补全成
         // “请播放音频”等解释性文本，既污染原文又产生无效调用成本。
@@ -221,11 +234,30 @@ public sealed class LiveAsrBatchFallbackService
         var orderedCandidates = candidates.ToArray();
         for (var index = 0; index < orderedCandidates.Length; index++)
         {
+            platformCancellationToken.ThrowIfCancellationRequested();
             var candidate = orderedCandidates[index];
+            if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                    candidate.ActualModel,
+                    candidate.Protocol,
+                    candidate.PlatformType,
+                    candidate.OfferingEndpointPath,
+                    candidate.IsExchange,
+                    out var routeError))
+            {
+                _logger.LogError(
+                    "滚动窗口 ASR 拒绝不兼容的 Offering window={Window} offering={Offering} model={Model} endpoint={Endpoint} error={Error}",
+                    windowIndex,
+                    candidate.OfferingId,
+                    candidate.ActualModel,
+                    candidate.OfferingEndpointPath,
+                    routeError);
+                continue;
+            }
             for (var providerAttempt = 1;
                  providerAttempt <= ProviderValidationAttempts;
                  providerAttempt++)
             {
+                platformCancellationToken.ThrowIfCancellationRequested();
                 await emit(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Status,
@@ -240,12 +272,16 @@ public sealed class LiveAsrBatchFallbackService
 
                 try
                 {
-                    var request = BuildRequest(candidate, wave, providerAttempt, requestContext);
+                    var request = BuildRequest(candidate, wave, providerAttempt, requestContext, appCallerCode);
+                    if (beforeFallbackSend is null)
+                        throw new TaskExecutionAdmissionException("TASK_ADMISSION_UNAVAILABLE", "任务授权服务暂时不可用，已停止转写；请保留录音后稍后重试。", 503);
+                    await beforeFallbackSend(platformCancellationToken);
                     onUpstreamRequest?.Invoke();
                     var response = await _gateway.SendRawWithResolutionAsync(
                         request,
                         candidate.ToGatewayResolution(),
-                        CancellationToken.None);
+                        platformCancellationToken);
+                    platformCancellationToken.ThrowIfCancellationRequested();
                     var text = response.Success && !string.IsNullOrWhiteSpace(response.Content)
                         ? ExtractText(response.Content)
                         : null;
@@ -282,6 +318,14 @@ public sealed class LiveAsrBatchFallbackService
                     // 浪费在已不可用的候选上。只有成功响应但文本无效才继续校验。
                     if (!response.Success)
                         break;
+                }
+                catch (OperationCanceledException) when (platformCancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (TaskExecutionAdmissionException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -424,7 +468,8 @@ public sealed class LiveAsrBatchFallbackService
         ModelResolutionResult candidate,
         byte[] wave,
         int providerAttempt,
-        GatewayRequestContext requestContext)
+        GatewayRequestContext requestContext,
+        string appCallerCode)
     {
         if (candidate.IsExchange
             && string.Equals(candidate.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
@@ -432,7 +477,7 @@ public sealed class LiveAsrBatchFallbackService
             return BaseRequest(
                 candidate,
                 requestContext,
-                requestBody: new JsonObject { ["audio_data"] = Convert.ToBase64String(wave) });
+                requestBody: new JsonObject { ["audio_data"] = Convert.ToBase64String(wave) }, appCallerCode: appCallerCode);
         }
 
         if (ShouldUseChatAudio(candidate))
@@ -473,23 +518,18 @@ public sealed class LiveAsrBatchFallbackService
                             },
                         },
                     },
-                });
+                }, appCallerCode: appCallerCode);
         }
 
         return BaseRequest(
             candidate,
             requestContext,
-            endpointPath: "/v1/audio/transcriptions",
-            multipartFields: new Dictionary<string, object>
-            {
-                ["model"] = candidate.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-            },
+            endpointPath: AsrRequestContractPolicy.TranscriptionsEndpoint,
+            multipartFields: AsrRequestContractPolicy.BuildTranscriptionFields(candidate.ActualModel),
             multipartFiles: new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("live-window.wav", wave, "audio/wav"),
-            });
+            }, appCallerCode: appCallerCode);
     }
 
     private static GatewayRawRequest BaseRequest(
@@ -498,11 +538,13 @@ public sealed class LiveAsrBatchFallbackService
         string? endpointPath = null,
         JsonObject? requestBody = null,
         Dictionary<string, object>? multipartFields = null,
-        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null)
+        Dictionary<string, (string FileName, byte[] Content, string MimeType)>? multipartFiles = null,
+        string appCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio)
     {
         return new GatewayRawRequest
         {
-            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            RequiredOfferingId = candidate.OfferingId,
+            AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             ExpectedModel = candidate.ActualModel,
             PinnedPlatformId = candidate.ActualPlatformId,
@@ -522,21 +564,10 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     private static bool ShouldUseChatAudio(ModelResolutionResult candidate)
-    {
-        var model = candidate.ActualModel?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (model.Contains("whisper", StringComparison.Ordinal) || model.Length == 0)
-            return false;
-        if (!model.Contains("audio", StringComparison.Ordinal)
-            && !model.Contains("gemini", StringComparison.Ordinal))
-            return false;
-
-        var protocol = candidate.Protocol?.Trim().ToLowerInvariant();
-        if (!string.IsNullOrWhiteSpace(protocol) && protocol != "unknown")
-            return protocol is "openai" or "openai-compatible" or "openrouter";
-
-        var platform = candidate.PlatformType?.Trim().ToLowerInvariant();
-        return platform is not ("google" or "gemini" or "anthropic" or "claude" or "exchange");
-    }
+        => AsrRequestContractPolicy.ShouldUseChatAudio(
+            candidate.ActualModel,
+            candidate.Protocol,
+            candidate.PlatformType);
 
     private static byte[] TakePrefix(MemoryStream stream, int count)
     {
@@ -548,7 +579,7 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     private static bool IsNoSpeech(string text)
-        => text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase);
+        => TranscribeNoteText.IsNoSpeechSentinel(text);
 
     public static bool LooksLikeAssistantReply(string text)
     {
@@ -612,6 +643,9 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     public static bool HasLikelySpeech(byte[] pcm)
+        => HasLikelySpeech(pcm.AsSpan());
+
+    public static bool HasLikelySpeech(ReadOnlySpan<byte> pcm)
     {
         if (pcm.Length < BytesPerSample)
             return false;
@@ -622,7 +656,7 @@ public sealed class LiveAsrBatchFallbackService
         for (var offset = 0; offset + 1 < pcm.Length; offset += BytesPerSample)
         {
             var amplitude = Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(
-                pcm.AsSpan(offset, BytesPerSample)));
+                pcm.Slice(offset, BytesPerSample)));
             if (amplitude < SpeechAmplitudeThreshold)
                 continue;
             activeSamples++;

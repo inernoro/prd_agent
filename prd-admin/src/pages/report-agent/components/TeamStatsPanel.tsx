@@ -13,13 +13,13 @@ interface TeamStatsPanelProps {
 }
 
 const statusColors: Record<string, { bg: string; text: string; label: string }> = {
-  submitted: { bg: 'rgba(34, 197, 94, 0.12)', text: 'rgba(34, 197, 94, 0.95)', label: '已提交' },
-  reviewed: { bg: 'rgba(59, 130, 246, 0.12)', text: 'rgba(59, 130, 246, 0.95)', label: '已审阅' },
-  viewed: { bg: 'rgba(139, 92, 246, 0.12)', text: 'rgba(139, 92, 246, 0.95)', label: '已查看' },
-  draft: { bg: 'rgba(234, 179, 8, 0.12)', text: 'rgba(234, 179, 8, 0.95)', label: '草稿' },
+  submitted: { bg: 'rgba(34, 197, 94, 0.12)', text: 'var(--accent-fg-success)', label: '已提交' },
+  reviewed: { bg: 'rgba(59, 130, 246, 0.12)', text: 'var(--accent-fg-blue)', label: '已审阅' },
+  viewed: { bg: 'rgba(139, 92, 246, 0.12)', text: 'var(--accent-fg-blue)', label: '已查看' },
+  draft: { bg: 'rgba(234, 179, 8, 0.12)', text: 'var(--accent-fg-amber)', label: '草稿' },
   'not-started': { bg: 'rgba(156, 163, 175, 0.12)', text: 'rgba(156, 163, 175, 0.95)', label: '未开始' },
-  vacation: { bg: 'rgba(244, 114, 182, 0.12)', text: 'rgba(244, 114, 182, 0.95)', label: '请假' },
-  overdue: { bg: 'rgba(239, 68, 68, 0.12)', text: 'rgba(239, 68, 68, 0.95)', label: '逾期' },
+  vacation: { bg: 'rgba(244, 114, 182, 0.12)', text: 'var(--accent-fg-violet)', label: '请假' },
+  overdue: { bg: 'rgba(239, 68, 68, 0.12)', text: 'var(--accent-fg-danger)', label: '逾期' },
 };
 
 export function TeamStatsPanel({ teamId, weekYear, weekNumber }: TeamStatsPanelProps) {

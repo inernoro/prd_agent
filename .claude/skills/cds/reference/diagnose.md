@@ -21,7 +21,7 @@ cdscli diagnose <branchId>        # 只抓数据不分析（原始素材）
 
 | 日志模式 | 推断 | 建议修复 |
 |---------|------|---------|
-| `error CS\d+` | C# 编译错误 | `dotnet build --no-restore` 本地复现 → 按行号修复 |
+| `error CS\d+` | C# 编译错误 | 错误行号就在日志里，直接按它改；要复现的话，本地有 SDK 就 `dotnet build --no-restore`（最快），没有就翻这条部署自己的构建日志或本仓库负责编译的那条流水线 |
 | `connection refused` | 下游服务拒接 | 检查 infra (`cdscli branch status`), MongoDB/Redis 是否 running |
 | `ENOENT.*node_modules` | 前端依赖缺失 | 容器内 `pnpm install` 或重新 deploy |
 | `port \d+ already in use` | 端口冲突 | `POST /api/cleanup-orphans` |
@@ -76,9 +76,9 @@ found in: logs.api line 123
   at Program.cs(42, 13)
 
 [建议]
-1. 本地 `cd prd-api && dotnet build --no-restore`
+1. 错误行号上面这段日志里就有，直接按它改；要复现的话，本地有 SDK 就 `dotnet build --no-restore`（最快），没有就翻这条部署自己的构建日志，或本仓库负责编译的那条流水线（如果有）
 2. 修复 Program.cs:42
-3. `cdscli deploy` 重新部署
+3. push 后等负责编译的那条流水线绿（那才是「编得出来」的判据）；项目已连 GitHub 且开着 autoDeploy 时 push 会自动部署，等它就位后冒烟即可，别再手动 `cdscli deploy`（会重复重启）——只有关了 autoDeploy 或分支被过滤掉时才需要手动
 
 [环境变量检查]
   envKeys 包含 AI_ACCESS_KEY: [OK]

@@ -57,6 +57,6 @@
 
 ## 关联文档
 
-- [doc/debt.agent-universe.md](./debt.agent-universe.md)：能力契约与已知边界。
+- [doc/debt.agent-universe.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.agent-universe.md)：能力契约与已知边界。
 - [design.knowledge-base.agent-architecture.md](./design.knowledge-base.agent-architecture.md)：知识库智能体架构。
 - [design.visual-agent.md](./design.visual-agent.md)、[design.literary-agent.md](./design.literary-agent.md)：生成型智能体的业务入口。

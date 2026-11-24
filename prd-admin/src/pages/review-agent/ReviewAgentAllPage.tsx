@@ -9,12 +9,12 @@ import { ReviewLeaderboardView } from './components/ReviewLeaderboardView';
 
 function getStatusInfo(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
-    if (item.isPassed === false) return { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
+    if (item.isPassed === false) return { label: '未通过', color: 'text-[color:var(--accent-fg-warning)]', icon: <XCircle className="w-3.5 h-3.5" /> };
     return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
   }
   if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
   if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
-  return { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
+  return { label: '等待评审', color: 'text-[color:var(--accent-fg-amber)]', icon: <Clock className="w-3.5 h-3.5" /> };
 }
 
 type StatusFilter = 'all' | 'passed' | 'notPassed' | 'error';
@@ -114,7 +114,7 @@ export function ReviewAgentAllPage() {
 
           <div className="flex items-center gap-3 mb-5">
             <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-              <ClipboardList className="w-4 h-4 text-indigo-400" />
+              <ClipboardList className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
             </div>
             <div>
               <h1 className="text-lg font-semibold text-token-primary">全部评审提交</h1>
@@ -183,7 +183,7 @@ export function ReviewAgentAllPage() {
                       onClick={() => { setSelectedSubmitterId(''); setPage(1); }}
                       className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                         !selectedSubmitterId
-                          ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                          ? 'bg-indigo-500/20 border-indigo-500/40 text-[color:var(--accent-fg-blue)]'
                           : 'bg-token-nested border-token-subtle text-token-secondary hover-border-token hover-text-primary'
                       }`}
                     >
@@ -195,7 +195,7 @@ export function ReviewAgentAllPage() {
                         onClick={() => { setSelectedSubmitterId(prev => prev === s.id ? '' : s.id); setPage(1); }}
                         className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                           selectedSubmitterId === s.id
-                            ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                            ? 'bg-indigo-500/20 border-indigo-500/40 text-[color:var(--accent-fg-blue)]'
                             : 'bg-token-nested border-token-subtle text-token-secondary hover-border-token hover-text-primary'
                         }`}
                       >
@@ -250,7 +250,7 @@ export function ReviewAgentAllPage() {
                                 (item.appealStatus === 'Pending'
                                   ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
                                   : item.appealStatus === 'Approved'
-                                    ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
+                                    ? 'bg-violet-500/15 text-[color:var(--accent-fg-violet)] border-violet-500/30'
                                     : 'bg-rose-900/30 text-rose-300 border-rose-700/40')
                               }
                             >

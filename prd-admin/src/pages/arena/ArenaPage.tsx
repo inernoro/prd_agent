@@ -18,7 +18,6 @@ import {
   createArenaGroup,
   updateArenaGroup,
   deleteArenaGroup,
-  createArenaSlot,
   deleteArenaSlot,
   toggleArenaSlot,
   createArenaRun,
@@ -30,7 +29,11 @@ import type { ArenaAttachmentInfo } from '@/services';
 import { api } from '@/services/api';
 import { Dialog } from '@/components/ui/Dialog';
 import { ConfirmTip } from '@/components/ui/ConfirmTip';
-import { ModelPoolPickerDialog, type SelectedModelItem } from '@/components/model/ModelPoolPickerDialog';
+import { ArenaModelPickerDialog } from '@/components/model/ArenaModelPickerDialog';
+import { ArenaLineupNotice } from '@/components/model/ArenaLineupNotice';
+import { arenaLineupProblem, arenaUnavailableSlots } from '@/lib/arenaModelReferences';
+import { ModelReferenceStatus } from '@/components/model/ModelReferenceStatus';
+import type { ArenaSlot, ArenaGroup } from '@/services/contracts/arena';
 import type { Platform } from '@/types/admin';
 import {
   Eye, Send, Plus, Search, MessageSquare, Clock, Swords, ChevronDown, ChevronRight, Brain,
@@ -40,28 +43,11 @@ import {
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
-import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
+import { HERO_GRADIENT, HERO_GRADIENT_FG } from '@/pages/home/sections/HeroSection';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface ArenaSlot {
-  id: string;
-  platformId: string;
-  modelId: string;
-  displayName?: string;
-  enabled?: boolean;
-}
-
-interface ArenaGroup {
-  id?: string;
-  key: string;
-  name: string;
-  description?: string;
-  sortOrder?: number;
-  slots: ArenaSlot[];
-}
 
 interface GroupForm {
   key: string;
@@ -277,6 +263,8 @@ export function ArenaPage() {
   const [groups, setGroups] = useState<ArenaGroup[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string>('');
   const [lineupLoading, setLineupLoading] = useState(true);
+  const [checkingLineup, setCheckingLineup] = useState(false);
+  const lineupCheck = useRef(false);
   const [lineupError, setLineupError] = useState<string | null>(null);
   const [groupDropdownOpen, setGroupDropdownOpen] = useState(false);
 
@@ -319,6 +307,7 @@ export function ArenaPage() {
   const [groupSaving, setGroupSaving] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelPickerTargetGroup, setModelPickerTargetGroup] = useState('');
+  const [repairingSlot, setRepairingSlot] = useState<ArenaSlot | null>(null);
   const [adminLoading, setAdminLoading] = useState(false);
 
   const platformMap = useMemo(() => {
@@ -326,16 +315,6 @@ export function ArenaPage() {
     for (const p of platforms) map.set(p.id, p.name);
     return map;
   }, [platforms]);
-
-  const existingModelsForPicker = useMemo<SelectedModelItem[]>(() => {
-    const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
-    if (!group) return [];
-    return group.slots.map((s) => ({
-      platformId: s.platformId,
-      modelId: s.modelId,
-      name: s.displayName || s.modelId,
-    }));
-  }, [adminGroups, modelPickerTargetGroup]);
 
   // --- Refs ---
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -578,71 +557,8 @@ export function ArenaPage() {
 
   function openAddSlots(groupKey: string) {
     setModelPickerTargetGroup(groupKey);
+    setRepairingSlot(null);
     setModelPickerOpen(true);
-  }
-
-  async function handleModelPickerConfirm(models: SelectedModelItem[]) {
-    const group = adminGroups.find((g) => g.key === modelPickerTargetGroup);
-    const existingSlots = group?.slots ?? [];
-    const existingKeys = new Set(
-      existingSlots.map((s) => `${s.platformId}:${s.modelId}`.toLowerCase()),
-    );
-    const confirmedKeys = new Set(
-      models.map((m) => `${m.platformId}:${m.modelId}`.toLowerCase()),
-    );
-
-    // Find new models to add
-    const newModels = models.filter(
-      (m) => !existingKeys.has(`${m.platformId}:${m.modelId}`.toLowerCase()),
-    );
-    // Find existing slots to remove (were in existing but removed from confirmed list)
-    const slotsToRemove = existingSlots.filter(
-      (s) => !confirmedKeys.has(`${s.platformId}:${s.modelId}`.toLowerCase()),
-    );
-
-    if (newModels.length === 0 && slotsToRemove.length === 0) {
-      toast.info('没有变更');
-      return;
-    }
-
-    let addCount = 0;
-    let removeCount = 0;
-
-    // Delete removed slots
-    for (const slot of slotsToRemove) {
-      try {
-        const res = await deleteArenaSlot(slot.id);
-        if (res.success) removeCount++;
-      } catch {
-        // continue
-      }
-    }
-
-    // Add new slots
-    for (const m of newModels) {
-      try {
-        const res = await createArenaSlot({
-          displayName: m.name || m.modelName || m.modelId,
-          platformId: m.platformId,
-          modelId: m.modelId,
-          group: modelPickerTargetGroup,
-          enabled: true,
-        });
-        if (res.success) addCount++;
-      } catch {
-        // continue
-      }
-    }
-
-    if (addCount > 0 || removeCount > 0) {
-      const msgs: string[] = [];
-      if (addCount > 0) msgs.push(`添加 ${addCount} 个`);
-      if (removeCount > 0) msgs.push(`移除 ${removeCount} 个`);
-      toast.success(`模型已更新：${msgs.join('，')}`);
-      await loadAdminGroups();
-    } else {
-      toast.error('操作失败');
-    }
   }
 
   async function handleDeleteSlot(slotId: string) {
@@ -669,6 +585,7 @@ export function ArenaPage() {
   // --- Get selected group's slots ---
   const selectedGroup = groups.find((g) => g.key === selectedGroupKey);
   const slots = selectedGroup?.slots ?? [];
+  const lineupBlocked = lineupLoading || checkingLineup || !!lineupError || arenaUnavailableSlots(slots).length > 0;
 
   // --- Start a new battle ---
   function handleNewBattle() {
@@ -877,11 +794,27 @@ export function ArenaPage() {
 
   // --- Core battle launcher (shared by handleSend & handleRetry) ---
   async function launchBattle(question: string, sendAttachmentIds: string[] = []) {
-    const newLabelMap = assignLabels(slots);
-    const runSlots = slots.map((slot) => {
+    if (lineupCheck.current) return false;
+    lineupCheck.current = true; setCheckingLineup(true);
+    let latestGroup: ArenaGroup | undefined;
+    try {
+      const latest = await getArenaLineup();
+      if (!latest.success) throw new Error('阵容状态未确认，请重新读取后重试。');
+      setGroups(latest.data.items); setLineupError(null);
+      latestGroup = latest.data.items.find(group => group.key === selectedGroupKey);
+      const problem = arenaLineupProblem(selectedGroup, latestGroup);
+      if (problem) { toast.warning(problem); return false; }
+    } catch {
+      setLineupError('阵容状态未确认');
+      toast.error('阵容状态未确认，请重新读取后重试。');
+      return false;
+    } finally { lineupCheck.current = false; setCheckingLineup(false); }
+    const newLabelMap = assignLabels(latestGroup!.slots);
+    const runSlots = latestGroup!.slots.map((slot) => {
       const info = newLabelMap.get(slot.id) ?? { label: '助手 ?', index: 0 };
       return {
         slotId: slot.id,
+        logicalModelId: slot.logicalModelId,
         platformId: slot.platformId,
         modelId: slot.modelId,
         label: info.label,
@@ -935,6 +868,7 @@ export function ArenaPage() {
       }));
 
       await subscribeToRunStream(runId, 0);
+      return true;
     } catch (e: any) {
       if (e?.name === 'AbortError') return;
       toast.error('竞技场请求失败', e?.message ?? '网络错误');
@@ -948,6 +882,8 @@ export function ArenaPage() {
       setIsStreaming(false);
       sessionStorage.removeItem(ARENA_RUN_STORAGE_KEY);
       setActiveRunId(null);
+      setPrompt(question);
+      return false;
     }
   }
 
@@ -967,9 +903,8 @@ export function ArenaPage() {
       fileName: a.fileName,
       mimeType: a.mimeType,
     })));
-    setAttachments([]);
-
-    await launchBattle(question, sendAttachmentIds);
+    const launched = await launchBattle(question, sendAttachmentIds);
+    if (launched) setAttachments([]);
   }, [prompt, isStreaming, slots, selectedGroupKey, attachments]);
 
   // --- Reveal models ---
@@ -1254,9 +1189,11 @@ export function ArenaPage() {
   const totalCount = panels.length;
   const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
+  // surface-tone-dark：本页是钉死的暗色画布，但内部文字走全局 token，
+  // 浅色主题下变成深字压深底（实测 1.01:1）。
   return (
     <div
-      className="relative flex h-full text-white"
+      className="relative flex h-full text-token-primary surface-tone-dark"
       style={{ minHeight: 0, fontFamily: 'var(--font-body)' }}
     >
       {/* Layer 0 · StaticBackdrop（absolute 模式，局限在 AppShell 主内容区） */}
@@ -1280,9 +1217,10 @@ export function ArenaPage() {
           <button
             type="button"
             onClick={handleNewBattle}
-            className="group relative inline-flex w-full items-center justify-center gap-2 h-10 px-4 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.01] active:scale-[0.98]"
+            className="group relative inline-flex w-full items-center justify-center gap-2 h-10 px-4 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.01] active:scale-[0.98]"
             style={{
               background: HERO_GRADIENT,
+              color: HERO_GRADIENT_FG,
               boxShadow:
                 '0 0 28px rgba(124, 58, 237, 0.32), 0 0 64px rgba(0, 240, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.45)',
               fontFamily: 'var(--font-display)',
@@ -1354,12 +1292,12 @@ export function ArenaPage() {
                         <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                           <span>{item.responseCount} 个模型</span>
                           {item.hasAttachments && (
-                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'rgba(99,102,241,0.7)' }} />
+                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'var(--accent-fg-violet)' }} />
                           )}
                           {item.revealed && (
                             <span
                               className="ml-1 text-[10px] px-1 py-0.5 rounded"
-                              style={{ background: 'rgba(99,102,241,0.15)', color: 'rgba(99,102,241,0.9)' }}
+                              style={{ background: 'rgba(99,102,241,0.15)', color: 'var(--accent-fg-violet)' }}
                             >
                               已揭晓
                             </span>
@@ -1392,7 +1330,7 @@ export function ArenaPage() {
               className="lg:hidden p-1.5 rounded-lg hover-bg-soft"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             >
-              <Swords className="w-4 h-4 text-white/85" />
+              <Swords className="w-4 h-4 text-token-secondary" />
             </button>
             <div className="flex items-center gap-3">
               {/* Gradient icon badge */}
@@ -1404,10 +1342,12 @@ export function ArenaPage() {
                     '0 0 24px rgba(124, 58, 237, 0.28), 0 0 48px rgba(0, 240, 255, 0.12)',
                 }}
               >
-                <Swords className="w-4 h-4 text-white drop-shadow" />
+                {/* 压在 HERO_GRADIENT 上必须用它配套的前景色：这条渐变对白字只有 2.23~3.62:1
+                    （越往右越亮越糟），用 --text-primary 实测 2.82:1，图标线要求 3:1。 */}
+                <Swords className="w-4 h-4 drop-shadow" style={{ color: HERO_GRADIENT_FG }} />
               </div>
               <h1
-                className="text-[17px] font-medium text-white"
+                className="text-[17px] font-medium text-token-primary"
                 style={{
                   fontFamily: 'var(--font-display)',
                   letterSpacing: '-0.015em',
@@ -1478,11 +1418,11 @@ export function ArenaPage() {
                       {lineupError ? '加载失败，点击重试' : '暂无可用阵容'}
                       <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
                         {lineupError ? (
-                          <button className="underline hover:text-white/80" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
+                          <button className="underline hover:text-token-secondary" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
                             重新加载
                           </button>
                         ) : (
-                          <button className="underline hover:text-white/80" onClick={enterManageMode}>
+                          <button className="underline hover:text-token-secondary" onClick={enterManageMode}>
                             点击配置阵容
                           </button>
                         )}
@@ -1603,8 +1543,10 @@ export function ArenaPage() {
                                       {slot.displayName || slot.modelId}
                                     </div>
                                     <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
-                                      {platformMap.get(slot.platformId) || slot.platformId}
+                                      {slot.logicalModelId ? slot.modelId : platformMap.get(slot.platformId) || slot.platformId}
                                     </div>
+                                    <ModelReferenceStatus reference={slot} />
+                                    {slot.modelReferenceStatus !== 'available' ? <button className="text-xs underline mt-1" onClick={() => { setRepairingSlot(slot); setModelPickerTargetGroup(ag.key); setModelPickerOpen(true); }}>修复模型引用</button> : null}
                                   </div>
                                   <div className="flex items-center gap-0.5 flex-shrink-0">
                                     <button
@@ -1646,7 +1588,7 @@ export function ArenaPage() {
                       className="w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
                       style={{
                         background: 'rgba(99,102,241,0.15)',
-                        color: 'rgba(99,102,241,0.95)',
+                        color: 'var(--accent-fg-violet)',
                         border: '1px solid rgba(99,102,241,0.2)',
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.25)'; }}
@@ -1662,6 +1604,8 @@ export function ArenaPage() {
         </div>
 
         {/* ===================== Content ===================== */}
+        <ArenaLineupNotice slots={slots} error={lineupError} checking={checkingLineup} onRefresh={() => void loadLineup()} onRepair={() => { enterManageMode(); setGroupDropdownOpen(true); }} />
+
         {!hasBattle ? (
           /* Empty State — hero-style welcome with Reveal stagger */
           <div className="flex-1 flex flex-col items-center justify-center px-4" style={{ minHeight: 0 }}>
@@ -1679,9 +1623,9 @@ export function ArenaPage() {
                         '0 0 20px rgba(148, 163, 184, 0.18), inset 0 0 10px rgba(148, 163, 184, 0.04)',
                     }}
                   >
-                    <Swords className="w-3.5 h-3.5 text-slate-200" />
+                    <Swords className="w-3.5 h-3.5 text-token-secondary" />
                     <span
-                      className="text-[12px] text-slate-200 uppercase"
+                      className="text-[12px] text-token-secondary uppercase"
                       style={{
                         letterSpacing: '0.22em',
                         textShadow: '0 0 10px rgba(203, 213, 225, 0.45)',
@@ -1695,7 +1639,7 @@ export function ArenaPage() {
                 <Reveal delay={80}>
                   <h2
                     data-arena-pulse
-                    className="text-white font-medium"
+                    className="text-token-primary font-medium"
                     style={{
                       fontFamily: 'var(--font-display)',
                       fontSize: 'clamp(1.875rem, 3.6vw, 2.75rem)',
@@ -1726,7 +1670,7 @@ export function ArenaPage() {
                 <div className="text-center mb-4">
                   <div
                     className="text-[13px] mb-2 px-3 py-2 rounded-lg inline-block"
-                    style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                    style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.15)' }}
                   >
                     加载阵容失败: {lineupError}
                   </div>
@@ -1799,7 +1743,7 @@ export function ArenaPage() {
                               <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center">
-                                <FileText className="w-5 h-5 text-white/50" />
+                                <FileText className="w-5 h-5 text-token-muted" />
                               </div>
                             )}
                             <button
@@ -1807,7 +1751,7 @@ export function ArenaPage() {
                               className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                               style={{ background: 'rgba(0,0,0,0.7)' }}
                             >
-                              <X className="w-2.5 h-2.5 text-white" />
+                              <X className="w-2.5 h-2.5 text-token-primary" />
                             </button>
                             <div
                               className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
@@ -1851,8 +1795,8 @@ export function ArenaPage() {
                       rows={3}
                       className={cn(
                         'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed',
-                        'placeholder:text-white/30 disabled:opacity-50 disabled:cursor-not-allowed',
-                        'px-2 py-1 no-focus-ring text-white'
+                        'placeholder:text-token-primary/30 disabled:opacity-50 disabled:cursor-not-allowed',
+                        'px-2 py-1 no-focus-ring text-token-primary'
                       )}
                       style={{ minHeight: '72px', maxHeight: '200px', border: 'none', boxShadow: 'none', fontFamily: 'var(--font-body)' }}
                     />
@@ -1864,9 +1808,9 @@ export function ArenaPage() {
                           onClick={handleAttachmentClick}
                           disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
                           className={cn(
-                            'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
+                            'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-token-muted',
                             'disabled:opacity-30 disabled:cursor-not-allowed',
-                            'hover-bg-soft hover:text-white/85'
+                            'hover-bg-soft hover:text-token-secondary'
                           )}
                           title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                         >
@@ -1875,7 +1819,7 @@ export function ArenaPage() {
                       </div>
                       <div className="flex items-center gap-3">
                         <span
-                          className="text-[11px] text-white/50"
+                          className="text-[11px] text-token-muted"
                           style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.08em' }}
                         >
                           {slots.length > 0
@@ -1885,10 +1829,11 @@ export function ArenaPage() {
                         <button
                           type="button"
                           onClick={handleSend}
-                          disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                          className="group inline-flex items-center gap-1.5 h-9 px-5 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          disabled={isStreaming || lineupBlocked || !prompt.trim() || slots.length === 0}
+                          className="group inline-flex items-center gap-1.5 h-9 px-5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                           style={{
                             background: HERO_GRADIENT,
+                            color: HERO_GRADIENT_FG,
                             boxShadow:
                               '0 0 24px rgba(124, 58, 237, 0.32), 0 0 54px rgba(0, 240, 255, 0.18), 0 4px 16px rgba(0, 0, 0, 0.45)',
                             fontFamily: 'var(--font-display)',
@@ -1907,7 +1852,7 @@ export function ArenaPage() {
               <Reveal delay={320}>
                 <div className="text-center mt-3">
                   <span
-                    className="text-[11px] text-white/45"
+                    className="text-[11px] text-token-muted"
                     style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
                   >
                     DRAG · PASTE · FILES · ENTER 发送 · SHIFT+ENTER 换行
@@ -1937,16 +1882,16 @@ export function ArenaPage() {
                     boxShadow: '0 0 12px rgba(124, 58, 237, 0.35)',
                   }}
                 >
-                  <MessageSquare className="w-3 h-3 text-white" />
+                  <MessageSquare className="w-3 h-3 text-token-primary" />
                 </div>
                 <p
-                  className="text-[13px] truncate flex-1 text-white/92"
+                  className="text-[13px] truncate flex-1 text-token-primary/92"
                   title={currentPrompt}
                 >
                   {currentPrompt}
                 </p>
                 <span
-                  className="hidden sm:inline-flex items-center px-2 h-5 rounded-full text-[10px] flex-shrink-0 text-white/55"
+                  className="hidden sm:inline-flex items-center px-2 h-5 rounded-full text-[10px] flex-shrink-0 text-token-muted"
                   style={{
                     border: '1px solid rgba(255, 255, 255, 0.14)',
                     fontFamily: 'var(--font-terminal)',
@@ -1958,8 +1903,9 @@ export function ArenaPage() {
                 </span>
                 {allDone && !isStreaming && (
                   <button
+                    disabled={lineupBlocked || isStreaming}
                     onClick={handleRetry}
-                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover-bg-soft flex-shrink-0 text-white/65"
+                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover-bg-soft flex-shrink-0 text-token-secondary"
                     style={{
                       border: '1px solid rgba(255, 255, 255, 0.16)',
                       fontFamily: 'var(--font-terminal)',
@@ -2073,7 +2019,7 @@ export function ArenaPage() {
                           )}
                           <div className="min-w-0">
                             <div
-                              className="text-[13px] font-medium truncate text-white"
+                              className="text-[13px] font-medium truncate text-token-primary"
                               style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em' }}
                             >
                               {revealed && info ? info.displayName : panel.label}
@@ -2124,7 +2070,7 @@ export function ArenaPage() {
                             )}
                             <div
                               className="text-[13px] px-3 py-2 rounded-lg break-all"
-                              style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                              style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                               {panel.errorMessage ?? '响应异常'}
                             </div>
@@ -2332,8 +2278,8 @@ export function ArenaPage() {
                   disabled={isStreaming || slots.length === 0}
                   rows={1}
                   className={cn(
-                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed text-white',
-                    'placeholder:text-white/30 disabled:opacity-50 disabled:cursor-not-allowed',
+                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed text-token-primary',
+                    'placeholder:text-token-primary/30 disabled:opacity-50 disabled:cursor-not-allowed',
                     'px-2 py-1 no-focus-ring'
                   )}
                   style={{ minHeight: '40px', maxHeight: '200px', border: 'none', boxShadow: 'none', fontFamily: 'var(--font-body)' }}
@@ -2346,9 +2292,9 @@ export function ArenaPage() {
                       onClick={handleAttachmentClick}
                       disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
                       className={cn(
-                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
+                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-token-muted',
                         'disabled:opacity-30 disabled:cursor-not-allowed',
-                        'hover-bg-soft hover:text-white/85'
+                        'hover-bg-soft hover:text-token-secondary'
                       )}
                       title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                     >
@@ -2375,7 +2321,7 @@ export function ArenaPage() {
                         type="button"
                         onClick={handleReveal}
                         disabled={revealLoading}
-                        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-[12.5px] font-medium text-white/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-[12.5px] font-medium text-token-primary/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{
                           background: 'rgba(10, 14, 22, 0.90)',
                           border: '1px solid rgba(255, 255, 255, 0.24)',
@@ -2390,10 +2336,11 @@ export function ArenaPage() {
                     <button
                       type="button"
                       onClick={handleSend}
-                      disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                      className="inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-4 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      disabled={isStreaming || lineupBlocked || !prompt.trim() || slots.length === 0}
+                      className="inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-4 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                       style={{
                         background: HERO_GRADIENT,
+                        color: HERO_GRADIENT_FG,
                         boxShadow:
                           '0 0 22px rgba(124, 58, 237, 0.3), 0 0 48px rgba(0, 240, 255, 0.16), 0 4px 14px rgba(0, 0, 0, 0.45)',
                         fontFamily: 'var(--font-display)',
@@ -2472,15 +2419,9 @@ export function ArenaPage() {
       />
 
       {/* ===================== Model Picker Dialog ===================== */}
-      <ModelPoolPickerDialog
-        open={modelPickerOpen}
-        onOpenChange={setModelPickerOpen}
-        selectedModels={existingModelsForPicker}
-        platforms={platforms}
-        onConfirm={handleModelPickerConfirm}
-        confirmText="确认保存"
-        description="管理该分组的参战模型：添加新模型或从池中移除已有模型，确认后生效"
-      />
+      <ArenaModelPickerDialog open={modelPickerOpen} onOpenChange={setModelPickerOpen}
+        group={adminGroups.find(group => group.key === modelPickerTargetGroup)} repairingSlot={repairingSlot}
+        onSaved={async () => { await loadAdminGroups(); await loadLineup(); }} />
 
       {/* Scoped keyframes — Arena neon pulse on title */}
       <style>{`

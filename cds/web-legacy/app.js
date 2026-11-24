@@ -4749,6 +4749,8 @@ async function importAndInit() {
     config = raw;
   }
 
+  if (!confirm('导入并初始化将为新增数据服务创建独立空数据卷。不会接管或替换任何已有数据卷；检测到既有或无法确认的卷会中止。确定按全新存储初始化？')) return;
+
   // Switch modal to progress view
   const modalBody = document.getElementById('configModalBody');
   if (!modalBody) return;
@@ -4786,7 +4788,7 @@ async function importAndInit() {
     const res = await fetch(API + '/import-and-init', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config }),
+      body: JSON.stringify({ config, initializeStorage: 'new-only' }),
     });
 
     if (!res.ok) {
@@ -5181,7 +5183,7 @@ async function infraDiscover() {
 
     const html = `
       <p class="config-panel-desc">
-        从项目 compose 文件中发现了以下基础设施服务。勾选要导入的服务：
+        从项目 compose 文件中发现了以下基础设施服务。新服务使用独立空数据卷，已有服务不改动。勾选要创建的服务：
       </p>
       <div id="infraDiscoverList">${listHtml}</div>
       <div class="form-row" style="margin-top:10px;gap:6px">
@@ -5200,8 +5202,9 @@ async function infraQuickstartSelected() {
     showToast('请至少选择一个服务', 'error');
     return;
   }
+  if (!confirm('创建所选的新服务时，将分配独立空数据卷。已有服务保持不变；不会接管或替换历史卷，检测到既有或无法确认的卷会中止。是否继续？')) return;
   try {
-    const data = await api('POST', '/infra/quickstart', { serviceIds });
+    const data = await api('POST', '/infra/quickstart', { serviceIds, projectId: CURRENT_PROJECT_ID, initializeStorage: 'new-only' });
     const results = data.results || [];
     const msgs = results.map(r => `${r.id}: ${r.status === 'started' ? '已启动' : r.status === 'exists' ? '已存在' : r.error || r.status}`);
     showToast(msgs.join(' | '), results.every(r => r.status === 'started' || r.status === 'exists') ? 'success' : 'error');
@@ -5265,10 +5268,37 @@ async function saveCustomInfra() {
   }
 
   try {
-    await api('POST', '/infra', { id, name, dockerImage, containerPort, volumes, injectEnv, env: {} });
-    showToast(`已创建 ${name}`, 'success');
-    // Auto-start
-    try { await api('POST', `/infra/${encodeURIComponent(id)}/start`); } catch { /* ok */ }
+    const imageBase = (dockerImage.toLowerCase().split('/').pop() || '').split(':')[0];
+    const catalogPreset = imageBase.startsWith('postgres') || imageBase.startsWith('timescale')
+      ? 'postgres'
+      : imageBase.startsWith('redis')
+        ? 'redis'
+        : imageBase.startsWith('mongo')
+          ? 'mongodb'
+          : imageBase.startsWith('mysql')
+            ? 'mysql'
+            : imageBase.startsWith('mariadb') ? 'mariadb' : null;
+    if (catalogPreset) {
+      const created = await api('POST', `/projects/${encodeURIComponent(CURRENT_PROJECT_ID)}/infra-presets`, {
+        presetIds: [catalogPreset],
+      });
+      const service = created.services && created.services[0];
+      if (!service) throw new Error('基础设施目录没有返回新服务');
+      await api('POST', `/infra/${encodeURIComponent(service.id)}/start?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`);
+      showToast(`已按安全目录创建并启动 ${service.name || name}`, 'success');
+      await loadInfraServices();
+      openInfraModal();
+      return;
+    }
+    if (volumes.length) {
+      showToast('自定义持久卷尚未确认归属，未创建服务。请改用基础设施目录；现有数据卷请联系管理员恢复。', 'error');
+      return;
+    }
+    await api('POST', `/infra?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`, {
+      id, name, dockerImage, containerPort, volumes, injectEnv, env: {},
+    });
+    await api('POST', `/infra/${encodeURIComponent(id)}/start?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`);
+    showToast(`已创建并启动 ${name}`, 'success');
     await loadInfraServices();
     openInfraModal();
   } catch (e) { showToast(e.message, 'error'); }
@@ -7676,7 +7706,7 @@ function openAddPeerForm(prefill) {
         <input id="peerName" class="form-input mc-input" placeholder="名称 (如: 生产 CDS)" value="${esc(prefill?.name || '')}">
       </div>
       <div class="form-row mc-row">
-        <input id="peerBaseUrl" class="form-input mc-input" placeholder="https://main.miduo.org" value="${esc(prefill?.baseUrl || '')}">
+        <input id="peerBaseUrl" class="form-input mc-input" placeholder="https://main.example.com" value="${esc(prefill?.baseUrl || '')}">
       </div>
       <div class="form-row mc-row">
         <input id="peerAccessKey" class="form-input mc-input" placeholder="${editingId ? '留空则保留现有密钥' : 'AI 访问密钥 (remote AI_ACCESS_KEY)'}" style="font-family:monospace">
@@ -10519,55 +10549,13 @@ function _topologyToggleAddMenu() {
 // appropriate existing CDS create flow, with novice-friendly defaults.
 // All menu items land on working flows after the P4 Part 18 cleanup —
 // no more "coming in P5/P6" stub toasts.
-// P4 Part 10 — Infra service templates for the Database submenu.
-//
-// Maps a template key to a fully-formed InfraService payload that
-// `POST /api/infra` accepts. Each template encodes the right docker
-// image / port / volumes / env that gets the database running on
-// the convention default. Image versions stay on stable major lines.
-const INFRA_TEMPLATES = {
-  postgres: {
-    id: 'postgres',
-    name: 'PostgreSQL',
-    dockerImage: 'postgres:16-alpine',
-    containerPort: 5432,
-    volumes: [{ name: 'postgres-data', containerPath: '/var/lib/postgresql/data' }],
-    env: {
-      POSTGRES_USER: 'postgres',
-      POSTGRES_PASSWORD: 'change-me-please',
-      POSTGRES_DB: 'app',
-    },
-  },
-  redis: {
-    id: 'redis',
-    name: 'Redis',
-    dockerImage: 'redis:7-alpine',
-    containerPort: 6379,
-    volumes: [{ name: 'redis-data', containerPath: '/data' }],
-    env: {},
-  },
-  mongodb: {
-    id: 'mongodb',
-    name: 'MongoDB',
-    dockerImage: 'mongo:8.0',
-    containerPort: 27017,
-    volumes: [{ name: 'mongodb-data', containerPath: '/data/db' }],
-    env: {
-      MONGO_INITDB_ROOT_USERNAME: 'admin',
-      MONGO_INITDB_ROOT_PASSWORD: 'change-me-please',
-    },
-  },
-  mysql: {
-    id: 'mysql',
-    name: 'MySQL',
-    dockerImage: 'mysql:8.4',
-    containerPort: 3306,
-    volumes: [{ name: 'mysql-data', containerPath: '/var/lib/mysql' }],
-    env: {
-      MYSQL_ROOT_PASSWORD: 'change-me-please',
-      MYSQL_DATABASE: 'app',
-    },
-  },
+// Legacy 页面只保留显示名称。镜像、端口、持久卷和随机凭据统一由后端
+// infra-catalog 生成，避免第二份无认证模板与实际启动合同漂移。
+const INFRA_PRESET_LABELS = {
+  postgres: 'PostgreSQL',
+  redis: 'Redis',
+  mongodb: 'MongoDB',
+  mysql: 'MySQL',
 };
 
 // Show the Database submenu. Replaces the menu's inner HTML with a
@@ -10634,36 +10622,33 @@ function _topologyShowAddMenuRoot() {
       '<span class="label">空服务</span><span class="chevron">›</span></button>';
 }
 
-// Create an infra service from a template. Calls POST /api/infra with
-// the template payload. On success: refresh infra list, close menu,
-// open the right service detail panel for the new entry.
+// 目录预设由后端生成随机凭据并落入项目 env；创建后立即走同一启动门禁。
 async function _topologyCreateInfraFromTemplate(key) {
-  var tpl = INFRA_TEMPLATES[key];
-  if (!tpl) return;
+  var label = INFRA_PRESET_LABELS[key];
+  if (!label) return;
 
   // Close the menu immediately so the user feels progress
   var menu = document.getElementById('topologyFsAddMenu');
   if (menu) menu.classList.remove('open');
 
-  showToast('正在创建 ' + tpl.name + '...', 'info');
-
-  // P4 Part 16 (B1 fix): tag the template with the current project so
-  // it lands in the right project, not the legacy default.
-  var payload = Object.assign({}, tpl, { projectId: CURRENT_PROJECT_ID });
+  showToast('正在创建 ' + label + '...', 'info');
 
   try {
-    var res = await fetch('/api/infra', {
+    var res = await fetch('/api/projects/' + encodeURIComponent(CURRENT_PROJECT_ID) + '/infra-presets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ presetIds: [key] }),
     });
     if (!res.ok) {
       var body = await res.json().catch(function () { return null; });
       throw new Error((body && body.error) || ('HTTP ' + res.status));
     }
     var data = await res.json();
-    showToast(tpl.name + ' 已创建（hostPort: ' + data.service.hostPort + '），点击节点启动', 'success');
+    var service = data.services && data.services[0];
+    if (!service) throw new Error('基础设施目录没有返回新服务');
+    await api('POST', '/infra/' + encodeURIComponent(service.id) + '/start?project=' + encodeURIComponent(CURRENT_PROJECT_ID));
+    showToast(label + ' 已创建并启动', 'success');
 
     // Refresh state + topology
     await loadInfraServices();
@@ -10671,7 +10656,7 @@ async function _topologyCreateInfraFromTemplate(key) {
 
     // Open the new infra in the right panel for immediate inspection
     if (typeof _topologyOpenServicePanel === 'function') {
-      _topologyOpenServicePanel(tpl.id, 'infra');
+      _topologyOpenServicePanel(service.id, 'infra');
     }
   } catch (err) {
     showToast('创建失败：' + (err && err.message ? err.message : err), 'error');

@@ -11,24 +11,23 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.ModelPool;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
 /// <summary>
-/// 跨进程 LLM Gateway 客户端 —— 把 MAP 自身的 LLM 调用从进程内（直接 new LlmGateway）
-/// 切换到 HTTP，远程调用独立部署的 PrdAgent.LlmGateway serving 服务（/gw/v1/*）。
+/// 跨进程 LLM Gateway 客户端 —— MAP 唯一的模型调用通道，远程调用独立部署的
+/// PrdAgent.LlmGateway serving 服务（/gw/v1/*）。
 ///
 /// 物理隔离设计见 doc/design.platform.llm-gateway.physical-isolation.md。
-/// 仅当配置 LlmGateway:Mode=http（环境变量 LlmGateway__Mode=http）时由 DI 注册，默认走进程内 LlmGateway。
-///
-/// 同时实现 Infrastructure 与 Core 两个 ILlmGateway 接口（两者仅命名空间不同；
-/// CreateClient 签名完全一致，单一实现满足两者），与进程内 LlmGateway 保持一致，
-/// 这样 Core 桥接注册（强转 Infrastructure → Core）在 http 模式下仍成立。
 ///
 /// JSON 口径与 serving 端严格对齐：PascalCase（PropertyNamingPolicy = null）。
 /// </summary>
 public sealed class HttpLlmGatewayClient
-    : PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway, CoreGateway.ILlmGateway
+    : PrdAgent.Core.LlmGateway.ILogicalModelGateway, CoreGateway.ILlmGateway
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<HttpLlmGatewayClient> _logger;
@@ -36,6 +35,7 @@ public sealed class HttpLlmGatewayClient
     private readonly IAssetStorage? _assetStorage;
     private readonly LlmGatewayDataContext? _gatewayData;
     private readonly IPoolFailoverNotifier? _failoverNotifier;
+    private readonly ITaskExecutionAuthorizer? _taskAuthorizer;
     private readonly string _baseUrl;
     private readonly string _gatewayKey;
     private readonly int _failedMultipartHours;
@@ -57,7 +57,8 @@ public sealed class HttpLlmGatewayClient
         PrdAgent.Core.Interfaces.ILLMRequestContextAccessor? ctxAccessor = null,
         IAssetStorage? assetStorage = null,
         LlmGatewayDataContext? gatewayData = null,
-        IPoolFailoverNotifier? failoverNotifier = null)
+        IPoolFailoverNotifier? failoverNotifier = null,
+        ITaskExecutionAuthorizer? taskAuthorizer = null)
     {
         _httpFactory = httpFactory;
         _logger = logger;
@@ -65,6 +66,7 @@ public sealed class HttpLlmGatewayClient
         _assetStorage = assetStorage;
         _gatewayData = gatewayData;
         _failoverNotifier = failoverNotifier;
+        _taskAuthorizer = taskAuthorizer;
         // serving 服务的根地址（如 http://llmgw-serve:8091），去掉尾部斜杠避免拼接出双斜杠。
         _baseUrl = (config["LlmGateway:ServeBaseUrl"] ?? "http://llmgw-serve:8091").TrimEnd('/');
         // 共享密钥门（内部 M2M），与 serving 端 LlmGwServe:ApiKey 对齐。
@@ -77,10 +79,25 @@ public sealed class HttpLlmGatewayClient
             : GatewayTenantDefaults.InternalTenantId;
     }
 
-    private HttpClient CreateHttp(bool infiniteTimeout)
+    /// <summary>传输超时下限；请求自带更长的预算（如生图最多 3600 秒）时按预算加余量放宽。</summary>
+    internal static readonly TimeSpan DefaultTransportTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// 请求自身预算 + 60 秒余量，且不低于默认 10 分钟：serving 那一侧要先跑完自己的超时并返回结构化错误，
+    /// MAP 这一跳不能比它先断开。
+    /// </summary>
+    internal static TimeSpan TransportTimeoutFor(int requestTimeoutSeconds)
     {
-        var http = _httpFactory.CreateClient();
-        http.Timeout = infiniteTimeout ? Timeout.InfiniteTimeSpan : TimeSpan.FromMinutes(10);
+        var budget = TimeSpan.FromSeconds(Math.Max(0, requestTimeoutSeconds) + 60);
+        return budget > DefaultTransportTimeout ? budget : DefaultTransportTimeout;
+    }
+
+    private HttpClient CreateHttp(bool infiniteTimeout, int? requestTimeoutSeconds = null)
+    {
+        var http = _httpFactory.CreateClient(AuthorizedGatewayRequest.HttpClientName);
+        http.Timeout = infiniteTimeout
+            ? Timeout.InfiniteTimeSpan
+            : requestTimeoutSeconds is { } seconds ? TransportTimeoutFor(seconds) : DefaultTransportTimeout;
         http.DefaultRequestHeaders.Remove("X-Gateway-Key");
         http.DefaultRequestHeaders.Add("X-Gateway-Key", _gatewayKey);
         return http;
@@ -91,7 +108,7 @@ public sealed class HttpLlmGatewayClient
 
     /// <summary>
     /// S2 观测：返回一份把 Context.GatewayTransport 打成 "http" 的请求副本（其余字段原样拷贝）。
-    /// serving 端据此把该条日志标为 http 传输（跨进程），区分于本地 inproc。
+    /// serving 端据此把该条日志标为 http 传输（跨进程）。
     /// </summary>
     private static GatewayRequest TagHttpTransport(GatewayRequest request)
         => new()
@@ -107,6 +124,7 @@ public sealed class HttpLlmGatewayClient
             EnablePromptCache = request.EnablePromptCache,
             TimeoutSeconds = request.TimeoutSeconds,
             IncludeThinking = request.IncludeThinking,
+            ForwardAvailableThinking = request.ForwardAvailableThinking,
             Context = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http),
         };
 
@@ -115,9 +133,11 @@ public sealed class HttpLlmGatewayClient
         request = TagHttpTransport(request);
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
-            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/send") { Content = JsonBody(request) };
+            using var http = CreateHttp(infiniteTimeout: false, request.TimeoutSeconds);
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/send");
             ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
+            await AuthorizedGatewayRequest.PrepareAsync(req, _taskAuthorizer, request.AppCallerCode, request.Context, ct);
+            req.Content = JsonBody(request);
             using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             var structured = TryDeserializeGatewayResponse(body);
@@ -127,8 +147,10 @@ public sealed class HttpLlmGatewayClient
                     _failoverNotifier,
                     structured.ErrorCode,
                     structured.ErrorMessage,
-                    structured.Resolution?.ActualPlatformName,
-                    _logger);
+                    structured.Resolution?.ActualPlatformName ?? structured.Resolution?.ActualPlatformId,
+                    structured.Resolution?.ActualModel,
+                    _logger,
+                    structured.Resolution?.BillingAlerts);
                 return structured;
             }
             if (!resp.IsSuccessStatusCode)
@@ -137,6 +159,10 @@ public sealed class HttpLlmGatewayClient
                     $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}", (int)resp.StatusCode);
             }
             return GatewayResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            return GatewayResponse.Fail(ex.Code, ex.Message, ex.StatusCode);
         }
         catch (Exception ex)
         {
@@ -155,15 +181,15 @@ public sealed class HttpLlmGatewayClient
         Stream? stream = null;
         StreamReader? reader = null;
         string? earlyError = null;
+        string? earlyErrorCode = null;
         try
         {
-            using var reqMsg = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/stream")
-            {
-                Content = JsonBody(request),
-            };
+            using var reqMsg = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/stream");
             reqMsg.Headers.Remove("X-Gateway-Key");
             reqMsg.Headers.Add("X-Gateway-Key", _gatewayKey);
             ApplyRoutingHeaders(reqMsg, request.AppCallerCode, request.Context);
+            await AuthorizedGatewayRequest.PrepareAsync(reqMsg, _taskAuthorizer, request.AppCallerCode, request.Context, ct);
+            reqMsg.Content = JsonBody(request);
 
             resp = await http.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, ct);
             if (!resp.IsSuccessStatusCode)
@@ -177,6 +203,11 @@ public sealed class HttpLlmGatewayClient
                 reader = new StreamReader(stream, Encoding.UTF8);
             }
         }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            earlyError = ex.Message;
+            earlyErrorCode = ex.Code;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[HttpLlmGatewayClient] StreamAsync 连接失败 base={Base}", _baseUrl);
@@ -186,12 +217,17 @@ public sealed class HttpLlmGatewayClient
         if (earlyError != null)
         {
             await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                _failoverNotifier, null, earlyError, null, _logger);
+                _failoverNotifier,
+                null,
+                earlyError,
+                null,
+                request.PinnedModelId ?? request.ExpectedModel,
+                _logger);
             reader?.Dispose();
             stream?.Dispose();
             resp?.Dispose();
             http.Dispose();
-            yield return GatewayStreamChunk.Fail(earlyError);
+            yield return GatewayStreamChunk.Fail(earlyError, earlyErrorCode);
             yield break;
         }
 
@@ -214,10 +250,16 @@ public sealed class HttpLlmGatewayClient
                 }
                 if (chunk != null)
                 {
-                    if (chunk.Type == GatewayChunkType.Error)
+                    if (chunk.Type == GatewayChunkType.Error || chunk.Resolution?.BillingAlerts?.Count > 0)
                     {
                         await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                            _failoverNotifier, null, chunk.Error, chunk.Resolution?.ActualPlatformName, _logger);
+                            _failoverNotifier,
+                            chunk.ErrorCode,
+                            chunk.Error,
+                            chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                            chunk.Resolution?.ActualModel ?? request.PinnedModelId ?? request.ExpectedModel,
+                            _logger,
+                            chunk.Resolution?.BillingAlerts);
                     }
                     yield return chunk;
                 }
@@ -250,6 +292,25 @@ public sealed class HttpLlmGatewayClient
                 resolution.ErrorMessage ?? "调用方 resolution 已失败，http 模式不得重新选模型");
         }
 
+        // 先核验任务，再落盘 multipart：没有许可的旧任务不能先消耗对象存储。
+        var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
+        using var authorizedMessage = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw");
+        if (TaskExecutionContext.Current?.VideoReceipt is { } receipt)
+        {
+            if (!receipt.Matches(request, resolution))
+                throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_TARGET_DENIED", "核账只能查询原视频作业、模型与供应通道。");
+            authorizedMessage.Options.Set(AuthorizedGatewayRequest.RawOperation, request);
+        }
+        ApplyRoutingHeaders(authorizedMessage, request.AppCallerCode, httpTaggedContext);
+        try
+        {
+            await AuthorizedGatewayRequest.PrepareAsync(authorizedMessage, _taskAuthorizer, request.AppCallerCode, httpTaggedContext, ct);
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            return GatewayRawResponse.Fail(ex.Code, ex.Message, ex.StatusCode);
+        }
+
         var multipartFileRefs = request.MultipartFileRefs;
         var hasInlineMultipartFiles = request.IsMultipart
             && request.MultipartFiles is { Count: > 0 }
@@ -270,7 +331,7 @@ public sealed class HttpLlmGatewayClient
                     request.MultipartFiles!,
                     _assetStorage,
                     _gatewayData,
-                    string.IsNullOrWhiteSpace(request.Context?.TenantId) ? _internalTenantId : request.Context.TenantId,
+                    string.IsNullOrWhiteSpace(httpTaggedContext.TenantId) ? _internalTenantId : httpTaggedContext.TenantId,
                     request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
                     _failedMultipartHours,
                     ct);
@@ -284,20 +345,37 @@ public sealed class HttpLlmGatewayClient
 
         // S2 观测：把 Context.GatewayTransport 打成 "http"（跨进程 raw），serving 端据此标注日志传输通道。
         // 无论是否锁定 ExpectedModel 都重建一份副本以打标记；ActualModel 非空时同时锁定 ExpectedModel。
-        var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
+        // 严格模型池契约的第一次解析会把 ExpectedModel 清空，并把命中的池保存在
+        // ModelGroupId。这里不能把实际 Provider 模型名再次作为 ExpectedModel 发送，
+        // 否则 serving 会把 Provider 名当成池 ID 二次解析，导致图片等 raw 请求被误判为
+        // “所选模型池不在 appCaller 允许范围内”。跨进程重解析必须保留池身份。
+        var outboundExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
+            ? resolution.LogicalModelPublicId
+            : string.Equals(resolution.ResolutionType, "GatewayRegistryPool", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(resolution.ModelGroupId)
+                ? resolution.ModelGroupId
+                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel;
+        var shouldPinResolvedPoolMember =
+            string.Equals(resolution.ResolutionType, "GatewayRegistryPool", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
+            && !string.IsNullOrWhiteSpace(resolution.ActualPlatformId)
+            && !string.IsNullOrWhiteSpace(resolution.ActualModel);
         // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
         var outboundRequest = new GatewayRawRequest
         {
             CanonicalImageRequest = request.CanonicalImageRequest,
             RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
+            // 首次提交保持为空，让 Serving 在同一逻辑模型内执行故障切换；
+            // 只有异步轮询/下载显式携带时才锁定提交成功的 Offering。
+            RequiredOfferingId = request.RequiredOfferingId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
-            ExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
-                ? resolution.LogicalModelPublicId
-                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
-            PinnedPlatformId = request.PinnedPlatformId,
-            PinnedModelId = request.PinnedModelId,
+            ExpectedModel = outboundExpectedModel,
+            // Serving 只负责按池身份恢复 ApiKey，不得重新选择池成员；否则首次命中的
+            // OpenRouter Seedance 可能在发送阶段被池优先级改选成 OpenAI Sora。
+            PinnedPlatformId = shouldPinResolvedPoolMember ? resolution.ActualPlatformId : request.PinnedPlatformId,
+            PinnedModelId = shouldPinResolvedPoolMember ? resolution.ActualModel : request.PinnedModelId,
             RequestBody = request.RequestBody,
             IsMultipart = request.IsMultipart,
             MultipartFields = request.MultipartFields,
@@ -312,10 +390,9 @@ public sealed class HttpLlmGatewayClient
 
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
-            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(outboundRequest) };
-            ApplyRoutingHeaders(req, outboundRequest.AppCallerCode, outboundRequest.Context);
-            using var resp = await http.SendAsync(req, ct);
+            using var http = CreateHttp(infiniteTimeout: false, outboundRequest.TimeoutSeconds);
+            authorizedMessage.Content = JsonBody(outboundRequest);
+            using var resp = await http.SendAsync(authorizedMessage, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             var structured = TryDeserializeRawResponse(body);
             if (structured is not null)
@@ -324,8 +401,13 @@ public sealed class HttpLlmGatewayClient
                     _failoverNotifier,
                     structured.ErrorCode,
                     structured.ErrorMessage,
-                    structured.Resolution?.ActualPlatformName ?? resolution.ActualPlatformName,
-                    _logger);
+                    structured.Resolution?.ActualPlatformName
+                    ?? structured.Resolution?.ActualPlatformId
+                    ?? resolution.ActualPlatformName
+                    ?? resolution.ActualPlatformId,
+                    structured.Resolution?.ActualModel ?? resolution.ActualModel,
+                    _logger,
+                    structured.Resolution?.BillingAlerts);
                 return structured;
             }
             if (!resp.IsSuccessStatusCode)
@@ -334,6 +416,10 @@ public sealed class HttpLlmGatewayClient
                     $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}", (int)resp.StatusCode);
             }
             return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            return GatewayRawResponse.Fail(ex.Code, ex.Message, ex.StatusCode);
         }
         catch (Exception ex)
         {
@@ -349,8 +435,10 @@ public sealed class HttpLlmGatewayClient
         try
         {
             using var http = CreateHttp(infiniteTimeout: false);
-            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/profile-test") { Content = JsonBody(request) };
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/profile-test");
             ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
+            await AuthorizedGatewayRequest.PrepareAsync(req, _taskAuthorizer, request.AppCallerCode, request.Context, ct);
+            req.Content = JsonBody(request);
             using var resp = await http.SendAsync(req, ct);
             var body = await resp.Content.ReadAsStringAsync(ct);
             var structured = TryDeserializeRawResponse(body);
@@ -360,8 +448,10 @@ public sealed class HttpLlmGatewayClient
                     _failoverNotifier,
                     structured.ErrorCode,
                     structured.ErrorMessage,
-                    structured.Resolution?.ActualPlatformName,
-                    _logger);
+                    structured.Resolution?.ActualPlatformName ?? structured.Resolution?.ActualPlatformId,
+                    structured.Resolution?.ActualModel ?? request.Model,
+                    _logger,
+                    structured.Resolution?.BillingAlerts);
                 return structured;
             }
             if (!resp.IsSuccessStatusCode)
@@ -371,6 +461,10 @@ public sealed class HttpLlmGatewayClient
             }
 
             return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "serving 响应反序列化为空");
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            return GatewayRawResponse.Fail(ex.Code, ex.Message, ex.StatusCode);
         }
         catch (Exception ex)
         {
@@ -453,7 +547,7 @@ public sealed class HttpLlmGatewayClient
         message.Headers.Remove("X-Gateway-App-Caller");
         message.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", appCallerCode);
         message.Headers.Remove("X-Gateway-Source");
-        message.Headers.TryAddWithoutValidation("X-Gateway-Source", context?.SourceSystem ?? "map");
+        message.Headers.TryAddWithoutValidation("X-Gateway-Source", "map");
         if (!string.IsNullOrWhiteSpace(context?.RequestId))
         {
             message.Headers.Remove("X-Request-Id");
@@ -533,13 +627,29 @@ public sealed class HttpLlmGatewayClient
         return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
     }
 
-    public async Task<GatewayModelResolution> ResolveModelAsync(
+    public Task<GatewayModelResolution> ResolveModelAsync(
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
         CancellationToken ct = default)
+        // 远程解析只返回元信息；真正的 send/raw 会在 Serving 再解析并领取执行租约。
+        // 所有旧调用方也走只读入口，避免模型面板、能力预检或调度预读抢走恢复名额。
+        => ResolveModelCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+
+    public Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => ResolveModelCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+
+    private async Task<GatewayModelResolution> ResolveModelCoreAsync(
+        string appCallerCode, string modelType, string? expectedModel,
+        string? pinnedPlatformId, string? pinnedModelId, CancellationToken ct)
     {
         // 注意：ApiKey 在 HTTP 模式下恒为 null（serving 端 [JsonIgnore] 不序列化敏感字段）。
         // 这是预期行为——此解析结果仅供调用方做元信息展示，真正发送时由网关在 send/raw 重新解析。
@@ -552,7 +662,8 @@ public sealed class HttpLlmGatewayClient
                 ModelType = modelType,
                 ExpectedModel = expectedModel,
                 PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId
+                PinnedModelId = pinnedModelId,
+                ReadOnlyMetadata = true,
             };
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/resolve") { Content = JsonBody(dto) };
             ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
@@ -566,12 +677,54 @@ public sealed class HttpLlmGatewayClient
                     ErrorMessage = $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}",
                 };
             }
+            // 旧 serving 会忽略未知 body 字段。必须收到明确只读确认，不能把普通解析当元信息。
+            if (!resp.Headers.TryGetValues(ILlmGateway.MetadataResolutionPurposeHeader, out var purposes)
+                || string.Join(",", purposes) != ILlmGateway.ReadOnlyMetadataPurpose)
+                return new GatewayModelResolution { Success = false, ErrorMessage = "serving 未确认只读元信息用途，请核对 API 与 LLMGW 发布版本" };
             var result = JsonSerializer.Deserialize<GatewayModelResolution>(body, JsonOpts);
             return result ?? new GatewayModelResolution { Success = false, ErrorMessage = "serving 响应反序列化为空" };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[HttpLlmGatewayClient] ResolveModelAsync 失败 base={Base}", _baseUrl);
+            return new GatewayModelResolution { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
+    public async Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false);
+            var dto = new
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = modelType,
+                OfferingId = offeringId,
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/resolve") { Content = JsonBody(dto) };
+            ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+            using var resp = await http.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return new GatewayModelResolution
+                {
+                    Success = false,
+                    ErrorMessage = $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}",
+                };
+            }
+
+            return JsonSerializer.Deserialize<GatewayModelResolution>(body, JsonOpts)
+                   ?? new GatewayModelResolution { Success = false, ErrorMessage = "serving 响应反序列化为空" };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HttpLlmGatewayClient] ResolveOfferingAsync 失败 base={Base}", _baseUrl);
             return new GatewayModelResolution { Success = false, ErrorMessage = ex.Message };
         }
     }
@@ -592,7 +745,7 @@ public sealed class HttpLlmGatewayClient
             if (!resp.IsSuccessStatusCode)
             {
                 // serving 不可达 / 鉴权失败 / 坏负载 不能伪装成「空池」——否则 admin/smoke 看到「无可用池」
-                // 却分不清网关其实是 down 的（Cursor Bugbot）。与 inproc 实现一致：错误向上抛，让调用方区分
+                // 却分不清网关其实是 down 的（Cursor Bugbot）。错误向上抛，让调用方区分
                 // 「真的没池」(200 + []) 与「网关故障」。
                 _logger.LogWarning("[HttpLlmGatewayClient] GetAvailablePoolsAsync serving 返回 {Code}: {Body}",
                     (int)resp.StatusCode, Truncate(body));
@@ -611,6 +764,62 @@ public sealed class HttpLlmGatewayClient
         }
     }
 
+    public async Task<List<ImageGen.GatewayImageModel>> GetImageModelsAsync(string appCallerCode, CancellationToken ct = default)
+    {
+        using var http = CreateHttp(infiniteTimeout: false);
+        http.Timeout = TimeSpan.FromSeconds(20);
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"{_baseUrl}/gw/v1/image-models?appCallerCode={Uri.EscapeDataString(appCallerCode)}");
+        ApplyRoutingHeaders(request, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(ct);
+        try
+        {
+            return JsonSerializer.Deserialize<List<ImageGen.GatewayImageModel>>(body, JsonOpts)
+                ?? throw new InvalidOperationException("网关模型目录响应为空。");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("网关模型目录响应格式不正确。", ex);
+        }
+    }
+
+    /// <summary>业务参数直达 serving；不在 MAP 预解析型号、尺寸或供应商协议。</summary>
+    public async Task<GatewayRawResponse> GenerateImageAsync(GatewayRawRequest request, CancellationToken ct)
+    {
+        if (request.CanonicalImageRequest is null || string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
+            || request.RequestBody is not null || request.IsMultipart)
+            return GatewayRawResponse.Fail("IMAGE_REQUEST_INVALID", "图片请求必须指定业务模型和标准参数。", 400);
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false, request.TimeoutSeconds);
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw");
+            ApplyRoutingHeaders(message, request.AppCallerCode, request.Context);
+            await AuthorizedGatewayRequest.PrepareAsync(message, _taskAuthorizer, request.AppCallerCode, request.Context, ct);
+            message.Content = JsonBody(request);
+            using var response = await http.SendAsync(message, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var result = TryDeserializeRawResponse(body)
+                ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "模型网关暂时无法返回结果，请稍后重试。", (int)response.StatusCode);
+            await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                _failoverNotifier, result.ErrorCode, result.ErrorMessage,
+                result.Resolution?.ActualPlatformName ?? result.Resolution?.ActualPlatformId,
+                result.Resolution?.ActualModel ?? request.RequiredLogicalModelPublicId,
+                _logger, result.Resolution?.BillingAlerts);
+            return result;
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            return GatewayRawResponse.Fail(ex.Code, ex.Message, ex.StatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            _logger.LogWarning(ex, "业务生图请求未完成");
+            return GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "模型网关暂时不可用，请稍后重试。", 503);
+        }
+    }
+
     public Core.Interfaces.ILLMClient CreateClient(
         string appCallerCode,
         string modelType,
@@ -624,7 +833,8 @@ public sealed class HttpLlmGatewayClient
         return new HttpLlmClient(
             _httpFactory, _baseUrl, _gatewayKey,
             appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel, pinnedPlatformId, pinnedModelId,
-            JsonOpts, _logger, _ctxAccessor, failoverNotifier: _failoverNotifier);
+            JsonOpts, _logger, _ctxAccessor, failoverNotifier: _failoverNotifier,
+            taskAuthorizer: _taskAuthorizer);
     }
 
     private static string Truncate(string? s, int max = 500)

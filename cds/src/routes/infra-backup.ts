@@ -15,40 +15,234 @@
  *   GET  /api/infra/:id/backup-history 列出已保存在 CDS 服务器的自动备份（可选）
  */
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { isPreviewInstance } from '../services/preview-instance.js';
+import {
+  backupDirCandidates,
+  backupKey,
+  buildRedisBackupProbeScript,
+  redisAuthFromServiceDefinition,
+  redisUsernameFromServiceDefinition,
+  redisProbeStdin,
+  backupKindOf,
+  type BackupKind,
+  buildMysqlDumpScript,
+  buildMysqlRestoreScript,
+  buildMysqlTableCountScript,
+  buildPostgresDumpScript,
+  buildPostgresRestoreScript,
+  buildPostgresTableCountScript,
+  buildNacosDumpScript,
+  buildNacosRestoreScript,
+  buildNacosConfigCountScript,
+  buildRabbitmqDumpScript,
+  buildRabbitmqRestoreScript,
+  buildRabbitmqQueueCountScript,
+  buildRedisAppendOnlyScript,
+  buildRedisRestorePlan,
+  buildRedisRdbPathScript,
+  isLegacyUnscopedBackupFile,
+  isProjectBackupFile,
+  INFRA_BACKUP_HEALTH_FILE,
+} from '../services/infra-backup-schedule.js';
+import {
+  buildBackupPanel,
+  type BackupFileEntry,
+  type BackupHealthRecord,
+} from '../services/backup-panel.js';
+import { backupHealthFindings } from '../services/platform-daily-health.js';
+import {
+  buildSecureMongoDockerInvocation,
+  invocationShellCommand,
+} from '../services/secure-database-cli.js';
 
 export interface InfraBackupRouterDeps {
+  retention?: import('../services/backup-retention.js').BackupRetentionService;
   stateService: StateService;
   shell: IShellExecutor;
   /** Inline project-scope guard. No-op for admin/cookie auth; 403 for a project-scoped key reaching another project. */
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
+  /** 备份目录兜底候选要用到（放在 repoRoot 旁边）。缺省时只试前两个候选。 */
+  repoRoot?: string;
 }
 
-function detectKind(dockerImage: string): 'mongo' | 'redis' | 'generic' {
-  const lower = dockerImage.toLowerCase();
-  if (lower.includes('mongo')) return 'mongo';
-  if (lower.includes('redis')) return 'redis';
-  return 'generic';
+/**
+ * 这台服务该用哪种方式导出。
+ *
+ * 原来这里是**第三份**镜像判据（周期备份一份、暴露面自检一份、这里一份），
+ * 三份覆盖的类型各不相同，于是同一台 postgres「自检认得出、周期备份跳过、
+ * 下载走 tar 兜底拿到空壳」。现在直接复用周期备份那一份，`null` 才落 generic：
+ * 两条路径必然同进同退，不会再出现「自动备了、手工下载是空的」这种分裂。
+ */
+function detectKind(svc: Pick<InfraService, 'dockerImage' | 'id' | 'containerName'>): BackupKind | 'generic' {
+  return backupKindOf(svc.dockerImage, { id: svc.id, containerName: svc.containerName }) ?? 'generic';
+}
+
+/**
+ * 走「在容器里跑一段导出脚本」这条路的类型，连同它的三段脚本、扩展名与计数单位。
+ *
+ * 原来这几样靠 `const isPg = kind === 'postgres'` 带出来的一串三元表达式，
+ * 在下载和恢复两处**各写了一遍**。加第三种类型时要同时改对两条三元链、还要记得
+ * 把两个地方写死的 `.sql.gz` 一起换掉——判据分裂就是这么开始的（形状 3）。
+ *
+ * 收成一张表：新增一种只加一行；表里取不到，就说明它不走这条路。
+ */
+export const SCRIPTED_DUMP_KINDS = {
+  mysql: {
+    label: 'MySQL',
+    ext: 'sql.gz',
+    /** 恢复前后各数一次的那个东西叫什么，进「XX 数 3 → 5」这句话。 */
+    unit: '表',
+    tool: 'mysqldump',
+    dump: buildMysqlDumpScript,
+    restore: buildMysqlRestoreScript,
+    count: buildMysqlTableCountScript,
+  },
+  postgres: {
+    label: 'PostgreSQL',
+    ext: 'sql.gz',
+    unit: '表',
+    tool: 'pg_dump',
+    dump: buildPostgresDumpScript,
+    restore: buildPostgresRestoreScript,
+    count: buildPostgresTableCountScript,
+  },
+  nacos: {
+    label: 'Nacos 配置',
+    // 每个命名空间一个 zip，打成一包再压。`.gz` 结尾还让上游的 gzip -t 自动生效。
+    ext: 'tar.gz',
+    unit: '配置',
+    tool: 'nacos 配置导出接口',
+    dump: buildNacosDumpScript,
+    restore: buildNacosRestoreScript,
+    count: buildNacosConfigCountScript,
+  },
+  rabbitmq: {
+    label: 'RabbitMQ definitions',
+    // 产物是 JSON 不是 SQL，扩展名必须说实话，否则拿到手的人不知道该怎么灌。
+    ext: 'json.gz',
+    unit: '队列',
+    tool: 'rabbitmqctl export_definitions',
+    dump: buildRabbitmqDumpScript,
+    restore: buildRabbitmqRestoreScript,
+    count: buildRabbitmqQueueCountScript,
+  },
+} as const;
+
+type ScriptedDumpKind = keyof typeof SCRIPTED_DUMP_KINDS;
+
+export function scriptedDump(kind: BackupKind | 'generic'): (typeof SCRIPTED_DUMP_KINDS)[ScriptedDumpKind] | null {
+  return (SCRIPTED_DUMP_KINDS as Record<string, (typeof SCRIPTED_DUMP_KINDS)[ScriptedDumpKind]>)[kind] ?? null;
+}
+
+/**
+ * 一份结果文件里的 `completedAt`，转成毫秒；读不出来返回 null。
+ *
+ * 只用来在多个候选目录之间比新旧——**不做任何业务判定**，那些都在
+ * services/backup-panel.ts 里。
+ */
+function healthRecordCompletedAt(raw: string): number | null {
+  if (!raw) return null;
+  try {
+    const at = Date.parse(String((JSON.parse(raw) as { completedAt?: string }).completedAt || ''));
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
 }
 
 function shq(s: string): string {
   return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }
 
+/**
+ * 截断命令输出取**尾**不取头。
+ *
+ * 失败原因永远在输出末尾；`slice(0, N)` 会把它整段切掉，只留下一堆启动噪音
+ * （house rule 见 release-ssh-failure-detail 的三宗罪）。本文件原先七处
+ * 报错全是头截断——同一个口径分散七份，所以收敛到这一个函数。
+ */
+function outputTail(s: string, max = 300): string {
+  const t = String(s || '').trim();
+  return t.length > max ? `…（前文截断）${t.slice(-max)}` : t;
+}
+
+function maskKnownSecrets(text: string, secrets: Array<string | undefined>): string {
+  return secrets.reduce<string>((masked, secret) => (
+    secret && secret.length >= 3 ? masked.split(secret).join('******') : masked
+  ), String(text || ''));
+}
+
 /** 从 env 里抠 mongo root 账号密码，同时兼容两种写法。 */
-function extractMongoAuth(env: Record<string, string>): { user?: string; password?: string } {
+function extractMongoAuth(env?: Record<string, string>): { user?: string; password?: string } {
+  const values = env || {};
   return {
-    user: env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME,
-    password: env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD,
+    user: values.MONGO_INITDB_ROOT_USERNAME || values.MONGO_USERNAME || values.MONGODB_USERNAME,
+    password: values.MONGO_INITDB_ROOT_PASSWORD || values.MONGO_PASSWORD || values.MONGODB_PASSWORD,
   };
 }
 
 export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   const { stateService, shell, assertProjectAccess } = deps;
   const router = Router();
+
+  /**
+   * 备份目录。与自动备份走**同一份候选**（services/infra-backup-schedule.ts）：
+   * 两边落在不同目录的话，「备份历史」看不见自动备份，又是一次「以为有、其实没有」。
+   * 逐个试写，用第一个真能写的；都不行就回退到首选，让失败暴露在写盘那一步。
+   */
+  async function resolveBackupDir(opts?: { create?: boolean }): Promise<string> {
+    const create = opts?.create !== false;
+    const candidates = backupDirCandidates({
+      slug: stateService.projectSlug,
+      repoRoot: deps.repoRoot,
+    });
+    const ok = (r: { exitCode: number; stdout?: string }): boolean =>
+      r.exitCode === 0 && (r.stdout || '').includes('ok');
+
+    if (create) {
+      // 写盘路径：要的是「能写进去的那个目录」，所以判据就是可写。
+      for (const c of candidates) {
+        if (ok(await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`))) return c;
+      }
+      return candidates[0];
+    }
+
+    // 只读路径（备份历史、周期备份面板）有两条不一样的纪律：
+    //
+    // 1. **不许建目录**。建了之后紧跟着的 `test -d` 必然为真，「一份备份都没有过」
+    //    就被报成「目录在、只是没有匹配项」——那个区分要防的正是零备份长期不被发现。
+    // 2. **不许拿「可写」当判据**（Codex review P2）。盘变只读的那一刻，真正存着
+    //    备份的那个目录会被跳过，于是面板去读一个空的候选，报出「一份周期备份都没
+    //    产出过」——偏偏是在存储出事、最需要看清手上有什么的时候说这种话。
+    //
+    // 但也不能简单地「去掉 -w」：候选是有优先级的，一个存量的、写不进去的旧目录
+    // 排在前面时，裸看「存在」会读到陈旧数据，那是同一个错的镜像。
+    //
+    // 也**不能取「第一个有结果文件的」**（Codex review 第三轮 P2，打脸我上一版的说法）：
+    // 高优先级目录变只读、写入端切到后面的候选之后，前面那个目录**照样留着一份旧的
+    // 结果文件**，第一个命中的就是它——读到的是几天前的快照，而且看不出来。
+    //
+    // 判据只能取**哪一份最新**：把每个存在的候选的结果文件都读一遍，比 completedAt，
+    // 取最大的那个。候选最多三个、文件都很小，这点代价换掉一个静默读旧数据的坑。
+    let freshest: { dir: string; at: number } | null = null;
+    const existing: string[] = [];
+    for (const c of candidates) {
+      if (!ok(await shell.exec(`test -d ${shq(c)} && echo ok`))) continue;
+      existing.push(c);
+      const raw = await shell.exec(`cat ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`);
+      const at = healthRecordCompletedAt((raw.stdout || '').trim());
+      // 读得到文件但认不出时间（旧格式 / 半截写坏），当成「最老」参与排序：
+      // 有总比没有强，但不许压过一个时间明确的候选。
+      if (at === null && !(raw.stdout || '').trim()) continue;
+      const score = at ?? Number.NEGATIVE_INFINITY;
+      if (!freshest || score > freshest.at) freshest = { dir: c, at: score };
+    }
+    return freshest?.dir ?? existing[0] ?? candidates[0];
+  }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
   // 绕过 PreviewInstanceShellExecutor。预览实例没有真实 infra 容器，路由器级
@@ -114,9 +308,35 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       return;
     }
 
-    const kind = detectKind(svc.dockerImage);
+    const kind = detectKind(svc);
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: svc.projectId,
+        serviceId: svc.id,
+        runtime: kind === 'mongo' ? 'mongodb' : kind === 'redis' ? 'redis' : 'other',
+        kind: 'manual-backup',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({
+        error: rotating ? '基础设施正在轮换凭据，请等待轮换完成后再备份。' : '无法登记备份作业，备份尚未开始。',
+      });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = async (status: 'completed' | 'failed'): Promise<void> => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
+    let maintenanceStatus: 'completed' | 'failed' = 'failed';
+    const scripted = scriptedDump(kind);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const filename = `${svc.id}-${stamp}.${kind === 'mongo' ? 'archive.gz' : kind === 'redis' ? 'rdb' : 'tar.gz'}`;
+    const filename = `${svc.id}-${stamp}.`
+      + (kind === 'mongo' ? 'archive.gz'
+        : kind === 'redis' ? 'rdb'
+          : scripted ? scripted.ext : 'tar.gz');
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -128,51 +348,124 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
         if (auth.user && auth.password) {
-          authArgs.push('-u', auth.user, '-p', auth.password, '--authenticationDatabase', 'admin');
+          authArgs.push('--username', auth.user, '--authenticationDatabase', 'admin');
         }
-        const cmd = [
-          'docker', 'exec', svc.containerName,
-          'mongodump', '--archive', '--gzip', ...authArgs,
-        ];
-        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+        const invocation = buildSecureMongoDockerInvocation(
+          svc.containerName,
+          'mongodump',
+          ['--archive', '--gzip', ...authArgs],
+          auth.password || '',
+        );
+        const proc = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+        proc.stdin.end(invocation.stdinPrefix);
         proc.stdout.pipe(res);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            console.error(`[infra-backup] mongodump exit ${code}: ${stderr}`);
-            if (!res.writableEnded) res.end();
-          }
-          // 记一条破坏性操作（备份自己不是破坏性，不记）
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
         });
+        if (code !== 0) {
+          const detail = maskKnownSecrets(stderr, [auth.password]);
+          console.error(`[infra-backup] mongodump exit ${code}: ${detail}`);
+          throw new Error(`mongodump exit ${code}: ${detail.slice(-300)}`);
+        }
+        maintenanceStatus = 'completed';
       } else if (kind === 'redis') {
-        // 1) BGSAVE 触发磁盘写入 2) 等待 lastsave 变化 3) cat /data/dump.rdb
-        await shell.exec(`docker exec ${shq(svc.containerName)} redis-cli BGSAVE`);
-        // 简化：sleep 1s 后 cat dump.rdb（生产环境应轮询 LASTSAVE）
-        await new Promise((r) => setTimeout(r, 1200));
-        const cmd = ['docker', 'exec', svc.containerName, 'cat', '/data/dump.rdb'];
+        // 走**和周期备份同一个**探测脚本：它认证（env 取不到就扫容器内进程命令行里的
+        // --requirepass）、用 INFO persistence 确认 BGSAVE 真的完成、再用 mtime 证明
+        // 文件被这次写过，最后回传快照的真实路径（CONFIG GET dir/dbfilename）。
+        //
+        // 上一版是「BGSAVE 忽略退出码 → sleep 1.2s → cat 写死的 /data/dump.rdb」，
+        // 三处都会静默给出**陈旧快照**：配了 requirepass 的库 BGSAVE 直接 NOAUTH；
+        // 1.2 秒对稍大的库根本不够；改过 dir 的实例那个路径上压根不是它的快照。
+        // 而这个端点还是项目迁移的数据来源——「以为备了、其实是旧的」比没有备份更危险。
+        // 与周期备份同一条送法：脚本走 stdin（`sh -s`），CDS 存的那份口令随之进去，
+        // 宿主命令行上不留明文。
+        const probe = await shell.exec(
+          `docker exec -i ${shq(svc.containerName)} sh -s`,
+          {
+            timeout: 120_000,
+            stdin: redisProbeStdin(buildRedisBackupProbeScript(), redisAuthFromServiceDefinition(svc), redisUsernameFromServiceDefinition(svc, stateService.getCustomEnv(svc.projectId))),
+          },
+        );
+        if (probe.exitCode !== 0) {
+          return res.status(500).json({
+            error: `BGSAVE 未确认完成，拒绝下载可能过期的快照：${outputTail(combinedOutput(probe), 300)}`,
+          });
+        }
+        const rdbPath = (probe.stdout || '').trim().split('\n').pop()?.trim() || '';
+        if (!rdbPath.startsWith('/')) {
+          return res.status(500).json({ error: '探测脚本没有回传快照路径，拒绝按默认路径猜' });
+        }
+        const cmd = ['docker', 'exec', svc.containerName, 'cat', rdbPath];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         proc.stdout.pipe(res);
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
+        });
+        if (code !== 0) throw new Error(`读取 Redis 快照失败 exit=${code}`);
+        maintenanceStatus = 'completed';
+      } else if (scripted) {
+        // mysql / postgres 此前都掉进下面的兜底 `tar -C /data`，而它们的数据分别在
+        // /var/lib/mysql 与 /var/lib/postgresql/data，于是**下载得到一个 22 字节的
+        // 空 gzip 壳，HTTP 却是 200**（E41，2026-08-18 实测三个 mysql 全是这样）。
+        // 拿它当迁移数据源或动手前的兜底，等于什么都没有。rabbitmq 的数据在
+        // /var/lib/rabbitmq，同一个形状。现在都走与周期备份同一段导出脚本：
+        // 流式压缩、两端退出码都保住。
+        const tool = scripted.tool;
+        const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-s'];
+        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
+        proc.stdin.end(scripted.dump());
+        proc.stdout.pipe(res);
+        let stderr = '';
+        proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
+        });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
+        });
+        if (code !== 0) {
+          // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
+          // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
+          const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
+          if (res.headersSent && !res.writableEnded) {
+            res.destroy(new Error(`${tool} exit ${code}: ${tail}`));
+            return;
+          }
+          throw new Error(`${tool} exit ${code}: ${tail}`);
+        }
+        maintenanceStatus = 'completed';
       } else {
-        // generic: tar /data
+        // generic: tar /data。只对「数据确实在 /data」的类型成立；
+        // 新增类型前先确认它的数据目录，否则又是一个「200 但空壳」。
         const cmd = ['docker', 'exec', svc.containerName, 'tar', '-czf', '-', '-C', '/data', '.'];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         proc.stdout.pipe(res);
-        proc.on('error', (err) => {
-          if (!res.headersSent) res.status(500).json({ error: err.message });
-          else res.end();
+        res.once('close', () => {
+          if (!res.writableEnded) { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } }
         });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
+        });
+        if (code !== 0) throw new Error(`通用数据导出失败 exit=${code}`);
+        maintenanceStatus = 'completed';
       }
     } catch (err) {
       if (!res.headersSent) res.status(500).json({ error: (err as Error).message });
+      else if (!res.writableEnded) res.destroy();
+    } finally {
+      await settleMaintenance(maintenanceStatus);
     }
   });
 
@@ -180,39 +473,117 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * POST /api/infra/:id/restore
    * 上传一份之前导出的 dump 文件恢复。body 是原始字节流。
    *
-   * 破坏性操作：恢复前自动 dump 一份当前数据库到 /data/cds/<slug>/backups/<id>-pre-restore-<timestamp>，
+   * 破坏性操作：恢复前自动 dump 一份当前数据库到
+   * /data/cds/<slug>/backups/<项目>--<id>-pre-restore-<timestamp>，
    * 并记 DestructiveOperationLog，这样用户还能还原回恢复前的状态。
+   *
+   * 文件名带项目段的理由与周期备份同源（见 backupKey）：infra id 只在项目内唯一，
+   * 六个项目各有一个 `redis`，同一秒里两个项目各恢复一次，后写的会盖掉先写的那份
+   * 救命快照。周期备份这一轮修了，恢复前快照是同一个形状的另一处，一起修。
    */
   router.post('/infra/:id/restore', async (req, res) => {
+    // 进函数第一件事：把请求流按住。**必须在任何 await 之前**。
+    //
+    // master 的 HTTP 日志中间件为了记录请求体挂了 `req.on('data')`，那一下就把
+    // 请求流切进了 flowing 模式。同一个 tick 里挂上的消费者（路由自带的 json
+    // 解析器就是这样）照样收得到数据，所以绝大多数接口毫无异样；但本 handler
+    // 要先 await 好几次（解析服务、探测备份目录）才 `req.pipe()`，等它 pipe 的
+    // 时候 body 早被日志中间件读完了——落到暂存文件里**一个字节都没有**。
+    //
+    // 后果不是报错而是假成功：空文件 docker cp 进容器，`gunzip | mysql` 里
+    // mysql 收到零字节正常退出，接口回一句「已恢复」。E42 就是这么来的，
+    // 上传 7MB 的 dump 全程 4 秒、库里一张表没多。
+    //
+    // pause 之后数据留在内核与流的缓冲里，后面 `req.pipe()` 会自动 resume。
+    req.pause();
+    // 按住之后，任何提前返回都要把流放开：否则客户端还在发那几十 MB，服务端却
+    // 既不读也不结束，上传方看到的是卡住而不是那条 4xx。
+    const bail = (): void => { req.resume(); };
     const svc = resolveScoped(req, res);
-    if (!svc) return;
+    if (!svc) { bail(); return; }
     if (svc.status !== 'running') {
       res.status(409).json({ error: `服务未运行，无法恢复` });
+      bail();
       return;
     }
 
-    const kind = detectKind(svc.dockerImage);
-    const { spawn } = await import('node:child_process');
+    const kind = detectKind(svc);
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: svc.projectId,
+        serviceId: svc.id,
+        runtime: kind === 'mongo' ? 'mongodb' : kind === 'redis' ? 'redis' : 'other',
+        kind: 'manual-restore',
+      });
+    } catch (error) {
+      bail();
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({
+        error: rotating ? '基础设施正在轮换凭据，请等待轮换完成后再恢复。' : '无法登记恢复作业，恢复尚未开始。',
+      });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = async (status: 'completed' | 'failed'): Promise<void> => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
+    let maintenanceStatus: 'completed' | 'failed' = 'failed';
+    const restoreOperation = async () => {
+    let closePreRestoreOutput: (() => Promise<void>) | undefined;
+    try {
+      const scripted = scriptedDump(kind);
+      const { spawn } = await import('node:child_process');
 
     // 1) 先自动备份当前状态（便于"撤销恢复"）
-    const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
+    const backupDir = await resolveBackupDir();
     await shell.exec(`mkdir -p ${shq(backupDir)}`);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const preBackupPath = `${backupDir}/${svc.id}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
-
+    // 扩展名要说明这份撤销快照是什么：redis 存的是 RDB，拿 `.bin` 命名的话，
+    // 真要拿它回滚的人分不清能不能直接喂回去。
+    const preBackupExt = kind === 'mongo' ? 'archive.gz'
+      : kind === 'redis' ? 'rdb'
+        : scripted ? scripted.ext : 'bin';
+    const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${preBackupExt}`;
+    const preBackupWritePath = deps.retention ? `${backupDir}/.tmp/restore-${randomUUID()}/pre-restore.${preBackupExt}` : preBackupPath;
+    const completePreRestoreBackup = async () => {
+      if (!deps.retention) return;
+      await deps.retention.promoteOutput(preBackupWritePath, preBackupPath);
+      await deps.retention.register(preBackupPath, svc.projectId, svc.id, 'pre-restore');
+    };
     try {
+      if (deps.retention) {
+        const round = preBackupWritePath.slice(0, preBackupWritePath.lastIndexOf('/'));
+        const created = await shell.exec(`mkdir -p ${shq(round)}`);
+        if (created.exitCode !== 0) throw new Error('恢复前备份准备目录失败，未开始恢复。');
+        const source = await deps.retention.captureSource(svc.projectId, svc.id);
+        await deps.retention.beginOutput(preBackupWritePath, svc.projectId, svc.id, source);
+        closePreRestoreOutput = () => deps.retention!.closeOutput(preBackupWritePath).catch(() => { console.warn('[infra-restore] 临时备份退役状态未确认，保持保护。'); });
+      }
       if (kind === 'mongo') {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
         if (auth.user && auth.password) {
-          authArgs.push('-u', auth.user, '-p', auth.password, '--authenticationDatabase', 'admin');
+          authArgs.push('--username', auth.user, '--authenticationDatabase', 'admin');
         }
-        const dumpCmd = `docker exec ${shq(svc.containerName)} mongodump --archive --gzip ${authArgs.map(shq).join(' ')} > ${shq(preBackupPath)}`;
-        await shell.exec(dumpCmd);
+        const invocation = buildSecureMongoDockerInvocation(
+          svc.containerName,
+          'mongodump',
+          ['--archive', '--gzip', ...authArgs],
+          auth.password || '',
+        );
+        const pre = await shell.exec(
+          `${invocationShellCommand(invocation)} > ${shq(preBackupWritePath)}`,
+          { timeout: 1_800_000, stdin: invocation.stdinPrefix },
+        );
+        if (pre.exitCode !== 0) throw new Error('恢复前备份失败，恢复尚未开始。');
+        await completePreRestoreBackup();
       }
     } catch (err) {
       console.error('[infra-restore] pre-restore backup 失败', err);
-      // 不阻止恢复；只是少一个兜底
+      throw new Error('恢复前备份未通过校验或登记，已中止恢复。');
     }
 
     // 2) 执行恢复
@@ -221,50 +592,257 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const auth = extractMongoAuth(svc.env);
         const authArgs: string[] = [];
         if (auth.user && auth.password) {
-          authArgs.push('-u', auth.user, '-p', auth.password, '--authenticationDatabase', 'admin');
+          authArgs.push('--username', auth.user, '--authenticationDatabase', 'admin');
         }
-        const cmd = [
-          'docker', 'exec', '-i', svc.containerName,
-          'mongorestore', '--archive', '--gzip', '--drop', ...authArgs,
-        ];
-        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
+        const invocation = buildSecureMongoDockerInvocation(
+          svc.containerName,
+          'mongorestore',
+          ['--archive', '--gzip', '--drop', ...authArgs],
+          auth.password || '',
+        );
+        const proc = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+        proc.stdin.write(invocation.stdinPrefix);
         req.pipe(proc.stdin);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            res.status(500).json({ error: `mongorestore exit ${code}`, detail: stderr });
-            return;
-          }
-          stateService.recordDestructiveOp({
-            type: 'purge-database',
-            summary: `恢复 ${svc.id} 数据库（预备份已保存：${preBackupPath}）`,
-          });
-          res.json({ restored: true, preRestoreBackup: preBackupPath, message: '数据库已恢复' });
+        const abortChild = (): void => { try { proc.kill('SIGKILL'); } catch { /* child close 负责结束台账 */ } };
+        req.once('aborted', abortChild);
+        res.once('close', () => { if (!res.writableEnded) abortChild(); });
+        const code = await new Promise<number | null>((resolve, reject) => {
+          proc.once('close', resolve);
+          proc.once('error', reject);
         });
+        if (code !== 0) {
+          throw new Error(`mongorestore exit ${code}: ${maskKnownSecrets(stderr, [auth.password]).slice(-300)}`);
+        }
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `恢复 ${svc.id} 数据库（预备份已保存：${preBackupPath}）`,
+        });
+        maintenanceStatus = 'completed';
+        res.json({ restored: true, preRestoreBackup: preBackupPath, message: '数据库已恢复' });
       } else if (kind === 'redis') {
-        // Redis restore：写入 /data/dump.rdb 然后重启容器加载
-        const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-c', 'cat > /data/dump.rdb'];
-        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'ignore', 'pipe'] });
-        req.pipe(proc.stdin);
-        proc.on('close', async (code) => {
-          if (code !== 0) {
-            res.status(500).json({ error: `写入 dump.rdb 失败 exit=${code}` });
-            return;
-          }
-          // 重启容器让 redis 重新加载
-          await shell.exec(`docker restart ${shq(svc.containerName)}`).catch(() => { /* noop */ });
-          stateService.recordDestructiveOp({
-            type: 'purge-database',
-            summary: `恢复 ${svc.id} Redis dump.rdb 并重启容器`,
+        // 该往哪写，问 redis 自己（和备份共用 REDIS_RDB_PATH_LINES 那份判据）。
+        // 写死 /data/dump.rdb 的话，改过 dir/dbfilename 的实例会把上传的快照写到
+        // 一个 redis 根本不读的位置，重启后加载的还是**旧数据**，而接口回的是
+        // 「已恢复」——恢复场景里这种谎话的代价是数据真的回不来了。
+        const auth = redisAuthFromServiceDefinition(svc);
+        const pathProbe = await shell.exec(
+          `docker exec -i ${shq(svc.containerName)} sh -s`,
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisRdbPathScript(), auth, redisUsernameFromServiceDefinition(svc, stateService.getCustomEnv(svc.projectId))) },
+        );
+        const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
+        if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
+          res.status(500).json({
+            error: `解析不出 redis 快照路径，拒绝按默认路径写入：${outputTail(combinedOutput(pathProbe), 200)}`,
           });
-          res.json({ restored: true, message: 'Redis 已从 dump.rdb 恢复并重启' });
+          return;
+        }
+
+        // 开着 AOF 的实例启动读 AOF、不读 RDB：写进去也不会生效，而接口会回
+        // 「已恢复」。这种情况明确拒绝，不假装成功（E35）。
+        const aofProbe = await shell.exec(
+          `docker exec -i ${shq(svc.containerName)} sh -s`,
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisAppendOnlyScript(), auth, redisUsernameFromServiceDefinition(svc, stateService.getCustomEnv(svc.projectId))) },
+        );
+        const aof = (aofProbe.stdout || '').trim().split('\n').pop()?.trim().toLowerCase() || '';
+        if (aofProbe.exitCode !== 0) {
+          res.status(500).json({
+            error: `问不出 appendonly 配置，拒绝恢复：${outputTail(combinedOutput(aofProbe), 200)}`,
+          });
+          return;
+        }
+        if (aof === 'yes') {
+          res.status(409).json({
+            error: '该实例开启了 AOF（appendonly yes）。redis 启动时读 AOF 不读 RDB，'
+              + '写入快照不会生效——拒绝执行以免给出「已恢复」的假象。请先关闭 AOF 或改用 AOF 文件恢复。',
+          });
+          return;
+        }
+
+        // 上传内容先落到宿主暂存文件：后面要在**容器停止**的状态下 docker cp 进去，
+        // 而停止的容器没法 docker exec，必须先把字节拿在手上。
+        const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.rdb`;
+        try {
+          const fsp = await import('node:fs');
+          await new Promise<void>((resolve, reject) => {
+            const w = fsp.createWriteStream(uploadPath);
+            req.pipe(w);
+            w.on('finish', () => resolve());
+            w.on('error', reject);
+            req.on('error', reject);
+          });
+        } catch (err) {
+          res.status(500).json({ error: `接收上传失败：${(err as Error).message}` });
+          return;
+        }
+
+        // 顺序是关键，见 buildRedisRestorePlan 的注释：停 → 存当前 → 覆盖 → 启动。
+        const plan = buildRedisRestorePlan({
+          containerName: svc.containerName,
+          rdbPath: rdbTarget,
+          uploadPath,
+          preBackupPath: preBackupWritePath,
+        });
+        let stopped = false;
+        try {
+          for (const step of plan) {
+            const r = await shell.exec(step.argv.map(shq).join(' '), { timeout: 120_000 });
+            if (step.id === 'stop') stopped = r.exitCode === 0;
+            if (step.id === 'start') stopped = r.exitCode === 0 ? false : stopped;
+            if (step.id === 'save-current' && deps.retention) {
+              if (r.exitCode !== 0) throw new Error('恢复前快照失败，已中止恢复。');
+              await completePreRestoreBackup();
+            }
+            // 存当前快照失败不致命（可能这台从没落过盘），其余每一步都必须成功：
+            // 覆盖失败却继续启动，用户会拿到「已恢复」而数据没变。
+            if (r.exitCode !== 0 && step.id !== 'save-current') {
+              throw new Error(`${step.id} 失败：${outputTail(combinedOutput(r), 200)}`);
+            }
+          }
+        } catch (err) {
+          // 停下了却没起回来，比恢复失败本身更严重——尽力拉起来再如实报错。
+          if (stopped) await shell.exec(`docker start ${shq(svc.containerName)}`).catch(() => { /* 已尽力 */ });
+          res.status(500).json({
+            error: `恢复失败：${(err as Error).message}`,
+            containerRestarted: stopped,
+          });
+          return;
+        } finally {
+          await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 暂存文件清不掉不影响结果 */ });
+        }
+
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `恢复 ${svc.id} Redis 快照（恢复前状态已存：${preBackupPath}）`,
+        });
+        maintenanceStatus = 'completed';
+        res.json({
+          restored: true,
+          preRestoreBackup: preBackupPath,
+          message: 'Redis 已从快照恢复：容器先停止、覆盖快照文件、再启动加载',
+        });
+      } else if (scripted) {
+        // 这几类此前**根本没有恢复入口**——能导出却灌不回去，等于没有备份。
+        // 大 dump 不能走 stdin 字符串（170MB 的库很常见），所以先落宿主暂存文件，
+        // 再 docker cp 进容器、在容器内解压灌回去，最后清理两边。
+        //
+        // 各类共用同一条流程，只有三段脚本按类型取：导出（恢复前快照）、导入、计数。
+        // 各自的坑写在脚本函数的注释里（mysql 是管道退出码，postgres 是 psql 默认
+        // 遇错继续照样 exit 0，rabbitmq 是 import 只合并不替换），这里不复述。
+        const engineLabel = scripted.label;
+        const dumpScript = scripted.dump();
+        const restoreScript = scripted.restore;
+        const tableCountScript = scripted.count();
+        const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.${scripted.ext}`;
+        const inContainer = `/tmp/cds-restore-${stamp}.${scripted.ext}`;
+        let uploadBytes = 0;
+        // 数不出来就留 null，不要拿 0 顶替——「没数到」和「一张表都没有」是两回事。
+        let tablesBefore: number | null = null;
+        let tablesAfter: number | null = null;
+        const countTables = async (container: string): Promise<number | null> => {
+          const r = await shell.exec(`docker exec -i ${shq(container)} sh -s`,
+            { timeout: 60_000, stdin: tableCountScript });
+          if (r.exitCode !== 0) return null;
+          const n = Number((r.stdout || '').trim().split('\n').pop()?.trim());
+          return Number.isFinite(n) ? n : null;
+        };
+        try {
+          const fsp = await import('node:fs');
+          await new Promise<void>((resolve, reject) => {
+            const w = fsp.createWriteStream(uploadPath);
+            req.pipe(w);
+            w.on('finish', () => resolve());
+            w.on('error', reject);
+            req.on('error', reject);
+          });
+          // 收了多少字节要自己数一遍。前面那次假成功里，「上传」这一步是否真的搬过
+          // 字节从来没人问过——文件空着照样往下走，直到最后回一句「已恢复」。
+          uploadBytes = fsp.statSync(uploadPath).size;
+        } catch (err) {
+          res.status(500).json({ error: `接收上传失败：${(err as Error).message}` });
+          return;
+        }
+        if (uploadBytes === 0) {
+          await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 空文件清不掉不影响结果 */ });
+          res.status(400).json({ error: `上传内容为空（收到 0 字节），未做任何改动。请确认请求体里带上了 .${scripted.ext} 文件。` });
+          return;
+        }
+
+        try {
+          // 恢复前先存一份当前状态：这两个分支此前连撤销快照都没有。
+          const pre = await shell.exec(
+            `docker exec -i ${shq(svc.containerName)} sh -s > ${shq(preBackupWritePath)}`,
+            { timeout: 600_000, stdin: dumpScript },
+          );
+          if (pre.exitCode !== 0) {
+            // 存不下当前状态就不许往下走——没有退路的恢复不该开始。
+            throw new Error(`恢复前快照失败，已中止：${outputTail(combinedOutput(pre), 200)}`);
+          }
+          await completePreRestoreBackup();
+          const cp = await shell.exec(
+            `docker cp ${shq(uploadPath)} ${shq(`${svc.containerName}:${inContainer}`)}`,
+            { timeout: 600_000 },
+          );
+          if (cp.exitCode !== 0) throw new Error(`拷入容器失败：${outputTail(combinedOutput(cp), 200)}`);
+          tablesBefore = await countTables(svc.containerName);
+          // 灌库：口令在容器内展开，不进宿主命令行；管道两端的退出码都要检查
+          // （裸管道只会给出最后一环的，见 buildMysqlRestoreScript 的注释）。
+          const load = await shell.exec(
+            `docker exec -i ${shq(svc.containerName)} sh -s`,
+            { timeout: 1_800_000, stdin: restoreScript(inContainer) },
+          );
+          if (load.exitCode !== 0) throw new Error(`导入失败：${outputTail(combinedOutput(load), 300)}`);
+          tablesAfter = await countTables(svc.containerName);
+        } catch (err) {
+          res.status(500).json({ error: `恢复失败：${(err as Error).message}`, preRestoreBackup: preBackupPath });
+          return;
+        } finally {
+          await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 暂存清不掉不影响结果 */ });
+          await shell.exec(`docker exec -i ${shq(svc.containerName)} rm -f ${shq(inContainer)}`)
+            .catch(() => { /* 容器内暂存清不掉不影响结果 */ });
+        }
+
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `恢复 ${svc.id} ${engineLabel} dump（恢复前状态已存：${preBackupPath}）`,
+        });
+        maintenanceStatus = 'completed';
+        res.json({
+          restored: true,
+          preRestoreBackup: preBackupPath,
+          uploadBytes,
+          tablesBefore,
+          tablesAfter,
+          // 「已恢复」这句话必须带着能被核对的数字，否则和上一版那句假成功长得一模一样。
+          message: `${engineLabel} 已从 dump 恢复：收到 ${uploadBytes} 字节，`
+            + `${scripted.unit}数 ${tablesBefore ?? '未知'} → ${tablesAfter ?? '未知'}`
+            // RabbitMQ 的 import 是合并不是替换，备份之后新建的东西会留着。
+            // 这句话必须跟在结果旁边——它决定了操作者要不要再做点什么。
+            + (kind === 'rabbitmq'
+              ? '。注意 definitions 是合并导入：备份之后新建的队列/交换机/用户不会被删掉，'
+                + '队列里的消息也不在这份备份里'
+              : '')
+            + '（恢复前状态已另存，可回滚）',
         });
       } else {
         res.status(400).json({ error: '暂不支持该 infra 类型的自动恢复，请手动导入' });
       }
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      if (!res.headersSent) res.status(500).json({ error: (err as Error).message });
+      else if (!res.writableEnded) res.destroy();
+    }
+    } finally {
+      await closePreRestoreOutput?.();
+      await settleMaintenance(maintenanceStatus);
+    }
+    };
+    try {
+      if (deps.retention) await deps.retention.withLease(await resolveBackupDir(), svc.projectId, svc.id, 'restore', restoreOperation);
+      else await restoreOperation();
+    } catch {
+      await settleMaintenance('failed'); bail();
+      if (!res.headersSent) res.status(503).json({ error: '恢复资源租约未确认，请稍后重试；未确认的备份保持保留。' });
     }
   });
 
@@ -275,19 +853,145 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   router.get('/infra/:id/backup-history', async (req, res) => {
     const svc = resolveScoped(req, res);
     if (!svc) return;
-    const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
-    const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null | grep ${shq(svc.id)} || true`);
+    const backupDir = await resolveBackupDir({ create: false });
+    // 目录不存在时 `ls` 的错误此前被 2>/dev/null 吞掉，返回的空列表与「备份过但
+    // 没有匹配项」长得一模一样——零备份可以就这么一直不被发现。这里显式区分。
+    const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
+    const dirExists = (probe.stdout || '').includes('yes');
+    // 筛选**不能**交给 `grep <id>`：备份目录是所有项目共用的，而 infra id 只在项目内
+    // 唯一，子串匹配还会把 `redis-cache` 一起捞给 `redis`。判据走 isProjectBackupFile
+    // （与写入端同一份），旧命名的恢复前快照单独标记后照列。
+    const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null || true`);
     const lines = (result.stdout || '').split('\n').filter(Boolean);
     const entries = lines.map(l => {
       const parts = l.trim().split(/\s+/);
       if (parts.length < 9) return null;
+      const name = parts.slice(8).join(' ');
+      const mine = isProjectBackupFile(name, svc.projectId, svc.id);
+      const legacy = !mine && isLegacyUnscopedBackupFile(name, svc.id);
+      if (!mine && !legacy) return null;
       return {
         size: parseInt(parts[4], 10) || 0,
         mtime: parts.slice(5, 8).join(' '),
-        name: parts[8],
+        name,
+        /**
+         * true = 文件名里没有项目段，是项目限定命名之前留下的，无法确认属于哪个项目。
+         * 照列是因为它多半就是本项目的救命快照；标出来是因为「多半」不等于「确认」。
+         */
+        unscoped: legacy,
       };
     }).filter(Boolean);
-    res.json({ backups: entries, directory: backupDir });
+    res.json({
+      backups: entries,
+      directory: backupDir,
+      /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
+      directoryExists: dirExists,
+    });
+  });
+
+  /**
+   * GET /api/projects/:id/backup-health
+   *
+   * 项目设置里「周期备份」面板的数据源。回答四件事：上一轮什么时候跑的、
+   * 每个目标现在什么处境、这个项目在盘上占了多少份备份、每日体检对备份怎么说。
+   *
+   * 判定全在 services/backup-panel.ts（纯函数、可回归），体检那几句话直接调
+   * `backupHealthFindings`——**不在这里照着再写一遍**：同一个判据分裂成两份、
+   * 然后各自漂移，正是这条链路上刚栽过的那个坑（形状 3）。
+   */
+  router.get('/projects/:id/backup-health', async (req, res) => {
+    const projectId = String(req.params.id || '');
+    const project = stateService.getProject(projectId);
+    // 对外允许用 slug，但盘上的文件名用的是规范 id。这里必须先解析成规范 id，
+    // 否则用 slug 打开面板会一个目标都筛不出来，看起来像「这个项目没有备份」。
+    const canonicalId = project?.id ?? projectId;
+    const mismatch = assertProjectAccess(req, canonicalId);
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body as Record<string, unknown>);
+      return;
+    }
+    if (!project) {
+      res.status(404).json({ error: `项目不存在: ${projectId}` });
+      return;
+    }
+
+    const backupDir = await resolveBackupDir({ create: false });
+    const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
+    const directoryExists = (probe.stdout || '').includes('yes');
+
+    // 健康文件与备份文件在同一个目录。读不到就把 health 传 null——
+    // 面板会如实说「读不到上一轮的结果」，不会说成「没问题」。
+    let health: BackupHealthRecord | null = null;
+    if (directoryExists) {
+      const raw = await shell.exec(`cat ${shq(`${backupDir}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`);
+      try {
+        const parsed = JSON.parse((raw.stdout || '').trim());
+        if (parsed && typeof parsed === 'object') health = parsed as BackupHealthRecord;
+      } catch { /* 没有或解析不了，就是读不到 */ }
+    }
+
+    const listing = directoryExists
+      ? await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null || true`)
+      : { stdout: '' } as { stdout: string };
+    const files: BackupFileEntry[] = (listing.stdout || '').split('\n').filter(Boolean).map((line) => {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 9) return null;
+      return { name: parts.slice(8).join(' '), bytes: parseInt(parts[4], 10) || 0 };
+    }).filter((f): f is BackupFileEntry => Boolean(f));
+
+    const now = new Date();
+    // 台账里此刻真实存在的数据服务。**必须传**：只看上一轮的记录，新建的库和当时
+    // 停着的服务会从清单上整个消失，而第一屏还在说一切正常（Codex review 第二轮 P1）。
+    //
+    // **停着的也照传，带上 running 标记**（Codex review 第八轮 P2）。
+    //
+    // 第三轮起「目标清单只并正在跑的」这条不变——周期备份对停着的容器记的本就是
+    // 「不阻塞健康」的跳过，把它算进目标会为一台运维故意停掉的库天天报一次
+    // 「上轮没备到」，那是一盏没人会看的灯。但**过滤不能发生在这里**：判定那一侧
+    // 还要回答另一个问题——「这个项目是不是一台数据服务都没有」。只收到正在跑的，
+    // 它就分不清「一台都没有」和「有、但都停着」，于是会对一个只有停机数据库的项目
+    // 说「没有需要周期备份的服务」，那是假绿灯。过滤挪进判定模块，这里如实报台账。
+    // running 的口径与 planInfraBackups 的 `s.status === 'running'` 一致。
+    const infra = stateService.getInfraServicesForProject(canonicalId)
+      .map((s) => ({
+        id: s.id, dockerImage: s.dockerImage, containerName: s.containerName,
+        running: s.status === 'running',
+      }));
+    const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
+    // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
+    // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
+    //
+    // 压根没有需要备份的东西时，这几条一条都不该出（Codex review 第七轮 P2）：
+    // 没有备份可言，「读不到上一轮结果」与「从来没做过恢复演练」都无从谈起，
+    // 而它们会以 critical 出现在一个头条写着「没有需要周期备份的服务」的页面上。
+    // 结论由判定那一侧算好挂在 `view.nothingToBackUp` 上，这里只读，不另判一遍（形状 3）。
+    const findings = view.nothingToBackUp ? [] : backupHealthFindings({
+      now,
+      backup: {
+        lastCompletedAt: view.lastRoundAt,
+        // 「覆盖不全」= 备到一部分（partial）+ 有数据却没被保护（unprotected）。
+        // **不能收 unsupported**：那一档现在的意思是「没有需要备份的状态」（memcached
+        // 重启即空），把它算进缺口等于给一台本来就不用备的服务天天报一次不完整；
+        // 而漏掉 unprotected 会让真正没被保护的 MinIO 从页脚消失。两处判据必须跟着
+        // 同一份语义走（Codex review 第六轮 P2，形状 3：判据分裂后漂移）。
+        coverageGaps: view.targets
+          .filter((t) => t.status === 'partial' || t.status === 'unprotected')
+          .map((t) => t.id),
+        failedTargets: view.targets.filter((t) => t.status === 'failed').map((t) => ({ id: t.id, projectId: canonicalId })),
+        offsiteOnlyTargets: view.targets.filter((t) => t.status === 'offsite-only').map((t) => ({ id: t.id, projectId: canonicalId })),
+      },
+      // 恢复演练目前没有任何地方记录，恒为 null——体检会如实报「从来没演练过」。
+      // 这不是占位符：在补上记录之前，「能不能真的恢复」的答案就是「不知道」。
+      lastRestoreDrillAt: null,
+    });
+
+    res.json({
+      ...view,
+      directory: backupDir,
+      /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
+      directoryExists,
+      findings,
+    });
   });
 
   return router;

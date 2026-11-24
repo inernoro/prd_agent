@@ -64,7 +64,7 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
   }
 
   return (
-    <div className="rounded-2xl border border-token-subtle bg-[#0f1014]/90 p-4 backdrop-blur-xl">
+    <div className="surface-tone-dark rounded-2xl border border-token-subtle bg-[#0f1014]/90 p-4 backdrop-blur-xl">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2 text-[13px] font-medium text-token-primary">
           <Palette size={14} />
@@ -113,7 +113,7 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
       </div>
 
       {error && (
-        <div className="mb-3 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-100">
+        <div className="mb-3 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-1.5 text-[12px] text-[color:var(--accent-fg-danger)]">
           {error}
         </div>
       )}

@@ -60,6 +60,25 @@ export type TranscribeFlowDrawerProps = {
 
 type StepState = TranscribeStepState;
 
+/**
+ * 等自动重试时给用户的那句话。
+ *
+ * 说清三件事：为什么停着、已经试了几次、下一次什么时候——
+ * 「还要多久」给不出确切值就给出下次时刻，绝不用一个不动的转圈糊弄过去。
+ * 时间戳坏掉时宁可不提时刻，也不把 Invalid Date 摆到用户脸上。
+ */
+export function describeRetryWait(
+  retry: { count: number; nextAt: string } | null,
+): string {
+  if (!retry) return '';
+  const at = new Date(retry.nextAt);
+  const when = Number.isNaN(at.getTime())
+    ? ''
+    : `下一次约在 ${at.toLocaleTimeString('zh-CN', { hour12: false })}。`;
+  return `语音转写服务暂时不可用，已自动重试 ${retry.count} 次；${when}`
+    + '录音已安全保存，可以关闭面板，恢复后会自动接着跑。';
+}
+
 export function TranscribeFlowDrawer({
   storeId,
   file,
@@ -81,6 +100,10 @@ export function TranscribeFlowDrawer({
   const [entryId, setEntryId] = useState<string | null>(initialEntryId ?? null);
   const [runId, setRunId] = useState<string | null>(restyleRun?.runId ?? null);
   const [phase, setPhase] = useState(restyleRun ? '完成' : '排队中');
+  // 转录暂时不可用、正在等自动重试。后端下发结构化字段，界面如实转述——
+  // 之前这一屏只显示按步骤推断出来的「排队中」，把服务端说的实话盖掉了，
+  // 用户盯着一个转圈几分钟，分不清是在跑还是已经坏了。
+  const [retryWait, setRetryWait] = useState<{ count: number; nextAt: string } | null>(null);
   const [status, setStatus] = useState<'uploading' | 'running' | 'done' | 'failed'>(
     file ? 'uploading' : restyleRun ? 'done' : 'running');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -188,6 +211,10 @@ export function TranscribeFlowDrawer({
     if (!res.success) return;
     const r = res.data;
     if (r.phase) setPhase(r.phase);
+    // 结构化事实，不是从 phase 文案里猜出来的：有下次重试时刻 = 正在等自动重试
+    setRetryWait(r.automaticRetryNextAt
+      ? { count: r.automaticRetryCount ?? 0, nextAt: r.automaticRetryNextAt }
+      : null);
     if (r.status === 'done') {
       setPhase('完成');
       setStatus('done');
@@ -370,6 +397,8 @@ export function TranscribeFlowDrawer({
     () => selectedStyle?.contextInput ? parseMeetingContext(styleContext) : [],
     [selectedStyle?.contextInput, styleContext],
   );
+  const retryWaitDescription = describeRetryWait(retryWait);
+
   const runningDescription = status === 'uploading'
     ? '录音正在安全保存，随后只生成可编辑原文'
     : phase.includes('写入')
@@ -426,10 +455,15 @@ export function TranscribeFlowDrawer({
             <MapSpinner size={28} />
           </motion.div>
           <p className="text-[18px] font-semibold text-token-primary">
-            {status === 'uploading' ? '正在保存录音' : (activeStep?.label ?? phase)}
+            {status === 'uploading'
+              ? '正在保存录音'
+              // 等重试时以服务端下发的 phase 为准：推断出来的步骤标签会把「暂时不可用」说成「排队中」
+              : retryWait
+                ? phase
+                : (activeStep?.label ?? phase)}
           </p>
           <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
-            {runningDescription}
+            {retryWait ? retryWaitDescription : runningDescription}
           </p>
           <p className="mt-3 text-[11px] tabular-nums text-token-muted">
             已进行 {formatProcessDuration(runningSeconds)}
@@ -448,12 +482,20 @@ export function TranscribeFlowDrawer({
             <div className="min-w-0">
               <p className="text-[13px] font-semibold text-token-primary">正在整理已保存的原文</p>
               <p className="mt-1 text-[11px] leading-relaxed text-token-muted">不会重新上传或转录音频，结果会更新在当前录音中。</p>
+              <p className="mt-1 text-[10px] tabular-nums text-token-muted">
+                已进行 {formatProcessDuration(runningSeconds)} · 通常需要 30–90 秒，可后台运行
+              </p>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-2">
             {steps.map((s) => (
-              <div key={s.key} className="flex min-w-0 flex-col items-center text-center">
+              <div
+                key={s.key}
+                data-testid={`transcribe-step-${s.key}`}
+                data-state={s.state}
+                aria-current={s.state === 'active' ? 'step' : undefined}
+                className="flex min-w-0 flex-col items-center text-center">
                 <StepIcon state={s.state} />
                 <div className="mt-2 min-w-0">
               <span
@@ -520,7 +562,7 @@ export function TranscribeFlowDrawer({
           style={{
             background: 'rgba(239,68,68,0.08)',
             border: '1px solid rgba(239,68,68,0.2)',
-            color: 'rgba(248,113,113,0.95)',
+            color: 'var(--accent-fg-danger)',
           }}>
           <div className="whitespace-pre-wrap break-all">{errorMessage}</div>
         </div>
@@ -538,10 +580,10 @@ export function TranscribeFlowDrawer({
             background: 'rgba(34,197,94,0.08)',
             border: '1px solid rgba(34,197,94,0.2)',
           }}>
-          <span className="text-[13px] font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
             查看转录笔记
           </span>
-          <ChevronRight size={15} style={{ color: 'rgba(74,222,128,0.95)' }} />
+          <ChevronRight size={15} style={{ color: 'var(--accent-fg-success)' }} />
         </button>
       )}
 
@@ -552,7 +594,7 @@ export function TranscribeFlowDrawer({
             background: 'rgba(34,197,94,0.08)',
             border: '1px solid rgba(34,197,94,0.2)',
           }}>
-          <p className="text-[13px] font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>
+          <p className="text-[13px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
             录音和原文已保存
           </p>
           <p className="mt-1 text-[11px] text-token-muted">
@@ -595,7 +637,7 @@ export function TranscribeFlowDrawer({
                   title={s.description}
                   className="cursor-pointer rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors"
                   style={active
-                    ? { background: 'rgba(59,130,246,0.18)', color: 'rgba(147,197,253,0.98)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.45)' }
+                    ? { background: 'rgba(59,130,246,0.18)', color: 'var(--accent-fg-blue)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.45)' }
                     : { background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
                   {s.label}
                 </button>
@@ -717,7 +759,7 @@ export function TranscribeFlowDrawer({
                   onClick={() => setSummaryView(key)}
                   className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors"
                   style={summaryView === key
-                    ? { background: 'rgba(59,130,246,0.16)', color: 'rgba(147,197,253,0.98)' }
+                    ? { background: 'rgba(59,130,246,0.16)', color: 'var(--accent-fg-blue)' }
                     : { color: 'var(--text-muted)' }}>
                   {label}
                 </button>
@@ -917,7 +959,7 @@ function StepIcon({ state }: { state: StepState }) {
     return (
       <span
         className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
-        style={{ background: 'rgba(34,197,94,0.15)', color: 'rgba(74,222,128,0.95)' }}>
+        style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--accent-fg-success)' }}>
         <Check size={12} strokeWidth={2.5} />
       </span>
     );
@@ -933,7 +975,7 @@ function StepIcon({ state }: { state: StepState }) {
     return (
       <span
         className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
-        style={{ background: 'rgba(239,68,68,0.14)', color: 'rgba(248,113,113,0.95)' }}>
+        style={{ background: 'rgba(239,68,68,0.14)', color: 'var(--accent-fg-danger)' }}>
         <X size={12} strokeWidth={2.5} />
       </span>
     );

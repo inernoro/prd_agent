@@ -393,7 +393,7 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
                 style={{
                   background: 'rgba(56, 189, 248, 0.12)',
                   border: '1px solid rgba(56, 189, 248, 0.28)',
-                  color: 'rgba(186, 230, 253, 0.95)',
+                  color: 'var(--accent-fg-blue)',
                   height: 16,
                 }}
               >
@@ -402,7 +402,7 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
               </span>
             ))}
             {tags.length > 3 && (
-              <span className="text-[9px]" style={{ color: 'rgba(186, 230, 253, 0.7)' }}>
+              <span className="text-[9px]" style={{ color: 'var(--accent-fg-blue)' }}>
                 +{tags.length - 3}
               </span>
             )}
@@ -473,9 +473,9 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
     icon: Package,
     color: {
       bg: 'rgba(56, 189, 248, 0.14)',
-      text: 'rgba(125, 211, 252, 0.98)',
+      text: 'var(--accent-fg-blue)',
       border: '1px solid rgba(56, 189, 248, 0.35)',
-      iconColor: 'rgba(125, 211, 252, 0.95)',
+      iconColor: 'var(--accent-fg-blue)',
     },
     api: {
       listMarketplace: listMarketplaceSkills,
@@ -506,7 +506,7 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
     icon: FileText,
     color: {
       bg: 'rgba(168, 85, 247, 0.12)',
-      text: 'rgba(168, 85, 247, 0.95)',
+      text: 'var(--accent-fg-violet)',
       border: '1px solid rgba(168, 85, 247, 0.28)',
       iconColor: 'rgba(147, 197, 253, 0.85)',
     },
@@ -527,9 +527,9 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
     icon: ImageIcon,
     color: {
       bg: 'rgba(236, 72, 153, 0.12)',
-      text: 'rgba(236, 72, 153, 0.95)',
+      text: 'var(--accent-fg-danger)',
       border: '1px solid rgba(236, 72, 153, 0.28)',
-      iconColor: 'rgba(236, 72, 153, 0.85)',
+      iconColor: 'var(--accent-fg-danger)',
     },
     api: {
       listMarketplace: listReferenceImageConfigsMarketplace,
@@ -548,9 +548,9 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
     icon: Sparkles,
     color: {
       bg: 'rgba(6, 182, 212, 0.12)',
-      text: 'rgba(6, 182, 212, 0.95)',
+      text: 'var(--accent-fg-blue)',
       border: '1px solid rgba(6, 182, 212, 0.28)',
-      iconColor: 'rgba(6, 182, 212, 0.85)',
+      iconColor: 'var(--accent-fg-blue)',
     },
     api: {
       listMarketplace: listWatermarksMarketplace,

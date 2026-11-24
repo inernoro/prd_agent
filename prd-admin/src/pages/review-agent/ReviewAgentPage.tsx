@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell, ListOrdered } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
@@ -11,12 +11,12 @@ import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
-    if (item.isPassed === false) return { label: '未通过', color: 'text-orange-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
+    if (item.isPassed === false) return { label: '未通过', color: 'text-[color:var(--accent-fg-warning)]', icon: <XCircle className="w-3.5 h-3.5" /> };
     return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
   }
   if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
   if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
-  return { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
+  return { label: '等待评审', color: 'text-[color:var(--accent-fg-amber)]', icon: <Clock className="w-3.5 h-3.5" /> };
 }
 
 type FilterTab = 'all' | 'passed' | 'notPassed' | 'error';
@@ -76,7 +76,7 @@ export function ReviewAgentPage() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
-            <ClipboardCheck className="w-5 h-5 text-indigo-400" />
+            <ClipboardCheck className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
           </div>
           <div>
             <h1 className="text-xl font-semibold text-token-primary">产品评审智能体</h1>
@@ -85,6 +85,14 @@ export function ReviewAgentPage() {
         </div>
         <div className="flex items-center gap-2">
           <TipsEntryButton compact />
+          <button
+            onClick={() => navigate('/review-agent/assessments')}
+            className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+            title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
+          >
+            <ListOrdered className="w-3.5 h-3.5" />
+            需求评估
+          </button>
           {canManage && (
             <>
               <button
@@ -173,7 +181,7 @@ export function ReviewAgentPage() {
             {activeTab === 'all' && (
               <button
                 onClick={() => navigate('/review-agent/submit')}
-                className="inline-flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+                className="inline-flex items-center gap-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 提交第一个方案
@@ -191,7 +199,7 @@ export function ReviewAgentPage() {
                   className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-token-primary truncate group-hover:text-indigo-200 transition-colors">
+                    <p className="text-sm font-medium text-token-primary truncate group-hover:text-[color:var(--accent-fg-blue)] transition-colors">
                       {item.title}
                     </p>
                     <div className="flex items-center gap-3 text-xs text-token-muted mt-1">

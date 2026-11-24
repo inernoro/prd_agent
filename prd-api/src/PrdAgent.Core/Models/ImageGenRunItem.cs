@@ -28,7 +28,12 @@ public class ImageGenRunItem
 
     public string? Base64 { get; set; }
     public string? Url { get; set; }
+    /// <summary>Url 对应展示对象的 SHA256；水印图与原图必须分别持久化。</summary>
+    public string? DisplaySha256 { get; set; }
     public string? RevisedPrompt { get; set; }
+
+    /// <summary>该张图真实执行的模型，由上游执行结果写入；历史缺失时保持为空。</summary>
+    public string? ActualModel { get; set; }
 
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
@@ -45,5 +50,4 @@ public enum ImageGenRunItemStatus
     Done,
     Error
 }
-
 

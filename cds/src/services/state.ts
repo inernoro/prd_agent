@@ -1,18 +1,88 @@
+import type {StorageBinding} from '../types.js';
+import {profileStorageTargetKey,profileStorageBranchIdentity,profileStorageDeclarationDigest,type ProfileStorageTarget,type ProfileStorageBinding} from "./profile-storage-provision.js";
+import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
+import {profileStoragePlan,withRuntimeTmpfs,stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
+import {validateBoundedStorageProof} from './bounded-storage-provider.js';
+import {withWritableSourceLayer} from './source-workspace.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { cdsEventsBus } from './cds-events-bus.js';
+import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import { worktreePathActivity } from './worktree-path-activity.js';
+import { serviceRuntimeRefs } from './service-runtime.js';
+import { customProbeTargetId } from './uptime-custom-monitor.js';
+import type {
+  DbLedgerEntry,
+  CdsState,
+  BranchEntry,
+  BranchTombstone,
+  BuildProfile,
+  BuildProfileOverride,
+  RoutingRule,
+  OperationLog,
+  ContainerLogArchiveEntry,
+  InfraService,
+  ExecutorNode,
+  DataMigration,
+  CdsPeer,
+  Project,
+  AgentKey,
+  GlobalAgentKey,
+  AgentKeyAccess,
+  Principal,
+  UserCredential,
+  ProjectGrant,
+  AccessRequest,
+  IdentityConnection,
+  CustomEnvStore,
+  ConfigSnapshot,
+  DestructiveOperationLog,
+  RemoteHost,
+  ServiceDeployment,
+  ServiceDeploymentLogEntry,
+  CdsConnection,
+  BugReportForwardingSettings,
+  ReleaseTarget,
+  ReleasePlan,
+  UptimeCustomMonitor,
+  ReleasePreflightRecord,
+  ReleaseRun,
+  ReleaseLogEntry,
+  ResourceExternalAccessPolicy,
+  ResourceCloneTask,
+  AcceptanceReportMeta,
+  ReportFolder,
+  PeerNodeRecord,
+  PeerPairingCode,
+  ScheduledJob,
+  ScheduledJobRun,
+  ScheduledJobAction,
+  DeploymentRun,
+  PersistedDeploymentIntent,
+  DeploymentVersion,
+  ContainerTeardownTombstone,
+  DeletedProjectWorktreeTombstone,
+  ReplicaDbSnapshot,
+  MonitorObservation,
+  InfraMaintenanceJob,
+  InfraMaintenanceJobKind,
+} from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
-import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
+import { mergeBranchProfiles, isValidExtraProfileId, assertBranchServiceIsolation } from './branch-extra-services.js';
+import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
-import { sanitizeProfileOverride } from './container.js';
+import { sanitizeProfileOverride, resolveEffectiveProfile } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
-import { buildCacheMounts } from './cache-catalog.js';
+import { createReportObjectStore, type ReportObjectStore } from './report-object-store.js';
+import { retireGeneratedCatalogCaches, mergeRetiredCatalogCaches } from './cache-catalog.js';
+import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
-import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
+import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
+import { projectBranchPreviewSlugs, projectBranchPublishedHosts } from './preview-entrypoints.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -37,9 +107,41 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
+import { credentialUsability, hasProjectKeyGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
+import { isHumanProjectGrantUpdatePending, recoverInterruptedHumanAccessUpdates } from './human-project-access.js';
+import { deriveInfraCredentialEnv } from './infra-credential-env.js';
+import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
+import { migrateLegacyDataMigrationCredentials } from './secure-database-cli.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
-const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+export const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+/* 定时任务运行记录：按任务各留 120 条（每 5 分钟的任务约 10 小时，日任务约 4 个月），
+   全局 5000 条兜底防状态文件无限膨胀。 */
+const SCHEDULED_JOB_RUNS_PER_JOB = 120;
+const SCHEDULED_JOB_RUNS_GLOBAL_CAP = 5000;
+/**
+ * 单条运行记录里日志的字节上限。运行史整段嵌在 global 文档里，而日志长度是无界的
+ * ——一次拉了一屏输出的命令动作就能顶掉几十条运行史的位置。
+ */
+const SCHEDULED_JOB_RUN_LOG_MAX_BYTES = 8 * 1024;
+/**
+ * 运行史这一段允许占的字节上限。条数上限管不住体积：5000 条 × 无界日志能把 global
+ * 文档顶过 Mongo 的 16MiB 上限，而 global 文档写不进去时**整份控制面状态都停止落库**
+ * ——不只是运行史丢，分支/项目的后续变更也丢（Codex #1471 P1）。
+ * 条数与字节两道闸都要有：条数保证低频任务的历史不被高频任务挤掉，字节保证再离谱的
+ * 日志也顶不破文档。
+ */
+const SCHEDULED_JOB_RUNS_MAX_BYTES = 4 * 1024 * 1024;
+
+/** 按 UTF-8 字节截断，保留尾部（失败原因通常在末尾）。 */
+function truncateLogTail(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const buf = Buffer.from(value, 'utf8');
+  if (buf.length <= maxBytes) return value;
+  const marker = '…（日志已截断，只保留末尾）\n';
+  const keep = buf.subarray(buf.length - maxBytes).toString('utf8');
+  return marker + keep.slice(keep.indexOf('\n') + 1);
+}
 const MAX_DEPLOYMENT_VERSIONS_PER_PROJECT = 100;
 /** 容器日志黑匣子 per-branch 上限：条数与字节双闸，防止 state 无界膨胀
  *（JSON 模式每次 save 全量 stringify、mongo-split 每 tick structuredClone 都要背这份数据）。 */
@@ -61,6 +163,12 @@ const SYSTEM_PROJECT_ID = '__system__';
  * 只在「本方法确定只改了 global rest」的 mutator 上使用。
  */
 const HINT_GLOBAL: StateSaveHint[] = [{ kind: 'global' }];
+
+/**
+ * 本 CDS 进程的代次。基础设施维护 job 的执行体只存在于进程内存里，所以「谁开的」
+ * 只需要区分到进程——进程一换，上一代留下的 active 就是遗留，可以就地收敛。
+ */
+const INFRA_MAINTENANCE_OWNER_GENERATION = `gen_${crypto.randomBytes(8).toString('hex')}`;
 
 /** 按「最新优先」裁剪一条分支的黑匣子列表：条数 ≤ MAX_ARCHIVES_PER_BRANCH 且累计字节 ≤ MAX_ARCHIVE_BYTES_PER_BRANCH。 */
 function trimArchiveList(list: ContainerLogArchiveEntry[]): ContainerLogArchiveEntry[] {
@@ -184,6 +292,7 @@ function emptyState(): CdsState {
     nextPortIndex: 0,
     logs: {},
     deploymentRuns: {},
+    deploymentIntents: {},
     deploymentVersions: {},
     containerLogArchives: {},
     defaultBranch: null,
@@ -199,6 +308,7 @@ function emptyState(): CdsState {
     activityLogs: {},
     resourceExternalAccess: {},
     resourceCloneTasks: [],
+    infraMaintenanceJobs: [],
     removedBranches: {},
   };
 }
@@ -248,14 +358,34 @@ function migrateCustomEnv(raw: unknown): CustomEnvStore {
   return out;
 }
 
+/** removeProject 的级联清理清单（也是 onProjectRemoved 观察者收到的东西）。 */
+export interface ProjectRemovalSummary {
+  branches: string[];
+  buildProfiles: string[];
+  infraServices: string[];
+  routingRules: string[];
+  projectGrants: string[];
+  dbLedgerEntries: string[];
+  uptimeMonitors: string[];
+}
+
 export class StateService {
   private state: CdsState = emptyState();
+  private readonly criticalDeploymentRunReferences = new Map<string, number>();
   private readonly filePath: string;
   private readonly repoRoot?: string;
   /** P3: the persistence seam. Mutable — setBackingStore() swaps it
    *  at runtime for the "switch storage mode" flow in the Settings
    *  panel (P4 Part 18 D.3). */
   private backingStore: StateBackingStore;
+  isReportObjectStoreConfigured(): boolean { return this.reportObjects.isConfigured(); }
+
+  /**
+   * 验收报告正文的持久层（2026-09-10）。元数据在这个 state 里（跟着 backingStore
+   * 进 Mongo），正文进对象存储——两半必须同一个持久等级，否则就是那批点不开的
+   * 幽灵报告。未配置对象存储时它 isConfigured()=false，写入方如实标 storage='local'。
+   */
+  private reportObjects: ReportObjectStore = createReportObjectStore();
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
   /**
@@ -274,6 +404,12 @@ export class StateService {
    */
   private releaseLogFlushTimer: NodeJS.Timeout | null = null;
 
+  private readonly projectRemovedListeners: Array<(summary: ProjectRemovalSummary) => void> = [];
+  /** 删除中的内存缺席不是持久化成功；失败记录保持阻止回执归档。 */
+  private readonly projectRemovalWrites = new Map<string, Promise<void> | undefined>();
+  /** 分支删除时被级联清掉的自定义监控 id —— 运行态台账靠它同步抹除。 */
+  private readonly orphanedMonitorListeners: Array<(monitorIds: string[]) => void> = [];
+
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
     this.repoRoot = repoRoot;
@@ -286,6 +422,14 @@ export class StateService {
     // when CDS_STORAGE_MODE=mongo, and supports runtime swaps via
     // setBackingStore().
     this.backingStore = backingStore ?? new JsonStateBackingStore(filePath);
+  }
+
+  /**
+   * 换掉报告正文的持久层。给测试用，也给「运行时配好凭据后热接上」留了口子——
+   * 与 setBackingStore 同一种接缝：持久层是可换的，读写路径不该知道它是谁。
+   */
+  setReportObjectStore(store: ReportObjectStore): void {
+    this.reportObjects = store;
   }
 
   /**
@@ -340,6 +484,10 @@ export class StateService {
     const loaded = this.backingStore.load();
     if (loaded) {
       this.state = loaded;
+      for(const key of Object.keys(this.state.profileStoragePublications||{})){if(this.state.profileStorageBindings)delete this.state.profileStorageBindings[key];}
+      for (const pending of Object.values(this.state.storageProvisionPublications || {})) {
+        this.state.infraServices = this.state.infraServices.filter(service => service.id !== pending.service.id || service.projectId !== pending.service.projectId);
+      }
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
       if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
@@ -364,8 +512,24 @@ export class StateService {
       if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
+      const legacyUpgrade = migrateLegacyDataMigrationCredentials(this.state.dataMigrations);
+      if (legacyUpgrade.changed) {
+        this.persistLegacyDataMigrationCredentialUpgrade();
+      }
+      if (legacyUpgrade.deferred.length > 0) {
+        // 外因在前：说清是谁、少了什么、要不要紧、下一步做什么。
+        // 推迟必须喊出来——不喊就是静默降级：管理员会以为凭据已经密封了。
+        console.warn(
+          `  [sealed-storage] 本实例还没有配置密封密钥（CDS_SECRET_KEY），` +
+            `${legacyUpgrade.deferred.length} 个数据迁移任务里的旧明文凭据暂时保持原样：` +
+            `${legacyUpgrade.deferred.join('、')}。` +
+            `这不是故障，服务照常启动；请用管理员身份调用 POST /cds-system/sealed-storage/initialize ` +
+            `装上密钥并重启，届时这些凭据会自动完成脱敏与密封。`,
+        );
+      }
       if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+      if (!this.state.infraMaintenanceJobs) this.state.infraMaintenanceJobs = [];
       if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
@@ -381,11 +545,16 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
-      // Legacy CDS instances sometimes ran from a generic checkout dir
-      // (`workspace`, `cursor-workspace`). Keep the immutable project slug
-      // intact, but set a preview alias from the Git repo so new URLs do
-      // not keep exposing the container/workspace folder name.
-      this.migrateLegacyPreviewAlias();
+      this.pruneOrphanedPreviewAddresses();
+      let identityBaselineAdded = false;
+      for (const project of this.state.projects) {
+        if (!project.identityHistory?.length) {
+          project.identityHistory = [identityRecord(project, 'baseline', { actor: 'system:history-baseline' })];
+          identityBaselineAdded = true;
+        }
+      }
+      if (identityBaselineAdded) this.save();
+      this.migrateProjectSlugs();
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
@@ -419,6 +588,65 @@ export class StateService {
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+    recoverInterruptedHumanAccessUpdates(this);
+  }
+
+  /**
+   * Plaintext migration passwords existed in state before sealed storage was
+   * introduced. JSON mode rewrites the primary file and every readable rolling
+   * backup synchronously before load returns, closing the crash window where a
+   * restarted CDS could continue to expose the old credential on disk. Other
+   * backends use the normal save/flush path; index.ts flushes startup migrations
+   * before the HTTP server is created.
+   */
+  private persistLegacyDataMigrationCredentialUpgrade(): void {
+    if (this.backingStore.kind !== 'json') {
+      this.save();
+      return;
+    }
+
+    const dir = path.dirname(this.filePath);
+    const base = path.basename(this.filePath);
+    const backupPaths = fs.existsSync(dir)
+      ? fs.readdirSync(dir)
+        .filter((name) => name.startsWith(`${base}.bak.`))
+        .map((name) => path.join(dir, name))
+      : [];
+    // 备份排在主文件之前，顺序是这件事的全部要害：本方法只在「主文件报告发生了变化」
+    // 时才被调用。先写主文件的话，崩在中途 = 主文件已密封、备份仍是明文，而重启时主文件
+    // 不再报 change，这些备份就永远不会被重扫，明文永久留在盘上。倒过来写，崩溃只会让
+    // 主文件仍是明文，下次启动照样检测得到、照样重跑一遍——中断可续。
+    const snapshots: Array<{ file: string; state: CdsState }> = [];
+    for (const backupPath of backupPaths) {
+      try {
+        const backupState = JSON.parse(fs.readFileSync(backupPath, 'utf8')) as CdsState;
+        if (!backupState.dataMigrations) backupState.dataMigrations = [];
+        migrateLegacyDataMigrationCredentials(backupState.dataMigrations);
+        snapshots.push({ file: backupPath, state: backupState });
+      } catch (error) {
+        throw new Error(`旧版数据迁移凭据备份无法安全升级：${path.basename(backupPath)}: ${(error as Error).message}`);
+      }
+    }
+    snapshots.push({ file: this.filePath, state: this.state });
+
+    for (const snapshot of snapshots) {
+      fs.mkdirSync(path.dirname(snapshot.file), { recursive: true });
+      const temp = `${snapshot.file}.credential-upgrade.${process.pid}`;
+      let fd: number | undefined;
+      try {
+        fd = fs.openSync(temp, 'w', 0o600);
+        fs.writeFileSync(fd, JSON.stringify(snapshot.state, null, 2));
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = undefined;
+        fs.renameSync(temp, snapshot.file);
+        fs.chmodSync(snapshot.file, 0o600);
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+        try { fs.unlinkSync(temp); } catch { /* already renamed */ }
+      }
+    }
+    this.save();
   }
 
   private hasLegacyDefaultPayload(): boolean {
@@ -440,46 +668,16 @@ export class StateService {
     return hasDefaultBranch || hasBranches || hasProfiles || hasInfra || hasRules || hasDefaultEnv;
   }
 
-  /**
-   * Backfill cacheMounts for profiles that were created before cache support.
-   * Uses dockerImage to detect the correct cache type.
-   *
-   * 2026-04-22: 改为「合并语义」——即使 profile 已有部分 cacheMounts，
-   * 也会按 dockerImage 对比标准模板，缺失哪类（nuget/pnpm）就补哪类。
-   * 原先 `if (profile.cacheMounts.length > 0) continue` 会导致：
-   * 混合镜像 profile（含 pnpm 但 dotnet SDK）永远拿不到 nuget 挂载 →
-   * 每次 dotnet restore 都从 nuget.org 冷下载。
-   */
+  /** Retire proven legacy compiler-cache declarations as metadata only.
+   * Do not regenerate host bindings or move/delete the original cache bytes. */
   private migrateCacheMounts(): void {
-    const CACHE_BASE = this.getCacheBase();
-
     let changed = false;
     for (const profile of this.state.buildProfiles) {
-      if (!profile.cacheMounts) profile.cacheMounts = [];
-
-      for (const cm of profile.cacheMounts) {
-        const updated = this.normalizeCacheHostPath(cm.hostPath);
-        if (updated !== cm.hostPath) {
-          cm.hostPath = updated;
-          changed = true;
-        }
-        if (cm.containerPath === '/root/.local/share/pnpm/store') {
-          cm.containerPath = '/pnpm/store';
-          changed = true;
-        }
-      }
-
-      // SSOT: services/cache-catalog.ts。按 dockerImage 推断应挂载的依赖缓存目录，
-      // 缺哪类补哪类（合并语义，不覆盖用户自定义挂载）。2026-06-20 起覆盖
-      // java(.m2+.gradle)/go/rust/python——固化 Java 依赖缓存避免重复冷下载（任务 3）。
-      const image = profile.dockerImage || '';
-      for (const mount of buildCacheMounts(image, CACHE_BASE)) {
-        const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
-        if (!alreadyMounted) {
-          profile.cacheMounts.push({ ...mount });
-          changed = true;
-        }
-      }
+      const result = retireGeneratedCatalogCaches(profile.dockerImage, this.getCacheBase(), profile.cacheMounts || []);
+      if (!result.retired.length) continue;
+      profile.cacheMounts = result.kept;
+      profile.retiredCatalogCacheMounts = mergeRetiredCatalogCaches(profile.retiredCatalogCacheMounts || [], result.retired);
+      changed = true;
     }
     if (changed) this.save();
   }
@@ -629,25 +827,41 @@ export class StateService {
     }
   }
 
-  private migrateLegacyPreviewAlias(): void {
+  private migrateProjectSlugs(): void {
     const projects = this.state.projects || [];
-    const legacy = projects.find((p) => p.legacyFlag === true);
-    if (!legacy || legacy.aliasSlug || !isGenericPreviewProjectSlug(legacy.slug)) return;
-
-    const candidate =
-      repoNameFromGitRef(legacy.gitRepoUrl) ||
-      repoNameFromGitRef(legacy.githubRepoFullName) ||
-      repoNameFromGitRef(readGitOriginUrl(this.repoRoot));
-    if (!candidate || candidate === legacy.slug) return;
-
-    const collides = projects.some(
-      (p) => p.id !== legacy.id && (p.slug === candidate || p.aliasSlug === candidate),
-    );
-    if (collides) return;
-
-    legacy.aliasSlug = candidate;
-    legacy.updatedAt = new Date().toISOString();
-    this.save();
+    const changes = projects.map((project) => {
+      // aliasSlug 仅在旧状态导入边界读取，迁移后从对象中物理删除。
+      const oldAlias = (project as Project & { aliasSlug?: string }).aliasSlug;
+      const candidate = oldAlias?.trim().toLowerCase() ||
+        (project.legacyFlag && isGenericPreviewProjectSlug(project.slug)
+          ? repoNameFromGitRef(project.gitRepoUrl) || repoNameFromGitRef(project.githubRepoFullName) || repoNameFromGitRef(readGitOriginUrl(this.repoRoot))
+          : '') || project.slug;
+      const resolved = !oldAlias && projects.some((other) => other.id !== project.id && projectReservedIdentifiers(other).includes(candidate)) ? project.slug : candidate;
+      return { project, candidate: resolved, hadAlias: Object.hasOwn(project, 'aliasSlug') };
+    });
+    // 先校验整批，冲突时不覆盖任何项目，保留原状态供原版本恢复。
+    for (const { project, candidate } of changes) {
+      if (candidate === project.slug) continue;
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(candidate)) {
+        throw new Error(`项目「${project.name}」的旧标识格式无效，迁移未执行。请先在原版本修正。`);
+      }
+      if (changes.some((other) => other.project.id !== project.id &&
+          (other.candidate === candidate || projectReservedIdentifiers(other.project).includes(candidate)))) {
+        throw new Error(`项目「${project.name}」的 slug「${candidate}」冲突，迁移未执行。请先在原版本修改冲突标识。`);
+      }
+    }
+    let changed = false;
+    for (const { project, candidate, hadAlias } of changes) {
+      if (candidate !== project.slug || hadAlias) {
+        const before = projectIdentitySnapshot(project);
+        project.slug = candidate;
+        delete (project as Project & { aliasSlug?: string }).aliasSlug;
+        project.identityHistory!.push(identityRecord(project, 'migrated', { actor: 'system:single-project-slug' }, before));
+        project.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   /**
@@ -804,6 +1018,9 @@ export class StateService {
   /** Listeners notified after every save() */
   private onSaveListeners: Array<() => void> = [];
 
+  private storageProvisionDrafts = new Map<string,{service:InfraService;names:string[];operationId:string}>();
+  private committingStorageProvisions = new Set<string>();
+
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
     this.onSaveListeners.push(fn);
@@ -834,7 +1051,35 @@ export class StateService {
     // hints（2026-07-21 增量快照）：mutator 确定本次只改了哪块 state 时传入，
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
-    this.backingStore.save(this.state, hints);
+    // 未到日志批次阈值的发布尾部仍在内存；一次实体级保存不能把它误当已落盘。
+    let completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
+      ? [...hints, ...HINT_GLOBAL] : hints;
+    let snapshot = this.state;
+    if (this.storageProvisionDrafts.size) {
+      const publications = {...snapshot.storageProvisionPublications}, births = {...snapshot.storageBirths};
+      const infra = [...snapshot.infraServices];
+      for (const [key,pending] of this.storageProvisionDrafts) {
+        if (this.committingStorageProvisions.has(key)) {
+          infra.push(structuredClone(pending.service)); delete publications[key];
+          for (const name of pending.names) { const row = births[name]; births[name] = {...row,seq:row.seq+1,stage:'published',updatedAt:new Date().toISOString()}; }
+        } else publications[key] = structuredClone(pending);
+      }
+      snapshot = {...snapshot,storageBirths:births,storageProvisionPublications:publications,infraServices:infra};
+    }
+if(this.profileStorageDrafts.size){
+ const bindings={...snapshot.profileStorageBindings},publications={...snapshot.profileStoragePublications},births={...snapshot.storageBirths};
+ for(const [key,row] of this.profileStorageDrafts){
+  if(this.committingProfileStorage.has(key)){
+   bindings[key]=structuredClone(row);delete publications[key];
+   for(const name of row.names){const birth=births[name];if(!birth||birth.stage!=='confirmed')throw new Error('storage_provision_unconfirmed');births[name]={...birth,seq:birth.seq+1,stage:'published',updatedAt:new Date().toISOString()};}
+  }else publications[key]={binding:structuredClone(row)};
+ }
+ snapshot={...snapshot,profileStorageBindings:bindings,profileStoragePublications:publications,storageBirths:births};
+}
+// In-flight storage projections must accompany unrelated entity snapshots.
+if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeHints?.length&&!completeHints.some(h=>h.kind==='global'))completeHints=[...completeHints,...HINT_GLOBAL];
+
+    this.backingStore.save(snapshot, completeHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
 
@@ -847,14 +1092,264 @@ export class StateService {
   }
 
   async flush(): Promise<void> {
+    this.flushPendingReleaseLogs();
     const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
     if (typeof maybeFlush === 'function') {
       await maybeFlush.call(this.backingStore);
     }
   }
 
+  async flushDeploymentRun(id: string): Promise<void> {
+    this.criticalDeploymentRunReferences.set(id, (this.criticalDeploymentRunReferences.get(id) || 0) + 1);
+    try {
+      if (this.backingStore.flushDeploymentRun) await this.backingStore.flushDeploymentRun(id);
+      else await this.flush();
+    } finally {
+      const remaining = (this.criticalDeploymentRunReferences.get(id) || 1) - 1;
+      if (remaining) this.criticalDeploymentRunReferences.set(id, remaining);
+      else this.criticalDeploymentRunReferences.delete(id);
+    }
+  }
+
   getState(): Readonly<CdsState> {
     return this.state;
+  }
+
+
+  /** Upgrade/default boot selects one stable storage owner, never a new owner over old births. */
+  async ensureStorageInstanceId(configured?: string): Promise<string> {
+    const previous = this.state.storageInstanceId;
+    const historical: Array<string | undefined> = Object.values(this.state.storageBirths || {}).map(row => row.binding?.instanceId);
+    const collect = (mounts?: readonly {storage?: {instanceId?: string}}[]) => {
+      for (const mount of mounts || []) if (mount.storage !== undefined) historical.push(mount.storage?.instanceId);
+    };
+    for (const service of this.state.infraServices || []) collect(service.volumes);
+    for (const row of Object.values(this.state.storageProvisionPublications || {})) collect(row.service.volumes);
+    for (const row of this.storageProvisionDrafts.values()) collect(row.service.volumes);
+    for (const profile of this.state.buildProfiles || []) collect(profile.cacheMounts);
+    for (const branch of Object.values(this.state.branches || {})) {
+      for (const profile of Object.values(branch.profileOverrides || {})) collect((profile as Partial<BuildProfile>).cacheMounts);
+      for (const profile of branch.extraProfiles || []) collect(profile.cacheMounts);
+    }
+    for (const row of Object.values(this.state.profileStorageBindings || {})) collect(row.mounts);
+    for (const row of Object.values(this.state.profileStoragePublications || {})) collect(row.binding.mounts);
+    for (const row of this.profileStorageDrafts.values()) collect(row.mounts);
+    const known = [configured, previous, ...historical].filter(value => value !== undefined);
+    if (known.some(value => typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value))
+        || new Set(known).size > 1 || historical.some(value => value === undefined)) {
+      throw new Error('storage_instance_identity_unconfirmed');
+    }
+    const selected = configured ?? previous ?? historical[0] ?? crypto.randomUUID().replace(/-/g, '');
+    this.state.storageInstanceId = selected;
+    // Retry the same identity after a synchronous save failure; RAM alone is never an ACK.
+    this.save(HINT_GLOBAL);
+    // An unknown/failed ACK prevents startup, so no allocator can use an unconfirmed owner.
+    await this.flush();
+    return selected;
+  }
+
+  private profileStorageDrafts = new Map<string, ProfileStorageBinding>();
+  private committingProfileStorage = new Set<string>();
+  getProfileStorageDeclaration(target: ProfileStorageTarget): {
+      branchIdentity: string;
+      declarationDigest: string;
+  } | undefined {
+      const branch = this.getBranch(target.branchId);
+      if (!branch || (branch.projectId || 'default') !== target.projectId || !this.getProject(target.projectId))
+          return;
+      const raw = mergeBranchProfiles(this.getBuildProfilesForProject(target.projectId), branch).find(p => p.id === target.serviceId);
+      if (!raw || raw.projectId !== target.projectId)
+          return;
+      const effective = resolveEffectiveProfile(raw, branch);
+      return { branchIdentity: profileStorageBranchIdentity(branch), declarationDigest: profileStorageDeclarationDigest(effective) };
+  }
+  assertFreshProfileStorageTarget(target: ProfileStorageTarget): void {
+      const branch = this.getBranch(target.branchId);
+      // First creation only. Existing, pending, failed or retained runtime identities are not "fresh".
+      if (!branch || branch.services[target.serviceId] || this.state.profileStorageBindings?.[profileStorageTargetKey(target)])
+          throw new Error('storage_provision_unconfirmed');
+  }
+  getProfileStorageBirths(target: ProfileStorageTarget): StorageBirth[] {
+      return Object.values(this.state.storageBirths || {}).filter(r => r.binding.scope === 'branch-private' && r.binding.projectId === target.projectId && r.binding.branchId === target.branchId && r.binding.serviceId === target.serviceId).map(r => structuredClone(r));
+  }
+  getProfileStorageBinding(target: ProfileStorageTarget): ProfileStorageBinding | undefined {
+      const key = profileStorageTargetKey(target);
+      if (this.profileStorageDrafts.has(key) || this.state.profileStoragePublications?.[key])
+          throw new Error('storage_provision_unconfirmed');
+      const row = this.state.profileStorageBindings?.[key];
+      return row && structuredClone(row);
+  }
+  resolvePublishedProfileStorage(entry: Pick<BranchEntry, 'id' | 'projectId'>, profile: BuildProfile): BuildProfile {
+      const target: ProfileStorageTarget = { kind: 'profile', projectId: entry.projectId || 'default', branchId: entry.id, serviceId: profile.id };
+      const key = profileStorageTargetKey(target), row = this.getProfileStorageBinding(target);
+      if (!row) {
+          if (this.getProfileStorageBirths(target).length)
+              throw new Error('storage_provision_unconfirmed');
+          return profile;
+      }
+      const declaration = this.getProfileStorageDeclaration(target);
+      if (!declaration || declaration.branchIdentity !== row.branchIdentity || declaration.declarationDigest !== row.declarationDigest || row.names.length === 0)
+          throw new Error('storage_provision_unconfirmed');
+      const original = profileStorageDeclarationDigest(profile), resolved = profileStorageDeclarationDigest({ ...profile, cacheMounts: row.mounts });
+      if (original !== row.declarationDigest && original !== resolved)
+          throw new Error('storage_provision_unconfirmed');
+      for (const name of row.names) {
+          const birth = this.state.storageBirths?.[name];
+          if (!birth || birth.stage !== 'published' || !birth.createIssued || birth.serviceDigest !== storageProvisionDigest(row) || birth.operationId !== row.operationId || birth.binding.scope !== 'branch-private' || birth.binding.projectId !== target.projectId || birth.binding.branchId !== target.branchId || birth.binding.serviceId !== target.serviceId)
+              throw new Error('storage_provision_unconfirmed');
+      }
+      return { ...structuredClone(profile), cacheMounts: structuredClone(row.mounts) };
+  }
+  async publishProfileStorageDurably(input: ProfileStorageBinding, assertCurrent: () => void): Promise<void> {
+      const row = structuredClone(input), target = row.target, key = profileStorageTargetKey(target), names = row.names;
+      const births = names.map(n => this.state.storageBirths?.[n]);
+      const fence = () => { assertCurrent(); const d = this.getProfileStorageDeclaration(target); if (!d || d.branchIdentity !== row.branchIdentity || d.declarationDigest !== row.declarationDigest || this.state.profileStorageBindings?.[key] || !names.length || new Set(names).size !== names.length || births.some((b, i) => !b || this.state.storageBirths?.[names[i]] !== b || b.stage !== 'confirmed' || b.operationId !== row.operationId || b.serviceDigest !== storageProvisionDigest(row) || b.binding.scope !== 'branch-private' || b.binding.branchId !== target.branchId || b.binding.projectId !== target.projectId || b.binding.serviceId !== target.serviceId))
+          throw new Error('storage_provision_unconfirmed'); this.assertFreshProfileStorageTarget(target); };
+      fence();
+      if (this.profileStorageDrafts.has(key) || this.state.profileStoragePublications?.[key])
+          throw new Error('storage_provision_unconfirmed');
+      this.profileStorageDrafts.set(key, row);
+      try {
+          this.save(HINT_GLOBAL);
+          await this.flush();
+          fence();
+          this.committingProfileStorage.add(key);
+          this.save(HINT_GLOBAL);
+          await this.flush();
+          fence();
+          this.state.profileStorageBindings ??= {};
+          this.state.profileStorageBindings[key] = row;
+          for (const b of births)
+              this.state.storageBirths![b!.name] = { ...b!, seq: b!.seq + 1, stage: 'published', updatedAt: new Date().toISOString() };
+          this.profileStorageDrafts.delete(key);
+          this.committingProfileStorage.delete(key);
+      }
+      catch (error) {
+          this.profileStorageDrafts.delete(key);
+          this.committingProfileStorage.delete(key);
+          // Roll back the private/public projection; retain a hold if ACK of compensation is unknown.
+          try {
+              this.save(HINT_GLOBAL);
+              await this.flush();
+          }
+          catch {
+              this.state.profileStoragePublications ??= {};
+              this.state.profileStoragePublications[key] = { binding: row };
+          }
+          throw error;
+      }
+  }
+
+  getStorageBirth(name: string): StorageBirth | undefined {
+    const row = this.state.storageBirths?.[name]; return row && structuredClone(row);
+  }
+
+  getStorageBirthsForService(projectId: string, serviceId: string): StorageBirth[] {
+    return Object.values(this.state.storageBirths || {}).filter(row => row.binding.scope==='project-shared' && row.binding.projectId === projectId && row.binding.serviceId === serviceId).map(row => structuredClone(row));
+  }
+
+  /** Unknown/partial first allocation holds R; legacy owner-bound volumes without a P journal retain their existing R checks. */
+  storageBirthRequirements(plan: DeploymentStoragePlan): StorageBirthRequirements {
+    const requirements: StorageBirthRequirements = {};
+    // A zero-volume candidate still has an owner: never shrink its retained denominator.
+    const owner = plan.owner;
+    if (owner) for (const row of Object.values(this.state.storageBirths || {})) {
+      const b = row.binding;
+      if (b.projectId !== owner.projectId || b.serviceId !== owner.serviceId
+          || (owner.branchId ? b.scope !== 'branch-private' || b.branchId !== owner.branchId : b.scope !== 'project-shared')) continue;
+      if (!plan.mounts.some(m => m.kind === 'volume' && m.source === row.name
+          && storageProvisionDigest(m.storage) === storageProvisionDigest(b))) throw new Error('storage_provision_unconfirmed');
+    }
+    for (const mount of plan.mounts.filter(m => m.kind === 'volume')) {
+      const row = this.state.storageBirths?.[mount.source]; if (!row) { if(mount.storage?.policy) throw new Error('storage_provision_unconfirmed'); continue; }
+      if (row.stage !== 'published' || !row.createIssued || row.name !== stableStorageVolumeName(row.binding)
+        || storageProvisionDigest(row.binding) !== storageProvisionDigest(mount.storage)
+        || !row.observation || row.observation.labels['cds.storage.birth'] !== row.birthNonce
+        || Object.values(this.state.storageProvisionPublications || {}).some(p => p.names.includes(row.name)) || Object.values(this.state.profileStoragePublications||{}).some(p=>p.binding.names.includes(row.name))) throw new Error('storage_provision_unconfirmed');
+      if (row.binding.policy) validateBoundedStorageProof(row.observation.bounded);
+      else if (row.observation.bounded) throw new Error('storage_provision_unconfirmed');
+      requirements[row.name] = {birthNonce:row.birthNonce,daemonId:row.daemonId,mountpoint:row.observation.mountpoint,createdAt:row.observation.createdAt,...(row.observation.bounded ? {bounded:structuredClone(row.observation.bounded)} : {})};
+    }
+    return requirements;
+  }
+
+  async writeStorageBirthDurably(input: StorageBirth, expectedSeq: number | undefined, assertCurrent: () => void): Promise<void> {
+    const row = structuredClone(input), previous = this.state.storageBirths?.[row.name]; assertCurrent();
+    if (row.observation) {
+      if(row.binding.policy) validateBoundedStorageProof(row.observation.bounded);
+      else if(row.observation.bounded) throw new Error('storage_provision_unconfirmed');
+    }
+    const declaredTarget=(row as StorageBirth & {target?:unknown}).target;const expectedTarget=row.binding.scope==='branch-private'?{kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId,serviceId:row.binding.serviceId}:{kind:'infra',projectId:row.binding.projectId,serviceId:row.binding.serviceId};
+    if((row.binding.scope==='branch-private'||declaredTarget!==undefined)&&storageProvisionDigest(declaredTarget)!==storageProvisionDigest(expectedTarget))throw new Error('storage_provision_unconfirmed');
+    if (row.version !== 1 || row.name !== stableStorageVolumeName(row.binding) || !['project-shared','branch-private'].includes(row.binding.scope)
+      || !/^[a-f0-9]{48}$/.test(row.birthNonce) || !/^[a-f0-9]{64}$/.test(row.planDigest) || !/^[a-f0-9]{64}$/.test(row.serviceDigest)
+      || previous?.seq !== expectedSeq || row.seq !== (expectedSeq || 0) + 1 || row.stage === 'published'
+      || !this.getProject(row.binding.projectId) || !Number.isFinite(Date.parse(row.createdAt)) || !Number.isFinite(Date.parse(row.updatedAt))) throw new Error('storage_provision_unconfirmed');
+    if (!previous) {
+      if (row.stage !== 'intent' || row.createIssued || Object.keys(this.state.storageBirths || {}).length >= 1024
+        || (row.binding.scope==='project-shared'?this.getInfraServiceForProjectAndId(row.binding.projectId,row.binding.serviceId):!this.getProfileStorageDeclaration({kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId!,serviceId:row.binding.serviceId})||!!this.getBranch(row.binding.branchId!)?.services[row.binding.serviceId])) throw new Error('storage_provision_unconfirmed');
+    } else {
+      const unchanged = { ...row, seq: previous.seq, stage: previous.stage, createIssued: previous.createIssued, updatedAt: previous.updatedAt, observation: previous.observation };
+      const allowed = row.stage === 'held' && previous.stage !== 'published'
+        || previous.stage === 'intent' && row.stage === 'issued' && row.createIssued
+        || previous.stage === 'issued' && row.stage === 'confirmed' && row.createIssued && !!row.observation;
+      if (!allowed || previous.createIssued && !row.createIssued || storageProvisionDigest(unchanged) !== storageProvisionDigest(previous)) throw new Error('storage_provision_unconfirmed');
+    }
+    this.state.storageBirths ??= {}; this.state.storageBirths[row.name] = row;
+    this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
+    if (this.state.storageBirths[row.name] !== row) throw new Error('storage_provision_unconfirmed');
+  }
+
+  /** Fresh infra stays private while the birth-confirmed configuration waits for both persistence barriers. */
+  async publishProvisionedInfraDurably(service: InfraService,names: string[],operationId: string,assertCurrent: () => void): Promise<void> {
+    const draft = { service: structuredClone(service), names: [...names], operationId }, key = JSON.stringify([service.projectId, service.id]);
+    const births = names.map(name => this.state.storageBirths?.[name]), project = this.getProject(service.projectId);
+    const fence = () => {
+      assertCurrent();
+      if (!project || this.getProject(service.projectId) !== project || service.scope !== 'project' || !names.length || new Set(names).size !== names.length || this.getInfraServiceForProjectAndId(service.projectId,service.id)
+        || births.some((row,i) => !row || this.state.storageBirths?.[names[i]] !== row || row.stage !== 'confirmed'
+          || row.operationId !== operationId || row.serviceDigest !== storageProvisionDigest(draft.service)
+          || row.binding.projectId !== service.projectId || row.binding.serviceId !== service.id)) throw new Error('storage_provision_unconfirmed');
+    };
+    fence();
+    if (this.storageProvisionDrafts.has(key) || this.state.storageProvisionPublications?.[key]) throw new Error('storage_provision_unconfirmed');
+    this.storageProvisionDrafts.set(key,draft);
+    try {
+      this.save(HINT_GLOBAL); await this.flush(); fence();
+      this.committingStorageProvisions.add(key); this.save(HINT_GLOBAL); await this.flush(); fence();
+      this.state.infraServices.push(structuredClone(draft.service));
+      for (const row of births) this.state.storageBirths![row!.name] = {...row!,seq:row!.seq+1,stage:'published',updatedAt:new Date().toISOString()};
+      this.storageProvisionDrafts.delete(key); this.committingStorageProvisions.delete(key);
+    } catch (error) {
+      this.storageProvisionDrafts.delete(key); this.committingStorageProvisions.delete(key);
+      try { this.save(HINT_GLOBAL); await this.flush(); }
+      catch { this.state.storageProvisionPublications ??= {}; this.state.storageProvisionPublications[key] = draft; }
+      throw error;
+    }
+  }
+
+
+
+  /** 验收切片在 flush 成功前不对读取发布，失败不留下虚假领取状态。 */
+  async persistAcceptanceState(
+    templates: import('../acceptance-types.js').AcceptanceTemplate[],
+    tasks: import('../acceptance-types.js').StoredAcceptanceTask[],
+  ): Promise<void> {
+    const previousTemplates = this.state.acceptanceTemplates;
+    const previousTasks = this.state.acceptanceTasks;
+    // backingStore.save 可以排队，故必须等待 flush；不能用 save 的返回值冒充落库。
+    this.state.acceptanceTemplates = templates;
+    this.state.acceptanceTasks = tasks;
+    try {
+      this.save([{ kind: 'global' }]);
+      await this.flush();
+    } catch (error) {
+      this.state.acceptanceTemplates = previousTemplates;
+      this.state.acceptanceTasks = previousTasks;
+      // 尝试撤回可能已入队的快照；失败仍向调用者报告，不返回租约票据。
+      try { this.save([{ kind: 'global' }]); await this.flush(); } catch { /* 原错误为权威结果 */ }
+      throw error;
+    }
   }
 
   // ── Scheduled jobs ──
@@ -897,14 +1392,110 @@ export class StateService {
       .slice(0, limit);
   }
 
-  upsertScheduledJobRun(run: ScheduledJobRun): ScheduledJobRun {
+  upsertScheduledJobRun(input: ScheduledJobRun): ScheduledJobRun {
+    // 日志先截断再入库：它是这条记录里唯一无界的字段。
+    const run: ScheduledJobRun = input.log
+      ? { ...input, log: truncateLogTail(input.log, SCHEDULED_JOB_RUN_LOG_MAX_BYTES) }
+      : input;
     if (!this.state.scheduledJobRuns) this.state.scheduledJobRuns = [];
     const idx = this.state.scheduledJobRuns.findIndex((item) => item.id === run.id);
     if (idx >= 0) this.state.scheduledJobRuns[idx] = run;
     else this.state.scheduledJobRuns.push(run);
-    this.state.scheduledJobRuns = this.state.scheduledJobRuns
-      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
-      .slice(0, 1000);
+    // 保留策略按「每个任务各留 N 条」，不是全局一刀切。
+    // 全局环形缓冲下，一个每 5 分钟的任务一天写 288 条，几天就能把日任务的
+    // 历史整段挤掉——「最近 20 次成功率」会静默缩水成「最近 3 次」，
+    // 24 小时轴的左半边也只剩最近一两个小时。
+    //
+    // 全局上限仍然要有（防无限增长），但它**不能按全局新旧一刀切**：那样一排序，
+    // 低频任务的记录天然全部靠后，任务数一多就被整段砍掉，恰好把上面这段防的
+    // 事情又做了一遍（Codex #1471 P2：约 42 个任务各 120 条就撑满 5000）。
+    // 改成按任务均分——先算出「每个任务最多留 k 条」里最大的那个 k，使总量不超上限，
+    // 记录数不足 k 的任务一条不丢。高频任务先让位，低频任务的历史被完整保住。
+    const byJob = new Map<string, ScheduledJobRun[]>();
+    for (const item of [...this.state.scheduledJobRuns]
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))) {
+      const list = byJob.get(item.jobId);
+      if (list) list.push(item);
+      else byJob.set(item.jobId, [item]);
+    }
+    // 现存任务与已删除任务**永远**分开算配额，不是只在任务数超上限时才分
+    // （Codex #1471 P2 第四轮）：4950 个「建完就删、各留一条」的任务加一个活任务，
+    // 组数 4951 没到上限、走不进整组淘汰那一档，可它们照样占着容量——均分的 k 被压到
+    // 50，活任务 120 条被砍成 50，而每一条已删除任务的留档一条不少。留档挤掉在跑的
+    // 任务，方向正好反了。
+    //
+    // 所以顺序固定为：现存任务先按每任务上限拿配额（装不下才在它们之间均分），
+    // 剩下的容量才轮到已删除任务的留档；连一条都排不下就整组丢弃——留档看不看得到
+    // 都不影响值班。两个桶内部都保持「最后活跃时刻靠前」的顺序（byJob 的插入顺序
+    // 已经是按 queuedAt 降序建的）。
+    const liveIds = new Set((this.state.scheduledJobs || []).map((job) => job.id));
+    const live: ScheduledJobRun[][] = [];
+    const orphan: ScheduledJobRun[][] = [];
+    for (const list of byJob.values()) (liveIds.has(list[0].jobId) ? live : orphan).push(list);
+
+    /**
+     * 「每个任务最多留 k 条」里最大的可行 k，使总量不超 cap；记录数不足 k 的任务
+     * 一条不丢。返回 0 表示连「每组一条」都放不下，调用方要整组淘汰。
+     */
+    const quotaWithin = (lists: ScheduledJobRun[][], cap: number): number => {
+      if (lists.length === 0) return SCHEDULED_JOB_RUNS_PER_JOB;
+      if (lists.length > cap) return 0;
+      const counts = lists.map((list) => Math.min(list.length, SCHEDULED_JOB_RUNS_PER_JOB));
+      const total = (k: number): number => counts.reduce((sum, n) => sum + Math.min(n, k), 0);
+      if (total(SCHEDULED_JOB_RUNS_PER_JOB) <= cap) return SCHEDULED_JOB_RUNS_PER_JOB;
+      let lo = 1;
+      let hi = SCHEDULED_JOB_RUNS_PER_JOB;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (total(mid) <= cap) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo;
+    };
+
+    const keptLive: ScheduledJobRun[][] = [];
+    const keptOrphan: ScheduledJobRun[][] = [];
+    const liveQuota = quotaWithin(live, SCHEDULED_JOB_RUNS_GLOBAL_CAP);
+    if (liveQuota === 0) {
+      // 现存任务数本身超过上限：每组一条都放不下，只能按「最后活跃时刻」整组淘汰。
+      for (const list of live.slice(0, SCHEDULED_JOB_RUNS_GLOBAL_CAP)) keptLive.push(list.slice(0, 1));
+    } else {
+      for (const list of live) keptLive.push(list.slice(0, liveQuota));
+    }
+    const remaining = SCHEDULED_JOB_RUNS_GLOBAL_CAP - keptLive.reduce((sum, list) => sum + list.length, 0);
+    if (remaining > 0 && orphan.length > 0) {
+      const orphanQuota = quotaWithin(orphan, remaining);
+      if (orphanQuota === 0) {
+        for (const list of orphan.slice(0, remaining)) keptOrphan.push(list.slice(0, 1));
+      } else {
+        for (const list of orphan) keptOrphan.push(list.slice(0, orphanQuota));
+      }
+    }
+
+    // 第二道闸：条数达标了体积也得达标。分配方式必须**和第一道闸同一个口径**——
+    // 按全局新旧砍会把每任务保留整个抵消掉：几个日志接近上限的高频任务就能吃光预算，
+    // 一个低频活任务的历史被整段清零，健康度和细带全空（Codex #1471 P2 第二十轮）。
+    // 改成「每个任务轮流拿一条」：先现存任务转圈，再已删除任务转圈，预算耗尽即止。
+    // 低频任务的那几条在第一圈就拿到手，高频任务的第 120 条才最先被牺牲。
+    const bounded: ScheduledJobRun[] = [];
+    let bytes = 2; // []
+    const fill = (columns: ScheduledJobRun[][]): boolean => {
+      const depthMax = columns.reduce((max, col) => Math.max(max, col.length), 0);
+      for (let depth = 0; depth < depthMax; depth += 1) {
+        for (const col of columns) {
+          if (depth >= col.length) continue;
+          const item = col[depth];
+          const size = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
+          if (bytes + size > SCHEDULED_JOB_RUNS_MAX_BYTES) return false;
+          bounded.push(item);
+          bytes += size;
+        }
+      }
+      return true;
+    };
+    if (fill(keptLive)) fill(keptOrphan);
+    this.state.scheduledJobRuns = bounded
+      .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt));
     this.save(HINT_GLOBAL);
     return run;
   }
@@ -937,14 +1528,46 @@ export class StateService {
     );
   }
 
+  /** A new default/named entry cannot take any existing published short address. */
+  assertBranchPreviewAddressAvailable(entry: BranchEntry): void {
+    const branches = this.getAllBranches();
+    const project = this.getProject(entry.projectId);
+    let proposedProject = project;
+    if (project && !project.mirror && !branches.some(b => b.projectId === entry.projectId && b.branch === entry.branch)) {
+      proposedProject = { ...project, previewAddresses: { ...project.previewAddresses } };
+      delete proposedProject.previewAddresses![entry.branch];
+    }
+    const profiles = this.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
+    // Empty roots compare DNS labels only; the shared publisher still supplies
+    // canonical, named-service and member encodings without inventing public URLs.
+    const proposed = new Set(projectBranchPublishedHosts(entry, proposedProject, profiles, ['']));
+    for (const owner of branches) {
+      const ownerProject = this.getProject(owner.projectId);
+      const claimed = [
+        ...projectBranchPublishedHosts(owner, ownerProject,
+          this.getEffectiveProfilesForBranch(owner).map(p => resolveEffectiveProfile(p, owner)), ['']),
+        ...(owner.subdomainAliases || []).map(alias => `${alias.trim().toLowerCase()}.`),
+      ];
+      const conflict = claimed.find(host => proposed.has(host));
+      if (conflict) throw new Error(`分支地址 "${conflict.slice(0, -1)}" 已被占用，请在占用项目修改地址后重试。`);
+    }
+  }
+
   addBranch(entry: BranchEntry): void {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
+    worktreePathActivity.assertClaimable([entry.worktreePath,
+      ...Object.values(entry.services || {}).map(s => s.sourceCheckoutPath).filter((p): p is string => !!p)]);
     // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
     if (!entry.projectId) entry.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+    const project = this.getProject(entry.projectId);
+    if (project && !project.mirror && !Object.values(this.state.branches).some(branch => branch.projectId === entry.projectId && branch.branch === entry.branch)) {
+      this.releasePreviewAddress(project, entry.branch, entry.id, '重新创建分支前释放遗留地址配置');
+    }
+    this.assertBranchPreviewAddressAvailable(entry);
     this.state.branches[entry.id] = entry;
   }
 
@@ -971,6 +1594,81 @@ export class StateService {
     return this.state.branches[branchId]?.profileOverrides?.[profileId];
   }
 
+  /** Simulate every import prefix before publishing the first profile or allocating storage. */
+  assertBuildProfileBatchStorageAllowed(incoming: readonly BuildProfile[]): void {
+    let rows = [...this.state.buildProfiles];
+    for (const input of incoming) {
+      const index = rows.findIndex(p=>p.id===input.id);
+      const candidate = index >= 0 ? {...rows[index],...input} : {...input,
+        projectId:input.projectId || this.resolveOrphanFallbackProject()?.id || 'default'};
+      rows = index >= 0 ? rows.map((p,i)=>i===index?candidate:p) : [...rows,candidate];
+      this.assertProfileStorageDeclarationsPreserved(undefined,rows);
+    }
+  }
+
+  /** Pure whole-candidate check, before any metadata, P, runtime or snapshot mutation. */
+  assertProfileStorageDeclarationsPreserved(
+    branches: readonly BranchEntry[] = Object.values(this.state.branches || {}),
+    profiles: readonly BuildProfile[] = this.state.buildProfiles,
+  ): void {
+    for (const branch of branches) {
+      const projectId = branch.projectId || 'default';
+      const slug = this.getProject(projectId)?.slug;
+      assertBranchServiceIsolation(profiles.filter(p => (p.projectId || 'default') === projectId), branch,
+        (this.state.infraServices || []).filter(s => !s.projectId || s.projectId === projectId).map(s => s.id),
+        slug ? `-${slug}` : '');
+    }
+    const targets = new Map<string, ProfileStorageTarget>();
+    const add = (t: ProfileStorageTarget) => targets.set(profileStorageTargetKey(t), t);
+    for (const row of Object.values(this.state.storageBirths || {})) if (row.binding.scope === 'branch-private')
+      add({kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId!,serviceId:row.binding.serviceId});
+    for (const row of [...this.profileStorageDrafts.values(), ...Object.values(this.state.profileStorageBindings || {}),
+      ...Object.values(this.state.profileStoragePublications || {}).map(p => p.binding)]) add(row.target);
+    for (const branch of Object.values(this.state.branches || {})) for (const profile of this.getEffectiveProfilesForBranch(branch))
+      for (const mount of profile.cacheMounts || []) if (mount.storage?.scope === 'branch-private' && mount.storage.branchId === branch.id)
+        add({kind:'profile',projectId:branch.projectId || 'default',branchId:branch.id,serviceId:profile.id});
+    const candidates = new Map(branches.map(b => [b.id,b]));
+    for (const t of targets.values()) {
+      const candidate = candidates.get(t.branchId); if (!candidate) continue;
+      const original = this.getBranch(t.branchId);
+      const members = (branch: BranchEntry | undefined, rows: readonly BuildProfile[]) => ({
+        projectId:branch?.projectId || 'default',
+        excluded:branch?.excludedProjectProfileIds?.includes(t.serviceId) || false,
+        project:rows.filter(p=>(p.projectId || 'default')===t.projectId && p.id===t.serviceId),
+        extra:(branch?.extraProfiles || []).filter(p=>p.id===t.serviceId),
+        override:branch?.profileOverrides?.[t.serviceId] || {},
+      });
+      // An unchanged historical orphan cannot freeze other projects. An affected
+      // orphan still fails closed; a new same-id profile cannot silently adopt it.
+      if (storageProvisionDigest(members(original,this.state.buildProfiles)) === storageProvisionDigest(members(candidate,profiles))) continue;
+      const pick = (branch: BranchEntry | undefined, rows: readonly BuildProfile[]) => {
+        if (!branch || (branch.projectId || 'default') !== t.projectId) return null;
+        const baseline = rows.filter(p => (p.projectId || 'default') === t.projectId);
+        const raw = mergeBranchProfiles(baseline, branch).find(p => p.id === t.serviceId);
+        if (!raw || raw.projectId !== t.projectId) return null;
+        return {source:baseline.some(p=>p.id===t.serviceId)?'project':'branch',declaration:profileStorageDeclarationDigest(resolveEffectiveProfile(raw,branch))};
+      };
+      const before = pick(original,this.state.buildProfiles), after = pick(candidate,profiles);
+      if (!before || !after || storageProvisionDigest(before) !== storageProvisionDigest(after))
+        throw new Error('storage_retained_profile_mutation_refused: 服务持有已分配或待确认的私有存储，请保留服务与存储声明');
+      // Keep persisted v1 publication digests compatible. Revalidate the exact
+      // candidate plan with retained mounts before accepting workspace/mode edits.
+      const effective = resolveEffectiveProfile(mergeBranchProfiles(profiles.filter(p=>(p.projectId || 'default')===t.projectId),candidate).find(p=>p.id===t.serviceId)!,candidate);
+      const k=profileStorageTargetKey(t), row=this.profileStorageDrafts.get(k)
+        || this.state.profileStorageBindings?.[k] || this.state.profileStoragePublications?.[k]?.binding;
+      if (!row && this.getProfileStorageBirths(t).length) {
+        const previousRaw=mergeBranchProfiles(this.getBuildProfilesForProject(t.projectId),original!).find(p=>p.id===t.serviceId)!;
+        const previous=resolveEffectiveProfile(previousRaw,original!);
+        const shape=(p:BuildProfile)=>[p.workDir || '.',p.containerWorkDir || '/app',!!p.prebuiltImage,!!p.managedBuild];
+        if(storageProvisionDigest(shape(previous))!==storageProvisionDigest(shape(effective)))throw new Error('storage_retained_profile_mutation_refused: 存储分配尚未确认');
+      }
+      const mounts=row?.mounts || effective.cacheMounts || [];
+      const instanceId=mounts.find(m=>m.storage)?.storage?.instanceId || this.state.storageInstanceId;
+      try { withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(candidate,{...effective,cacheMounts:mounts},{storageInstanceId:instanceId}))); }
+      catch { throw new Error('storage_retained_profile_mutation_refused: 挂载目标与候选工作区不兼容'); }
+    }
+  }
+
   /**
    * Replace the override for one profile on one branch. Passing an empty
    * object clears all fields but keeps the entry (equivalent to inheriting
@@ -980,6 +1678,8 @@ export class StateService {
   setBranchProfileOverride(branchId: string, profileId: string, override: BuildProfileOverride): void {
     const branch = this.state.branches[branchId];
     if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    const candidate={...branch,profileOverrides:{...branch.profileOverrides,[profileId]:sanitizeProfileOverride(override) ?? {}}};
+    this.assertProfileStorageDeclarationsPreserved(Object.values(this.state.branches).map(b=>b===branch?candidate:b));
     if (!branch.profileOverrides) branch.profileOverrides = {};
     // writer 端就剥掉 null 结构哨兵字段，让新 override 一开始就干净（不写 containerPort:null /
     // dockerImage:null 这类「该继承」的伪值）。与 applyProfileOverride 的 merge 端 sanitize 双保险，
@@ -994,6 +1694,9 @@ export class StateService {
   clearBranchProfileOverride(branchId: string, profileId: string): void {
     const branch = this.state.branches[branchId];
     if (!branch?.profileOverrides) return;
+    const candidate={...branch,profileOverrides:{...branch.profileOverrides}};
+    delete candidate.profileOverrides[profileId];
+    this.assertProfileStorageDeclarationsPreserved(Object.values(this.state.branches).map(b=>b===branch?candidate:b));
     delete branch.profileOverrides[profileId];
     if (Object.keys(branch.profileOverrides).length === 0) {
       delete branch.profileOverrides;
@@ -1072,7 +1775,7 @@ export class StateService {
       for (const other of Object.values(this.state.branches)) {
         if (other.id === branchId) continue;
         // Collision: candidate equals another branch's slug
-        if (other.id.toLowerCase() === normalized) {
+        if (other.id.toLowerCase() === normalized || projectBranchPreviewSlugs(other, this.getProject(other.projectId)).includes(normalized)) {
           conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'slug' });
           continue;
         }
@@ -1099,14 +1802,109 @@ export class StateService {
     return conflicts;
   }
 
-  removeBranch(id: string): void {
+  private releasePreviewAddress(project: Project, ref: string, branchId: string, result: string): void {
+    if (!project.previewAddresses || !Object.hasOwn(project.previewAddresses, ref)) return;
+    const before = project.previewAddresses[ref];
+    const addresses = { ...project.previewAddresses };
+    delete addresses[ref];
+    // Replace the project rather than mutating a pending save's snapshot. A failed
+    // concurrent save must not roll this release back and resurrect the old claim.
+    this.updateProject(project.id, {
+      previewAddresses: addresses,
+      previewAddressAudit: [...(project.previewAddressAudit || []), {
+        id: crypto.randomUUID(),
+        at: new Date().toISOString(),
+        actor: 'system:branch-lifecycle',
+        branchId,
+        action: 'release',
+        scope: 'branch',
+        result,
+        before: { gitBranch: ref, branchAddress: before },
+        after: { branchAddress: null },
+      }],
+    }, { actor: 'system:branch-lifecycle' });
+  }
+
+  /** Historical audit may outlive a branch; active address claims must not. */
+  private pruneOrphanedPreviewAddresses(): void {
+    for (const project of this.state.projects || []) {
+      const activeRefs = new Set(Object.values(this.state.branches)
+        .filter(branch => branch.projectId === project.id).map(branch => branch.branch));
+      for (const ref of Object.keys(project.previewAddresses || {})) {
+        if (!activeRefs.has(ref)) {
+          this.releasePreviewAddress(this.getProject(project.id)!, ref, '', '已删除分支的遗留地址配置已释放');
+        }
+      }
+    }
+  }
+
+  /**
+   * 删分支，并级联清掉**绑在这条分支上**的自定义监控。
+   *
+   * 返回被清掉的监控 id，调用方据此把运行态台账也抹掉（forgetTargets）。
+   * 返回值是新增的，原来返回 void——忽略它的调用方行为不变。
+   *
+   * 为什么必须级联（2026-09-09）：项目级 Key 自助登记的监控指向的是某条分支的
+   * 预览地址，而分支是会消失的。分支删了监控还在，就变成一条**永远红着的死地址**：
+   * 它不是故障，却长期占着故障位，把真告警淹掉，最后所有人学会无视这块面板。
+   * 项目删除早就有同款级联（同一个理由），分支这一层此前是漏的。
+   *
+   * 只清 boundBranchId 命中的：管理员手动加的监控没有这个绑定，不受影响——
+   * 那是人明确要盯的东西，不该因为某条分支没了就替他删掉。
+   */
+  /** Keep the declaration and journal needed to resolve retained private storage.
+   * This is not deallocation. Call before runtime/log/worktree cleanup as well as
+   * through removeBranch's final State fence. All birth stages are retained.
+   */
+  assertBranchStorageRemovalAllowed(id: string): void {
+    const branch = this.state.branches[id];
+    if (!branch) return;
+    const projectId = branch.projectId || 'default';
+    const ownsTarget = (target: {projectId: string; branchId: string}) =>
+      target.projectId === projectId && target.branchId === id;
+    const ownsBinding = (binding?: StorageBinding) => binding?.scope === 'branch-private'
+      && binding.projectId === projectId && binding.branchId === id;
+    const declarations = [
+      ...this.getBuildProfilesForProject(projectId),
+      ...Object.values(branch.profileOverrides || {}),
+      ...(branch.extraProfiles || []),
+    ];
+    const retained = Object.values(this.state.storageBirths || {}).some(row => ownsBinding(row.binding))
+      || [...this.profileStorageDrafts.values()].some(row => ownsTarget(row.target))
+      || Object.values(this.state.profileStoragePublications || {}).some(row => ownsTarget(row.binding.target))
+      || Object.values(this.state.profileStorageBindings || {}).some(row => ownsTarget(row.target))
+      || declarations.some(profile => 'cacheMounts' in profile && profile.cacheMounts?.some(mount => ownsBinding(mount.storage)));
+    if (retained) throw new Error('storage_retained_branch_delete_refused: 分支含已分配、已声明或待确认的私有存储，请保留完整分支配置并改用停止');
+  }
+
+  removeBranch(id: string): string[] {
+    this.assertBranchStorageRemovalAllowed(id);
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
+    const branch = this.state.branches[id];
+    const project = this.getProject(branch.projectId);
+    if (project) this.releasePreviewAddress(project, branch.branch, id, '分支已删除，地址配置已释放');
     delete this.state.branches[id];
     if (this.state.defaultBranch === id) {
       this.state.defaultBranch = null;
     }
+    const orphaned = Object.values(this.state.uptimeMonitors || {})
+      .filter((monitor) => monitor.boundBranchId === id)
+      .map((monitor) => monitor.id);
+    for (const mid of orphaned) this.deleteUptimeMonitorState(mid);
+    if (orphaned.length > 0) {
+      for (const listener of this.orphanedMonitorListeners) {
+        // 各自 try/catch：一个观察者抛了不该让删分支这件事失败。
+        try {
+          listener(orphaned);
+        } catch {
+          // 观察者自己的问题，不影响删除结果
+        }
+      }
+    }
+    this.save();
+    return orphaned;
   }
 
   setDefaultBranch(id: string | null): void {
@@ -1145,7 +1943,7 @@ export class StateService {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
-        if (svc.hostPort) usedPorts.add(svc.hostPort);
+        for (const runtime of serviceRuntimeRefs(svc)) if (runtime.hostPort) usedPorts.add(runtime.hostPort);
       }
       // 复制集成员/专用隔离实例的端口同样保留（Codex 第二十五轮 P2）：stopped/
       // provisioning 成员不在 ss 可见集合里，分配序列绕回后会把它们保留的
@@ -1224,6 +2022,7 @@ export class StateService {
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
     if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.assertBuildProfileRuntimeBoundary(profile);
+    this.assertProfileStorageDeclarationsPreserved(undefined,[...this.state.buildProfiles,profile]);
     this.state.buildProfiles.push(profile);
   }
 
@@ -1231,10 +2030,12 @@ export class StateService {
     const idx = this.state.buildProfiles.findIndex(p => p.id === id);
     if (idx === -1) throw new Error(`构建配置 "${id}" 不存在`);
     this.assertBuildProfileRuntimeBoundary({ ...this.state.buildProfiles[idx], ...updates });
+    this.assertProfileStorageDeclarationsPreserved(undefined,this.state.buildProfiles.map((p,i)=>i===idx?{...p,...updates}:p));
     Object.assign(this.state.buildProfiles[idx], updates);
   }
 
   removeBuildProfile(id: string): void {
+    this.assertProfileStorageDeclarationsPreserved(undefined,this.state.buildProfiles.filter(p => p.id !== id));
     this.state.buildProfiles = this.state.buildProfiles.filter(p => p.id !== id);
   }
 
@@ -1253,7 +2054,7 @@ export class StateService {
 
   // ── Deployment runs（分支部署唯一事实源）──
 
-  addDeploymentRun(run: DeploymentRun): DeploymentRun {
+  addDeploymentRun(run: DeploymentRun, intent?: PersistedDeploymentIntent): DeploymentRun {
     if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
     if (this.state.deploymentRuns[run.id]) {
       throw new Error(`DeploymentRun already exists: ${run.id}`);
@@ -1264,6 +2065,13 @@ export class StateService {
       throw new Error(`DeploymentRun project mismatch: ${run.projectId} != ${branch.projectId}`);
     }
     this.state.deploymentRuns[run.id] = run;
+    if (intent) {
+      if (intent.runId !== run.id || intent.operationId !== run.operationId || intent.generation !== run.operationGeneration) {
+        delete this.state.deploymentRuns[run.id];
+        throw new Error('Deployment intent does not match run identity');
+      }
+      (this.state.deploymentIntents ||= {})[run.id] = intent;
+    }
     branch.lastDeploymentRunId = run.id;
     this.pruneDeploymentRuns(run.projectId);
     // prune 只会删同 kind 的其他 run —— 删除检测靠 id 集，单实体 hint 足够覆盖。
@@ -1274,8 +2082,36 @@ export class StateService {
     return run;
   }
 
+  /**
+   * 删掉某条分支名下全部部署 run。
+   *
+   * removeBranch / removeProject 不动 run 账本（主实例上 run 是审计证据，分支没了也要留），
+   * 但预览实例换镜像时旧镜像的分支整体退场，run 若留着，同 id 的新 run 会被「已存在」跳过，
+   * 旧记录一直挂在重建出来的项目下（Codex P2）。删除检测靠 id 集，单实体 hint 足够覆盖。
+   */
+  removeDeploymentRunsForBranch(branchId: string): number {
+    const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
+    for (const id of ids) { delete this.state.deploymentRuns?.[id]; delete this.state.deploymentIntents?.[id]; }
+    if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
+    return ids.length;
+  }
+
   getDeploymentRun(id: string): DeploymentRun | undefined {
     return this.state.deploymentRuns?.[id];
+  }
+
+  /** 仅供执行恢复读取，不通过公开 run 投影暴露。 */
+  getDeploymentIntents(): PersistedDeploymentIntent[] {
+    return Object.values(this.state.deploymentIntents || {});
+  }
+
+  getDeploymentRunForOperation(operationId: string, generation: number): DeploymentRun | undefined {
+    // 写操作关联读取无需生成、过滤和排序整份历史列表。
+    for (const id in this.state.deploymentRuns || {}) {
+      const run = this.state.deploymentRuns![id];
+      if (run.operationId === operationId && run.operationGeneration === generation) return run;
+    }
+    return undefined;
   }
 
   getDeploymentRuns(filters: { projectId?: string; branchId?: string; status?: DeploymentRun['status'] } = {}): DeploymentRun[] {
@@ -1295,6 +2131,7 @@ export class StateService {
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
     mutate(run);
+    if (run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') delete this.state.deploymentIntents?.[id];
     this.save([{ kind: 'deploymentRuns', id }]);
     return run;
   }
@@ -1307,8 +2144,10 @@ export class StateService {
     if (overflow <= 0) return;
     for (const run of runs) {
       if (overflow <= 0) break;
+      if (this.criticalDeploymentRunReferences.has(run.id)) continue;
       if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
       delete this.state.deploymentRuns?.[run.id];
+      delete this.state.deploymentIntents?.[run.id];
       overflow -= 1;
     }
   }
@@ -1353,6 +2192,7 @@ export class StateService {
     const protectedIds = new Set([
       ...Object.values(this.state.branches).map((branch) => branch.currentVersionId).filter(Boolean),
       ...Object.values(this.state.deploymentRuns || {}).map((run) => run.versionId).filter(Boolean),
+      ...this.getReleaseBatches(projectId).map(batch => batch.versionId),
     ]);
     for (const version of versions) {
       if (overflow <= 0) break;
@@ -1445,6 +2285,9 @@ export class StateService {
     return this.state.schedulerMaxHotOverride;
   }
 
+  getImageRetentionCursor(): string | undefined { return this.state.imageRetentionCursor; }
+  setImageRetentionCursor(image: string): void { this.state.imageRetentionCursor = image; }
+
   setSchedulerMaxHotOverride(value: number | undefined): void {
     if (value === undefined) {
       delete this.state.schedulerMaxHotOverride;
@@ -1472,6 +2315,24 @@ export class StateService {
   //
   // Mirrors scheduler override semantics: Dashboard writes these fields to
   // state so global expiry settings survive CDS restarts.
+  getHostCapacitySamplingEnabled(): boolean { return this.state.hostCapacitySamplingEnabled === true; }
+  setHostCapacitySamplingEnabled(enabled: boolean): void {
+    this.state.hostCapacitySamplingEnabled = enabled; this.save();
+  }
+  async updateHostCapacitySamplingEnabled(enabled: boolean): Promise<void> {
+    const previous = this.state.hostCapacitySamplingEnabled;
+    try { this.setHostCapacitySamplingEnabled(enabled); await this.flush(); }
+    catch (error) {
+      if (previous === undefined) delete this.state.hostCapacitySamplingEnabled;
+      else this.state.hostCapacitySamplingEnabled = previous;
+      // Restore the live snapshot and best-effort compensate an unknown ACK.
+      // A later unrelated save must never commit the rejected candidate.
+      try { this.save(); await this.flush(); } catch {}
+      throw error;
+    }
+  }
+
+
   getJanitorEnabledOverride(): boolean | undefined {
     return this.state.janitorEnabledOverride;
   }
@@ -1528,7 +2389,7 @@ export class StateService {
     const byId = projects.find((p) => p.id === idOrSlug);
     if (byId) return byId;
     const lc = idOrSlug.toLowerCase();
-    return projects.find((p) => (p.slug || '').toLowerCase() === lc);
+    return projects.find((p) => projectHistoricalSlugs(p).includes(lc));
   }
 
   /**
@@ -1616,13 +2477,23 @@ export class StateService {
    * method (no HTTP surface) so tests can exercise the storage layer
    * without waiting for Part 2's route work.
    */
-  addProject(project: Project): void {
+  addProject(project: Project, context: ProjectIdentityActor = { actor: 'unknown' }): void {
+    if (Object.hasOwn(project, 'aliasSlug')) {
+      if (!project.mirror) throw new Error('项目只保留一个 slug，不接受 aliasSlug 字段');
+      project = importLegacyProjectSlug(project);
+    }
     if (!this.state.projects) this.state.projects = [];
     if (this.state.projects.some((p) => p.id === project.id)) {
       throw new Error(`Project with id '${project.id}' already exists`);
     }
-    if (this.state.projects.some((p) => p.slug === project.slug)) {
+    if (this.state.projects.some(p => projectReservedIdentifiers(p).includes(project.id))) {
+      throw new Error(`Project id '${project.id}' is reserved by an existing project`);
+    }
+    if (this.state.projects.some((p) => projectReservedIdentifiers(p).includes(project.slug))) {
       throw new Error(`Project with slug '${project.slug}' already exists`);
+    }
+    if (!project.mirror || !project.identityHistory?.length) {
+      project.identityHistory = [identityRecord(project, project.mirror ? 'baseline' : 'created', context)];
     }
     this.state.projects.push(project);
     this.save();
@@ -1662,6 +2533,25 @@ export class StateService {
 
   getContainerTeardownTombstones(): ContainerTeardownTombstone[] {
     return [...(this.state.pendingContainerTeardowns || [])];
+  }
+
+  /** 明确删除意图的网络清理台账；不能靠扫描名字猜项目归属。 */
+  addNetworkTeardowns(networks: Array<{ name: string; projectId: string }>): void {
+    const list = this.state.pendingNetworkTeardowns ||= [];
+    for (const item of networks) {
+      if (!list.some(n => n.name === item.name && n.projectId === item.projectId)) list.push(item);
+    }
+    this.save();
+  }
+
+  getNetworkTeardowns(): Array<{ name: string; projectId: string }> {
+    return [...(this.state.pendingNetworkTeardowns || [])];
+  }
+
+  removeNetworkTeardown(name: string, projectId: string): void {
+    this.state.pendingNetworkTeardowns = (this.state.pendingNetworkTeardowns || [])
+      .filter(n => n.name !== name || n.projectId !== projectId);
+    this.save();
   }
 
   /**
@@ -1745,18 +2635,47 @@ export class StateService {
    * Returns a summary of what was removed so the caller (route) can
    * report it to the operator.
    */
-  removeProject(id: string): {
-    branches: string[];
-    buildProfiles: string[];
-    infraServices: string[];
-    routingRules: string[];
-  } {
+  /**
+   * 删项目的观察者：台账落库之后回调一次，拿到级联清理清单。存活监控用它立刻
+   * 抹掉被删自定义监控的运行态台账——否则删项目响应回了 200，状态页还会把那条
+   * 监控和它的故障挂到下一轮（单条删除路由已经是立即 forgetTarget，删项目得同款）。
+   * 回调各自 try/catch，一个观察者抛了不影响删除结果。
+   */
+  onProjectRemoved(listener: (summary: ProjectRemovalSummary) => void): void {
+    this.projectRemovedListeners.push(listener);
+  }
+
+  /**
+   * 分支删除导致监控被级联清理时回调一次。
+   *
+   * 为什么用观察者而不是让调用方处理返回值：removeBranch 有 5 个调用点，散在
+   * routes/branches、executor/routes、index 里，其中多数拿不到 uptimeMonitor 实例。
+   * 逐个接必然漏一个，而漏掉的那个不会报错——只会让被删分支的监控继续被探测
+   * （形状 2：链路只建一半）。一处触发、全局生效才接得住。
+   */
+  onUptimeMonitorsOrphaned(listener: (monitorIds: string[]) => void): void {
+    this.orphanedMonitorListeners.push(listener);
+  }
+
+  isProjectRemovalConfirmed(id: string): boolean {
+    return !this.getProject(id) && !this.projectRemovalWrites.has(id);
+  }
+
+  async waitForProjectRemoval(id: string): Promise<void> {
+    if (!this.projectRemovalWrites.has(id)) return;
+    const write = this.projectRemovalWrites.get(id);
+    if (!write) throw new Error('项目删除尚未成功保存');
+    await write;
+  }
+
+  removeProject(id: string): ProjectRemovalSummary {
+    this.assertProjectStorageRemovalAllowed(id);
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1778,39 +2697,139 @@ export class StateService {
     const routingRulesToRemove = (this.state.routingRules || [])
       .filter((r) => r.projectId === id)
       .map((r) => r.id);
+    // 项目没了，指向它的授权也就不再授予任何东西 —— 但**吊销而不是删除**：
+    // 权限总览只列未吊销的授权（所以界面上立刻消失），审计行按吊销留存期保留。
+    // 少了这一步，删项目会在总览里留下一枚指向空气、连名字都显示不出来的授权。
+    const projectGrantsToRevoke = (this.state.projectGrants || [])
+      .filter((g) => g.projectId === id && !g.revokedAt)
+      .map((g) => g.id);
+    // 数据台账：项目没了，它的派生库记录也没有归属（视图按 projectId 过滤，留着只会成为
+    // 谁也看不到、却仍指向容器 / 备份文件的幽灵行）。承载库的容器由路由层按墓碑拆除。
+    const dbLedgerToRemove = (this.state.dbLedger || [])
+      .filter((e) => e.projectId === id)
+      .map((e) => e.id);
+    // 挂在这个项目名下的自定义监控一起删：留下来会带着一个不存在的 projectId
+    // 继续每轮往外发探测，而且没有任何项目级凭据能再管它（Codex PR #1514 第五轮 P2）。
+    // 系统级（projectId 为空）的不动。
+    const uptimeMonitorsToRemove = Object.values(this.state.uptimeMonitors || {})
+      .filter((m) => m.projectId === id)
+      .map((m) => m.id);
 
-    // ── Cascade mutate ──
-    for (const bid of branchesToRemove) {
-      delete this.state.branches[bid];
-      // Also drop any operation logs tied to this branch — reuse the
-      // existing removeLogs() helper which knows the storage layout.
-      this.removeLogs(bid);
-    }
-    if (this.state.buildProfiles) {
-      this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
-    }
-    if (this.state.infraServices) {
-      this.state.infraServices = this.state.infraServices.filter(
-        (s) => s.projectId !== id || isSystemInfraService(s),
-      );
-    }
-    if (this.state.routingRules) {
-      this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
-    }
-    // Drop this project's customEnv scope too so a deleted project doesn't
-    // leave behind a dangling bucket that would revive on re-create with
-    // the same id. _global is never removed.
-    this.dropCustomEnvScope(id);
-
-    this.state.projects = this.state.projects.filter((p) => p.id !== id);
-    this.save();
-
-    return {
+    // 仅保存本项目级联会修改的记录；失败恢复不能覆盖等待期间其他项目的写入。
+    const snapshot = structuredClone({
+      project,
+      branches: branchesToRemove.map(bid => this.state.branches[bid]),
+      logs: Object.fromEntries(branchesToRemove.filter(bid => this.state.logs[bid]).map(bid => [bid, this.state.logs[bid]])),
+      buildProfiles: (this.state.buildProfiles || []).filter(p => p.projectId === id),
+      infraServices: (this.state.infraServices || []).filter(p => infraServicesToRemove.includes(p.id)),
+      routingRules: (this.state.routingRules || []).filter(p => p.projectId === id),
+      grants: (this.state.projectGrants || []).filter(p => projectGrantsToRevoke.includes(p.id)),
+      dbLedger: (this.state.dbLedger || []).filter(p => p.projectId === id),
+      monitors: uptimeMonitorsToRemove.map(mid => this.state.uptimeMonitors![mid]),
+      monitorSubscriptions: uptimeMonitorsToRemove.map(mid => ({ targetId: customProbeTargetId({ id: mid }), value: this.state.monitorSubscriptions?.[customProbeTargetId({ id: mid })] })),
+      monitorNotifications: uptimeMonitorsToRemove.map(mid => {
+        const targetId = customProbeTargetId({ id: mid });
+        const settings = this.state.monitorNotifications;
+        return { targetId, override: settings?.overrides?.[targetId], mutedUntil: settings?.mutedUntil?.[targetId], acknowledgedAt: settings?.acknowledgedAt?.[targetId] };
+      }),
+      customEnv: this.state.customEnv?.[id],
+    });
+    let restored = false;
+    const rollback = () => {
+      if (restored) return;
+      restored = true;
+      const restore = <T extends { id: string }>(current: T[], previous: T[]): T[] =>
+        [...current, ...previous.filter(p => !current.some(c => c.id === p.id))];
+      this.state.projects = restore(this.state.projects || [], [snapshot.project]);
+      this.state.buildProfiles = restore(this.state.buildProfiles || [], snapshot.buildProfiles);
+      this.state.infraServices = restore(this.state.infraServices || [], snapshot.infraServices);
+      this.state.routingRules = restore(this.state.routingRules || [], snapshot.routingRules);
+      this.state.dbLedger = restore(this.state.dbLedger || [], snapshot.dbLedger);
+      for (const b of snapshot.branches) this.state.branches[b.id] ??= b;
+      for (const [bid, logs] of Object.entries(snapshot.logs)) this.state.logs[bid] ??= logs;
+      for (const m of snapshot.monitors) (this.state.uptimeMonitors ??= {})[m.id] ??= m;
+      for (const previous of snapshot.monitorSubscriptions) {
+        if (previous.value) (this.state.monitorSubscriptions ??= {})[previous.targetId] ??= previous.value;
+      }
+      for (const previous of snapshot.monitorNotifications) {
+        if (previous.override === undefined && previous.mutedUntil === undefined && previous.acknowledgedAt === undefined) continue;
+        const settings = this.state.monitorNotifications ??= {};
+        if (previous.override !== undefined) (settings.overrides ??= {})[previous.targetId] ??= previous.override;
+        if (previous.mutedUntil !== undefined) (settings.mutedUntil ??= {})[previous.targetId] ??= previous.mutedUntil;
+        if (previous.acknowledgedAt !== undefined) (settings.acknowledgedAt ??= {})[previous.targetId] ??= previous.acknowledgedAt;
+      }
+      if (snapshot.customEnv) this.state.customEnv[id] ??= snapshot.customEnv;
+      for (const previous of snapshot.grants) {
+        const current = this.state.projectGrants?.find(g => g.id === previous.id);
+        if (current?.revokedBy === 'system:project-deleted') {
+          current.revokedAt = previous.revokedAt;
+          current.revokedBy = previous.revokedBy;
+        }
+      }
+      // 排队中的失败快照也必须由恢复态覆盖，防止之后无关保存提交失败的删除。
+      try { this.save(); } catch { /* 原持久化故障交还调用方；内存保持可重试。 */ }
+    };
+    const summary: ProjectRemovalSummary = {
+      uptimeMonitors: uptimeMonitorsToRemove,
       branches: branchesToRemove,
       buildProfiles: buildProfilesToRemove,
       infraServices: infraServicesToRemove,
       routingRules: routingRulesToRemove,
+      projectGrants: projectGrantsToRevoke,
+      dbLedgerEntries: dbLedgerToRemove,
     };
+
+    try {
+      // 变更前标记未确认删除，覆盖保存与异步落盘失败。
+      this.projectRemovalWrites.set(id, undefined);
+      // ── Cascade mutate ──
+      for (const bid of branchesToRemove) {
+        delete this.state.branches[bid];
+        // Also drop any operation logs tied to this branch — reuse the
+        // existing removeLogs() helper which knows the storage layout.
+        this.removeLogs(bid);
+      }
+      if (this.state.buildProfiles) {
+        this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
+      }
+      if (this.state.infraServices) {
+        this.state.infraServices = this.state.infraServices.filter(
+          (s) => s.projectId !== id || isSystemInfraService(s),
+        );
+      }
+      if (this.state.routingRules) {
+        this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
+      }
+      // Drop this project's customEnv scope too so a deleted project doesn't
+      // leave behind a dangling bucket that would revive on re-create with
+      // the same id. _global is never removed.
+      this.dropCustomEnvScope(id);
+      for (const grant of this.state.projectGrants || []) {
+        if (grant.projectId === id && !grant.revokedAt) {
+          grant.revokedAt = new Date().toISOString();
+          grant.revokedBy = 'system:project-deleted';
+        }
+      }
+
+      if (this.state.dbLedger) {
+        this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
+      }
+      for (const mid of uptimeMonitorsToRemove) this.deleteUptimeMonitorState(mid);
+
+      this.state.projects = this.state.projects.filter((p) => p.id !== id);
+      this.save();
+      const write = this.flush().catch(async err => { rollback(); await this.flush(); throw err; });
+      this.projectRemovalWrites.set(id, write);
+      void write.then(() => {
+        if (this.projectRemovalWrites.get(id) === write) this.projectRemovalWrites.delete(id);
+        for (const listener of this.projectRemovedListeners) {
+          try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
+        }
+      }, () => { /* 保留未确认记录，不把失败的删除解释成成功归档。 */ });
+
+    } catch (err) { rollback(); throw err; }
+
+    return summary;
   }
 
   /**
@@ -1825,7 +2844,10 @@ export class StateService {
         Project,
         | 'name'
         | 'aliasName'
-        | 'aliasSlug'
+        | 'previewAddresses'
+        | 'previewAddressAudit'
+        | 'monitoringInspections'
+        | 'slug'
         | 'description'
         | 'deliveryMode'
         | 'managedSpec'
@@ -1848,19 +2870,50 @@ export class StateService {
         | 'composeUpdatedAt'
         | 'composeVersion'
         | 'composeSource'
+        | 'openDesignWorkspaceVersions'
       >
     >,
+    context: ProjectIdentityActor = { actor: 'unknown' },
   ): void {
     if (!this.state.projects) return;
     const idx = this.state.projects.findIndex((p) => p.id === id);
     if (idx < 0) return;
     const current = this.state.projects[idx];
-    this.state.projects[idx] = {
+    const next = {
       ...current,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+    if (identityChanged(current, next)) {
+      const history = current.identityHistory?.length ? current.identityHistory : [
+        identityRecord(current, 'baseline', { actor: 'system:history-baseline' }),
+      ];
+      next.identityHistory = [...history, identityRecord(next, 'changed', context, projectIdentitySnapshot(current))];
+    }
+    this.state.projects[idx] = next;
     this.save();
+  }
+
+  /** 恢复未确认保存的字段；后续身份版本和独立并发修改不被回退。 */
+  restoreProjectSettingsUpdate(id: string, before: Project, applied: Project, fields: Array<keyof Project>, writtenProject: Project): boolean {
+    const current = this.getProject(id);
+    if (!current) return false;
+    const ownsIdentity = current.identityHistory === applied.identityHistory;
+    const identityFields = new Set<keyof Project>(['name', 'aliasName', 'slug', 'gitRepoUrl']);
+    for (const key of fields) {
+      if (identityFields.has(key) && !ownsIdentity) continue;
+      if (current[key] !== applied[key]) continue;
+      if (Object.hasOwn(before, key)) (current as unknown as Record<string, unknown>)[key] = before[key];
+      else delete (current as unknown as Record<string, unknown>)[key];
+    }
+    if (ownsIdentity) {
+      if (before.identityHistory) current.identityHistory = before.identityHistory;
+      else delete current.identityHistory;
+    }
+    if (current === writtenProject && current.updatedAt === applied.updatedAt) current.updatedAt = before.updatedAt;
+    this.save();
+    return fields.every(key => JSON.stringify(current[key]) === JSON.stringify(before[key])) &&
+      JSON.stringify(current.identityHistory) === JSON.stringify(before.identityHistory);
   }
 
   /**
@@ -1925,11 +2978,34 @@ export class StateService {
    * projects shouldn't happen in practice (the link endpoint refuses that),
    * but this picks the first match defensively.
    */
-  findProjectByRepoFullName(repoFullName: string): Project | undefined {
-    const needle = repoFullName.toLowerCase();
-    return (this.state.projects || []).find(
+  /**
+   * 同一个仓库下的**全部**项目。
+   *
+   * 一个 git 仓库可以同时喂多个 CDS 项目（本仓库就是：主项目与自托管项目共用
+   * 同一个 repo）。这才是「按仓库名找项目」的真实语义；只取第一个是历史遗留，
+   * 它让第二个及以后的项目永远收不到 webhook 事件。
+   *
+   * 顺序沿用 projects 数组顺序，因此第一个元素与旧的
+   * {@link findProjectByRepoFullName} 逐字节一致。
+   */
+  findProjectsByRepoFullName(repoFullName: string): Project[] {
+    const needle = String(repoFullName || '').toLowerCase();
+    if (!needle) return [];
+    return (this.state.projects || []).filter(
       (p) => p.githubRepoFullName?.toLowerCase() === needle,
     );
+  }
+
+  /**
+   * 单个项目版本。**只在语义确实是「任取一个」时用**（例如仅需要项目的
+   * installation id 这类同仓库共享的信息）；凡是「这个仓库的每个项目都该
+   * 收到」的场景，一律改用 {@link findProjectsByRepoFullName}。
+   *
+   * 内部委托给复数版，保证两者的匹配口径永远是同一份
+   * （predicate-and-wiring-discipline 形状 3：同一个判断不许有两份实现）。
+   */
+  findProjectByRepoFullName(repoFullName: string): Project | undefined {
+    return this.findProjectsByRepoFullName(repoFullName)[0];
   }
 
   /**
@@ -1957,6 +3033,7 @@ export class StateService {
       ciWorkflowRunUrl?: string;
       ciWaitingSince?: string;
       ciImageError?: string;
+      ciDiagnosis?: BranchEntry['ciDiagnosis'];
     },
   ): void {
     const branch = this.state.branches[id];
@@ -1975,6 +3052,8 @@ export class StateService {
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
     if ('ciImageStatus' in updates) branch.ciImageStatus = updates.ciImageStatus;
+    if ('ciDiagnosis' in updates) branch.ciDiagnosis = updates.ciDiagnosis;
+    else if ('ciImageStatus' in updates || 'ciTargetSha' in updates) branch.ciDiagnosis = null;
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
@@ -2146,6 +3225,7 @@ export class StateService {
     this.state.releaseTargets[target.id] = {
       ...existing,
       ...target,
+      ...(existing?.governance?.required ? { governance: existing.governance } : {}),
       createdAt: existing?.createdAt || target.createdAt || now,
       updatedAt: now,
     };
@@ -2157,6 +3237,117 @@ export class StateService {
     if (!this.state.releaseTargets?.[id]) return false;
     delete this.state.releaseTargets[id];
     this.save();
+    return true;
+  }
+
+  // ── 监控中心：自定义探测目标 ──
+
+  listUptimeMonitors(projectId?: string): UptimeCustomMonitor[] {
+    if (!this.state.uptimeMonitors) return [];
+    return Object.values(this.state.uptimeMonitors)
+      .filter((monitor) => !projectId || monitor.projectId === projectId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /**
+   * 记一次功能监控的观测证据，新的在前，只留最近 MAX_OBSERVATIONS 条。
+   *
+   * 为什么截断：监控看的是趋势，不是审计日志。不截断的话每 6 小时一条、
+   * 一年下来单条监控上千条证据，state 台账会被撑爆，而没人会翻半年前那次生成。
+   */
+  recordMonitorObservation(monitorId: string, observation: MonitorObservation): void {
+    const monitor = this.state.uptimeMonitors?.[monitorId];
+    if (!monitor) return;
+    const kept = [observation, ...(monitor.observations || [])].slice(0, MAX_OBSERVATIONS);
+    monitor.observations = kept;
+    monitor.updatedAt = new Date().toISOString();
+    this.save();
+  }
+
+  getMonitorSubscriptions(): NonNullable<CdsState['monitorSubscriptions']> {
+    let changed = false;
+    const subscriptions = this.state.monitorSubscriptions ??= {};
+    for (const monitor of this.listUptimeMonitors()) {
+      const id = customProbeTargetId(monitor);
+      if (!subscriptions[id]) { subscriptions[id] = { subscribed: monitor.enabled !== false, updatedBy: 'registered-monitor', updatedAt: monitor.createdAt }; changed = true; }
+    }
+    if (changed) this.save(HINT_GLOBAL);
+    return structuredClone(subscriptions);
+  }
+
+  setMonitorSubscription(targetId: string, subscribed: boolean, updatedBy: string): void {
+    (this.state.monitorSubscriptions ??= {})[targetId] = { subscribed, updatedBy, updatedAt: new Date().toISOString() };
+    this.save(HINT_GLOBAL);
+  }
+
+  getMonitorNotifications(): import('./alarm-route.js').MonitorNotificationSettings {
+    return structuredClone(this.state.monitorNotifications ?? {});
+  }
+
+  setMonitorNotifications(settings: import('./alarm-route.js').MonitorNotificationSettings): void {
+    this.state.monitorNotifications = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+  }
+
+  async recordMcpMonitorAudit(evidence: import('./mcp-monitor.js').McpCallEvidence): Promise<void> {
+    this.state.mcpMonitorAudits = [evidence, ...(this.state.mcpMonitorAudits ?? [])].slice(0, 200);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listMcpMonitorAudits(): import('./mcp-monitor.js').McpCallEvidence[] {
+    return structuredClone(this.state.mcpMonitorAudits ?? []);
+  }
+
+  getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
+    return this.state.uptimeMonitors?.[id];
+  }
+
+  upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor {
+    if (!this.state.uptimeMonitors) this.state.uptimeMonitors = {};
+    const existing = this.state.uptimeMonitors[monitor.id];
+    // 归属项目允许改：编辑弹窗把「归属项目」摆成了可编辑字段，管理员把一条监控
+    // 从系统级挪到项目、或在项目间挪，都是正当操作（Codex PR #1514 第二轮 P2）。
+    // 「客户端指定 id 命中他人条目」的防护在路由层：写入只给管理员身份，且新增时
+    // id 已存在直接 409，不在这里再判一遍项目。
+    const now = new Date().toISOString();
+    const saved: UptimeCustomMonitor = {
+      ...existing,
+      ...monitor,
+      createdAt: existing?.createdAt || monitor.createdAt || now,
+      updatedAt: now,
+    };
+    // 新接入不能继承旧版本删除后残留的静默；正常编辑保留现有通知。
+    if (!existing) this.clearUptimeMonitorNotifications(monitor.id);
+    this.state.uptimeMonitors[monitor.id] = saved;
+    if (!existing) (this.state.monitorSubscriptions ??= {})[customProbeTargetId(saved)] ??= {
+      subscribed: saved.enabled !== false, updatedAt: now, updatedBy: saved.createdBy || 'registered-monitor',
+    };
+    this.save(HINT_GLOBAL);
+    return saved;
+  }
+
+  removeUptimeMonitor(id: string): boolean {
+    if (!this.deleteUptimeMonitorState(id)) return false;
+    this.save(HINT_GLOBAL);
+    return true;
+  }
+
+  private clearUptimeMonitorNotifications(id: string): void {
+    const targetId = customProbeTargetId({ id });
+    const settings = this.state.monitorNotifications;
+    for (const entries of [settings?.overrides, settings?.mutedUntil, settings?.acknowledgedAt]) {
+      if (entries) delete entries[targetId];
+    }
+  }
+
+  /** 由单项、分支、项目删除共用；各调用者仍只提交自己的原子保存。 */
+  private deleteUptimeMonitorState(id: string): boolean {
+    if (!this.state.uptimeMonitors?.[id]) return false;
+    delete this.state.uptimeMonitors[id];
+    this.clearUptimeMonitorNotifications(id);
+    // Keep explicit opt-outs across discovery disappearance/reappearance of the stable id.
+    if (this.state.monitorSubscriptions?.[customProbeTargetId({ id })]?.subscribed) delete this.state.monitorSubscriptions[customProbeTargetId({ id })];
     return true;
   }
 
@@ -2175,6 +3366,33 @@ export class StateService {
     this.state.releasePlans[plan.id] = plan;
     this.save();
     return plan;
+  }
+
+  getReleaseBatches(projectId?: string): import('../domain/release-batch.js').ReleaseBatch[] {
+    return Object.values(this.state.releaseBatches || {})
+      .filter(batch => !projectId || batch.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(batch => structuredClone(batch));
+  }
+
+  getReleaseBatch(id: string): import('../domain/release-batch.js').ReleaseBatch | undefined {
+    const batch = this.state.releaseBatches && Object.hasOwn(this.state.releaseBatches, id) ? this.state.releaseBatches[id] : undefined;
+    return batch ? structuredClone(batch) : undefined;
+  }
+
+  saveReleaseBatch(batch: import('../domain/release-batch.js').ReleaseBatch): void {
+    this.state.releaseBatches ||= {};
+    this.state.releaseBatches[batch.id] = structuredClone(batch);
+    this.save(HINT_GLOBAL);
+  }
+
+  getReleaseGovernance(): import('../domain/release-governance.js').ReleaseGovernanceState {
+    return structuredClone(this.state.releaseGovernance || { authorizations: {}, attempts: [], mergeBacks: {} });
+  }
+
+  saveReleaseGovernance(value: import('../domain/release-governance.js').ReleaseGovernanceState): void {
+    this.state.releaseGovernance = structuredClone(value);
+    this.save(HINT_GLOBAL);
   }
 
   getReleaseRuns(filter: { projectId?: string; targetId?: string; branchId?: string } = {}): ReleaseRun[] {
@@ -2302,8 +3520,11 @@ export class StateService {
     const runs = Object.values(this.state.releaseRuns).filter((run) => run.targetId === targetId);
     const doomed = selectReleaseRunsToPrune({ runs, nowMs: Date.now() });
     if (doomed.length === 0) return;
-    for (const releaseId of doomed) delete this.state.releaseRuns[releaseId];
-    console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${doomed.length} 条历史发布记录: ${doomed.join(', ')}`);
+    const batchReferences = new Set(this.getReleaseBatches().flatMap(batch => batch.targets.flatMap(row =>
+      [row.previousReleaseId, row.runId, row.rollbackRunId, ...row.attempts.map(attempt => attempt.runId)])));
+    const pruned = doomed.filter(releaseId => !batchReferences.has(releaseId));
+    for (const releaseId of pruned) delete this.state.releaseRuns[releaseId];
+    if (pruned.length) console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${pruned.length} 条历史发布记录: ${pruned.join(', ')}`);
   }
 
   // ── 发布前检查结论（阶段三记账）──
@@ -2415,6 +3636,22 @@ export class StateService {
     return merged;
   }
 
+  activateCdsConnection(id: string, fields: Partial<CdsConnection>, previousId?: string): CdsConnection {
+    const connections = this.state.cdsConnections;
+    const pending = connections?.[id];
+    if (!connections || pending?.status !== 'pending-pairing') {
+      throw new Error('CDS connection is no longer pending');
+    }
+    const active: CdsConnection = { ...pending, ...fields, id, status: 'active' };
+    const previous = previousId ? connections[previousId] : undefined;
+    if (previous?.status === 'active' && previous.id !== id) {
+      connections[previous.id] = { ...previous, status: 'revoked', longTokenHash: undefined };
+    }
+    connections[id] = active;
+    this.save();
+    return active;
+  }
+
   removeCdsConnection(id: string): boolean {
     if (!this.state.cdsConnections || !this.state.cdsConnections[id]) return false;
     delete this.state.cdsConnections[id];
@@ -2488,11 +3725,163 @@ export class StateService {
     return true;
   }
 
+  // ── 身份层：主体 / 用户级凭证 / 项目授权（2026-09-01）──
+  //
+  // 三张表都是**纯增量**：缺省为空数组，任何存量安装的行为不变。它们回答的是
+  // 此前系统答不上来的一个问题——「这把钥匙是谁的」。没有它，钥匙就是身份，
+  // 于是丢钥匙等于丢身份、换钥匙等于作废已批的授权、吊销列表看不出归属。
+
+  getPrincipals(): Principal[] {
+    return this.state.principals || [];
+  }
+
+  getHumanAccessRecoveries(): NonNullable<CdsState['humanAccessRecovery']> {
+    return this.state.humanAccessRecovery || {};
+  }
+
+  /** Journal changes travel in the same snapshot as the next access mutation. */
+  setHumanAccessRecovery(id: string, record: NonNullable<CdsState['humanAccessRecovery']>[string] | undefined): void {
+    if (!this.state.humanAccessRecovery) this.state.humanAccessRecovery = {};
+    if (record) this.state.humanAccessRecovery[id] = record;
+    else delete this.state.humanAccessRecovery[id];
+  }
+
+  getPrincipal(id: string): Principal | undefined {
+    return (this.state.principals || []).find((p) => p.id === id);
+  }
+
+  addPrincipal(entry: Principal): void {
+    if (!this.state.principals) this.state.principals = [];
+    this.state.principals.push(entry);
+    this.save();
+  }
+
+  /** 停用一个主体：它名下所有凭证立刻不可用，但记录保留（审计）。 */
+  setPrincipalStatus(id: string, status: Principal['status'], actor?: string): boolean {
+    const entry = (this.state.principals || []).find((p) => p.id === id);
+    if (!entry) return false;
+    entry.status = status;
+    if (status === 'disabled') {
+      entry.disabledAt = new Date().toISOString();
+      if (actor) entry.disabledBy = actor;
+    } else {
+      delete entry.disabledAt;
+      delete entry.disabledBy;
+    }
+    this.save();
+    return true;
+  }
+
+  touchPrincipalSeen(id: string): void {
+    const entry = (this.state.principals || []).find((p) => p.id === id);
+    if (!entry) return;
+    entry.lastSeenAt = new Date().toISOString();
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  getUserCredentials(): UserCredential[] {
+    return this.state.userCredentials || [];
+  }
+
+  addUserCredential(entry: UserCredential): void {
+    if (!this.state.userCredentials) this.state.userCredentials = [];
+    this.state.userCredentials.push(entry);
+    this.save();
+  }
+
+  /**
+   * 解析明文 `cdsu_<suffix>` 找到未吊销的用户级凭证。
+   *
+   * 与项目级同一套做法：只存 sha256、定长比较。**过期判定不在这里做** ——
+   * 这里只回答「是哪一张」，能不能用由 identity.credentialUsability 统一判，
+   * 免得两处各写一份过期逻辑然后漂移。
+   */
+  findUserCredentialByPlaintext(plaintextKey: string): UserCredential | undefined {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsu_')) return undefined;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const entry of this.state.userCredentials || []) {
+      if (entry.revokedAt) continue;
+      try {
+        const entryBuf = Buffer.from(entry.hash, 'hex');
+        if (entryBuf.length !== hashBuf.length) continue;
+        if (crypto.timingSafeEqual(entryBuf, hashBuf)) return entry;
+      } catch { /* malformed hash in state, skip */ }
+    }
+    return undefined;
+  }
+
+  /** 记一次使用；`newExpiresAt` 有值时同时滑动续期（用一次自动续）。 */
+  touchUserCredential(id: string, newExpiresAt?: string): void {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
+    if (newExpiresAt) entry.expiresAt = newExpiresAt;
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  /** 记一次签发（签发留痕：留痕是这套设计唯一的安全收益，看不见就等于没留）。 */
+  recordUserCredentialIssue(id: string): void {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return;
+    entry.issuedCount = (entry.issuedCount || 0) + 1;
+    entry.lastIssuedAt = new Date().toISOString();
+    try { this.save(); } catch { /* best-effort */ }
+  }
+
+  revokeUserCredential(id: string, actor?: string): boolean {
+    const entry = (this.state.userCredentials || []).find((c) => c.id === id);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      if (actor) entry.revokedBy = actor;
+      this.save();
+    }
+    return true;
+  }
+
+  getProjectGrants(): ProjectGrant[] {
+    return this.state.projectGrants || [];
+  }
+
+  addProjectGrant(entry: ProjectGrant): void {
+    if (!this.state.projectGrants) this.state.projectGrants = [];
+    // 同一 (主体, 项目) 已有未撤销授权时不重复写 —— 授权是集合语义，不是流水。
+    const existing = this.state.projectGrants.find(
+      (g) => g.principalId === entry.principalId && g.projectId === entry.projectId && !g.revokedAt,
+    );
+    if (existing) return;
+    this.state.projectGrants.push(entry);
+    this.save();
+  }
+
+  revokeProjectGrant(id: string, actor?: string): boolean {
+    const entry = (this.state.projectGrants || []).find((g) => g.id === id);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      if (actor) entry.revokedBy = actor;
+      this.save();
+    }
+    return true;
+  }
+
+  /** 全部项目级凭证（带上所属项目），供权限总览按主体聚合。 */
+  getAllAgentKeysWithProject(): Array<AgentKey & { projectId: string; projectName: string }> {
+    const out: Array<AgentKey & { projectId: string; projectName: string }> = [];
+    for (const project of this.state.projects || []) {
+      for (const key of project.agentKeys || []) {
+        out.push({ ...key, projectId: project.id, projectName: project.aliasName || project.name });
+      }
+    }
+    return out;
+  }
+
   // ── Project-scoped Agent Keys ──
   //
   // Each AgentKey stores only the sha256 of the plaintext key; the key
-  // prefix (`cdsp_<slugHead12>_...`) encodes the owning project so the
-  // auth middleware can look up the project from the header alone.
+  // prefix (`cdsp_<slugHead12>_...`) is a readable signing-time hint;
+  // the saved hash binding identifies the owning project after a rename.
   // Plaintext is shown once at signing time and never persisted.
 
   /** Append an AgentKey entry under a project. Creates the array on demand. */
@@ -2537,10 +3926,10 @@ export class StateService {
    * timingSafeEqual for hash comparison so the endpoint doesn't leak
    * hash bytes via timing.
    *
-   * Returns null on any failure (malformed prefix, unknown slug, no
+   * Returns null on any failure (malformed prefix, no
    * matching hash, key revoked).
    */
-  findAgentKeyForAuth(plaintextKey: string): { projectId: string; keyId: string } | null {
+  findAgentKeyForAuth(plaintextKey: string): ({ projectId: string; keyId: string } & Pick<AgentKey, 'planningAccess' | 'designAccess'>) | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsp_')) return null;
     // Strict shape: cdsp_<slugHead>_<suffix>
     const parts = plaintextKey.split('_');
@@ -2550,15 +3939,32 @@ export class StateService {
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const project of this.state.projects || []) {
-      const projectSlugHead = project.slug.slice(0, 12).toLowerCase();
-      if (projectSlugHead !== slugHead) continue;
+      // 哈希归属才是权限依据；slug 前缀只是签发时的可读提示，改名不会撤销凭据。
       for (const entry of project.agentKeys || []) {
         if (entry.revokedAt) continue;
+        // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
+        // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
+        if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
+        // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
+        // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
+        // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
+        //
+        // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
+        // 这段整个跳过，与启用前逐字节一致。
+        if (entry.principalId) {
+          // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
+          if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
+          const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
+          if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
+          if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, project.id)) continue;
+        }
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;
           if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
-            return { projectId: project.id, keyId: entry.id };
+            return { projectId: project.id, keyId: entry.id,
+              ...(entry.planningAccess ? { planningAccess: entry.planningAccess } : {}),
+              ...(entry.designAccess ? { designAccess: entry.designAccess } : {}) };
           }
         } catch {
           /* malformed hash in state, skip */
@@ -2574,16 +3980,68 @@ export class StateService {
     const entry = project?.agentKeys?.find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
+    // 「用即续」必须在这里兑现：只更新 lastUsedAt 而不推 expiresAt，一直在干活的
+    // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
+    // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
+    // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
+    if (entry.expiresAt) {
+      const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
+      if (next) entry.expiresAt = next;
+    }
     // Save is best-effort — a failed save here shouldn't block the request.
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save([{ kind: 'projects', id: projectId }]); } catch { /* ignore */ }
   }
 
   // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
+
+  getIdentityConnections(): IdentityConnection[] {
+    return this.state.identityConnections || [];
+  }
+
+  addIdentityConnection(item: IdentityConnection): void {
+    const now = Date.now();
+    this.state.identityConnections = (this.state.identityConnections || []).filter(r => Date.parse(r.expiresAt) > now);
+    this.state.identityConnections.push(item);
+    this.save();
+  }
+
+  updateIdentityConnection(id: string, updates: Partial<IdentityConnection>): void {
+    const item = this.getIdentityConnections().find(r => r.id === id);
+    if (!item) throw new Error('接入申请不存在');
+    Object.assign(item, updates);
+    this.save();
+  }
 
   addAccessRequest(item: AccessRequest): void {
     if (!this.state.accessRequests) this.state.accessRequests = [];
     this.state.accessRequests.push(item);
     this.save();
+  }
+
+  /** 申请者离线后仍关闭过期审批与未领取的一次授权，清除待交付明文。 */
+  expireBootstrapAccessRequests(now = Date.now()): void {
+    const expiredIds: string[] = [];
+    for (const item of this.state.accessRequests || []) {
+      if (item.kind !== 'bootstrap' || item.createdProject
+        || !['pending', 'approved'].includes(item.status)) continue;
+      const key = (this.state.globalAgentKeys || []).find(k => k.id === item.issuedKeyId);
+      const requestDeadline = Date.parse(item.expiresAt || '') || Date.parse(item.createdAt) + 600_000;
+      const keyDeadline = Date.parse(key?.expiresAt || '');
+      const deadline = item.deliveredAt
+        ? keyDeadline || Date.parse(item.deliveredAt) + 300_000
+        : Math.min(requestDeadline, keyDeadline || Infinity);
+      if (deadline > now && !key?.revokedAt) continue;
+      if (key && !key.revokedAt) key.revokedAt = new Date(now).toISOString();
+      item.status = 'expired';
+      item.decidedAt = new Date(now).toISOString();
+      delete item.issuedKeyPlaintext;
+      expiredIds.push(item.id);
+    }
+    if (expiredIds.length) {
+      this.save();
+      const pendingCount = this.listAccessRequests().filter(item => item.status === 'pending').length;
+      for (const requestId of expiredIds) cdsEventsBus.publish('access-request.decided', { requestId, status: 'expired', pendingCount });
+    }
   }
 
   listAccessRequests(): AccessRequest[] {
@@ -2687,10 +4145,11 @@ export class StateService {
    */
   findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
+    this.expireBootstrapAccessRequests();
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const entry of this.state.globalAgentKeys || []) {
-      if (entry.revokedAt) continue;
+      if (entry.revokedAt || (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now())) continue;
       try {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;
@@ -2709,7 +4168,7 @@ export class StateService {
     const entry = (this.state.globalAgentKeys || []).find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save(HINT_GLOBAL); } catch { /* ignore */ }
   }
 
   // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
@@ -2892,6 +4351,7 @@ export class StateService {
   setBranchWorktreePath(branchId: string, worktreePath: string): void {
     const branch = this.state.branches[branchId];
     if (!branch) return;
+    worktreePathActivity.assertClaimable([worktreePath]);
     branch.worktreePath = worktreePath;
   }
 
@@ -2923,6 +4383,25 @@ export class StateService {
     );
   }
 
+  /** Preview the same upserts and orphan fallback as import, without publishing metadata. */
+  previewImportedProfiles(incoming: readonly BuildProfile[]): BuildProfile[] {
+    const profiles = new Map(this.getBuildProfiles().map(profile => [profile.id, structuredClone(profile)]));
+    for (const profile of incoming) {
+      const existing = profiles.get(profile.id);
+      const next = {...existing, ...structuredClone(profile)} as BuildProfile;
+      if (!existing && !next.projectId) next.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+      profiles.set(profile.id, next);
+    }
+    return [...profiles.values()];
+  }
+
+  previewImportedProfilesForProject(projectId: string, incoming: readonly BuildProfile[]): BuildProfile[] {
+    if (this.getProject(projectId)?.deliveryMode === 'managed') {
+      return structuredClone(this.getBuildProfilesForProject(projectId));
+    }
+    return this.previewImportedProfiles(incoming).filter(profile => (profile.projectId || 'default') === projectId);
+  }
+
   /**
    * 这条分支**实际要部署**的服务清单 = 项目级 profiles(稳定底座) + 本分支临时额外服务
    * (branch.extraProfiles)。没声明额外服务的分支 = 项目 profiles 原样(老行为零回归)。
@@ -2936,6 +4415,58 @@ export class StateService {
     );
   }
 
+  /** Opaque compare-and-set token: configuration values never leave this method. */
+  getBranchServiceIsolationRevision(branch: BranchEntry): string {
+    return storageProvisionDigest({
+      projectId: branch.projectId, profiles: this.getBuildProfilesForProject(branch.projectId),
+      extraProfiles: branch.extraProfiles || [], overrides: branch.profileOverrides || {},
+      excluded: branch.excludedProjectProfileIds || [],
+    });
+  }
+
+  /** One atomic branch-only change; no deployment, container or volume operation. */
+  setBranchServiceIsolation(branchId: string, input: {
+    expectedRevision: string; excludedProjectProfileIds: string[];
+    dependsOnOverrides?: Record<string, string[] | null>;
+  }): BranchEntry {
+    const branch = this.getBranch(branchId);
+    if (!branch) throw new Error('分支不存在');
+    if (input.expectedRevision !== this.getBranchServiceIsolationRevision(branch)) throw new Error('分支配置已变化，请重新读取');
+    if (branch.status !== 'idle' || branch.deleting || branch.remoteDeployment
+      || Object.values(branch.services || {}).some(s => s.status !== 'stopped')) {
+      throw new Error('须先停止并对账本分支全部操作');
+    }
+    if (!Array.isArray(input.excludedProjectProfileIds)
+      || input.excludedProjectProfileIds.some(id => !isValidExtraProfileId(id))) throw new Error('排除清单必须是服务标识数组');
+    const candidate = structuredClone(branch);
+    candidate.excludedProjectProfileIds = [...input.excludedProjectProfileIds];
+    const changes = input.dependsOnOverrides || {};
+    if (typeof changes !== 'object' || Array.isArray(changes)) throw new Error('依赖覆盖必须是对象');
+    const available = new Set(mergeBranchProfiles(this.getBuildProfilesForProject(branch.projectId),
+      { ...branch, excludedProjectProfileIds: [] }).map(p => p.id));
+    for (const [id, deps] of Object.entries(changes)) {
+      if (!available.has(id) || !isValidExtraProfileId(id) || candidate.excludedProjectProfileIds.includes(id)
+        || (deps !== null && (!Array.isArray(deps) || new Set(deps).size !== deps.length || deps.some(d => !isValidExtraProfileId(d))))) {
+        throw new Error('依赖覆盖包含非法服务或依赖');
+      }
+      candidate.profileOverrides ||= {};
+      const override = { ...candidate.profileOverrides[id] };
+      if (deps === null) delete override.dependsOn;
+      else override.dependsOn = [...deps];
+      candidate.profileOverrides[id] = override;
+    }
+    for (const id of candidate.excludedProjectProfileIds) {
+      if (branch.services?.[id] || branch.replicaSets?.[id]) throw new Error('被排除服务仍有容器或复制集记录，请先对账');
+    }
+    this.assertProfileStorageDeclarationsPreserved([candidate]);
+    if (candidate.excludedProjectProfileIds.length) branch.excludedProjectProfileIds = candidate.excludedProjectProfileIds;
+    else delete branch.excludedProjectProfileIds;
+    if (Object.keys(changes).length) branch.profileOverrides = candidate.profileOverrides;
+    try { this.save([{ kind: 'branches', id: branch.id }]); }
+    catch { throw new Error('service_isolation_save_unconfirmed'); }
+    return branch;
+  }
+
   /**
    * 设置/清空一条分支的临时额外服务(branch-local)。空数组 = 清空(回到纯项目底座)。
    * 非法 id 的额外项被丢弃。仅改这一条分支,不碰项目 profiles、不碰别的分支。
@@ -2946,6 +4477,7 @@ export class StateService {
     const sanitized = (extraProfiles || []).filter(
       (p) => p && isValidExtraProfileId(p.id),
     );
+    this.assertProfileStorageDeclarationsPreserved([{...branch,extraProfiles:sanitized}]);
     if (sanitized.length === 0) {
       delete branch.extraProfiles;
     } else {
@@ -3153,6 +4685,29 @@ export class StateService {
   }
 
   /**
+   * 补齐项目里声明为 `generate: secret` 但还没有值的内部密钥，返回本次新生成的 key。
+   *
+   * 这类密钥只在两个服务之间对暗号（例如 api 调设计执行服务），没有人需要知道它的值，
+   * 让用户去生成一把再粘贴回来是纯粹的转嫁。已有值（含用户显式填写的）一律不动，
+   * 生成后写进项目 env，项目内所有分支共用同一把，后续部署不再重生成。
+   * 值只进 state，不进日志；调用方负责 save()。
+   */
+  ensureGeneratedEnvKeys(projectId: string): string[] {
+    const project = this.getProject(projectId);
+    if (!project?.envMeta) return [];
+    const mergedEnv = this.getCustomEnv(projectId);
+    const generated: string[] = [];
+    for (const [key, meta] of Object.entries(project.envMeta)) {
+      if (meta.generate !== 'secret') continue;
+      const current = mergedEnv[key];
+      if (current && current.trim() && !isPlaceholderValue(current)) continue;
+      this.setCustomEnvVar(key, crypto.randomBytes(32).toString('base64url'), projectId);
+      generated.push(key);
+    }
+    return generated;
+  }
+
+  /**
    * 列出当前项目所有 kind='required' 但 value 为空 / 仍是 TODO 占位符的 env keys。
    * deploy 路由用此判断是否 block。返回空数组 = 全部填齐,可以 deploy。
    *
@@ -3169,12 +4724,30 @@ export class StateService {
     if (!project?.envMeta) return [];
     const mergedEnv = this.getCustomEnv(projectId);
     const missing: string[] = [];
+    const alternativeGroups = new Map<string, Map<string, string[]>>();
+    const hasValue = (key: string): boolean => {
+      const value = mergedEnv[key];
+      return Boolean(value && value.trim() && !isPlaceholderValue(value));
+    };
     for (const [key, meta] of Object.entries(project.envMeta)) {
       if (meta.kind !== 'required') continue;
-      const value = mergedEnv[key];
-      if (!value || !value.trim() || isPlaceholderValue(value)) {
+      if (meta.requiredGroup && meta.requiredOption) {
+        const options = alternativeGroups.get(meta.requiredGroup) ?? new Map<string, string[]>();
+        const keys = options.get(meta.requiredOption) ?? [];
+        keys.push(key);
+        options.set(meta.requiredOption, keys);
+        alternativeGroups.set(meta.requiredGroup, options);
+      } else if (!hasValue(key)) {
         missing.push(key);
       }
+    }
+    for (const options of alternativeGroups.values()) {
+      if ([...options.values()].some((keys) => keys.every(hasValue))) continue;
+      // 优先提示用户已经开始填写的那一套；完全没填时按 compose 声明顺序提示第一套。
+      const preferred = [...options.values()].sort((a, b) => (
+        b.filter(hasValue).length - a.filter(hasValue).length
+      ))[0] ?? [];
+      missing.push(...preferred.filter((key) => !hasValue(key)));
     }
     return missing;
   }
@@ -3194,29 +4767,50 @@ export class StateService {
     project.updatedAt = new Date().toISOString();
   }
 
-  // Phase 9.5 — env 修改审计日志(ring buffer)
+  // The default view remains bounded. Explicit export can also read earlier facts.
   private static readonly ENV_AUDIT_MAX_ENTRIES = 200;
+  private static readonly ENV_AUDIT_RETENTION_MS = 365 * 86_400_000;
 
   appendEnvChangeLog(
     projectId: string,
     entry: Omit<import('../types.js').EnvChangeLogEntry, 'ts'>,
   ): void {
+    const now = new Date();
+    const row = { ts: now.toISOString(), ...entry };
+    if (projectId === '_global') {
+      (this.state.globalEnvironmentChangeLog ??= []).push(row);
+      return;
+    }
     const project = this.getProject(projectId);
     if (!project) return;
-    if (!project.envChangeLog) project.envChangeLog = [];
-    project.envChangeLog.push({ ts: new Date().toISOString(), ...entry });
-    // Ring buffer:超过上限丢最旧的
-    if (project.envChangeLog.length > StateService.ENV_AUDIT_MAX_ENTRIES) {
-      project.envChangeLog = project.envChangeLog.slice(
-        -StateService.ENV_AUDIT_MAX_ENTRIES,
-      );
-    }
-    project.updatedAt = new Date().toISOString();
+    (project.envChangeLog ??= []).push(row);
+    project.updatedAt = now.toISOString();
   }
 
-  getEnvChangeLog(projectId: string): import('../types.js').EnvChangeLogEntry[] {
-    const project = this.getProject(projectId);
-    return project?.envChangeLog ? [...project.envChangeLog] : [];
+  recordEnvironmentAuditEffect(run: import('../types.js').DeploymentRun): void {
+    const project = this.getProject(run.projectId);
+    if (!project?.envChangeLog || run.status !== 'running' || !run.finishedAt || !run.environmentAuditIds?.length) return;
+    const frozen = new Set(run.environmentAuditIds);
+    let applied = false;
+    for (const entry of project.envChangeLog) {
+      for (const fact of entry.facts ?? []) {
+        if (fact.effect.state !== 'pending' || !frozen.has(fact.eventId) || (fact.branchId && fact.branchId !== run.branchId)) continue;
+        fact.effect = { state: 'effective', runId: run.id, at: run.finishedAt };
+        applied = true;
+      }
+    }
+    if (applied) {
+      project.updatedAt = run.finishedAt;
+      this.save();
+    }
+  }
+
+  getEnvChangeLog(projectId: string, includeArchive = false, legacyLimit = StateService.ENV_AUDIT_MAX_ENTRIES): import('../types.js').EnvChangeLogEntry[] {
+    const entries = (projectId === '_global' ? this.state.globalEnvironmentChangeLog : this.getProject(projectId)?.envChangeLog) ?? [];
+    if (includeArchive) return [...entries];
+    const cutoff = Date.now() - StateService.ENV_AUDIT_RETENTION_MS;
+    const legacy = new Set(entries.filter(row => !row.facts).slice(-legacyLimit));
+    return entries.filter(row => row.facts ? Date.parse(row.ts) >= cutoff : legacy.has(row));
   }
 
   // ── Infrastructure services ──
@@ -3262,6 +4856,9 @@ export class StateService {
   }
 
   addInfraService(service: InfraService): void {
+    const key=JSON.stringify([service.projectId,service.id]);
+    if (this.storageProvisionDrafts.has(key) || this.state.storageProvisionPublications?.[key]
+      || this.getStorageBirthsForService(service.projectId,service.id).length) throw new Error('storage_provision_unconfirmed');
     service.scope = classifyInfraScope(service);
     if (service.scope === 'system') {
       service.projectId = SYSTEM_PROJECT_ID;
@@ -3285,10 +4882,52 @@ export class StateService {
       ? this.state.infraServices.findIndex(s => s.id === id && (s.projectId || 'default') === projectId)
       : this.state.infraServices.findIndex(s => s.id === id);
     if (idx === -1) throw new Error(`基础设施服务 "${id}" 不存在`);
+    const previous = this.state.infraServices[idx], candidate = {...previous,...updates};
+    const pid = previous.projectId || 'default', key = JSON.stringify([pid,id]);
+    const retained = this.getStorageBirthsForService(pid,id).length || this.storageProvisionDrafts.has(key)
+      || this.state.storageProvisionPublications?.[key] || previous.volumes?.some(v=>v.storage !== undefined);
+    const declaration = (s: InfraService) => ({id:s.id,projectId:s.projectId || 'default',scope:s.scope,volumes:s.volumes || []});
+    if (retained && storageProvisionDigest(declaration(previous)) !== storageProvisionDigest(declaration(candidate)))
+      throw new Error('storage_retained_infra_mutation_refused: 已分配或待确认的存储声明不可通过普通配置修改');
     Object.assign(this.state.infraServices[idx], updates);
   }
 
+  /** Retain all original service metadata when first allocation exists or is uncertain.
+   * Stop is still available. Deletion is not a recovery/reallocation operation.
+   */
+  assertInfraRemovalAllowed(id: string, projectId?: string): void {
+    const retained = (pid: string) => {
+      const key = JSON.stringify([pid, id]);
+      return this.storageProvisionDrafts.has(key) || Boolean(this.state.storageProvisionPublications?.[key])
+        || this.getStorageBirthsForService(pid, id).length > 0
+        || this.getInfraServiceForProjectAndId(pid,id)?.volumes?.some(v=>v.storage !== undefined);
+    };
+    const projects = projectId ? [projectId] : [...new Set([
+      ...this.state.infraServices.filter(s => s.id === id).map(s => s.projectId || 'default'),
+      ...Object.values(this.state.storageBirths || {}).filter(r => r.binding.scope === 'project-shared' && r.binding.serviceId === id).map(r => r.binding.projectId),
+      ...[...this.storageProvisionDrafts.values(), ...Object.values(this.state.storageProvisionPublications || {})]
+        .filter(r => r.service.id === id).map(r => r.service.projectId || 'default'),
+    ])];
+    if (projects.some(retained)) throw new Error('storage_retained_service_delete_refused: 已分配或待确认的存储保留完整配置，请改用停止');
+  }
+
+  assertProjectStorageRemovalAllowed(projectId: string): void {
+    const hasStorage = (p: Partial<BuildProfile>) => p.cacheMounts?.some(m=>m.storage !== undefined);
+    const retained = this.state.infraServices.some(s=>(s.projectId || 'default')===projectId && s.volumes?.some(v=>v.storage !== undefined))
+      || this.state.buildProfiles?.some(p=>(p.projectId || 'default')===projectId && hasStorage(p))
+      || Object.values(this.state.branches || {}).some(b=>(b.projectId || 'default')===projectId
+        && [...Object.values(b.profileOverrides || {}),...(b.extraProfiles || [])].some(p=>hasStorage(p as Partial<BuildProfile>)))
+      || Object.values(this.state.storageBirths || {}).some(r => r.binding.projectId === projectId)
+      || [...this.storageProvisionDrafts.values(), ...Object.values(this.state.storageProvisionPublications || {})]
+        .some(r => (r.service.projectId || 'default') === projectId)
+      || [...this.profileStorageDrafts.values()].some(r => r.target.projectId === projectId)
+      || Object.values(this.state.profileStoragePublications || {}).some(r => r.binding.target.projectId === projectId)
+      || Object.values(this.state.profileStorageBindings || {}).some(r => r.target.projectId === projectId);
+    if (retained) throw new Error('storage_retained_service_delete_refused: 项目含已分配或待确认的存储，请改用停止');
+  }
+
   removeInfraService(id: string, projectId?: string): void {
+    this.assertInfraRemovalAllowed(id, projectId);
     if (projectId) {
       this.state.infraServices = this.state.infraServices.filter(
         s => !(s.id === id && (s.projectId || 'default') === projectId),
@@ -3388,6 +5027,47 @@ export class StateService {
     if (this.state.previewMode == null) {
       this.state.previewMode = mode;
     }
+  }
+
+  /**
+   * 写入项目的 Agent 角色声明。项目不存在时返回 false，调用方据此回 404。
+   *
+   * 整条记录覆盖写：角色声明是一次性快照，不做字段级合并——半新半旧的
+   * 组合（新角色配旧技能列表）比整体过期更难排查。
+   */
+  setProjectAgentProfile(
+    projectId: string,
+    profile: import('../types.js').ProjectAgentProfile,
+  ): boolean {
+    const project = this.getProject(projectId);
+    if (!project) return false;
+    project.agentProfile = profile;
+    project.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  /** 读取项目的分支自定义分组；从未配置过返回空列表（updatedAt 为 null）。 */
+  getProjectBranchGroups(projectId: string): import('../types.js').BranchGroupsSettings | null {
+    const project = this.getProject(projectId);
+    if (!project) return null;
+    return project.branchGroups ?? { groups: [], updatedAt: null, updatedBy: null };
+  }
+
+  /** 整体替换项目的分支分组（调用方负责先经 normalizeBranchGroups 校验）。 */
+  setProjectBranchGroups(
+    projectId: string,
+    settings: import('../types.js').BranchGroupsSettings,
+  ): boolean {
+    const project = this.getProject(projectId);
+    if (!project) return false;
+    project.branchGroups = settings;
+    project.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  /** 读取项目的 Agent 角色声明；从未声明过返回 null。 */
+  getProjectAgentProfile(projectId: string): import('../types.js').ProjectAgentProfile | null {
+    return this.getProject(projectId)?.agentProfile ?? null;
   }
 
   // ── GitHub PR preview comment template ──
@@ -3573,6 +5253,44 @@ export class StateService {
     return this.state.agentRequestHistory || [];
   }
 
+  /** Agent session idempotency reservations and public recovery snapshots. */
+  static readonly AGENT_SESSION_RESERVATIONS_MAX = 500;
+
+  upsertAgentSessionReservation(record: import('../types.js').AgentSessionReservationRecord): void {
+    const previous = this.state.agentSessionReservations;
+    const reservations = { ...(previous || {}) };
+    reservations[record.id] = record;
+    const overflow = Object.values(reservations)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(StateService.AGENT_SESSION_RESERVATIONS_MAX);
+    for (const stale of overflow) delete reservations[stale.id];
+    this.state.agentSessionReservations = reservations;
+    try {
+      this.save(HINT_GLOBAL);
+    } catch (error) {
+      this.state.agentSessionReservations = previous;
+      throw error;
+    }
+  }
+
+  removeAgentSessionReservation(id: string): void {
+    if (!this.state.agentSessionReservations?.[id]) return;
+    const previous = this.state.agentSessionReservations;
+    const reservations = { ...previous };
+    delete reservations[id];
+    this.state.agentSessionReservations = reservations;
+    try {
+      this.save(HINT_GLOBAL);
+    } catch (error) {
+      this.state.agentSessionReservations = previous;
+      throw error;
+    }
+  }
+
+  listAgentSessionReservations(): import('../types.js').AgentSessionReservationRecord[] {
+    return Object.values(this.state.agentSessionReservations || {});
+  }
+
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
     // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
     // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。
@@ -3609,6 +5327,25 @@ export class StateService {
     // 记录进 history 等同于"流程结束",清掉 in-progress 标记。
     // 复用 clearSelfUpdateActive — 它会按 repoRoot 选磁盘 / 内存路径。
     this.clearSelfUpdateActive();
+  }
+
+  /** 仅撤回本次未交接成功；历史环已满时也恢复被临时挤出的原记录。 */
+  recordProvisionalSelfUpdateSuccess(record: import('../types.js').SelfUpdateRecord): () => void {
+    if (record.status !== 'success') throw new Error('CDS 临时成功记录状态无效。');
+    const originals = [...(this.state.selfUpdateHistory || [])];
+    this.recordSelfUpdate(record);
+    const pending = this.state.selfUpdateHistory?.at(-1);
+    let undone = false;
+    return () => {
+      const list = this.state.selfUpdateHistory || [];
+      const index = pending ? list.indexOf(pending) : -1;
+      if (undone || !pending || originals.includes(pending) || index < 0) return;
+      undone = true;
+      list.splice(index, 1);
+      this.state.selfUpdateHistory = [...originals.filter(row => !list.includes(row)), ...list]
+        .slice(-StateService.SELF_UPDATE_HISTORY_MAX);
+      this.save();
+    };
   }
 
   getSelfUpdateHistory(
@@ -3680,7 +5417,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.deployDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordDeployDuration save failed:', (err as Error).message);
     }
@@ -3743,7 +5480,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.releaseDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordReleaseDuration save failed:', (err as Error).message);
     }
@@ -3783,7 +5520,7 @@ export class StateService {
     list.push(delivery);
     this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
-      this.save();
+      this.save([{ kind: 'webhookDeliveries' }]);
     } catch (err) {
       // 写盘失败不影响 webhook 主链路 - 顶多丢这条日志
       console.warn('[state] recordGithubWebhookDelivery save failed:', (err as Error).message);
@@ -3799,6 +5536,74 @@ export class StateService {
     const cappedLimit = Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX));
     const cappedOffset = Math.max(0, offset);
     return [...list].reverse().slice(cappedOffset, cappedOffset + cappedLimit);
+  }
+
+  /**
+   * 通知通道凭据。**读出来是全的**（内部用，要拿去签名），
+   * 对外回显由路由负责打码——私钥永远不出 API。
+   */
+  getAlarmNotify(): import('../types.js').AlarmNotifyConfig | undefined {
+    const c = this.state.alarmNotify;
+    if (!c) return undefined;
+    const privateKey = unsealToken(c.privateKey);
+    // 四项缺任何一项都算没配：半套凭据只会在真出事那天以 401 的形式暴露。
+    const ok = [c.endpoint, c.keyId, c.username, privateKey].every((v) => (v || '').trim());
+    if (!ok) throw new Error('已保存的 MAP 签名配置不完整');
+    return { ...c, privateKey };
+  }
+
+  setAlarmNotify(next: import('../types.js').AlarmNotifyConfig | null): void {
+    if (next === null) delete this.state.alarmNotify;
+    else {
+      const privateKey = sealToken(next.privateKey);
+      if (!isSealedSecret(privateKey)) throw new Error('请先启用 CDS 密封存储，再保存 MAP 私钥');
+      this.state.alarmNotify = { ...next, privateKey };
+    }
+    this.save();
+  }
+
+  /**
+   * 通知通道表。
+   *
+   * 读接口返回的是**存着的原样**（含密钥），只给服务端用；路由层负责脱敏后才出网
+   * ——私钥、Bark key、自定义请求头的值一律不回给前端，那些是写了就不再读的东西。
+   */
+  getAlarmIdentity(): import('./alarm-identity.js').AlarmIdentitySettings | undefined {
+    return this.state.alarmIdentity ? structuredClone(this.state.alarmIdentity) : undefined;
+  }
+  setAlarmIdentity(identity: import('./alarm-identity.js').AlarmIdentitySettings): void {
+    this.state.alarmIdentity = structuredClone(identity);
+    this.save();
+  }
+  listAlarmChannels(): import('./alarm-route.js').AlarmChannelConfig[] {
+    return [...(this.state.alarmChannels ?? [])];
+  }
+
+  upsertAlarmChannel(next: import('./alarm-route.js').AlarmChannelConfig): void {
+    const list = this.state.alarmChannels ?? [];
+    const at = list.findIndex((c) => c.id === next.id);
+    if (at >= 0) list[at] = next;
+    else list.push(next);
+    this.state.alarmChannels = list;
+    this.save();
+  }
+
+  removeAlarmChannel(id: string): boolean {
+    const list = this.state.alarmChannels ?? [];
+    const next = list.filter((c) => c.id !== id);
+    if (next.length === list.length) return false;
+    this.state.alarmChannels = next;
+    const settings = this.state.monitorNotifications;
+    if (settings?.defaultChannelIds) settings.defaultChannelIds = settings.defaultChannelIds.filter(channelId => channelId !== id);
+    if (settings?.overrides) {
+      for (const [targetId, channelIds] of Object.entries(settings.overrides)) {
+        // Keep empty overrides explicit: removing their keys would subscribe
+        // these services to the default channels instead of leaving them off.
+        settings.overrides[targetId] = channelIds.filter(channelId => channelId !== id);
+      }
+    }
+    this.save();
+    return true;
   }
 
   getGithubAppWhitelist(): import('../types.js').GithubAppWhitelistSettings {
@@ -3979,6 +5784,18 @@ export class StateService {
     this.save();
   }
 
+  /**
+   * 列出全部分支墓碑（验收主页「合并未验」用：reason='merged' 的墓碑就是主干合并记录，
+   * 与报告的 prNumber / commitSha / branch 交叉即可算出哪些合并没有任何验收）。
+   * 可按项目过滤；按 removedAt 倒序。
+   */
+  listRemovedBranches(projectId?: string | null): BranchTombstone[] {
+    const map = this.state.removedBranches;
+    if (!map) return [];
+    const all = Object.values(map).filter((t) => !projectId || t.projectId === projectId);
+    return all.sort((a, b) => (b.removedAt || '').localeCompare(a.removedAt || ''));
+  }
+
   /** 按 previewSlug 查分支墓碑；无记录返回 undefined。 */
   getRemovedBranch(previewSlug: string): BranchTombstone | undefined {
     if (!previewSlug) return undefined;
@@ -4049,7 +5866,44 @@ export class StateService {
   // ── Data migrations ──
 
   getDataMigrations(): DataMigration[] {
+
     return this.state.dataMigrations || [];
+  }
+
+  getLegacyDataCases(projectId?: string) {
+    return (this.state.legacyDataCases || []).filter(row => !projectId || row.projectId === projectId);
+  }
+
+  resourceRetirementJournal(instance: string, kind: 'backups' | 'tasks' | 'images') {
+    const key = JSON.stringify([instance, kind]);
+    return {
+      read: () => structuredClone(this.state.resourceRetirementExecutions?.[key] || null),
+      write: (value: unknown) => {
+        this.state.resourceRetirementExecutions ??= {};
+        this.state.resourceRetirementExecutions[key] = structuredClone(value);
+        this.save(HINT_GLOBAL);
+      },
+    };
+  }
+
+  recordLegacyDataObservations(observations: Array<{ projectId: string; sourceIdentity: string; dataIdentity: string; marker: string; device: number; inode: number; birthtimeMs?: number }>, nowMs: number) {
+    this.state.legacyDataCases ??= [];
+    const date = new Date(nowMs).toISOString();
+    for (const observation of observations) {
+      const id = crypto.createHash('sha256').update(JSON.stringify([observation.sourceIdentity, observation.dataIdentity, observation.device, observation.inode, observation.birthtimeMs])).digest('hex').slice(0, 32);
+      const existing = this.state.legacyDataCases.find(row => row.id === id);
+      if (existing) existing.lastObservedAt = date;
+      else this.state.legacyDataCases.push({ ...observation, id, firstObservedAt: date, lastObservedAt: date, status: 'needs-owner' });
+    }
+    if (observations.length) this.save();
+  }
+
+  confirmLegacyDataCase(id: string, disposition: 'business-data' | 'ephemeral-test' | 'unknown', confirmedBy: string, note: string) {
+    const row = this.state.legacyDataCases?.find(item => item.id === id);
+    if (!row) throw new Error('数据对象不存在或身份已变化。');
+    // Confirmation cannot authorize data removal or assert a backup/migration has happened.
+    Object.assign(row, { disposition, confirmedBy, note, confirmedAt: new Date().toISOString(), status: disposition === 'ephemeral-test' ? 'backup-required' : 'protected' });
+    this.save();return row;
   }
 
   getDataMigration(id: string): DataMigration | undefined {
@@ -4076,6 +5930,10 @@ export class StateService {
 
   resourcePolicyKey(projectId: string, branchId: string, resourceId: string): string {
     return `${projectId}:${branchId}:${resourceId}`;
+  }
+
+  getAllResourceExternalAccess(): ResourceExternalAccessPolicy[] {
+    return Object.values(this.state.resourceExternalAccess || {});
   }
 
   getResourceExternalAccess(projectId: string, branchId: string, resourceId: string): ResourceExternalAccessPolicy | undefined {
@@ -4173,6 +6031,129 @@ export class StateService {
     return task;
   }
 
+  // ── Infrastructure maintenance jobs ──
+
+  private isCredentialRotationTerminal(service: InfraService): boolean {
+    const rotation = service.credentialRotation;
+    if (!rotation) return true;
+    return rotation.stage === 'verified_after_revoke'
+      || (rotation.stage === 'failed' && rotation.rollback === 'completed');
+  }
+
+  canStartInfraMaintenance(projectId: string, serviceId: string): boolean {
+    const service = this.getInfraServiceForProjectAndId(projectId, serviceId);
+    return Boolean(service && this.isCredentialRotationTerminal(service));
+  }
+
+  hasActiveCredentialRotation(runtime?: 'mongodb' | 'redis'): boolean {
+    return this.state.infraServices.some((service) => {
+      if (this.isCredentialRotationTerminal(service)) return false;
+      if (!runtime) return true;
+      const label = `${service.id} ${service.basePresetId || ''} ${service.dockerImage}`.toLowerCase();
+      return runtime === 'mongodb' ? label.includes('mongo') : label.includes('redis');
+    });
+  }
+
+  /**
+   * 把短作业意图先耐久落盘再允许它接触数据库。轮换一旦写入非终态记录，新作业即被拒绝，
+   * 与撤销前的 active-job 枚举合起来封住「刚检查完又启动新备份」的竞态窗口。
+   */
+  async beginInfraMaintenanceJob(input: {
+    projectId: string;
+    serviceId: string;
+    runtime: InfraMaintenanceJob['runtime'];
+    kind: InfraMaintenanceJobKind;
+  }): Promise<InfraMaintenanceJob> {
+    const service = this.getInfraServiceForProjectAndId(input.projectId, input.serviceId);
+    if (!service) throw new Error('infra_maintenance.service_not_found');
+    if (!this.isCredentialRotationTerminal(service)) {
+      throw new Error('infra_maintenance.credential_rotation_in_progress');
+    }
+    if (!this.state.infraMaintenanceJobs) this.state.infraMaintenanceJobs = [];
+    const job: InfraMaintenanceJob = {
+      id: `imj_${crypto.randomBytes(12).toString('hex')}`,
+      projectId: input.projectId,
+      serviceId: input.serviceId,
+      runtime: input.runtime,
+      kind: input.kind,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+      ownerGeneration: INFRA_MAINTENANCE_OWNER_GENERATION,
+    };
+    this.state.infraMaintenanceJobs.push(job);
+    this.state.infraMaintenanceJobs = [
+      ...this.state.infraMaintenanceJobs.filter((item) => item.status === 'active'),
+      ...this.state.infraMaintenanceJobs.filter((item) => item.status !== 'active').slice(-200),
+    ];
+    try {
+      this.save(HINT_GLOBAL);
+      await this.flush();
+    } catch (error) {
+      // 落盘失败时必须把这次预约摘掉再抛。它盖的是**当前**代次，而收割器只收上一代的
+      // 遗留（那是有意的：本代的 job 可能正在跑）。留着它，调用方又拿不到 handle 去
+      // finish，于是这个服务的凭据轮换到进程重启为止都进不来——一次写盘抖动换来一道
+      // 永久闸门。摘除本身也尽力落盘，但真正挡路的是内存态，闸读的就是它。
+      this.state.infraMaintenanceJobs = (this.state.infraMaintenanceJobs || [])
+        .filter((item) => item.id !== job.id);
+      try {
+        this.save(HINT_GLOBAL);
+        await this.flush();
+      } catch {
+        // 已经在失败路径上，落盘再失败也不改变结论：内存里那条已经摘掉了。
+      }
+      throw error;
+    }
+    return { ...job };
+  }
+
+  async finishInfraMaintenanceJob(id: string, status: 'completed' | 'failed'): Promise<void> {
+    const job = (this.state.infraMaintenanceJobs || []).find((item) => item.id === id);
+    if (!job || job.status !== 'active') return;
+    job.status = status;
+    job.finishedAt = new Date().toISOString();
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  /**
+   * 把上一个进程遗留的 active job 收敛成 failed，返回收敛条数。
+   *
+   * 这些 job 的执行体只活在进程内存里：CDS 在 begin 与 finish 之间重启，就再也没人
+   * 能调 finishInfraMaintenanceJob，而这条记录会永远出现在 listActive 里，让此后每一次
+   * 凭据轮换都撞 rotation.active_jobs_in_progress，且没有任何途径清掉。
+   * 同 ReleaseService.reconcileInterruptedReleases 的思路：守卫本身是「卡死」的放大器，
+   * 所以在读取点先收割一次再判定（concurrency-gate-discipline 五件套之「周期收敛」）。
+   */
+  reconcileOrphanedInfraMaintenanceJobs(): number {
+    const jobs = this.state.infraMaintenanceJobs || [];
+    let reconciled = 0;
+    for (const job of jobs) {
+      if (job.status !== 'active') continue;
+      if (job.ownerGeneration === INFRA_MAINTENANCE_OWNER_GENERATION) continue;
+      job.status = 'failed';
+      job.finishedAt = new Date().toISOString();
+      reconciled += 1;
+    }
+    if (reconciled > 0) this.save(HINT_GLOBAL);
+    return reconciled;
+  }
+
+  listActiveInfraMaintenanceJobs(filter: {
+    projectId?: string;
+    serviceId?: string;
+    runtime?: InfraMaintenanceJob['runtime'];
+  } = {}): InfraMaintenanceJob[] {
+    // 先收割遗留，再判定——否则一次重启就能把凭据轮换永久钉死。
+    this.reconcileOrphanedInfraMaintenanceJobs();
+    return (this.state.infraMaintenanceJobs || []).filter((job) => {
+      if (job.status !== 'active') return false;
+      if (filter.projectId && job.projectId !== filter.projectId) return false;
+      if (filter.serviceId && job.serviceId !== filter.serviceId) return false;
+      if (filter.runtime && job.runtime !== filter.runtime) return false;
+      return true;
+    }).map((job) => ({ ...job }));
+  }
+
   // ── CDS peers (remote CDS instances trusted for data migration) ──
 
   getCdsPeers(): CdsPeer[] {
@@ -4201,13 +6182,24 @@ export class StateService {
 
   /**
    * Resolve the Docker host IP for infra services.
-   * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default 172.17.0.1
+   * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default.
+   *
+   * 判定本体在 services/infra-publish.ts —— 它同时是**端口绑定地址**的来源。
+   * 两者必须是同一个值：注入给应用的连接串写的是这个地址，容器就得能在这个
+   * 地址上连到库。此前这份判定在本文件与 ReplicaSetService 各写一份，分裂
+   * 一旦漂移就是「连接串指向 A、端口绑在 B」——编译过、测试绿，只有真连库时才炸。
    */
   private resolveDockerHost(): string {
     // Docker host is a cross-project concern, read from the global scope.
-    return (this.state.customEnv?.[GLOBAL_ENV_SCOPE] || {})['CDS_DOCKER_HOST']
-      || process.env.CDS_DOCKER_HOST
-      || '172.17.0.1';
+    return resolveDockerBridgeHost({ globalEnv: this.state.customEnv?.[GLOBAL_ENV_SCOPE] });
+  }
+
+  /**
+   * infra 宿主端口该绑在哪几个地址上。ContainerService 通过适配器取这个值，
+   * 保证「绑定地址」与上面 `resolveDockerHost()` 注入的连接串同源。
+   */
+  getInfraPublishHosts(): string[] {
+    return resolveInfraPublishHosts({ bridgeHost: this.resolveDockerHost() });
   }
 
   /**
@@ -4219,6 +6211,25 @@ export class StateService {
    *
    * These can be referenced in app service environments as ${CDS_MONGODB_PORT} etc.
    */
+  // ── 数据台账（数据库隔离收敛 3，2026-09-03）──
+  // 唯一入口；调用方不直接碰 state.dbLedger。
+
+  getDbLedger(projectId: string): DbLedgerEntry[] {
+    return (this.state.dbLedger || []).filter((e) => e.projectId === projectId);
+  }
+
+  getDbLedgerEntry(id: string): DbLedgerEntry | undefined {
+    return (this.state.dbLedger || []).find((e) => e.id === id);
+  }
+
+  /** 按 id 新增或整条替换；不 save，调用方决定落盘时机 */
+  upsertDbLedgerEntry(entry: DbLedgerEntry): void {
+    if (!this.state.dbLedger) this.state.dbLedger = [];
+    const idx = this.state.dbLedger.findIndex((e) => e.id === entry.id);
+    if (idx >= 0) this.state.dbLedger[idx] = entry;
+    else this.state.dbLedger.push(entry);
+  }
+
   // ── ConfigSnapshot / DestructiveOperationLog (2026-04-22) ──
   //
   // See types.ts ConfigSnapshot + DestructiveOperationLog docs. These helpers
@@ -4256,10 +6267,12 @@ export class StateService {
       if (params.projectId && (branch.projectId || 'default') !== params.projectId) continue;
       const hasOverrides = branch.profileOverrides && Object.keys(branch.profileOverrides).length > 0;
       const hasExtras = branch.extraProfiles && branch.extraProfiles.length > 0;
-      if (!hasOverrides && !hasExtras && !branch.derivedFromBranchId) continue;
+      const hasExclusions = !!branch.excludedProjectProfileIds?.length;
+      if (!hasOverrides && !hasExtras && !hasExclusions && !branch.derivedFromBranchId) continue;
       branchConfigs[branchId] = JSON.parse(JSON.stringify({
         ...(hasOverrides ? { profileOverrides: branch.profileOverrides } : {}),
         ...(hasExtras ? { extraProfiles: branch.extraProfiles } : {}),
+        ...(hasExclusions ? { excludedProjectProfileIds: branch.excludedProjectProfileIds } : {}),
         ...(branch.derivedFromBranchId ? {
           derivedFromBranchId: branch.derivedFromBranchId,
           derivedFromBranchName: branch.derivedFromBranchName,
@@ -4302,9 +6315,82 @@ export class StateService {
    * 回滚：从快照恢复四件套。不会触碰 branches / logs / projects / runtime 字段。
    * 回滚前先自拍一份当前状态（trigger='pre-destructive'），以防回滚本身也是误操作。
    */
+  /** A config rollback cannot erase ownership metadata established by P.
+   * This is a pure preflight before even the pre-rollback backup snapshot.
+   */
+  private assertStorageSnapshotRollbackAllowed(target: ConfigSnapshot): void {
+    // A global snapshot cannot silently reinstate a deliberately omitted legacy service.
+    for (const branch of Object.values(this.state.branches)) {
+      if (target.projectId && branch.projectId !== target.projectId) continue;
+      const before = branch.excludedProjectProfileIds || [];
+      const after = target.payload.branchConfigs?.[branch.id]?.excludedProjectProfileIds || [];
+      if (before.length || after.length) {
+        const snap = target.payload.branchConfigs?.[branch.id];
+        if (JSON.stringify(before) !== JSON.stringify(after)
+          || JSON.stringify(branch.profileOverrides || {}) !== JSON.stringify(snap?.profileOverrides || {})
+          || JSON.stringify(branch.extraProfiles || []) !== JSON.stringify(snap?.extraProfiles || [])
+          || JSON.stringify(this.getBuildProfilesForProject(branch.projectId)) !== JSON.stringify(target.payload.buildProfiles.filter(p => p.projectId === branch.projectId))) {
+          throw new Error('请先沿本分支隔离入口停止并对账，再恢复不同的服务配置');
+        }
+      }
+    }
+
+    const refuse = () => { throw new Error('storage_retained_service_delete_refused: 回滚会覆盖已分配或待确认存储的完整配置，请保留原配置并使用停止'); };
+    const same = (left: unknown, right: unknown) => storageProvisionDigest(left) === storageProvisionDigest(right);
+    const infraTargets = new Map<string, {projectId: string; id: string}>();
+    const addInfra = (projectId: string, id: string) => infraTargets.set(JSON.stringify([projectId,id]), {projectId,id});
+    // Existing owner-bound declarations also retain identity without a P journal.
+    // Match ordinary deletion's denominator before an older snapshot replaces it.
+    for (const service of this.state.infraServices)
+      if (service.volumes?.some(volume=>volume.storage !== undefined)) addInfra(service.projectId || 'default',service.id);
+    for (const row of Object.values(this.state.storageBirths || {}))
+      if (row.binding.scope === 'project-shared') addInfra(row.binding.projectId,row.binding.serviceId);
+    for (const row of [...this.storageProvisionDrafts.values(),...Object.values(this.state.storageProvisionPublications || {})])
+      addInfra(row.service.projectId || 'default',row.service.id);
+    for (const {projectId,id} of infraTargets.values()) {
+      const select = (rows: InfraService[]) => rows.filter(row => (row.projectId || 'default') === projectId && row.id === id);
+      // A private held service remains private: an old snapshot cannot publish it.
+      if (!same(select(this.state.infraServices),select(target.payload.infraServices))) refuse();
+      if (!same(this.state.customEnv?.[projectId],target.payload.customEnv?.[projectId])
+        || !same(this.state.customEnv?.[GLOBAL_ENV_SCOPE],target.payload.customEnv?.[GLOBAL_ENV_SCOPE])) refuse();
+    }
+    const profileProjects = new Set<string>([
+      ...this.state.buildProfiles.filter(profile=>profile.cacheMounts?.some(mount=>mount.storage !== undefined)).map(profile=>profile.projectId || 'default'),
+      ...Object.values(this.state.branches).filter(branch=>[
+        ...Object.values(branch.profileOverrides || {}),...(branch.extraProfiles || []),
+      ].some(profile=>(profile as Partial<BuildProfile>).cacheMounts?.some(mount=>mount.storage !== undefined))).map(branch=>branch.projectId || 'default'),
+      ...Object.values(this.state.storageBirths || {}).filter(row=>row.binding.scope==='branch-private').map(row=>row.binding.projectId),
+      ...this.profileStorageDrafts.values(),
+      ...Object.values(this.state.profileStoragePublications || {}).map(row=>row.binding),
+      ...Object.values(this.state.profileStorageBindings || {}),
+    ].map(row=>typeof row==='string'?row:row.target.projectId));
+    const projectRows = <T extends {projectId?: string}>(rows: T[], projectId: string) => rows.filter(row=>(row.projectId || 'default')===projectId);
+    for (const projectId of profileProjects) {
+      // Preserve this project's declarations and dependency/env configuration;
+      // another project's unrelated rollback remains available.
+      if (!same(projectRows(this.state.buildProfiles,projectId),projectRows(target.payload.buildProfiles,projectId))
+        || !same(projectRows(this.state.infraServices,projectId),projectRows(target.payload.infraServices,projectId))
+        || !same(projectRows(this.state.routingRules,projectId),projectRows(target.payload.routingRules,projectId))
+        || !same(this.state.customEnv?.[projectId],target.payload.customEnv?.[projectId])
+        || !same(this.state.customEnv?.[GLOBAL_ENV_SCOPE],target.payload.customEnv?.[GLOBAL_ENV_SCOPE])) refuse();
+      if (target.payload.branchConfigs && (!target.projectId || target.projectId === projectId)) {
+        for (const branch of Object.values(this.state.branches).filter(row=>(row.projectId || 'default')===projectId)) {
+          const pick = (row: typeof branch | NonNullable<ConfigSnapshot['payload']['branchConfigs']>[string]) => ({
+            profileOverrides: row.profileOverrides && Object.keys(row.profileOverrides).length ? row.profileOverrides : undefined,
+            extraProfiles: row.extraProfiles?.length ? row.extraProfiles : undefined,
+            excludedProjectProfileIds: row.excludedProjectProfileIds?.length ? row.excludedProjectProfileIds : undefined,
+            ...(row.derivedFromBranchId ? {derivedFromBranchId:row.derivedFromBranchId,derivedFromBranchName:row.derivedFromBranchName,derivedAt:row.derivedAt} : {}),
+          });
+          if (!same(pick(branch),pick(target.payload.branchConfigs[branch.id] || {}))) refuse();
+        }
+      }
+    }
+  }
+
   rollbackToConfigSnapshot(id: string, triggeredBy?: string): ConfigSnapshot {
     const target = this.getConfigSnapshot(id);
     if (!target) throw new Error(`ConfigSnapshot not found: ${id}`);
+    this.assertStorageSnapshotRollbackAllowed(target);
 
     this.createConfigSnapshot({
       trigger: 'pre-destructive',
@@ -4328,6 +6414,8 @@ export class StateService {
         if (snap) {
           if (snap.profileOverrides) branch.profileOverrides = JSON.parse(JSON.stringify(snap.profileOverrides));
           else delete branch.profileOverrides;
+          if (snap.excludedProjectProfileIds?.length) branch.excludedProjectProfileIds = [...snap.excludedProjectProfileIds];
+          else delete branch.excludedProjectProfileIds;
           if (snap.extraProfiles) branch.extraProfiles = JSON.parse(JSON.stringify(snap.extraProfiles));
           else delete branch.extraProfiles;
           if (snap.derivedFromBranchId) {
@@ -4343,6 +6431,7 @@ export class StateService {
           // 拍照时该分支没有任何分支层配置 → 恢复为无配置
           delete branch.profileOverrides;
           delete branch.extraProfiles;
+          delete branch.excludedProjectProfileIds;
           delete branch.derivedFromBranchId;
           delete branch.derivedFromBranchName;
           delete branch.derivedAt;
@@ -4417,6 +6506,33 @@ export class StateService {
       // Per-service host (allows future per-service host override)
       const hostKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_HOST`;
       result[hostKey] = dockerHost;
+      // 只发地址不发凭据，服务一旦开了认证，消费方容器启动即崩（NOAUTH）——
+      // 而 CDS 自己存着那对账号口令。判据与已知边界见 infra-credential-env.ts。
+      //
+      // svc.env 存的是**未展开的模板**（compose 导入的服务里 MYSQL_USER 常常就是
+      // 字面的 `${CDS_MYSQL_USER}`）。容器启动、数据工作台、数据操作三处都是先解析
+      // 再用，这里必须走同一套，否则会把占位符当口令发出去。解析器对解不出来的模板
+      // 返回空字符串，正好落到派生函数「没口令就什么都不发」那条路上。
+      const resolvedSvcEnv = resolveEnvTemplates(
+        svc.env || {},
+        this.getCustomEnv(svc.projectId || 'default'),
+      );
+      // 启动参数也要一起送进去，并且同样先解析模板：redis 这类服务「env 里有口令」
+      // 不等于「服务端在校验它」，判据要看命令行上有没有 --requirepass / --aclfile。
+      // 与认证门禁同一口径；证不出来就不发凭据，免得把本来能裸连的消费方弄坏。
+      const svcCustomEnv = this.getCustomEnv(svc.projectId || 'default');
+      Object.assign(
+        result,
+        deriveInfraCredentialEnv(
+          svc.id,
+          resolvedSvcEnv,
+          { host: dockerHost, port: svc.hostPort },
+          {
+            command: resolveCommandTemplate(svc.command, svcCustomEnv),
+            entrypoint: resolveCommandTemplate(svc.entrypoint, svcCustomEnv),
+          },
+        ),
+      );
     }
     return result;
   }
@@ -4467,6 +6583,36 @@ export class StateService {
     return (this.state.acceptanceReports || []).find((r) => r.id === id);
   }
 
+  getCodeReviewSettings(): import('./code-review-settings.js').CodeReviewSettings | undefined {
+    return this.state.codeReviewSettings ? structuredClone(this.state.codeReviewSettings) : undefined;
+  }
+
+  async setCodeReviewSettings(settings: import('./code-review-settings.js').CodeReviewSettings): Promise<void> {
+    this.state.codeReviewSettings = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listCodeReviewTasks(projectId?: string): import('../shared/code-review.js').CodeReviewTask[] {
+    return structuredClone((this.state.codeReviewTasks || [])
+      .filter((task) => !projectId || task.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  }
+
+  getCodeReviewTask(id: string): import('../shared/code-review.js').CodeReviewTask | undefined {
+    const task = (this.state.codeReviewTasks || []).find((row) => row.id === id);
+    return task ? structuredClone(task) : undefined;
+  }
+
+  async putCodeReviewTask(task: import('../shared/code-review.js').CodeReviewTask): Promise<void> {
+    const rows = this.state.codeReviewTasks ||= [];
+    const index = rows.findIndex((row) => row.id === task.id);
+    if (index < 0) rows.push(structuredClone(task));
+    else rows[index] = structuredClone(task);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
   /** Read the raw content of a report from disk, or undefined if missing. */
   readAcceptanceReportContent(id: string): string | undefined {
     const meta = this.getAcceptanceReport(id);
@@ -4484,14 +6630,73 @@ export class StateService {
    * a bundle reading many report bodies; doing those reads synchronously stalls
    * the single-process CDS server during a MAP pull (Cursor Bugbot High).
    */
-  async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
+  async readAcceptanceReportContentAsync(id: string, options: { requireObjectStorage?: boolean } = {}): Promise<string | undefined> {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return undefined;
+    // 任务要求持久归档时必须核实权威对象，不能用仍在本地的缓存掩盖对象丢失。
+    if (options.requireObjectStorage) {
+      if (meta.storage !== 'object' || !meta.objectKey) return undefined;
+      return (await this.reportObjects.get(meta.objectKey)) ?? undefined;
+    }
+    // 本地盘现在只是读缓存：命中就用，未命中不代表正文没了。
     try {
       return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
     } catch {
-      return undefined;
+      // 落到对象存储——这才是正文的权威地址。
     }
+    if (!meta.objectKey) return undefined;
+    const content = await this.reportObjects.get(meta.objectKey);
+    if (content == null) return undefined;
+    /*
+     * 回填缓存：同一份报告常被连续读（列表预览 → 详情 → 导出），
+     * 但回填失败绝不能影响本次返回，磁盘满的时候正文照样要读得出来。
+     *
+     * 写法与写入路径同一套「临时文件 + 原子改名」：直接 writeFile 会先截断目标，
+     * 写到一半失败就留下半份文件；本次请求返回的是对象存储取回的正确正文，**下一次**
+     * 请求却会本地优先命中那半份，从此一直端出残缺正文，而且不报错
+     *（Codex review 抓到）。失败时连临时文件带坏缓存一起清掉。
+     */
+    const cachePath = this.reportFilePath(meta);
+    const tmpPath = `${cachePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+      await fs.promises.writeFile(tmpPath, content, 'utf-8');
+      await fs.promises.rename(tmpPath, cachePath);
+    } catch {
+      await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+      await fs.promises.rm(cachePath, { force: true, recursive: true }).catch(() => {});
+    }
+    return content;
+  }
+
+  /**
+   * 正文当前处于什么状态——供 API 给出可读原因，而不是甩一个裸 404。
+   *
+   * 三种「读不到」的成因必须分开说：没配对象存储导致正文只在本地（会随容器蒸发）、
+   * 历史报告本来就没进对象存储、以及对象存储里也确实没有。混成一句
+   * 「HTTP 404」正是用户看到的那一屏。
+   */
+  describeAcceptanceReportStorage(meta: AcceptanceReportMeta, opts: { bodyMissing?: boolean } = {}): {
+    durable: boolean;
+    reason: string | null;
+  } {
+    if (meta.objectKey) {
+      // 第四种成因：元数据说它在对象存储里，可是取不回来——桶里没有、凭据换了、
+      // 或者对象存储本身不可达。它与「历史报告没进过对象存储」的下一步动作完全不同
+      // （一个是去查桶和网络，一个是无法挽回只能重跑），压成同一句「正文已丢失」
+      // 等于把最需要原因的那一屏的原因扔了。
+      if (opts.bodyMissing) {
+        return {
+          durable: true,
+          reason: `正文登记在对象存储的 ${meta.objectKey}，但这次取不回来：桶里没有该对象，或凭据/网络不通。这不是历史数据缺失，去查对象存储配置与连通性`,
+        };
+      }
+      return { durable: true, reason: null };
+    }
+    if (meta.storage === 'local') {
+      return { durable: false, reason: '归档时未配置对象存储，正文只写在容器本地盘，容器重建后会丢失' };
+    }
+    return { durable: false, reason: '本报告归档于正文入对象存储之前，正文可能已随容器重建丢失' };
   }
 
   // ── Report inline-image assets (content-addressed, 2026-06-26) ──
@@ -4523,6 +6728,40 @@ export class StateService {
     if (fs.existsSync(file)) return;
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, data);
+  }
+
+  /** Shared canonical image normalization for ingestion and immutable task binding. */
+  async normalizeReportInlineImages(content: string, base: string): Promise<{ content: string; extracted: number }> {
+    const DATA_IMG_RE = /data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=\s]+)/g;
+    const MIME_EXT: Record<string, string> = {
+      png: 'png', jpeg: 'jpg', jpg: 'jpg', gif: 'gif', webp: 'webp', 'svg+xml': 'svg',
+    };
+    let extracted = 0;
+    // replace 回调不能 await——先同步改写正文并收集待写资产，最后统一异步落盘
+    //（2026-07-09：截图资产原来 writeFileSync，MB 级整图会阻塞单进程服务器）。
+    const pendingWrites = new Map<string, Buffer>();
+    const out = content.replace(DATA_IMG_RE, (whole: string, mime: string, b64: string) => {
+      const clean = b64.replace(/\s+/g, '');
+      if (!clean) return whole;
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(clean, 'base64');
+      } catch {
+        return whole;
+      }
+      if (!buf.length) return whole;
+      const ext = MIME_EXT[mime.toLowerCase()] || 'png';
+      const hash = crypto.createHash('sha256').update(buf).digest('hex');
+      const name = `${hash}.${ext}`;
+      pendingWrites.set(name, buf); // 内容寻址，同名去重
+      extracted += 1;
+      const rel = `/api/reports/assets/${name}`;
+      return base ? `${base}${rel}` : rel;
+    });
+    await Promise.all(
+      [...pendingWrites.entries()].map(([name, buf]) => this.writeReportAssetAsync(name, buf)),
+    );
+    return { content: out, extracted };
   }
 
   /**
@@ -4583,6 +6822,11 @@ export class StateService {
    * callers cannot collide. Returns the stored metadata.
    */
   createAcceptanceReport(input: {
+    classification?: import('../shared/notification-templates.js').ReportClassification;
+    monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
+    reportType?: 'acceptance' | 'code-review';
+    reviewTaskId?: string;
+    scheduledJobRunId?: string;
     title: string;
     format: 'html' | 'md';
     content: string;
@@ -4597,14 +6841,24 @@ export class StateService {
     prNumber?: number | null;
     deployMode?: string | null;
     sourceId?: string | null;
+    inlineAssetBaseUrl?: string;
     sourcePath?: string | null;
     contentHash?: string | null;
     publishedAt?: string | null;
     createdBy?: string;
+    /**
+     * 只给种子数据用：把归档时刻放到过去，好让演示数据有真实的时间分布。
+     * 业务路径一律不要传它——归档时刻由系统定，让调用方自报会让台账可被伪造。
+     */
+    createdAt?: string;
   }): AcceptanceReportMeta {
     const meta = this.buildAcceptanceReportMeta(input);
     fs.mkdirSync(this.getReportsBase(), { recursive: true });
     fs.writeFileSync(this.reportFilePath(meta), input.content, 'utf-8');
+    // 同步路径只剩首启种子数据在用（对象存储是异步的，塞不进同步签名）。
+    // 它写的就是本地盘，那就如实标 local——宁可标成「会丢」，也不许标成持久而骗人。
+    meta.storage = 'local';
+    meta.objectKey = null;
     this.state.acceptanceReports!.push(meta);
     this.save();
     return meta;
@@ -4618,11 +6872,62 @@ export class StateService {
     input: Parameters<StateService['createAcceptanceReport']>[0],
   ): Promise<AcceptanceReportMeta> {
     const meta = this.buildAcceptanceReportMeta(input);
-    await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
-    await fs.promises.writeFile(this.reportFilePath(meta), input.content, 'utf-8');
+    // 顺序是有讲究的：先把正文写进对象存储，成功了才落元数据。
+    // 反过来（先落元数据后传正文）一旦上传失败，就又造出一条点不开的幽灵记录——
+    // 正是这次要根除的形状。上传抛错就整个归档失败，让调用方知道没存上。
+    await this.persistAcceptanceReportContent(meta, input.content);
     this.state.acceptanceReports!.push(meta);
     this.save();
     return meta;
+  }
+
+  /**
+   * 把正文写到它该在的地方，并把「写到哪了」如实记进元数据。
+   *
+   * 配了对象存储 → 正文进对象存储（权威），本地盘写一份读缓存（尽力而为）。
+   * 没配         → 只能写本地盘，且必须标 storage='local'，让上层能告诉用户
+   *                「这份正文重建就没」，而不是等它变成 404 才发现。
+   */
+  private async persistAcceptanceReportContent(meta: AcceptanceReportMeta, content: string): Promise<void> {
+    const objectKey = await this.reportObjects.put(meta, content);
+    /*
+     * 配了对象存储，就不许再退回本地。
+     *
+     * put 返回 null 只有两种成因：没配（那是有意只用本地），或者正文为空被拒收。
+     * 后者在配了对象存储的实例上会一路走成「objectKey 被清掉 + storage='local'」——
+     * 元数据完好、正文只剩一个空的本地文件，重建即成幽灵，而接口回 200。
+     * 这正是本轮要根除的形状，所以在这里当场拒绝，而不是如实标个 local 就算交代
+     *（Codex review 抓到）。路由层也拦了一道空正文，这里是纵深。
+     */
+    if (!objectKey && this.reportObjects.isConfigured()) {
+      throw new Error(
+        '对象存储已配置，但这份正文没有被收下（多半是正文为空）。'
+        + '拒绝退回本地盘：那会留下一条重建即打不开的记录。',
+      );
+    }
+    meta.objectKey = objectKey;
+    meta.storage = objectKey ? 'object' : 'local';
+    const cachePath = this.reportFilePath(meta);
+    const tmpPath = `${cachePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+      // 先写临时文件再原子改名：直接覆盖的话，写到一半失败就把半份正文留成了缓存，
+      // 而读路径本地优先，这半份会被一直当成正文端出去。
+      await fs.promises.writeFile(tmpPath, content, 'utf-8');
+      await fs.promises.rename(tmpPath, cachePath);
+    } catch (err) {
+      // 对象存储已经收下了，本地缓存写不进去不该让归档失败。
+      // 但没配对象存储时本地盘是唯一副本，写不进去就是真失败，必须抛。
+      await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+      if (!objectKey) throw err;
+      // 关键：**旧缓存必须删掉**。编辑一份已归档的报告时，对象存储收下了新正文、
+      // 本地缓存没更新成功，而 readAcceptanceReportContentAsync 永远本地优先——
+      // 留着它等于「改成功了，但页面上永远显示改之前那一版」，而且不报错
+      // （Codex review 抓到）。删掉之后下一次读会回源对象存储并回填。
+      // recursive：这个路径上无论躺着什么（半份文件、甚至一个同名目录）都必须清掉，
+      // 留下任何一种都会让下一次读命中它而不是回源。
+      await fs.promises.rm(cachePath, { force: true, recursive: true }).catch(() => {});
+    }
   }
 
   /** create 的元数据构建（sync/async 变体共享，无 IO）。 */
@@ -4638,6 +6943,11 @@ export class StateService {
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     return {
       id: crypto.randomUUID().replace(/-/g, ''),
+      classification: input.classification,
+      monitorEvent: input.monitorEvent,
+      reportType: input.reportType,
+      reviewTaskId: input.reviewTaskId,
+      scheduledJobRunId: input.scheduledJobRunId,
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,
@@ -4652,12 +6962,13 @@ export class StateService {
       prNumber: input.prNumber ?? null,
       deployMode: input.deployMode ?? null,
       sourceId: input.sourceId ?? null,
+      inlineAssetBaseUrl: input.inlineAssetBaseUrl,
       sourcePath: input.sourcePath ?? null,
       contentHash: input.contentHash ?? null,
       publishedAt: input.publishedAt ?? null,
       createdBy: input.createdBy,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.createdAt ?? now,
     };
   }
 
@@ -4669,6 +6980,8 @@ export class StateService {
   updateAcceptanceReport(
     id: string,
     updates: {
+      classification?: import('../shared/notification-templates.js').ReportClassification;
+      monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
       title?: string;
       format?: 'html' | 'md';
       content?: string;
@@ -4680,6 +6993,7 @@ export class StateService {
       prNumber?: number | null;
       deployMode?: string | null;
       sourceId?: string | null;
+      inlineAssetBaseUrl?: string;
       sourcePath?: string | null;
       contentHash?: string | null;
       publishedAt?: string | null;
@@ -4695,8 +7009,15 @@ export class StateService {
       formatChanged = true;
     }
     if (typeof updates.content === 'string') {
+      // 正文已在对象存储时，同步路径无法把新正文传上去：本地缓存改了、对象没改，
+      // 缓存一失效就把**旧正文**读回来当成当前版本——比报错难查得多。所以直接拒绝，
+      // 让调用方走 updateAcceptanceReportAsync（HTTP 路径本来就用的是异步版）。
+      if (meta.objectKey) {
+        throw new Error('该报告正文存于对象存储，请改用 updateAcceptanceReportAsync 更新正文');
+      }
       fs.mkdirSync(this.getReportsBase(), { recursive: true });
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
+      meta.storage = 'local';
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath && fs.existsSync(previousPath)) {
@@ -4725,6 +7046,34 @@ export class StateService {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
     const previousPath = this.reportFilePath(meta);
+    /*
+     * meta 就是 state 里那个**活对象**。下面任何一步抛出，路由会回 500 且不 save()，
+     * 但内存里的它已经被改过了：同一个进程里后续的列表与详情会读到那个被拒绝的标题；
+     * 格式更糟，reportFilePath 跟着扩展名走，本地缓存会去找另一个扩展名的文件、
+     * 或者拿旧对象配上新 MIME 端出去（Codex review 抓到）。
+     * 所以先拍一张快照，IO 段失败就整组回滚，让内存回到这次 PATCH 之前。
+     */
+    const before = {
+      title: meta.title, format: meta.format,
+      objectKey: meta.objectKey, storage: meta.storage, sizeBytes: meta.sizeBytes,
+    };
+    try {
+      await this.rewriteAcceptanceReportPayloadAsync(meta, updates, previousPath);
+    } catch (err) {
+      Object.assign(meta, before);
+      throw err;
+    }
+    this.applyAcceptanceReportFieldUpdates(meta, updates);
+    this.save();
+    return meta;
+  }
+
+  /** 异步更新的 IO 段：改标题/格式、重写正文、清理旧对象与旧缓存。抛出即由调用方回滚。 */
+  private async rewriteAcceptanceReportPayloadAsync(
+    meta: AcceptanceReportMeta,
+    updates: Parameters<StateService['updateAcceptanceReport']>[1],
+    previousPath: string,
+  ): Promise<void> {
     if (typeof updates.title === 'string') meta.title = updates.title;
     let formatChanged = false;
     if (updates.format !== undefined && updates.format !== meta.format) {
@@ -4732,14 +7081,30 @@ export class StateService {
       formatChanged = true;
     }
     if (typeof updates.content === 'string') {
-      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
-      await fs.promises.writeFile(this.reportFilePath(meta), updates.content, 'utf-8');
+      // 与新建同一条路：正文进对象存储、本地盘当缓存、如实标记落在哪一层。
+      const previousObjectKey = meta.objectKey || null;
+      await this.persistAcceptanceReportContent(meta, updates.content);
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+      /*
+       * 改了格式 → 对象键的扩展名跟着变，旧对象就没人认领了。但这里**不删**它。
+       *
+       * 删要成立得有一个前提：新的 objectKey 已经持久化。而 save() 是写后即返回的
+       * （Mongo 后端更是排队写），删完之后进程要是退了或者那次写盘失败，持久的元数据
+       * 仍然指着刚被删掉的旧键——报告重启即不可读，而新对象成了没人认领的孤儿。
+       * 一个删不掉的孤儿只占空间，一份读不出来的报告是数据丢失，两者不对等
+       *（Codex review 抓到）。
+       *
+       * 所以旧版本留着，等一次真正的回收（判据与待办见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md）。
+       */
+      void previousObjectKey;
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath) {
         try { await fs.promises.unlink(previousPath); } catch { /* best-effort cleanup of old extension */ }
       }
     } else if (formatChanged) {
+      // 只改格式不改正文时**不动 objectKey**：正文一律按 meta.objectKey 读，
+      // 键里的扩展名只是可读性，与定位无关。为了对齐扩展名去搬一次对象，
+      // 等于用一次「下载+上传+删除」换零收益，还多了一个中途失败丢正文的窗口。
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath) {
         // 对齐同步版守卫：仅当源存在且目标不存在才 rename
@@ -4752,9 +7117,6 @@ export class StateService {
         }
       }
     }
-    this.applyAcceptanceReportFieldUpdates(meta, updates);
-    this.save();
-    return meta;
   }
 
   /** update 的非 IO 字段应用（sync/async 变体共享）。 */
@@ -4762,6 +7124,8 @@ export class StateService {
     meta: AcceptanceReportMeta,
     updates: Parameters<StateService['updateAcceptanceReport']>[1],
   ): void {
+    if (updates.classification !== undefined) meta.classification = updates.classification;
+    if (updates.monitorEvent !== undefined) meta.monitorEvent = updates.monitorEvent;
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
     if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;
@@ -4770,6 +7134,7 @@ export class StateService {
     if (updates.prNumber !== undefined) meta.prNumber = updates.prNumber;
     if (updates.deployMode !== undefined) meta.deployMode = updates.deployMode;
     if (updates.sourceId !== undefined) meta.sourceId = updates.sourceId;
+    if (updates.inlineAssetBaseUrl !== undefined) meta.inlineAssetBaseUrl = updates.inlineAssetBaseUrl;
     if (updates.sourcePath !== undefined) meta.sourcePath = updates.sourcePath;
     if (updates.contentHash !== undefined) meta.contentHash = updates.contentHash;
     if (updates.publishedAt !== undefined) meta.publishedAt = updates.publishedAt;
@@ -4801,6 +7166,91 @@ export class StateService {
       this.save();
     }
     return meta;
+  }
+
+  /** 项目登记的自检端点清单（监控自发现的「插口」）。 */
+  listMonitorEndpoints(projectId: string): string[] {
+    return [...(this.getProject(projectId)?.monitorEndpoints || [])];
+  }
+
+  /**
+   * 插上一个自检端点。幂等：同一个地址重复插不产生第二条。
+   * 返回 false 表示项目不存在。
+   */
+  addMonitorEndpoint(projectId: string, url: string): boolean {
+    if (!this.state.projects) return false;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return false;
+    const current = this.state.projects[idx];
+    const list = [...(current.monitorEndpoints || [])];
+    if (list.includes(url)) return true;
+    list.push(url);
+    this.state.projects[idx] = { ...current, monitorEndpoints: list, updatedAt: new Date().toISOString() };
+    this.save();
+    return true;
+  }
+
+  /**
+   * 拔掉一个自检端点。它名下的自发现监控由下一轮对账清理——
+   * 这里不顺手删：删监控是对账那一处的职责，两处都能删就会有两套判据。
+   */
+  removeMonitorEndpoint(projectId: string, url: string): boolean {
+    if (!this.state.projects) return false;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return false;
+    const current = this.state.projects[idx];
+    const list = (current.monitorEndpoints || []).filter((u) => u !== url);
+    this.state.projects[idx] = { ...current, monitorEndpoints: list, updatedAt: new Date().toISOString() };
+    this.save();
+    return true;
+  }
+
+  /**
+   * 开一个项目的公开状态页：生成（或幂等返回已有的）不可枚举 token。
+   * 与报告分享同款，不重复 mint——重复 mint 会让上一条已经发出去的链接静默失效。
+   */
+  openProjectStatusPage(projectId: string): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    if (current.statusPageToken) return current;
+    const next: Project = {
+      ...current,
+      statusPageToken: crypto.randomBytes(16).toString('hex'),
+      statusPageOpenedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /** 关掉公开状态页：token 置空，已经发出去的链接当即 404。 */
+  closeProjectStatusPage(projectId: string): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    if (!current.statusPageToken) return current;
+    const next: Project = {
+      ...current,
+      statusPageToken: null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /**
+   * 按公开状态页 token 反查项目（匿名 `/api/public/status/<token>` 用）。
+   * 空串一律不命中——否则一个没带 token 的请求会匹配上所有没开公开页的项目。
+   */
+  getProjectByStatusPageToken(token: string): Project | undefined {
+    const t = (token || '').trim();
+    if (!t) return undefined;
+    return (this.state.projects || []).find((p) => p.statusPageToken === t);
   }
 
   /** E6：按分享 token 反查报告（公开 `/r/<token>` 路由用）。空/未命中返回 undefined。 */
@@ -4904,8 +7354,27 @@ export class StateService {
     } catch {
       // Content file may already be gone — metadata removal still proceeds.
     }
+    const orphanKey = meta.objectKey || null;
     this.state.acceptanceReports = all.filter((r) => r.id !== id);
     this.save();
+    if (orphanKey) {
+      /*
+       * 顺序是有讲究的：**先删元数据，再删对象**，而且删对象不阻塞。
+       *
+       * 反过来（先删对象）有一个窗口：save() 是写后即返回的（Mongo 后端排队写），
+       * 对象已经没了而那次写盘失败或者进程退出，重启后元数据还在、还指着一个
+       * 被删掉的键——这条报告从此永远打不开。反之，先删元数据就算删对象失败，
+       * 也只是在桶里留一个没人引用的孤儿（占空间，不是数据丢失）。
+       * 两者不对等，所以宁可留孤儿（Codex review 抓到）。
+       *
+       * 这和「改格式时不删旧对象」是同一条判断的两面：任何删除都排在
+       * 元数据落定之后，桶里的孤儿统一等一次回收（判据见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md）。
+       */
+      void this.reportObjects.remove(orphanKey).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[reports] 对象存储正文删除失败，已留下孤儿对象', { objectKey: orphanKey, error: String(err) });
+      });
+    }
     return true;
   }
 

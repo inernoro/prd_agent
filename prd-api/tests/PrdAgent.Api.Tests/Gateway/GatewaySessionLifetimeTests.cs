@@ -9,7 +9,7 @@ using Xunit;
 namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>
-/// 网关控制台登录有效期：默认 7 天 + 用后自动续期（滑动窗口），
+/// 网关控制台登录有效期：默认一个月 + 用后自动续期（滑动窗口），
 /// 且显式缩短的会话（MAP SSO 这类联邦短会话）不得被悄悄拉长。
 /// </summary>
 public sealed class GatewaySessionLifetimeTests
@@ -54,13 +54,21 @@ public sealed class GatewaySessionLifetimeTests
         }, out _);
     }
 
+    /// <summary>
+    /// 默认会话时长跟着生产常量走，不写死一个字面量：用户要的是「一个月」，
+    /// 此前这里钉着 7 天，改成 30 天之后这条用例反过来锁住了旧行为
+    /// （predicate-and-wiring-discipline 形状 4a：测试逐字要求那个已被推翻的实现存在）。
+    /// 读常量仍然能红——把生产默认值改小，下面的区间立刻不成立。
+    /// </summary>
     [Fact]
-    public void Issue_DefaultsToSevenDayLifetime()
+    public void Issue_DefaultsToConfiguredLifetime()
     {
         var jwt = new GwJwt(Secret, Issuer);
         var (_, expiresAt) = jwt.Issue(BuildUser(), BuildTenant(), BuildMembership());
 
-        (expiresAt - DateTime.UtcNow).TotalDays.ShouldBeInRange(6.9, 7.01);
+        var expected = GwJwt.DefaultLifetimeDays;
+        expected.ShouldBeGreaterThan(7, "用户明确要求「一个月」，默认会话不得退回周级");
+        (expiresAt - DateTime.UtcNow).TotalDays.ShouldBeInRange(expected - 0.1, expected + 0.01);
     }
 
     [Fact]
@@ -83,7 +91,9 @@ public sealed class GatewaySessionLifetimeTests
         var renewed = jwt.TryRenew(principal, DateTime.UtcNow.AddDays(3));
 
         renewed.ShouldNotBeNull();
-        (renewed!.Value.ExpiresAt - DateTime.UtcNow.AddDays(3)).TotalDays.ShouldBeInRange(6.9, 7.01);
+        // 续期是「重新计时」，所以换发出来的仍是一整个默认时长，而不是把旧的补齐。
+        (renewed!.Value.ExpiresAt - DateTime.UtcNow.AddDays(3)).TotalDays
+            .ShouldBeInRange(GwJwt.DefaultLifetimeDays - 0.1, GwJwt.DefaultLifetimeDays + 0.01);
 
         var renewedPrincipal = ReadPrincipal(jwt, renewed.Value.Token);
         renewedPrincipal.FindFirst(ClaimTypes.NameIdentifier)?.Value.ShouldBe("user-1");
@@ -131,5 +141,54 @@ public sealed class GatewaySessionLifetimeTests
         var (token, _) = jwt.Issue(BuildUser(), BuildTenant(), BuildMembership());
 
         jwt.TryRenew(ReadPrincipal(jwt, token), DateTime.UtcNow.AddHours(13)).ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void Issue_WithAbsoluteDeadline_IsNotLiftedByTheFiveMinuteFloor()
+    {
+        // 这条钉的是那个 5 分钟下限**不许**作用在硬截止上。
+        //
+        // 联邦会话（fed_session）带着「免旧口令改密」的特权，它的边界就是到期时刻。
+        // 续签走 lifetime 时，下限会把「只剩 2 分钟」抬成 5 分钟——每 2 分钟续一次
+        // 就能把特权无限续下去。所以硬截止必须原样落在 exp 上，一秒都不许往后挪
+        // （Codex PR #1364 P1 第二轮；我上一版误以为这个下限无害，正是它把洞留下的）。
+        var jwt = new GwJwt(Secret, Issuer, lifetimeDays: 7, renewAfterHours: 24);
+        var deadline = DateTime.UtcNow.AddMinutes(2);
+
+        var (token, expiresAt) = jwt.Issue(
+            BuildUser(), BuildTenant(), BuildMembership(), federatedSession: true, absoluteExpiresAt: deadline);
+
+        // 允许一秒级误差（JWT 的 exp 精度到秒），但绝不允许被抬到 5 分钟。
+        expiresAt.ShouldBeLessThan(DateTime.UtcNow.AddMinutes(3));
+        var exp = ReadPrincipal(jwt, token).FindFirst(JwtRegisteredClaimNames.Exp)!.Value;
+        var expUtc = DateTimeOffset.FromUnixTimeSeconds(long.Parse(exp)).UtcDateTime;
+        (expUtc - deadline).Duration().ShouldBeLessThan(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public void Issue_WithElapsedAbsoluteDeadline_ThrowsInsteadOfBuildingAnInvalidToken()
+    {
+        // 鉴权配了 1 分钟 ClockSkew，token 过期后一分钟内仍能通过校验，
+        // 于是 exp 有可能已经在过去。直接拿去签发会因为 expires <= notBefore 抛异常，
+        // 而改密那条路上此时口令已经落库——用户会拿到「改成功了但是 500」。
+        // 正确的兜底是：调用方在写入之前就拒绝，这里只负责不造非法 token（Codex PR #1364 P2）。
+        var jwt = new GwJwt(Secret, Issuer);
+
+        Should.Throw<ArgumentOutOfRangeException>(() => jwt.Issue(
+            BuildUser(), BuildTenant(), BuildMembership(),
+            federatedSession: true, absoluteExpiresAt: DateTime.UtcNow.AddSeconds(-30)));
+    }
+
+    [Fact]
+    public void Issue_WithoutAbsoluteDeadline_StillFloorsShortLifetimes()
+    {
+        // 反面：不传硬截止时，原来的 5 分钟下限行为保持不变——
+        // 上一条不是把下限删了，而是让它不作用在硬截止那条路上。
+        var jwt = new GwJwt(Secret, Issuer, lifetimeDays: 7, renewAfterHours: 24);
+
+        var (_, expiresAt) = jwt.Issue(
+            BuildUser(), BuildTenant(), BuildMembership(), lifetime: TimeSpan.FromMinutes(2));
+
+        expiresAt.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(4));
     }
 }

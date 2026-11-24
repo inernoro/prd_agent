@@ -15,6 +15,7 @@ import {
   occupiedHostOwners,
   publishedEntrypointsEnv,
   publishedServiceLabels,
+  projectBranchPublishedServiceHosts,
   resolveBranchEntrypointsEnv,
   resolveServiceLandingPath,
   subdomainWithLegacyAliases,
@@ -434,7 +435,13 @@ describe('占位抑制：全部消费方与发布器同判据（形状 2/3 守�
   it('撞名占位刻意**不**过滤 —— 它要的是已声明拓扑占了哪些 host', () => {
     const src = read('src/routes/branches.ts');
     expect(src).toContain('for (const host of computeBranchPublishedServiceHosts(other, root))');
-    expect(src).toContain('for (const label of publishedServiceLabels(slug, sub))');
+    expect(src).toContain('return projectBranchPublishedServiceHosts(entry, project, stateService.getEffectiveProfilesForBranch(entry), [root])');
+    const entry = { id: 'occupied', projectId: 'p', branch: 'main', subdomainAliases: ['main-project-llmgw'] } as BranchEntry;
+    const hosts = projectBranchPublishedServiceHosts(entry, { slug: 'project' }, [{
+      id: 'gateway', projectId: 'p', name: 'Gateway', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80, subdomain: 'llmgw',
+    }], [HOST]);
+    expect(hosts).toContain(`main-project-llmgw.${HOST}`);
+    expect(hosts).toContain(`main-project-llmgw-web.${HOST}`);
   });
 });
 

@@ -1,21 +1,31 @@
 ---
 name: create-visual-test-to-kb
-description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名结构固定，**每次归档强制输出可达地址**：CDS 直达深链 /reports，匿名对外用 /r/token）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无 CDS/离线退化为本地 md+截图。触发词："视觉验收"、"验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
+description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名结构固定，**每次归档强制输出可达地址**：CDS 直达深链 /reports，匿名对外用 /r/token）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；离线只能生成本地诊断草稿，不得作为验收报告交付。触发词："视觉验收"、"验收"、"页面验收"、"功能交付收尾"、"回归验收"、"验收报告"、"报告不符合技能"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
 metadata:
-  version: 1.0.0
+  version: 1.0.3
 ---
 
 # 验收归档 v2 — 工业级功能验收全流水线
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/验收`、`/视觉验收`、"视觉验收"、"验收"、"视觉测试"、"验收归档"、"create visual test"
+> **版本**：v1.0.3 | **状态**：已落地 | **触发**：`/验收`、`/视觉验收`、"视觉验收"、"验收"、"视觉测试"、"验收归档"、"create visual test"
 
 > 一条不可分的流水线:**标准定义测什么/怎么截/怎么命名 → 模拟人类浏览器取证 → 证据落 CDS 验收中心出直达深链**。
 > 主纲在此,完整规则按需加载(见下"按需文件")。规则 SSOT 先读仓库 `doc/`,外部技能包才读 `references/rules/`;`reference/standard-v2.md` 是执行协议和准入下限,同样必读。
+
+## 操作入口与 MECE 覆盖（2026-10-15 更新）
+
+每份报告必须有「操作入口」：从登录后首页开始，逐步列出导航、按钮、对象选择、最终面板及预期可见状态，配入口截图；有简版时该章节必须默认可见，不能藏在完整版或只给深链。
+
+数据库、连接或权限类验收按通道 × 数据库类型 × 操作类型建立覆盖账本，再覆盖角色/审批、生命周期/异常、隔离/清理、明暗主题。通道至少区分 UI、CLI/技能和原生工具；操作区分 CRUD、批量、事务、克隆/恢复/迁移和引擎特性。全组合只是候选集，按真实能力标记已通过、失败、未支持、按设计拒绝、未执行，不把不适用或只读拒写算成功能已实现。对未执行项列补跑入口和关闭条件。
+
+技能发布到市场后，必须读回条目的 version/updatedAt，并重新下载安装包核对 CLI 与文档版本；上传成功不能代替消费端校验。
 
 ## 何时用
 
 - 一个功能/PR 开发完成,需要可查收、可追溯、结构化的验收报告(替代塞 PR 评论 / 塞 HTML 进 doc/)。
 - AI 自测完(CLAUDE #8.1)后,以**真人路径**复验并归档结论 + 证据。
+- 用户自然语言要求「页面验收」「回归验收」「验收报告」，或开发交付需要验收结论时自动触发，不以显式 `/验收` 为前提。宿主未注入本技能时按仓库 `AGENTS.md` 的链接读取，不能因此省略。
+- 从 CDS、`human-verify`、`acceptance-checklist` 或交接流程进入时，本技能仍负责正式报告。上游测试记录是输入；自行生成 HTML、直接 `report create` 上传和自行抽查图片均不能替代标准生成、准入校验与 `verify-open`。复杂场景沿用下文规定的设计与编排前置。
 
 ## 前置依赖（接入即查,缺一不可)
 
@@ -27,7 +37,18 @@ metadata:
 | **CDS 归档 env**(默认 cds 模式) | 落 CDS 验收中心鉴权 | `CDS_HOST`(CDS 服务地址) + (`CDS_PROJECT_KEY`=项目级最小权限 key,推荐;或 `AI_ACCESS_KEY`=全局)。**禁止写进文件**,运行时 export |
 | **cdscli** | 取预览域名 + report/report-folder 命令 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
-`report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本机临时目录,默认 `/tmp/map-acceptance-local`。不得写入仓库内 `doc/acceptance/`。
+`report.mode=local` 仅允许在断网排障时配合归档命令的显式 `--local-diagnostic` 参数生成本机诊断草稿,默认写入 `/tmp/map-acceptance-local`;只改配置而不带参数会被拒绝。它不是验收报告,不得交付、通知或标记为完成。正式验收必须恢复 CDS 归档并通过线上 `verify-open`。任何临时产物都不得写入仓库内 `doc/acceptance/`。
+
+本地诊断沿用下文正式归档命令的全部必填参数,但配置必须为 `report.mode=local`,并额外添加:
+
+```bash
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
+  --local-diagnostic \
+  --config "$SKILLS_ROOT/create-visual-test-to-kb/acceptance.config.json" \
+  <其余报告与证据参数>
+```
 `report.format=html` 是每日验收默认交付格式。报告正文仍用 Markdown 写作,归档脚本会转换成交互 HTML,提供证据导航、指标卡、证据缩略图、表格筛选、章节折叠和图号锚点跳转。HTML 与 Markdown 必须使用不同模板:Markdown 保持审计文本结构不变,HTML 才启用更强的视觉和交互阅读层。只有下游系统明确要求 Markdown 时才改 `format=md`。
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。
@@ -54,7 +75,10 @@ metadata:
 6. **比例原则**:严格不等于吹毛求疵。测试深度必须由风险、用户影响和证明力决定;低风险、非运行态、观察型问题不得被包装成 P0/P1。报告必须说明为什么当前深度足够,也必须说明继续加测不会改变 Verdict 的边界。
 7. **问题可定位**:凡报告写 P0/P1/P2 视觉问题,读者必须能从图里 3 秒定位。缺陷行要写清`位置 + 阻挡物/异常物 + 被影响对象 + 用户影响`,证据图必须有红/橙框或圈和短标签。只写"遮挡""异常""看这里"不合格。
 8. **移动端是独立硬门禁**:存在用户可见 Web 页面的 L1 至少 1 张、L2 至少 2 张真实触控移动端证据。必须使用独立 `isMobile:true,hasTouch:true` context，从登录或首页点击进入；桌面 context 仅缩窄视口不算。完整规则见 `doc/rule.acceptance.map-enterprise.md` §11.2、`reference/standard-v2.md` §5.0 和 `doc/rule.frontend.mobile-visual-check-matrix.md`。
-9. **结论必须语义分层**:每日/昨日验收首屏必须分别写 `产品质量`、`验收完整性`、`综合结论`、`发布建议`、`判定性质`；`产品质量` 必须包含唯一结构化事实 `核心用例=通过/失败/未执行`，不得靠自然语言猜测核心用例状态。`核心用例=未执行` 或根因链存在 `覆盖缺口` 时不能同时声称验收完整。conditional/fail 还必须提供 `目标要求 -> 观察事实 -> 系统原因 -> 证据影响 -> 结论 -> 关闭动作` 根因链。根因链的 `结论` 只允许 `通过`、`覆盖缺口`、`非阻断风险`、`产品失败`、`核心用例失败`、`验收链路失败`、`硬门禁失败`；前四列是人类可读证据，不参与 Verdict 文本猜测。缺陷为 0 且唯一问题是覆盖不足、目标版本无法复现或非阻断风险时用 `conditional`，不得用笼统 `fail` 暗示产品失败。
+9. **第一屏先说人话**:每日/昨日验收正文的第一个 H2 固定为「给你的一页结论」,五行答完不看代码的决策读者真正会问的四件事(产品能不能用 / 验收测完了吗 / 昨天上了什么 / 需要你决定什么),答案用固定开头,禁止验收行话。**产品失败与验收失败必须分开**:测试脚本、环境或硬门禁自身的问题写「这次没测出来」,不得说成产品坏了;已有 P0/P1 或核心用例失败也不得粉饰成「可以正常使用」。判据与拒收条件见 `reference/standard-v2.md` §6.0 与 `doc/rule.acceptance.map-enterprise.md` §7.0；含本节的报告归档成 HTML 时默认渲染简版,一键切完整版。
+10. **结论必须语义分层**:每日/昨日验收首屏必须分别写 `产品质量`、`验收完整性`、`综合结论`、`发布建议`、`判定性质`；`产品质量` 必须包含唯一结构化事实 `核心用例=通过/失败/未执行`，不得靠自然语言猜测核心用例状态。`核心用例=未执行` 或根因链存在 `覆盖缺口` 时不能同时声称验收完整。conditional/fail 还必须提供 `目标要求 -> 观察事实 -> 系统原因 -> 证据影响 -> 结论 -> 关闭动作` 根因链。根因链的 `结论` 只允许 `通过`、`覆盖缺口`、`非阻断风险`、`产品失败`、`核心用例失败`、`验收链路失败`、`硬门禁失败`；前四列是人类可读证据，不参与 Verdict 文本猜测。缺陷为 0 且唯一问题是覆盖不足、目标版本无法复现或非阻断风险时用 `conditional`，不得用笼统 `fail` 暗示产品失败。
+11. **未执行项必须可操作**:报告出现 `not-run`、未执行数量大于零或判定性质为覆盖不足时，首屏后必须有「执行覆盖账本」。先逐环境列计划/已执行/通过/失败/未执行，再逐项写阻塞类别、具体原因、代码或页面入口、补跑命令和关闭条件。只写“149 项未执行”但不给路径，视为报告不完整并拒绝归档。
+12. **验收报告必须在线**:验收的完成条件是 CDS 不可变报告已生成、直达深链可打开、正文/证据/内部链接全部通过 `verify-open`。`/tmp`、`file://`、本机 HTML 和 Markdown 只是生成过程的临时产物，不得称为验收报告。CDS 不可用时应判定验收链路失败并保持未完成，不得回退交付本地文件。
 
 ## 复杂验收前置（每日/PR/commit/未发布分支/缺陷复测/视觉回归/发布前必用）
 
@@ -73,9 +97,9 @@ metadata:
 每日/昨日自动验收必须先跑机器盘点:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
 # 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
   --date <YYYY-MM-DD> \
   --json-out /tmp/daily-scope.json \
@@ -115,6 +139,44 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - `MAP_AI_USER` / `MAP_ACCEPT_PASS` 只用于 MAP 登录;CDS API、知识库写入和 Slack 不能误用这两个账号密码。
 - 缺少 `MAP_AI_USER`、`MAP_ACCEPT_PASS`、`MAP_DOC_STORE_KEY` 或 `AI_ACCESS_KEY` 时,仍必须生成失败报告并通知 Slack,不能静默退出或只报本地错误。
 
+## 最终回复与 Slack 直观汇报模板（自动化验收统一使用）
+
+自动化 prompt 不再自带汇报格式,一律用本节。读者是**不看代码的决策读者**,他要在 30 秒内答出:
+产品能不能用、昨天上了什么、要不要我做决定、要不要拦住发布。
+
+语言约束(与 `reference/standard-v2.md` §6.0 同一套判据):
+
+- 每条问题先写「用户做什么会遇到什么」,再写技术原因;只写技术现象不写用户后果的一律重写。
+- 内部名词首次出现必须紧跟「(一句话解释)」,否则不许出现。默认禁用:门禁、断言、契约测试、冻结提交、证明力、覆盖矩阵、根因链、Verdict、SHA、smoke、ready、verify-open、integration-live。
+- 缺陷级别后必须跟后果词:P0/P1 = 拦住发布,P2 = 可以发布但要盯着,P3 = 记录即可。
+- 禁止把测试脚本的内部状态(第几段、第几次重试、断言值)当作问题正文的主语,这类细节只进线上报告。
+- 门禁/自动化用例失败必须先归因:产品原因 / 测试脚本原因 / 暂时分不清,并与报告首屏判定性质一致。
+
+```
+产品能不能用：{可以正常使用 / 有功能坏了 / 这次没测出来}
+验收测完了吗：{测完了 / 没测完，缺 N 项}
+综合结论：{通过 / 原则性通过 / 不通过}。{一句话说清为什么}
+
+昨天交付了什么
+- {功能大白话名称}：{对用户的意义}。验收结果：{能用 / 没测 / 坏了}
+
+需要你决定的事
+- {事项}：{可选做法}。建议：{建议}。不处理的后果：{后果}
+（无事项时整段写：本次不需要你做任何事。）
+
+[发现问题]
+- {P级，拦住发布 / 可以发布但要盯着 / 记录即可}：用户{做什么}时会{看到什么}。技术原因：{一句话}。归因：{产品原因 / 测试脚本原因 / 暂时分不清}
+
+[需要注意]
+- {只列影响发布判断或需要后续处理的事项，用大白话写}
+
+报告：{线上 HTTPS 链接}
+运行信息（无需处理）：验收版本 {test commit 与 origin/main，相同则合并}；归档 {结果}；verify-open {结果}
+```
+
+方括号段落仅在有内容时出现;「昨天交付了什么」和「需要你决定的事」即使全绿也必须出现。
+测试数量、截图数量和长 commit 默认不占首屏。Slack 发送失败时在「需要注意」写清原因和重试次数,不得伪报已发送。
+
 ## CDS 预览 ready 门禁（自动化/每日验收强制）
 
 每日验收开始取证前必须证明被测预览环境真的可测:
@@ -151,10 +213,10 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 每日自动化的交付入口必须是线上可打开地址:
 
-- Slack 禁止发送 `/tmp`、`file://` 或本机 HTML 作为报告入口。报告 HTML/Markdown 必须发布到 CDS 验收报告页或 MAP 知识库分享链;优先 CDS 自托管报告,失败再回退 MAP 知识库。
+- 任何通知和交付都禁止使用 `/tmp`、`file://` 或本机 HTML/Markdown 作为报告入口。报告必须发布到 CDS 验收中心；MAP 等系统只通过开放协议消费 CDS 报告，不作为交付回退。
 - 通知里出现的报告链接、raw 链接和页面链接必须同源且可由接收者打开。raw 内容验证通过不等于页面验证通过。
-- 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片，并全量校验交互报告内部链接、真实点击当前视口可见链接后目标是否进入可视区。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
-- 如果所有线上归档路径都失败,仍要把本地报告路径写入失败报告摘要,但 Slack 结论必须写「线上归档失败」,不能伪装为已完成。
+- 归档后必须跑 `scripts/verify-open.mjs`，默认最多尝试三次。脚本等待标题、正文和图片，核对全部内部链接并实点可见跳转。对标准交互报告逐张点开证据卡片，核对报告自身的地址片段、正文锚点与可解码的对应图片，再逐张返回证据列表。标准报告的最低图数按正文证据图计算。三次均失败判验收链路失败。若第二或第三次通过，记录首试失败和实际通过次数。
+- 如果 CDS 归档或线上打开校验失败,本轮必须判定「验收链路失败」并保持未完成；本地路径只能进入内部排障日志，不得出现在面向验收人的报告入口或交付摘要中。
 - Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、P0/P1/P2/P3 数量、非零严重级的一句话问题概述、未覆盖数量、归档结果、打开验证结果。不能只给缺陷总数；详细证据放报告,不要塞进 automation prompt。
 - Slack 必须增加一句 Verdict 性质说明。例如：`综合结论 conditional：已测范围未发现缺陷，但目标日冻结版本有 4 项无法确认`。禁止发送 `FAIL + 缺陷 0 + 未覆盖 N` 而不解释失败对象。
 
@@ -165,7 +227,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 每个 PR/commit 必须先抽取「改动断言」：这次代码声称改变了什么可观察行为。不要先决定截图页面。
 - 每条改动断言必须写「必要证明」：最小可证明动作或状态。例如同步功能要开测同步动作、同步结果、同步日志或接口返回；不能用列表页可见替代。
 - 报告必须包含「改动断言到证据表」,列为: `PR/commit`、`changed files`、`改动断言`、`必要证明`、`实际证据`、`关联性`、`结论`。
-- `关联性` 只允许: `相关`、`弱相关`、`无关`、`未覆盖`。只有 `相关` 可以支撑 pass；`弱相关` 最多支撑有条件通过；`无关/未覆盖` 必须进入缺陷或未覆盖项。
+- `关联性` 只允许: `相关`、`弱相关`、`无关`、`未覆盖`。只有 `相关` 可以支撑 pass；`弱相关` 最多支撑原则性通过；`无关/未覆盖` 必须进入缺陷或未覆盖项。
 - `列表可见`、`页面可达`、`按钮可见` 只证明入口/承载可用。除非提交本身改的是入口、路由、布局或按钮显隐，否则不得作为该提交通过证据。
 - 同步、恢复、上传/压缩、鉴权、异步任务、外部下载、部署/canary、状态流转、数据写入类改动必须至少有一个动作/结果证据或 API/log/state 证据。无法安全触发时标 `未深测`，不能用邻近页面截图顶替。
 - CDS 平台改动必须走 CDS 平台证据,不能用 CDS Agent 页面顶替。报告中出现“CDS 预览/部署/报告/branch/extra-services/self-update/scheduler/proxy”与“CDS Agent 页面”绑定为通过证据,属于 `无关证据`,必须改为未覆盖或补 CDS 平台证据。
@@ -191,7 +253,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 只有入口可达、页面主体可见、少量 API 200 的报告，只能叫 `广度冒烟`，不能写“深度验收”“深入功能验收”“完整验收通过”。
 - 若报告声称 `深度验收` 或 `深度复验`，默认至少需要 12 张有效截图；归档脚本会对每日/昨日深度报告做硬门禁，少于 12 张直接拒收。
 - 深度验收的每个高风险模块至少要有 2 个证据点：一个用户路径截图 + 一个结果截图/API/负面路径证据。典型高风险模块包括鉴权、异步任务、文件上传/压缩、外部下载、发布/部署、状态流转、数据恢复。
-- 深度验收必须包含负面路径或边界测试。没有负面路径时，只能判“广度冒烟通过”或“有条件通过”，不得判深度通过。
+- 深度验收必须包含负面路径或边界测试。没有负面路径时，只能判“广度冒烟通过”或“原则性通过”，不得判深度通过。
 - 如果因成本或安全性不能触发真实流程（如真实生图、外部视频下载、CDS canary、生产写入），必须在报告中标为 `未深测`，不能用入口截图替代。
 
 ## 每日验收内容充裕门禁（2026-06-21 演练反哺）
@@ -204,7 +266,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 报告必须同时回答五个问题：改了什么；用户在哪能感知；怎么触发；预期应该看到什么；这张图或内部证据为什么能证明它。
 - 充裕不等于堆字。重复截图、泛泛描述、无关页面、流水账日志不算充裕。只有补足范围、断言、预期、证据、缺口、风险解释的内容才算充裕。
 - 如果一天变更很多,允许合并为功能簇,但功能簇内必须保留 commit 列表和覆盖结论。合并是为了理解,不是为了隐藏没测项。
-- 报告结尾必须有“总缺口账本”：列出未深测、弱相关、内部证据、环境抖动、需要后续专测的项。没有缺口账本的有条件通过报告不合格。
+- 报告结尾必须有“总缺口账本”：列出未深测、弱相关、内部证据、环境抖动、需要后续专测的项。没有缺口账本的原则性通过报告不合格。
 - 归档前自问:一个没参与开发的人只看这篇报告,能否复述昨天的主要变更、哪些被证明、哪些没被证明、为什么总 Verdict 不是更高或更低。不能复述就继续补内容。
 
 ## 取证选材与标注（重点,2026-05-31 强化）
@@ -270,16 +332,17 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 ## 工作流(四步)
 
 1. **定标准与档位 + 选模板**:读 `reference/standard-v2.md`,按改动定 L0/L1/L2(下限见 §3);按上表「自动选模板」决定 zz-report.md / report-template.md(歧义才问用户)。
-2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/createMobileContext/login/gotoByClick/click/type/setTheme/shot`。桌面流程用 `launch`;移动端流程在同一 browser 内用 `createMobileContext(browser,cfg)` 新建真实触控 context，并重新登录、从首页点击入口。L1 至少 1 张移动端证据，L2 至少 2 张且分别证明入口/操作与结果/状态。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。结束 `writeManifest(outDir, {verdict,target,themeSupport,timing})`。
+2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/createMobileContext/login/gotoByClick/click/type/setTheme/shot`。桌面流程用 `launch`;移动端流程在同一 browser 内用 `createMobileContext(browser,cfg)` 新建真实触控 context，并重新登录、从首页点击入口。L1 至少 1 张移动端证据，L2 至少 2 张且分别证明入口/操作与结果/状态。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。结束 `writeManifest(outDir, {verdict,target,themeSupport,timing})`。全面复测的每次 `shot()` 还必须传 `coverageStates`、`testType`、`status`、`methodAnchor` 和 `breadcrumb`，使主管报告能逐图判断通过、失败或需干预；普通单功能验收可不启用该扩展门禁。
    - **v1.0 自动捕获(默认开,零配置)**:`launch()` 已默认挂 `attachAutoCapture`——取证全程自动收集 console.error / 同源 4xx-5xx / 未捕获异常(标准 §5.3),P0 级(未捕获异常 + 5xx)自动折叠进截图 warnings → 准入直接拒收。这是"人眼扫静态图永远漏"的维度,机器替你盯。
    - **v1.0 双主题**:先 `detectThemeSupport(page,cfg)` 探测本页是否真支持 light(标准 §5.4);`supportsLight=true` 才双主题各一张,dark-only 页单图 + 注明不计 fail。别交两张一模一样的暗图。
    - **v1.0 机读产物**:`writeManifest` 同时写 `result.json`(verdict/autoFindings/themeSupport/timing),供下游 Agent 直接消费。
    - **v2.14 移动端元数据**:`shot()` 自动记录 `viewport`、`touchPoints`、`isMobile`;归档脚本只把宽度不大于 480、触控点不少于 1 且 `isMobile=true` 的截图计为真实移动端证据。报告必须有「移动端验收」章节，写清视口、路径、触控、滚动、溢出、遮挡/裁切和结果。
-   - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-agent.md「Visual Agent 验收技能」`)。
+   - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 [「Visual Agent 验收技能」历史记录](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.visual-agent.md))。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对（全量,不许抽查)**:manifest 里**每一张**截图都用 Read 工具读回,肉眼级核对 caption 与图内容一致(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。图文不符 → 修 driver 重拍,**禁止改 caption 迁就错图**。pass 用例必须连图、图必须独立可证 claim(反例:声称"下拉含 8 选项"但图里下拉收起——先 `select.size=N` 展开再截)、关键词断言不得同义反复(排除自己输入的消息,锚定产物区域)。详见 standard §3.6 证据链连线,准入第 8 项机检兜底。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
    - **每日验收报告结构(2026-06-18 固化,2026-06-20 修订)**:每日/昨日验收类报告必须先给类似周报的「昨日工作总结」,说明昨天做了什么、按模块覆盖了哪些内容、哪些没覆盖;紧接「PR/commit 到结果映射」「改动断言到证据表」「改动断言表」「影响面矩阵」「融合测试设计」「证明力矩阵」「覆盖缺口」和「覆盖矩阵」,再按大章节逐页验收。正文**不放目录**,避免目录占位替代证据链。页面章节顺序建议:总结 → PR/commit 到结果映射 → 改动断言到证据表 → 改动断言表 → 影响面矩阵 → 融合测试设计 → 证明力矩阵 → 覆盖缺口 → 覆盖矩阵 → 验收地址 → DoD/自测 → 需求一一对应 → 用例表 → 截图回读检查 → 页面验收章节 → 重试记录 → 缺陷清单 → 总结论。不得直接堆截图。
    - **每日验收必须写明深度预算(2026-06-20 修订)**:每日/昨日验收类报告必须在「覆盖矩阵」前写「改动规模与深度预算」,包含 commit 数、PR 数、模块数、高风险模块、计划证据数、实际证据数。数据来源优先用 `daily_scope.py` 的 JSON。证据不足时顶部结论必须降级为 `广度冒烟` 或 `不通过`,不能把少量入口截图包装成深度验收。
+   - **批量验收必须给执行覆盖账本(2026-08-04 修订)**:只要正文出现 `not-run`、未执行数量大于零或覆盖不足，必须紧跟速览卡列「执行覆盖账本」。每个未执行 caseId 都要给原因、代码/页面入口、无密钥补跑命令与关闭条件；旧报告保持不可变，新规则从下一份报告生效。
    - **每日验收必须内容充裕(2026-06-21 修订)**:每日/昨日验收类报告不能只有截图清单和短结论。必须充分展开昨日工作总结、commit/PR 映射、改动断言到证据、页面优先分层、覆盖缺口、缺陷清单和总缺口账本。复杂日报里出现 `同上`、`见上文`、`略`、`待补`、`按常规` 等空泛填充,视为半成品。
    - **每日验收证据引用必须可点击(2026-07-01 修订)**:`PR/commit 到结果映射`、`改动断言到证据表`、`覆盖矩阵`、`需求一一对应表`、`验收用例`、`缺陷清单`、`截图回读检查` 等表格里的证据列,不要只写裸 `图01`。优先写完整截图名锚点,例如 `{{IMG:01-login-home}}` 对应 `[图01](#fig-01-login-home)`；多图写 `[图01](#fig-01-login-home)、[图02](#fig-02-voc)`。`archive_report.py` 会给每个 `{{IMG:<name>}}` 截图自动注入 `fig-<name>` 锚点,并把唯一编号的裸 `图XX` 或旧式 `#fig-XX` 规范化为完整锚点；同编号多图时必须写完整锚点,避免跳错证据。
    - **每日验收必须内置标记法则与验收标准**:每日/昨日验收报告必须有「标记法则与验收标准」章节,把颜色含义、严重级、测试规则、所用验收标准写清楚,让读者不用回看技能文档也知道图上的框是什么意思、为什么最终判通过/不通过。
@@ -289,7 +352,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **规范一致性自测必须入报告**:日报、争议复测、失败报告必须加「规范一致性自测」或等价段落,核对本轮实际流程是否真的使用 `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb`,深度标签是否与证据一致,规范引用是否真正改变了测试动作而不是装饰性引用。
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
 4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --report-kind "<验收前缀>" --title-focus "<重点对象>" --report-date "<YYYY-MM-DD>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
-   - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 为离线兜底;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。
+   - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 仅为排障草稿模式，不产生可交付验收报告;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。
    - **交互 HTML 默认**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构作为 Markdown 写作源,归档脚本默认转成 `format=html` 交互报告（证据导航/表格筛选/章节折叠/图号跳转）。归档时先把每张截图上传到 CDS report assets,再把正文占位符替换为不可变 URL。10MB 仅是文本/HTML 正文的安全上限,不得通过删减必要截图来迁就该限制。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。仅在下游明确要求 Markdown 时把 config `report.format` 改为 `md`。
    - **按项目 + 文件夹归类(文件夹归类是默认行为,不是可选项)**:报告永远带 projectId(config.report.cdsProjectId > env CDS_PROJECT_ID > config.project);文件夹三级解析 `--folder-path`('/'分隔可嵌套,如 `每日验收/2026-07`) > `config.report.cdsFolder` > `--module` 自动归类——三者都空才落项目根,所以只要按规范传了 `--module`,报告就不会散在根上(2026-07-10 用户反馈 54 份报告大半未归类,由此固化)。服务端在项目作用域内按名 find-or-create,不会跨项目串文件夹。`--verdict/--tier/--branch/--commit/--pr` 作为元数据 + E1 部署上下文 stamp 进报告(看板/跨系统/PR 回写都靠这些)。
    - **命名固定结构**(用户定 2026-07-23):标题 = `{验收前缀} · {重点对象} · {目标日期}`。前缀只允许 `功能验收`、`每日验收`、`PR验收`、`Commit验收`、`分支验收`、`缺陷复测`、`视觉回归`、`发布验收`、`规范演练`。复杂验收必须显式传 `--report-kind/--title-focus/--report-date`；每日验收的日期是被验收自然日。项目和状态等信息走 CDS 元数据，不靠标题表达。
@@ -301,9 +364,9 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 `scripts/example-driver.mjs` 是可直接改的取证脚本骨架。完整一轮:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
 # 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 SKILL="$SKILLS_ROOT/create-visual-test-to-kb"
 export PWPATH=$(npm root -g)/playwright
 export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>' AI_ACCESS_KEY='<access-key>'
@@ -318,7 +381,7 @@ node /tmp/my-driver.mjs "$(python3 $SKILL/../cds/cli/cdscli.py --human preview-u
 # 3. 读图核对(用 Read 工具逐张看),据 templates/report-template.md 写 /tmp/report_body.md
 #    正文里用 {{EVIDENCE}} 占位,脚本自动替换为内联截图
 
-# 4. 归档(默认 cds 验收中心;无 CDS/离线改 config.report.mode=local)
+# 4. 归档(只有 CDS 线上归档 + verify-open 通过才是验收完成)
 python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json \
   --target "你的验收目标" \
   --report-kind "功能验收" --title-focus "模块 / 核心能力" --report-date "2026-07-23" \
@@ -349,8 +412,8 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
-| `scripts/archive_report.py` | 配置驱动归档(默认 cds:Markdown 写作源 → 交互 HTML → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 离线兜底;doc-store 向后兼容) | 归档时 |
-| `scripts/verify-open.mjs` | 归档后自查:headless 断言标题、正文、截图和全部内部锚点，真实点击可见链接核对滚动结果；任一失败 exit 2 | 归档后(强制) |
+| `scripts/archive_report.py` | 配置驱动归档(默认 cds:Markdown 写作源 → 交互 HTML → POST /api/reports,按项目+文件夹归类,带 verdict/部署上下文;local 仅排障草稿;doc-store 向后兼容) | 归档时 |
+| `scripts/verify-open.mjs` | 打开报告并核对可见链接。标准报告逐张检查证据卡片、地址、正文图片和返回列表 | 归档后(强制) |
 | `../cds/reference/acceptance-reports.md` | CDS 验收中心:报告/文件夹 API、cdscli report 命令、取证管线、深链格式、10MB/份压图注意 | 归档到 CDS 时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/CDS 项目与文件夹/截图);跨仓库改这个 | 接新仓库时 |
 
@@ -372,7 +435,7 @@ python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
 
 ## 跨仓库复用
 
-整个技能项目无关,耦合点全在 `acceptance.config.json`:预览域名命令、登录选择器与 env、文档空间 API base、报告库名、截图参数。别的仓库装本技能 + 改配置即用;`report.mode=local` 时退化为写 `/tmp/map-acceptance-local` 这类仓库外临时目录,不依赖文档空间。
+整个技能项目无关,耦合点全在 `acceptance.config.json`:预览域名命令、登录选择器与 env、文档空间 API base、报告库名、截图参数。别的仓库装本技能 + 改配置即用;`report.mode=local` 只能把中间草稿写到 `/tmp/map-acceptance-local` 这类仓库外临时目录，正式交付仍必须切回 `cds` 并通过线上打开校验。
 
 ## 与既有技能的关系
 

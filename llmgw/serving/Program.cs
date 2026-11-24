@@ -16,6 +16,12 @@ using PrdAgent.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// 全局 BSON 约定必须在任何 Mongo 读写之前装好：class map 是懒建的，一旦某个类型
+// 已经映射过，之后再注册约定不会追溯回去。这里只装约定、不装 MAP 的类映射
+// （serving 不需要那批实体），核心是 IgnoreExtraElements——serving 与 console-api
+// 共用 llm_gateway 库，写方加字段不能炸掉读方。见 RegisterConventionsOnly 的注释。
+BsonClassMapRegistration.RegisterConventionsOnly();
+
 // ───────────────────────── DI 装配 ─────────────────────────
 // 严格复刻 MAP（PrdAgent.Api/Program.cs）中承载 LlmGateway / ModelResolver 所需的注册，
 // 让本服务通过进程内 DI 直接 HOST 既有实现，再用 HTTP 端点暴露出去。不重写任何网关逻辑。
@@ -34,10 +40,20 @@ builder.Services.AddSingleton<LlmGatewayDatabaseInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabaseInitializer>());
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
+builder.Services.AddSingleton<IGatewayRuntimeGrantCallCounter, GatewayRuntimeGrantCallCounter>();
+builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
+builder.Services.AddSingleton<IGatewayTaskAdmission, GatewayTaskAdmission>();
+builder.Services.AddSingleton<IGatewayInvocationAuthority, GatewayInvocationAuthority>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
+builder.Services.AddSingleton<GatewayMinimumProtectionCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();
 builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
+// 未处理异常计数：让「最近有没有崩过」成为一个能被机器定量读取的数。
+// 窗口默认 360 分钟，与端点自描述里 6 小时的常设探测间隔对齐——
+// 窗口小于探测间隔会让异常落在窗口外，探针读到 0 误判成健康。
+builder.Services.AddSingleton(sp => new ServingFaultTracker(
+    sp.GetRequiredService<IConfiguration>().GetValue("LlmGateway:FaultWindowMinutes", ServingFaultTracker.DefaultWindowMinutes)));
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -78,6 +94,9 @@ builder.Services.AddMemoryCache();
 
 // LLM 请求上下文 + 旁路日志写入
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
+builder.Services.AddSingleton<LlmLogOwner>();
+builder.Services.AddSingleton<LlmLogLifecycleReconciler>();
+builder.Services.AddHostedService<GatewayLogLifecycleWorker>();
 builder.Services.AddSingleton(sp =>
     new LlmRequestLogBackground(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,
@@ -93,11 +112,8 @@ builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
         sp.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>(),
         sp.GetRequiredService<IAssetStorage>(),
         sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<IHttpContextAccessor>()));
-builder.Services.AddSingleton<ILlmShadowComparisonWriter>(sp =>
-    new LlmShadowComparisonWriter(
-        sp.GetRequiredService<LlmGatewayDataContext>().Context,
-        sp.GetRequiredService<ILogger<LlmShadowComparisonWriter>>()));
+        sp.GetRequiredService<IHttpContextAccessor>(),
+        sp.GetRequiredService<LlmLogOwner>()));
 
 // GW-owned 运行设置（LlmRequestLogWriter 依赖 IAppSettingsService）。首次只复制 MAP 非敏感日志字段，
 // MAP 不可达时使用默认值，不阻断 serving 启动。
@@ -289,19 +305,53 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifi
         sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>>()));
 
 // 模型调度执行器
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>();
 
 // LLM Gateway 统一守门员（HOST 既有实现）
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, TaskBudgetGateway>();
 builder.Services.AddScoped<DoubaoStreamAsrService>();
 builder.Services.AddScoped<LiveAsrBatchFallbackService>();
-builder.Services.AddScoped<LiveAsrSessionOrchestrator>();
+builder.Services.AddScoped(sp => new LiveAsrSessionOrchestrator(
+    sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(), sp.GetRequiredService<DoubaoStreamAsrService>(),
+    sp.GetRequiredService<LiveAsrBatchFallbackService>(), sp.GetRequiredService<ILogger<LiveAsrSessionOrchestrator>>(),
+    sp.GetRequiredService<IGatewayInvocationAuthority>(), builder.Configuration));
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。
 // 本 Worker 只读、仅告警、不重加密（重加密留 api 侧），启动 20s 后 + 每 6h 扫一次，
 // 把「serving 能不能解密」从盲区变成容器日志里一眼可见的 [ServingKeyIntegrity] 行。
 builder.Services.AddHostedService<ServingKeyIntegrityCheck>();
+
+/*
+  生图契约的覆盖表刷新器——serving 这一侧必须也跑一份。
+
+  ImageGenModelAdapterRegistry 是**进程全局**的静态表。serving 自己处理
+  /v1/images/generations 并直接读它，却一直没有这个 Worker：于是控制台里配好的契约
+  在 MAP 进程里生效、在网关进程里完全不生效，而控制台那一屏照样显示「已同步」
+  （它读的是 MAP 写的那行状态）。外部走网关发的生图请求全程用代码内置那 26 条，
+  尺寸和参数翻译都是旧的，没有任何地方会报错——链路只建了一半（形状 2），
+  而且那一半还在替另一半说话（形状 10：静默降级说谎）。
+
+  Worker 因此从 PrdAgent.Api.Services 搬进了 PrdAgent.Infrastructure.LLM，
+  两个进程注册同一个类型，不做第二份实现。
+
+  租户这一层因此要在这里就拦住：serving 按请求携带的服务密钥判定租户、可能同时服务
+  多个租户，而这张表按模型名索引、没有租户维度，全链路二十来个调用点又都是静态方法、
+  拿不到请求的租户。于是带租户的契约一旦装进来，就会作用到**所有**租户的请求上——
+  A 租户配的尺寸改写 B 租户的出图，B 自己那份反而不生效。
+  所以这一侧只装平台级契约（TenantId 为空串），带租户的跳过并把条数报给控制台。
+  代价是「控制台配的契约在网关这一侧不生效」，这句话必须显示在那一屏上，
+  不能让人配完看见「生效 0 条」去查一个没坏的东西（degradation-must-alarm）。
+  把租户维度补进注册表是另一件事，已记台账 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md。
+*/
+builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
+    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    hostRole: "llmgw-serving",
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.MultiTenant,
+    sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // JSON：PascalCase（PropertyNamingPolicy = null），与既有 DTO 属性名一一对应，
 // MAP 侧 HttpLlmGatewayClient 用相同口径序列化/反序列化。
@@ -312,6 +362,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
+// 必须是管道最外层：那次事故的异常一路穿透到 Kestrel 才被记录，
+// 挂在内层就抓不到同类故障。只记不吞，异常原样继续往外抛。
+app.UseMiddleware<ServingFaultTrackingMiddleware>();
 app.UseForwardedHeaders();
 app.UseWebSockets(new WebSocketOptions
 {
@@ -342,6 +395,7 @@ gwApiKey ??= DevServeKey; // 非生产保留便利回落
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty;
 
 app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);
+app.MapCodeReviewUserKeys();
 app.MapLiveAsrGatewayEndpoint();
 
 app.Run();

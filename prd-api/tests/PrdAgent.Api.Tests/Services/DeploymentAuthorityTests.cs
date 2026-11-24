@@ -31,6 +31,207 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void SharedScheduledWork_RequiresExplicitGrantAndIdentity_PreviewNeverRuns()
+    {
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new()
+        {
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new()
+        {
+            [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        })).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(
+            Build(new()
+            {
+                ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+                [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+                [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+            })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SharedScheduledWork_NotificationTakeoverDoesNotUnlockPreview()
+    {
+        // ManageGlobalNotification=true 的语义是「让这个分支临时接管全局告警行」。
+        // 它绝不该顺带把「对着共享库和 CDS 跑周期拉取」也解锁——同项目所有分支预览
+        // 共用一个 Mongo，N 个分支同时跑同一个拉取任务，既是对上游的自我 DDoS，
+        // 也让「这批文档是谁写的」变得不可追（Codex review P2）。
+        //
+        // 没有这一条，把判据换回 IsAuthoritativeDeployment 也全绿——那正是这次的缺陷。
+        var previewTakingOverNotifications = Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "true",
+        });
+        DeploymentAuthority.IsAuthoritativeDeployment(previewTakingOverNotifications).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(previewTakingOverNotifications).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SharedScheduledWork_ExplicitFalseIsAVeto()
+    {
+        // 软开关只能收紧：standby/canary 写 false 表示「我不拥有任何共享状态」，
+        // 那么周期任务也不许跑。与 CanRotateSharedCiphertext 同一形状。
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ModelLeaderboardSync_OnlyProductionOrCdsMainRuns()
+    {
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        })).ShouldBeTrue();
+
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "main",
+        })).ShouldBeTrue();
+
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "codex/fix-production-dashboard-parity",
+        })).ShouldBeFalse();
+
+        // 缺少平台注入的真实分支名时必须关闭，不能把缺失值当授权。
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ModelLeaderboardSync_ExplicitSharedStateOptOutIsAVeto()
+    {
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "main",
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void HasOptedOutOfSharedState_OnlyExplicitFalseCounts()
+    {
+        // 这条判据是「退出共享状态归属」的唯一来源，三个消费方共用（密文轮换、周期任务、
+        // 榜单手动同步）。它只认显式 false——软开关只能收紧，不能放宽。
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        })).ShouldBeTrue();
+
+        // 显式 true 不是退出
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "true",
+        })).ShouldBeFalse();
+
+        // 没配 = 没退出（默认生产可写）
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new())).ShouldBeFalse();
+
+        // 配了但解析不出布尔值 = 没退出，不许把一个打错的值当成静默关停
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "nope",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void OptOut_AppliesToEveryShareStateConsumer()
+    {
+        // 退出开关一票否决所有共享状态写入路径。榜单的手动同步入口读的就是
+        // HasOptedOutOfSharedState——非 CDS 的 standby 没有 CDS_PROJECT_ID、作用域为 null，
+        // 不挡它的话它一点同步就直接改写权威快照，而周期 worker 恰恰被同一个开关挡着
+        // （Codex 在 PR #1538 指出）。
+        var optedOut = Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        });
+
+        DeploymentAuthority.HasOptedOutOfSharedState(optedOut).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(optedOut).ShouldBeFalse();
+        DeploymentAuthority.CanRotateSharedCiphertext(optedOut).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void LegacyTranscriptAdoption_UsesOneBoundedAuthorityPerEnvironment()
+    {
+        var production = Build(new());
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(production).ShouldBeTrue();
+        DeploymentAuthority.GetLegacyTranscriptCreatedBeforeUtc(production)
+            .ShouldBe(DeploymentAuthority.LegacyTranscriptRolloutCreatedBeforeUtc);
+
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "false",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "true",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["Transcript:AdoptLegacyUnownedRuns"] = "true",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2026-01-01T00:00:00Z",
+        })).ShouldBeTrue();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "main",
+        })).ShouldBeTrue();
+        DeploymentAuthority.CanAdoptLegacyTranscriptRuns(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "codex/self-avatar-edit",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void LegacyBranchOwnerAdoption_RequiresOneExplicitNonCdsAuthority()
+    {
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+        })).ShouldBeFalse();
+        var authorized = Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["Deployment:RetiredLegacyBranchOwnerIds"] = "main,codex/retired-preview,main",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2026-01-01T00:00:00Z",
+        });
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(authorized).ShouldBeTrue();
+        DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(authorized)
+            .ShouldBe(["main", "codex/retired-preview"]);
+        DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(authorized)
+            .ShouldBe(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["Deployment:RetiredLegacyBranchOwnerIds"] = "main",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2999-01-01T00:00:00Z",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanAdoptLegacyBranchOwners(Build(new()
+        {
+            ["Deployment:AdoptLegacyBranchOwners"] = "true",
+            ["Deployment:RetiredLegacyBranchOwnerIds"] = "main",
+            ["Deployment:LegacyOwnerCreatedBeforeUtc"] = "2026-01-01T00:00:00Z",
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
     public void ExplicitFalse_OverridesProductionAuthority()
     {
         var config = Build(new() { ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false" });

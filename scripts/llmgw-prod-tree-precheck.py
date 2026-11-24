@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Read-only production runner release tree precheck for LLM Gateway rollout."""
+"""Read-only production runner release tree precheck.
+
+确认生产 runner 上的发布关键文件与目标 release commit 逐字一致，再执行
+fast.sh --commit X && exec_dep.sh --commit X。只读，不部署。
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -23,24 +26,16 @@ CRITICAL_PATHS = [
     "deploy/nginx/nginx.conf",
     "deploy/nginx/conf.d/branches/_disconnected.conf",
     "deploy/nginx/conf.d/branches/_standalone.conf",
-    "scripts/llmgw-prod-stage.sh",
-    "scripts/llmgw-rollout-ledger.py",
-    "scripts/llmgw-rollout-status.py",
     "scripts/llmgw-prod-preflight.py",
     "scripts/llmgw-upstream-readiness.py",
     "scripts/llmgw-prod-provider-config-audit.py",
-    "scripts/llmgw-map-shadow-seed.py",
-    "scripts/llmgw-report-agent-shadow-seed.py",
-    "scripts/llmgw-shadow-coverage-report.py",
-    "scripts/llmgw-shadow-sample-plan.py",
+    "scripts/llmgw-map-acceptance-seed.py",
     "scripts/llmgw-video-exchange-canary.py",
     "scripts/llmgw-asr-http-canary.py",
-    "scripts/llmgw-release-gate.py",
     "scripts/llmgw-serving-probe.py",
+    "scripts/llmgw-protocol-canary.py",
     "scripts/gw-smoke.py",
     "scripts/llmgw-disk-space-guard.sh",
-    "scripts/llmgw-rollback-inproc.sh",
-    "scripts/llmgw-restore-shadow-safe.sh",
 ]
 
 
@@ -115,20 +110,23 @@ def _compare_paths(commit: str) -> list[dict[str, Any]]:
 
 
 def _self_test() -> int:
+    # exec_dep.sh 发布后直接调用的三个网关探测脚本必须在比对清单里；
+    # 清单里的每一项也必须是仓库里真实存在的文件，否则比对永远 missing-local。
     expected = {
-        "scripts/llmgw-prod-stage.sh",
-        "scripts/llmgw-rollout-ledger.py",
-        "scripts/llmgw-rollout-status.py",
-        "scripts/llmgw-shadow-coverage-report.py",
-        "scripts/llmgw-shadow-sample-plan.py",
-        "scripts/llmgw-readiness-audit.py",
-        "scripts/llmgw-release-gate.py",
+        "exec_dep.sh",
+        "scripts/llmgw-serving-probe.py",
         "scripts/gw-smoke.py",
+        "scripts/llmgw-protocol-canary.py",
     }
-    missing = sorted(path for path in expected if path not in CRITICAL_PATHS and path != "scripts/llmgw-readiness-audit.py")
-    if missing:
+    missing = sorted(path for path in expected if path not in CRITICAL_PATHS)
+    root = Path(__file__).resolve().parents[1]
+    absent = sorted(path for path in CRITICAL_PATHS if not (root / path).is_file())
+    if missing or absent:
         print("LLM Gateway production tree precheck self-test: FAIL")
-        print("missing critical paths: " + ", ".join(missing))
+        if missing:
+            print("missing critical paths: " + ", ".join(missing))
+        if absent:
+            print("critical paths not in repository: " + ", ".join(absent))
         return 1
     print("LLM Gateway production tree precheck self-test: PASS")
     return 0
@@ -160,7 +158,7 @@ def _report_markdown(report: dict[str, Any]) -> str:
     for item in report.get("pathChecks", []):
         if item.get("ok"):
             continue
-        lines.append(f"| {item.get('path')} | 0% | {item.get('status')} | local file must match release commit before execute=true |")
+        lines.append(f"| {item.get('path')} | 0% | {item.get('status')} | local file must match release commit before running exec_dep.sh |")
     return "\n".join(lines) + "\n"
 
 
@@ -192,24 +190,8 @@ def main() -> int:
 
     path_checks = _compare_paths(commit) if commit_available else []
     failures = [item for item in path_checks if not item.get("ok")]
-    env_allow_raw = (os.environ.get("LLMGW_STAGE_ALLOW_RELEASE_TREE_MISMATCH") or "").strip().lower()
-    legacy_env_allow_raw = (os.environ.get("LLMGW_STAGE_ALLOW_SCRIPT_TREE_MISMATCH") or "").strip().lower()
-    env_allow = env_allow_raw in {"1", "true", "yes"}
-    legacy_env_allow = legacy_env_allow_raw in {"1", "true", "yes"}
-    allow_mismatch = args.allow_mismatch or env_allow or legacy_env_allow
-    allow_mismatch_source = "none"
-    if args.allow_mismatch and env_allow and legacy_env_allow:
-        allow_mismatch_source = "arg+env+legacy-env"
-    elif args.allow_mismatch and env_allow:
-        allow_mismatch_source = "arg+env"
-    elif args.allow_mismatch and legacy_env_allow:
-        allow_mismatch_source = "arg+legacy-env"
-    elif args.allow_mismatch:
-        allow_mismatch_source = "arg"
-    elif env_allow:
-        allow_mismatch_source = "env"
-    elif legacy_env_allow:
-        allow_mismatch_source = "legacy-env"
+    allow_mismatch = bool(args.allow_mismatch)
+    allow_mismatch_source = "arg" if allow_mismatch else "none"
     verdict = "pass" if commit_available and (not failures or allow_mismatch) else "fail"
     report = {
         "generatedAt": generated_at,

@@ -166,8 +166,11 @@ export type GetActiveReferenceImageConfigContract = () => Promise<ApiResponse<{
 export interface LiteraryAgentModelPoolItem {
   modelId: string;
   platformId: string;
+  actualModelId?: string | null;
+  actualPlatformId?: string | null;
   priority: number;
   healthStatus: string;
+  isRecoveryProbeAvailable?: boolean;
 }
 
 /**
@@ -177,6 +180,8 @@ export interface LiteraryAgentModelPool {
   id: string;
   name: string;
   code: string;
+  aliases?: string[];
+  legacyPoolIds?: string[];
   priority: number;
   modelType: string;
   isDefaultForType: boolean;
@@ -257,6 +262,8 @@ export type CreateLiteraryAgentImageGenRunContract = (params: {
   input: CreateImageGenRunInput;
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ runId: string }>>;
+
+export type GetLiteraryAgentRunByRequestContract = (requestId: string) => Promise<ApiResponse<{ runId: string }>>;
 
 /**
  * 取消文学创作图片生成任务

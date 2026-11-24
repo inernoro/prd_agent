@@ -1,13 +1,5 @@
-/**
- * 产品团队 tab — 成员管理 + 产品管理员指派。
- *
- * 角色三级：负责人(owner) / 产品管理员(admin) / 成员(member)。
- * - canManageMembers：可增删普通成员（全局管理 / 负责人 / 产品管理员）。
- * - canManageAdmins：可指派/撤销产品管理员（仅全局管理 / 负责人）。
- * 后端按角色再次校验（ProductAgentController），前端仅据标志显隐操作入口。
- */
 import { useCallback, useEffect, useState } from 'react';
-import { UserPlus, ShieldCheck, ShieldOff, Trash2, Crown } from 'lucide-react';
+import { UserPlus, Trash2, Crown } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { SelectionActionBar, SelectableRow, useSelectableListExport } from './selectableList';
@@ -16,19 +8,16 @@ import {
   listProductMembers,
   addProductMembers,
   removeProductMember,
-  setProductMemberRole,
 } from '@/services/real/productAgent';
 import type { ProductMember, ProductMembersResult } from './types';
 
 const ROLE_LABEL: Record<ProductMember['role'], string> = {
   owner: '负责人',
-  admin: '产品管理员',
   member: '成员',
 };
 
 const ROLE_BADGE: Record<ProductMember['role'], string> = {
   owner: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  admin: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
   member: 'bg-token-nested text-token-secondary border-token-subtle',
 };
 
@@ -67,16 +56,8 @@ export function ProductTeamTab({ productId }: { productId: string }) {
     if (res.success) await reload();
   };
 
-  const onSetRole = async (userId: string, role: 'admin' | 'member') => {
-    setBusyId(userId);
-    const res = await setProductMemberRole(productId, userId, role);
-    setBusyId(null);
-    if (res.success) await reload();
-  };
-
   const members = data?.members ?? [];
   const canManageMembers = data?.canManageMembers ?? false;
-  const canManageAdmins = data?.canManageAdmins ?? false;
   const { selection, exportSelected } = useSelectableListExport(
     members,
     (m) => m.userId,
@@ -103,12 +84,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-[12px] text-token-muted leading-relaxed">
-        管理本产品的团队成员与产品管理员。
-        {canManageAdmins
-          ? '你可以增删成员，并指派/撤销产品管理员。'
-          : canManageMembers
-            ? '你可以增删普通成员；指派产品管理员需负责人或 MAP 管理员。'
-            : '你当前为只读权限，仅查看成员名单。'}
+        维护产品负责人和协作成员名单。
       </p>
 
       {canManageMembers && (
@@ -123,7 +99,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
           <button
             onClick={onAdd}
             disabled={!pickUserId || adding}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
           >
             {adding ? <MapSpinner size={14} /> : <UserPlus size={15} />} 添加成员
           </button>
@@ -141,9 +117,8 @@ export function ProductTeamTab({ productId }: { productId: string }) {
       <div className="flex flex-col gap-2">
         {members.map((m) => {
           const isOwner = m.role === 'owner';
-          const isAdmin = m.role === 'admin';
           const busy = busyId === m.userId;
-          const canRemove = !isOwner && (isAdmin ? canManageAdmins : canManageMembers);
+          const canRemove = !isOwner && canManageMembers;
           return (
             <SelectableRow
               key={m.userId}
@@ -153,31 +128,11 @@ export function ProductTeamTab({ productId }: { productId: string }) {
               trailing={
                 <div className="flex items-center gap-1.5 shrink-0">
                   {busy && <MapSpinner size={14} />}
-                  {!isOwner && canManageAdmins && !isAdmin && (
-                    <button
-                      onClick={() => onSetRole(m.userId, 'admin')}
-                      disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-purple-300 hover:bg-purple-500/15 disabled:opacity-40"
-                      title="指派为产品管理员"
-                    >
-                      <ShieldCheck size={13} /> 设为管理员
-                    </button>
-                  )}
-                  {!isOwner && canManageAdmins && isAdmin && (
-                    <button
-                      onClick={() => onSetRole(m.userId, 'member')}
-                      disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-token-secondary hover-bg-soft disabled:opacity-40"
-                      title="撤销产品管理员"
-                    >
-                      <ShieldOff size={13} /> 取消管理员
-                    </button>
-                  )}
                   {canRemove && (
                     <button
                       onClick={() => onRemove(m.userId)}
                       disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-red-300/70 hover:bg-red-500/15 disabled:opacity-40"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/15 disabled:opacity-40"
                       title="移除成员"
                     >
                       <Trash2 size={13} /> 移除

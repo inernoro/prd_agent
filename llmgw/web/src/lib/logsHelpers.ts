@@ -5,6 +5,14 @@ import type { LlmLogListItem } from './types';
 
 export const DASH = '—';
 
+export const MODEL_FALLBACK_LABEL = '模型/模型池回退';
+export const MODEL_FALLBACK_SCOPE = '模型解析回退记录；线路备用见路由尝试';
+
+/** Nullable model-resolution flag; provider-route attempts are a separate fact. */
+export function formatModelFallback(value?: boolean | null): string {
+  return value == null ? '未记录' : value ? '是' : '否';
+}
+
 // ── 数值/时间格式化 ──
 export function computeTokPerSec(outputTokens?: number | null, durationMs?: number | null): number | null {
   if (outputTokens == null || durationMs == null || durationMs <= 0) return null;
@@ -56,6 +64,29 @@ export function fmtCost(value?: number | null, currency?: string | null): string
   return `${symbol}${amount}`;
 }
 
+export function costKindLabel(kind?: string | null, provider?: string | null): string {
+  switch (kind) {
+    case 'provider_actual': return '供应商实际';
+    case 'official_baseline_estimate':
+      return provider?.toLowerCase().includes('apiyi')
+        ? 'OpenAI 官方基准价估算，经 APIYI 调用'
+        : '官方基准价估算';
+    case 'provider_policy_estimate': return '供应商策略估算';
+    case 'no_usage': return '无可计价用量';
+    case 'unpriced': return '未计价';
+    default: return '金额性质未知';
+  }
+}
+
+/**
+ * 金额列表和概览卡只需要一眼可扫的短标签；完整供应商语义仍由
+ * `costKindLabel` 提供给 title 与审计详情，避免长说明抢过金额本身。
+ */
+export function costKindBadgeLabel(kind?: string | null, provider?: string | null): string {
+  if (kind === 'official_baseline_estimate') return '官方基准价估算';
+  return costKindLabel(kind, provider);
+}
+
 export function fmtShortTime(iso?: string | null): string {
   if (!iso) return DASH;
   const d = new Date(iso);
@@ -84,9 +115,9 @@ export const TIME_RANGE_PRESETS: TimeRangePreset[] = [
   { key: '30d', label: '近 30 天', days: 30 },
 ];
 
-export function rangeFromPreset(days: number): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+export function rangeFromPreset(days: number, now = Date.now()): { from: string; to: string } {
+  const to = new Date(now);
+  const from = new Date(now - days * 24 * 60 * 60 * 1000);
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
@@ -94,15 +125,59 @@ export function rangeFromPreset(days: number): { from: string; to: string } {
 export function statusBadgeStyle(
   status?: string | null,
   statusCode?: number | null,
-): { label: string; color: string; bg: string } {
+): { label: string; color: string; bg: string; quiet?: boolean } {
   const code = statusCode ?? 0;
+  // 成功是绝大多数行的常态，给它一枚亮绿底 chip 等于让整屏最刺眼的东西恰好是
+  // 「一切正常」。风格调性原则 4 说得很直白：只有异常才配拥有视觉噪音。
+  // 成功保留文字（用户仍要能读到 200），但降成一句普通小字，不占底色。
   if (status === 'succeeded' || (code >= 200 && code < 300))
-    return { label: code ? String(code) : '成功', color: 'var(--ok)', bg: 'var(--ok-bg)' };
+    return { label: code ? String(code) : '成功', color: 'var(--text-muted)', bg: 'transparent', quiet: true };
   if (status === 'failed' || code >= 400)
     return { label: code ? String(code) : '失败', color: 'var(--err)', bg: 'var(--err-bg)' };
+  if (status === 'unknown') return { label: '结果未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (status === 'running') return { label: '进行中', color: 'var(--info)', bg: 'var(--info-bg)' };
   if (status === 'cancelled') return { label: '已取消', color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
   return { label: status || DASH, color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
+}
+
+/**
+ * 模型列要显示的短名：去掉厂商命名空间前缀（`deepseek-ai/DeepSeek-V4-Fast` → `DeepSeek-V4-Fast`）。
+ *
+ * 由来：这一列宽 158px，而一整屏的模型往往同属一个命名空间，于是每一行都被截成
+ * `deepseek-ai/Dee…`——**截断点落在公共前缀里，整列的信息量归零**，光看列表分不出
+ * 任何两行。Provider 已经单独成列，厂商信息不必在模型列再占一次位置。
+ * 完整标识不丢：hover 卡片的标题与单元格 title 仍给全量 slug。
+ */
+export function shortModelName(raw?: string | null): string {
+  if (!raw) return DASH;
+  const slash = raw.lastIndexOf('/');
+  if (slash < 0 || slash === raw.length - 1) return raw;
+  return raw.slice(slash + 1);
+}
+
+/**
+ * App 列/抽屉里显示的 App 名。
+ *
+ * 2026-08-14 去掉了这里原有的 `G-` 前缀：它是纯展示层凭空加的两个字符，
+ * 后端 appCallerCode 里没有、`appDetailsHref` 也用原始 code，既没有文档解释
+ * 也没有契约断言依赖它。代价却很实在——App 列本就放不下
+ * `product-agent.marketing-consult::chat`，前缀再白占两格；更糟的是同一个 App
+ * 在不同渲染点有的带前缀有的不带（业务请求视图带、会话视图不带），
+ * 而实体图标的颜色是按名字哈希出来的，于是同一个 App 在两处是两种颜色。
+ *
+ * 这段逻辑此前在 6 个文件里各抄了一遍（判据分裂）。展示名的口径收敛到这里，
+ * 以后要改前缀/大小写/截断只动一处。
+ */
+export function appDisplayName(item: {
+  appCallerCode?: string | null;
+  appCallerCodeDisplayName?: string | null;
+  appCallerTitle?: string | null;
+}): string {
+  const code = item.appCallerCode?.trim();
+  const displayName = [item.appCallerCodeDisplayName, item.appCallerTitle]
+    .map(value => value?.trim())
+    .find(value => value && value.toLowerCase() !== code?.toLowerCase());
+  return displayName || (code ? '未命名 App' : DASH);
 }
 
 // ── 仅注册后端有真实数据来源的视图 ──
@@ -130,19 +205,29 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
   // 于是每列都有 30~50% 的均匀富余（OpenRouter 那一屏就是这个比例），
   // 而不是把余量全塞进某一列、在表格中间撑出一个空洞。
   // 全部左对齐——右对齐 + 富余会在每列中间再撑出一条空白山谷。
-  { key: 'date', label: '时间', width: 'minmax(104px, 1.04fr)', required: true },
+  //
+  // 2026-08-14 按实测占用率重排了一次下限。此前 App 列 192px 而内容要 296px（占用率 154%，
+  // 每一行都被截断），同一屏里 Provider 只用掉 58%、费用只用掉 47% —— 余量堆在用不上的列里
+  // 空转，而最需要它的那一列在截断。原则 2 要求各列占用率落在同一条窄带（参照 48%~88%）。
+  // 挪动时保持「fr 权重与下限等比」不变，并让下限总和 + 间隙(8×12) + 内边距(32) + 齿轮(42)
+  // 仍小于 1440 视口下滚动容器的 clientWidth（实测 1156px），否则会重新逼出横向滚动条——
+  // 那正是这套列宽当初要治的病。第一版把 App 提到 296（内容完整宽度）时合计 1162，
+  // 超了 6px，1440 下真的冒出了滚动条；退到 288 后合计 1150，留 6px 余量。
+  // 代价写明白：1440 下最长的 appCallerCode（37 字符 / 296px）仍会截掉约一个字符，
+  // ≥1600 的屏按 fr 摊分后完整显示（实测 1600 → 341px、1920 → 441px）。
+  { key: 'date', label: '时间', width: 'minmax(92px, 0.92fr)', required: true },
   { key: 'generation', label: '请求 ID', width: 'minmax(150px, 1.5fr)', defaultVisible: false },
-  { key: 'model', label: '模型', width: 'minmax(158px, 1.58fr)' },
-  { key: 'provider', label: 'Provider', width: 'minmax(140px, 1.4fr)' },
-  { key: 'app', label: 'App', width: 'minmax(190px, 1.9fr)', tip: '点击查看 appCaller 摘要与治理入口' },
-  { key: 'input', label: '输入', width: 'minmax(72px, 0.72fr)' },
-  { key: 'output', label: '输出', width: 'minmax(72px, 0.72fr)' },
-  { key: 'cost', label: '费用', width: 'minmax(88px, 0.88fr)' },
+  { key: 'model', label: '模型', width: 'minmax(160px, 1.6fr)' },
+  { key: 'provider', label: 'Provider', width: 'minmax(100px, 1fr)' },
+  { key: 'app', label: 'App', width: 'minmax(288px, 2.88fr)', tip: '点击查看 appCaller 摘要与治理入口' },
+  { key: 'input', label: '输入', width: 'minmax(60px, 0.6fr)' },
+  { key: 'output', label: '输出', width: 'minmax(64px, 0.64fr)' },
+  { key: 'cost', label: '金额', width: 'minmax(112px, 1.12fr)' },
   { key: 'usage', label: '用途', width: 'minmax(84px, 0.84fr)', defaultVisible: false },
   { key: 'speed', label: '速度', width: 'minmax(88px, 0.88fr)' },
   { key: 'finish', label: '结束原因', width: 'minmax(88px, 0.88fr)', defaultVisible: false },
   { key: 'user', label: '客户端用户', width: 'minmax(120px, 1.2fr)', defaultVisible: false },
-  { key: 'status', label: '状态', width: '52px', align: 'center', required: true },
+  { key: 'status', label: '状态', width: '48px', align: 'center', required: true },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
@@ -153,7 +238,7 @@ export const UPSTREAM_COLUMNS: ColumnDef[] = [
   { key: 'genId', label: '请求 ID', width: '1.8fr' },
   { key: 'status', label: '状态', width: '0.8fr', align: 'center' },
   { key: 'attempts', label: '尝试次数', width: '0.8fr', align: 'center', tip: '未记录每次重试历史，仅有最终回退标记' },
-  { key: 'fallback', label: '是否回退', width: '0.9fr' },
+  { key: 'fallback', label: MODEL_FALLBACK_LABEL, width: '0.9fr', tip: MODEL_FALLBACK_SCOPE },
   { key: 'latency', label: '耗时', width: '0.9fr', align: 'right' },
 ];
 
@@ -267,6 +352,7 @@ export function deriveLifecycle(it: {
   endedAt?: string | null;
 }): LifecycleInfo {
   const status = it.status || '';
+  if (status === 'unknown') return { key: 'unknown', label: '结果未知', color: 'var(--warn)', bg: 'var(--warn-bg)' };
   if (status === 'succeeded') return { key: 'completed', label: '已完成', color: '#34d399', bg: 'rgba(52,211,153,0.15)' };
   if (status === 'failed') return { key: 'failed', label: '失败', color: '#f87171', bg: 'rgba(248,113,113,0.15)' };
   if (status === 'cancelled') return { key: 'cancelled', label: '已取消', color: '#94a3b8', bg: 'rgba(148,163,184,0.15)' };

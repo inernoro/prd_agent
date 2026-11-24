@@ -1,3 +1,9 @@
+---
+paths:
+  - "doc/**/*.md"
+  - "cds/src/**/*.ts"
+---
+
 # Agent Runtime SDK Boundary
 
 **一句话**：写 Agent 运行时集成时别让「官方 SDK」四个字盖住自建部分，必须逐层说清哪层是官方的、哪层是自己搭的。

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 
 namespace PrdAgent.Infrastructure.Security;
 
@@ -18,6 +19,19 @@ namespace PrdAgent.Infrastructure.Security;
 /// </summary>
 public static class DeploymentAuthority
 {
+    public const string AdoptLegacyTranscriptRunsKey = "Transcript:AdoptLegacyUnownedRuns";
+    public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
+    public const string RetiredLegacyBranchOwnerIdsKey = "Deployment:RetiredLegacyBranchOwnerIds";
+    public const string LegacyOwnerCreatedBeforeUtcKey = "Deployment:LegacyOwnerCreatedBeforeUtc";
+    public const string SharedScheduledWorkEnabledKey = "Deployment:SharedScheduledWorkEnabled";
+    public const string DeploymentIdentityKey = "Deployment:Identity";
+    private const string GitHubBranchKey = "Changelog:GitHubBranch";
+
+    // scoped_queued 在该时刻前已完成全链路上线。这个固定截止线只用于接管旧版
+    // queued 记录，不能随容器启动时间向后滑动，否则仍在线旧版本可以持续投递。
+    public static readonly DateTime LegacyTranscriptRolloutCreatedBeforeUtc =
+        new(2026, 8, 12, 19, 20, 0, DateTimeKind.Utc);
+
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
     /// 生产强制权威可写 true；某个分支想临时接管全局告警可写 true；反之写 false 彻底静默。
@@ -54,6 +68,112 @@ public static class DeploymentAuthority
         => string.IsNullOrWhiteSpace(ReadFirst(configuration, "CDS_PROJECT_ID")) is false;
 
     /// <summary>
+    /// 历史无归属转写队列由每个环境唯一的迁移权威接管：正式环境本身，或 CDS 的 main。
+    /// 未显式配置时只迁移固定发布截止线之前的记录；显式 true 必须另配截止线，
+    /// 显式 false 可关闭迁移。CDS 功能分支永不参与，避免多分支争抢共享库任务。
+    /// </summary>
+    public static bool CanAdoptLegacyTranscriptRuns(IConfiguration configuration)
+        => GetLegacyTranscriptCreatedBeforeUtc(configuration) != null;
+
+    public static DateTime? GetLegacyTranscriptCreatedBeforeUtc(IConfiguration configuration)
+    {
+        if (!IsLegacyTranscriptMigrationAuthority(configuration)) return null;
+
+        var configured = configuration[AdoptLegacyTranscriptRunsKey];
+        if (bool.TryParse(configured, out var enabled))
+            return enabled ? GetLegacyOwnerCreatedBeforeUtcAllowingCdsMain(configuration) : null;
+
+        return LegacyTranscriptRolloutCreatedBeforeUtc;
+    }
+
+    private static bool IsLegacyTranscriptMigrationAuthority(IConfiguration configuration)
+    {
+        if (!IsCdsBranchPreview(configuration)) return true;
+        return string.Equals(
+            ReadFirst(configuration, GitHubBranchKey),
+            "main",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DateTime? GetLegacyOwnerCreatedBeforeUtcAllowingCdsMain(IConfiguration configuration)
+    {
+        var raw = configuration[LegacyOwnerCreatedBeforeUtcKey];
+        if (!DateTimeOffset.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+
+        return parsed.UtcDateTime <= DateTime.UtcNow ? parsed.UtcDateTime : null;
+    }
+
+    /// <summary>
+    /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移，
+    /// 且只允许接管明确登记为已退役的 owner。不能用“没有部署域分隔符”推断分支已停止。
+    /// </summary>
+    public static bool CanAdoptLegacyBranchOwners(IConfiguration configuration)
+        => GetRetiredLegacyBranchOwnerIds(configuration).Count > 0
+           && GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration) != null;
+
+    public static IReadOnlyList<string> GetRetiredLegacyBranchOwnerIds(IConfiguration configuration)
+    {
+        if (!bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
+            || !enabled
+            || IsCdsBranchPreview(configuration)
+            || GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration) == null)
+            return [];
+        return (configuration[RetiredLegacyBranchOwnerIdsKey] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(owner => !owner.Contains("::", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 旧 owner 接管只允许覆盖上线前已经存在的记录。缺少或无法解析 UTC 截止时间时，
+    /// 所有旧 owner 接管均关闭，避免仍在线的旧预览容器持续向生产投递新任务。
+    /// </summary>
+    public static DateTime? GetLegacyOwnerCreatedBeforeUtc(IConfiguration configuration)
+    {
+        if (IsCdsBranchPreview(configuration)) return null;
+        var raw = configuration[LegacyOwnerCreatedBeforeUtcKey];
+        if (!DateTimeOffset.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+        return parsed.UtcDateTime <= DateTime.UtcNow ? parsed.UtcDateTime : null;
+    }
+
+    public static DateTime? GetRetiredLegacyBranchOwnerCreatedBeforeUtc(IConfiguration configuration)
+        => bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
+           && enabled
+           && !IsCdsBranchPreview(configuration)
+            ? GetLegacyOwnerCreatedBeforeUtc(configuration)
+            : null;
+
+    /// <summary>
+    /// 这个部署是否**显式退出了共享状态归属**（`ManageGlobalNotification=false`）。
+    ///
+    /// 它是一票否决的总开关：standby / canary 用它宣告「我不拥有任何共享状态」。
+    /// 抽成一个具名判据，是因为它此前在 <see cref="CanRotateSharedCiphertext"/> 与
+    /// <see cref="CanRunSharedScheduledWork"/> 里各写了一遍，而第三个消费方
+    /// （榜单的手动同步入口）又要用它——同一判断抄成三份必然漂
+    /// （predicate-and-wiring-discipline 形状 3）。
+    ///
+    /// 注意它与「是不是权威部署」不是一回事：<see cref="IsAuthoritativeDeployment"/> 里
+    /// 显式 true / false 都算数；这里只认 false，因为软开关只能收紧、不能放宽。
+    /// </summary>
+    public static bool HasOptedOutOfSharedState(IConfiguration configuration)
+        => bool.TryParse(configuration[ManageGlobalNotificationKey], out var forced) && !forced;
+
+    /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
     /// 与通知授权**独立且更严**，同时满足两条才允许：
     /// 1. 未被显式关停共享状态归属——`ManageGlobalNotification=false` 是「我不拥有任何共享状态」的
@@ -68,12 +188,63 @@ public static class DeploymentAuthority
     public static bool CanRotateSharedCiphertext(IConfiguration configuration)
     {
         // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决，连密文都不动。
-        var explicitFlag = configuration[ManageGlobalNotificationKey];
-        if (bool.TryParse(explicitFlag, out var forced) && !forced)
-            return false;
+        if (HasOptedOutOfSharedState(configuration)) return false;
 
         // 条件 2：rotation 只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
         return !IsCdsBranchPreview(configuration);
+    }
+
+    /// <summary>
+    /// 当前部署是否有权**跑打共享库与外部服务的周期后台任务**（scheduled 层）。
+    ///
+    /// 与通知授权独立，缺少 CDS 标记不能推断为生产授权：
+    /// 1. `ManageGlobalNotification=false` 是「我不拥有任何共享状态」的总开关，
+    ///    standby/canary 用它退出时，周期任务也不许跑；
+    /// 2. 不得带 CDS 分支预览标记；
+    /// 3. 必须有显式部署身份与 SharedScheduledWorkEnabled=true 的任务授权。
+    ///
+    /// **关键：`ManageGlobalNotification=true` 绝不为 preview 放宽这一层。**
+    /// 那个开关的语义是「让某个分支临时接管全局告警行」——它管的是往共享库写一行通知。
+    /// 周期后台任务是另一回事：同项目所有分支预览共用一个 Mongo，N 个分支同时跑同一个
+    /// 拉取任务，既是对上游的自我 DDoS，也让「这批文档是谁写的」变得不可追。
+    /// 一个为了看告警而临时接管通知的分支，不该顺带获得这个权限（Codex review P2）。
+    ///
+    /// 这也正是本类已有的纪律：软开关一票否决可以，一票放行不行。
+    /// </summary>
+    public static bool CanRunSharedScheduledWork(IConfiguration configuration)
+    {
+        // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决。
+        if (HasOptedOutOfSharedState(configuration)) return false;
+
+        return !IsCdsBranchPreview(configuration)
+               && !string.IsNullOrWhiteSpace(configuration[DeploymentIdentityKey])
+               && bool.TryParse(configuration[SharedScheduledWorkEnabledKey], out var enabled)
+               && enabled;
+    }
+
+    /// <summary>
+    /// 当前部署是否负责刷新模型排行榜公开快照。
+    ///
+    /// 排行榜与其它共享周期任务的网络条件不同：正式机可能无法直连 arena.ai，CDS main
+    /// 却可以通过只读网页代理抓取，并把自己的分支作用域快照公开给正式机镜像。因此它需要
+    /// 一个比 <see cref="CanRunSharedScheduledWork"/> 更精确的单任务权威：
+    /// 1. 正式环境遵守通用显式任务授权；
+    /// 2. CDS 里只允许真实 Git 分支名为 main 的那一个部署运行；
+    /// 3. 显式退出共享状态归属仍然一票否决。
+    ///
+    /// 这里不放宽通用周期任务总闸，避免 CDS main 顺带获得报告导入等其它共享写权限。
+    /// 分支名来自 CDS 平台注入的 VITE_GIT_BRANCH，并经 cds-compose 映射到
+    /// Changelog:GitHubBranch；功能分支不会因 compose 默认值而冒充 main。
+    /// </summary>
+    public static bool CanRunModelLeaderboardSync(IConfiguration configuration)
+    {
+        if (HasOptedOutOfSharedState(configuration)) return false;
+        if (!IsCdsBranchPreview(configuration)) return CanRunSharedScheduledWork(configuration);
+
+        return string.Equals(
+            ReadFirst(configuration, GitHubBranchKey),
+            "main",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

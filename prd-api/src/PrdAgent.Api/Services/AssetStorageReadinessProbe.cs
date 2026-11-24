@@ -133,7 +133,9 @@ public sealed class AssetStorageReadinessProbe
             await _storage.UploadToKeyAsync(
                 key,
                 payload,
-                "audio/mp4",
+                // 与 iOS Safari MediaRecorder 的真实 MIME 完全一致。只测 audio/mp4
+                // 曾让健康检查通过，但真实录音归档因带 codecs 参数而持续验签失败。
+                "audio/mp4;codecs=mp4a.40.2",
                 cancellationToken);
             uploaded = true;
             writeVerified = true;

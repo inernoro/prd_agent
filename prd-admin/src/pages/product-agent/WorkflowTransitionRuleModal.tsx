@@ -1,5 +1,5 @@
 /**
- * 应用配置 — 单条流转规则详情（角色 / 必填字段 / 备注等），矩阵格点击设置图标打开。
+ * 应用配置 — 单条流转规则详情（必填字段 / 备注等），矩阵格点击设置图标打开。
  */
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -8,14 +8,10 @@ import type { WorkflowState, WorkflowTransition } from './types';
 import {
   WORKFLOW_TRANSITION_FIELD_KEYS,
   WORKFLOW_TRANSITION_FIELD_LABELS,
-  WORKFLOW_TRANSITION_ROLE_LABELS,
-  WORKFLOW_TRANSITION_ROLES,
   type WorkflowTransitionFieldKey,
-  type WorkflowTransitionRole,
 } from './workflowTransitionGuard';
 import { WORKFLOW_LINK_ENTITY_LABELS } from './productDefectLinkageCatalog';
 
-const WORKFLOW_ROLE_OPTIONS = Object.values(WORKFLOW_TRANSITION_ROLES);
 const WORKFLOW_FIELD_OPTIONS = Object.values(WORKFLOW_TRANSITION_FIELD_KEYS);
 
 function toggleListItem(list: string[] | null | undefined, item: string): string[] {
@@ -95,22 +91,6 @@ export function WorkflowTransitionRuleModal({
               />
               自动认领
             </label>
-          </div>
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-token-secondary">允许角色（不选表示不限）</span>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {WORKFLOW_ROLE_OPTIONS.map((role) => (
-                <label key={role} className="flex items-center gap-1.5 text-xs text-token-secondary">
-                  <input
-                    type="checkbox"
-                    checked={(draft.allowedRoles ?? []).includes(role)}
-                    onChange={() => setDraft((d) => ({ ...d, allowedRoles: toggleListItem(d.allowedRoles, role) }))}
-                    className="accent-cyan-500"
-                  />
-                  {WORKFLOW_TRANSITION_ROLE_LABELS[role as WorkflowTransitionRole]}
-                </label>
-              ))}
-            </div>
           </div>
           <div className="flex flex-col gap-1.5">
             <span className="text-xs text-token-secondary">跨对象联动（流转成功后自动执行）</span>

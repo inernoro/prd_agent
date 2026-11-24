@@ -59,7 +59,7 @@ public record LlmLogStart(
     /// <summary>本次请求是否流式（来自请求体 stream 字段）</summary>
     bool? IsStreaming = null,
     /// <summary>
-    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
+    /// 网关传输路径观测标记（S2）：http / direct / admin-probe。
     /// 由构建日志的位置权威标注；为 null 时写入器兜底为调用上下文的 GatewayTransport（默认 direct）。
     /// </summary>
     string? GatewayTransport = null,
@@ -79,8 +79,16 @@ public record LlmLogStart(
     string? ModelPoolId = null,
     decimal? InputPricePerMillion = null,
     decimal? OutputPricePerMillion = null,
+    /// <summary>缓存命中输入单价快照。</summary>
+    decimal? CachedInputPricePerMillion = null,
+    /// <summary>写入缓存输入单价快照。</summary>
+    decimal? CacheWritePricePerMillion = null,
     decimal? PricePerCall = null,
     string? PriceCurrency = null,
+    /// <summary>价格来源：upstream / admin / migrated。</summary>
+    string? PriceSource = null,
+    /// <summary>价格观测时间。</summary>
+    DateTime? PriceObservedAt = null,
     /// <summary>产生本条请求日志的发布 commit；为空时写入器从 GIT_COMMIT 兜底。</summary>
     string? ReleaseCommit = null,
     /// <summary>MAP 业务运行 ID，用于把 GW 请求日志反查到业务 run。</summary>
@@ -100,7 +108,15 @@ public record LlmLogStart(
     string? OfferingTargetKind = null,
     string? Operation = null,
     string? LogicalRequestId = null,
-    string? ProviderTaskId = null);
+    string? ProviderTaskId = null,
+    string? TaskPermitId = null,
+    string? TaskLeaseRunId = null,
+    long? TaskLeaseFence = null,
+    string? ExecutionOrigin = null,
+    string? TriggerCredentialId = null,
+    string? TriggerActorUserId = null,
+    string? SourceDeployment = null,
+    string? SourceTask = null);
 
 public record LlmLogDone(
     int? StatusCode,
@@ -127,10 +143,18 @@ public record LlmLogDone(
     string? FinishReason = null,
     decimal? EstimatedInputCost = null,
     decimal? EstimatedOutputCost = null,
+    /// <summary>缓存命中输入部分的成本。</summary>
+    decimal? EstimatedCacheReadCost = null,
+    /// <summary>写入缓存部分的成本（Anthropic 一类协议）。</summary>
+    decimal? EstimatedCacheWriteCost = null,
     decimal? EstimatedCallCost = null,
     decimal? EstimatedCost = null,
     string? EstimatedCostCurrency = null,
     decimal? EstimatedCostUsd = null,
+    /// <summary>这次调用算没算出钱：priced / unpriced / stale_currency / no_usage。</summary>
+    string? CostStatus = null,
+    /// <summary>算不出钱时的人话原因。</summary>
+    string? CostUnpricedReason = null,
     List<LlmProviderAttempt>? ProviderAttempts = null,
     string? Provider = null,
     string? Model = null,
@@ -145,7 +169,11 @@ public record LlmLogDone(
     string? ModelGroupName = null,
     decimal? ProviderReportedCost = null,
     string? ProviderCostCurrency = null,
-    List<LlmLogImagePayload>? OutputImagePayloads = null);
+    List<LlmLogImagePayload>? OutputImagePayloads = null,
+    int? ReasoningTokens = null,
+    bool? CacheCreationCountedInsideInput = null,
+    string? CostKind = null,
+    string? ProviderTaskId = null);
 
 public sealed record LlmLogImagePayload(
     string? Base64Data,

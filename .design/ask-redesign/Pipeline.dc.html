@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); }
+    h3 { font-size: 19px; margin: 4px 0 0; letter-spacing: -0.005em; }
+    .flow { display: flex; align-items: stretch; gap: 10px; }
+    .step { flex-grow: 1; display: flex; flex-direction: column; gap: 7px; padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); }
+    .step.new { background: rgba(217,119,87,0.10); border-color: rgba(217,119,87,0.32); }
+    .step .n { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 6px; }
+    .step.new .n { color: rgba(217,119,87,0.95); }
+    .step .t { font-size: 13.5px; font-weight: 600; }
+    .step .d { font-size: 12px; line-height: 1.65; color: rgba(247,247,251,0.68); }
+    .arrow { display: flex; align-items: center; color: rgba(247,247,251,0.30); flex-shrink: 0; }
+    .band { display: flex; align-items: center; gap: 12px; padding: 12px 15px; border-radius: 11px; background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.28); font-size: 12.5px; line-height: 1.7; color: rgba(247,247,251,0.80); }
+    .band b { color: #f7f7fb; font-weight: 600; }
+    .cols { display: flex; gap: 18px; align-items: flex-start; }
+    .card { flex-grow: 1; border-radius: 14px; background: #1e1e24; border: 1px solid rgba(255,255,255,0.12); overflow: hidden; }
+    .c-head { display: flex; align-items: center; gap: 8px; padding: 12px 15px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .c-title { font-size: 13.5px; font-weight: 600; }
+    .c-tag { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 3px 8px; border-radius: 5px; background: rgba(217,119,87,0.14); border: 1px solid rgba(217,119,87,0.32); color: rgba(247,247,251,0.86); }
+    .c-body { padding: 13px 15px 15px; display: flex; flex-direction: column; gap: 8px; }
+    .row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 9px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 12.5px; color: rgba(247,247,251,0.86); }
+    .box { width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .box.off { background: transparent; border: 1px solid rgba(255,255,255,0.24); }
+    .acts { display: flex; gap: 8px; margin-top: 3px; }
+    .btn { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.18); font-size: 12px; color: rgba(247,247,251,0.80); }
+    .rules { flex-shrink: 0; width: 400px; display: flex; flex-direction: column; gap: 9px; }
+    .rule { display: flex; gap: 10px; padding: 12px 13px; border-radius: 11px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+    .rule .ic { flex-shrink: 0; margin-top: 1px; }
+    .rule .t { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+    .rule .d { font-size: 11.5px; line-height: 1.7; color: rgba(247,247,251,0.68); }
+  </style>
+</helmet>
+
+<div class="board">
+  <div class="eyebrow">快捷词条从哪来</div>
+  <h3>上传者什么都不用配 —— 词条是从他自己上传的正文里读出来的</h3>
+
+  <div class="flow">
+    <div class="step">
+      <div class="n">01 · 用户动作</div>
+      <div class="t">选文件，点「开始上传」</div>
+      <div class="d">上传者的参与到此为止。他不会被问「要不要配几个开场问题」，因为那个问题的答案在他刚传的文件里。</div>
+    </div>
+    <div class="arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+    <div class="step">
+      <div class="n">02 · 已有能力</div>
+      <div class="t">解包、找入口、取正文快照</div>
+      <div class="d">现在就在做的事：把 ZIP 摊开、认出入口 HTML、把正文抽成快照。提问功能本来就靠这份快照回答。</div>
+    </div>
+    <div class="arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+    <div class="step new">
+      <div class="n">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+        03 · 这次新增
+      </div>
+      <div class="t">让模型读一遍，出 5 个问题</div>
+      <div class="d">快照就绪后入队一次调用：读正文，写出访客最可能问的 5 句，外加一句欢迎语。一次上传一次调用，正文没变不重跑。</div>
+    </div>
+    <div class="arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></div>
+    <div class="step">
+      <div class="n">04 · 访客侧</div>
+      <div class="t">打开链接就看见</div>
+      <div class="d">词条直接铺在提问入口上。空态不再是一片留白，而是五句「我可以问这个」。</div>
+    </div>
+  </div>
+
+  <div class="band">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20 6L9 17l-5-5"></path></svg>
+    <div><b>用户无感知的边界：</b>上传者点完按钮就能走人，词条在几秒后自己到位；他从头到尾没被要求做任何配置。他唯一会看到它的时刻，是想改它的时候 —— 分享的时候那一栏已经填好了。</div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <div class="c-head">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        <div class="c-title">分享设置 · 开场问题</div>
+        <div class="c-tag">已自动生成 5 条 · 来自正文</div>
+      </div>
+      <div class="c-body">
+        <div class="row"><div class="box"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"></path></svg></div>这份验收报告的结论是什么？</div>
+        <div class="row"><div class="box"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"></path></svg></div>哪些问题还没修完？</div>
+        <div class="row"><div class="box"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round"><path d="M20 6L9 17l-5-5"></path></svg></div>搜索入口为什么算未通过？</div>
+        <div class="row"><div class="box off"></div>34 项走查里通过了多少？</div>
+        <div class="row"><div class="box off"></div>导航从 7 项收敛到 4 项，剩下的去哪了？</div>
+        <div class="acts">
+          <div class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"></path></svg>重新生成</div>
+          <div class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>自己加一条</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rules">
+      <div class="rule">
+        <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg></div>
+        <div><div class="t">读不出来就不显示，不编</div><div class="d">正文取不到、或模型没给出合格的 5 条，这一栏整块不出现 —— 宁可没有词条，也不摆五句「关于本页你想了解什么」这种放到任何页面都成立的空话。</div></div>
+      </div>
+      <div class="rule">
+        <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round"><path d="M12 3a9 9 0 1 1-9 9"></path><path d="M3 3v5h5"></path></svg></div>
+        <div><div class="t">改过就不再被覆盖</div><div class="d">owner 只要动过这一栏（改字、删条、加条），后续重新上传不会把他的改动冲掉；要回到自动结果得他自己点「重新生成」。</div></div>
+      </div>
+      <div class="rule">
+        <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+        <div><div class="t">一次上传一次调用</div><div class="d">词条跟着正文快照走：正文没变就不重跑，替换文件才重算。这是一个站点一辈子几次的成本，不是每个访客一次。</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

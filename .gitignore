@@ -1,5 +1,10 @@
 # Dependencies
+# 尾斜杠只匹配目录，匹配不到同名的**软链**（软链在 git 眼里是文件）。
+# 2026-08-27 在临时 worktree 里软链依赖目录跑测试，`git add -A` 把
+# cds/node_modules 与 cds/web/node_modules 两个软链提交了进去，四条 CI 全红。
+# 两条都写，目录与软链一起挡。
 node_modules/
+node_modules
 .pnpm-store/
 
 # Build outputs
@@ -81,12 +86,17 @@ __pycache__/
 .claude/launch.json
 .claude/worktrees/
 
+# Codex desktop local environments (machine-specific and may contain credentials)
+.Codex/environments/
+
 # CDS runtime state (contains env secrets, port allocations, container status)
 # When CDS runs from the repo root it creates /.cds/ and /.cds-worktrees/
 # there; when it runs from cds/ it creates cds/.cds/. Ignore both locations
 # so `git status` stays clean regardless of how exec_cds.sh is invoked.
 /.cds/
 /.cds-data/
+/.cds-static-previews/
+/.cds-preview-assets-v1/
 /.cds-cache/
 /.cds-worktrees/
 .cds/state.json
@@ -107,9 +117,20 @@ cds/nginx/www/
 
 # Agent development workspace (per-developer progress tracking)
 .agent-workspace/
+cds/default-regression-output/
+cds/branch-claim-entry-output/
 
 # Local Codex/agent skill mirrors (machine-specific, generated locally)
 .agents/skills/*
+# 项目级交付技能入口使用仓库内相对链接，云端克隆后可直接发现
+!.agents/skills/work-budget
+!.agents/skills/kill-debt
+!.agents/skills/create-debt
+!.agents/skills/first-principles
+!.agents/skills/cds-skeleton-review
+# 项目级原型导出技能由仓库维护，统一源头剪枝与上传前预检
+!.agents/skills/prototype-export/
+!.agents/skills/prototype-export/**
 # 项目级主题风险治理技能由仓库维护，供不同宿主的开发代理复用
 !.agents/skills/reduce-adaptive-theme-risk/
 !.agents/skills/reduce-adaptive-theme-risk/**
@@ -119,3 +140,14 @@ cds/nginx/www/
 
 # 验收报告/截图本地退化产物——归档走知识库，不入库（2026-06-12 清理）
 doc/acceptance/
+
+# 对比度审计的扫描产物（截图 + 报告），跑一次 e2e/theme-contrast-audit-local.mjs 就能重生成，不入库
+.audit-contrast-local/
+
+# 对比度审计每轮产出的截图与报告，属临时产物：跑一次脚本即重生成，不入库
+.audit-*/
+
+# 对比度审计产物（截图 + report.json/md）：跑一次脚本即重生成，不该进仓库。
+# 之前只忽略了具体几个目录名，换个 AUDIT_OUT 就漏，于是 116 个文件 23MB 被提交进来
+# （Codex 在 PR #1374 抓到）。改成前缀通配，堵住所有 .audit-* 变体。
+.audit-*/

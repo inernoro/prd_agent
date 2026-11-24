@@ -16,6 +16,8 @@ export interface SubmissionItem {
   viewCount: number;
   likedByMe: boolean;
   createdAt: string;
+  /** 排序与列表展示使用的最近有效内容时间；旧后端缺失时回退 createdAt。 */
+  activityAt?: string;
 }
 
 export async function listPublicSubmissions(params?: {
@@ -125,6 +127,7 @@ export async function getSubmissionDetail(id: string) {
 
 export async function createSubmission(body: {
   contentType: string;
+  trigger?: 'manual' | 'auto';
   title?: string;
   imageAssetId?: string;
   workspaceId?: string;
@@ -136,10 +139,10 @@ export async function createSubmission(body: {
   );
 }
 
-export async function autoSubmitImages(imageAssetIds: string[]) {
+export async function autoSubmitImages(imageAssetIds: string[], trigger: 'auto' | 'manual' = 'auto') {
   return apiRequest<{ submitted: number }>(
     api.submissions.autoSubmit(),
-    { method: 'POST', body: { imageAssetIds } },
+    { method: 'POST', body: { imageAssetIds, trigger } },
   );
 }
 

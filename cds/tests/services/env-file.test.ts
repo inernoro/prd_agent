@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import {
   parseEnvFile,
   serializeEnvFile,
@@ -9,6 +10,9 @@ import {
   readEnvFile,
   writeEnvFileAtomic,
   updateEnvFile,
+  withEnvFileLock,
+  cdsEnvFileCandidates,
+  resolveCdsEnvFilePath,
 } from '../../src/services/env-file.js';
 
 /**
@@ -25,7 +29,33 @@ describe('env-file helper', () => {
     envFile = path.join(tmpDir, '.cds.env');
   });
 
+  describe('env file path SSOT', () => {
+    it('忽略可热更新的 CDS_REPO_ROOT 并以启动 cwd 为默认权威', () => {
+      const env = { CDS_REPO_ROOT: '/mnt/hot-updated-repositories' };
+      fs.writeFileSync(envFile, 'export CDS_SECRET_KEY="value"\n', { mode: 0o600 });
+
+      expect(cdsEnvFileCandidates(env, tmpDir)[0]).toBe(envFile);
+      expect(resolveCdsEnvFilePath(env, tmpDir)).toBe(envFile);
+      expect(resolveCdsEnvFilePath(env, tmpDir)).not.toContain('/mnt/hot-updated-repositories');
+    });
+
+    it('外部 CDS_ENV_FILE 是唯一覆盖且不会追加其他 fallback', () => {
+      const selected = path.join(tmpDir, 'selected.env');
+      expect(cdsEnvFileCandidates({ CDS_ENV_FILE: selected }, '/ignored')).toEqual([selected]);
+      expect(resolveCdsEnvFilePath({ CDS_ENV_FILE: selected }, '/ignored')).toBe(selected);
+    });
+
+    it('cwd 无文件时 loader 与 writer 共享同一个模块候选', () => {
+      const candidates = cdsEnvFileCandidates({}, tmpDir);
+      expect(candidates).toHaveLength(2);
+      expect(candidates[0]).toBe(envFile);
+      expect(candidates[1]).toBe(path.resolve(process.cwd(), '.cds.env'));
+      expect(resolveCdsEnvFilePath({}, tmpDir)).toBe(candidates[0]);
+    });
+  });
+
   afterEach(() => {
+    vi.restoreAllMocks();
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
@@ -166,6 +196,50 @@ describe('env-file helper', () => {
       expect(first).toBe(second);
     });
 
+    it('所有更新共用跨进程锁，锁已存在时不覆盖环境文件', () => {
+      fs.writeFileSync(envFile, 'export KEEP="original"\n', { mode: 0o600 });
+      fs.mkdirSync(`${envFile}.write.lock`, { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(`${envFile}.write.lock`, 'owner'),
+        `${process.pid}\nother-process\n`,
+        { mode: 0o600 },
+      );
+      expect(() => updateEnvFile(envFile, { KEEP: 'changed' })).toThrow(/另一进程更新/);
+      expect(fs.readFileSync(envFile, 'utf8')).toContain('KEEP="original"');
+    });
+
+    it('即使 owner PID 已退出也拒绝自动接管残留锁', () => {
+      fs.writeFileSync(envFile, 'export KEEP="original"\n', { mode: 0o600 });
+      fs.mkdirSync(`${envFile}.write.lock`, { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(`${envFile}.write.lock`, 'owner'),
+        '2147483647\nstale-owner\n',
+        { mode: 0o600 },
+      );
+      expect(() => updateEnvFile(envFile, { KEEP: 'changed' })).toThrow(/另一进程更新/);
+      expect(fs.readFileSync(envFile, 'utf8')).toContain('KEEP="original"');
+    });
+
+    it('释放锁时不删除被替换的其他 owner 锁', () => {
+      const lockPath = `${envFile}.write.lock`;
+      withEnvFileLock(envFile, () => {
+        fs.rmSync(path.join(lockPath, 'owner'));
+        fs.rmdirSync(lockPath);
+        fs.mkdirSync(lockPath, { mode: 0o700 });
+        fs.writeFileSync(path.join(lockPath, 'owner'), `${process.pid}\nreplacement-owner\n`, { mode: 0o600 });
+      });
+      expect(fs.readFileSync(path.join(lockPath, 'owner'), 'utf8')).toContain('replacement-owner');
+    });
+
+    it('Node 持锁时外部 Shell 进程无法取得同一目录锁', () => {
+      const lockPath = `${envFile}.write.lock`;
+      withEnvFileLock(envFile, () => {
+        const shell = spawnSync('mkdir', [lockPath], { encoding: 'utf8' });
+        expect(shell.status).not.toBe(0);
+      });
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
+
     it('escapes embedded double quotes on serialize and preserves the raw line across updates', () => {
       const tricky = 'value with "quotes" inside';
       updateEnvFile(envFile, { TRICKY: tricky });
@@ -192,6 +266,16 @@ describe('env-file helper', () => {
       expect(reread).toContain('TRICKY');
       expect(reread).toContain('\\"');
       expect(reread).toContain('export OTHER="ok"');
+    });
+
+    it('转义 dollar 和 backtick，避免 source .cds.env 时发生展开或命令替换', () => {
+      const value = 'prefix$HOME`id`\\suffix';
+      updateEnvFile(envFile, { CDS_SECRET_KEY: value });
+
+      const raw = fs.readFileSync(envFile, 'utf8');
+      expect(raw).toContain('prefix\\$HOME\\`id\\`\\\\suffix');
+      const parsed = readEnvFile(envFile).find((line) => line.key === 'CDS_SECRET_KEY');
+      expect(parsed?.value).toBe(value);
     });
   });
 
@@ -241,6 +325,21 @@ describe('env-file helper', () => {
       // (typically 0644 on Linux), exposing the token to other users on a
       // multi-user host. We chmod explicitly after copy.
       expect(backupMode).toBe(0o600);
+    });
+
+    it('rename 失败时保留原文件并删除含敏感值的临时文件', () => {
+      writeEnvFileAtomic(envFile, 'export TOKEN="old-value"\n');
+      const renameSync = fs.renameSync.bind(fs);
+      vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+        if (String(target) === envFile) throw new Error('simulated rename failure');
+        return renameSync(source, target);
+      });
+
+      expect(() => writeEnvFileAtomic(envFile, 'export TOKEN="new-sensitive-value"\n'))
+        .toThrow(/simulated rename failure/);
+      expect(fs.readFileSync(envFile, 'utf8')).toContain('old-value');
+      expect(fs.readFileSync(envFile, 'utf8')).not.toContain('new-sensitive-value');
+      expect(fs.readdirSync(tmpDir).filter((name) => name.includes('.tmp.'))).toEqual([]);
     });
   });
 

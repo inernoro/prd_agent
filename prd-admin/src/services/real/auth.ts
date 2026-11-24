@@ -1,5 +1,6 @@
 import { ok, type ApiResponse } from '@/types/api';
 import type {
+  ChangePasswordContract,
   GetSsoOptionsContract,
   LoginContract,
   LoginResponse,
@@ -7,6 +8,7 @@ import type {
   ResetPasswordContract,
   ResetPasswordResponse,
   SsoOptionsResponse,
+  SyntheticLoginContract,
 } from '@/services/contracts/auth';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
@@ -46,6 +48,9 @@ export const getSsoOptionsReal: GetSsoOptionsContract = async (): Promise<ApiRes
   });
 };
 
+export const completeCdsLoginReal = (): Promise<ApiResponse<LoginResponse>> =>
+  apiRequest<LoginResponse>(api.auth.cdsComplete(), { method: 'POST', auth: false });
+
 export const loginWithMiduoPlanetTokenReal: MiduoPlanetLoginContract = async (token): Promise<ApiResponse<LoginResponse>> => {
   const res = await apiRequest<BackendLoginResponse>(api.auth.miduoPlanetLogin(), {
     method: 'POST',
@@ -64,11 +69,50 @@ export const loginWithMiduoPlanetTokenReal: MiduoPlanetLoginContract = async (to
   });
 };
 
+export const loginWithSyntheticTicketReal: SyntheticLoginContract = async (code): Promise<ApiResponse<LoginResponse>> => {
+  const res = await apiRequest<BackendLoginResponse>(api.auth.syntheticLoginExchange(), {
+    method: 'POST',
+    auth: false,
+    body: { code },
+  });
+
+  if (!res.success) return res;
+
+  return ok({
+    user: res.data.user,
+    accessToken: res.data.accessToken,
+    refreshToken: res.data.refreshToken,
+    sessionKey: res.data.sessionKey,
+    mustResetPassword: false,
+  });
+};
+
 export const resetPasswordReal: ResetPasswordContract = async (userId, newPassword, confirmPassword, accessToken): Promise<ApiResponse<ResetPasswordResponse>> => {
   return apiRequest<ResetPasswordResponse>(api.auth.resetPassword(), {
     method: 'POST',
     auth: !accessToken,
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     body: { userId, newPassword, confirmPassword },
+  });
+};
+
+export const changePasswordReal: ChangePasswordContract = async (
+  currentPassword,
+  newPassword,
+  confirmPassword,
+): Promise<ApiResponse<LoginResponse>> => {
+  const res = await apiRequest<BackendLoginResponse>(api.auth.changePassword(), {
+    method: 'POST',
+    body: { currentPassword, newPassword, confirmPassword },
+  });
+
+  if (!res.success) return res;
+
+  return ok({
+    user: res.data.user,
+    accessToken: res.data.accessToken,
+    refreshToken: res.data.refreshToken,
+    sessionKey: res.data.sessionKey,
+    mustResetPassword: false,
   });
 };

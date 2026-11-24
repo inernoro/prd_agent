@@ -39,7 +39,7 @@ export function PmTodosCard() {
       <div className="shrink-0 flex items-center gap-2 mb-1">
         <ListChecks size={15} className="text-blue-400" />
         <span className="text-sm font-semibold text-token-primary">我的待办</span>
-        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">{items.length}</span>
+        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-blue-500/15 text-[color:var(--accent-fg-blue)] border border-blue-500/30">{items.length}</span>
       </div>
       <div className="shrink-0 text-[11px] text-token-muted mb-3">跨项目聚合：指派给我的未完成任务（逾期优先）+ 待我打分的结案评价</div>
       {loading ? (

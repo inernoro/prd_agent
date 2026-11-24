@@ -91,14 +91,21 @@ export function AvatarProgressRing({
             height: 14,
             padding: '0 3px',
             borderRadius: 999,
-            background: complete ? '#34d399' : 'linear-gradient(135deg,#a78bfa,#818cf8)',
+            /*
+             * 9px 的等级数字要 4.5:1，而原来的浅底 + 深字实测只有 4.07:1
+             * （全量扫描里横跨 121 个「路由×主题×视口」组合，是最大的一组）。
+             * 原因是底与字各自独立取值、互相不知道对方：底显示成绿色时字仍是
+             * 未满环的深紫 #1a1033。改成「深底 + 白字」，两个分支都不会再漂 ——
+             * 满环 #047857 配白 5.48:1，未满环 #7c3aed→#4f46e5 配白 5.7~6.29:1。
+             */
+            background: complete ? '#047857' : 'linear-gradient(135deg,#7c3aed,#4f46e5)',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 9,
             fontWeight: 800,
             lineHeight: 1,
-            color: complete ? '#06281d' : '#1a1033',
+            color: 'var(--accent-on-solid)',   // 深底配白字，两个主题同值（见 tokens.css 该 token 注释）
             boxShadow: '0 0 0 1.5px var(--bg-card, #1E1F20)',
           }}
         >

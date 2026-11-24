@@ -1,0 +1,324 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using PrdAgent.Infrastructure.Security;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Gateway;
+
+public sealed class VisualLogicalModelCatalogTests
+{
+    [Fact]
+    public void MapCatalog_UsesGatewayCapabilitySnapshot_WithoutKnowingUpstreamModelName()
+    {
+        var model = new AvailableModelPool
+        {
+            Id = "dynamic",
+            Code = "dynamic-public-id",
+            Name = "动态模型",
+            ResolutionType = "LogicalModel",
+            Models =
+            [
+                new PoolModelInfo
+                {
+                    ModelId = "dynamic-public-id",
+                    PlatformId = "logical-model",
+                    ActualModelId = "a-model-map-has-never-seen",
+                    ImageCapabilities = new GatewayImageCapabilitiesSnapshot
+                    {
+                        SizeConstraintType = "whitelist",
+                        SizeParamFormat = "WxH",
+                        SizesByResolution = new Dictionary<string, List<string>>
+                        {
+                            ["custom"] = ["1024x1024", "1536x1024", "bad-size"],
+                        },
+                        SupportsImageToImage = true,
+                    },
+                },
+            ],
+        };
+
+        var info = GatewayImageModelCatalog.Describe(model);
+
+        Assert.NotNull(info);
+        Assert.True(info.SupportsImageToImage);
+        Assert.Equal(new[] { "1024x1024", "1536x1024" }, info.SizesByResolution["custom"].Select(x => x.Size));
+        Assert.Equal(new[] { "1:1", "3:2" }, info.SizesByResolution["custom"].Select(x => x.AspectRatio));
+    }
+
+    [Fact]
+    public void MapCatalog_DoesNotInferCapabilitiesFromActualModelName()
+    {
+        var model = new AvailableModelPool
+        {
+            Id = "legacy",
+            Code = "legacy-public-id",
+            Name = "旧目录项",
+            ResolutionType = "LogicalModel",
+            Models =
+            [
+                new PoolModelInfo
+                {
+                    ModelId = "legacy-public-id",
+                    PlatformId = "logical-model",
+                    ActualModelId = "gpt-image-1",
+                },
+            ],
+        };
+
+        Assert.Null(GatewayImageModelCatalog.Describe(model));
+    }
+
+    [Theory]
+    [InlineData(AppCallerRegistry.VisualAgent.Image.Text2Img)]
+    [InlineData(AppCallerRegistry.VisualAgent.Image.Img2Img)]
+    [InlineData(AppCallerRegistry.VisualAgent.Image.VisionGen)]
+    public async Task StrictPool_ExposesBusinessChoices_AndResolvesSelectedIdentity(string caller)
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27018";
+        var client = new MongoClient(connection);
+        var gatewayName = $"visual_catalog_{Guid.NewGuid():N}";
+        var mapName = $"visual_catalog_map_{Guid.NewGuid():N}";
+        var gateway = new LlmGatewayDataContext(connection, gatewayName);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ApiKeyCrypto:Secret"] = "visual-model-catalog-test-only-2026",
+            ["LlmGateway:ModelCatalogGateRecheckSeconds"] = "0",
+        }).Build();
+        async Task Insert<T>(string collection, T value)
+        {
+            var doc = value!.ToBsonDocument();
+            doc["TenantId"] = GatewayTenantDefaults.InternalTenantId;
+            await gateway.Database.GetCollection<BsonDocument>(collection).InsertOneAsync(doc);
+        }
+
+        try
+        {
+            await Insert("llmgw_app_callers", new GatewayAppCallerRecord
+            {
+                AppCallerCode = caller, RequestType = "generation", Status = "configured",
+                AllowedModelPoolIds = ["allowed-pool"], DefaultModelPoolId = "allowed-pool",
+            });
+            await Insert("llmgw_platforms", new LLMPlatform
+            {
+                Id = "provider", Name = "测试上游", PlatformType = "openai", Enabled = true,
+                ApiUrl = "https://image.example.test/v1", ApiKeyEncrypted = ApiKeyCryptoKeyRing.Encrypt("test-key", config),
+            });
+            await Insert("llmgw_model_pools", new ModelGroup
+            {
+                Id = "allowed-pool", Name = "图片生成默认池", Code = "default-generation", ModelType = "generation",
+                Models = [
+                    new ModelGroupItem { PlatformId = "provider", ModelId = "gpt-image-1", HealthStatus = ModelHealthStatus.Healthy },
+                    new ModelGroupItem { PlatformId = "provider", ModelId = "gpt-image-2", HealthStatus = ModelHealthStatus.Healthy },
+                ],
+            });
+            // 这条测试的不变量是「不该被这个调用方选到的模型，既不出现在清单里、也解析不出来」。
+            //
+            // 旧架构靠模型池表达它：池里没有的物理模型选不到。池退场之后，「谁能选什么」
+            // 由对外模型的放行名单回答，所以 outside 换成**没有放行给这个调用方**——
+            // 同一个不变量，换了它在新架构里的表达方式，不是把判据放宽。
+            foreach (var (id, upstream, order) in new[] { ("image1", "gpt-image-1", 20), ("image2", "gpt-image-2", 10), ("outside", "outside-model", 0) })
+            {
+                await Insert("llmgw_models", new LLMModel
+                {
+                    Id = id + "-upstream", ModelName = upstream, PlatformId = "provider", Enabled = true, Protocol = "openai",
+                    MaxTokens = 8192, InputPricePerMillion = 3m, OutputPricePerMillion = 12m,
+                    PriceCurrency = "USD", PriceSource = "fixture", PriceObservedAt = DateTime.UtcNow.AddMinutes(-1),
+                });
+                await Insert("llmgw_logical_models", new GatewayLogicalModel
+                {
+                    Id = id, PublicId = id, PublicIdNormalized = id, Name = id, ModelType = "generation",
+                    Description = id + " 的业务用途",
+                    Capabilities = ["image_generation", "text2img", "img2img", "vision_generation"],
+                    AllowedAppCallerCodes = id == "outside" ? ["someone-else.agent::generation"] : [caller],
+                    DisplayOrder = order,
+                });
+                await Insert("llmgw_model_offerings", new GatewayModelOffering
+                {
+                    Id = id + "-offering", LogicalModelId = id, TargetId = id + "-upstream", Protocol = "openai",
+                });
+            }
+
+            var resolver = new ModelResolver(new MongoDbContext(connection, mapName), config, NullLogger<ModelResolver>.Instance, gateway);
+            var catalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.Equal(new[] { "image2", "image1" }, catalog.Select(x => x.Code));
+            Assert.All(catalog, item => Assert.Equal("LogicalModel", item.ResolutionType));
+            Assert.True(catalog[0].IsDefault);
+            Assert.Equal("image2 的业务用途", catalog[0].Description);
+            Assert.False(catalog[1].IsDefault);
+            Assert.Equal("gpt-image-2", Assert.Single(catalog[0].Models).ActualModelId);
+            Assert.Equal("gpt-image-1", Assert.Single(catalog[1].Models).ActualModelId);
+            Assert.All(catalog, item => Assert.NotNull(Assert.Single(item.Models).ImageCapabilities));
+            foreach (var choice in catalog)
+            {
+                var resolved = await resolver.ResolveAsync(caller, "generation", choice.Code);
+                Assert.True(resolved.Success, resolved.ErrorMessage);
+                Assert.Equal(choice.Code, resolved.LogicalModelPublicId);
+                Assert.Equal(choice.Code == "image1" ? "gpt-image-1" : "gpt-image-2", resolved.ActualModel);
+            }
+            // 没放行给这个调用方的模型：点名也选不到。
+            var outside = await resolver.ResolveAsync(caller, "generation", "outside");
+            Assert.False(outside.Success);
+
+            // 目录与参数面板属于只读路径：即使线路已进入可半开探测窗口，也只能读取
+            // 解析能力快照，不能抢占真正业务请求需要的恢复租约。
+            var offerings = gateway.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            await offerings.UpdateOneAsync(
+                x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
+                    .Unset(x => x.HalfOpenLeaseUntil));
+            // 修改预算只读元信息后，真实业务请求仍应拥有认领恢复探针的机会。
+            var budgetMetadata = await resolver.ResolveMetadataAsync(caller, "generation", "image2");
+            Assert.True(budgetMetadata.Success, budgetMetadata.ErrorMessage);
+            Assert.Equal("image2-offering", budgetMetadata.OfferingId);
+            Assert.Equal("测试上游", budgetMetadata.ActualPlatformName);
+            Assert.Equal(8192, budgetMetadata.MaxTokens);
+            Assert.Equal(3m, budgetMetadata.InputPricePerMillion);
+            Assert.Equal(12m, budgetMetadata.OutputPricePerMillion);
+            Assert.Equal("USD", budgetMetadata.PriceCurrency);
+            Assert.Equal("fixture", budgetMetadata.PriceSource);
+            Assert.NotNull(budgetMetadata.PriceObservedAt);
+            var afterMetadataRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterMetadataRead.HalfOpenLeaseUntil);
+            var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            var halfOpenMember = Assert.Single(halfOpenCatalog[0].Models);
+            Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
+            Assert.Equal("Unavailable", halfOpenMember.HealthStatus);
+            Assert.Equal(0, halfOpenMember.HealthScore);
+            Assert.True(halfOpenMember.IsRecoveryProbeAvailable);
+            var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+            // 人工恢复即使尚在冷却期，也应开放入口；只读目录仍不认领租约。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                    .Set(x => x.ManualRecoveryAt, DateTime.UtcNow));
+            await Insert("llmgw_models", new LLMModel
+            {
+                Id = "blocked-upstream", ModelName = "future-unapproved-probe-1699", PlatformId = "provider", Enabled = true,
+            });
+            await gateway.Database.GetCollection<BsonDocument>("llmgw_models").UpdateOneAsync(
+                new BsonDocument("_id", "image2-upstream"), Builders<BsonDocument>.Update.Set("AllowedOutsideCatalog", true));
+            await gateway.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName).InsertManyAsync(
+                GatewayCatalogMigrations.RequiredIds.Select(id => new BsonDocument
+                {
+                    ["_id"] = id, [GatewayCatalogMigrations.CompletedAtField] = DateTime.UtcNow,
+                }));
+            Assert.True(await GatewayCatalogGate.EnforcesAsync(config, gateway.Database, default));
+            foreach (var (id, target, priority) in new[] { ("missing-probe", "missing-target", -2), ("blocked-probe", "blocked-upstream", -1) })
+                await Insert("llmgw_model_offerings", new GatewayModelOffering
+                {
+                    Id = id, LogicalModelId = "image2", TargetId = target, Protocol = "openai", Priority = priority,
+                    HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
+                });
+            var manualCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.True(Assert.Single(manualCatalog[0].Models).IsRecoveryProbeAvailable);
+            Assert.Equal("gpt-image-2", Assert.Single(manualCatalog[0].Models).ActualModelId);
+            Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 2));
+            var recoveryMetadata = await resolver.ResolveMetadataAsync(caller, "generation", "image2");
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 0));
+            Assert.All(await offerings.Find(x => x.LogicalModelId == "image2").ToListAsync(),
+                offering => Assert.Null(offering.HalfOpenLeaseUntil));
+            Assert.Empty(await gateway.Database.GetCollection<BsonDocument>("system.profile")
+                .Find(new BsonDocument("command.findAndModify", "llmgw_model_offerings")).ToListAsync());
+            Assert.True(recoveryMetadata.Success, recoveryMetadata.ErrorMessage);
+            Assert.Equal("image2-offering", recoveryMetadata.OfferingId);
+            await Insert("llmgw_model_offerings", new GatewayModelOffering
+            {
+                Id = "é-later-probe", LogicalModelId = "image2", TargetId = "unneeded-later-target", Protocol = "openai", Priority = 100,
+                HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
+            });
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 2));
+            var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 0));
+            Assert.Empty(await gateway.Database.GetCollection<BsonDocument>("system.profile")
+                .Find(new BsonDocument { ["command.find"] = "llmgw_models", ["command.filter._id"] = "unneeded-later-target" })
+                .ToListAsync());
+            Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
+            Assert.Equal("image2-offering", recoveryAttempt.OfferingId);
+            Assert.All(await offerings.Find(x => x.Id == "missing-probe" || x.Id == "blocked-probe").ToListAsync(),
+                offering => Assert.Null(offering.HalfOpenLeaseUntil));
+            var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
+            var leasedCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.False(Assert.Single(leasedCatalog[0].Models).IsRecoveryProbeAvailable);
+            var busyRecovery = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.False(busyRecovery.Success);
+            Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, busyRecovery.FailureCode);
+            Assert.Equal(503, GatewayRouteFailure.HttpStatusCode(busyRecovery.FailureCode));
+
+            // 半开失败必须消耗人工恢复资格，回到冷却期；不能让坏线路被每次请求重试。
+            await resolver.RecordFailureAsync(recoveryAttempt);
+            var failedProbe = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Equal(ModelHealthStatus.Unavailable, failedProbe.HealthStatus);
+            Assert.Equal(1, failedProbe.ConsecutiveFailures);
+            Assert.Null(failedProbe.HalfOpenLeaseUntil);
+            Assert.Null(failedProbe.ManualRecoveryAt);
+            Assert.NotNull(failedProbe.LastFailedAt);
+            var cooling = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.False(cooling.Success);
+            Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, cooling.FailureCode);
+
+            // 只推进自有测试数据库的时间，不 sleep、不调用供应商；并发请求只能取得一张探测票。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1)));
+            var contenders = await Task.WhenAll(Enumerable.Range(0, 8)
+                .Select(_ => resolver.ResolveAsync(caller, "generation", "image2")));
+            var winner = Assert.Single(contenders, x => x.Success);
+            Assert.Equal("image2-offering", winner.OfferingId);
+            Assert.All(contenders.Where(x => !x.Success),
+                loser => Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, loser.FailureCode));
+
+            // 真正消费成功回执后才恢复健康，释放租约并清失败数；后续正常请求不再争半开票。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.ManualRecoveryAt, DateTime.UtcNow));
+            await resolver.RecordSuccessAsync(winner);
+            var recovered = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Equal(ModelHealthStatus.Healthy, recovered.HealthStatus);
+            Assert.Equal(0, recovered.ConsecutiveFailures);
+            Assert.Equal(1, recovered.ConsecutiveSuccesses);
+            Assert.Null(recovered.HalfOpenLeaseUntil);
+            Assert.Null(recovered.ManualRecoveryAt);
+            Assert.NotNull(recovered.LastSuccessAt);
+            var recoveredCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.False(Assert.Single(recoveredCatalog[0].Models).IsRecoveryProbeAvailable);
+            var normalAfterRecovery = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(normalAfterRecovery.Success, normalAfterRecovery.ErrorMessage);
+            Assert.Equal("image2-offering", normalAfterRecovery.OfferingId);
+            Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
+
+            await offerings
+                .UpdateManyAsync(
+                    FilterDefinition<GatewayModelOffering>.Empty,
+                    Builders<GatewayModelOffering>.Update
+                        .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                        .Unset(x => x.ManualRecoveryAt));
+            var unavailableCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.Equal(new[] { "image2", "image1" }, unavailableCatalog.Select(x => x.Code));
+            Assert.All(unavailableCatalog, item =>
+                Assert.Equal("Unavailable", Assert.Single(item.Models).HealthStatus));
+            Assert.All(unavailableCatalog, item =>
+                Assert.False(Assert.Single(item.Models).IsRecoveryProbeAvailable));
+            Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
+
+            await gateway.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models")
+                .UpdateManyAsync(FilterDefinition<GatewayLogicalModel>.Empty, Builders<GatewayLogicalModel>.Update.Set(x => x.Enabled, false));
+            Assert.Empty(await resolver.GetAvailablePoolsAsync(caller, "generation"));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(gatewayName);
+            await client.DropDatabaseAsync(mapName);
+        }
+    }
+}

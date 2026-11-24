@@ -15,6 +15,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.Changelog;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -292,10 +293,13 @@ public class ChangelogController : ControllerBase
     {
         if (trace.PublishStatus == DefectResolutionPublishStatus.Published)
             return DefectResolutionPublishStatus.Published;
-        if (string.IsNullOrWhiteSpace(deployedCommitSha) || deployedIndex < 0)
+        if (string.IsNullOrWhiteSpace(deployedCommitSha))
             return DefectResolutionPublishStatus.Unknown;
+        // 最小热修复可能尚未进入主干日志；与实际部署版本完全一致即可证明已发布。
         if (string.Equals(commitSha, deployedCommitSha, StringComparison.OrdinalIgnoreCase))
             return DefectResolutionPublishStatus.Published;
+        if (deployedIndex < 0)
+            return DefectResolutionPublishStatus.Unknown;
         if (!shaIndex.TryGetValue(commitSha, out var traceIndex))
             return DefectResolutionPublishStatus.Unknown;
         return traceIndex >= deployedIndex

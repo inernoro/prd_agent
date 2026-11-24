@@ -87,6 +87,7 @@
 | `report_team_members` | `ReportTeamMember` | 周报团队成员 | `(teamId, userId)` 唯一；`userId` |
 | `report_templates` | `ReportTemplate` | 周报模板 | `(isDefault, createdAt)` |
 | `report_weekly_reports` | `WeeklyReport` | 周报主体 | `(userId, teamId, weekYear, weekNumber)` 唯一；`(teamId, status, periodEnd)`；`(userId, periodEnd)` |
+| `report_monthly_reports` | `MonthlyReport` | 月报主体（四章手写，不接入 AI；互动复用 report_comments / report_likes / report_view_events） | `(userId, teamId, year, month)` 唯一；`(teamId, year, month)` |
 | `report_daily_logs` | `ReportDailyLog` | 每日工作打点 | `(userId, date)` 唯一 |
 | `report_data_sources` | `ReportDataSource` | Git/SVN 数据源配置 | `teamId` |
 | `report_commits` | `ReportCommit` | 缓存的代码提交 | `(dataSourceId, commitHash)` 唯一；`(mappedUserId, committedAt)` |
@@ -109,7 +110,9 @@
 | `github_user_connections` | `GitHubUserConnection` | 每个 PRD Agent 用户的 GitHub OAuth 连接（加密 token、scopes、login） | `(userId)` 唯一 |
 | `pr_review_items` | `PrReviewItem` | PR 审查工作台的用户级记录（owner/repo/number + 嵌入式 Snapshot + 私人笔记） | `(userId, updatedAt desc)`；`(userId, owner, repo, number)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
+| `design_generation_settings` | `DesignGenerationSettings` | 网页生成设置单例（Id=global）：默认执行器、自查强度、风格预设、三段可编辑提示词；null 字段回落内置默认 | 无（单文档） |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
+| `document_embeddings` | `DocumentEmbedding` | 知识库文档切块向量（`Vector` 为 float32 二进制，随向量存 `Model` / `Dimension`，跨模型同维度判为不兼容；`DeploymentSlug` 隔离分支预览与生产，二者共用同一个 Mongo） | 待建：`(storeId, deploymentSlug, model)` 检索用；`(entryId, chunkIndex, deploymentSlug)` 唯一——**唯一键必须带部署作用域**，否则分支预览与生产的同一篇文档会撞键。索引未创建，见 no-auto-index 规则，交 DBA |
 | `document_stores` | `DocumentStore` | 知识库（文档空间）主记录：名称/描述/tags/是否公开/主文档/置顶/点赞收藏计数 | （未显式创建额外索引；owner 查询走 `OwnerId`） |
 | `document_entries` | `DocumentEntry` | 知识库内的文档条目：文件/文件夹/订阅源；含 `sourceType`(upload/subscription/github_directory)、同步字段（`SyncIntervalMinutes` / `LastSyncAt` / `IsPaused` / `ContentHash` / `LastETag` / `LastChangedAt`）、软链到 `ParsedPrd.Id` / `attachments.Id` | （未显式创建额外索引；按 `StoreId`、`ParentId` 查询） |
 | `document_sync_logs` | `DocumentSyncLog` | 知识库订阅同步日志（**只记录 change / error 事件**，无变化不落库）。GitHub 目录类型含 `FileChanges: [{path, action}]` | （按 `EntryId`、`SyncedAt desc` 查询） |
@@ -125,12 +128,14 @@
 | `agent_api_keys` | `AgentApiKey` | 海鲜市场开放接口 / Agent 开放入口的 M2M 长效 API Key。关键字段：`ApiKeyHash`（SHA256，不存明文）+ `KeyPrefix`（明文前 12 字符仅用于 UI 识别）+ `Scopes: List<string>`（`marketplace.skills:read/write` 或动态 `agent.{key}:{action}`）+ `ExpiresAt`（可为 null；默认 365 天；过期后有 7 天 `GracePeriodDays` 宽限期仍放行）+ `RevokedAt`（非空即失效）+ `LastRenewedAt/LastUsedAt`（审计）+ `OwnerUserId`（调用时以该用户身份执行） | 按 `ApiKeyHash` 查询（鉴权）；按 `OwnerUserId` 查询（用户管理） |
 | `agent_open_endpoints` | `AgentOpenEndpoint` | P3 Agent 开放接口登记。每条描述"某个 Agent 在路径 Y 开放 HTTP 接口，需 scope Z 调用"。关键字段：`AgentKey`（kebab-case，对齐 `toolboxStore.BUILTIN_TOOLS`）+ `HttpMethod` + `Path`（绝对路径）+ `RequiredScopes: List<string>`（正则 `agent.{key}:{action}`）+ `AllowedCallerUserIds`（反向白名单，空=公开给所有持 scope 的 Key）+ `RequestExampleJson/ResponseExampleJson`（给前端渲染调用示例）+ `LinkedMarketplaceSkillId`（P3 桥接目标，已占位、自动桥接逻辑待后续实现） | 按 `AgentKey` 查询；按 `RequiredScopes` 反查（用于 scope 白名单校验） |
 | `home_recent_opens` | `UserRecentOpen` | 首页「继续上次」每用户最近打开台账。打开视觉/文学工作区详情或工作流详情时 `RecentOpenTracker.TouchAsync` 按 `(UserId, AgentKey, EntityId)` upsert。是 `GET /api/home/recent-work` 的唯一数据源——禁止改回实体全局时间戳（UpdatedAt/LastOpenedAt/LastExecutedAt），否则共享成员/定时任务的活跃会顶进所有用户的继续上次 | 建议手动建索引（`no-auto-index`）：`(UserId, LastOpenedAt desc)` + `(UserId, AgentKey, EntityId)` 唯一，见 [guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md) |
+| `model_leaderboard_snapshots` | `ModelLeaderboardSnapshot` | arena.ai 公开榜单的本地快照（一个分榜一条文档，每次同步整份覆盖）。存快照而不是实时代理：对方没有开放 API，只能解析页面 HTML，页面每次 1.8MB 且随时改版，所以每天抓一次落库、页面永远读库。`FetchedAt` 是页面上「数据截至」的唯一来源，不许拿当前时间冒充；`Kind` 记这份数据**实际**解析出来的表格形状（agent/score），不是照目录抄的。`DeploymentSlug` 隔离分支预览与权威部署（同 `document_embeddings`，二者共用同一个 Mongo，见 cross-project-isolation 通道 4/10）——缺该字段读作 null 即权威部署，存量文档无需迁移。已进 `DataSyncScope.Excluded`：外站公开数据的本地缓存，跨实例搬运无意义且会误导来源 | 无需索引（十一个榜 × 部署数，量级几十条）。写入按 `_id` upsert，`_id` 由「榜名 + 部署作用域」派生（`ModelLeaderboardScope.DocumentId`），并发首写因此收敛到一条文档而不是撞唯一索引 |
 
 ### LLM Gateway 独立数据库
 
 | 集合（collection） | 模型 | 用途 | 索引/TTL/唯一约束 |
 |---|---|---|---|
 | `llmgw_model_pool_types` | `BsonDocument` | 租户程序池类型注册表及默认池权威指针。关键字段为 `TenantId`、`Code`、`DefaultPoolId`、`Version`；运行时只信任同租户、同类型指针 | `(TenantId, Code)` 唯一；所有查询和更新必须包含 `TenantId` |
+| `llmgw_runtime_grants` | `GatewayRuntimeGrantRecord` | OpenDesign 单次任务访问 LLMGW 的短期授权，只保存密钥哈希与前缀，并冻结租户、任务、用户、调用方、模型策略、调用次数和到期时间 | `KeyHash` 唯一；`ExpiresAt` TTL；`(TenantId, RunId)`；只由 DBA 清单创建，应用启动不建索引 |
 | `llmgw_cost_reconciliations` | `BsonDocument` | 供应商实际账单与网关请求估算的租户级对账记录。保存原始 estimated、provider actual、币种、可选汇率快照和差额，不覆盖请求原估算；跨币种缺少 `FxSnapshotId` 时差额保持空值 | `(TenantId, Provider, ExternalRecordId)` 唯一；请求粒度 `(TenantId, Provider, ProviderRequestId)` 条件唯一，防止更换外部记录号重复计费；窗口粒度同租户、团队、供应商、service key 不允许不同账单记录时间重叠；`(TenantId, TeamId, ServiceKeyId, BilledAt desc)`；所有查询和更新必须包含 `TenantId`，团队角色查询还必须包含服务端解析的团队范围 |
 | `llmgw_cost_import_scope_locks` | `BsonDocument` | 费用导入的短租约集合，把同一服务端租户、供应商和团队的 request/window 检查与写入串行化，防止并发重叠窗口或逐请求与窗口双计费；不保存账单正文 | `(TenantId, Provider, TeamId)` 唯一；`ExpiresAt` TTL；获取、释放和过期接管都必须包含服务端解析的 `TenantId` |
 | `llmgw_legacy_key_cutovers` | `GatewayLegacyKeyCutoverRecord` | 内部 MAP legacy shared key 的截止时间、appCaller 白名单、后继 scoped key 清单及逐 key 观察计数 | `TenantId` 唯一；撤销前每个 successor 均须达到观察阈值；所有查询和更新必须包含 `TenantId` |

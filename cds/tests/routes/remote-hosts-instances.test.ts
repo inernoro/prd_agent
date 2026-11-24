@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -7,8 +11,16 @@ import path from 'node:path';
 
 import { createRemoteHostsRouter } from '../../src/routes/remote-hosts.js';
 import { CdsPairingService } from '../../src/services/connection/pairing-service.js';
+import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
+import {
+  AgentWorkspaceRuntimeError,
+  AgentWorkspaceSessionRuntime,
+  OPEN_DESIGN_IMAGE,
+} from '../../src/services/agent-workspace-session-runtime.js';
+import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import { StateService } from '../../src/services/state.js';
-import type { BuildProfile, Project } from '../../src/types.js';
+import { computeCdsInstanceId } from '../../src/services/orphan-container-reaper.js';
+import type { BuildProfile, ExecResult, IShellExecutor, Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
@@ -50,6 +62,82 @@ async function request(
   });
 }
 
+async function waitForSessionStatus(server: http.Server, projectId: string, token: string, sessionId: string, status: string) {
+  let result: Awaited<ReturnType<typeof request>>;
+  await waitFor(async () => {
+    result = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, token);
+    return result.status === 200 && result.body.item.status === status;
+  });
+  expect(result!.status).toBe(200);
+  return result!;
+}
+
+function streamRequest(
+  server: http.Server,
+  urlPath: string,
+  token: string,
+): {
+  firstEvent: Promise<string>;
+  completed: Promise<{ status: number; body: string }>;
+  abort: () => void;
+} {
+  let resolveFirstEvent!: (value: string) => void;
+  const firstEvent = new Promise<string>((resolve) => {
+    resolveFirstEvent = resolve;
+  });
+  let aborted = false;
+  let req: http.ClientRequest;
+  const completed = new Promise<{ status: number; body: string }>((resolve, reject) => {
+    let settled = false;
+    const finish = (value: { status: number; body: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const addr = server.address() as { port: number };
+    req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: addr.port,
+        path: urlPath,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      (res) => {
+        let raw = '';
+        let firstResolved = false;
+        res.on('data', (chunk: Buffer) => {
+          raw += chunk.toString();
+          if (!firstResolved && raw.includes('\n\n')) {
+            firstResolved = true;
+            resolveFirstEvent(raw.slice(0, raw.indexOf('\n\n') + 2));
+          }
+        });
+        res.on('end', () => finish({ status: res.statusCode!, body: raw }));
+        res.on('close', () => {
+          if (aborted) finish({ status: 0, body: raw });
+        });
+      },
+    );
+    req.on('error', (error) => {
+      if (aborted) {
+        finish({ status: 0, body: '' });
+        return;
+      }
+      reject(error);
+    });
+    req.end();
+  });
+  return {
+    firstEvent,
+    completed,
+    abort: () => {
+      aborted = true;
+      req.destroy();
+    },
+  };
+}
+
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1_000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -68,6 +156,9 @@ const previewEnvKeys = [
   'DASHBOARD_DOMAIN',
   'CDS_ROOT_DOMAINS',
   'ROOT_DOMAINS',
+  'CDS_AGENT_SESSION_HOST_LIMIT',
+  'CDS_AGENT_SESSION_PROJECT_LIMIT',
+  'CDS_AGENT_SESSION_PRINCIPAL_LIMIT',
 ];
 
 describe('Remote hosts project instances route', () => {
@@ -83,40 +174,90 @@ describe('Remote hosts project instances route', () => {
     runtimeServer = undefined;
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     for (const key of previewEnvKeys) delete process.env[key];
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
-  async function startServer(routerOverrides: Partial<Parameters<typeof createRemoteHostsRouter>[0]> = {}) {
+  it.each(['data-root', 'explicit-root'] as const)(
+    'constructs the production workspace runtime under the host-visible %s and preserves sibling isolation',
+    async (rootSource) => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-workspace-root-'));
+      const dataRoot = path.join(tmpDir, 'shared-data');
+      const explicitRoot = path.join(tmpDir, 'explicit-workspaces');
+      vi.stubEnv('CDS_CACHE_BASE', path.join(dataRoot, 'cache'));
+      vi.stubEnv('CDS_REPO_ROOT', tmpDir);
+      vi.stubEnv('CDS_AGENT_WORKSPACE_ROOT', rootSource === 'explicit-root' ? explicitRoot : '');
+      stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      const expectedRoot = rootSource === 'explicit-root' ? explicitRoot : path.join(dataRoot, 'agent-workspaces');
+      const instanceScope = crypto.createHash('sha256').update(computeCdsInstanceId(tmpDir)).digest('hex').slice(0, 8);
+      const staleSession = path.join(expectedRoot, instanceScope, 'stale-session');
+      const siblingSession = path.join(expectedRoot, 'other-instance', 'live-session');
+      fs.mkdirSync(staleSession, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(siblingSession, { recursive: true, mode: 0o700 });
+      const bootstrap = vi.spyOn(AgentWorkspaceSessionRuntime.prototype, 'bootstrapAndVerify');
+      // Only orphan listings succeed. No real Docker process, image pull, or model request is allowed.
+      const shell: IShellExecutor = {
+        exec: async (command) => ({
+          exitCode: /^docker (ps -aq|network ls -q|volume ls -q) /.test(command) ? 0 : 1,
+          stdout: '',
+          stderr: '',
+        }),
+      };
+
+      createRemoteHostsRouter({ stateService, shell });
+      expect(bootstrap).toHaveBeenCalledOnce();
+      await bootstrap.mock.results[0].value;
+
+      // Exercise the real constructor and filesystem recovery, not a mocked path resolver.
+      expect(fs.existsSync(staleSession)).toBe(false);
+      expect(fs.existsSync(siblingSession)).toBe(true);
+      expect(fs.existsSync(dataRoot)).toBe(rootSource === 'data-root');
+    },
+  );
+
+  async function startServer(routerOverrides: Partial<Parameters<typeof createRemoteHostsRouter>[0]> = {}, permitTestOwner = false) {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-instances-route-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     const app = express();
     app.use(express.json());
+    if (permitTestOwner) app.use((req, _res, next) => {
+      if (req.headers.authorization === 'Bearer test-owner') {
+        Object.assign(req, { cdsUser: { isSystemOwner: true, authProvider: 'local' }, cdsSession: {} });
+      }
+      next();
+    });
     app.use('/api', createRemoteHostsRouter({ stateService, ...routerOverrides }));
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => resolve());
     });
   }
 
-  function authorizeSharedServiceProject(): { projectId: string; longToken: string } {
+  function authorizeSharedServiceProject(options: {
+    projectId?: string;
+    partnerId?: string;
+  } = {}): { projectId: string; longToken: string } {
+    const projectId = options.projectId ?? 'shared-sidecar-pool';
+    const partnerId = options.partnerId ?? 'map-test';
     const pairing = new CdsPairingService(
       stateService,
       () => 'https://cds.example.test',
       () => 'cds-test',
       () => 'CDS Test',
     );
-    const issued = pairing.issue({ name: 'map-test' });
+    const issued = pairing.issue({ name: partnerId });
     const accepted = pairing.accept(
       {
         pairingToken: issued.pairingToken,
         partnerKind: 'map',
-        partnerId: 'map-test',
+        partnerId,
         partnerName: 'MAP Test',
         partnerBaseUrl: 'https://map.example.test',
         projectIntent: { kind: 'shared-service', name: 'shared-sidecar-pool' },
       },
       (intent) => {
         const project: Project = {
-          id: 'shared-sidecar-pool',
-          slug: 'shared-sidecar-pool',
+          id: projectId,
+          slug: projectId,
           name: intent.name,
           kind: 'shared-service',
           createdAt: new Date().toISOString(),
@@ -354,6 +495,1241 @@ describe('Remote hosts project instances route', () => {
     });
   });
 
+  it('publishes OpenDesign as implemented but not selectable without an injected container runtime', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const catalog = await request(server, 'GET', `/api/projects/${projectId}/agent-runtime-providers`, longToken);
+
+    expect(catalog.status).toBe(200);
+    expect(catalog.body).toMatchObject({
+      runtimeOwnedBy: 'cds-remote-agent',
+      isolationOwnedBy: 'cds-remote-agent',
+    });
+    expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
+      adapterKind: 'design-daemon',
+      implementationStatus: 'available',
+      healthy: false,
+      selectable: false,
+      requiredIsolationMode: 'session-container',
+      resourcePolicyEnforcedPerSession: false,
+    });
+
+    const rejected = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'open-design', workloadKind: 'design-artifact', clientRequestId: 'missing-runtime' },
+    );
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error).toMatchObject({
+      code: 'resource_policy_not_enforced',
+      runtime: 'open-design',
+      requestedIsolationMode: 'session-container',
+      isolationOwnedBy: 'cds-remote-agent',
+      resourcePolicyEnforcedPerSession: false,
+    });
+  });
+
+  it('keeps OpenDesign unselectable when its configured image is absent', async () => {
+    const shell: IShellExecutor = {
+      async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
+        if (command.startsWith('docker version')) {
+          return { stdout: '27.0.0\n', stderr: '', exitCode: 0 };
+        }
+        if (command.startsWith('docker image inspect')) {
+          return { stdout: '', stderr: 'No such image', exitCode: 1 };
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const workspaceRuntime = new AgentWorkspaceSessionRuntime(shell, { capabilityCacheMs: 0 });
+    // Provider 目录现在只读非阻塞快照；先完成一次探针，才能断言缺镜像的具体原因，
+    // 否则首个请求按设计只会得到 fail-closed 的“正在验证”。
+    await workspaceRuntime.capability(true);
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const catalog = await request(server, 'GET', `/api/projects/${projectId}/agent-runtime-providers`, longToken);
+
+    expect(catalog.status).toBe(200);
+    expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
+      implementationStatus: 'available',
+      healthy: false,
+      selectable: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: `OpenDesign image ${OPEN_DESIGN_IMAGE} is being prepared on this CDS node`,
+    });
+  });
+
+  it('retains ordinary OpenDesign creation failures with credential-safe diagnostics and releases clean capacity', async () => {
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '1';
+    const events: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
+    const serverEventLogStore: ServerEventLogSink = {
+      record(event) {
+        events.push(event);
+      },
+    };
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_container_create_failed',
+          'OpenDesign container failed to be created',
+          true,
+          {
+            stage: 'docker_create',
+            exitCode: 125,
+            stderrPreview: 'permission denied OD_API_TOKEN=***[masked]***',
+            stdoutPreview: '',
+          },
+        );
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime, serverEventLogStore });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const fullCommand = "docker create --env-file /dev/stdin 'private-image'";
+
+    const failed = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        clientRequestId: 'ordinary-create-failure',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/input',
+          resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/result',
+          transferToken: 'transfer-secret',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision-1',
+          maxInputBytes: 1024 * 1024,
+          maxOutputBytes: 1024 * 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+        },
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+
+    expect(failed.status).toBe(202);
+    const terminal = await waitForSessionStatus(server, projectId, longToken, failed.body.item.id, 'failed');
+    expect(terminal.body.item.creationFailure).toMatchObject({
+      code: 'workspace_container_create_failed',
+      message: 'OpenDesign container failed to be created',
+      retryable: true,
+      details: { stage: 'docker_create', exitCode: 125 },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      category: 'container',
+      severity: 'error',
+      source: 'agent-workspace-session-runtime',
+      action: 'agent-workspace-session.create.failed',
+      message: 'OpenDesign workspace session creation failed',
+      projectId,
+      status: 'failed',
+      exitCode: 125,
+      error: {
+        code: 'workspace_container_create_failed',
+        message: 'OpenDesign workspace session creation failed',
+      },
+      details: {
+        sessionId: expect.any(String),
+        runtime: 'open-design',
+        code: 'workspace_container_create_failed',
+        retryable: true,
+        stage: 'docker_create',
+        exitCode: 125,
+        stderrPreview: 'permission denied OD_API_TOKEN=***[masked]***',
+        stdoutPreview: '',
+      },
+    });
+    const serializedEvent = JSON.stringify(events[0]);
+    expect(serializedEvent).not.toContain('model-secret');
+    expect(serializedEvent).not.toContain('transfer-secret');
+    expect(serializedEvent).not.toContain(fullCommand);
+    expect(serializedEvent).not.toContain('workspaceTransfer');
+    expect(serializedEvent).not.toContain('modelApiKey');
+
+    const failedSessionId = String(events[0].details?.sessionId || '');
+    expect(failedSessionId).not.toBe('');
+    const retained = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${failedSessionId}`,
+      longToken,
+    );
+    expect(retained.status).toBe(200);
+    expect(retained.body.item.resourceCleanupPending).toBe(false);
+    const replacement = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+    expect(replacement.status).toBe(201);
+  });
+
+  it('rejects credentialed OpenDesign model URLs before creating or observing a session', async () => {
+    const serverEvents: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
+    const activities: Array<Record<string, unknown>> = [];
+    let createCalls = 0;
+    const unsubscribe = cdsEventsBus.subscribe((event) => {
+      if (event.type === 'agent-session.activity') {
+        activities.push(event.data as Record<string, unknown>);
+      }
+    });
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        createCalls += 1;
+        throw new Error('create must not be reached');
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    const serverEventLogStore: ServerEventLogSink = {
+      record(event) {
+        serverEvents.push(event);
+      },
+    };
+
+    try {
+      await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime, serverEventLogStore });
+      const { projectId, longToken } = authorizeSharedServiceProject();
+      const failed = await request(
+        server,
+        'POST',
+        `/api/projects/${projectId}/agent-sessions`,
+        longToken,
+        {
+          runtime: 'open-design',
+          workloadKind: 'design-artifact',
+          model: 'map-managed',
+          modelBaseUrl: 'https://url-user:url-password@map.example.test/api?token=url-token#url-fragment',
+          clientRequestId: 'invalid-model-url',
+          modelProtocol: 'openai',
+          modelApiKey: 'model-secret-url-validation',
+          workspaceTransfer: {
+            schemaVersion: 'map-design-workspace-v1',
+            inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-url/input',
+            resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-url/result',
+            transferToken: 'transfer-secret-url-validation',
+            inputSha256: 'a'.repeat(64),
+            baseRevision: 'revision-url',
+            maxInputBytes: 1024 * 1024,
+            maxOutputBytes: 1024 * 1024,
+            allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+          },
+          resourcePolicy: {
+            cpuCores: 1,
+            memoryMb: 768,
+            timeoutSeconds: 120,
+            networkPolicy: 'egress-only',
+            autoCleanupMinutes: 5,
+          },
+        },
+      );
+      expect(failed.status).toBe(422);
+      expect(failed.body.error).toMatchObject({
+        code: 'workspace_transfer_invalid',
+        message: 'modelBaseUrl cannot contain credentials, query parameters, or fragments',
+      });
+      expect(createCalls).toBe(0);
+
+      const sessions = await request(
+        server,
+        'GET',
+        `/api/projects/${projectId}/agent-sessions`,
+        longToken,
+      );
+      expect(sessions.body.items).toEqual([]);
+      expect(serverEvents).toEqual([]);
+      expect(activities).toEqual([]);
+      const observable = JSON.stringify({ failed, sessions, serverEvents, activities });
+      for (const credential of ['url-user', 'url-password', 'url-token', 'url-fragment']) {
+        expect(observable).not.toContain(credential);
+      }
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('retains OpenDesign creation cleanup failures until the runtime janitor confirms cleanup', async () => {
+    process.env.CDS_AGENT_SESSION_HOST_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PROJECT_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '1';
+    const modelSecret = 'model-secret-create-cleanup';
+    const transferSecret = 'transfer-secret-create-cleanup';
+    const cleanupSecret = 'cleanup-secret-create';
+    const events: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
+    let createCalls = 0;
+    let runtimeRetainsPartialCleanup = false;
+    let cleanupSettled: ((error?: unknown) => void) | undefined;
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create(
+        _sessionId: string,
+        _transfer: unknown,
+        _policy: unknown,
+        _onStage: unknown,
+        onCleanupSettled: (error?: unknown) => void,
+      ) {
+        createCalls += 1;
+        cleanupSettled = onCleanupSettled;
+        runtimeRetainsPartialCleanup = true;
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_cleanup_failed',
+          `creation cleanup failed ${modelSecret} token=${cleanupSecret}`,
+          true,
+          {
+            cleanupErrors: [`volume cleanup failed with Bearer ${transferSecret}`],
+            authorization: `Bearer ${cleanupSecret}`,
+          },
+        );
+      },
+      async stop() {},
+      has() {
+        return runtimeRetainsPartialCleanup;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    const serverEventLogStore: ServerEventLogSink = {
+      record(event) {
+        events.push(event);
+      },
+    };
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime, serverEventLogStore });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const createBody = {
+      runtime: 'open-design',
+      workloadKind: 'design-artifact',
+      model: 'map-managed',
+      modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-create-cleanup/llm/v1',
+      clientRequestId: 'create-cleanup-failure',
+      modelProtocol: 'openai',
+      modelApiKey: modelSecret,
+      workspaceTransfer: {
+        schemaVersion: 'map-design-workspace-v1',
+        inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-create-cleanup/input',
+        resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-create-cleanup/result',
+        transferToken: transferSecret,
+        inputSha256: 'a'.repeat(64),
+        baseRevision: 'revision-create-cleanup',
+        maxInputBytes: 1024 * 1024,
+        maxOutputBytes: 1024 * 1024,
+        allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+      },
+      resourcePolicy: {
+        cpuCores: 1,
+        memoryMb: 768,
+        timeoutSeconds: 120,
+        networkPolicy: 'egress-only',
+        autoCleanupMinutes: 5,
+      },
+    };
+
+    const failed = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      createBody,
+    );
+    expect(failed.status).toBe(202);
+    const terminal = await waitForSessionStatus(server, projectId, longToken, failed.body.item.id, 'failed');
+    expect(terminal.body.item.creationFailure.code).toBe('workspace_cleanup_failed');
+    expect(terminal.body.item).toMatchObject({
+      status: 'failed',
+      resourceCleanupPending: true,
+    });
+    const sessionId = failed.body.item.id;
+
+    const retained = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}`,
+      longToken,
+    );
+    expect(retained.status).toBe(200);
+    expect(retained.body.item.resourceCleanupPending).toBe(true);
+
+    const rejected = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'fake' },
+    );
+    expect(rejected.status).toBe(429);
+    expect(rejected.body.error.code).toBe('agent_session_principal_limit_exceeded');
+    expect(createCalls).toBe(1);
+
+    const [stream, logs] = await Promise.all([
+      request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`, longToken),
+      request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}/logs`, longToken),
+    ]);
+    const observable = JSON.stringify({ failed, retained, stream, logs, events });
+    expect(observable).toContain('***[masked]***');
+    expect(observable).not.toContain(modelSecret);
+    expect(observable).not.toContain(transferSecret);
+    expect(observable).not.toContain(cleanupSecret);
+
+    runtimeRetainsPartialCleanup = false;
+    cleanupSettled?.();
+    const stopped = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}`,
+      longToken,
+    );
+    expect(stopped.body.item).toMatchObject({
+      status: 'stopped',
+      resourceCleanupPending: false,
+    });
+
+    const replacement = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'fake' },
+    );
+    expect(replacement.status).toBe(201);
+  });
+
+  it('redacts OpenDesign execution credentials from session events, logs, activity, and diagnostics', async () => {
+    process.env.CDS_AGENT_SESSION_HOST_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PROJECT_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '1';
+    const modelSecret = 'model-secret-execution';
+    const transferSecret = 'transfer-secret-execution';
+    const bearerSecret = 'bearer-secret-execution';
+    const serverEvents: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
+    const activities: Array<Record<string, unknown>> = [];
+    const stopCalls: Array<{ sessionId: string; reason: string }> = [];
+    let runtimeRetainsSession = false;
+    const unsubscribe = cdsEventsBus.subscribe((event) => {
+      if (event.type === 'agent-session.activity') {
+        activities.push(event.data as Record<string, unknown>);
+      }
+    });
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        runtimeRetainsSession = true;
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-redaction-test',
+          networkName: 'cds-od-redaction-net',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 1,
+        };
+      },
+      async execute() {
+        throw new AgentWorkspaceRuntimeError(
+          'open_design_execution_failed',
+          `runtime rejected ${modelSecret} and ${transferSecret}; Bearer ${bearerSecret}`,
+          false,
+          {
+            stderrPreview: `apiKey=${modelSecret} token=${transferSecret}`,
+            authorization: `Bearer ${modelSecret}`,
+            nested: {
+              transferToken: transferSecret,
+              password: 'unrelated-password-secret',
+            },
+          },
+        );
+      },
+      async stop(sessionId: string, reason: string) {
+        stopCalls.push({ sessionId, reason });
+        runtimeRetainsSession = false;
+      },
+      has() {
+        return runtimeRetainsSession;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    const serverEventLogStore: ServerEventLogSink = {
+      record(event) {
+        serverEvents.push(event);
+      },
+    };
+
+    try {
+      await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime, serverEventLogStore });
+      const { projectId, longToken } = authorizeSharedServiceProject();
+      const created = await request(
+        server,
+        'POST',
+        `/api/projects/${projectId}/agent-sessions`,
+        longToken,
+        {
+          runtime: 'open-design',
+          workloadKind: 'design-artifact',
+          model: 'map-managed',
+          modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-redaction/llm/v1',
+          clientRequestId: 'execution-redaction',
+          modelProtocol: 'openai',
+          modelApiKey: modelSecret,
+          workspaceTransfer: {
+            schemaVersion: 'map-design-workspace-v1',
+            inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-redaction/input',
+            resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-redaction/result',
+            transferToken: transferSecret,
+            inputSha256: 'a'.repeat(64),
+            baseRevision: 'revision-redaction',
+            maxInputBytes: 1024 * 1024,
+            maxOutputBytes: 1024 * 1024,
+            allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+          },
+          resourcePolicy: {
+            cpuCores: 1,
+            memoryMb: 768,
+            timeoutSeconds: 120,
+            networkPolicy: 'egress-only',
+            autoCleanupMinutes: 5,
+          },
+        },
+      );
+      expect(created.status).toBe(202);
+      const sessionId = created.body.item.id;
+      await waitForSessionStatus(server, projectId, longToken, sessionId, 'running');
+
+      const sent = await request(
+        server,
+        'POST',
+        `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+        longToken,
+        { content: 'trigger redacted failure' },
+      );
+      expect(sent.status).toBe(202);
+      await waitFor(async () => {
+        const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+        return current.body.item.status === 'failed';
+      });
+
+      const [stream, logs, current] = await Promise.all([
+        request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`, longToken),
+        request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}/logs`, longToken),
+        request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken),
+      ]);
+      const observable = JSON.stringify({ sent, stream, logs, current, activities, serverEvents });
+      expect(observable).toContain('***[masked]***');
+      expect(observable).not.toContain(modelSecret);
+      expect(observable).not.toContain(transferSecret);
+      expect(observable).not.toContain(bearerSecret);
+      expect(observable).not.toContain('unrelated-password-secret');
+      expect(logs.body.logs).toContain('OpenDesign workspace execution failed');
+      expect(logs.body.logs).toContain('resources cleaned after execution failure');
+      expect(activities.some((activity) => activity.eventType === 'error')).toBe(true);
+      expect(serverEvents).toHaveLength(1);
+      expect(stopCalls).toEqual([{ sessionId, reason: 'execution_failed' }]);
+      const retryFailedSession = await request(
+        server,
+        'POST',
+        `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+        longToken,
+        { content: 'must not restart a terminal failed session' },
+      );
+      expect(retryFailedSession.status).toBe(409);
+      expect(retryFailedSession.body.error.code).toBe('session_failed');
+      const replacement = await request(
+        server,
+        'POST',
+        `/api/projects/${projectId}/agent-sessions`,
+        longToken,
+        { runtime: 'fake' },
+      );
+      expect(replacement.status).toBe(201);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('retries a transient OpenDesign cleanup failure before reporting the session stop', async () => {
+    let runtimeRetainsSession = false;
+    let stopCalls = 0;
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        runtimeRetainsSession = true;
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-stop-retry-test',
+          networkName: 'cds-od-stop-retry-net',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 1,
+        };
+      },
+      async stop() {
+        stopCalls += 1;
+        if (stopCalls === 1) {
+          throw new AgentWorkspaceRuntimeError(
+            'workspace_cleanup_failed',
+            'OpenDesign session resources could not be fully cleaned',
+            true,
+          );
+        }
+        runtimeRetainsSession = false;
+      },
+      has() {
+        return runtimeRetainsSession;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/llm/v1',
+        clientRequestId: 'stop-retry',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret-stop-retry',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/input',
+          resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-retry/result',
+          transferToken: 'transfer-secret-stop-retry',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision-stop-retry',
+          maxInputBytes: 1024 * 1024,
+          maxOutputBytes: 1024 * 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+        },
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+
+    expect(created.status).toBe(202);
+    await waitForSessionStatus(server, projectId, longToken, created.body.item.id, 'running');
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${created.body.item.id}/stop`,
+      longToken,
+      {},
+    );
+
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.item).toMatchObject({
+      status: 'stopped',
+      resourceCleanupPending: false,
+    });
+    expect(stopCalls).toBe(2);
+  });
+
+  it('does not let an aborted OpenDesign execute failure race a requested stop', async () => {
+    let runtimeRetainsSession = false;
+    let executeStarted = false;
+    const stopCalls: Array<{ sessionId: string; reason: string }> = [];
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        runtimeRetainsSession = true;
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-stop-race-test',
+          networkName: 'cds-od-stop-race-net',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 1,
+        };
+      },
+      async execute(
+        _sessionId: string,
+        _content: string,
+        _model: unknown,
+        _transferToken: string,
+        signal?: AbortSignal,
+      ) {
+        executeStarted = true;
+        return new Promise((_, reject) => {
+          const abort = () => reject(new AgentWorkspaceRuntimeError(
+            'open_design_run_cancelled',
+            'OpenDesign run was cancelled',
+          ));
+          if (signal?.aborted) abort();
+          else signal?.addEventListener('abort', abort, { once: true });
+        });
+      },
+      async stop(sessionId: string, reason: string) {
+        stopCalls.push({ sessionId, reason });
+        runtimeRetainsSession = false;
+      },
+      has() {
+        return runtimeRetainsSession;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-race/llm/v1',
+        clientRequestId: 'stop-race',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret-stop-race',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-race/input',
+          resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-stop-race/result',
+          transferToken: 'transfer-secret-stop-race',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision-stop-race',
+          maxInputBytes: 1024 * 1024,
+          maxOutputBytes: 1024 * 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+        },
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+    expect(created.status).toBe(202);
+    const sessionId = created.body.item.id;
+    await waitForSessionStatus(server, projectId, longToken, sessionId, 'running');
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'hold until stopped' },
+    );
+    expect(sent.status).toBe(202);
+    await waitFor(() => executeStarted);
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stop`,
+      longToken,
+      {},
+    );
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.item.status).toBe('stopped');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const current = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}`,
+      longToken,
+    );
+    expect(current.body.item.status).toBe('stopped');
+    expect(current.body.item.resourceCleanupPending).toBe(false);
+    expect(stopCalls).toEqual([{ sessionId, reason: 'session_stop_requested' }]);
+    expect(JSON.stringify(current.body.item)).not.toContain('execution_failed_resources_cleaned');
+  });
+
+  it('keeps failed OpenDesign sessions in capacity while runtime cleanup remains incomplete', async () => {
+    process.env.CDS_AGENT_SESSION_HOST_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PROJECT_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '1';
+    const modelSecret = 'model-secret-cleanup';
+    const transferSecret = 'transfer-secret-cleanup';
+    const cleanupSecret = 'cleanup-command-secret';
+    const serverEvents: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }> = [];
+    let runtimeRetainsSession = false;
+    let stopCalls = 0;
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create() {
+        runtimeRetainsSession = true;
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-cleanup-failure-test',
+          networkName: 'cds-od-cleanup-failure-net',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 1,
+        };
+      },
+      async execute() {
+        throw new AgentWorkspaceRuntimeError('open_design_execution_failed', 'execution failed');
+      },
+      async stop() {
+        stopCalls += 1;
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_cleanup_failed',
+          `cleanup failed token=${cleanupSecret} apiKey=${modelSecret}`,
+          true,
+          {
+            cleanupErrors: [`docker rm failed with Bearer ${transferSecret}`],
+            authorization: `Bearer ${cleanupSecret}`,
+          },
+        );
+      },
+      has() {
+        return runtimeRetainsSession;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    const serverEventLogStore: ServerEventLogSink = {
+      record(event) {
+        serverEvents.push(event);
+      },
+    };
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime, serverEventLogStore });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-cleanup/llm/v1',
+        clientRequestId: 'cleanup-capacity',
+        modelProtocol: 'openai',
+        modelApiKey: modelSecret,
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-cleanup/input',
+          resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-cleanup/result',
+          transferToken: transferSecret,
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision-cleanup',
+          maxInputBytes: 1024 * 1024,
+          maxOutputBytes: 1024 * 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+        },
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+    expect(created.status).toBe(202);
+    const sessionId = created.body.item.id;
+    await waitForSessionStatus(server, projectId, longToken, sessionId, 'running');
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'trigger cleanup failure' },
+    );
+    expect(sent.status).toBe(202);
+    await waitFor(async () => {
+      const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+      return current.body.item.status === 'failed' && stopCalls === 1;
+    });
+
+    const rejected = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'fake' },
+    );
+    expect(rejected.status).toBe(429);
+    expect(rejected.body.error.code).toBe('agent_session_principal_limit_exceeded');
+
+    const [stream, logs] = await Promise.all([
+      request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`, longToken),
+      request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}/logs`, longToken),
+    ]);
+    const observable = JSON.stringify({ stream, logs, serverEvents });
+    expect(observable).toContain('workspace_cleanup_failed');
+    expect(observable).toContain('***[masked]***');
+    expect(observable).not.toContain(modelSecret);
+    expect(observable).not.toContain(transferSecret);
+    expect(observable).not.toContain(cleanupSecret);
+    expect(serverEvents.map((event) => event.action)).toEqual([
+      'agent-workspace-session.execute.failed',
+      'agent-workspace-session.cleanup.failed',
+    ]);
+  });
+
+  it('limits active agent sessions per principal and releases capacity after stop', async () => {
+    process.env.CDS_AGENT_SESSION_HOST_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PROJECT_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '1';
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const first = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+    const rejected = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+
+    expect(first.status).toBe(201);
+    expect(rejected.status).toBe(429);
+    expect(rejected.body.error).toMatchObject({
+      code: 'agent_session_principal_limit_exceeded',
+      dimension: 'principal',
+      limit: 1,
+      activeCount: 1,
+      retryable: true,
+    });
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${first.body.item.id}/stop`,
+      longToken,
+      {},
+    );
+    expect(stopped.status).toBe(200);
+    const replacement = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+    expect(replacement.status).toBe(201);
+  });
+
+  it('limits active agent sessions per project', async () => {
+    process.env.CDS_AGENT_SESSION_HOST_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PROJECT_LIMIT = '1';
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '10';
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const first = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+    const rejected = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, { runtime: 'fake' });
+
+    expect(first.status).toBe(201);
+    expect(rejected.status).toBe(429);
+    expect(rejected.body.error).toMatchObject({
+      code: 'agent_session_project_limit_exceeded',
+      dimension: 'project',
+      limit: 1,
+      activeCount: 1,
+    });
+  });
+
+  it('limits active agent sessions across projects on the host', async () => {
+    process.env.CDS_AGENT_SESSION_HOST_LIMIT = '1';
+    process.env.CDS_AGENT_SESSION_PROJECT_LIMIT = '10';
+    process.env.CDS_AGENT_SESSION_PRINCIPAL_LIMIT = '10';
+    await startServer();
+    const firstAuth = authorizeSharedServiceProject({ projectId: 'shared-pool-a', partnerId: 'map-a' });
+    const secondAuth = authorizeSharedServiceProject({ projectId: 'shared-pool-b', partnerId: 'map-b' });
+
+    const first = await request(server, 'POST', `/api/projects/${firstAuth.projectId}/agent-sessions`, firstAuth.longToken, { runtime: 'fake' });
+    const rejected = await request(server, 'POST', `/api/projects/${secondAuth.projectId}/agent-sessions`, secondAuth.longToken, { runtime: 'fake' });
+
+    expect(first.status).toBe(201);
+    expect(rejected.status).toBe(429);
+    expect(rejected.body.error).toMatchObject({
+      code: 'agent_session_host_limit_exceeded',
+      dimension: 'host',
+      limit: 1,
+      activeCount: 1,
+    });
+  });
+
+  it('switches only new authorized MAP tasks and keeps old tasks on their recorded version', async () => {
+    const candidate = `ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:${'b'.repeat(64)}`;
+    const ready = { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+    const verifyVersion = vi.fn(async () => ready);
+    const workspaceRuntime = {
+      configuredImage: OPEN_DESIGN_IMAGE,
+      capability: async () => ready,
+      verifyVersion,
+      async create(
+        sessionId: string,
+        transfer: { inputPackageUrl: string },
+        _policy: unknown,
+        _onStage: unknown,
+        _onExpired: unknown,
+        selectImage?: (runId: string) => Promise<string>,
+      ) {
+        const runId = new URL(transfer.inputPackageUrl).pathname.split('/').at(-2)!;
+        return { containerName: sessionId, image: selectImage ? await selectImage(runId) : OPEN_DESIGN_IMAGE };
+      },
+      stop: async () => {},
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime }, true);
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const { projectId: otherId, longToken: otherToken } = authorizeSharedServiceProject({ projectId: 'unrelated-project', partnerId: 'unrelated-partner' });
+    async function allocate(runId: string, requestId: string, continuingRun?: boolean, id = projectId, token = longToken) {
+      const base = `https://map.example.test/api/design-artifacts/runtime/${runId}`;
+      const response = await request(server, 'POST', `/api/projects/${id}/agent-sessions`, token, {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: `${base}/llm/v1`,
+        clientRequestId: requestId,
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret',
+        workspaceTransfer: {
+          schemaVersion: 'map-design-workspace-v1',
+          inputPackageUrl: `${base}/input`,
+          resultCommitUrl: `${base}/result`,
+          transferToken: 'transfer-secret',
+          inputSha256: 'a'.repeat(64),
+          baseRevision: 'revision',
+          maxInputBytes: 1024,
+          maxOutputBytes: 1024,
+          allowedOutputPaths: ['index.html', 'manifest.json'],
+          continuingRun,
+        },
+        resourcePolicy: { cpuCores: 1, memoryMb: 768, timeoutSeconds: 120, networkPolicy: 'egress-only', autoCleanupMinutes: 5 },
+      });
+      expect(response.status).toBe(202);
+      return (await waitForSessionStatus(server, id, token, response.body.item.id, 'running')).body.item;
+    }
+
+    const original = await allocate('original-run', 'original-attempt', false);
+    expect(original.runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+    const versionPath = `/api/projects/${projectId}/agent-runtime-version`;
+    const activation = { action: 'activate', image: candidate, expectedImage: OPEN_DESIGN_IMAGE };
+    expect((await request(server, 'POST', versionPath, longToken, activation)).status).toBe(403);
+    expect(verifyVersion).not.toHaveBeenCalled();
+    const switched = await request(server, 'POST', versionPath, 'test-owner', activation);
+    expect(switched.status).toBe(200);
+    expect(switched.body.activeImage).toBe(candidate);
+
+    const read = await request(server, 'GET', `/api/projects/${projectId}/agent-requests`, 'test-owner');
+    expect(read.body.workspaceVersion).toMatchObject({ activeImage: candidate, drainingCount: 1, canUpdate: true });
+    expect((await request(server, 'GET', `/api/projects/${projectId}/agent-requests`, longToken)).body.workspaceVersion.canUpdate).toBe(false);
+    expect((await allocate('new-run', 'new-attempt', false)).runtimeImage).toBe(candidate);
+    expect((await allocate('other-run', 'other-attempt', false, otherId, otherToken)).runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+    expect((await request(server, 'POST', `/api/projects/${projectId}/agent-sessions/${original.id}/stop`, longToken, {})).status).toBe(200);
+    const resumed = await allocate('original-run', 'resume-attempt', true);
+    expect(resumed.id).not.toBe(original.id);
+    expect(resumed.runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+    expect((await allocate('legacy-run', 'legacy-attempt')).runtimeImage).toBe(OPEN_DESIGN_IMAGE);
+  });
+
+  it('routes OpenDesign through the injected workspace runtime and exposes only committed result facts', async () => {
+    const calls: Array<{ kind: string; value: unknown }> = [];
+    let completeExecution!: () => void;
+    const executionGate = new Promise<void>((resolve) => {
+      completeExecution = resolve;
+    });
+    const workspaceRuntime = {
+      async capability() {
+        return { available: true, resourcePolicyEnforcedPerSession: true, reason: null };
+      },
+      async create(sessionId: string, transfer: any, policy: any, onStage: (stage: string) => void) {
+        calls.push({ kind: 'create', value: { sessionId, transfer, policy } });
+        onStage('workspace_materialized');
+        return {
+          hostRoot: '/host/session',
+          workspaceDir: '/host/session/workspace',
+          containerName: 'cds-od-test',
+          networkName: 'cds-od-net-test',
+          daemonBaseUrl: 'http://172.19.0.2:7456',
+          inputFileCount: 2,
+        };
+      },
+      async execute(
+        sessionId: string,
+        instruction: string,
+        model: any,
+        transferToken: string,
+        _signal: AbortSignal,
+        onStage: (stage: string, detail?: Record<string, unknown>) => void,
+      ) {
+        calls.push({ kind: 'execute', value: { sessionId, instruction, model, transferToken } });
+        onStage('open_design_running', {
+          status: 'failed',
+          runId: 'nested-run-telemetry',
+          elapsedSeconds: 7,
+        });
+        onStage('workspace_collecting');
+        await executionGate;
+        onStage('workspace_committing');
+        return {
+          artifactRef: 'design-artifact:run-1',
+          resultSha256: 'b'.repeat(64),
+          files: [
+            { path: 'index.html', sha256: 'c'.repeat(64), size: 120, mediaType: 'text/html; charset=utf-8' },
+            { path: 'manifest.json', sha256: 'd'.repeat(64), size: 220, mediaType: 'application/json; charset=utf-8' },
+          ],
+          openDesignRunId: 'od-run-1',
+        };
+      },
+      async stop(sessionId: string, reason: string) {
+        calls.push({ kind: 'stop', value: { sessionId, reason } });
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    await startServer({ agentWorkspaceSessionRuntime: workspaceRuntime });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const transfer = {
+      schemaVersion: 'map-design-workspace-v1',
+      inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/input',
+      resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/result',
+      transferToken: 'transfer-secret',
+      inputSha256: 'a'.repeat(64),
+      baseRevision: 'revision-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+    };
+
+    const catalog = await request(server, 'GET', `/api/projects/${projectId}/agent-runtime-providers`, longToken);
+    expect(catalog.body.items.find((item: any) => item.id === 'open-design')).toMatchObject({
+      healthy: true,
+      selectable: true,
+      resourcePolicyEnforcedPerSession: true,
+    });
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'open-design',
+        workloadKind: 'design-artifact',
+        model: 'map-managed',
+        modelBaseUrl: 'HTTPS://MAP.EXAMPLE.TEST:443/api/design-artifacts/runtime/run-1/llm/v1',
+        clientRequestId: 'committed-result',
+        modelProtocol: 'openai',
+        modelApiKey: 'model-secret',
+        workspaceTransfer: transfer,
+        resourcePolicy: {
+          cpuCores: 1,
+          memoryMb: 768,
+          timeoutSeconds: 120,
+          networkPolicy: 'egress-only',
+          autoCleanupMinutes: 5,
+        },
+      },
+    );
+
+    expect(created.status).toBe(202);
+    const ready = await waitForSessionStatus(server, projectId, longToken, created.body.item.id, 'running');
+    expect(ready.body.item).toMatchObject({
+      runtime: 'open-design',
+      workloadKind: 'design-artifact',
+      containerName: 'cds-od-test',
+      workspaceRoot: '/workspace',
+      hasModelApiKey: true,
+      modelBaseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+      workspaceTransfer: {
+        schemaVersion: 'map-design-workspace-v1',
+        inputSha256: 'a'.repeat(64),
+        baseRevision: 'revision-1',
+      },
+    });
+    expect(JSON.stringify(created.body.item)).not.toContain('transfer-secret');
+    expect(JSON.stringify(created.body.item)).not.toContain('model-secret');
+    expect(JSON.stringify(created.body.item)).not.toContain('inputPackageUrl');
+    const sessionId = created.body.item.id;
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: '将页面调整为清晰的产品发布页' },
+    );
+    expect(sent.status).toBe(202);
+    expect(sent.body).toMatchObject({ accepted: true, runtimeOwnedBy: 'cds-agent-workspace-session' });
+
+    expect(calls.find((call) => call.kind === 'execute')?.value).toMatchObject({
+      instruction: '将页面调整为清晰的产品发布页',
+      model: {
+        baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        apiKey: 'model-secret',
+        model: 'map-managed',
+      },
+      transferToken: 'transfer-secret',
+    });
+    const firstStream = streamRequest(
+      server,
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream?follow=true`,
+      longToken,
+    );
+    const firstEvent = await firstStream.firstEvent;
+    const firstCursor = Number(firstEvent.match(/^id: (\d+)$/m)?.[1]);
+    expect(firstCursor).toBeGreaterThan(0);
+    firstStream.abort();
+    await firstStream.completed;
+
+    const running = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+    expect(running.body.item.status).toBe('running');
+
+    const resumedStream = streamRequest(
+      server,
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream?afterSeq=${firstCursor}&follow=true`,
+      longToken,
+    );
+    const resumedFirstEvent = await resumedStream.firstEvent;
+    expect(Number(resumedFirstEvent.match(/^id: (\d+)$/m)?.[1])).toBeGreaterThan(firstCursor);
+
+    // 直到断线续接后的流已经收到回放事件才允许异步 runtime 完成。旧的一次性快照实现
+    // 会在此时提前关闭，因此绝不可能把随后产生的 done 带回 MAP。
+    completeExecution();
+    const stream = await resumedStream.completed;
+    expect(stream.status).toBe(200);
+    expect(stream.body).toContain('"status":"running","reason":"open_design_running","runtimeStatus":"failed"');
+    expect(stream.body).not.toContain('"status":"failed","reason":"open_design_running"');
+    expect(stream.body).toContain('CDS 正在校验生成文件与安全边界。');
+    expect(stream.body).toContain('CDS 正在向 MAP 提交已校验的结果。');
+    expect(stream.body).toContain('design-artifact:run-1');
+    expect(stream.body).toContain('event: done');
+    expect(stream.body).not.toContain(`id: ${firstCursor}\n`);
+    expect(stream.body).not.toContain('model-secret');
+    expect(stream.body).not.toContain('transfer-secret');
+
+    await waitFor(async () => {
+      const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+      return current.body.item.status === 'idle';
+    });
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stop`,
+      longToken,
+      {},
+    );
+    expect(stopped.status).toBe(200);
+    expect(calls.find((call) => call.kind === 'stop')?.value).toEqual({
+      sessionId,
+      reason: 'session_stop_requested',
+    });
+  });
+
   it('reconciles CDS-managed official SDK runtime capacity without remote host fallback', async () => {
     process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
     await startServer();
@@ -473,6 +1849,12 @@ describe('Remote hosts project instances route', () => {
     await startServer({
       config: { portStart: 19000 },
       containerService: {
+        async inspectOwnedRuntime(_entry, _profileId, runtime) {
+          return { ...runtime, containerId: 'a'.repeat(64), networkName: runtime.networkName || 'old-sdk-network' };
+        },
+        async connectReplacementPeer() {},
+        async removeOwnedRuntime() {},
+        async cleanupUnusedReplacementNetworks() {},
         async runService(branch, profile, service, onOutput, customEnv) {
           containerCalls.push({ kind: 'runService', branch, profile, service: { ...service }, customEnv });
           expect(branch.worktreePath).toBe(path.dirname(process.cwd()));
@@ -487,8 +1869,8 @@ describe('Remote hosts project instances route', () => {
           expect(service.hostPort).toBeGreaterThanOrEqual(19000);
           onOutput?.('managed runtime container started');
         },
-        async waitForReadiness(hostPort, probe, onAttempt) {
-          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe });
+        async waitForReadiness(hostPort, probe, onAttempt, _onOutput, containerName) {
+          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe, containerName });
           expect(probe?.path).toBe('/readyz');
           onAttempt?.({ attempt: 1, max: 1, stage: 'http', ok: true });
           return true;
@@ -528,6 +1910,7 @@ describe('Remote hosts project instances route', () => {
     });
     expect(JSON.stringify(applied.body)).not.toContain('CDS_REMOTE_HOST');
     expect(containerCalls.map(call => call.kind)).toEqual(['runService', 'waitForReadiness']);
+    expect(containerCalls[1].containerName).toBe(containerCalls[0].service.containerName);
 
     const available = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
     expect(available.status).toBe(200);
@@ -555,6 +1938,36 @@ describe('Remote hosts project instances route', () => {
       'runService',
       'waitForReadiness',
     ]);
+  });
+
+  it('较新的受管运行更新已就绪时，迟到旧更新不得覆盖其服务记录', async () => {
+    let release!: () => void, started!: () => void, calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    await startServer({ config: { portStart: 19000 }, containerService: {
+      async runService() { calls++; if (calls === 1) { started(); await gate; } },
+      async waitForReadiness() { return true; },
+      async inspectOwnedRuntime(_entry, _profile, runtime) { return runtime; },
+      async connectReplacementPeer() {}, async removeOwnedRuntime() {}, async cleanupUnusedReplacementNetworks() {},
+    } });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const first = request(server, 'POST', `/api/projects/${projectId}/runtime-capacity/reconcile`, longToken,
+      { apply: true, liveApply: true, force: true });
+    try {
+      await entered;
+      const newer = await request(server, 'POST', `/api/projects/${projectId}/runtime-capacity/reconcile`, longToken,
+        { apply: true, liveApply: true, force: true });
+      expect(newer.body.liveApply?.status).toBe('running');
+      const branch = stateService.findBranchByProjectAndName(projectId, 'cds-managed-runtime')!;
+      const latest = Object.values(branch.services)[0];
+      release();
+      const older = await first;
+      expect(older.body.liveApply?.status).toBe('superseded');
+      expect(Object.values(branch.services)[0]).toBe(latest);
+      expect(latest.status).toBe('running');
+      expect(branch.status).toBe('running');
+      expect(calls).toBe(2);
+    } finally { release(); await first; }
   });
 
   it('does not expose branch services for regular projects through instance discovery', async () => {

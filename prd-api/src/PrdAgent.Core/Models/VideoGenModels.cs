@@ -16,6 +16,7 @@ public static class VideoModelCapabilities
     public static IReadOnlyList<int> GetSupportedDurations(string? modelId)
     {
         var key = (modelId ?? string.Empty).ToLowerInvariant();
+        if (key.Contains("seedance-2.5")) return Enumerable.Range(4, 27).ToArray();
         if (key.Contains("seedance-2")) return [5, 10, 15];
         if (key.Contains("seedance-1-5") || key.Contains("seedance-1.5")) return [4, 5, 8, 10, 12];
         if (key.Contains("wan-") || key.Contains("wan2")) return [5, 10];
@@ -51,6 +52,7 @@ public static class VideoTrackType
 public static class VideoExportTaskStatus
 {
     public const string Queued = "Queued";
+    public const string ScopedQueued = "ScopedQueued";
     public const string Processing = "Processing";
     public const string Completed = "Completed";
     public const string Failed = "Failed";
@@ -107,6 +109,8 @@ public class VideoProject
     public bool GenerateAudio { get; set; } = true;
     public string? LatestRunId { get; set; }
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
     public List<VideoProjectAsset> Assets { get; set; } = new();
     public List<VideoTimelineTrack> TimelineTracks { get; set; } =
     [
@@ -137,6 +141,9 @@ public static class VideoGenRunStatus
 {
     /// <summary>用户已提交，等待 worker 拾取</summary>
     public const string Queued = "Queued";
+
+    /// <summary>带部署归属的新队列；旧 Worker 只领取 Queued，不能抢走新任务。</summary>
+    public const string ScopedQueued = "ScopedQueued";
 
     /// <summary>storyboard 模式：LLM 正在拆分镜</summary>
     public const string Scripting = "Scripting";
@@ -193,8 +200,12 @@ public static class SceneItemStatus
 /// <summary>
 /// storyboard 模式下的单个分镜（不含 Remotion 字段，单纯 prompt + OpenRouter 参数）
 /// </summary>
-public class VideoGenScene
+public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>当前镜头生成或改写动作的执行许可；重启只恢复，不从所属长期Run借新权限。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public int Index { get; set; }
 
     /// <summary>分镜标题（可选，给用户看）</summary>
@@ -211,6 +222,9 @@ public class VideoGenScene
 
     /// <summary>本镜使用的 OpenRouter 模型 id（留空 = 跟随 Run.DirectVideoModel）</summary>
     public string? Model { get; set; }
+
+    /// <summary>本镜提交成功的 Offering ID，用于 worker 重启后精确恢复上游。</summary>
+    public string? OfferingId { get; set; }
 
     /// <summary>本镜时长（秒，留空 = 跟随 Run.DirectDuration）</summary>
     public int? Duration { get; set; }
@@ -239,14 +253,30 @@ public class VideoGenScene
     /// <summary>本镜成本（美元）</summary>
     public double? Cost { get; set; }
 
+    /// <summary>取消后仅查询原已提交作业的收据，不代表本地任务恢复生成。</summary>
+    public string? UpstreamStatus { get; set; }
+    public DateTime? ReconciledAt { get; set; }
+    public DateTime? ReceiptQueuedAt { get; set; }
+
     /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
     public string? VideoUrl { get; set; }
 
     /// <summary>当前采用的视频版本 ID</summary>
     public string? ActiveVersionId { get; set; }
 
+    /// <summary>当前镜头采用的本人私有语音任务；重新导出只读取，不重新调用模型。</summary>
+    public VideoSceneNarration? Narration { get; set; }
+
     /// <summary>本镜历史生成版本，重新渲染不会覆盖旧产物</summary>
     public List<VideoGenSceneVersion> Versions { get; set; } = new();
+}
+
+/// <summary>与镜头一起持久化的配音采用记录。</summary>
+public sealed class VideoSceneNarration
+{
+    public string SpeechRunId { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public double DurationSeconds { get; set; }
 }
 
 /// <summary>单个分镜的一次生成结果</summary>
@@ -254,6 +284,7 @@ public class VideoGenSceneVersion
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string VideoUrl { get; set; } = string.Empty;
+    public string? AssetSha256 { get; set; }
     public string? JobId { get; set; }
     public string? Model { get; set; }
     public string Prompt { get; set; } = string.Empty;
@@ -271,12 +302,29 @@ public class VideoGenSceneVersion
 /// 1. direct: 一段 prompt 调 OpenRouter 一镜直出 → VideoAssetUrl
 /// 2. storyboard: 文章 → LLM 拆分镜 → 用户编辑 → 逐镜 OpenRouter → ffmpeg concat → VideoAssetUrl
 /// </summary>
-public class VideoGenRun
+public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
     public string? ProjectId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
     public string Status { get; set; } = VideoGenRunStatus.Queued;
+
+    /// <summary>仅持久化内部队列身份，对外仍沿用 Queued 契约。</summary>
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoGenRunStatus.ScopedQueued ? VideoGenRunStatus.Queued : Status;
+        set => Status = value;
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeploymentSlug { get; set; }
 
     /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
     public string Mode { get; set; } = VideoGenMode.Direct;
@@ -298,6 +346,8 @@ public class VideoGenRun
     // ─── OpenRouter 默认参数（direct 直接用；storyboard 作为分镜默认值） ───
 
     public string? DirectVideoModel { get; set; }
+    /// <summary>direct 模式提交成功的 Offering ID，用于轮询与下载精确恢复上游。</summary>
+    public string? DirectVideoOfferingId { get; set; }
     public string? DirectAspectRatio { get; set; }
     public string? DirectResolution { get; set; }
     public int? DirectDuration { get; set; }
@@ -314,11 +364,22 @@ public class VideoGenRun
     /// <summary>累计成本（美元）</summary>
     public double? DirectVideoCost { get; set; }
 
+    /// <summary>最近一次从供应商读取的任务状态；本地取消不代表供应商已终止。</summary>
+    public string? DirectVideoUpstreamStatus { get; set; }
+
+    /// <summary>上游已到终态并回读费用的时间；费用未返回时仍保留 null，不视为免费。</summary>
+    public DateTime? DirectVideoReconciledAt { get; set; }
+
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
 
+    /// <summary>最终视频在资产存储中的内容哈希，用于所有权校验后的单对象清理。</summary>
+    public string? VideoAssetSha256 { get; set; }
+
     /// <summary>最近一次独立导出任务 ID。</summary>
     public string? LatestExportTaskId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ExportHolderLeaseId { get; set; }
 
     /// <summary>用户已请求把全部分镜合成为完整视频</summary>
     public bool ExportRequested { get; set; }
@@ -346,6 +407,8 @@ public class VideoGenRun
 
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    [BsonDefaultValue(null)]
+    public DateTime? QueueEnteredAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
     public bool CancelRequested { get; set; }
@@ -353,11 +416,27 @@ public class VideoGenRun
     public string? ErrorMessage { get; set; }
 
     /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
+    /// 删除请求的持久化标记。设置后该任务不再对普通查询可见，失败重试只继续清理，不再恢复播放。
     /// </summary>
-    public bool ForceFullShadowSample { get; set; }
+    public DateTime? DeletionRequestedAt { get; set; }
+
+    /// <summary>后台恢复清理最近一次领取时间；失败任务超过退避窗口后可再次领取。</summary>
+    public DateTime? DeletionCleanupAttemptedAt { get; set; }
+
+    /// <summary>删除开始前固化的生成视频对象清单，保证中途失败后仍可幂等续作。</summary>
+    public List<VideoGenDeletionArtifact> DeletionArtifacts { get; set; } = new();
 }
+
+public sealed class VideoGenDeletionArtifact
+{
+    public string Sha256 { get; set; } = string.Empty;
+    public List<string> Urls { get; set; } = new();
+}
+
+public sealed record DeleteVideoGenRunResult(
+    bool Deleted,
+    bool ProjectDeleted,
+    int ArtifactsDeleted);
 
 [BsonIgnoreExtraElements]
 public class VideoExportTask
@@ -367,14 +446,65 @@ public class VideoExportTask
     public string OwnerAdminId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
-    public string Status { get; set; } = VideoExportTaskStatus.Queued;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string Status { get; set; } = VideoExportTaskStatus.ScopedQueued;
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoExportTaskStatus.ScopedQueued ? VideoExportTaskStatus.Queued : Status;
+        set => Status = value;
+    }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? WorkerLeaseId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }
+    // 完成回执先落库，恢复只核对本人当前导出，不重新生成、上传或申请执行许可。
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeploymentSlug { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? OutputSha256 { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double? TotalCost { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? RunReconciledAt { get; set; }
+
     public string? ErrorMessage { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+}
+
+[BsonIgnoreExtraElements]
+public class DirectVideoJobOwnership
+{
+    public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AppKey { get; set; } = "video-agent";
+    public string OwnerAdminId { get; set; } = string.Empty;
+    public string JobId { get; set; } = string.Empty;
+    /// <summary>
+    /// 上游任务命名空间：优先使用 Offering，历史无 Offering 任务回退到模型。
+    /// Provider 本地 JobId 不是全局唯一，必须与本字段联合定位。
+    /// </summary>
+    public string JobNamespace { get; set; } = string.Empty;
+    public string? Model { get; set; }
+    public string? OfferingId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.Add(Retention);
+    public DateTime? RevokedAt { get; set; }
+
+    public static string BuildJobNamespace(string? offeringId, string? model)
+    {
+        var offering = (offeringId ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(offering)) return $"offering:{offering}";
+        var normalizedModel = (model ?? string.Empty).Trim();
+        return $"model:{(string.IsNullOrWhiteSpace(normalizedModel) ? "unknown" : normalizedModel)}";
+    }
 }
 
 public class VideoModelOption

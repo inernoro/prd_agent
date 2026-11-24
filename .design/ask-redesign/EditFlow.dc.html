@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.42); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11.5px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .sp { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; box-sizing: border-box; }
+    .paper-in { width: 700px; margin: 0 auto; }
+    .paper h1 { font-size: 25px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 20px; }
+    .paper h2 { font-size: 15px; margin: 18px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .send { border-radius: 10px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .note-row { display: flex; gap: 22px; padding: 2px 2px 0; }
+    .note-row div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .note-row b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .note-row .ok b { color: #4ade80; }
+    .note-row .warn b { color: #D97757; }
+    h3 { font-size: 19px; margin: 2px 0 0; letter-spacing: -0.005em; }
+    .lede { font-size: 13px; line-height: 1.8; color: rgba(247,247,251,0.72); max-width: 900px; margin: 0; }
+    .cols { display: flex; gap: 18px; align-items: flex-start; }
+    .mock { width: 560px; flex-shrink: 0; border-radius: 14px; background: #1e1e24; border: 1px solid rgba(255,255,255,0.14); overflow: hidden; }
+    .m-head { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 13px; font-weight: 600; }
+    .tag { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; padding: 3px 8px; border-radius: 5px; background: rgba(74,222,128,0.14); border: 1px solid rgba(74,222,128,0.30); color: #f7f7fb; }
+    .m-body { padding: 13px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .lbl { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); }
+    .was { padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,0.04); border-left: 2px solid rgba(255,255,255,0.20); font-size: 12.5px; line-height: 1.7; color: rgba(247,247,251,0.60); text-decoration: line-through; text-decoration-color: rgba(247,247,251,0.28); }
+    .now { padding: 10px 12px; border-radius: 9px; background: rgba(74,222,128,0.09); border-left: 2px solid #4ade80; font-size: 12.5px; line-height: 1.7; color: rgba(247,247,251,0.90); }
+    .instr { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 5px 0 12px; border-radius: 11px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .instr span { flex-grow: 1; font-size: 12.5px; color: #f7f7fb; }
+    .acts { display: flex; gap: 8px; align-items: center; }
+    .btn { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.18); font-size: 12.5px; color: rgba(247,247,251,0.80); }
+    .btn.pri { background: #B0523A; border-color: transparent; color: #fff; }
+    .costs { flex-grow: 1; display: flex; flex-direction: column; gap: 9px; }
+    .cost { display: flex; gap: 11px; padding: 12px 13px; border-radius: 11px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+    .cost .n { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.95); margin-top: 2px; }
+    .cost .t { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+    .cost .d { font-size: 11.5px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .verdict { display: flex; gap: 12px; padding: 14px 16px; border-radius: 12px; background: rgba(217,119,87,0.09); border: 1px solid rgba(217,119,87,0.30); }
+    .verdict .t { font-size: 13.5px; font-weight: 600; margin-bottom: 5px; }
+    .verdict .d { font-size: 12.5px; line-height: 1.8; color: rgba(247,247,251,0.78); }
+  </style>
+</helmet>
+
+<div class="board">
+
+  <div class="eyebrow">可选 · 改这段<em>你说的第 4 条。做得到，但它不是多一个按钮</em></div>
+  <h3>「问」和「改」差一个数量级：一个不留痕，一个要出版本</h3>
+  <p class="lede">托管站是<strong style="color:#f7f7fb">上传上来的静态产物</strong>，不是在线文档。改一段正文 = 改文件 = 出新版本，而那个链接已经发出去了。所以这条路的终点不能是「就地改好」，只能是「存成一版，你决定什么时候让它生效」。</p>
+
+  <div class="cols">
+    <div class="mock">
+      <div class="m-head">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10-10-4-4L4 16z"></path></svg>
+        改这段
+        <div class="tag">草稿 v3 · 未发布</div>
+      </div>
+      <div class="m-body">
+        <div class="lbl">原文</div>
+        <div class="was">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</div>
+        <div class="lbl">改成</div>
+        <div class="now">搜索已从抽屉提到常驻。移动端触达率仍低于阈值（实测 3.2%，目标 8%），列入二轮走查，负责人：视觉组。</div>
+        <div class="instr">
+          <span>把这句改具体一点，补上实测数字和负责人</span>
+          <div class="send" style="width:30px; height:30px; border-radius:9px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+        </div>
+        <div class="acts">
+          <div class="btn pri"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"></path></svg>存进草稿</div>
+          <div class="btn">再改一版</div>
+          <div class="btn">丢弃</div>
+          <div class="sp"></div>
+          <div class="lbl">发布是另一个动作</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="costs">
+      <div class="cost"><div class="n">01</div><div><div class="t">已分享的链接会跟着变</div><div class="d">同一个地址，昨天看到的和今天看到的不是一份东西。看过的人不会被告知，除非我们主动记一条「这一页在 X 时间改过 N 处」并显示给访客。</div></div></div>
+      <div class="cost"><div class="n">02</div><div><div class="t">改的是产物，不是源</div><div class="d">用户下次重新上传同一份文件，线上这次的改动会被整个覆盖掉 —— 除非明确规定「改过的站点重传要先问一句」。这条不定清楚，用户会丢东西。</div></div></div>
+      <div class="cost"><div class="n">03</div><div><div class="t">改一段要能定位回文件</div><div class="d">正文快照是抽出来的纯文本，而要改的是入口 HTML 里的某个节点。两者之间需要一条稳定的锚（节点路径或内容哈希），锚断了就改错地方。</div></div></div>
+      <div class="cost"><div class="n">04</div><div><div class="t">权限与痕迹</div><div class="d">只有 owner / editor 能改；每一次改要记谁改的、原文是什么、什么时候发布的。没有痕迹的静默改写，是这个功能最容易变成事故的地方。</div></div></div>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round" style="flex-shrink:0; margin-top:2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+    <div>
+      <div class="t">我的建议：这一版不做，但把位置留好</div>
+      <div class="d">
+        划词悬浮条本身这一版就做（访客的「就这段问」），owner 那枚绿色的「改这段」留成第二期。
+        理由是上面四条里有三条是<strong style="color:#f7f7fb">产品决策</strong>而不是实现难度：重传要不要覆盖、访客要不要被告知内容变过、改动要不要审。
+        这三条没定之前先做出来，用户会在真实数据上撞到它们 —— 那时候再改，成本比现在高得多。
+        要推的话，先把这三个问题拍板，我再画完整的版本管理与发布流。
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

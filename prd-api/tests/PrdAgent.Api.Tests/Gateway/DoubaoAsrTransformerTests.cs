@@ -6,11 +6,30 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
 public class DoubaoAsrTransformerTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AsyncSubmitOrQueryOverdue_PreservesBillingCauseAndResolution(int failOnRequest)
+    {
+        var http = new DoubaoAsyncHttpClientFactory(failOnRequest: failOnRequest);
+        var gateway = new LlmGateway(new NoopModelResolver(), http, NullLogger<LlmGateway>.Instance);
+        var result = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelType = ModelTypes.Asr,
+            RequestBody = new JsonObject { ["audio_data"] = "UklGRg==" },
+        }, DoubaoResolution());
+        Assert.False(result.Success); Assert.Equal(GatewayBillingFailure.AccountOverdue, result.ErrorCode);
+        Assert.Contains("账户欠费", result.ErrorMessage); Assert.Contains("补缴费用", result.ErrorMessage);
+        Assert.Equal("Doubao ASR", result.Resolution?.ActualPlatformName);
+        Assert.Equal(failOnRequest, http.RequestUris.Count);
+    }
+
     [Fact]
     public async Task SendRawWithResolutionAsync_SubmitSuccessMustQueryBeforeTransformingResponse()
     {
@@ -89,6 +108,7 @@ public class DoubaoAsrTransformerTests
               {
                 "start_time": 450,
                 "end_time": 1530,
+                "speaker_id": "0",
                 "text": "关闭透传。"
               }
             ]
@@ -104,6 +124,7 @@ public class DoubaoAsrTransformerTests
         segments[0]!["start"]!.GetValue<double>().ShouldBe(0.45);
         segments[0]!["end"]!.GetValue<double>().ShouldBe(1.53);
         segments[0]!["text"]!.GetValue<string>().ShouldBe("关闭透传。");
+        segments[0]!["speaker"]!.GetValue<string>().ShouldBe("0");
     }
 
     [Fact]
@@ -151,10 +172,11 @@ public class DoubaoAsrTransformerTests
             ExchangeTransformerType = "doubao-asr",
         };
 
-    private sealed class DoubaoAsyncHttpClientFactory(int pendingQueryCount = 0) : IHttpClientFactory
+    private sealed class DoubaoAsyncHttpClientFactory(int pendingQueryCount = 0, int? failOnRequest = null) : IHttpClientFactory
     {
         private int _requestCount;
         private int PendingQueryCount { get; } = pendingQueryCount;
+        private int? FailOnRequest { get; } = failOnRequest;
         public List<string> RequestUris { get; } = [];
 
         public HttpClient CreateClient(string name)
@@ -169,6 +191,16 @@ public class DoubaoAsrTransformerTests
             {
                 owner.RequestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
                 var requestNumber = Interlocked.Increment(ref owner._requestCount);
+                if (requestNumber == owner.FailOnRequest)
+                {
+                    var denied = new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+                    {
+                        Content = new StringContent("{\"error\":{\"code\":\"AccountOverdueError\",\"message\":\"rejected\"}}"),
+                    };
+                    denied.Headers.TryAddWithoutValidation("X-Api-Status-Code", "45000000");
+                    denied.Headers.TryAddWithoutValidation("X-Api-Message", "账户欠费");
+                    return Task.FromResult(denied);
+                }
                 var isSubmit = requestNumber == 1;
                 var isPendingQuery = requestNumber > 1
                     && requestNumber <= owner.PendingQueryCount + 1;
@@ -217,6 +249,9 @@ public class DoubaoAsrTransformerTests
             => Task.CompletedTask;
 
         public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
             => Task.CompletedTask;
     }
 }

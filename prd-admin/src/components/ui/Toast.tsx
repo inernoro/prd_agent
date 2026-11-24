@@ -1,6 +1,6 @@
 import { cn } from '@/lib/cn';
 import { useToastStore, type Toast as ToastModel } from '@/lib/toast';
-import { CheckCircle2, XCircle, Info, AlertTriangle, X } from 'lucide-react';
+import { CheckCircle2, XCircle, Info, AlertTriangle, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { glassToast } from '@/lib/glassStyles';
 
@@ -11,26 +11,31 @@ const icons = {
   warning: AlertTriangle,
 };
 
+/**
+ * bg / border 是低透明度语义色，叠在 --toast-bg-base 上，暗浅两套主题都成立；
+ * icon 是不透明前景（图标 + 动作按钮文字），必须走 token —— 500 档饱和色
+ * 在浅色暖纸底上只有 1.9:1，看不清。见 tokens.css 的 --accent-fg-*。
+ */
 const colors = {
   success: {
     bg: 'rgba(34, 197, 94, 0.18)',
     border: 'rgba(34, 197, 94, 0.38)',
-    icon: '#22c55e',
+    icon: 'var(--accent-fg-success)',
   },
   error: {
     bg: 'rgba(239, 68, 68, 0.18)',
     border: 'rgba(239, 68, 68, 0.38)',
-    icon: '#ef4444',
+    icon: 'var(--accent-fg-error)',
   },
   info: {
     bg: 'rgba(59, 130, 246, 0.18)',
     border: 'rgba(59, 130, 246, 0.38)',
-    icon: '#3b82f6',
+    icon: 'var(--accent-fg-info)',
   },
   warning: {
     bg: 'rgba(251, 146, 60, 0.18)',
     border: 'rgba(251, 146, 60, 0.38)',
-    icon: '#fb923c',
+    icon: 'var(--accent-fg-warning)',
   },
 };
 
@@ -50,7 +55,7 @@ function ToastItem({ toast }: { toast: ToastModel }) {
   const removeToast = useToastStore((s) => s.removeToast);
   const [isExiting, setIsExiting] = useState(false);
 
-  const Icon = icons[toast.type];
+  const Icon = toast.loading ? LoaderCircle : icons[toast.type];
   const color = colors[toast.type];
 
   useEffect(() => {
@@ -87,7 +92,11 @@ function ToastItem({ toast }: { toast: ToastModel }) {
       )}
       style={glassToast(color.bg, color.border)}
     >
-      <Icon size={20} style={{ color: color.icon, flexShrink: 0, marginTop: 2 }} />
+      <Icon
+        size={20}
+        className={toast.loading ? 'animate-spin' : undefined}
+        style={{ color: color.icon, flexShrink: 0, marginTop: 2 }}
+      />
 
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-[13px] text-token-primary mb-1">{toast.title}</div>

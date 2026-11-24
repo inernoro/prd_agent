@@ -41,14 +41,14 @@ describe('通知账本接线守卫', () => {
     expect(
       source,
       '外发配置必须由 resolveNoticeOutboundConfig 从 env 解析（凭据只在服务端）',
-    ).toContain('resolveNoticeOutboundConfig(');
+    ).toContain('resolveCurrentNoticeOutbound(');
 
     const call = windowAfter(source, 'startNoticeLedger(', 900);
     expect(call, 'startNoticeLedger 必须拿到账本实例').toContain('ledger:');
     expect(
       call,
       '外发接线被摘掉后账本照常记账、只是永远不外发——删掉不会红，故在此钉住',
-    ).toContain('outbound: noticeOutbound');
+    ).toContain('getOutbound: getNoticeOutbound');
   });
 
   it('server.ts 挂载了站内信路由（否则前端拉账本 404）', () => {
@@ -71,7 +71,14 @@ describe('通知账本接线守卫', () => {
 
   it('index.ts 把存活监控的翻转事件接上了总线（健康掉线这一路事件源）', () => {
     const source = read('src/index.ts');
-    const construct = windowAfter(source, 'new UptimeMonitorService(', 1400);
+    // 取整个构造调用，而不是固定长度窗口：这个构造块每加一条依赖注入就变长，
+    // 定长窗口会在某次无关的新增后把 onAlert 挤出去，红得莫名其妙（2026-09-09 就这么红过一次）。
+    // 判据要盯的是「onAlert 在不在这个构造里」，与块有多长无关。
+    const constructAt = source.indexOf('new UptimeMonitorService(');
+    expect(constructAt, '找不到存活监控的构造，守卫的取值范围需要跟着改').toBeGreaterThanOrEqual(0);
+    const closeAt = source.indexOf('\n  });', constructAt);
+    expect(closeAt, '构造块的收尾缩进变了，守卫的取值范围需要跟着改').toBeGreaterThan(constructAt);
+    const construct = source.slice(constructAt, closeAt);
     expect(
       construct,
       'onAlert 没接 = 生产掉线只躺在 incidents 台账里，账本收不到、没人被通知',

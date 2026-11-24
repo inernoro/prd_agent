@@ -1,6 +1,5 @@
 using PrdAgent.Infrastructure.ModelPool;
 using PrdAgent.Infrastructure.ModelPool.Models;
-using PrdAgent.Infrastructure.ModelPool.Testing;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services.ModelPool;
@@ -43,37 +42,6 @@ public class ModelPoolIntegrationTests
 
         Assert.False(result.IsSuccess);
         Assert.True(result.LatencyMs > 0);
-    }
-
-    /// <summary>
-    /// 测试 HttpPoolEndpointTester 的端点测试能力
-    /// </summary>
-    [Fact]
-    public async Task HttpPoolEndpointTester_InvalidEndpoint_ShouldReturnFailure()
-    {
-        var httpDispatcher = new HttpPoolDispatcher(new TestHttpClientFactory());
-        var tester = new HttpPoolEndpointTester(httpDispatcher);
-
-        var endpoint = new PoolEndpoint
-        {
-            EndpointId = "test:invalid",
-            ModelId = "invalid-model",
-            PlatformId = "test",
-            PlatformType = "openai",
-            ApiUrl = "https://localhost:9999",
-            ApiKey = "sk-test"
-        };
-
-        var result = await tester.TestAsync(endpoint, new PoolTestRequest
-        {
-            TimeoutSeconds = 3,
-            MaxTokens = 10
-        });
-
-        Assert.False(result.Success);
-        Assert.Equal("test:invalid", result.EndpointId);
-        Assert.True(result.LatencyMs > 0);
-        Assert.NotNull(result.ErrorMessage);
     }
 
     /// <summary>

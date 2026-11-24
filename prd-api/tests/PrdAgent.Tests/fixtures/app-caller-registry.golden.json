@@ -1,5 +1,17 @@
 [
   {
+    "code": "active-tasks.absorb::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "active-tasks.import::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "admin.platforms.available-models::chat",
     "modelTypes": [
       "chat"
@@ -108,6 +120,12 @@
     ]
   },
   {
+    "code": "cds.code-review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "channel-adapter.email.classify::chat",
     "modelTypes": [
       "chat"
@@ -153,6 +171,18 @@
     "code": "channel-trace-agent.knowledge::vision",
     "modelTypes": [
       "vision"
+    ]
+  },
+  {
+    "code": "chat-agent.conversation::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "chat-agent.image-gen::generation",
+    "modelTypes": [
+      "generation"
     ]
   },
   {
@@ -228,6 +258,12 @@
     ]
   },
   {
+    "code": "document-store.writing::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "email-agent.draft::chat",
     "modelTypes": [
       "chat"
@@ -276,6 +312,12 @@
     ]
   },
   {
+    "code": "infra-agent.runtime::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "literary-agent.content::chat",
     "modelTypes": [
       "chat"
@@ -309,6 +351,12 @@
     "code": "marketplace-skill.summary::chat",
     "modelTypes": [
       "chat"
+    ]
+  },
+  {
+    "code": "mcp-speech.synthesize::tts",
+    "modelTypes": [
+      "tts"
     ]
   },
   {
@@ -516,6 +564,18 @@
     ]
   },
   {
+    "code": "prd-agent-web.knowledge-base.index::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
+    "code": "prd-agent-web.knowledge-base.query::embedding",
+    "modelTypes": [
+      "embedding"
+    ]
+  },
+  {
     "code": "prd-agent-web.lab::chat",
     "modelTypes": [
       "chat"
@@ -546,7 +606,37 @@
     ]
   },
   {
+    "code": "prd-agent-web.web-hosting.ask-openers::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
+    "code": "prd-agent-web.web-hosting.ask::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-web.web-hosting.edit-html::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent-web.web-hosting.generate-html::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "prd-agent.arena.battle::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "prd-agent.bookshelf.digest::chat",
     "modelTypes": [
       "chat"
     ]
@@ -639,6 +729,18 @@
     "code": "report-agent.weekly-poster.image::generation",
     "modelTypes": [
       "generation"
+    ]
+  },
+  {
+    "code": "review-agent.requirement-assessment.column-mapping::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "review-agent.requirement-assessment::chat",
+    "modelTypes": [
+      "chat"
     ]
   },
   {
@@ -895,6 +997,12 @@
   },
   {
     "code": "visual-agent.image.img2img::generation",
+    "modelTypes": [
+      "generation"
+    ]
+  },
+  {
+    "code": "visual-agent.image.layering::generation",
     "modelTypes": [
       "generation"
     ]

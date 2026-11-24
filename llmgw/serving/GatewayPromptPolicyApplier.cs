@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -125,6 +126,7 @@ public static partial class GatewayPromptPolicyApplier
         EnablePromptCache = source.EnablePromptCache,
         TimeoutSeconds = source.TimeoutSeconds,
         IncludeThinking = source.IncludeThinking,
+        ForwardAvailableThinking = source.ForwardAvailableThinking,
         Context = context,
     };
 

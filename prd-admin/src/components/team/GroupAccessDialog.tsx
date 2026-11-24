@@ -219,7 +219,7 @@ export function GroupAccessDialog({
                   disabled={!subjectId}
                   className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1 shrink-0"
                   style={subjectId
-                    ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
+                    ? { background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)' }
                     : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
                   onClick={addRule}
                 >
@@ -239,7 +239,7 @@ export function GroupAccessDialog({
             type="button"
             disabled={saving}
             className="h-8 px-4 rounded-[8px] text-[12px]"
-            style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }}
+            style={{ background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)' }}
             onClick={() => void save()}
           >
             {saving ? '保存中…' : '保存'}

@@ -227,7 +227,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
     try {
       await navigator.clipboard.writeText(buildAgentPrompt(plaintext));
       setCopiedPrompt(true);
-      toast.success('已复制智能体指令 —— 粘贴到 Claude Code / Cursor 让它自动配置');
+      toast.success('已复制智能体指令 —— 粘贴到 Claude Code / Codex 让它自动配置');
       setTimeout(() => setCopiedPrompt(false), 2500);
     } catch {
       toast.error('复制失败，请手动选中');
@@ -407,7 +407,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         {!primaryActive && (
           <div className="mt-1 text-center text-[10.5px] text-token-muted opacity-70">
             {agentMode
-              ? '点上方按钮后，粘贴到 Claude Code / Cursor，AI 会自己配置 + 下载技能包'
+              ? '点上方按钮后，粘贴到 Claude Code / Codex，AI 会自己配置 + 下载技能包'
               : '想让 AI 一键配置？旁边的「复制给智能体」即可'}
           </div>
         )}
@@ -437,7 +437,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value.slice(0, 60))}
-          placeholder="例：Cursor 工作站 / 我的 Claude Code"
+          placeholder="例：Codex 工作站 / 我的 Claude Code"
           className={FIELD_CLASS}
         />
       </div>

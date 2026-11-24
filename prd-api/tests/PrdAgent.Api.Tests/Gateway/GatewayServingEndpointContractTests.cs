@@ -15,6 +15,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -57,6 +58,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Resolve_RespectsExpectedModel_NoSelectAGiveB()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -77,6 +79,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Resolve_DifferentExpectedModels_MapToDistinctActuals()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         // 加固「不选 A 给 B」：连发两个不同 expectedModel，回传必须一一对应，不能都塌到同一个默认池模型
         // （这正是历史「选 A 给 B」bug 的表现——第二次 resolve(null) 覆盖成第一个池的模型）。
         await using var app = await StartServingHostAsync();
@@ -97,6 +100,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Send_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -119,6 +123,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Invoke_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -133,6 +138,7 @@ public class GatewayServingEndpointContractTests
                     "application/json"),
             };
             req.Headers.Add("X-Gateway-Key", TestKey);
+            req.Headers.Add(GatewayTaskAdmission.HeaderName, GatewayAuthorizedTaskFixture.PermitId);
 
             var resp = await client.SendAsync(req);
             var body = await resp.Content.ReadAsStringAsync();
@@ -146,6 +152,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task OpenAiCompatibleChatCompletions_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -160,6 +167,7 @@ public class GatewayServingEndpointContractTests
                     "application/json"),
             };
             req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestKey);
+            req.Headers.Add(GatewayTaskAdmission.HeaderName, GatewayAuthorizedTaskFixture.PermitId);
             req.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.PageAgent.Generate);
 
             var resp = await client.SendAsync(req);
@@ -175,6 +183,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task ProfileTest_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -202,6 +211,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Pools_ReturnsNonEmpty()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -212,6 +222,17 @@ public class GatewayServingEndpointContractTests
             pools.ShouldNotBeNull();
             pools.ShouldNotBeEmpty("可用池列表为空 = 调度无候选，属故障态");
             pools[0].Id.ShouldNotBeNullOrWhiteSpace();
+            var logical = pools.Single(pool => pool.Code == "default-generation");
+            var member = logical.Models.ShouldHaveSingleItem();
+            member.ActualModelId.ShouldBe("chatgpt-image-latest",
+                "目录解析出的实际模型必须跨 HTTP 边界完整下发");
+            member.ActualPlatformId.ShouldBe("openai");
+            member.ParameterCapabilities.ShouldNotBeNull();
+            member.ParameterCapabilities!["image_size.field.size"].ShouldBeTrue();
+            member.ImageCapabilities.ShouldNotBeNull(
+                "LLMGW 发布的图片能力快照必须跨 HTTP 边界完整下发，MAP 才不需要识别实际模型名");
+            member.ImageCapabilities!.SizesByResolution["default"].ShouldBe(new[] { "1024x1024", "1536x1024" });
+            member.ImageCapabilities.SupportsImageToImage.ShouldBeTrue();
         }
         finally { await app.StopAsync(); }
     }
@@ -224,9 +245,10 @@ public class GatewayServingEndpointContractTests
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
-        builder.Services.AddSingleton<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, EchoingGateway>();
+        builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway, EchoingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
 
+        GatewayAuthorizedTaskFixture.Register(builder.Services);
         var app = builder.Build();
         app.MapGatewayServingEndpoints(PascalJson, TestKey, "endpoint-contract-test");
         await app.StartAsync();
@@ -248,14 +270,14 @@ public class GatewayServingEndpointContractTests
             ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = key,
         }).Build();
-        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
     }
 
     /// <summary>
     /// stub 上游：把「调用方传入的 expectedModel」回显为 ActualModel / Content，
     /// 以此在无 Mongo 的前提下断言「不选 A 给 B」跨 HTTP 边界仍成立。
     /// </summary>
-    private sealed class EchoingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class EchoingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         private static GatewayModelResolution Resolve(string? expected) => new()
         {
@@ -299,6 +321,38 @@ public class GatewayServingEndpointContractTests
             {
                 new() { Id = "pool-dedicated", Name = "专属池", Code = "dedicated", Priority = 0, ResolutionType = "dedicatedPool", IsDedicated = true },
                 new() { Id = "pool-default", Name = "默认池", Code = "default", Priority = 1, ResolutionType = "defaultPool", IsDefault = true },
+                new()
+                {
+                    Id = "logical-default-generation",
+                    Name = "默认生图",
+                    Code = "default-generation",
+                    Priority = 2,
+                    ResolutionType = "LogicalModel",
+                    Models =
+                    [
+                        new PoolModelInfo
+                        {
+                            ModelId = "default-generation",
+                            PlatformId = "logical-model",
+                            ActualModelId = "chatgpt-image-latest",
+                            ActualPlatformId = "openai",
+                            ParameterCapabilities = new Dictionary<string, bool>
+                            {
+                                ["image_size.field.size"] = true,
+                            },
+                            ImageCapabilities = new GatewayImageCapabilitiesSnapshot
+                            {
+                                SizeConstraintType = "whitelist",
+                                SizeParamFormat = "WxH",
+                                SizesByResolution = new Dictionary<string, List<string>>
+                                {
+                                    ["default"] = ["1024x1024", "1536x1024"],
+                                },
+                                SupportsImageToImage = true,
+                            },
+                        },
+                    ],
+                },
             });
 
         public ILLMClient CreateClient(

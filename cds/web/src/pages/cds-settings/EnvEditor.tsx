@@ -1,10 +1,11 @@
+import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
-import { CodePill, ErrorBlock, LoadingBlock, Section, maskSecret } from './components';
+import { CodePill, ErrorBlock, LoadingBlock, Section, isSensitiveEnvKey, maskSecret } from './components';
 import type { EnvResponse, LoadState } from './types';
 
 interface EnvEditorProps {
@@ -32,9 +33,7 @@ function queryForScope(scope: string): string {
   return `scope=${encodeURIComponent(scope)}`;
 }
 
-function isSensitiveKey(key: string): boolean {
-  return /password|secret|token|key|pat|jwt|credential|private/i.test(key);
-}
+
 
 function categoryForKey(key: string): { label: string; order: number } {
   if (/^CDS_|^(ROOT_DOMAINS|SWITCH_DOMAIN|MAIN_DOMAIN|PREVIEW_DOMAIN|DASHBOARD_DOMAIN|JWT_SECRET)$/i.test(key)) {
@@ -42,7 +41,7 @@ function categoryForKey(key: string): { label: string; order: number } {
   }
   if (/GITHUB|^GH_/i.test(key)) return { label: 'GitHub', order: 2 };
   if (/MONGO|REDIS|POSTGRES|MYSQL|DATABASE|DB_/i.test(key)) return { label: '数据库', order: 3 };
-  if (/PASSWORD|SECRET|TOKEN|KEY|AUTH|JWT|PAT/i.test(key)) return { label: '凭证', order: 4 };
+  if (/PASSWORD|SECRET|TOKEN|KEY|AUTH|JWT|PAT|CREDENTIAL|PRIVATE/i.test(key)) return { label: '凭证', order: 4 };
   if (/URL|HOST|DOMAIN|PORT|ORIGIN|ENDPOINT/i.test(key)) return { label: '网络', order: 5 };
   return { label: '项目', order: 9 };
 }
@@ -130,7 +129,7 @@ export function EnvEditor({
 }: EnvEditorProps): JSX.Element {
   const [state, setState] = useState<LoadState<EnvResponse>>({ status: 'loading' });
   const [query, setQuery] = useState('');
-  const [entryMode, setEntryMode] = useState<EntryMode>('single');
+  const [entryMode, setEntryMode] = useState<EntryMode | null>(null);
   const [draft, setDraft] = useState({ key: '', value: '' });
   const [inlineEdit, setInlineEdit] = useState<InlineEditState>(null);
   const [bulkText, setBulkText] = useState('');
@@ -143,15 +142,22 @@ export function EnvEditor({
   const [formError, setFormError] = useState('');
   const [bulkError, setBulkError] = useState('');
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const data = await apiRequest<EnvResponse>(`/api/env?${queryForScope(scope)}`);
+      const data = await apiRequest<EnvResponse>(`/api/env?${queryForScope(scope)}`, { signal });
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
     } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (signal.aborted) return;
+      const message = err instanceof ApiError ? err.message : String(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [scope]);
+  }, [scope, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -199,6 +205,12 @@ export function EnvEditor({
     setFormError('');
   }
 
+  async function refreshAfterWrite(): Promise<void> {
+    onChanged?.();
+    try { await load(true); }
+    catch { onToast('配置已写入，列表刷新失败。请刷新核对，勿重复提交。'); }
+  }
+
   async function saveNewEnv(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const nextKey = draft.key.trim();
@@ -217,8 +229,7 @@ export function EnvEditor({
       });
       onToast(`${nextKey} 已添加`);
       resetDraft();
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -236,8 +247,7 @@ export function EnvEditor({
       });
       onToast(`${key} 已更新`);
       setInlineEdit(null);
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -289,8 +299,7 @@ export function EnvEditor({
       });
       onToast(`已导入 ${changed} 项，更新 ${updated} 项，新增 ${added} 项${skipped ? `，跳过 ${skipped} 项` : ''}`);
       setBulkText('');
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       setBulkError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -304,8 +313,7 @@ export function EnvEditor({
       await apiRequest(`/api/env/${encodeURIComponent(key)}?${queryForScope(scope)}`, { method: 'DELETE' });
       onToast(`${key} 已删除`);
       if (inlineEdit?.key === key) setInlineEdit(null);
-      await load();
-      onChanged?.();
+      await refreshAfterWrite();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -318,7 +326,7 @@ export function EnvEditor({
       await navigator.clipboard.writeText(value);
       onToast(`${key} 已复制`);
     } catch {
-      onToast(value);
+      onToast('复制失败，请允许剪贴板访问后重试。');
     }
   }
 
@@ -334,15 +342,19 @@ export function EnvEditor({
   return (
     <Section title={title} description={description}>
       <div className="space-y-5">
-        {topContent}
-
-        <div className="rounded-md border border-border bg-card">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" onClick={() => setEntryMode('single')}><Plus />新增变量</Button>
+          <Button type="button" variant="outline" onClick={() => setEntryMode('bulk')}><Upload />批量导入</Button>
+          <span className="sr-only">{scope === '_global' ? '仅明确开启继承的项目读取共享变量；系统配置按各配置项规则生效。' : '只影响当前项目，保存后重新部署分支生效。'}</span>
+        </div>
+        {entryMode ? <div className="rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-sm font-semibold">{entryMode === 'single' ? '新增变量' : '导入变量'}</div>
-              <div className="mt-1 text-xs text-muted-foreground">保存后立即写入当前 scope，并在下次部署时进入容器环境。</div>
+              <div className="mt-1 text-xs text-muted-foreground">填写后点击添加或导入才会保存。关闭面板会保留本次输入。</div>
             </div>
             <div className="flex gap-2">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setEntryMode(null)} disabled={saving || bulkSaving}><X />关闭</Button>
               <Button type="button" variant={entryMode === 'single' ? 'secondary' : 'ghost'} size="sm" onClick={() => setEntryMode('single')}>
                 <Plus />
                 单条
@@ -356,11 +368,12 @@ export function EnvEditor({
 
           {entryMode === 'single' ? (
             <form className="px-4 py-4" onSubmit={(event) => void saveNewEnv(event)}>
-              <div className="grid gap-3 lg:grid-cols-[minmax(180px,280px)_minmax(260px,1fr)_112px] lg:items-start">
+              <div className="grid gap-3 lg:grid-cols-[minmax(11.25rem,17.5rem)_minmax(16.25rem,1fr)_7rem] lg:items-start">
                 <label className="grid gap-2">
                   <span className={singleFieldLabelClass}>变量名</span>
                   <input
                     className={`${inputClass} h-12 font-mono text-base leading-none`}
+                    disabled={saving}
                     value={draft.key}
                     onChange={(event) => setDraft({ ...draft, key: event.target.value })}
                     placeholder="AI_ACCESS_KEY"
@@ -371,6 +384,7 @@ export function EnvEditor({
                   <span className={singleFieldLabelClass}>变量值</span>
                   <textarea
                     className={`${textareaClass} h-12 min-h-12 max-h-32 resize-y py-3 text-base leading-5`}
+                    disabled={saving}
                     value={draft.value}
                     onChange={(event) => setDraft({ ...draft, value: event.target.value })}
                     placeholder="value"
@@ -392,6 +406,8 @@ export function EnvEditor({
             <div className="space-y-3 px-4 py-4">
               <textarea
                 className={`${textareaClass} min-h-40 resize-y`}
+                disabled={bulkSaving}
+                aria-label="批量导入内容"
                 value={bulkText}
                 onChange={(event) => {
                   setBulkText(event.target.value);
@@ -428,23 +444,24 @@ export function EnvEditor({
               ) : null}
             </div>
           )}
-        </div>
+        </div> : null}
 
         <div className="rounded-md border border-border bg-card">
           <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold">变量列表</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                scope <CodePill>{scope}</CodePill>，当前显示 {rows.length} 项
+                {query ? `搜索结果 ${rows.length} 项` : `共 ${rows.length} 项`}
               </div>
             </div>
-            <label className="relative block min-w-[260px]">
+            <label className="relative block w-full md:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索 key / value"
+                aria-label="搜索变量"
+                placeholder="搜索变量名或值"
               />
             </label>
           </div>
@@ -453,7 +470,7 @@ export function EnvEditor({
           {state.status === 'error' ? <div className="p-4"><ErrorBlock message={state.message} /></div> : null}
           {state.status === 'ok' && rows.length === 0 ? (
             <div className="px-4 py-8 text-sm leading-6 text-muted-foreground">
-              {emptyDescription || '当前 scope 没有环境变量。'}
+              {query ? '没有匹配的变量，请调整搜索条件。' : emptyDescription || '尚未添加环境变量。'}
             </div>
           ) : null}
           {state.status === 'ok' && rows.length > 0 ? (
@@ -463,22 +480,23 @@ export function EnvEditor({
                   <div className="bg-muted/30 px-4 py-2 text-xs font-semibold text-muted-foreground">{group.label}</div>
                   <div className="divide-y divide-border">
                     {group.rows.map((row) => {
-                      const sensitive = isSensitiveKey(row.key);
+                      const sensitive = isSensitiveEnvKey(row.key);
                       const revealed = revealedKeys.has(row.key);
                       const displayValue = sensitive && !revealed ? maskSecret(row.key, row.value) : row.value;
                       const isEditing = inlineEdit?.key === row.key;
                       return (
-                        <div key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(220px,300px)_minmax(280px,1fr)_176px] lg:items-center">
+                        <div key={row.key} data-env-key={row.key} className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(13.75rem,18.75rem)_minmax(17.5rem,1fr)_11rem] lg:items-center">
                           <div className="min-w-0">
                             <div className="truncate font-mono font-semibold">{row.key}</div>
                             <div className="mt-1 flex gap-2">
-                              <CodePill>{row.category.label}</CodePill>
-                              {sensitive ? <CodePill>masked</CodePill> : null}
+                              {sensitive ? <span className="text-xs text-muted-foreground">{isEditing ? '正在编辑明文' : revealed ? '敏感值已显示' : row.value ? '敏感值已遮盖' : '敏感值为空'}</span> : null}
                             </div>
                           </div>
                           {isEditing ? (
                             <textarea
                               className={`${textareaClass} min-h-20 resize-y`}
+                              disabled={rowSavingKey === row.key}
+                              aria-label={`编辑 ${row.key} 的值`}
                               value={inlineEdit.value}
                               onChange={(event) => setInlineEdit({ key: row.key, value: event.target.value })}
                               spellCheck={false}
@@ -495,7 +513,7 @@ export function EnvEditor({
                           <div className="flex justify-end gap-2">
                             {isEditing ? (
                               <>
-                                <Button
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4"
                                   type="button"
                                   variant="outline"
                                   size="icon"
@@ -506,33 +524,34 @@ export function EnvEditor({
                                 >
                                   {rowSavingKey === row.key ? <Loader2 className="animate-spin" /> : <Save />}
                                 </Button>
-                                <Button type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} onClick={() => setInlineEdit(null)}>
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title="取消" aria-label={`取消编辑 ${row.key}`} disabled={rowSavingKey === row.key} onClick={() => setInlineEdit(null)}>
                                   <X />
                                 </Button>
                               </>
                             ) : (
                               <>
                                 {sensitive ? (
-                                  <Button type="button" variant="outline" size="icon" title={revealed ? '隐藏' : '显示'} aria-label={`${revealed ? '隐藏' : '显示'} ${row.key}`} onClick={() => toggleReveal(row.key)}>
+                                  <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title={revealed ? '隐藏' : '显示'} aria-label={`${revealed ? '隐藏' : '显示'} ${row.key}`} onClick={() => toggleReveal(row.key)}>
                                     {revealed ? <EyeOff /> : <Eye />}
                                   </Button>
                                 ) : (
                                   <div className="h-9 w-9" aria-hidden="true" />
                                 )}
-                                <Button type="button" variant="outline" size="icon" title="复制" aria-label={`复制 ${row.key}`} onClick={() => void copyValue(row.key, row.value)}>
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title="复制" aria-label={`复制 ${row.key}`} onClick={() => void copyValue(row.key, row.value)}>
                                   <Copy />
                                 </Button>
-                                <Button type="button" variant="outline" size="icon" title="编辑" aria-label={`编辑 ${row.key}`} onClick={() => startEdit(row.key, row.value)}>
+                                <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4" type="button" variant="outline" size="icon" title="编辑" aria-label={`编辑 ${row.key}`} onClick={() => startEdit(row.key, row.value)}>
                                   <Pencil />
                                 </Button>
                                 <ConfirmAction
+                                  scopeKey={`${scope}:${row.key}`}
                                   title="删除环境变量"
-                                  description={<span className="break-all font-mono">{row.key}</span>}
+                                  description={<span>从{scope === '_global' ? 'CDS 全局配置' : '当前项目'}删除 <code className="break-all">{row.key}</code>。{scope === '_global' ? '系统配置按各配置项规则生效；继承此变量的项目在重新部署后不再读取该全局值。' : '已运行容器不会立即改变；重新部署后不再读取此项目值，全局继承开启时可能回退到同名全局值。'}</span>}
                                   confirmLabel="删除"
                                   pending={deletingKey === row.key}
                                   onConfirm={() => deleteEnv(row.key)}
                                   trigger={
-                                    <Button
+                                    <Button className="min-h-[3.25rem] min-w-[3.25rem] [&_svg]:size-[1.875rem] lg:min-h-0 lg:min-w-0 lg:[&_svg]:size-4"
                                       type="button"
                                       variant="outline"
                                       size="icon"
@@ -556,6 +575,7 @@ export function EnvEditor({
             </div>
           ) : null}
         </div>
+        {topContent}
       </div>
     </Section>
   );

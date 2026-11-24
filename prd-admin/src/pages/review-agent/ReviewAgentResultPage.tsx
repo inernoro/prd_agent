@@ -36,20 +36,20 @@ function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejecte
   if (!status) return null;
   if (status === 'Pending') {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-[color:var(--accent-fg-blue)] border border-blue-500/30">
         <ClockIcon className="w-2.5 h-2.5" /> 申诉中
       </span>
     );
   }
   if (status === 'Approved') {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-[color:var(--accent-fg-violet)] border border-violet-500/30">
         <CheckCircle className="w-2.5 h-2.5" /> 申诉成功
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-900/30 text-rose-300 border border-rose-700/40">
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-900/30 text-[color:var(--accent-fg-danger)] border border-rose-700/40">
       <XCircle className="w-2.5 h-2.5" /> 申诉驳回
     </span>
   );
@@ -57,7 +57,7 @@ function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejecte
 
 function CheckboxBadge({ state }: { state: 'yes' | 'no' | 'none' }) {
   if (state === 'yes') {
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">是</span>;
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-[color:var(--accent-fg-blue)]">是</span>;
   }
   if (state === 'no') {
     return <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">否</span>;
@@ -105,7 +105,7 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
       <div className="divide-y divide-token-subtle">
         {Object.entries(grouped).map(([cat, list]) => (
           <div key={cat} className="px-3 py-2">
-            <p className="text-[11px] text-indigo-400/80 mb-1.5 font-medium">{cat}</p>
+            <p className="text-[11px] text-[color:var(--accent-fg-blue)] mb-1.5 font-medium">{cat}</p>
             <div className="space-y-1">
               {list.map(item => {
                 const v = verdictLabel(item);
@@ -113,7 +113,7 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
                   ? 'bg-emerald-500/15 text-emerald-300'
                   : v.tone === 'fail-hard'
                     ? 'bg-rose-500/20 text-rose-200'
-                    : 'bg-amber-500/15 text-amber-300';
+                    : 'bg-amber-500/15 text-[color:var(--accent-fg-amber)]';
                 return (
                   <div
                     key={item.id}
@@ -148,17 +148,17 @@ function RawOutputDebug({ result }: { result: ReviewResult }) {
   return (
     <div className="mb-4 bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
       <div className="flex items-start gap-2 mb-2">
-        <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+        <AlertTriangle className="w-4 h-4 text-[color:var(--accent-fg-amber)] flex-shrink-0 mt-0.5" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-amber-300">评分解析失败</p>
+          <p className="text-sm font-medium text-[color:var(--accent-fg-amber)]">评分解析失败</p>
           {result.parseError && (
-            <p className="text-xs text-amber-400/70 mt-0.5 font-mono break-all">{result.parseError}</p>
+            <p className="text-xs text-[color:var(--accent-fg-amber)] mt-0.5 font-mono break-all">{result.parseError}</p>
           )}
         </div>
       </div>
       <button
         onClick={() => setExpanded(v => !v)}
-        className="text-xs text-amber-400/60 hover:text-amber-400 transition-colors flex items-center gap-1"
+        className="text-xs text-[color:var(--accent-fg-amber)] hover:text-[color:var(--accent-fg-amber)] transition-colors flex items-center gap-1"
       >
         {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
         {expanded ? '收起' : '查看'} AI 原始输出（用于诊断）
@@ -513,7 +513,7 @@ export function ReviewAgentResultPage() {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8 text-center">
         <p className="text-token-muted">提交记录不存在</p>
-        <button onClick={() => navigate('/review-agent')} className="mt-4 text-indigo-400 hover:text-indigo-300 text-sm">
+        <button onClick={() => navigate('/review-agent')} className="mt-4 text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] text-sm">
           返回列表
         </button>
       </div>
@@ -543,7 +543,7 @@ export function ReviewAgentResultPage() {
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-              <ClipboardCheck className="w-4 h-4 text-indigo-400" />
+              <ClipboardCheck className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
             </div>
             <div>
               <h1 className="text-base font-semibold text-token-primary">{submission.title}</h1>
@@ -553,10 +553,10 @@ export function ReviewAgentResultPage() {
           {/* 总分/状态 */}
           {isDone && totalScore !== null && !isRunning && (
             <div className="flex-shrink-0 text-right">
-              <div className={`text-2xl font-bold ${isPassed ? 'text-emerald-400' : 'text-orange-400'}`}>
+              <div className={`text-2xl font-bold ${isPassed ? 'text-emerald-400' : 'text-[color:var(--accent-fg-warning)]'}`}>
                 {totalScore}分
               </div>
-              <div className={`flex items-center gap-1 text-xs mt-0.5 justify-end ${isPassed ? 'text-emerald-400/80' : 'text-orange-400/80'}`}>
+              <div className={`flex items-center gap-1 text-xs mt-0.5 justify-end ${isPassed ? 'text-emerald-400/80' : 'text-[color:var(--accent-fg-warning)]'}`}>
                 {isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                 {isPassed ? '已通过' : '未通过'}
               </div>
@@ -569,7 +569,7 @@ export function ReviewAgentResultPage() {
           )}
           {isRunning && (
             <div className="flex-shrink-0">
-              <div className="flex items-center gap-1.5 text-xs text-amber-400/80">
+              <div className="flex items-center gap-1.5 text-xs text-[color:var(--accent-fg-amber)]">
                 <MapSpinner size={14} />
                 评审中
               </div>
@@ -577,7 +577,7 @@ export function ReviewAgentResultPage() {
           )}
           {isAwaitingRetry && (
             <div className="flex-shrink-0">
-              <div className="flex items-center gap-1.5 text-xs text-amber-400/80">
+              <div className="flex items-center gap-1.5 text-xs text-[color:var(--accent-fg-amber)]">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 等待重试
               </div>
@@ -649,7 +649,7 @@ export function ReviewAgentResultPage() {
             >
               <Megaphone className="w-3.5 h-3.5" /> 我要申诉
               {submission.completedAt && (
-                <span className="text-[10px] text-indigo-200/80 ml-1">
+                <span className="text-[10px] text-[color:var(--accent-fg-blue)] ml-1">
                   ({Math.max(0, Math.floor((new Date(submission.completedAt).getTime() + APPEAL_WINDOW_HOURS * 3600_000 - Date.now()) / 60_000))} 分钟内)
                 </span>
               )}
@@ -699,7 +699,7 @@ export function ReviewAgentResultPage() {
 
       {streamError && !isError && !isDone && (
         <div className="mb-6 bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
-          <p className="text-xs font-medium text-amber-300/90 mb-1">
+          <p className="text-xs font-medium text-[color:var(--accent-fg-amber)] mb-1">
             {submission.status === 'Running' ? '评审仍在后台执行' : '评审连接暂时失败'}
           </p>
           <p className="text-sm text-amber-100/80">
@@ -712,7 +712,7 @@ export function ReviewAgentResultPage() {
               type="button"
               onClick={retryReviewStream}
               disabled={streaming}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-200 transition-colors hover:bg-amber-500/25 disabled:opacity-50"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-amber)] transition-colors hover:bg-amber-500/25 disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />
               重新连接评审
@@ -742,7 +742,7 @@ export function ReviewAgentResultPage() {
             {dimensionScores.map((dim) => {
               const pct = dim.maxScore > 0 ? (dim.score / dim.maxScore) * 100 : 0;
               const isExpanded = expandedDims.has(dim.key);
-              const scoreColor = pct >= 90 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 60 ? 'text-amber-400' : 'text-rose-400';
+              const scoreColor = pct >= 90 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 60 ? 'text-[color:var(--accent-fg-amber)]' : 'text-rose-400';
               const barColor = pct >= 90 ? 'bg-emerald-500' : pct >= 75 ? 'bg-cyan-500' : pct >= 60 ? 'bg-amber-500' : 'bg-rose-500';
               const dimCfg = dimConfigs.find(c => c.key === dim.key);
 
@@ -780,7 +780,7 @@ export function ReviewAgentResultPage() {
                       )}
                       {dimCfg?.description && (
                         <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
-                          <p className="text-xs text-indigo-400/70 mb-1 font-medium">明细要求</p>
+                          <p className="text-xs text-[color:var(--accent-fg-blue)] mb-1 font-medium">明细要求</p>
                           <p className="text-xs text-token-muted leading-relaxed whitespace-pre-wrap">{dimCfg.description}</p>
                         </div>
                       )}
@@ -819,16 +819,16 @@ export function ReviewAgentResultPage() {
                   {resultHistory.map((r, i) => (
                     <li key={r.id} className="flex items-center gap-3 text-xs">
                       <span className="text-token-muted tabular-nums w-12">#{resultHistory.length - i}</span>
-                      <span className={`tabular-nums font-medium ${r.isPassed ? 'text-emerald-400' : 'text-orange-400'}`}>
+                      <span className={`tabular-nums font-medium ${r.isPassed ? 'text-emerald-400' : 'text-[color:var(--accent-fg-warning)]'}`}>
                         {r.totalScore}分
                       </span>
-                      <span className={`flex items-center gap-1 ${r.isPassed ? 'text-emerald-400/80' : 'text-orange-400/80'}`}>
+                      <span className={`flex items-center gap-1 ${r.isPassed ? 'text-emerald-400/80' : 'text-[color:var(--accent-fg-warning)]'}`}>
                         {r.isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                         {r.isPassed ? '通过' : '未通过'}
                       </span>
                       <span className="text-token-muted">{new Date(r.scoredAt).toLocaleString('zh-CN')}</span>
                       {r.adjustmentLog && r.adjustmentLog.length > 0 && (
-                        <span className="text-amber-400/60">（系统兜底 {r.adjustmentLog.length} 项）</span>
+                        <span className="text-[color:var(--accent-fg-amber)]">（系统兜底 {r.adjustmentLog.length} 项）</span>
                       )}
                     </li>
                   ))}
@@ -842,10 +842,10 @@ export function ReviewAgentResultPage() {
       {/* 系统兜底调整记录（三层 guardrails 触发后才出现） */}
       {adjustmentLog.length > 0 && !isRunning && (
         <div className="mb-6 bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
-          <h2 className="text-sm font-medium text-amber-300/90 mb-3 flex items-center gap-2">
+          <h2 className="text-sm font-medium text-[color:var(--accent-fg-amber)] mb-3 flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" />
             系统兜底调整记录
-            <span className="text-[11px] text-amber-300/60 font-normal">
+            <span className="text-[11px] text-[color:var(--accent-fg-amber)] font-normal">
               （LLM 原始打分被三层 guardrail 调整，明细如下）
             </span>
           </h2>
@@ -878,7 +878,7 @@ export function ReviewAgentResultPage() {
               <button
                 onClick={handleRerun}
                 disabled={rerunning}
-                className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] transition-colors disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${rerunning ? 'animate-spin' : ''}`} />
                 重新评审

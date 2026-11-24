@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-input: #091014; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14); --ok: #22c55e; --warn: #eab308;
+      --radius: 8px; --radius-sm: 6px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .label { font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em; }
+    .caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; animation: c 1s step-end infinite; }
+    @keyframes c { 50% { opacity: 0; } }
+    .dot { width: 5px; height: 5px; border-radius: 999px; background: var(--accent); display: inline-block; animation: b 1.1s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.15s; }
+    .dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes b { 0%, 100% { opacity: 0.25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+  </style>
+</helmet>
+
+<div style="padding: 28px 32px; display: flex; flex-direction: column; gap: 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;">试跑 · 上输入下输出</div>
+    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">现在只能「上传文本」传个文件，输出块还飘在代码块上方、和输入没有配对关系。改成一个上下成对的区块：你写什么，紧接着就看到它回什么。</div>
+  </div>
+
+  <!-- ── 状态一：还没跑 ── -->
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <span class="label">状态一 · 还没跑</span>
+    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border-subtle); background: var(--bg-elevated); color: var(--text-secondary); font-size: 13px;">文字对话</span>
+        <span style="font-size: 12px; color: var(--text-muted);">模型</span>
+        <div style="flex: 1 1 200px; min-width: 0; height: 32px; display: flex; align-items: center; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-base); padding: 0 12px; font-size: 13px; color: var(--text-muted);">auto（由模型池调度）</div>
+      </div>
+
+      <!-- 输入：可直接写，不再只能传文件 -->
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="label">你要发什么</span>
+          <button type="button" style="margin-left: auto; height: 32px; padding: 0 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 9.5V2.5"/><path d="M4.2 5.3L7 2.5l2.8 2.8"/><path d="M2.5 10v1.5h9V10"/></svg>
+            或上传文本
+          </button>
+        </div>
+        <div class="mono" style="min-height: 88px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-primary);">Reply with OK</div>
+      </div>
+
+      <!-- 动作行把输入与输出隔开，两块同宽同圆角，读起来就是一对 -->
+      <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+        <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted); line-height: 1.7;">安全试跑不打上游、不计费；真实调用会计入用量与费用。</span>
+        <div style="flex: none; display: flex; gap: 8px;">
+          <button type="button" style="height: 32px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">安全试跑</button>
+          <button type="button" style="height: 32px; padding: 0 14px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">真实调用</button>
+        </div>
+      </div>
+
+      <!-- 输出：空态也占位，避免一跑起来页面往下跳 -->
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span class="label">模型返回</span>
+        <div style="min-height: 88px; border: 1px dashed var(--border-subtle); border-radius: var(--radius-sm); background: var(--bg-base); padding: 14px 16px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-muted);">跑一次就出现在这里</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 状态二：正在接收 ── -->
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <span class="label">状态二 · 正在接收（流式逐字）</span>
+    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span class="label">你要发什么</span>
+        <div class="mono" style="min-height: 88px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-primary);">用三句话说明什么是模型网关</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+        <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted);">安全试跑不打上游、不计费；真实调用会计入用量与费用。</span>
+        <div style="flex: none; display: flex; gap: 8px;">
+          <button type="button" disabled style="height: 32px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; opacity: 0.5;">安全试跑</button>
+          <button type="button" disabled style="height: 32px; padding: 0 14px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 13px; font-weight: 500; opacity: 0.5;">正在接收</button>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="label">模型返回</span>
+          <span style="display: inline-flex; gap: 3px; align-items: center;"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+          <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">已用 1.2s</span>
+        </div>
+        <div class="mono" style="min-height: 88px; border: 1px solid var(--border-subtle); border-left: 2px solid var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--bg-base); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-secondary);">模型网关是所有大模型调用的统一入口。它<span class="caret"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 状态三：已返回 ── -->
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <span class="label">状态三 · 已返回</span>
+    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <span class="label">你要发什么</span>
+        <div class="mono" style="min-height: 88px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-primary);">用三句话说明什么是模型网关</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+        <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted);">安全试跑不打上游、不计费；真实调用会计入用量与费用。</span>
+        <div style="flex: none; display: flex; gap: 8px;">
+          <button type="button" style="height: 32px; padding: 0 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">安全试跑</button>
+          <button type="button" style="height: 32px; padding: 0 14px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">再跑一次</button>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <!-- 返回的元信息在标签行，不占正文：类型 / 耗时 / 真正执行的模型 / 回查链接 -->
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span class="label">模型返回</span>
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border-subtle); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px;">文字</span>
+          <span style="font-size: 12px; color: var(--text-muted);">1.9s · 实际执行 gpt-4o-mini</span>
+          <a href="#" class="mono" style="margin-left: auto; font-size: 12px;">requestId</a>
+        </div>
+        <div class="mono" style="min-height: 88px; border: 1px solid var(--border-subtle); border-left: 2px solid var(--ok); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: var(--bg-base); padding: 14px 16px; font-size: 13px; line-height: 1.75; color: var(--text-secondary);">模型网关是所有大模型调用的统一入口。它按调用用途码把请求路由到获准的模型池，并统一记账与限流。应用侧只认一个地址和一把密钥，换模型不用改代码。</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 8px; background: rgba(167,139,250,0.10); border: 1px solid rgba(167,139,250,0.32); border-radius: var(--radius-sm); padding: 14px 16px;">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 3px;"><path d="M8 7.5v3.5"/><path d="M8 5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+    <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">对照关系靠三件事成立：输入与输出<b>同宽同圆角上下相邻</b>；空态也占 88px，跑起来页面不往下跳；输出块左侧一条竖线（接收中 accent，完成 ok）标明「这是回来的」。输入框里的内容同时进 cURL 片段，两边永远是同一次请求。</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

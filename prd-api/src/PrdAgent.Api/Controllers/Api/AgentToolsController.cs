@@ -3,9 +3,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.ClaudeSidecar;
+using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -28,18 +31,22 @@ public class AgentToolsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IInfraConnectionService _infraConnections;
 
+    private readonly IChatAgentOneOffRunRegistry _oneOffRuns;
+
     public AgentToolsController(
         IAgentToolRegistry registry,
         IOptionsMonitor<ClaudeSidecarOptions> options,
         ILogger<AgentToolsController> logger,
         MongoDbContext db,
-        IInfraConnectionService infraConnections)
+        IInfraConnectionService infraConnections,
+        IChatAgentOneOffRunRegistry oneOffRuns)
     {
         _registry = registry;
         _options = options;
         _logger = logger;
         _db = db;
         _infraConnections = infraConnections;
+        _oneOffRuns = oneOffRuns;
     }
 
     [HttpGet("list")]
@@ -87,12 +94,23 @@ public class AgentToolsController : ControllerBase
             AppCallerCode = req.AppCallerCode,
             SidecarName = Request.Headers["X-Sidecar-Name"].FirstOrDefault(),
             InfraAgentSessionId = session?.Id,
+            // 工具按「谁发起的」判权限。基础设施 Agent 会话优先；
+            // 通用对话没有这种会话，改用轮次 id 回查对话会话的归属用户；
+            // 一次性转派（宿主自带上下文、不落库）再退到进程内台账。
+            // 三条都查不到 = 无主调用，工具会自己拒绝，这里不兜底成某个默认用户。
+            UserId = session?.UserId
+                     ?? await ResolveChatAgentUserIdAsync(req.RunId, ct)
+                     ?? _oneOffRuns.TryResolveUserId(req.RunId),
             ApprovalId = req.ApprovalId,
             CdsBaseUrl = connection?.PartnerBaseUrl,
             CdsProjectId = connection?.ProjectId,
             CdsLongToken = cdsToken,
         };
 
+        var continuation = await HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>().ValidateAsync(
+            Request.Headers["X-Sidecar-Token"].ToString(), req.RunId ?? "", ctx.UserId);
+        if (continuation is null) return StatusCode(403, new { error = "任务工具授权已失效，未执行工具；请查看任务状态。" });
+        using var taskExecution = TaskExecutionContext.Enter(continuation);
         var approval = await ResolveToolApprovalAsync(req.RunId, req.ToolName, req.ApprovalId, TimeSpan.Zero, ct);
         if (!approval.Allowed)
         {
@@ -219,6 +237,9 @@ public class AgentToolsController : ControllerBase
         var session = await FindSessionByRunIdAsync(runId, ct);
         if (session == null)
         {
+            // 单篇索引只在已归属的通用对话轮次内执行；基础设施只读会话仍由下方策略拒绝。
+            if (toolName == "kb_index" && await ResolveChatAgentUserIdAsync(runId, ct) != null)
+                return ToolApprovalDecision.Allow("chat_entry_index", risk);
             return risk == "readonly"
                 ? ToolApprovalDecision.Allow("auto_allowed", risk)
                 : ToolApprovalDecision.Deny("approval_context_missing", "dangerous tool requires an infra agent session approval context", risk);
@@ -267,6 +288,25 @@ public class AgentToolsController : ControllerBase
         }
 
         return ToolApprovalDecision.Deny("tool_approval_cancelled", "tool approval wait cancelled", risk, "cancelled");
+    }
+
+    /// <summary>
+    /// 通用对话的轮次回查归属用户。对话里 runId 就是轮次 id；
+    /// 查不到就返回 null，工具会因为没有用户身份而拒绝执行——绝不放行无主调用。
+    /// </summary>
+    private async Task<string?> ResolveChatAgentUserIdAsync(string? runId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(runId)) return null;
+
+        var message = await _db.ChatAgentMessages
+            .Find(Builders<ChatAgentMessage>.Filter.Eq(m => m.TurnId, runId))
+            .FirstOrDefaultAsync(ct);
+        if (message == null) return null;
+
+        var session = await _db.ChatAgentSessions
+            .Find(Builders<ChatAgentSession>.Filter.Eq(x => x.Id, message.SessionId))
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(session?.UserId) ? null : session!.UserId;
     }
 
     private async Task<InfraAgentSession?> FindSessionByRunIdAsync(string? runId, CancellationToken ct)
@@ -369,16 +409,11 @@ public class AgentToolsController : ControllerBase
         var existing = await FindApprovalDecisionAsync(sessionId, approvalId, ct);
         if (!string.IsNullOrWhiteSpace(existing)) return;
 
-        var latest = await _db.InfraAgentEvents
-            .Find(x => x.SessionId == sessionId)
-            .SortByDescending(x => x.Seq)
-            .Limit(1)
-            .FirstOrDefaultAsync(ct);
-
         await _db.InfraAgentEvents.InsertOneAsync(new InfraAgentEvent
         {
             SessionId = sessionId,
-            Seq = (latest?.Seq ?? 0) + 1,
+            Seq = await InfraAgentSessionService.ReserveEventSeqRangeAsync(
+                _db, sessionId, 1, ct),
             Type = InfraAgentEventTypes.ToolResult,
             PayloadJson = JsonSerializer.Serialize(new
             {
@@ -424,16 +459,11 @@ public class AgentToolsController : ControllerBase
             }
         }
 
-        var latest = await _db.InfraAgentEvents
-            .Find(x => x.SessionId == sessionId)
-            .SortByDescending(x => x.Seq)
-            .Limit(1)
-            .FirstOrDefaultAsync(ct);
-
         await _db.InfraAgentEvents.InsertOneAsync(new InfraAgentEvent
         {
             SessionId = sessionId,
-            Seq = (latest?.Seq ?? 0) + 1,
+            Seq = await InfraAgentSessionService.ReserveEventSeqRangeAsync(
+                _db, sessionId, 1, ct),
             Type = InfraAgentEventTypes.ToolCall,
             PayloadJson = JsonSerializer.Serialize(new
             {
@@ -454,7 +484,7 @@ public class AgentToolsController : ControllerBase
         var normalized = toolName.Trim().ToLowerInvariant();
         return normalized switch
         {
-            "kb_apply" => "write",
+            "kb_apply" or "kb_index" => "write",
             "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action"
                 or "bash" or "edit" or "write" => "dangerous",
             _ => "readonly"
@@ -470,6 +500,13 @@ public class AgentToolsController : ControllerBase
             return false;
         }
 
+        if (TaskContinuationTokens.IsTaskToken(presented))
+        {
+            var valid = HttpContext.RequestServices.GetRequiredService<TaskContinuationTokens>()
+                .ValidateTokenAsync(presented).GetAwaiter().GetResult();
+            reason = valid ? "ok" : "task continuation expired";
+            return valid;
+        }
         var configured = _options.CurrentValue.Sidecars
             .Select(s =>
                 !string.IsNullOrWhiteSpace(s.Token)

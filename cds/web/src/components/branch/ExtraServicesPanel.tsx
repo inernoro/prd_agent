@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ExtraServicesPanel — 分支级临时额外服务管理（波1 W1b，最后一公里）。
  *
@@ -16,6 +17,7 @@ import { FlaskConical, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { ExtraServiceFormDialog, type ExtraServiceProfile } from './ExtraServiceFormDialog';
 
 interface ExtraServicesPutResponse {
@@ -38,11 +40,14 @@ export function ExtraServicesPanel({
   branchId,
   onToast,
   onChanged,
+  compactWhenEmpty = false,
 }: {
   branchId: string;
+  compactWhenEmpty?: boolean;
   onToast?: (message: string) => void;
   onChanged?: () => void;
 }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<PanelState>({ status: 'idle' });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ExtraServiceProfile | null>(null);
@@ -132,9 +137,10 @@ export function ExtraServicesPanel({
     }
   }, [digestResponse, onToast, putProfiles, state]);
 
+  const compactEmpty = compactWhenEmpty && state.status === 'ok' && state.profiles.length === 0;
   return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div className={compactEmpty ? 'flex flex-wrap items-center justify-end gap-2' : 'rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3'}>
+      {compactEmpty ? (canManageConsole ? <Button size="sm" variant="outline" onClick={() => { setEditing(null); setDialogOpen(true); }}><Plus />添加临时服务</Button> : <p className="text-sm text-muted-foreground">没有临时服务；添加请联系系统所有者。</p>) : <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <FlaskConical className="h-3.5 w-3.5" />
@@ -154,7 +160,7 @@ export function ExtraServicesPanel({
           >
             <RefreshCw className={state.status === 'loading' ? 'animate-spin' : ''} />
           </Button>
-          <Button
+          {canManageConsole ? <Button
             size="sm"
             variant="outline"
             onClick={() => { setEditing(null); setDialogOpen(true); }}
@@ -162,25 +168,20 @@ export function ExtraServicesPanel({
           >
             <Plus />
             添加服务
-          </Button>
+          </Button> : null}
         </div>
-      </div>
+      </div>}
 
       {notice ? (
         <div className={`mb-3 rounded-md border px-3 py-2 text-sm ${notice.kind === 'warn'
-          ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+          ? 'border-warn/30 bg-warn-soft text-warn'
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
         >
           {notice.text}
         </div>
       ) : null}
 
-      {state.status === 'loading' || state.status === 'idle' ? (
-        <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在加载临时服务…
-        </div>
-      ) : null}
+      {state.status === 'loading' || state.status === 'idle' ? <ContentLoading label="加载临时服务" variant="rows" /> : null}
 
       {state.status === 'error' ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -188,12 +189,11 @@ export function ExtraServicesPanel({
         </div>
       ) : null}
 
-      {state.status === 'ok' && state.profiles.length === 0 ? (
+      {!compactEmpty && state.status === 'ok' && state.profiles.length === 0 ? (
         <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-5 text-center text-sm text-muted-foreground">
           <div>本分支还没有临时服务。</div>
           <div className="mt-1 text-xs">
-            典型场景：这个分支要试 Nacos / Kafka / MinIO，但不想影响别的分支——点「添加服务」，
-            选个预设改两下就能起容器。
+            {canManageConsole ? '这个分支要试 Nacos / Kafka / MinIO 时，可以添加临时服务。' : '添加或修改临时服务请联系系统所有者。'}
           </div>
         </div>
       ) : null}
@@ -208,15 +208,15 @@ export function ExtraServicesPanel({
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{profile.id}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="max-w-[220px] truncate font-mono" title={profile.dockerImage}>{profile.dockerImage}</span>
+                  <span className="max-w-[13.75rem] truncate font-mono" title={profile.dockerImage}>{profile.dockerImage}</span>
                   <span className="font-mono">:{profile.containerPort}</span>
                   {profile.subdomain ? (
-                    <span className="rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-blue-700 dark:text-blue-300">
+                    <span className="rounded border border-info/30 bg-info-soft px-1.5 py-0.5 text-info">
                       子域 {profile.subdomain}
                     </span>
                   ) : null}
                   {profile.dbScope === 'per-branch' ? (
-                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                    <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-ok">
                       分支独立库
                     </span>
                   ) : null}
@@ -227,7 +227,7 @@ export function ExtraServicesPanel({
                   ) : null}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
+              {canManageConsole ? <div className="flex shrink-0 items-center gap-1">
                 <Button
                   size="sm"
                   variant="ghost"
@@ -248,20 +248,20 @@ export function ExtraServicesPanel({
                   pending={removingId === profile.id}
                   onConfirm={() => handleRemove(profile.id, true)}
                 />
-              </div>
+              </div> : <span className="text-xs text-muted-foreground">只读</span>}
             </div>
           ))}
         </div>
       ) : null}
 
-      <ExtraServiceFormDialog
+      {canManageConsole ? <ExtraServiceFormDialog
         open={dialogOpen}
         initial={editing}
         existingIds={state.status === 'ok' ? state.profiles.map((p) => p.id) : []}
         saving={saving}
         onClose={() => { if (!saving) { setDialogOpen(false); setEditing(null); } }}
         onSubmit={(draft, redeploy) => void handleSubmit(draft, redeploy)}
-      />
+      /> : null}
     </div>
   );
 }

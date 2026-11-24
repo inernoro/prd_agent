@@ -1,0 +1,189 @@
+using PrdAgent.Core.Models;
+
+namespace PrdAgent.Core.LlmGateway;
+
+/// <summary>
+/// 「一个对外模型下的线路，这次该排成什么顺序、哪些根本不参与」的**唯一判据**。
+///
+/// 为什么要抽出来：控制台的「调用全貌」面板要回答同一个问题（现在发一个请求会落到谁），
+/// 而它跑在独立的 console-api 里、按既定架构不引用 PrdAgent.*。两边各写一遍，
+/// 就是 predicate-and-wiring-discipline 形状 3（判据分裂各自漂移）——面板说落到 A、
+/// 实际落到 B，而且没有任何东西会发现。
+///
+/// 所以这里只放**纯函数**：不碰数据库、不碰时钟、不碰请求上下文。
+/// 运行时 <c>ModelResolver</c> 调它，console-api 那份镜像（<c>CallTracePlanner</c>）逐字对齐，
+/// 测试项目同时引用两边，拿同一组输入喂进去断言结果一致——不是扫源码，是行为对照。
+///
+/// 判据本身只有两条，刻意保持这么小：
+///   1. 哪些线路不参与（停用 / 熔断）——<see cref="SkipReason"/>
+///   2. 参与的怎么排队——<see cref="Queue"/>
+/// 半开试探（把一条熔断线路临时插到队首）不在这里：它要抢租约、要写库，
+/// 不是纯函数；面板也只把它标成「可能被试探」，不当成确定的下一跳。
+/// </summary>
+public static class GatewayRouteSelection
+{
+    /// <summary>熔断态的数值，与 <c>ModelHealthStatus.Unavailable</c> 相同。</summary>
+    public const int HealthUnavailable = 2;
+
+    /// <summary>线路被停用时的跳过原因。文案是产品语义，镜像两侧必须逐字相同。</summary>
+    public const string SkipDisabled = "这条线路被停用了";
+
+    /// <summary>线路熔断时的跳过原因。</summary>
+    public const string SkipQuarantined = "连续失败太多，已被摘掉";
+
+    /// <summary>线路指向的那个上游模型（或它所属的上游）被停用时的跳过原因。</summary>
+    public const string SkipTargetDisabled = "上游那个模型被停用了";
+
+    /// <param name="Id">线路标识。排序里做最后一级 tie-break，所以必须稳定。</param>
+    /// <param name="Priority">顺位，小的先。</param>
+    /// <param name="Weight">权重，只在按权重分配时有意义；小于 1 的按 1 算。</param>
+    /// <param name="HealthStatus">0 健康 / 1 降级 / 2 熔断。</param>
+    /// <param name="Enabled">这条线路自己有没有被停用。</param>
+    /// <param name="TargetUsable">它指向的上游模型与所属上游都还启用着吗。</param>
+    public readonly record struct RouteCandidate(
+        string Id,
+        int Priority,
+        int Weight,
+        int HealthStatus,
+        bool Enabled,
+        bool TargetUsable = true);
+
+    /// <summary>
+    /// 这条线路为什么不参与这次排队；<c>null</c> 表示参与。
+    ///
+    /// 顺序按「人拿到这句话之后该去改哪儿」排，不是按代码方便：
+    /// 线路自己被关掉 → 目标模型/上游被关掉 → 熔断。一条既停用又熔断的线路，
+    /// 人要先知道它是被人关掉的；「连续失败太多」会把人引去查上游，而那不是原因。
+    ///
+    /// <c>TargetUsable</c> 这一档运行时并不从这里走——<c>ModelResolver</c> 是在随后按
+    /// Offering 去查目标模型与上游时用 <c>requireEnabled</c> 过滤掉的，效果相同、位置不同。
+    /// 放进来是因为控制台必须说得出**为什么**跳过：2026-09-14 就是漏了这一档，
+    /// 面板把一条指向已停用物理模型的线路报成了「会落到它」。
+    /// 运行时那处过滤是否还在，由 GatewayDataDomainGuardTests 钉住。
+    /// </summary>
+    public static string? SkipReason(in RouteCandidate candidate)
+    {
+        if (!candidate.Enabled) return SkipDisabled;
+        if (!candidate.TargetUsable) return SkipTargetDisabled;
+        if (candidate.HealthStatus == HealthUnavailable) return SkipQuarantined;
+        return null;
+    }
+
+    /// <summary>参与排队的那些线路。</summary>
+    public static List<RouteCandidate> Eligible(IReadOnlyList<RouteCandidate> all)
+        => all.Where(x => SkipReason(x) is null).ToList();
+
+    /// <summary>
+    /// 把参与排队的线路排成这次真实的发送顺序。队首就是这次会落到的那一条。
+    ///
+    /// 三级排序：健康的排在降级的前面 → 顺位小的在前 → 线路标识（保证同分时次序稳定，
+    /// 否则同一份数据两次调用能给出不同答案，面板和实际就会无故对不上）。
+    ///
+    /// 按权重分配时，在排好的队列上按 <paramref name="seed"/> 落点旋转一次：
+    /// 权重大的被旋到队首的概率大，而后备顺序仍然保留（失败了照样往下走）。
+    /// seed 由调用方给（运行时用 requestId 派生，面板用固定值），
+    /// 这样这个函数本身没有随机性，可测。
+    ///
+    /// 旋转**只在最健康的那一档里**做。跨档旋转会把降级线路旋到队首，
+    /// 把上一步刚排好的健康顺序原样抵消掉——主流量继续打向一条已经在累积失败的上游，
+    /// 而排序代码看着完全正确（predicate-and-wiring-discipline 形状 1：
+    /// 判据的作用范围比它该管的宽，健康档这个维度被权重吃掉了）。
+    /// 降级的那些仍然在队列里，只是排在后面当后备——它们是兜底，不是分流对象。
+    /// </summary>
+    public static List<RouteCandidate> Queue(IReadOnlyList<RouteCandidate> all, bool weighted, uint seed)
+    {
+        var ordered = Eligible(all)
+            .OrderBy(x => HealthTier(x))
+            .ThenBy(x => x.Priority)
+            .ThenBy(x => x.Id, StringComparer.Ordinal)
+            .ToList();
+        if (!weighted || ordered.Count < 2) return ordered;
+
+        // 最健康那一档的条数。排序已经把它们放在最前面，所以取前 N 条即可。
+        var bestTier = HealthTier(ordered[0]);
+        var tierCount = ordered.Count(x => HealthTier(x) == bestTier);
+        if (tierCount < 2) return ordered;
+
+        var head = ordered.Take(tierCount).ToList();
+        var totalWeight = head.Sum(x => Math.Max(1, x.Weight));
+        var cursor = (int)(seed % (uint)totalWeight);
+        var firstIndex = 0;
+        for (var i = 0; i < head.Count; i++)
+        {
+            cursor -= Math.Max(1, head[i].Weight);
+            if (cursor < 0)
+            {
+                firstIndex = i;
+                break;
+            }
+        }
+        return head.Skip(firstIndex)
+            .Concat(head.Take(firstIndex))
+            .Concat(ordered.Skip(tierCount))
+            .ToList();
+    }
+
+    /// <summary>健康档：0 = 健康，1 = 降级。Unavailable 已被 <see cref="Eligible"/> 挡在外面。</summary>
+    private static int HealthTier(RouteCandidate candidate) => candidate.HealthStatus == 0 ? 0 : 1;
+
+    /// <summary>
+    /// 按权重分配时，每条线路被排到队首的概率（百分比，四舍五入到一位小数）。
+    ///
+    /// 面板不能在按权重分配时谎称「会落到 A」——那是编的。它给的是分配比例。
+    ///
+    /// 分配范围与 <see cref="Queue"/> 的旋转范围必须是同一个：最健康的那一档。
+    /// 两边取不同范围就是同一个判据分裂成两份（形状 3），面板报的比例和真实分流对不上，
+    /// 而且要等到有人拿日志去核才发现。降级线路不参与分配，所以不在返回值里。
+    /// </summary>
+    public static IReadOnlyList<(string Id, double Percent)> WeightShare(IReadOnlyList<RouteCandidate> all)
+    {
+        var eligible = Eligible(all);
+        if (eligible.Count == 0) return [];
+        var bestTier = eligible.Min(HealthTier);
+        var share = eligible.Where(x => HealthTier(x) == bestTier).ToList();
+        var total = share.Sum(x => Math.Max(1, x.Weight));
+        if (total <= 0) return [];
+        return share
+            .Select(x => (x.Id, Percent: Math.Round(Math.Max(1, x.Weight) * 100.0 / total, 1)))
+            .ToList();
+    }
+
+    /// <summary>是不是按权重分配。策略串只有这一个值触发，其余一律按顺位。</summary>
+    public static bool IsWeighted(string? routingStrategy)
+        => string.Equals(routingStrategy, "weighted", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 一个调用方在这一刻，还认不认「对外模型」这张目录。
+    ///
+    /// 为什么这件事必须有主语：面板此前那句「只给 appCallerCode、不点名模型时会落到它」
+    /// 是一句**没有主语的话**——判据只看模型自己（是不是默认、启用了没、有没有能接的线路），
+    /// 全程不问「谁在调」。拿一个调用方的样本判一句全称命题，正是
+    /// predicate-and-wiring-discipline 形状 1（判据太窄）。
+    ///
+    /// 2026-09-16 从三档收到两档。此前还有一档 DedicatedPoolOnly：调用方配了专属池，
+    /// 对外模型这一档整个被跳过。模型池在 2026-09-15 退场之后，运行时再也不看
+    /// AllowedModelPoolIds 了，**只要放行就认这张目录**——留着那一档，面板会拿一个
+    /// 已经没有任何解析作用的历史字段去解释落点，而运行时压根不读它
+    /// （形状 6：判据读的值不是真正生效的那个值）。实证：`document-store.transcribe-summary::chat`
+    /// 名下还留着 AllowedModelPoolIds，面板据此说它「点名与不点名都走不到 default-chat」，
+    /// 而真打一次点名，它落到了 default-chat 的队首。结论是反的。
+    /// </summary>
+    public enum CallerReach
+    {
+        /// <summary>认对外模型目录：点名走目录，不点名落到认领它的模型、否则该用途的默认。</summary>
+        UsesModelCatalog,
+
+        /// <summary>这个调用方当前不放行，请求根本发不出去，谈不上落到谁。</summary>
+        TrafficRejected,
+    }
+
+    /// <param name="AppCallerCode">调用方代码。</param>
+    /// <param name="TrafficAllowed">这个调用方当前放不放行（状态判定的结果）。</param>
+    public readonly record struct CallerBinding(
+        string AppCallerCode,
+        bool TrafficAllowed);
+
+    /// <summary>这个调用方还认不认对外模型目录。运行时与面板共用这一份。</summary>
+    public static CallerReach Reach(in CallerBinding caller)
+        => caller.TrafficAllowed ? CallerReach.UsesModelCatalog : CallerReach.TrafficRejected;
+}

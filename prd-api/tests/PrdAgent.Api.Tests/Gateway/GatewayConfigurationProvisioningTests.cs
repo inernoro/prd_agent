@@ -1,4 +1,7 @@
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
+using PrdAgent.Core.Models;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
 using PrdAgent.LlmGw.Provisioning;
@@ -9,6 +12,114 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class GatewayConfigurationProvisioningTests
 {
+    private static CreateExchangeRequest SpeechExchange(string? resourceId = "seed-tts-2.0") => new()
+    {
+        Name = "豆包 TTS 测试配置",
+        TargetUrl = "https://openspeech.example/api/v3/tts/unidirectional",
+        ApiKey = "test-only-private-key",
+        TargetAuthScheme = "XApiKey",
+        TransformerType = "doubao-tts",
+        ResourceId = resourceId,
+        Models = [new ExchangeModelWriteRequest { ModelId = "configured-speech-model", ModelType = "tts" }],
+    };
+
+    [Theory]
+    [InlineData("XApiKey", "XApiKey")]
+    [InlineData("DoubaoTts", "DoubaoTts")]
+    [InlineData("doubao-tts", "DoubaoTts")]
+    public void SpeechExchange_CreatePersistsExplicitResourceAndBothAuthenticationModes(string input, string expected)
+    {
+        var request = SpeechExchange();
+        request.TargetAuthScheme = input;
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out var draft, out var error).ShouldBeTrue(error);
+        draft!.TargetAuthScheme.ShouldBe(expected);
+        var document = GatewayConfigurationProvisioning.BuildExchangeDocument(draft,
+            "server-tenant", "exchange-tts", "ciphertext", DateTime.UnixEpoch, "admin");
+        document["TransformerConfig"]["resourceId"].AsString.ShouldBe("seed-tts-2.0");
+        GatewayConfigurationProvisioning.ReadExchangeResourceId(document).ShouldBe("seed-tts-2.0");
+        document.ToJson().ShouldNotContain("test-only-private-key");
+        GatewayConfigurationProvisioning.GetExchangeTransformerOptions().ShouldContain(x => x.Value == "doubao-tts");
+        GatewayConfigurationProvisioning.GetExchangeAuthSchemeOptions().ShouldContain(x => x.Value == "DoubaoTts");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("resource\r\nX-Api-Key: test")]
+    [InlineData("{\"token\":\"private\"}")]
+    [InlineData("resource/key")]
+    public void SpeechExchange_RequiresResourceAndRejectsHeaderOrObjectInjection(string? value)
+    {
+        GatewayConfigurationProvisioning.TryNormalizeExchange(SpeechExchange(value), out _, out var error).ShouldBeFalse();
+        error.ShouldContain("resourceId");
+        GatewayConfigurationProvisioning.ReadExchangeResourceId(new BsonDocument
+        {
+            ["TransformerType"] = "doubao-tts",
+            ["TransformerConfig"] = new BsonDocument("resourceId", value is null ? BsonNull.Value : value),
+        }).ShouldBeNull();
+    }
+
+    [Fact]
+    public void SpeechExchange_UpdateChangesOnlyResourceLeafAndRetainsVersionGuardContract()
+    {
+        var request = new UpdateExchangeRequest
+        {
+            Name = "豆包 TTS 测试配置",
+            TargetUrl = "https://openspeech.example/api/v3/tts/unidirectional",
+            TargetAuthScheme = "XApiKey",
+            TransformerType = "doubao-tts",
+            ResourceId = "seed-tts-1.0",
+            Models = SpeechExchange().Models,
+            Version = 4,
+        };
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out var draft, out var error).ShouldBeTrue(error);
+        draft!.Version.ShouldBe(4);
+        var document = new BsonDocument
+        {
+            ["TransformerType"] = "doubao-tts",
+            ["TransformerConfig"] = new BsonDocument
+            {
+                ["resourceId"] = "seed-tts-2.0",
+                ["uid"] = "existing-nonpublic-uid",
+                ["secret"] = "existing-private-secret",
+            },
+            ["TargetApiKeyEncrypted"] = "private-ciphertext",
+            ["Version"] = 4L,
+        };
+        var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(draft, document, "admin", DateTime.UnixEpoch, 5);
+        var rendered = update.Render(new RenderArgs<BsonDocument>(BsonSerializer.LookupSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+        var changes = rendered["$set"].AsBsonDocument;
+        changes["TransformerConfig.resourceId"].AsString.ShouldBe("seed-tts-1.0");
+        changes.Contains("TransformerConfig").ShouldBeFalse();
+        changes.Contains("TargetApiKeyEncrypted").ShouldBeFalse();
+        changes["Version"].AsInt64.ShouldBe(5);
+        rendered.ToJson().ShouldNotContain("existing-private-secret");
+        document["TransformerConfig"]["uid"].AsString.ShouldBe("existing-nonpublic-uid");
+        document["TransformerConfig"]["secret"].AsString.ShouldBe("existing-private-secret");
+        request.Version = null;
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out _, out error).ShouldBeFalse();
+        error.ShouldContain("version");
+    }
+
+    [Fact]
+    public void SpeechExchange_OnlyExposesResourceIdAndInitializesLegacyNullConfig()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeExchange(SpeechExchange(), out var draft, out var error).ShouldBeTrue(error);
+        var document = new BsonDocument { ["TransformerConfig"] = BsonNull.Value };
+        var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(draft!, document, "admin", DateTime.UnixEpoch, 1);
+        var rendered = update.Render(new RenderArgs<BsonDocument>(BsonSerializer.LookupSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+        rendered["$set"]["TransformerConfig"]["resourceId"].AsString.ShouldBe("seed-tts-2.0");
+        typeof(ExchangeItem).GetProperty("ResourceId").ShouldNotBeNull();
+        foreach (var type in new[] { typeof(ExchangeItem), typeof(CreateExchangeRequest), typeof(UpdateExchangeRequest) })
+            type.GetProperty("TransformerConfig").ShouldBeNull();
+        document["TransformerType"] = "doubao-tts";
+        document["TransformerConfig"] = new BsonDocument { ["resourceId"] = "seed-tts-2.0", ["token"] = "private-token" };
+        var item = new ExchangeItem { ResourceId = GatewayConfigurationProvisioning.ReadExchangeResourceId(document) };
+        System.Text.Json.JsonSerializer.Serialize(item).ShouldNotContain("private-token");
+        document["TransformerType"] = "doubao-asr";
+        GatewayConfigurationProvisioning.ReadExchangeResourceId(document).ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("openrouter", "openai")]
     [InlineData("openai-compatible", "openai")]
@@ -170,6 +281,163 @@ public sealed class GatewayConfigurationProvisioningTests
     }
 
     [Fact]
+    public void ImageGenerationModel_PersistsStructuredUpstreamSizeControlCapabilities()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeModel(new CreateModelRequest
+        {
+            PlatformId = "platform-1",
+            ModelName = "custom-image-model",
+            Capabilities = ["generation"],
+            ImageSizeControlMode = "field_and_prompt",
+            ImageSizeFieldFormat = "aspect_ratio",
+        }, out var draft, out var error).ShouldBeTrue(error);
+
+        var document = GatewayConfigurationProvisioning.BuildModelDocument(
+            draft!, "tenant-a", "model-image", null, DateTime.UnixEpoch);
+        var capabilityTypes = document["Capabilities"].AsBsonArray
+            .Select(item => item.AsBsonDocument["Type"].AsString)
+            .ToList();
+
+        capabilityTypes.ShouldContain("image_generation");
+        capabilityTypes.ShouldContain("parameter:image_size.prompt");
+        capabilityTypes.ShouldContain("parameter:image_size.field.aspect_ratio");
+        capabilityTypes
+            .Where(ImageSizeControlCapabilities.IsSizeControlCapability)
+            .ShouldBe(ImageSizeControlCapabilities.BuildCapabilityTypes(
+                ImageSizeControlModes.FieldAndPrompt,
+                ImageSizeFieldFormats.AspectRatio));
+    }
+
+    [Fact]
+    public void NonImageModel_RejectsImageSizeControlCapability()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeModel(new CreateModelRequest
+        {
+            PlatformId = "platform-1",
+            ModelName = "tutorial-chat",
+            Capabilities = ["chat"],
+            ImageSizeControlMode = "prompt",
+        }, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("图片生成模型");
+    }
+
+    [Theory]
+    [InlineData("parameter:image_size.none")]
+    [InlineData(" PARAMETER:IMAGE_SIZE.FIELD.SIZE ")]
+    [InlineData("parameter.image_size.prompt")]
+    [InlineData("param:image_size.field.aspect_ratio")]
+    [InlineData("param.image_size.field.width_height")]
+    public void BulkCapabilityType_ReservesImageSizeNamespaceForDedicatedEndpoint(string capabilityType)
+    {
+        GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+            capabilityType, out _, out var error).ShouldBeFalse();
+
+        error.ShouldContain("专用接口");
+    }
+
+    [Fact]
+    public void BulkCapabilityType_NormalizesOrdinaryCapability()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeBulkCapabilityType(
+            " vision ", out var type, out var error).ShouldBeTrue(error);
+
+        type.ShouldBe("vision");
+    }
+
+    [Fact]
+    public void ImageSizeControlMapping_NormalizesSupportedParameterAliases()
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "param.image_size.prompt", ["Value"] = true },
+            new BsonDocument { ["Type"] = "parameter.image_size.field.aspect_ratio", ["Value"] = true },
+        ]);
+
+        result.Mode.ShouldBe("field_and_prompt");
+        result.FieldFormat.ShouldBe("aspect_ratio");
+    }
+
+    [Theory]
+    [InlineData(true, false, "inherit")]
+    [InlineData(false, true, "none")]
+    public void ImageSizeControlMapping_LaterAliasValueOverridesEarlierValue(
+        bool canonicalValue,
+        bool aliasValue,
+        string expectedMode)
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "parameter:image_size.none", ["Value"] = canonicalValue },
+            new BsonDocument { ["Type"] = "param.image_size.none", ["Value"] = aliasValue },
+        ]);
+
+        result.Mode.ShouldBe(expectedMode);
+        result.FieldFormat.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ContainsImageSizeControlCapability_RecognizesReservedNamespaceAliases()
+    {
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["seed", "parameter:image_size.none"]).ShouldBeTrue();
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["param.image_size.field.size"]).ShouldBeTrue();
+        GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
+            ["image_generation", "parameter:seed"]).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void HasEnabledCapability_RequiresBooleanTrueValue()
+    {
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+        ], "image_generation").ShouldBeFalse();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "IMAGE_GENERATION", ["Value"] = true },
+        ], "image_generation").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "text_to_image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+        ], "image_generation", "text_to_image", "image").ShouldBeFalse();
+
+        GatewayConfigurationProvisioning.HasEnabledCapability(
+        [
+            new BsonDocument { ["Type"] = "image", ["Value"] = true },
+            new BsonDocument { ["Type"] = "image_generation", ["Value"] = false },
+        ], "image_generation", "text_to_image", "image").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ImageSizeControlMapping_IgnoresMissingAndNonBooleanValues()
+    {
+        var result = GatewayConfigurationProvisioning.MapImageSizeControl(
+        [
+            new BsonDocument { ["Type"] = "parameter:image_size.none" },
+            new BsonDocument { ["Type"] = "parameter:image_size.prompt", ["Value"] = "true" },
+            new BsonDocument { ["Type"] = "parameter:image_size.field.size", ["Value"] = false },
+        ]);
+
+        result.Mode.ShouldBe("inherit");
+        result.FieldFormat.ShouldBeNull();
+    }
+
+    [Fact]
     public void Exchange_RequiresCommunicationKeyAndAtLeastOneUniqueModelMapping()
     {
         var missingKey = new CreateExchangeRequest
@@ -229,7 +497,7 @@ public sealed class GatewayConfigurationProvisioningTests
         }, out var draft, out var error).ShouldBeTrue(error);
 
         var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
-            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch);
+            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch, "admin@example.com");
 
         document["TenantId"].AsString.ShouldBe("tenant-from-session");
         document["NameNormalized"].AsString.ShouldBe("教程原生中继");
@@ -238,6 +506,59 @@ public sealed class GatewayConfigurationProvisioningTests
         document.Contains("ApiKey").ShouldBeFalse();
         document["Models"].AsBsonArray.Count.ShouldBe(2);
         document["Version"].AsInt64.ShouldBe(1);
+
+        // 名录外的别名必须逐条盖上放行标记：数据面只认这个标记，不认「它来自兑换所」。
+        // 认容器不认条目的话，往兑换所里加一个没人看过的别名照样能过名录门。
+        foreach (var model in document["Models"].AsBsonArray.OfType<BsonDocument>())
+        {
+            model["AllowedOutsideCatalog"].AsBoolean.ShouldBeTrue(
+                $"{model["ModelId"].AsString} 不在名录里，写入时就该记下是谁放行的");
+            model["AllowedOutsideCatalogBy"].AsString.ShouldBe("admin@example.com");
+            model["AllowedOutsideCatalogAt"].ToUniversalTime().ShouldBe(DateTime.UnixEpoch);
+        }
+    }
+
+    /// <summary>
+    /// 盖了放行标记的兑换所文档，运行时必须还读得回来。
+    ///
+    /// 这条不是形式主义：`ModelExchange` 带 <c>[BsonIgnoreExtraElements]</c>，但那个属性
+    /// **不会传染给嵌套类型**。给 `Models` 数组的元素加一个 `ExchangeModel` 上没有的字段，
+    /// serving 的就绪探针、serving 的兑换所装配、解析器的兑换所查找——所有把这个集合
+    /// 读成 `ModelExchange` 的地方都会在反序列化时抛。写入侧一盖戳，读取侧全线炸，
+    /// 而写入侧自己用的是 BsonDocument，测不出来。
+    /// </summary>
+    [Fact]
+    public void StampedExchangeModel_StillDeserializes()
+    {
+        var document = new BsonDocument
+        {
+            { "_id", "gw-exchange-stamp" },
+            { "TenantId", "tenant-1" },
+            { "Name", "盖过戳的兑换所" },
+            { "Enabled", true },
+            {
+                "Models", new BsonArray
+                {
+                    new BsonDocument
+                    {
+                        { "ModelId", "vendor/private-model" },
+                        { "ModelType", "chat" },
+                        { "Enabled", true },
+                        { "AllowedOutsideCatalog", true },
+                        { "AllowedOutsideCatalogBy", "admin@example.com" },
+                        { "AllowedOutsideCatalogAt", DateTime.UnixEpoch },
+                    },
+                }
+            },
+        };
+
+        var exchange = BsonSerializer.Deserialize<ModelExchange>(document);
+
+        exchange.Models.Count.ShouldBe(1);
+        exchange.Models[0].ModelId.ShouldBe("vendor/private-model");
+        exchange.Models[0].AllowedOutsideCatalog.ShouldBe(true);
+        exchange.Models[0].AllowedOutsideCatalogBy.ShouldBe("admin@example.com");
+        exchange.GetEffectiveModels().Count.ShouldBe(1);
     }
 
     [Fact]
@@ -280,5 +601,136 @@ public sealed class GatewayConfigurationProvisioningTests
         model["ModelName"].AsString.ShouldBe($"tutorial-{modelType}");
         model["SourceCollection"].AsString.ShouldBe("llmgw_model_exchanges");
         GatewayModelPoolTypeRegistry.IsCompatible(model, modelType).ShouldBeTrue();
+    }
+
+    // intent 池成员资格：判据必须读运维真正能改的那个面。
+    //
+    // 这三条钉的是一次真实事故：上游批量导入的模型 IsIntent/IsMain 恒为 false（那两位只在建模型
+    // 那一刻由能力勾选写入），而控制台唯一能维护的能力面是 Capabilities 数组——判据不读它，于是
+    // intent 默认池对全部批量导入模型永久关闭，没有任何一条控制台路径能往里放模型。
+    [Fact]
+    public void IntentPool_AcceptsExplicitlyDeclaredIntentCapability_NotOnlyLegacyFlags()
+    {
+        var bulkImported = new BsonDocument
+        {
+            ["ModelName"] = "gpt-5.6-sol",
+            ["PlatformId"] = "platform-1",
+            ["IsIntent"] = false,
+            ["IsMain"] = false,
+            ["Capabilities"] = new BsonArray
+            {
+                new BsonDocument { ["Type"] = "chat", ["Source"] = "inferred", ["Value"] = true },
+            },
+        };
+
+        // 只有 chat 能力时不算 intent 可用：默认池会在建模型时自动追加所有兼容模型，
+        // 认了 chat 就等于把几百个对话模型无差别灌进 intent 池。
+        GatewayModelPoolTypeRegistry.IsCompatible(bulkImported, "intent").ShouldBeFalse();
+
+        bulkImported["Capabilities"].AsBsonArray.Add(
+            new BsonDocument { ["Type"] = "intent", ["Source"] = "user", ["Value"] = true });
+
+        GatewayModelPoolTypeRegistry.IsCompatible(bulkImported, "intent").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IntentPool_StillAcceptsLegacyFlagsWrittenAtModelCreation()
+    {
+        var byIntentFlag = new BsonDocument { ["IsIntent"] = true, ["IsMain"] = false };
+        var byMainFlag = new BsonDocument { ["IsIntent"] = false, ["IsMain"] = true };
+        var neither = new BsonDocument { ["IsIntent"] = false, ["IsMain"] = false };
+
+        GatewayModelPoolTypeRegistry.IsCompatible(byIntentFlag, "intent").ShouldBeTrue();
+        GatewayModelPoolTypeRegistry.IsCompatible(byMainFlag, "intent").ShouldBeTrue();
+        GatewayModelPoolTypeRegistry.IsCompatible(neither, "intent").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IntentPool_CapabilityValueFalseDoesNotCount()
+    {
+        var declaredThenRevoked = new BsonDocument
+        {
+            ["IsIntent"] = false,
+            ["IsMain"] = false,
+            ["Capabilities"] = new BsonArray
+            {
+                new BsonDocument { ["Type"] = "intent", ["Source"] = "user", ["Value"] = false },
+            },
+        };
+
+        GatewayModelPoolTypeRegistry.IsCompatible(declaredThenRevoked, "intent").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void FalImageLayeringBlueprint_PublishesGenericLogicalCapabilityWithoutBusinessBinding()
+    {
+        var draft = FalImageLayeringProvisioning.CreateExchangeDraft("fal-secret");
+        var logicalModel = FalImageLayeringProvisioning.BuildLogicalModelDocument(
+            "tenant-a", "logical-a", DateTime.UnixEpoch);
+        var offering = FalImageLayeringProvisioning.BuildOfferingDocument(
+            "tenant-a", "offering-a", "logical-a", "exchange-a", DateTime.UnixEpoch);
+
+        draft.TargetAuthScheme.ShouldBe("Key");
+        draft.TransformerType.ShouldBe("fal-image-layered");
+        draft.Models.Single().ModelId.ShouldBe("fal-qwen-image-layered");
+        logicalModel["PublicId"].AsString.ShouldBe("image-layering");
+        logicalModel["AllowedAppCallerCodes"].AsBsonArray.ShouldBeEmpty();
+        logicalModel.ToJson().ShouldNotContain("visual-agent");
+        offering["LogicalModelId"].AsString.ShouldBe("logical-a");
+        offering["TargetId"].AsString.ShouldBe("exchange-a");
+        offering["UpstreamModelId"].AsString.ShouldBe("fal-qwen-image-layered");
+        offering.Contains("AppCallerCode").ShouldBeFalse();
+    }
+
+    // ── 批量能力维护的 modelIds ──
+
+    [Fact]
+    public void 传了_modelIds_但一项都不合法_必须拒绝而不是改整个平台()
+    {
+        // 最危险的失效形态：不报错，只是改多了。带 platformId、modelIds 全是空白或超长串的
+        // 请求，如果只是「归一化后为空就不加这个过滤条件」，本该精确到几个模型的写入
+        // 会静默扩成整个平台上几百个模型全刷一遍。
+        var supplied = new List<string?> { "  ", "", null, new string('x', 301) };
+        var ok = GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            supplied, out var modelIds, out var error);
+
+        Assert.False(ok);
+        Assert.Empty(modelIds);
+        Assert.Contains("不会据此改动整个平台", error);
+    }
+
+    [Fact]
+    public void 一个都没传是合法的_那是按平台整片刷()
+    {
+        // 上一条的边界：不能把「没传」也拒掉，按平台整片刷是这个接口本来就支持的用法。
+        Assert.True(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            null, out var fromNull, out _));
+        Assert.Empty(fromNull);
+
+        Assert.True(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            new List<string?>(), out var fromEmpty, out _));
+        Assert.Empty(fromEmpty);
+    }
+
+    [Fact]
+    public void 混着无效项时_保留有效项并去重去空白()
+    {
+        var ok = GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            new List<string?> { " gpt-5.6-sol ", "", "gpt-5.6-sol", null, "claude-opus-5" },
+            out var modelIds,
+            out var error);
+
+        Assert.True(ok);
+        Assert.Equal(string.Empty, error);
+        Assert.Equal(new[] { "gpt-5.6-sol", "claude-opus-5" }, modelIds);
+    }
+
+    [Fact]
+    public void 超过_200_项要拒()
+    {
+        var supplied = Enumerable.Range(0, 201).Select(i => (string?)$"model-{i}").ToList();
+        Assert.False(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            supplied, out _, out var error));
+        Assert.Contains("最多 200 项", error);
     }
 }

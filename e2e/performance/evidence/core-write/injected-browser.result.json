@@ -1,0 +1,4373 @@
+{
+  "schema": 2,
+  "commit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+  "harnessCommit": "ff576c40f469d774e349545d4861f0045f50b9d7",
+  "environmentId": "map-perf-ffd60764da58",
+  "startedAt": "2026-11-13T11:06:33.668Z",
+  "contract": {
+    "schema": 4,
+    "buildMetadataVersion": 2,
+    "workload": {
+      "version": 3,
+      "stores": 6,
+      "documentsPerStore": 20,
+      "writerDocuments": 128,
+      "contentBytes": 8192,
+      "writeFlow": "edit-existing-document",
+      "browserRepetitions": 3,
+      "rateLimit": {
+        "maxRequestsPerMinute": 100000,
+        "maxConcurrentRequests": 1024
+      },
+      "warmup": {
+        "users": 2,
+        "iterationsPerUser": 20
+      },
+      "normal": {
+        "users": 2,
+        "seconds": 60,
+        "intervalMs": 1000,
+        "minimumBaselineSamples": 100
+      },
+      "ramp": {
+        "users": [
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "seconds": 15,
+        "intervalMs": 0
+      },
+      "soak": {
+        "users": 2,
+        "seconds": 120,
+        "intervalMs": 1000
+      }
+    },
+    "limits": {
+      "api": [
+        "1",
+        "1024m"
+      ],
+      "mongo": [
+        "1",
+        "768m"
+      ],
+      "redis": [
+        "0.5",
+        "256m"
+      ],
+      "web": [
+        "0.5",
+        "256m"
+      ]
+    },
+    "images": {
+      "mongo": "mongo:7@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71",
+      "redis": "redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
+      "web": "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+    },
+    "sdkVersion": "8.0.428",
+    "nodeMajor": "24",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "probe": "43fd9c42cf07260e756ddd05d9934b44877683b2c912d76b54aed752f27be4a1",
+    "metricsCode": "a45e45bd489b530efb9985a6dabebd4f328194d652767b8e67f442713b0d8b69",
+    "resourcesCode": "d09b742e3507553867cd95be3c292878e33bda00e63f0cf781c63d0c338ab8a2",
+    "proxyRecipe": "10d5e9c006998dfa4a31e7df68be23caeb48914142c850d345354cd87b50331c",
+    "runtimeRecipe": "11532728d000073bf127740721b67165239f114fa52e9ebe59aec972b133c7cb",
+    "workloadCode": "eaeeec6e8f2a046b8fee153132cfdede649de5e4db6522424467ff4d2c44c944",
+    "runtimeImage": "sha256:2102ef7b75ceb93d1a9c5f207cf5c9052571214a8eeb0420b9f74f8fbcc18f71",
+    "effectiveCgroups": {
+      "mongo": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "redis": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "api": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "web": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      }
+    },
+    "browserVersion": "156.0.8078.79"
+  },
+  "execution": {
+    "profile": "normal",
+    "state": "complete"
+  },
+  "host": {
+    "cpus": 5,
+    "memoryBytes": 18882662400,
+    "kernel": "6.18.57"
+  },
+  "injectionMs": 0,
+  "phases": [
+    {
+      "name": "normal",
+      "users": 2,
+      "seconds": 60.032585542999996,
+      "metrics": {
+        "document-open": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 7.478553000008105,
+            "p95": 16.204916000002413,
+            "p99": 17.445719000010286,
+            "max": 17.800229999993462,
+            "mean": 8.466881625001163
+          },
+          "app": {
+            "n": 120,
+            "p50": 6.091,
+            "p95": 9.976,
+            "p99": 13.819,
+            "max": 15.332,
+            "mean": 6.53889166666667
+          },
+          "externalHttp": {
+            "n": 120,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "home": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 11.345044000001508,
+            "p95": 25.782898999997997,
+            "p99": 48.35844300000463,
+            "max": 57.277654000004986,
+            "mean": 14.225311958333744
+          },
+          "app": {
+            "n": 120,
+            "p50": 8.753,
+            "p95": 18.426,
+            "p99": 23.579,
+            "max": 23.804,
+            "mean": 9.889199999999999
+          },
+          "externalHttp": {
+            "n": 120,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "journey": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 69.41401100000076,
+            "p95": 125.38590799999656,
+            "p99": 393.4419749999943,
+            "max": 394.10331400000723,
+            "mean": 82.04323990833291
+          },
+          "app": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "externalHttp": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "knowledge-list": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 9.931314000001294,
+            "p95": 39.89005499999621,
+            "p99": 341.62599000000046,
+            "max": 343.7374850000051,
+            "mean": 18.252575233332877
+          },
+          "app": {
+            "n": 120,
+            "p50": 8.111,
+            "p95": 29.683,
+            "p99": 335.754,
+            "max": 336.566,
+            "mean": 15.18349166666667
+          },
+          "externalHttp": {
+            "n": 120,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 33.05645999999251,
+            "p95": 69.25270700000692,
+            "p99": 170.12195200000133,
+            "max": 172.9118610000005,
+            "mean": 40.85940357500076
+          },
+          "app": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "externalHttp": {
+            "n": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-readback": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 7.164735999991535,
+            "p95": 20.840173999997205,
+            "p99": 119.14337600000727,
+            "max": 121.9123949999921,
+            "mean": 10.628579525001138
+          },
+          "app": {
+            "n": 120,
+            "p50": 5.734,
+            "p95": 12.662,
+            "p99": 78.022,
+            "max": 78.525,
+            "mean": 7.673816666666666
+          },
+          "externalHttp": {
+            "n": 120,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-save": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 17.45850399999472,
+            "p95": 29.981331999995746,
+            "p99": 31.65166999999201,
+            "max": 67.14160400000401,
+            "mean": 19.188290866667135
+          },
+          "app": {
+            "n": 120,
+            "p50": 15.927,
+            "p95": 26.005,
+            "p99": 29.039,
+            "max": 56.528,
+            "mean": 17.04900000000001
+          },
+          "externalHttp": {
+            "n": 120,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        },
+        "write-versions": {
+          "attempts": 120,
+          "errors": 0,
+          "errorRate": 0,
+          "throughput": 1.9989144048118115,
+          "client": {
+            "n": 120,
+            "p50": 8.004809999998542,
+            "p95": 32.620091999997385,
+            "p99": 46.261744999996154,
+            "max": 68.44364300000598,
+            "mean": 10.85148580833217
+          },
+          "app": {
+            "n": 120,
+            "p50": 6.714,
+            "p95": 16.262,
+            "p99": 36.923,
+            "max": 48.385,
+            "mean": 8.175458333333337
+          },
+          "externalHttp": {
+            "n": 120,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0
+          }
+        }
+      },
+      "resourceSampleStart": 0,
+      "resourceSampleEnd": 59
+    }
+  ],
+  "browser": {
+    "samples": {
+      "home": [
+        11071.189814999998,
+        10837.263242,
+        10850.50593
+      ],
+      "knowledge-list": [
+        168.32569799999328,
+        157.04199900000094,
+        155.2778959999996
+      ],
+      "document-open": [
+        1034.1389180000042,
+        1125.183567,
+        1058.2423089999938
+      ],
+      "write": [
+        1508.4009789999982,
+        1471.486269000001,
+        1498.5330219999887
+      ]
+    },
+    "home": 11071.189814999998,
+    "knowledge-list": 168.32569799999328,
+    "document-open": 1125.183567,
+    "write": 1508.4009789999982,
+    "requests": [
+      {
+        "path": "/api/v1/auth/miduo-planet/options",
+        "status": 200,
+        "stage": "login",
+        "round": 1
+      },
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/menu-catalog",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/model-leaderboard/top",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/mobile/feed",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/ai-toolbox/items",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/mobile/stats",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/ai-toolbox/marketplace",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/weekly-posters/current",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/home/recent-work",
+        "status": 200,
+        "stage": "home",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/seed-document-store-page-guide/track",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "knowledge-list",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/d3b0529383744b2db9c4fb9e6179aab0/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/074e682cbb9c44f382c82fdad7930e0c/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/73f23c4fe99d4761ba72c6148b9db270/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/53eea352b864487390a5f0159f362040/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6e39673ccec64909b734c06c47f65019/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/seed-document-store-page-guide/mark-learned",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/entries",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/tutorial-link-graph",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/sync",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/c32f7e64d97d40629eaa267d339d852e/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/c32f7e64d97d40629eaa267d339d852e/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/view-events/590a4d5afd68453cbf339743f419f360/leave",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/agent-runs/latest",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/tutorial-link-graph",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/entries",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/sync",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/view",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/inline-comments",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 1
+      },
+      {
+        "path": "/api/v1/auth/miduo-planet/options",
+        "status": 200,
+        "stage": "login",
+        "round": 2
+      },
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/menu-catalog",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/model-leaderboard/top",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/mobile/feed",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/mobile/stats",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/ai-toolbox/items",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/ai-toolbox/marketplace",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/weekly-posters/current",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/home/recent-work",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/074e682cbb9c44f382c82fdad7930e0c/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/53eea352b864487390a5f0159f362040/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6e39673ccec64909b734c06c47f65019/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/d3b0529383744b2db9c4fb9e6179aab0/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/73f23c4fe99d4761ba72c6148b9db270/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/tutorial-link-graph",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/entries",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/sync",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/c32f7e64d97d40629eaa267d339d852e/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/c32f7e64d97d40629eaa267d339d852e/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/view-events/590a4d5afd68453cbf339743f419f360/leave",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/agent-runs/latest",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/tutorial-link-graph",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/entries",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/sync",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/inline-comments",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/view",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 2
+      },
+      {
+        "path": "/api/v1/auth/miduo-planet/options",
+        "status": 200,
+        "stage": "login",
+        "round": 3
+      },
+      {
+        "path": "/api/v1/auth/login",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/menu-catalog",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/model-leaderboard/top",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/ai-toolbox/items",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/mobile/feed",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/mobile/stats",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/ai-toolbox/marketplace",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/weekly-posters/current",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/home/recent-work",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/submissions/public/creators",
+        "status": 200,
+        "stage": "home",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/73f23c4fe99d4761ba72c6148b9db270/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6e39673ccec64909b734c06c47f65019/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/53eea352b864487390a5f0159f362040/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/074e682cbb9c44f382c82fdad7930e0c/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/d3b0529383744b2db9c4fb9e6179aab0/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/tutorial-link-graph",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/entries",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/sync",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/c32f7e64d97d40629eaa267d339d852e/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/c32f7e64d97d40629eaa267d339d852e/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/c32f7e64d97d40629eaa267d339d852e/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/view-events/590a4d5afd68453cbf339743f419f360/leave",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/inline-comments",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/agent-runs/latest",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/view",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "document-open",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/notifications",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/progress",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/daily-tips/visible",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/changelog/current-week",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/authz/me",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/agent-runs/latest",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/peer-sync/runs",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/tutorial-link-graph",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/entries",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/dashboard/user-preferences",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/analytics-summary",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/with-preview",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/transcribe-styles",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/sync",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/inline-comments",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/view",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/entries/694e51a1b7ee4b1199e2d546b86763aa/content",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/document-store/stores/6592c7ca6ce3413b96bfeb3c56a2a209/size",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      },
+      {
+        "path": "/api/mentions/documents/694e51a1b7ee4b1199e2d546b86763aa/links",
+        "status": 200,
+        "stage": "write",
+        "round": 3
+      }
+    ],
+    "pass": true
+  },
+  "resources": [
+    {
+      "at": "2026-11-13T11:07:54.109Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": null,
+          "rssBytes": 198455296,
+          "cpuSeconds": 3.76,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": null,
+          "rssBytes": 12660736,
+          "cpuSeconds": 0.63,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": null,
+          "rssBytes": 1097396224,
+          "cpuSeconds": 25.59,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": null,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.46,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:07:55.225Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 8.062992180160778,
+          "rssBytes": 198979584,
+          "cpuSeconds": 3.85,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.7917760400357288,
+          "rssBytes": 12791808,
+          "cpuSeconds": 0.65,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 110.19422646219732,
+          "rssBytes": 1119154176,
+          "cpuSeconds": 26.82,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.46,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:07:56.251Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.873415997131632,
+          "rssBytes": 199634944,
+          "cpuSeconds": 3.9,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.9493663988526526,
+          "rssBytes": 12791808,
+          "cpuSeconds": 0.67,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.620247991394894,
+          "rssBytes": 1119154176,
+          "cpuSeconds": 26.97,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9746831994263263,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.47,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:07:57.310Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 10.393420168330628,
+          "rssBytes": 199634944,
+          "cpuSeconds": 4.01,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9448563789391481,
+          "rssBytes": 12922880,
+          "cpuSeconds": 0.68,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 30.23540412605274,
+          "rssBytes": 1119154176,
+          "cpuSeconds": 27.29,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.47,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:07:58.344Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.8653251041888845,
+          "rssBytes": 199897088,
+          "cpuSeconds": 4.05,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9663312760472211,
+          "rssBytes": 13185024,
+          "cpuSeconds": 0.69,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 17.39396296884998,
+          "rssBytes": 1119416320,
+          "cpuSeconds": 27.47,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9663312760472211,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.48,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:07:59.373Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9151611381750073,
+          "rssBytes": 200290304,
+          "cpuSeconds": 4.08,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9717203793916692,
+          "rssBytes": 13185024,
+          "cpuSeconds": 0.7,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.688924173308362,
+          "rssBytes": 1119416320,
+          "cpuSeconds": 27.58,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.48,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:00.398Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.878808170549382,
+          "rssBytes": 200552448,
+          "cpuSeconds": 4.13,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9757616341098763,
+          "rssBytes": 13185024,
+          "cpuSeconds": 0.71,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 20.4909943163074,
+          "rssBytes": 1119547392,
+          "cpuSeconds": 27.79,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.48,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:01.433Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.867463155362574,
+          "rssBytes": 200945664,
+          "cpuSeconds": 4.17,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 13185024,
+          "cpuSeconds": 0.71,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.635523677247077,
+          "rssBytes": 1119678464,
+          "cpuSeconds": 27.9,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9668657888406434,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.49,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:02.455Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9321910872181483,
+          "rssBytes": 201338880,
+          "cpuSeconds": 4.2,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9773970290727161,
+          "rssBytes": 13185024,
+          "cpuSeconds": 0.72,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.728764348872593,
+          "rssBytes": 1119678464,
+          "cpuSeconds": 28.02,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.49,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:03.520Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.634007937111509,
+          "rssBytes": 201469952,
+          "cpuSeconds": 4.26,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.8780026457038363,
+          "rssBytes": 13316096,
+          "cpuSeconds": 0.74,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 26.29203703985371,
+          "rssBytes": 1119940608,
+          "cpuSeconds": 28.3,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.49,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:04.541Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.919808402901122,
+          "rssBytes": 201994240,
+          "cpuSeconds": 4.3,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9799521007252805,
+          "rssBytes": 13316096,
+          "cpuSeconds": 0.75,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.759425208703366,
+          "rssBytes": 1119940608,
+          "cpuSeconds": 28.42,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.49,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:05.577Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 6.758572385905244,
+          "rssBytes": 202256384,
+          "cpuSeconds": 4.37,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9655103408436061,
+          "rssBytes": 13316096,
+          "cpuSeconds": 0.76,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 16.413675794341305,
+          "rssBytes": 1119940608,
+          "cpuSeconds": 28.59,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9655103408436061,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.5,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:06.638Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 8.482120798159146,
+          "rssBytes": 202649600,
+          "cpuSeconds": 4.46,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9424578664621274,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.77,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 19.791615195704672,
+          "rssBytes": 1120071680,
+          "cpuSeconds": 28.8,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.5,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:07.687Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 6.671724526446246,
+          "rssBytes": 202911744,
+          "cpuSeconds": 4.53,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.90620700755607,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.79,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 19.0620700755607,
+          "rssBytes": 1120071680,
+          "cpuSeconds": 29,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.953103503778035,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.51,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:08.711Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.883640362886772,
+          "rssBytes": 203042816,
+          "cpuSeconds": 4.58,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9767280725773544,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.8,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.720736870928251,
+          "rssBytes": 1120202752,
+          "cpuSeconds": 29.12,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.51,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:09.743Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.90621311697688,
+          "rssBytes": 203304960,
+          "cpuSeconds": 4.61,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.96873770565896,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.81,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.65611476224856,
+          "rssBytes": 1120202752,
+          "cpuSeconds": 29.23,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.51,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:10.766Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9320829057896067,
+          "rssBytes": 203567104,
+          "cpuSeconds": 4.64,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9773609685965354,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.82,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.773609685965356,
+          "rssBytes": 1120464896,
+          "cpuSeconds": 29.33,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.51,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:11.794Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9182957132412137,
+          "rssBytes": 204091392,
+          "cpuSeconds": 4.67,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.82,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.727652377470713,
+          "rssBytes": 1120464896,
+          "cpuSeconds": 29.43,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9727652377470715,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.52,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:12.818Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.884170094189206,
+          "rssBytes": 204353536,
+          "cpuSeconds": 4.72,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9768340188378413,
+          "rssBytes": 13447168,
+          "cpuSeconds": 0.83,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.652510282567615,
+          "rssBytes": 1121120256,
+          "cpuSeconds": 29.58,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.52,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:13.842Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.929880285550547,
+          "rssBytes": 204484608,
+          "cpuSeconds": 4.75,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9766267618501825,
+          "rssBytes": 13578240,
+          "cpuSeconds": 0.84,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.719521142202188,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 29.7,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.52,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:14.864Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9349188524139613,
+          "rssBytes": 204746752,
+          "cpuSeconds": 4.78,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 13709312,
+          "cpuSeconds": 0.84,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.783062841379872,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 29.8,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9783062841379873,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.53,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:15.888Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.9050595364986833,
+          "rssBytes": 205139968,
+          "cpuSeconds": 4.82,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 13709312,
+          "cpuSeconds": 0.84,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.73891372537138,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 29.91,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.53,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:16.917Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 7.7734863371935745,
+          "rssBytes": 205402112,
+          "cpuSeconds": 4.9,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.9433715842983936,
+          "rssBytes": 13709312,
+          "cpuSeconds": 0.86,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 16.518658466536348,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 30.08,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.53,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:17.955Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.892167420526671,
+          "rssBytes": 205533184,
+          "cpuSeconds": 4.93,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 13709312,
+          "cpuSeconds": 0.86,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.640558068422237,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 30.18,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.53,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:18.994Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.7706719668108635,
+          "rssBytes": 205664256,
+          "cpuSeconds": 4.99,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.961778661135144,
+          "rssBytes": 13709312,
+          "cpuSeconds": 0.87,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.426679917027158,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 30.33,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.961778661135144,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.54,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:20.022Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9181231631369196,
+          "rssBytes": 206188544,
+          "cpuSeconds": 5.02,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9727077210456397,
+          "rssBytes": 13709312,
+          "cpuSeconds": 0.88,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.727077210456399,
+          "rssBytes": 1121251328,
+          "cpuSeconds": 30.43,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.54,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:21.090Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.81066982356102,
+          "rssBytes": 206450688,
+          "cpuSeconds": 5.05,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9368899411870067,
+          "rssBytes": 13840384,
+          "cpuSeconds": 0.89,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 8.43200947068306,
+          "rssBytes": 1121513472,
+          "cpuSeconds": 30.52,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.54,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:22.124Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.803362239816178,
+          "rssBytes": 206843904,
+          "cpuSeconds": 5.11,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9672270399693631,
+          "rssBytes": 13971456,
+          "cpuSeconds": 0.9,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 21.278994879325985,
+          "rssBytes": 1121644544,
+          "cpuSeconds": 30.74,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9672270399693631,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.55,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:23.150Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.897006616177073,
+          "rssBytes": 207237120,
+          "cpuSeconds": 5.15,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 13971456,
+          "cpuSeconds": 0.9,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 12.66527150257549,
+          "rssBytes": 1121644544,
+          "cpuSeconds": 30.87,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.55,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:24.194Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.788211139180993,
+          "rssBytes": 207237120,
+          "cpuSeconds": 5.2,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9576422278361987,
+          "rssBytes": 13971456,
+          "cpuSeconds": 0.91,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.36463341754298,
+          "rssBytes": 1121644544,
+          "cpuSeconds": 31.02,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.55,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:25.217Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.933091312367165,
+          "rssBytes": 207499264,
+          "cpuSeconds": 5.23,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9776971041223884,
+          "rssBytes": 13971456,
+          "cpuSeconds": 0.92,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.73236524946866,
+          "rssBytes": 1121775616,
+          "cpuSeconds": 31.14,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9776971041223884,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.56,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:26.237Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.9227205535705703,
+          "rssBytes": 207761408,
+          "cpuSeconds": 5.27,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9806801383926426,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.93,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.76816166071171,
+          "rssBytes": 1121906688,
+          "cpuSeconds": 31.26,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.56,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:27.260Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.9106223507537794,
+          "rssBytes": 208023552,
+          "cpuSeconds": 5.31,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.93,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.731867052261338,
+          "rssBytes": 1122037760,
+          "cpuSeconds": 31.38,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9776555876884448,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.57,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:28.311Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.8081532805458194,
+          "rssBytes": 208547840,
+          "cpuSeconds": 5.35,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9520383201364548,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.94,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 15.232613122183277,
+          "rssBytes": 1122037760,
+          "cpuSeconds": 31.54,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.57,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:29.337Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.868847518445132,
+          "rssBytes": 208678912,
+          "cpuSeconds": 5.4,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9737695036890263,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.95,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 12.659003547957342,
+          "rssBytes": 1122037760,
+          "cpuSeconds": 31.67,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9737695036890263,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.58,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:30.396Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.777577826805858,
+          "rssBytes": 208941056,
+          "cpuSeconds": 5.44,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9443944567014645,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.96,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.388339023716108,
+          "rssBytes": 1122168832,
+          "cpuSeconds": 31.78,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.58,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:31.419Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.9092959676569548,
+          "rssBytes": 209072128,
+          "cpuSeconds": 5.48,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.96,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 15.637183870627819,
+          "rssBytes": 1122168832,
+          "cpuSeconds": 31.94,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.58,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:32.437Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.946984812970179,
+          "rssBytes": 209334272,
+          "cpuSeconds": 5.51,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9823282709900596,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.97,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.823282709900596,
+          "rssBytes": 1122299904,
+          "cpuSeconds": 32.04,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.58,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:33.461Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.930391532289027,
+          "rssBytes": 209465344,
+          "cpuSeconds": 5.54,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.97,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.767971774296758,
+          "rssBytes": 1122299904,
+          "cpuSeconds": 32.14,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9767971774296758,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.59,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:34.479Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.928169585240368,
+          "rssBytes": 209727488,
+          "cpuSeconds": 5.58,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.964084792620184,
+          "rssBytes": 14102528,
+          "cpuSeconds": 0.99,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.784508755721104,
+          "rssBytes": 1122693120,
+          "cpuSeconds": 32.26,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.59,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:35.508Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.916448212138665,
+          "rssBytes": 209858560,
+          "cpuSeconds": 5.61,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14233600,
+          "cpuSeconds": 0.99,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 8.749344636415996,
+          "rssBytes": 1122693120,
+          "cpuSeconds": 32.35,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.59,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:36.535Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.895061162937954,
+          "rssBytes": 210120704,
+          "cpuSeconds": 5.65,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9737652907344885,
+          "rssBytes": 14233600,
+          "cpuSeconds": 1,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 12.658948779548352,
+          "rssBytes": 1122955264,
+          "cpuSeconds": 32.48,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.59,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:37.556Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9370951608992826,
+          "rssBytes": 210382848,
+          "cpuSeconds": 5.68,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9790317202997609,
+          "rssBytes": 14233600,
+          "cpuSeconds": 1.01,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 8.81128548269785,
+          "rssBytes": 1122955264,
+          "cpuSeconds": 32.57,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.59,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:38.577Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9391639357139345,
+          "rssBytes": 210644992,
+          "cpuSeconds": 5.71,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14364672,
+          "cpuSeconds": 1.01,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.79721311904645,
+          "rssBytes": 1123086336,
+          "cpuSeconds": 32.67,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9797213119046448,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.6,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:39.604Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.921760763049846,
+          "rssBytes": 210907136,
+          "cpuSeconds": 5.74,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14364672,
+          "cpuSeconds": 1.01,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.739202543499486,
+          "rssBytes": 1123217408,
+          "cpuSeconds": 32.77,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.6,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:40.636Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.905054349804844,
+          "rssBytes": 211169280,
+          "cpuSeconds": 5.77,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.968351449934948,
+          "rssBytes": 14364672,
+          "cpuSeconds": 1.02,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.683514499349481,
+          "rssBytes": 1123348480,
+          "cpuSeconds": 32.87,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.6,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:41.667Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 7.760889659341744,
+          "rssBytes": 211431424,
+          "cpuSeconds": 5.85,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.970111207417718,
+          "rssBytes": 14364672,
+          "cpuSeconds": 1.03,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 15.521779318683487,
+          "rssBytes": 1123348480,
+          "cpuSeconds": 33.03,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.970111207417718,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.61,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:42.708Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.8433077585030615,
+          "rssBytes": 211562496,
+          "cpuSeconds": 5.89,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9608269396257654,
+          "rssBytes": 14364672,
+          "cpuSeconds": 1.04,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.569096335883419,
+          "rssBytes": 1123348480,
+          "cpuSeconds": 33.14,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.61,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:43.731Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 1.9551017472438224,
+          "rssBytes": 211824640,
+          "cpuSeconds": 5.91,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9775508736219112,
+          "rssBytes": 14495744,
+          "cpuSeconds": 1.05,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.730610483462932,
+          "rssBytes": 1123348480,
+          "cpuSeconds": 33.26,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.61,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:44.765Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 5.801004359403559,
+          "rssBytes": 212086784,
+          "cpuSeconds": 5.97,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14626816,
+          "cpuSeconds": 1.05,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 16.43617901831009,
+          "rssBytes": 1123610624,
+          "cpuSeconds": 33.43,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9668340599005932,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.62,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:45.788Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 7.823506695982806,
+          "rssBytes": 212611072,
+          "cpuSeconds": 6.05,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9779383369978507,
+          "rssBytes": 14626816,
+          "cpuSeconds": 1.06,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 8.801445032980656,
+          "rssBytes": 1123610624,
+          "cpuSeconds": 33.52,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.62,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:46.804Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9525785706205934,
+          "rssBytes": 212873216,
+          "cpuSeconds": 6.08,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9841928568735312,
+          "rssBytes": 14757888,
+          "cpuSeconds": 1.07,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.810314282482373,
+          "rssBytes": 1123741696,
+          "cpuSeconds": 33.64,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9841928568735312,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.63,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:47.827Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.9077846488539736,
+          "rssBytes": 213004288,
+          "cpuSeconds": 6.12,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9769461622134934,
+          "rssBytes": 14757888,
+          "cpuSeconds": 1.08,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.746407784348428,
+          "rssBytes": 1123872768,
+          "cpuSeconds": 33.75,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.63,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:48.854Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9225417398896796,
+          "rssBytes": 213135360,
+          "cpuSeconds": 6.15,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 14757888,
+          "cpuSeconds": 1.08,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 11.690166959558718,
+          "rssBytes": 1123872768,
+          "cpuSeconds": 33.87,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.63,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:49.873Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9448133757357224,
+          "rssBytes": 213397504,
+          "cpuSeconds": 6.18,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9816044585785743,
+          "rssBytes": 14888960,
+          "cpuSeconds": 1.09,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 9.816044585785741,
+          "rssBytes": 1123872768,
+          "cpuSeconds": 33.97,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.63,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:50.901Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 3.889885457013118,
+          "rssBytes": 213528576,
+          "cpuSeconds": 6.22,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9724713642532795,
+          "rssBytes": 14888960,
+          "cpuSeconds": 1.1,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 8.752242278279516,
+          "rssBytes": 1124003840,
+          "cpuSeconds": 34.06,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.63,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:51.929Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9181729367489946,
+          "rssBytes": 213790720,
+          "cpuSeconds": 6.25,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0,
+          "rssBytes": 15020032,
+          "cpuSeconds": 1.1,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 12.645416059245642,
+          "rssBytes": 1124134912,
+          "cpuSeconds": 34.19,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0.9727243122496648,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.64,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:52.962Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 2.9046147801218476,
+          "rssBytes": 213921792,
+          "cpuSeconds": 6.28,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 1.936409853414565,
+          "rssBytes": 15020032,
+          "cpuSeconds": 1.12,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 10.650254193780109,
+          "rssBytes": 1124134912,
+          "cpuSeconds": 34.3,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.64,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    },
+    {
+      "at": "2026-11-13T11:08:53.989Z",
+      "samples": [
+        {
+          "role": "mongo",
+          "cpuPercent": 4.866491508854637,
+          "rssBytes": 214839296,
+          "cpuSeconds": 6.33,
+          "pids": [
+            47336
+          ]
+        },
+        {
+          "role": "redis",
+          "cpuPercent": 0.9732983017709276,
+          "rssBytes": 15020032,
+          "cpuSeconds": 1.13,
+          "pids": [
+            47462
+          ]
+        },
+        {
+          "role": "api",
+          "cpuPercent": 14.59947452656391,
+          "rssBytes": 1124134912,
+          "cpuSeconds": 34.45,
+          "pids": [
+            47550
+          ]
+        },
+        {
+          "role": "web",
+          "cpuPercent": 0,
+          "rssBytes": 9682944,
+          "cpuSeconds": 0.64,
+          "pids": [
+            47661,
+            47744
+          ]
+        }
+      ]
+    }
+  ],
+  "browserInjection": {
+    "delayMs": 10000,
+    "applied": [
+      {
+        "round": 1,
+        "stage": "home",
+        "asset": "/assets/AgentLauncherPage-BDyuo-IC-dd992d7add2686a83841b0d7a78d3de32e84b85c.js",
+        "delayMs": 10000
+      },
+      {
+        "round": 2,
+        "stage": "home",
+        "asset": "/assets/AgentLauncherPage-BDyuo-IC-dd992d7add2686a83841b0d7a78d3de32e84b85c.js",
+        "delayMs": 10000
+      },
+      {
+        "round": 3,
+        "stage": "home",
+        "asset": "/assets/AgentLauncherPage-BDyuo-IC-dd992d7add2686a83841b0d7a78d3de32e84b85c.js",
+        "delayMs": 10000
+      }
+    ]
+  },
+  "isolation": {
+    "networkInternal": true,
+    "publishedAddress": "http://127.0.0.1:32794",
+    "freshDatabases": true,
+    "persistentVolumes": false
+  },
+  "resourceAccounting": {
+    "source": "Linux /proc process tree; CPU ticks and summed RSS",
+    "requestedLimitsEnforced": false,
+    "clockTicksPerSecond": 100,
+    "pageBytes": 4096
+  },
+  "buildIdentity": {
+    "api": {
+      "actualCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "expectedCommit": "dd992d7add2686a83841b0d7a78d3de32e84b85c",
+      "commitMatch": "match"
+    },
+    "webEntries": [
+      "/assets/index-CqLXP3YQ-dd992d7add2686a83841b0d7a78d3de32e84b85c.js"
+    ]
+  },
+  "admission": {
+    "original": {
+      "maxRequestsPerMinute": 600,
+      "maxConcurrentRequests": 100
+    },
+    "applied": {
+      "maxRequestsPerMinute": 100000,
+      "maxConcurrentRequests": 1024
+    }
+  },
+  "capacity": {
+    "criterion": "任一场景错误率>1% 或 client p95>正常负载两倍；仅为本隔离配置的相对退化边界",
+    "firstDegradedUsers": null,
+    "lastTestedUsers": null,
+    "stages": []
+  },
+  "finishedAt": "2026-11-13T11:08:56.887Z",
+  "comparison": {
+    "pass": false,
+    "failures": [
+      "browser/home: ready p95 11071.19 > 2927.12 ms"
+    ]
+  }
+}

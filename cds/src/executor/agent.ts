@@ -124,7 +124,7 @@ export class ExecutorAgent {
     const branches = this.stateService.getAllBranches();
     const branchStatus: Record<string, { status: string; services: Record<string, unknown> }> = {};
     for (const b of branches) {
-      branchStatus[b.id] = { status: b.status, services: b.services };
+      branchStatus[b.id] = { status: b.status, services: b.services, ...(b.remoteDeployment ? { remoteDeployment: b.remoteDeployment } : {}) };
     }
 
     const payload = {

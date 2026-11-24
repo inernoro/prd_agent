@@ -14,6 +14,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.Poster;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -870,6 +871,7 @@ public sealed class WeeklyPosterController : ControllerBase
         var userId = this.GetRequiredUserId();
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = userId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
@@ -892,7 +894,6 @@ public sealed class WeeklyPosterController : ControllerBase
             AppCallerCode = ImageGenAppCallerCode,
             AppKey = AppNames.ReportAgent,
             WeeklyPosterId = id,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using PrdAgent.Api.Services.PrReview;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services.ReportAgent;
 
@@ -64,8 +65,6 @@ public sealed class DailyLogPolishService
                 },
                 ["temperature"] = 0.4,
                 ["max_tokens"] = 1024,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
         };
 

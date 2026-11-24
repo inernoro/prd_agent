@@ -1,3 +1,4 @@
+using PrdAgent.GatewayTransport;
 using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
@@ -7,6 +8,8 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.Asr;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -19,7 +22,8 @@ public interface IDoubaoStreamAsrExecutor
         byte[] audioData,
         Dictionary<string, object>? config = null,
         CancellationToken ct = default,
-        bool requirePublicPinnedWebSocket = false);
+        bool requirePublicPinnedWebSocket = false,
+        ResolvedUpstreamProxy? upstreamProxy = null);
 }
 
 /// <summary>
@@ -94,7 +98,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         byte[] audioData,
         Dictionary<string, object>? config = null,
         CancellationToken ct = default,
-        bool requirePublicPinnedWebSocket = false)
+        bool requirePublicPinnedWebSocket = false,
+        ResolvedUpstreamProxy? upstreamProxy = null)
     {
         var result = new StreamAsrResult();
         var diag = InitializeDiagnostic(result, wsUrl, appKey, accessKey, config);
@@ -236,16 +241,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         try
         {
             // 1. 连接
-            if (requirePublicPinnedWebSocket)
-            {
-                if (_safeWebSocketConnector is null)
-                    throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
-                safeTransport = await _safeWebSocketConnector.ConnectAsync(ws, wsUrl, ct);
-            }
-            else
-            {
-                await ws.ConnectAsync(new Uri(wsUrl), ct);
-            }
+            safeTransport = await ConnectUpstreamAsync(ws, wsUrl, requirePublicPinnedWebSocket, upstreamProxy, ct);
             _logger.LogInformation("[DoubaoStreamAsr] WebSocket 已连接: {Url}", wsUrl);
 
             var seq = 1;
@@ -590,7 +586,9 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         int totalAttempts,
         Dictionary<string, object>? config = null,
         CancellationToken ct = default,
-        bool requirePublicPinnedWebSocket = false)
+        bool requirePublicPinnedWebSocket = false,
+        ResolvedUpstreamProxy? upstreamProxy = null,
+        bool allowPrivateProxy = false)
     {
         var resourceId = config?.GetValueOrDefault("resourceId")?.ToString()
             ?? "volc.bigasr.sauc.duration";
@@ -622,16 +620,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         {
             using var setupCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             setupCts.CancelAfter(TimeSpan.FromSeconds(15));
-            if (requirePublicPinnedWebSocket)
-            {
-                if (_safeWebSocketConnector is null)
-                    throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
-                safeTransport = await _safeWebSocketConnector.ConnectAsync(ws, wsUrl, setupCts.Token);
-            }
-            else
-            {
-                await ws.ConnectAsync(new Uri(wsUrl), setupCts.Token);
-            }
+            safeTransport = await ConnectUpstreamAsync(ws, wsUrl, requirePublicPinnedWebSocket, upstreamProxy, setupCts.Token, allowPrivateProxy);
 
             var protocolSequence = 1;
             var fullRequest = BuildFullClientRequest(protocolSequence, channels: 1, bits: 16, rate: 16000, config);
@@ -801,6 +790,39 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         }
     }
 
+    // 文件与实时转写共用连接出口；实时目标仍做既有安全校验，仅内部组织可用私网代理。
+    private async Task<IDisposable?> ConnectUpstreamAsync(ClientWebSocket ws, string wsUrl,
+        bool requirePublicPinnedWebSocket, ResolvedUpstreamProxy? upstreamProxy, CancellationToken ct,
+        bool allowPrivateProxy = false)
+    {
+        if (upstreamProxy is not null)
+        {
+            if (requirePublicPinnedWebSocket)
+            {
+                if (_safeWebSocketConnector is null) throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
+                if (upstreamProxy.Mode == "custom")
+                    _safeWebSocketConnector.ValidateProxyTarget(wsUrl);
+                else
+                    await _safeWebSocketConnector.PrepareAsync(wsUrl, ct);
+            }
+            var publicOnly = requirePublicPinnedWebSocket && !(upstreamProxy.Mode == "custom" && allowPrivateProxy);
+            var invoker = new HttpMessageInvoker(UpstreamProxy.CreateHandler(upstreamProxy, publicOnly), disposeHandler: true);
+            try
+            {
+                await ws.ConnectAsync(new Uri(wsUrl), invoker, ct);
+                return invoker;
+            }
+            catch { invoker.Dispose(); throw; }
+        }
+        if (requirePublicPinnedWebSocket)
+        {
+            if (_safeWebSocketConnector is null) throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
+            return await _safeWebSocketConnector.ConnectAsync(ws, wsUrl, ct);
+        }
+        await ws.ConnectAsync(new Uri(wsUrl), ct);
+        return null;
+    }
+
     // ═══════════════════════════════════════════════════════════
     // 诊断辅助
     // ═══════════════════════════════════════════════════════════
@@ -938,7 +960,24 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             0x00
         };
 
-        var payload = new JsonObject
+        var payload = BuildRecognitionRequest(channels, bits, rate, config);
+
+        var payloadBytes = GzipCompress(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+
+        using var ms = new MemoryStream();
+        ms.Write(header, 0, header.Length);
+        WriteInt32BigEndian(ms, seq);
+        WriteUInt32BigEndian(ms, (uint)payloadBytes.Length);
+        ms.Write(payloadBytes, 0, payloadBytes.Length);
+        return ms.ToArray();
+    }
+
+    internal static JsonObject BuildRecognitionRequest(
+        int channels,
+        int bits,
+        int rate,
+        Dictionary<string, object>? config)
+        => new()
         {
             ["user"] = new JsonObject { ["uid"] = "prd-agent" },
             ["audio"] = new JsonObject
@@ -956,19 +995,10 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                 ["enable_punc"] = GetBool(config, "enablePunc", true),
                 ["enable_ddc"] = GetBool(config, "enableDdc", true),
                 ["show_utterances"] = true,
+                ["enable_speaker_info"] = GetBool(config, "enableSpeakerInfo", true),
                 ["enable_nonstream"] = false
             }
         };
-
-        var payloadBytes = GzipCompress(Encoding.UTF8.GetBytes(payload.ToJsonString()));
-
-        using var ms = new MemoryStream();
-        ms.Write(header, 0, header.Length);
-        WriteInt32BigEndian(ms, seq);
-        WriteUInt32BigEndian(ms, (uint)payloadBytes.Length);
-        ms.Write(payloadBytes, 0, payloadBytes.Length);
-        return ms.ToArray();
-    }
 
     private static byte[] BuildAudioOnlyRequest(int seq, byte[] segment, bool isLast)
     {
@@ -1169,7 +1199,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                             segments.Add(new StreamAsrSegment
                             {
                                 Text = text,
-                                DurationSec = (endMs - startMs) / 1000.0
+                                DurationSec = (endMs - startMs) / 1000.0,
+                                SpeakerId = ResolveSpeakerId(utt),
                             });
                         }
                     }
@@ -1205,6 +1236,24 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             catch { /* skip */ }
         }
         return segments;
+    }
+
+    internal static string? ResolveSpeakerId(JsonElement utterance)
+    {
+        foreach (var key in new[] { "speaker_id", "speaker", "speakerId" })
+        {
+            if (!utterance.TryGetProperty(key, out var value)) continue;
+            if (value.ValueKind == JsonValueKind.String)
+                return string.IsNullOrWhiteSpace(value.GetString()) ? null : value.GetString();
+            if (value.ValueKind == JsonValueKind.Number)
+                return value.GetRawText();
+        }
+
+        if (utterance.TryGetProperty("speaker_info", out var info)
+            && info.ValueKind == JsonValueKind.Object)
+            return ResolveSpeakerId(info);
+
+        return null;
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -1459,6 +1508,7 @@ public class StreamAsrSegment
 {
     public string Text { get; set; } = "";
     public double DurationSec { get; set; }
+    public string? SpeakerId { get; set; }
 }
 
 /// <summary>

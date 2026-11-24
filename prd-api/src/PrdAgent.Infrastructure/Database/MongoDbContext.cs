@@ -11,19 +11,55 @@ namespace PrdAgent.Infrastructure.Database;
 public class MongoDbContext
 {
     private readonly IMongoDatabase _database;
+    private readonly IMongoCollection<LlmRequestLog> _llmRequestLogs;
 
     /// <summary>
     /// 暴露底层 IMongoDatabase 实例（用于 DropCollectionAsync 等高级操作）
     /// </summary>
     public IMongoDatabase Database => _database;
 
-    public MongoDbContext(string connectionString, string databaseName)
+    /// <param name="llmRequestLogDatabaseName">
+    /// 模型请求日志所在库。MAP 的模型调用全部经独立网关，日志由 serving 写进网关库；
+    /// MAP 进程传网关库名，让日志页、成本统计等读者读到同一份。不传则与业务库相同（serving 自身即如此）。
+    /// </param>
+    /// <param name="llmRequestLogConnectionString">
+    /// 网关库单独部署在另一台 Mongo 时传它的连接串（与 serving 的 LlmGateway:MongoConnectionString 同源）；不传则与业务库同一连接。
+    /// </param>
+    /// <param name="llmRequestLogTenantId">
+    /// 网关日志集合由全部租户共用。MAP 进程传内部租户 ID，日志的每一次读写都被限定在这个租户上；
+    /// serving 自己要写所有租户的日志，不传。
+    /// </param>
+    public MongoDbContext(
+        string connectionString,
+        string databaseName,
+        string? llmRequestLogDatabaseName = null,
+        string? llmRequestLogConnectionString = null,
+        string? llmRequestLogTenantId = null)
     {
         // 注册 BSON 类映射（替代注解方式）
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
-        _database = client.GetDatabase(databaseName);
+        var taskCoordinator = new Lazy<PrdAgent.Core.Interfaces.ITaskExecutionCoordinator>(() =>
+            new PrdAgent.Infrastructure.Security.TaskExecutionCoordinator(new LlmGatewayDataContext(
+                string.IsNullOrWhiteSpace(llmRequestLogConnectionString) ? connectionString : llmRequestLogConnectionString,
+                string.IsNullOrWhiteSpace(llmRequestLogDatabaseName) ? databaseName : llmRequestLogDatabaseName)));
+        _database = TaskLifecycleMongoDatabase.Wrap(client.GetDatabase(databaseName), () => taskCoordinator.Value, llmRequestLogTenantId);
+        var logClient = string.IsNullOrWhiteSpace(llmRequestLogConnectionString)
+                        || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
+            ? client
+            : new MongoClient(llmRequestLogConnectionString);
+        var llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
+            ? _database
+            : logClient.GetDatabase(llmRequestLogDatabaseName);
+        HasSeparateLegacyLlmRequestLogCollection = !ReferenceEquals(logClient, client)
+            || !string.Equals(llmRequestLogDatabase.DatabaseNamespace.DatabaseName, databaseName, StringComparison.Ordinal);
+        var llmRequestLogs = llmRequestLogDatabase.GetCollection<LlmRequestLog>("llmrequestlogs");
+        _llmRequestLogs = string.IsNullOrWhiteSpace(llmRequestLogTenantId)
+            ? llmRequestLogs
+            : new ScopedMongoCollection<LlmRequestLog>(
+                llmRequestLogs,
+                Builders<LlmRequestLog>.Filter.Eq(x => x.TenantId, llmRequestLogTenantId.Trim()));
         
         // 索引由 DBA 手动创建，禁止应用启动时自动创建
         // 索引定义文档：doc/guide.platform.mongodb-indexes.md
@@ -31,6 +67,25 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<SpeechSettings> SpeechSettings => _database.GetCollection<SpeechSettings>("speech_settings");
+    public IMongoCollection<SpeechPreset> SpeechPresets => _database.GetCollection<SpeechPreset>("speech_presets");
+    public IMongoCollection<SpeechRun> SpeechRuns => _database.GetCollection<SpeechRun>("speech_runs");
+    public IMongoCollection<SpeechQuotaLedger> SpeechQuotaLedgers => _database.GetCollection<SpeechQuotaLedger>("speech_quota_ledgers");
+    public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
+        _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
+    public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
+        _database.GetCollection<BsonDocument>("console_sso_tickets");
+    public IMongoCollection<CdsSsoSession> CdsSsoSessions =>
+        _database.GetCollection<CdsSsoSession>("cds_sso_sessions");
+    /// <summary>本站作为「源站」签发的一次性数据导出授权（含导出令牌散列）</summary>
+    public IMongoCollection<BsonDocument> DataSyncGrants =>
+        _database.GetCollection<BsonDocument>("data_sync_grants");
+    /// <summary>本站作为「目标站」执行的跨实例同步记录</summary>
+    public IMongoCollection<DataSyncRun> DataSyncRuns =>
+        _database.GetCollection<DataSyncRun>("data_sync_runs");
+    /// <summary>模型排行榜快照，一个榜单一条文档，由 ModelLeaderboardSyncWorker 每天覆盖写</summary>
+    public IMongoCollection<ModelLeaderboardSnapshot> ModelLeaderboardSnapshots =>
+        _database.GetCollection<ModelLeaderboardSnapshot>("model_leaderboard_snapshots");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
     // PRD 文档长期存储（原文 + 解析结构）
@@ -47,6 +102,7 @@ public class MongoDbContext
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
+    public IMongoCollection<DeploymentMarker> DeploymentMarkers => _database.GetCollection<DeploymentMarker>("deployment_markers");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     public IMongoCollection<AdminPushProfile> AdminPushProfiles => _database.GetCollection<AdminPushProfile>("admin_push_profiles");
     public IMongoCollection<AdminPushSubscription> AdminPushSubscriptions => _database.GetCollection<AdminPushSubscription>("admin_push_subscriptions");
@@ -58,8 +114,13 @@ public class MongoDbContext
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
-    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
-    public IMongoCollection<LlmShadowComparison> LlmShadowComparisons => _database.GetCollection<LlmShadowComparison>("llmshadow_comparisons");
+    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _llmRequestLogs;
+
+    /// <summary>
+    /// 业务库里切换前留下的旧 llmrequestlogs 是否与 <see cref="LlmRequestLogs"/> 不是同一个集合。
+    /// 网关库与业务库在同一连接上配成同名时为 false：那时清理旧集合就等于删掉网关全部租户的日志。
+    /// </summary>
+    public bool HasSeparateLegacyLlmRequestLogCollection { get; }
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
@@ -77,6 +138,10 @@ public class MongoDbContext
     public IMongoCollection<ImageGenRunItem> ImageGenRunItems => _database.GetCollection<ImageGenRunItem>("image_gen_run_items");
     public IMongoCollection<ImageGenRunEvent> ImageGenRunEvents => _database.GetCollection<ImageGenRunEvent>("image_gen_run_events");
     public IMongoCollection<UploadArtifact> UploadArtifacts => _database.GetCollection<UploadArtifact>("upload_artifacts");
+    public IMongoCollection<ProfileAvatarObjectCleanupTask> ProfileAvatarObjectCleanupTasks =>
+        _database.GetCollection<ProfileAvatarObjectCleanupTask>("profile_avatar_object_cleanup_tasks");
+    public IMongoCollection<DocumentAssetCleanupTask> DocumentAssetCleanupTasks =>
+        _database.GetCollection<DocumentAssetCleanupTask>("document_asset_cleanup_tasks");
     public IMongoCollection<AdminPromptOverride> AdminPromptOverrides => _database.GetCollection<AdminPromptOverride>("admin_prompt_overrides");
     public IMongoCollection<AdminIdempotencyRecord> AdminIdempotencyRecords => _database.GetCollection<AdminIdempotencyRecord>("admin_idempotency");
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
@@ -89,6 +154,12 @@ public class MongoDbContext
 
     // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
     public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
+
+    /// <summary>智能体经 MCP 调用平台能力的流水（接入台的调用记录）</summary>
+    public IMongoCollection<McpCallLog> McpCallLogs => _database.GetCollection<McpCallLog>("mcp_call_logs");
+
+    /// <summary>接入台按密钥的当日用量计数器（配额闸门的原子占坑处）</summary>
+    public IMongoCollection<McpUsageCounter> McpUsageCounters => _database.GetCollection<McpUsageCounter>("mcp_usage_counters");
 
     // OpenApi 对外网关请求日志（按 Key 聚合用量/降级，与 OpenPlatform 日志分离）
     public IMongoCollection<OpenApiRequestLog> OpenApiRequestLogs => _database.GetCollection<OpenApiRequestLog>("open_api_request_logs");
@@ -103,6 +174,12 @@ public class MongoDbContext
     public IMongoCollection<InfraAgentEvent> InfraAgentEvents => _database.GetCollection<InfraAgentEvent>("infra_agent_events");
     public IMongoCollection<InfraAgentHookProfile> InfraAgentHookProfiles => _database.GetCollection<InfraAgentHookProfile>("infra_agent_hook_profiles");
     public IMongoCollection<InfraAgentRuntimeProfile> InfraAgentRuntimeProfiles => _database.GetCollection<InfraAgentRuntimeProfile>("infra_agent_runtime_profiles");
+
+    // 通用对话智能体（面向全体用户的对聊入口，见 doc/design.platform.chat-agent.md）。
+    // 与上面那套基础设施 Agent 刻意分表：语义不同，混表会互相污染。
+    public IMongoCollection<ChatAgentSession> ChatAgentSessions => _database.GetCollection<ChatAgentSession>("chat_agent_sessions");
+    public IMongoCollection<ChatAgentMessage> ChatAgentMessages => _database.GetCollection<ChatAgentMessage>("chat_agent_messages");
+    public IMongoCollection<ChatAgentEvent> ChatAgentEvents => _database.GetCollection<ChatAgentEvent>("chat_agent_events");
 
     // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.platform.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");
@@ -133,6 +210,17 @@ public class MongoDbContext
     // Defect Agent 缺陷管理
     public IMongoCollection<DefectTemplate> DefectTemplates => _database.GetCollection<DefectTemplate>("defect_templates");
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
+
+    /// <summary>公共藏书阁个人进度（一人一行，UserId 唯一）</summary>
+    public IMongoCollection<BookshelfProgress> BookshelfProgresses => _database.GetCollection<BookshelfProgress>("bookshelf_progress");
+
+    /// <summary>
+    /// 一本书一篇精读稿，全站共享（不是每人一份）。
+    ///
+    /// 不建索引：这张表上限就是书单的本数（当前 51），全表扫的代价远低于维护一条索引，
+    /// 而本仓库对启动期自动建索引本来就有禁令（`no-auto-index`）。
+    /// </summary>
+    public IMongoCollection<BookDigest> BookDigests => _database.GetCollection<BookDigest>("book_digests");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
@@ -169,6 +257,8 @@ public class MongoDbContext
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
     public IMongoCollection<ReviewAppeal> ReviewAppeals => _database.GetCollection<ReviewAppeal>("review_appeals");
+    public IMongoCollection<RequirementAssessmentRun> RequirementAssessmentRuns => _database.GetCollection<RequirementAssessmentRun>("requirement_assessment_runs");
+    public IMongoCollection<RequirementAssessmentItem> RequirementAssessmentItems => _database.GetCollection<RequirementAssessmentItem>("requirement_assessment_items");
 
     // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
     public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
@@ -180,6 +270,7 @@ public class MongoDbContext
     public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
     public IMongoCollection<UserReportTemplatePreference> UserReportTemplatePreferences => _database.GetCollection<UserReportTemplatePreference>("user_report_template_preferences");
     public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
+    public IMongoCollection<MonthlyReport> MonthlyReports => _database.GetCollection<MonthlyReport>("report_monthly_reports");
     public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
@@ -263,6 +354,7 @@ public class MongoDbContext
     public IMongoCollection<VideoProject> VideoProjects => _database.GetCollection<VideoProject>("video_projects");
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
     public IMongoCollection<VideoExportTask> VideoExportTasks => _database.GetCollection<VideoExportTask>("video_export_tasks");
+    public IMongoCollection<DirectVideoJobOwnership> DirectVideoJobOwnerships => _database.GetCollection<DirectVideoJobOwnership>("direct_video_job_ownerships");
 
     // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
     public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
@@ -272,7 +364,31 @@ public class MongoDbContext
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
     // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedCollection> HostedCollections => _database.GetCollection<HostedCollection>("hosted_collections");
+
+    public IMongoCollection<HostedDocumentGroup> HostedDocumentGroups => _database.GetCollection<HostedDocumentGroup>("hosted_document_groups");
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
+    public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
+    // 物理集合隔离：未升级 worker 的旧扫描不能认领、恢复或清理新任务。
+    public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs_v2");
+    /// <summary>网页生成设置单例（默认执行器、风格预设、可编辑提示词）。</summary>
+    public IMongoCollection<DesignGenerationSettings> DesignGenerationSettings => _database.GetCollection<DesignGenerationSettings>("design_generation_settings");
+    // 「我的风格」：每人自己的网页生成风格（按 OwnerUserId 隔离，每人最多 20 套）
+    public IMongoCollection<PersonalDesignStyle> PersonalDesignStyles => _database.GetCollection<PersonalDesignStyle>("personal_design_styles");
+
+    /// <summary>
+    /// 公开历史与共享对象引用保护专用只读查询。不得用于取消、生命周期、工作区或发布写入。
+    /// 不限定部署，用户归属等读取条件由调用方提供；不暴露旧集合的写句柄。
+    /// </summary>
+    public async Task<DesignArtifactRun?> FindDesignArtifactRunHistoryAsync(
+        System.Linq.Expressions.Expression<Func<DesignArtifactRun, bool>> predicate,
+        CancellationToken ct = default) =>
+        await DesignArtifactRuns.Find(predicate).FirstOrDefaultAsync(ct)
+        ?? await _database.GetCollection<DesignArtifactRun>("design_artifact_runs")
+            .Find(predicate).FirstOrDefaultAsync(ct);
+    public IMongoCollection<HostedSiteOptimizationSession> HostedSiteOptimizationSessions =>
+        _database.GetCollection<HostedSiteOptimizationSession>("hosted_site_optimization_sessions");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
     public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
@@ -308,8 +424,14 @@ public class MongoDbContext
     public IMongoCollection<TranscriptTemplate> TranscriptTemplates => _database.GetCollection<TranscriptTemplate>("transcript_templates");
 
     // Document Store 文档空间
-    public IMongoCollection<DocumentStore> DocumentStores => _database.GetCollection<DocumentStore>("document_stores");
-    public IMongoCollection<DocumentEntry> DocumentEntries => _database.GetCollection<DocumentEntry>("document_entries");
+    // 正常业务统一屏蔽回收数据，包含条件写入，防止旧编辑请求复活已删除内容。
+    public IMongoCollection<DocumentStore> DocumentStores => new ScopedMongoCollection<DocumentStore>(
+        DocumentStoresIncludingTrash, Builders<DocumentStore>.Filter.Eq(x => x.Trash, null));
+    public IMongoCollection<DocumentStore> DocumentStoresIncludingTrash => _database.GetCollection<DocumentStore>("document_stores");
+    public IMongoCollection<DocumentEntry> DocumentEntries => new ScopedMongoCollection<DocumentEntry>(
+        DocumentEntriesIncludingTrash, Builders<DocumentEntry>.Filter.Eq(x => x.Trash, null));
+    // 仅回收恢复、资源引用和同步身份识别使用；不能用于普通读路径。
+    public IMongoCollection<DocumentEntry> DocumentEntriesIncludingTrash => _database.GetCollection<DocumentEntry>("document_entries");
     public IMongoCollection<DocumentStoreLike> DocumentStoreLikes => _database.GetCollection<DocumentStoreLike>("document_store_likes");
     public IMongoCollection<DocumentStoreFavorite> DocumentStoreFavorites => _database.GetCollection<DocumentStoreFavorite>("document_store_favorites");
     public IMongoCollection<DocumentStoreShareLink> DocumentStoreShareLinks => _database.GetCollection<DocumentStoreShareLink>("document_store_share_links");
@@ -348,6 +470,13 @@ public class MongoDbContext
     public IMongoCollection<HostedSiteComment> HostedSiteComments => _database.GetCollection<HostedSiteComment>("hosted_site_comments");
     public IMongoCollection<WebFolder> WebFolders => _database.GetCollection<WebFolder>("web_folders");
 
+    // 知识库语义检索：文档切块向量
+    public IMongoCollection<DocumentEmbedding> DocumentEmbeddings => _database.GetCollection<DocumentEmbedding>("document_embeddings");
+
+    // 网页托管「向我提问」
+    public IMongoCollection<HostedSiteAskSession> HostedSiteAskSessions => _database.GetCollection<HostedSiteAskSession>("hosted_site_ask_sessions");
+    public IMongoCollection<HostedSiteAskMessage> HostedSiteAskMessages => _database.GetCollection<HostedSiteAskMessage>("hosted_site_ask_messages");
+
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
@@ -359,6 +488,13 @@ public class MongoDbContext
     // 个人任务树
     public IMongoCollection<TaskTree> TaskTrees => _database.GetCollection<TaskTree>("task_trees");
     public IMongoCollection<TaskNode> TaskNodes => _database.GetCollection<TaskNode>("task_nodes");
+
+    // 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）
+    public IMongoCollection<ActiveTaskEntry> ActiveTaskEntries => _database.GetCollection<ActiveTaskEntry>("active_task_entries");
+    public IMongoCollection<ActiveTaskBoardSettings> ActiveTaskBoardSettingsCollection => _database.GetCollection<ActiveTaskBoardSettings>("active_task_board_settings");
+    public IMongoCollection<ActiveTaskSuggestion> ActiveTaskSuggestions => _database.GetCollection<ActiveTaskSuggestion>("active_task_suggestions");
+    public IMongoCollection<ActiveTaskAbsorbPreference> ActiveTaskAbsorbPreferences => _database.GetCollection<ActiveTaskAbsorbPreference>("active_task_absorb_preferences");
+    public IMongoCollection<ActiveTaskDebt> ActiveTaskDebts => _database.GetCollection<ActiveTaskDebt>("active_task_debts");
 
     // Project Management 项目管理
     public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
@@ -395,6 +531,15 @@ public class MongoDbContext
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
     public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
     public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
+    public IMongoCollection<ProductAnnouncement> ProductAnnouncements => _database.GetCollection<ProductAnnouncement>("product_announcements");
+    public IMongoCollection<ProductAnnouncementSync> ProductAnnouncementSyncs => _database.GetCollection<ProductAnnouncementSync>("product_announcement_syncs");
+    public IMongoCollection<ProductWorkdayCalendar> ProductWorkdayCalendars => _database.GetCollection<ProductWorkdayCalendar>("product_workday_calendars");
+    public IMongoCollection<ProductVersionWorkflowSnapshot> ProductVersionWorkflowSnapshots => _database.GetCollection<ProductVersionWorkflowSnapshot>("product_version_workflow_snapshots");
+    public IMongoCollection<VersionRegistrySystem> VersionRegistrySystems => _database.GetCollection<VersionRegistrySystem>("version_registry_systems");
+    public IMongoCollection<VersionRegistryApplication> VersionRegistryApplications => _database.GetCollection<VersionRegistryApplication>("version_registry_applications");
+    public IMongoCollection<VersionRegistration> VersionRegistrations => _database.GetCollection<VersionRegistration>("version_registrations");
+    public IMongoCollection<VersionRegistrationSnapshot> VersionRegistrationSnapshots => _database.GetCollection<VersionRegistrationSnapshot>("version_registration_snapshots");
+    public IMongoCollection<VersionRegistrationSequence> VersionRegistrationSequences => _database.GetCollection<VersionRegistrationSequence>("version_registration_sequences");
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
@@ -414,6 +559,7 @@ public class MongoDbContext
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
     public IMongoCollection<ProductAgentSettings> ProductAgentSettings => _database.GetCollection<ProductAgentSettings>("product_agent_settings");
+    public IMongoCollection<ProductScheduledNotification> ProductScheduledNotifications => _database.GetCollection<ProductScheduledNotification>("product_scheduled_notifications");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
@@ -441,71 +587,6 @@ public class MongoDbContext
                 || message.Contains("IndexOptionsConflict", StringComparison.OrdinalIgnoreCase)
                 || message.Contains("IndexKeySpecsConflict", StringComparison.OrdinalIgnoreCase)
                 || message.Contains("IndexAlreadyExists", StringComparison.OrdinalIgnoreCase);
-        }
-
-        void EnsureTtlIndex<TDocument>(
-            IMongoCollection<TDocument> collection,
-            string collectionName,
-            string fieldName,
-            TimeSpan expireAfter,
-            string? indexName = null)
-        {
-            var options = new CreateIndexOptions
-            {
-                ExpireAfter = expireAfter
-            };
-            if (!string.IsNullOrWhiteSpace(indexName))
-            {
-                options.Name = indexName;
-            }
-
-            try
-            {
-                collection.Indexes.CreateOne(new CreateIndexModel<TDocument>(
-                    Builders<TDocument>.IndexKeys.Ascending(fieldName),
-                    options));
-            }
-            catch (MongoCommandException ex) when (IsIndexConflict(ex))
-            {
-                // 兼容历史环境：旧索引可能已存在（同 key 但非 TTL），此时 createIndexes 会因选项冲突失败并导致进程启动中断。
-                // 优先按 name 执行 collMod 升级 TTL，若名称不匹配则回退到 keyPattern 升级。
-                var ttlSeconds = (long)Math.Floor(expireAfter.TotalSeconds);
-                try
-                {
-                    var collModByName = new BsonDocument
-                    {
-                        { "collMod", collectionName },
-                        { "index", new BsonDocument
-                            {
-                                { "name", indexName ?? $"{fieldName}_1" },
-                                { "expireAfterSeconds", ttlSeconds }
-                            }
-                        }
-                    };
-                    _database.RunCommand<BsonDocument>(collModByName);
-                }
-                catch (MongoCommandException)
-                {
-                    try
-                    {
-                        var collModByPattern = new BsonDocument
-                        {
-                            { "collMod", collectionName },
-                            { "index", new BsonDocument
-                                {
-                                    { "keyPattern", new BsonDocument(fieldName, 1) },
-                                    { "expireAfterSeconds", ttlSeconds }
-                                }
-                            }
-                        };
-                        _database.RunCommand<BsonDocument>(collModByPattern);
-                    }
-                    catch (MongoCommandException ex2) when (IsIndexConflict(ex2))
-                    {
-                        // ignore
-                    }
-                }
-            }
         }
 
         // Users索引
@@ -691,6 +772,10 @@ public class MongoDbContext
         LlmRequestLogs.Indexes.CreateOne(new CreateIndexModel<LlmRequestLog>(
             Builders<LlmRequestLog>.IndexKeys.Ascending(l => l.EndedAt)));
 
+        CdsSsoSessions.Indexes.CreateOne(new CreateIndexModel<CdsSsoSession>(
+            Builders<CdsSsoSession>.IndexKeys.Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "ttl_cds_sso_sessions_expires_at", ExpireAfter = TimeSpan.Zero }));
+
         // ApiRequestLogs 索引（系统请求日志）
         ApiRequestLogs.Indexes.CreateOne(new CreateIndexModel<ApiRequestLog>(
             Builders<ApiRequestLog>.IndexKeys.Descending(x => x.StartedAt)));
@@ -852,21 +937,15 @@ public class MongoDbContext
         ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
             Builders<ImageGenRun>.IndexKeys.Ascending(x => x.Status).Ascending(x => x.CreatedAt)));
         // 幂等键：同一 admin 下唯一（只对存在 IdempotencyKey 的文档生效）
-        try
-        {
-            ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
-                Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
-                new CreateIndexOptions<ImageGenRun>
-                {
-                    Name = "uniq_image_gen_runs_owner_idem",
-                    // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
-                    PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
-                }));
-        }
-        catch (MongoCommandException ex) when (IsIndexConflict(ex))
-        {
-            // ignore
-        }
+        ImageGenRuns.Indexes.CreateOne(new CreateIndexModel<ImageGenRun>(
+            Builders<ImageGenRun>.IndexKeys.Ascending(x => x.OwnerAdminId).Ascending(x => x.IdempotencyKey),
+            new CreateIndexOptions<ImageGenRun>
+            {
+                Name = "uniq_image_gen_runs_owner_idem",
+                Unique = true,
+                // 仅对字符串类型生效：避免 null 字段也命中 partial index，导致同一 admin 只能创建 1 条 run
+                PartialFilterExpression = new BsonDocument("IdempotencyKey", new BsonDocument("$type", "string"))
+            }));
 
         // ImageGenRunItems：按 runId + (itemIndex,imageIndex) 唯一；按 owner + runId 查询
         ImageGenRunItems.Indexes.CreateOne(new CreateIndexModel<ImageGenRunItem>(
@@ -1047,6 +1126,42 @@ public class MongoDbContext
         DefectTemplates.Indexes.CreateOne(new CreateIndexModel<DefectTemplate>(
             Builders<DefectTemplate>.IndexKeys.Descending(x => x.IsDefault).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_templates_default" }));
+
+        // ActiveTaskEntries：团队视图按 state 扫全员；个人视图按 userId + state 排队；历史按 userId + 完成时间倒序
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.State).Ascending(x => x.OrderKey),
+            new CreateIndexOptions { Name = "idx_active_tasks_user_state_order" }));
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.State).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_active_tasks_state_updated" }));
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.DoneAt),
+            new CreateIndexOptions { Name = "idx_active_tasks_user_done" }));
+
+        // ActiveTaskSuggestions：收件箱按 target + state + 时间倒序；发件回溯按 from
+        ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
+            Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.TargetUserId).Ascending(x => x.State).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_active_task_suggestions_target_state" }));
+        ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
+            Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.FromUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_active_task_suggestions_from" }));
+
+        // ActiveTaskDebts：Key 唯一（同步靠它幂等，重复推同一条只会更新不会长出第二条）；
+        // 面板按状态 + 模块排；「我认领的」按 owner 查
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.Key),
+            new CreateIndexOptions { Name = "idx_active_task_debts_key", Unique = true }));
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.State).Ascending(x => x.Module).Ascending(x => x.Num),
+            new CreateIndexOptions { Name = "idx_active_task_debts_state_module" }));
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.State),
+            new CreateIndexOptions { Name = "idx_active_task_debts_owner" }));
+        // BookshelfProgresses：一人一行，UserId 建唯一索引——并发写入时靠它兜底，
+        // 只靠 upsert 的代码路径挡不住两个请求同时插入
+        BookshelfProgresses.Indexes.CreateOne(new CreateIndexModel<BookshelfProgress>(
+            Builders<BookshelfProgress>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_bookshelf_progress_user", Unique = true }));
 
         // DefectReports：按 reporterId + status 查询；按 assigneeId + status 查询
         DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
@@ -1542,6 +1657,26 @@ public class MongoDbContext
             Builders<WeeklyReport>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.PeriodEnd),
             new CreateIndexOptions { Name = "idx_weekly_reports_user_period" }));
 
+        // MonthlyReports：(UserId, TeamId, Year, Month) 唯一，防止重复月报
+        try
+        {
+            MonthlyReports.Indexes.CreateOne(new CreateIndexModel<MonthlyReport>(
+                Builders<MonthlyReport>.IndexKeys
+                    .Ascending(x => x.UserId)
+                    .Ascending(x => x.TeamId)
+                    .Ascending(x => x.Year)
+                    .Ascending(x => x.Month),
+                new CreateIndexOptions { Name = "uniq_monthly_reports_user_team_month", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // MonthlyReports：按 TeamId + Year + Month 查询团队月报
+        MonthlyReports.Indexes.CreateOne(new CreateIndexModel<MonthlyReport>(
+            Builders<MonthlyReport>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.Year).Ascending(x => x.Month),
+            new CreateIndexOptions { Name = "idx_monthly_reports_team_month" }));
+
         // ReportDailyLogs：(UserId, Date) 唯一，一天一条
         try
         {
@@ -1639,12 +1774,55 @@ public class MongoDbContext
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
 
+        // 一份文档只属于一个导航组；唯一多值索引同时防止并发添加到两个组。
+        HostedDocumentGroups.Indexes.CreateOne(new CreateIndexModel<HostedDocumentGroup>(
+            Builders<HostedDocumentGroup>.IndexKeys.Ascending(x => x.SiteIds),
+            new CreateIndexOptions { Unique = true, Name = "ux_hosted_document_groups_member" }));
+
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.ReferencedSiteIds).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_comments_references" }));
+
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.AiReplyDeployment).Ascending(x => x.AiReplyDueAt),
+            new CreateIndexOptions<HostedSiteComment>
+            {
+                Name = "idx_hosted_comment_ai_reply_due",
+                PartialFilterExpression = Builders<HostedSiteComment>.Filter.Type(x => x.AiReplyDueAt, MongoDB.Bson.BsonType.DateTime),
+            }));
+
         // ========== Hosted Sites 网页托管索引 ==========
 
         // HostedSites：按用户 + 创建时间查询
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        // PersonalDesignStyles：风格画廊按「我的 + 最近更新」列出、创建前按归属人计数（仅参考，DBA 执行 scripts/mongodb-indexes.js）
+        PersonalDesignStyles.Indexes.CreateOne(new CreateIndexModel<PersonalDesignStyle>(
+            Builders<PersonalDesignStyle>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_personal_design_styles_owner_updated" }));
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys
+                .Ascending(x => x.AssetCleanupNextAttemptAt)
+                .Ascending(x => x.AssetCleanupLeaseExpiresAt),
+            new CreateIndexOptions<HostedSite>
+            {
+                Name = "idx_hosted_sites_asset_cleanup_due",
+                PartialFilterExpression = Builders<HostedSite>.Filter.Exists("PendingAssetCleanupKeys.0", true),
+            }));
+        HostedSiteDeletionTasks.Indexes.CreateOne(new CreateIndexModel<HostedSiteDeletionTask>(
+            Builders<HostedSiteDeletionTask>.IndexKeys
+                .Ascending(x => x.NextAttemptAt)
+                .Ascending(x => x.LeaseExpiresAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_deletion_due" }));
+        // HostedSiteRevisions：版本面板按站点取最近 100 条。版本记录是全局一张表，
+        // 站点越多它越长，而唯一那条回退幂等索引带着 partial filter、且第二段不是
+        // CreatedAt，服务不了这个排序——没有本索引就是整表扫 + 内存排序。
+        HostedSiteRevisions.Indexes.CreateOne(new CreateIndexModel<HostedSiteRevision>(
+            Builders<HostedSiteRevision>.IndexKeys
+                .Ascending(x => x.SiteId)
+                .Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_revisions_site_created" }));
         ShortVideoMaterialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoMaterialRun>(
             Builders<ShortVideoMaterialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_short_video_material_runs_user_created" }));
@@ -1660,7 +1838,6 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.Folder),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_folder" }));
-
         // WebPageShareLinks：按 Token 唯一
         try
         {
@@ -1801,6 +1978,21 @@ public class MongoDbContext
             PeerNodes.Indexes.CreateOne(new CreateIndexModel<PeerNode>(
                 Builders<PeerNode>.IndexKeys.Ascending(x => x.RemoteNodeId),
                 new CreateIndexOptions { Name = "uniq_peer_nodes_remote_node_id", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // 直出视频上游任务在 Offering 命名空间内只能归属一个业务身份。
+        try
+        {
+            DirectVideoJobOwnerships.Indexes.CreateOne(new CreateIndexModel<DirectVideoJobOwnership>(
+                Builders<DirectVideoJobOwnership>.IndexKeys
+                    .Ascending(x => x.AppKey)
+                    .Ascending(x => x.JobNamespace)
+                    .Ascending(x => x.JobId),
+                new CreateIndexOptions { Name = "uniq_direct_video_job_app_namespace_job", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

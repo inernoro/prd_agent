@@ -1,9 +1,9 @@
 import { memo, useMemo, useCallback, useState } from 'react';
 import { Copy as CopyIcon, Check } from 'lucide-react';
 import { MessageContentRenderer } from './MessageContentRenderer';
-import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
-import { inlineMarksToTokens } from '@/lib/chipTokenText';
-import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { cleanDisplayTitle, extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
+import { inlineMarksToTokens, parseChipTokenText } from '@/lib/chipTokenText';
+import { parseVisualMessageDisplay, normalizeHistoricalVisualNotice } from '@/lib/visualMessageDisplay';
 import { copyToClipboard } from '@/lib/clipboard';
 import { resolveVisualResultModelLabel } from '../visualAgentModelOptions';
 
@@ -163,7 +163,7 @@ function MessageMetadataInline({
             maxWidth: '70%',
             border: '1px solid rgba(139,92,246,0.20)',
             background: 'rgba(139,92,246,0.08)',
-            color: 'rgba(139,92,246,0.85)',
+            color: 'var(--accent-fg-violet)',
             fontSize: 10,
             fontWeight: 600,
           }}
@@ -284,12 +284,12 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     return (
       <div className="flex flex-col items-start gap-0.5">
         <div
-          className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
+          className="surface-tone-dark group relative max-w-[85%] rounded-[10px] overflow-hidden"
           style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
         >
           {genError.prompt ? (
             <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-              <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }} title={genError.prompt}>
+              <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }} title={cleanDisplayTitle(genError.prompt, 300)}>
                 <MessageContentRenderer
                   content={genError.prompt}
                   canvasItems={canvas}
@@ -326,7 +326,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             <div className="min-w-0 flex-1">
               <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
               <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-                {genError.msg}
+                <MessageContentRenderer content={genError.msg} canvasItems={canvas}
+                  onPreview={(src, prompt) => onPreview(src, prompt)} />
               </div>
             </div>
           </div>
@@ -382,12 +383,12 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     return (
       <div className="flex flex-col items-start gap-0.5">
         <div
-          className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
+          className="surface-tone-dark group relative max-w-[85%] rounded-[10px] overflow-hidden"
           style={{ border: '1px solid var(--border-subtle)', background: 'rgba(44, 44, 50, 0.78)' }}
         >
           {(genDone.prompt || genDone.refSrc) ? (
             <div className="px-2.5 pb-2 pt-1 flex items-center gap-2 border-b border-b-token-subtle" >
-              <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'var(--text-secondary)' }} title={genDone.prompt}>
+              <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'var(--text-secondary)' }} title={cleanDisplayTitle(genDone.prompt || '', 300)}>
                 <MessageContentRenderer
                   content={genDone.prompt || ''}
                   canvasItems={canvas}
@@ -419,7 +420,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           >
             <img
               src={genDone.src}
-              alt={genDone.prompt || '生成结果'}
+              alt={cleanDisplayTitle(genDone.prompt || '', 300) || '生成结果'}
               style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
             />
           </button>
@@ -445,12 +446,13 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     return (
       <div className="flex flex-col items-start gap-0.5">
         <div
-          className="group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
+          className="surface-tone-dark group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
           style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
         >
           <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
           <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-            {legacyMsg}
+            <MessageContentRenderer content={legacyMsg} canvasItems={canvas}
+              onPreview={(src, prompt) => onPreview(src, prompt)} />
           </div>
         </div>
         <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
@@ -463,22 +465,23 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   // ── Plain text message ─────────────────────────────────────────────
 
   const parsed = isUser ? extractInlineImageToken(m.content) : null;
-  const contentText = parsed ? parsed.clean : m.content;
+  const contentText = parsed ? parsed.clean : isUser ? m.content : normalizeHistoricalVisualNotice(m.content);
   const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
   const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
   const msgBody = String(modeledMsg.cleanText ?? '');
   const MSG_COLLAPSE_THRESHOLD = 100;
-  const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
+  const isLongMsg = parseChipTokenText(msgBody).reduce((length, segment) => length + (segment.type === 'text' ? segment.text.length : 3), 0) > MSG_COLLAPSE_THRESHOLD;
 
   // 用户消息气泡下方的"用户期望：xxx 模型"标签：从 @model:xxx token 解析
   const expectedModelForUser = isUser ? String(modeledMsg.model ?? '').trim() : '';
 
   return (
-    <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
+    <div data-testid="visual-chat-message" data-message-role={m.role}
+      className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
       <div
         className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
         style={{
-          background: isUser ? 'rgba(62, 55, 42, 0.92)' : 'rgba(42, 43, 50, 0.92)',
+          background: 'var(--nested-block-bg)',
           border: '1px solid var(--border-subtle)',
           boxShadow: '0 10px 24px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.06)',
           backdropFilter: 'blur(14px) saturate(150%)',
@@ -518,7 +521,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               fontWeight: 600,
               border: '1px solid rgba(129,140,248,0.25)',
               background: 'rgba(99,102,241,0.08)',
-              color: 'rgba(165,180,252,0.85)',
+              color: 'var(--accent-fg-blue)',
             }}
           >
             <span style={{ opacity: 0.7 }}>用户期望</span>
@@ -545,7 +548,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               color: copied ? 'rgba(74,222,128,0.9)' : 'var(--text-secondary)',
               cursor: 'pointer',
             }}
-            title="复制消息（图片引用序列化为 [@image:#N:...] 文本，粘回输入框可还原）"
+            title="复制文字和参考图片，粘贴回输入框可继续编辑"
             onClick={() => copyUserMessage(msgBody)}
           >
             {copied ? <Check size={11} /> : <CopyIcon size={11} />}

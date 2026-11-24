@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * Phase 8 — 项目导入后强制 env 配置弹窗。
  *
@@ -68,6 +69,8 @@ export type EnvKind = 'auto' | 'required' | 'infra-derived';
 export interface EnvMetaEntry {
   kind: EnvKind;
   hint?: string;
+  requiredGroup?: string;
+  requiredOption?: string;
 }
 
 interface EnvBundle {
@@ -224,8 +227,23 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
 
   // 是否所有必填项都填了(空字符串和只含空格也算未填)
   const allRequiredFilled = useMemo(() => {
-    return groups.required.every(({ key }) => (draft[key] || '').trim().length > 0);
-  }, [groups.required, draft]);
+    if (state.status !== 'ready') return false;
+    const meta = state.bundle.envMeta || {};
+    const grouped = new Map<string, Map<string, string[]>>();
+    for (const [key, item] of Object.entries(meta)) {
+      if (item.kind !== 'required') continue;
+      if (!item.requiredGroup || !item.requiredOption) {
+        if (!(draft[key] || '').trim()) return false;
+        continue;
+      }
+      const options = grouped.get(item.requiredGroup) ?? new Map<string, string[]>();
+      options.set(item.requiredOption, [...(options.get(item.requiredOption) || []), key]);
+      grouped.set(item.requiredGroup, options);
+    }
+    return [...grouped.values()].every((options) => (
+      [...options.values()].some((keys) => keys.every((key) => (draft[key] || '').trim()))
+    ));
+  }, [state, draft]);
 
   // F12 — 检测项目是否带 schemaful DB(双信号源):
   //   1) env keys 命中 MYSQL_/POSTGRES_/MARIADB_ 前缀(含 cdscli 生成的 `CDS_` 前缀变种)
@@ -401,7 +419,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           </div>
           <div className="flex items-center gap-2">
             {uploadHint ? (
-              <span className="text-[10px] text-muted-foreground">{uploadHint}</span>
+              <span className="text-[0.625rem] text-muted-foreground">{uploadHint}</span>
             ) : null}
             <input
               ref={fileInputRef}
@@ -421,17 +439,17 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
               onClick={() => fileInputRef.current?.click()}
               disabled={state.status !== 'ready'}
             >
-              <Upload className="mr-1 h-3.5 w-3.5" />
+              <Upload className="mr-1" />
               上传 .env
             </Button>
           </div>
         </div>
 
         {(hasSchemafulDb || databaseInit.recommendation || databaseInit.status === 'loading') ? (
-          <div className="rounded-md border border-sky-500/35 bg-sky-500/5 px-3 py-2 text-xs">
+          <div className="rounded-md border border-info/35 bg-info-soft px-3 py-2 text-xs">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 gap-2 text-muted-foreground">
-                <Database className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-sky-500" />
+                <Database className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-info" />
                 <div className="min-w-0 space-y-1">
                   <div className="font-medium text-foreground">数据库初始化</div>
                   {databaseInit.status === 'loading' ? (
@@ -461,7 +479,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                     </div>
                   )}
                   {initScriptHint ? (
-                    <div className="text-[10px] text-muted-foreground">{initScriptHint}</div>
+                    <div className="text-[0.625rem] text-muted-foreground">{initScriptHint}</div>
                   ) : null}
                 </div>
               </div>
@@ -486,9 +504,9 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                   title="自动识别失败时的手动兜底"
                 >
                   {initScriptUploading ? (
-                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="mr-1 animate-spin" />
                   ) : (
-                    <Upload className="mr-1 h-3.5 w-3.5" />
+                    <Upload className="mr-1" />
                   )}
                   导入 SQL
                 </Button>
@@ -501,12 +519,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           className="flex-1 overflow-y-auto pr-1"
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
         >
-          {state.status === 'loading' ? (
-            <div className="flex items-center justify-center py-12 text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              正在读取环境变量...
-            </div>
-          ) : state.status === 'error' ? (
+          {state.status === 'loading' ? <ContentLoading label="读取环境变量" variant="table" /> : state.status === 'error' ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
               读取失败:{state.message}
             </div>
@@ -514,8 +527,8 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
             <div className="space-y-4">
               {/* 必填项 — 顶部最显眼 */}
               {groups.required.length > 0 ? (
-                <section className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
-                  <header className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
+                <section className="rounded-md border border-warn/40 bg-warn-soft p-4">
+                  <header className="mb-3 flex items-center gap-2 text-sm font-semibold text-warn">
                     <KeyRound className="h-4 w-4" />
                     你必须填写({groups.required.length} 项)
                   </header>
@@ -531,9 +544,9 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                           <label className="block text-xs font-medium text-foreground">
                             {key}
                             {isEmpty ? (
-                              <span className="ml-2 text-amber-600">必填</span>
+                              <span className="ml-2 text-warn">必填</span>
                             ) : (
-                              <span className="ml-2 inline-flex items-center text-emerald-600">
+                              <span className="ml-2 inline-flex items-center text-ok">
                                 <CheckCircle2 className="mr-0.5 h-3 w-3" />
                                 已填
                               </span>
@@ -550,7 +563,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 setDraft((current) => ({ ...current, [key]: e.target.value }))
                               }
                               placeholder={hint || `请填写 ${key}`}
-                              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-warn focus:outline-none focus:ring-1 focus:ring-warn"
                               autoComplete="off"
                               spellCheck={false}
                             />
@@ -562,7 +575,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 onClick={() => toggleReveal(key)}
                                 title={isRevealed ? '隐藏' : '显示'}
                               >
-                                {isRevealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                {isRevealed ? <EyeOff /> : <Eye />}
                               </Button>
                             ) : null}
                             {looksSecret ? (
@@ -577,7 +590,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 }}
                                 title="生成强随机密钥(浏览器侧 crypto.getRandomValues)"
                               >
-                                <Wand2 className="mr-1 h-3.5 w-3.5" />
+                                <Wand2 className="mr-1" />
                                 生成
                               </Button>
                             ) : null}
@@ -588,7 +601,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                   </div>
                 </section>
               ) : (
-                <section className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-4 text-sm text-emerald-700 dark:text-emerald-300">
+                <section className="rounded-md border border-ok/40 bg-ok-soft p-4 text-sm text-ok">
                   <CheckCircle2 className="mr-2 inline h-4 w-4" />
                   本项目无必填项,CDS 会全部自动处理。
                 </section>
@@ -597,7 +610,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
               {/* CDS 自动生成 */}
               {groups.auto.length > 0 ? (
                 <DisclosurePanel
-                  icon={<Sparkles className="h-4 w-4 text-emerald-500" />}
+                  icon={<Sparkles className="h-4 w-4 text-ok" />}
                   title={`CDS 已自动生成(${groups.auto.length} 项)`}
                   subtitle="密码 / JWT 等,默认随机强值,你不需要管。展开可以修改。"
                 >
@@ -611,7 +624,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                           <div className="flex items-baseline justify-between gap-2 text-foreground">
                             <span>{key}</span>
                             {hint ? (
-                              <span className="text-[10px] text-muted-foreground">{hint}</span>
+                              <span className="text-[0.625rem] text-muted-foreground">{hint}</span>
                             ) : null}
                           </div>
                           <div className="mt-1 flex gap-1">
@@ -633,7 +646,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 onClick={() => toggleReveal(key)}
                                 title={isRevealed ? '隐藏' : '显示'}
                               >
-                                {isRevealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                {isRevealed ? <EyeOff /> : <Eye />}
                               </Button>
                             ) : null}
                           </div>
@@ -647,7 +660,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
               {/* 基础设施推导 */}
               {groups.derived.length > 0 ? (
                 <DisclosurePanel
-                  icon={<Database className="h-4 w-4 text-sky-500" />}
+                  icon={<Database className="h-4 w-4 text-info" />}
                   title={`基础设施推导(${groups.derived.length} 项)`}
                   subtitle="DATABASE_URL / REDIS_URL 等,由 CDS 根据 infra 配置自动拼接,无需你管。"
                 >
@@ -656,7 +669,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                       <div key={key} className="text-muted-foreground">
                         <span className="text-foreground">{key}</span>
                         {hint ? (
-                          <span className="ml-2 text-[10px]">{hint}</span>
+                          <span className="ml-2 text-[0.625rem]">{hint}</span>
                         ) : null}
                         <div className="mt-0.5 break-all">{value}</div>
                       </div>
@@ -697,7 +710,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
             disabled={saving || state.status !== 'ready' || !allRequiredFilled}
           >
             {saving ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              <Loader2 className="mr-1 animate-spin" />
             ) : null}
             完成,开始部署
           </Button>

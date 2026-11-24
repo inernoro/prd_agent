@@ -16,8 +16,11 @@
  * `git diff <旧sha> <当前sha> -- <该组件的 workDir>`——没有差异就是情形 (a)，
  * 有差异或查不出来就走原来的源码编译路径。
  *
- * 本模块只做**纯判定**（可单测），真正的 git 调用与 docker 拉取由调用方注入。
+ * 本模块提供纯判定与只读Git比较适配；执行能力由调用方注入，Docker事实由准入器核验。
  */
+
+import type { IShellExecutor } from '../types.js';
+import { createReleaseGitRunner, READ_TIMEOUT_MS } from './release-git-reader.js';
 
 /** CDS/CI 给部署镜像打的 tag 形状：`sha-<40 位十六进制>`。 */
 const SHA_TAG_PATTERN = /:sha-([0-9a-f]{40})$/;
@@ -28,11 +31,52 @@ export function shaFromImageTag(image: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * 部署刚 pull 到的最新提交对应的极速版镜像（2026-10-08，方案甲）。
+ *
+ * 极速版镜像标签锁在 CDS 记下的提交上（CI 就绪的 ciTargetSha，退而 githubCommitSha），
+ * 这个值靠 webhook 推进。项目关掉 push 事件后它就停在旧提交，而部署照样 pull 到最新代码：
+ * 按旧提交找镜像——多半已被清理或从没建过——拉不到就回退宿主源码编译。mdimp 10-08
+ * 实测存的是 09-30 的提交，CI 其实每次推送约 4 分钟就产出全部镜像。
+ *
+ * `sha-<40 位提交>` 标签只有 CI 用那个提交构建完才会被推上去，所以「拉得到」本身就是
+ * 「CI 已就绪」的证明，不需要另做 provenance 校验。返回 null 表示不需要额外尝试：
+ * 目标镜像不是 per-SHA 标签、最新提交不是完整 40 位、或与已锁定的提交相同。
+ */
+export function latestCommitImage(intendedImage: string, latestCommitSha: string | null | undefined): string | null {
+  const locked = shaFromImageTag(intendedImage);
+  const latest = (latestCommitSha || '').trim().toLowerCase();
+  if (!locked || !/^[0-9a-f]{40}$/.test(latest) || latest === locked) return null;
+  return `${imageRepositoryOf(intendedImage)}:sha-${latest}`;
+}
+
 /** 取镜像引用的仓库部分（去掉 `:tag`；仓库名里的 `/` 与端口号不受影响）。 */
 export function imageRepositoryOf(image: string): string {
-  const s = (image || '').trim();
+  const s = (image || '').trim().split('@')[0];
   const idx = s.lastIndexOf(':');
   return idx > s.lastIndexOf('/') ? s.slice(0, idx) : s;
+}
+
+/** 配置候选的唯一规整入口，不从目标提交猜测其他镜像。 */
+export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
+  if (!fallback) return [];
+  return [...new Set((Array.isArray(fallback) ? fallback : [fallback]).map(value => value.trim()).filter(Boolean))];
+}
+
+/** 只读可信项目仓库，不创建worktree、不fetch；缺提交或读取能力时不能证明等价。 */
+export function componentInputComparator(shell: IShellExecutor, repoRoot: string, assertCurrent: () => void = () => {}, remainingMs?: () => number) {
+  const read = createReleaseGitRunner(shell, assertCurrent);
+  return async (fromSha: string, toSha: string, scope: readonly string[]): Promise<boolean> => {
+    const paths = normalizeBuildScope(scope);
+    if (!repoRoot || !paths || !normalizeImageRevision(fromSha) || !normalizeImageRevision(toSha)) return false;
+    assertCurrent();
+    const unchanged = await Promise.resolve().then(() => {
+      if (remainingMs && remainingMs() < READ_TIMEOUT_MS) throw new Error('构建输入核验剩余时间不足');
+      return read(['-C', repoRoot, 'diff', '--no-ext-diff', '--quiet', fromSha, toSha, '--', ...paths]);
+    })
+      .then(() => true, () => false);
+    assertCurrent(); remainingMs?.(); return unchanged;
+  };
 }
 
 export interface ReuseCandidate {
@@ -140,6 +184,72 @@ export function normalizeBuildScope(scope: readonly string[] | undefined | null)
     out.push(s.replace(/^\.\//, ''));
   }
   return out.length > 0 ? [...new Set(out)] : null;
+}
+
+/** OCI 镜像的源码 revision 标签只接受完整 commit SHA。 */
+export function normalizeImageRevision(value: string | undefined | null): string | null {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9a-f]{40}$/.test(normalized) ? normalized : null;
+}
+
+export type FallbackImageProofReason =
+  | 'exact-target'
+  | 'component-unchanged'
+  | 'missing-revision'
+  | 'missing-target'
+  | 'missing-build-scope'
+  | 'missing-comparator'
+  | 'component-changed-or-unverifiable';
+
+export interface ProveFallbackImageInput {
+  /** 镜像 OCI label `org.opencontainers.image.revision` 的原始值。 */
+  revision?: string | null;
+  /** 本次部署点名的 commit SHA。 */
+  targetSha?: string | null;
+  /** 与 CI path-filter 一致的组件构建输入范围。 */
+  buildScope?: readonly string[] | null;
+  /** 比较镜像 revision 与目标 revision 之间该组件是否无变化。 */
+  isComponentUnchangedSince?: (
+    fromSha: string,
+    toSha: string,
+    scopePaths: readonly string[],
+  ) => Promise<boolean>;
+}
+
+export interface FallbackImageProof {
+  accepted: boolean;
+  reason: FallbackImageProofReason;
+  revision: string | null;
+  targetSha: string | null;
+}
+
+/**
+ * 证明浮动回退镜像与目标提交等价。
+ *
+ * `branch-*` / `latest` 只说明发布通道，不说明里面是哪份源码。只有两种情况能运行：
+ *  1. 镜像标签里的 revision 就是目标提交；
+ *  2. revision 较旧，但 Git 能证明该组件的全部构建输入到目标提交之间没有变化。
+ *
+ * 任何信息缺失、比较失败或组件有变化都拒绝。调用方应继续尝试其他候选，最终回退
+ * 源码构建，而不是把“镜像拉到了”误当成“镜像内容正确”。
+ */
+export async function proveFallbackImage(input: ProveFallbackImageInput): Promise<FallbackImageProof> {
+  const revision = normalizeImageRevision(input.revision);
+  const targetSha = normalizeImageRevision(input.targetSha);
+  if (!revision) return { accepted: false, reason: 'missing-revision', revision, targetSha };
+  if (!targetSha) return { accepted: false, reason: 'missing-target', revision, targetSha };
+  if (revision === targetSha) return { accepted: true, reason: 'exact-target', revision, targetSha };
+  if (!input.buildScope || input.buildScope.length === 0) {
+    return { accepted: false, reason: 'missing-build-scope', revision, targetSha };
+  }
+  if (!input.isComponentUnchangedSince) {
+    return { accepted: false, reason: 'missing-comparator', revision, targetSha };
+  }
+  const unchanged = await input.isComponentUnchangedSince(revision, targetSha, input.buildScope)
+    .catch(() => false);
+  return unchanged
+    ? { accepted: true, reason: 'component-unchanged', revision, targetSha }
+    : { accepted: false, reason: 'component-changed-or-unverifiable', revision, targetSha };
 }
 
 /**

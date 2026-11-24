@@ -1,3 +1,4 @@
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using Xunit;
 
@@ -231,28 +232,28 @@ public class ModelPoolSchedulingTests
     }
 
     /// <summary>
-    /// 模拟 LlmGateway 中 ModelResolver 的模型选择逻辑
+    /// 挑最佳成员——直接调**权威判据**，不在测试里另写一份。
+    ///
+    /// 原来这里有一份「模拟 ModelResolver 选择逻辑」的私有拷贝，于是这几条用例断言的是
+    /// 它自己，不是生产代码：生产那份改了，这里照样绿（形状 4：测试自己坏了）。
+    /// 同一个判断当时一共有四份——权威、控制台镜像、ModelResolver 里一个无人调用的
+    /// SelectBestModel、以及这里。后两份已删，这里改为调权威那份。
     /// </summary>
     private static ModelGroupItem? SelectBestModel(ModelGroup group)
     {
-        // 按优先级和健康状态选择最佳模型
-        var healthyModels = group.Models
-            .Where(m => m.HealthStatus == ModelHealthStatus.Healthy)
-            .OrderBy(m => m.Priority)
+        if (group.Models is null || group.Models.Count == 0) return null;
+        var candidates = group.Models
+            .Select((m, i) => new GatewayRouteSelection.RouteCandidate(
+                Id: $"{m.PlatformId}:{m.ModelId}:{i}",
+                Priority: m.Priority,
+                Weight: 100,
+                HealthStatus: (int)m.HealthStatus,
+                Enabled: true))
             .ToList();
-
-        if (healthyModels.Count != 0)
-            return healthyModels.First();
-
-        var degradedModels = group.Models
-            .Where(m => m.HealthStatus == ModelHealthStatus.Degraded)
-            .OrderBy(m => m.Priority)
-            .ToList();
-
-        if (degradedModels.Count != 0)
-            return degradedModels.First();
-
-        return null;
+        var queue = GatewayRouteSelection.Queue(candidates, weighted: false, seed: 0);
+        if (queue.Count == 0) return null;
+        var headIndex = int.Parse(queue[0].Id.Split(':')[^1]);
+        return group.Models[headIndex];
     }
 
     #endregion

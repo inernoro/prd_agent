@@ -30,12 +30,14 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
         self.assertIn('GW_KEY="$protocol_canary_key" python3 scripts/llmgw-protocol-canary.py', self.source)
         self.assertNotIn('GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py', self.source)
 
-    def test_global_runtime_gate_keeps_release_gate_key(self) -> None:
-        self.assertIn(
-            'GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py '
-            '$args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates',
-            self.source,
-        )
+    def test_post_deploy_has_no_shadow_release_gate(self) -> None:
+        # MAP 只剩 HTTP 调网关一条路，发布前后都不再有影子样本门禁与阶段账本；
+        # 发布后只跑 serving probe + gw-smoke + 可选四协议 canary。
+        self.assertNotIn("scripts/llmgw-release-gate.py", self.source)
+        self.assertNotIn("--require-runtime-gates", self.source)
+        self.assertNotIn("LLMGW_MODE", self.source)
+        self.assertNotIn("scripts/llmgw-prod-stage.sh", self.source)
+        self.assertIn("python3 scripts/llmgw-serving-probe.py", self.source)
 
     def test_smoke_sends_scoped_identity_headers(self) -> None:
         smoke_source = (ROOT / "scripts" / "gw-smoke.py").read_text(encoding="utf-8")

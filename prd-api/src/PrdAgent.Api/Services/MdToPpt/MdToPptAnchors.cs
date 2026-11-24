@@ -15,6 +15,81 @@ namespace PrdAgent.Api.Services.MdToPpt;
 /// </summary>
 public static class MdToPptAnchors
 {
+    internal const string MobilePresentationGuardId = "mdppt-mobile-presentation-guard";
+
+    private const string MobilePresentationGuard = """
+<style id="mdppt-mobile-presentation-guard">
+@media (max-width: 640px) {
+  html, body { width:100%; height:100%; overflow:hidden; }
+  .slide {
+    padding:48px 22px 112px !important;
+    justify-content:flex-start !important;
+    align-items:stretch !important;
+    box-sizing:border-box !important;
+    width:100vw !important;
+    min-width:100vw !important;
+    height:100vh !important;
+    min-height:100vh !important;
+    max-height:none !important;
+    overflow-x:auto !important;
+    overflow-y:auto !important;
+    overscroll-behavior:contain;
+  }
+  .slide *, .slide *::before, .slide *::after { box-sizing:border-box !important; min-width:0 !important; max-width:100% !important; }
+  .slide img, .slide svg, .slide canvas, .slide video { height:auto !important; object-fit:contain !important; }
+  .slide pre, .slide table { display:block; width:100% !important; overflow-x:auto !important; }
+  .slide [data-mdppt-source] table th, .slide [data-mdppt-source] table td {
+    white-space:nowrap !important; overflow-wrap:normal !important; word-break:normal !important;
+  }
+  .slide h1, .slide [class*="-h1"] {
+    font-size:clamp(32px, 9.5vw, 44px) !important;
+    line-height:1.08 !important;
+    letter-spacing:-.025em !important;
+    overflow-wrap:break-word !important;
+    word-break:normal !important;
+  }
+  .slide h2, .slide [class*="-h2"] {
+    font-size:clamp(28px, 8vw, 38px) !important;
+    line-height:1.14 !important;
+    overflow-wrap:break-word !important;
+    word-break:normal !important;
+  }
+  .slide h3, .slide [class*="-h3"] { font-size:clamp(20px, 6vw, 28px) !important; }
+  .slide p, .slide li, .slide [class*="lede"], .slide [class*="desc"] {
+    font-size:clamp(14px, 4.1vw, 18px) !important;
+    line-height:1.55 !important;
+    white-space:normal !important;
+    overflow-wrap:anywhere !important;
+  }
+  .slide [class*="grid"], .slide [class*="columns"], .slide [class*="split"],
+  .slide [style*="grid-template-columns"] { grid-template-columns:minmax(0, 1fr) !important; }
+  .slide [class*="row"] { flex-wrap:wrap !important; }
+  .slide [class*="big"], .slide [class*="display"], .slide [class*="hero-title"] {
+    font-size:clamp(32px, 12vw, 52px) !important;
+    overflow-wrap:anywhere !important;
+  }
+  .slide-4 .slide-header { flex-wrap:wrap !important; gap:12px !important; }
+  .slide-4 .chart-container { width:100% !important; gap:16px !important; }
+  .slide--chart .bar-track { gap:8px !important; padding-left:0 !important; }
+  .slide-rsvp .hand-line { font-size:0 !important; overflow:hidden !important; }
+  .deck-header, .deck-footer { left:18px !important; right:18px !important; font-size:9px !important; }
+  .deck-footer { bottom:68px !important; }
+  .overview.open { grid-template-columns:1fr !important; padding:20px !important; }
+}
+</style>
+""";
+
+    // soft-editorial 使用 OpenDesign 的固定画布 deck-stage 运行时自适应缩放。
+    // 若套用通用移动端重排规则，会把 1920x1080 画布强行改成 390px 宽并破坏版式语义。
+    private const string SoftEditorialMobilePresentationGuard = """
+<style id="mdppt-mobile-presentation-guard">
+@media (max-width: 640px) {
+  html, body { width:100%; height:100%; margin:0; overflow:hidden; }
+  deck-stage { position:fixed; inset:0; display:block; }
+}
+</style>
+""";
+
     public sealed record AnchorSlide(string File, string Layout, string ClassAttr, string Summary, string Html);
 
     public sealed record Anchor(string Name, string Prefix, string Suffix, IReadOnlyList<AnchorSlide> Slides)
@@ -59,6 +134,11 @@ public static class MdToPptAnchors
                 var root = Path.Combine(AppContext.BaseDirectory, "Resources", "mdppt", "anchors", name);
                 if (!Directory.Exists(root)) return null;
                 var prefix = File.ReadAllText(Path.Combine(root, "prefix.html"));
+                if (name.Equals("soft-editorial", StringComparison.OrdinalIgnoreCase))
+                {
+                    prefix = EnsureEmbeddedRuntime(prefix);
+                    if (HasUnresolvedRuntimeReference(prefix)) return null;
+                }
                 var suffix = File.ReadAllText(Path.Combine(root, "suffix.html"));
                 using var meta = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "meta.json")));
                 var slides = new List<AnchorSlide>();
@@ -72,6 +152,19 @@ public static class MdToPptAnchors
                         l.TryGetProperty("summary", out var sm) ? sm.GetString() ?? "" : "",
                         File.ReadAllText(Path.Combine(root, "slides", file))));
                 }
+                if (slides.Count >= 3 && !slides.Any(IsSemanticTable))
+                {
+                    // One explicitly selected capability, inheriting the chosen
+                    // theme. Do not replace its cover, closing or content rotation.
+                    var shared = Path.Combine(AppContext.BaseDirectory, "Resources", "mdppt", "anchors", "_shared");
+                    var tableHtml = File.ReadAllText(Path.Combine(shared, "semantic-table.html"));
+                    var tableCss = File.ReadAllText(Path.Combine(shared, "semantic-table.css"));
+                    slides.Insert(slides.Count - 1, new AnchorSlide("_shared/semantic-table.html", "s-table",
+                        "slide mdppt-semantic-table", "Semantic source records table", tableHtml));
+                    var style = $"<style data-mdppt-semantic-table>\n{tableCss}\n</style>\n";
+                    var headClose = prefix.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+                    prefix = headClose >= 0 ? prefix.Insert(headClose, style) : style + prefix;
+                }
                 return slides.Count >= 3 ? new Anchor(name, prefix, suffix, slides) : null;
             }
             catch
@@ -82,17 +175,140 @@ public static class MdToPptAnchors
     }
 
     /// <summary>
-    /// 按页角色 + 设计意图挑版式范本：封面=首版式，结语=末版式；
-    /// 中间页按设计意图关键词匹配（数据/对比/引用/时间线/列表/表格），否则轮换不重复。
+    /// 把历史 soft-editorial 产物的精确受信运行时引用固化为单文件脚本。
+    /// 只处理包含 deck-stage 的官方相对路径，不下载、不接受调用方指定的脚本。
     /// </summary>
+    internal static string EnsureEmbeddedRuntime(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)
+            || html.Contains("data-open-design-runtime", StringComparison.Ordinal)
+            || !HasUnresolvedRuntimeReference(html)
+            || !html.Contains("<deck-stage", StringComparison.OrdinalIgnoreCase))
+            return html;
+
+        var runtimePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "Resources",
+            "mdppt",
+            "anchors",
+            "soft-editorial",
+            "deck-stage.js");
+        if (!File.Exists(runtimePath)) return html;
+        var runtime = File.ReadAllText(runtimePath);
+        return System.Text.RegularExpressions.Regex.Replace(
+            html,
+            "<script\\s+src=[\"']assets/deck-stage\\.js[\"']\\s*></script>",
+            _ => $"<script data-open-design-runtime>\n{runtime}\n</script>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+    }
+
+    internal static bool HasUnresolvedRuntimeReference(string html) =>
+        !string.IsNullOrWhiteSpace(html)
+        && System.Text.RegularExpressions.Regex.IsMatch(
+            html,
+            "<script\\s+src=[\"']assets/deck-stage\\.js[\"']\\s*></script>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+
+    internal static string EnsureMobilePresentationGuard(string htmlHead, string? anchorName = null)
+    {
+        if (string.IsNullOrWhiteSpace(htmlHead)
+            || htmlHead.Contains(MobilePresentationGuardId, StringComparison.Ordinal))
+            return htmlHead;
+
+        var taggedHead = htmlHead;
+        var normalizedAnchorName = (anchorName ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalizedAnchorName.Length > 0
+            && normalizedAnchorName.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-'))
+        {
+            taggedHead = System.Text.RegularExpressions.Regex.Replace(
+                taggedHead,
+                "<body(?<attrs>[^>]*)>",
+                match => $"<body{match.Groups["attrs"].Value} data-mdppt-anchor=\"{normalizedAnchorName}\">",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+                TimeSpan.FromSeconds(1));
+        }
+
+        var guard = normalizedAnchorName == "soft-editorial"
+            ? SoftEditorialMobilePresentationGuard
+            : MobilePresentationGuard;
+        var headClose = taggedHead.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+        return headClose >= 0
+            ? taggedHead.Insert(headClose, guard + "\n")
+            : guard + taggedHead;
+    }
+
+    /// <summary>
+    /// 首页面向封面；其余页优先匹配设计意图，未匹配的末页使用结语，内容页轮换。
+    /// </summary>
+    /// <summary>
+    /// 一页内容能不能撑起某个版式。范本里的版式各有前提：数据页要有数字、
+    /// 索引页要有好几条、宣言页要一句短话。轮换时不问这件事，就会出现
+    /// 「一页只有一句话却被塞进大数字＋柱状图版式」——模型无数可填，
+    /// 只好把标题重复灌进每个槽，标题撑爆容器、图表全是假数据。
+    /// 判据只看这一页自己的内容，不猜、不调模型。
+    /// </summary>
+    public readonly record struct PageShape(int ItemCount, int NumberCount, int LongestTextLength)
+    {
+        public static PageShape FromText(IEnumerable<string>? items, string? extraText)
+        {
+            var list = (items ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList();
+            var all = string.Join("\n", list);
+            if (!string.IsNullOrWhiteSpace(extraText)) all += "\n" + extraText;
+            // 只认「独立成词的数量」：2026 这种年份也算数字，但 h2/第 3 页里的序号不该算。
+            var numbers = System.Text.RegularExpressions.Regex.Matches(
+                all, @"(?<![\w.])\d+(?:[.,]\d+)?\s*(?:%|％|万|亿|千|倍|分|秒|天|周|月|年|次|个|人|元|\$)?(?![\w])",
+                System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)).Count;
+            var longest = list.Count == 0 ? (extraText?.Length ?? 0) : list.Max(x => x.Length);
+            return new PageShape(list.Count, numbers, longest);
+        }
+    }
+
+    private static readonly string[] NeedsNumbersHints = { "stats", "data", "numbers", "chart", "pie", "financial", "metric" };
+    // colophon / credits 是多栏版权页：栏位比内容多的时候，模型会拿展示标题
+    // 把空栏挨个填满（实测一句话的收尾页上「结语」出现了六次）。
+    private static readonly string[] NeedsManyItemsHints =
+        { "index", "list", "grid", "services", "pillars", "insights", "timeline", "roadmap", "process", "colophon", "credits" };
+    private static readonly string[] NeedsOneShortLineHints = { "quote", "manifesto", "statement" };
+
+    public static bool Fits(AnchorSlide slide, PageShape shape)
+    {
+        var layout = slide.Layout ?? string.Empty;
+        bool Hits(string[] hints) => hints.Any(h => layout.Contains(h, StringComparison.OrdinalIgnoreCase));
+        // 大数字／图表版式：至少两个数字，否则模型只能拿标题凑数。
+        if (Hits(NeedsNumbersHints)) return shape.NumberCount >= 2;
+        // 索引／清单／时间线：至少三条，一条内容撑不起这种版式。
+        if (Hits(NeedsManyItemsHints)) return shape.ItemCount >= 3;
+        // 宣言／金句：一句短话。这类版式的字号是 clamp(56px … 120px)，一屏放得下
+        // 二三十个字；把四五十字的整段话塞进去就会溢出成一团（实测 47 字即炸）。
+        if (Hits(NeedsOneShortLineHints)) return shape.ItemCount <= 2 && shape.LongestTextLength <= 30;
+        return true;
+    }
+
     public static AnchorSlide PickLayout(Anchor anchor, int index, int total, string? designIntent)
+        => PickLayout(anchor, index, total, designIntent, default, hasShape: false);
+
+    public static AnchorSlide PickLayout(
+        Anchor anchor, int index, int total, string? designIntent, PageShape shape, bool hasShape = true)
     {
         if (index == 0) return anchor.Cover;
-        if (index == total - 1) return anchor.Closing;
-        var pool = anchor.ContentSlides;
-        if (pool.Count == 0) return anchor.Cover;
+        var allContentSlides = anchor.ContentSlides;
+        // 新的语义表格仅供明确表格意图，不能改变既有普通内容页轮换。
+        var pool = allContentSlides.Where(slide => slide.Layout != "s-table").ToList();
+        // 内容撑不起的版式先剔掉；全被剔掉时退回原池，宁可难看也不能没版式。
+        if (hasShape)
+        {
+            var fit = pool.Where(slide => Fits(slide, shape)).ToList();
+            if (fit.Count > 0) pool = fit;
+        }
 
         var intent = designIntent ?? string.Empty;
+        if (intent.Contains("表格", StringComparison.OrdinalIgnoreCase)
+            || intent.Contains("table", StringComparison.OrdinalIgnoreCase))
+            return allContentSlides.FirstOrDefault(IsSemanticTable)
+                ?? throw new NotSupportedException($"Anchor '{anchor.Name}' has no semantic table layout.");
         var keywordMap = new (string[] Keys, string[] LayoutHints)[]
         {
             (new[] { "数据", "数字", "指标", "看板", "stat" }, new[] { "stats", "data", "numbers", "chart", "pie", "financial" }),
@@ -100,16 +316,26 @@ public static class MdToPptAnchors
             (new[] { "引用", "金句", "观点", "quote" }, new[] { "quote", "statement", "manifesto" }),
             (new[] { "时间线", "里程碑", "排期", "流程", "步骤" }, new[] { "timeline", "process", "roadmap", "cycle", "method", "pipeline" }),
             (new[] { "列表", "清单", "要点", "功能" }, new[] { "list", "grid", "index", "services", "pillars", "insights" }),
-            (new[] { "表格", "table" }, new[] { "table", "dense", "financial" }),
             (new[] { "代码", "命令", "终端", "code" }, new[] { "code", "terminal" }),
         };
         foreach (var (keys, hints) in keywordMap)
         {
             if (!keys.Any(k => intent.Contains(k, StringComparison.OrdinalIgnoreCase))) continue;
+            // pool 已按内容撑不撑得起筛过：意图说「数据」但这页没有数字时，
+            // 这里就选不中大数字版式，落回下面的轮换——意图不能凌驾于内容之上。
             var hit = pool.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
             if (hit != null) return hit;
         }
+        // 收尾页同样要过内容这一关：原来是无条件发 Closing，于是一句话的收尾页
+        // 拿到四栏版权页，三栏空着被标题填满。撑不起就退回轮换里挑一个。
+        if (index == total - 1 && (!hasShape || Fits(anchor.Closing, shape))) return anchor.Closing;
+        if (pool.Count == 0) return anchor.Cover;
         // 轮换：相邻内容页不重复版式
         return pool[(index - 1) % pool.Count];
     }
+
+    private static bool IsSemanticTable(AnchorSlide slide) =>
+        slide.Layout == "s-table"
+        && System.Text.RegularExpressions.Regex.IsMatch(slide.Html, "<table(?:\\s|>)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
 }

@@ -14,7 +14,7 @@
  */
 
 import { getLauncherCatalog, LAUNCHER_GROUP_LABELS, type LauncherItem } from '@/lib/launcherCatalog';
-import { getAugmentedAdminMenuCatalog, getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
+import { getAugmentedAdminMenuCatalog, getSidebarAutoAppendItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
@@ -54,7 +54,7 @@ export const NAV_SECTION_META: Record<
   utility: { label: '实用工具', subtitle: '日常高频入口', iconName: 'Sparkles' },
   infra: {
     label: '基础设施',
-    subtitle: '平台级能力（知识库/市场/模型/团队等）',
+    subtitle: '平台级能力（知识库/市场/团队等）',
     iconName: 'Boxes',
   },
   menu: { label: '其他菜单', subtitle: '后端注册的管理入口', iconName: 'Menu' },
@@ -198,6 +198,7 @@ export function getUnifiedNavCatalog(opts: {
   const idSeen = new Set<string>();
 
   const push = (item: NavCatalogItem) => {
+    if (SIDEBAR_HIDDEN_APPKEYS.has(item.id)) return;
     if (idSeen.has(item.id)) return;
     if (routeSeen.has(item.route)) return;
     idSeen.add(item.id);
@@ -260,11 +261,11 @@ export function getUnifiedNavCatalog(opts: {
  * 新上线但不在此列表中的条目由 NavLayoutEditor 的孤立条目检测自动追加。
  */
 export const DEFAULT_NAV_ORDER: readonly string[] = [
-  'ai-toolbox', 'workflow-agent', 'executive',
+  'ai-toolbox', 'executive',
   NAV_DIVIDER_KEY,
   'marketplace', 'my-assets', 'web-pages', 'document-store', 'emergence',
   NAV_DIVIDER_KEY,
-  'mds', 'users', 'settings',
+  'users', 'settings',
 ];
 
 /**

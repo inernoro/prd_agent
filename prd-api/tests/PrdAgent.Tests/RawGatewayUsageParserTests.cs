@@ -154,4 +154,100 @@ public sealed class RawGatewayUsageParserTests
         Assert.Null(result.ProviderReportedCost);
         Assert.False(result.HasReportedUsage);
     }
+
+    /// <summary>
+    /// Responses 那套接口把缓存明细挂在 input_tokens_details 下，不是 prompt_tokens_details。
+    ///
+    /// 只认后者的话，走 Responses 的调用拿不到缓存这一截，而 input_tokens 里**含着**它——
+    /// 每个命中缓存的 token 都按输入全价收，账与预算一起虚高。这是行为断言，不是扫源码：
+    /// 判据换个等价写法（改常量、改读取顺序）也得给出同一个答案。
+    /// </summary>
+    [Theory]
+    [InlineData("input_tokens_details")]
+    [InlineData("inputTokensDetails")]
+    [InlineData("prompt_tokens_details")]
+    [InlineData("promptTokensDetails")]
+    public void Parse_ReadsCachedTokensFromEitherUsageDetailShape(string detailsField)
+    {
+        var response = $$"""
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 20,
+            "{{detailsField}}": { "cached_tokens": 800 }
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(1000, result.InputTokens);
+        Assert.Equal(800, result.CacheReadInputTokens);
+    }
+
+    [Fact]
+    public void Parse_ResponsesUsage_PreservesReasoningAndNestedCacheWriteSemantics()
+    {
+        const string response = """
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 120,
+            "input_tokens_details": {
+              "cached_tokens": 600,
+              "cache_write_tokens": 150
+            },
+            "output_tokens_details": {
+              "reasoning_tokens": 80
+            }
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(1000, result.InputTokens);
+        Assert.Equal(120, result.OutputTokens);
+        Assert.Equal(80, result.ReasoningTokens);
+        Assert.Equal(600, result.CacheReadInputTokens);
+        Assert.Equal(150, result.CacheCreationInputTokens);
+        Assert.True(result.CacheCreationCountedInsideInput);
+    }
+
+    [Fact]
+    public void Parse_NestedCacheWriteWinsOverLegacyRootField_WithoutDoubleCounting()
+    {
+        const string response = """
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "cache_creation_input_tokens": 900,
+            "input_tokens_details": { "cache_write_tokens": 150 }
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(150, result.CacheCreationInputTokens);
+        Assert.True(result.CacheCreationCountedInsideInput);
+    }
+
+    [Fact]
+    public void Parse_RootCacheCreation_RemainsIndependentUsage()
+    {
+        const string response = """
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "cache_creation_input_tokens": 150
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(150, result.CacheCreationInputTokens);
+        Assert.False(result.CacheCreationCountedInsideInput);
+    }
 }

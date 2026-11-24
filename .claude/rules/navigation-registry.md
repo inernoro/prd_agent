@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-admin/src/stores/**/*.ts"
+  - "prd-admin/src/lib/**/*.ts"
+---
+
 # 导航注册规则（新 Agent / 新路由必须自动出现在所有入口）
 
 **一句话**：新路由必须登记进三个数据源之一，侧边栏、设置页可添加池与命令面板会自动同步；没登记或指向不存在的路由，CI 直接红。
@@ -67,7 +74,7 @@
 #### 测试 2：launcherCatalog 中的 route 必须真实存在
 扫描 `launcherCatalog` 的所有 route，必须能在 `App.tsx` 找到对应 `<Route>`。否则就是 phantom 路由（点击 404）。
 
-历史教训：v0 之前 `infra:models` 写了 `/models`、`utility:prompts` 写了 `/prompts`，但 App.tsx 实际只有 `/mds` 没有 `/prompts`。点开就 404，没人发现。本测试根除此类 bug。
+历史教训：v0 之前 `infra:models` 写了 `/models`、`utility:prompts` 写了 `/prompts`，但 App.tsx 里两条都不存在（模型页当时挂在别的路径，`/prompts` 根本没有）。点开就 404，没人发现。本测试根除此类 bug。
 
 ### 触发场景
 - 本地：`pnpm test`

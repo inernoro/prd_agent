@@ -6,6 +6,8 @@ import type {
   DeploymentVersionProfile,
 } from '../types.js';
 import type { StateService } from './state.js';
+import { resolveEffectiveProfile } from './container.js';
+import { selectDefaultRollbackVersion } from './deployment-version-selection.js';
 
 export interface CreateDeploymentVersionInput {
   projectId: string;
@@ -26,27 +28,7 @@ export class DeploymentVersionService {
   ) {}
 
   computeConfigHash(profiles: BuildProfile[], effectiveEnv: Record<string, string>): string {
-    const normalizedProfiles = profiles.map((profile) => ({
-      id: profile.id,
-      name: profile.name,
-      dockerImage: profile.dockerImage,
-      command: profile.command || '',
-      workDir: profile.workDir,
-      containerWorkDir: profile.containerWorkDir || '',
-      containerPort: profile.containerPort,
-      env: profile.env || {},
-      pathPrefixes: profile.pathPrefixes || [],
-      subdomain: profile.subdomain || '',
-      dependsOn: profile.dependsOn || [],
-      readinessProbe: profile.readinessProbe || null,
-      startupSignal: profile.startupSignal || '',
-      activeDeployMode: profile.activeDeployMode || '',
-      prebuiltImage: profile.prebuiltImage === true,
-      entrypoint: profile.entrypoint,
-      resources: profile.resources || null,
-      managedBuild: profile.managedBuild || null,
-    })).sort((left, right) => left.id.localeCompare(right.id));
-    return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
+    return computeDeploymentConfigHash(profiles, effectiveEnv);
   }
 
   create(input: CreateDeploymentVersionInput): DeploymentVersion {
@@ -84,11 +66,7 @@ export class DeploymentVersionService {
     if (!branch) return undefined;
     const versions = this.stateService.getDeploymentVersions({ branchId });
     if (requestedVersionId) return versions.find((version) => version.id === requestedVersionId);
-    return versions.find((version) =>
-      version.id !== branch.currentVersionId
-      && version.profiles.length > 0
-      && version.profiles.every((profile) => profile.reusable),
-    );
+    return selectDefaultRollbackVersion(versions, branch.currentVersionId);
   }
 
   findReusable(input: {
@@ -116,7 +94,7 @@ export class DeploymentVersionService {
     ).join('; '));
   }
 
-  materializeProfiles(version: DeploymentVersion, currentProfiles: BuildProfile[]): BuildProfile[] {
+  materializeProfiles(version: DeploymentVersion, currentProfiles: BuildProfile[], branch: BranchEntry): BuildProfile[] {
     this.assertReusable(version);
     return version.profiles.map((snapshot) => {
       const current = currentProfiles.find((profile) => profile.id === snapshot.profileId);
@@ -125,17 +103,26 @@ export class DeploymentVersionService {
       }
       return {
         ...current,
+        // 版本不持久化环境明文；运行时仍使用本次受理的分支配置，不能退回项目基线库。
+        // 镜像、命令等产物契约继续由下面的版本快照固定，不重新套用当前部署模式。
+        env: resolveEffectiveProfile(current, branch).env,
         name: snapshot.name,
         dockerImage: snapshot.artifactImage,
+        buildScope: snapshot.buildScope ? [...snapshot.buildScope] : undefined,
+        staticWeb: snapshot.staticWeb ? structuredClone(snapshot.staticWeb) : undefined,
         command: snapshot.runtimeCommand,
         containerPort: snapshot.containerPort,
         containerWorkDir: snapshot.containerWorkDir,
         pathPrefixes: snapshot.pathPrefixes,
         subdomain: snapshot.subdomain,
+        webEntry: snapshot.webEntry,
         dependsOn: snapshot.dependsOn,
         readinessProbe: snapshot.readinessProbe,
         startupSignal: snapshot.startupSignal,
         activeDeployMode: snapshot.deployedMode,
+        // 历史产物已物化，不能再让当前模式定义或热更新覆写镜像与启动命令。
+        deployModes: undefined,
+        hotReload: undefined,
         prebuiltImage: true,
         localArtifact: snapshot.artifactKind === 'managed-image',
         managedBuild: undefined,
@@ -149,12 +136,14 @@ export class DeploymentVersionService {
     const service = branch.services[profile.id];
     const artifactImage = service?.deployedImage || profile.dockerImage;
     const actualMode = service?.deployedMode ?? profile.activeDeployMode ?? '';
-    const managedArtifact = !!profile.managedBuild;
+    const managedArtifact = !!profile.managedBuild || (profile.prebuiltImage === true && /^sha256:[0-9a-f]{64}$/i.test(artifactImage));
     const reusable = (profile.prebuiltImage === true || managedArtifact) && isImmutableImageReference(artifactImage);
     return {
       profileId: profile.id,
       name: profile.name,
       artifactImage,
+      buildScope: profile.buildScope ? [...profile.buildScope] : undefined,
+      staticWeb: profile.staticWeb ? structuredClone(profile.staticWeb) : undefined,
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable
@@ -167,6 +156,7 @@ export class DeploymentVersionService {
       containerWorkDir: profile.containerWorkDir,
       pathPrefixes: profile.pathPrefixes,
       subdomain: profile.subdomain,
+      webEntry: profile.webEntry,
       dependsOn: profile.dependsOn,
       readinessProbe: profile.readinessProbe,
       startupSignal: profile.startupSignal,
@@ -175,9 +165,49 @@ export class DeploymentVersionService {
   }
 }
 
+/** 部署输入与本地产物共用配置身份，敏感环境值只进入摘要。 */
+export function computeDeploymentConfigHash(profiles: BuildProfile[], effectiveEnv: Record<string, string>): string {
+  const normalizedProfiles = profiles.map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    dockerImage: profile.dockerImage,
+    command: profile.command || '',
+    workDir: profile.workDir,
+    containerWorkDir: profile.containerWorkDir || '',
+    containerPort: profile.containerPort,
+    env: profile.env || {},
+    pathPrefixes: profile.pathPrefixes || [],
+    subdomain: profile.subdomain || '',
+    webEntry: profile.webEntry || null,
+    dependsOn: profile.dependsOn || [],
+    readinessProbe: profile.readinessProbe || null,
+    startupSignal: profile.startupSignal || '',
+    activeDeployMode: profile.activeDeployMode || '',
+    prebuiltImage: profile.prebuiltImage === true,
+    entrypoint: profile.entrypoint,
+    resources: profile.resources || null,
+    managedBuild: profile.managedBuild || null,
+    buildScope: profile.buildScope,
+    staticWeb: profile.staticWeb,
+    cacheMounts: profile.cacheMounts,
+    buildTimeout: profile.buildTimeout,
+    role: profile.role,
+    calls: profile.calls,
+    hotReload: profile.hotReload,
+    localArtifact: profile.localArtifact,
+    fallbackImage: profile.fallbackImage,
+    sourceFallbackProfile: profile.sourceFallbackProfile,
+    dbScope: profile.dbScope,
+    dbInit: profile.dbInit,
+    deployModes: profile.deployModes,
+  })).sort((left, right) => left.id.localeCompare(right.id));
+  return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
+}
+
 export function isImmutableImageReference(image: string): boolean {
   const normalized = image.trim();
-  return /@sha256:[0-9a-f]{64}$/i.test(normalized)
+  return /^sha256:[0-9a-f]{64}$/i.test(normalized)
+    || /@sha256:[0-9a-f]{64}$/i.test(normalized)
     || /:sha-[0-9a-f]{7,40}$/i.test(normalized);
 }
 

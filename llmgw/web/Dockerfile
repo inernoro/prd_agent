@@ -13,6 +13,8 @@ RUN pnpm install --frozen-lockfile
 
 # 拷贝源码并构建
 COPY . .
+ARG VITE_ENTRY_MEDIA_CDN_ORIGIN
+ARG VITE_ENTRY_SHORT_MEDIA_CDN_ORIGIN
 RUN pnpm run build
 
 # ── 运行阶段：nginx 静态托管 ──

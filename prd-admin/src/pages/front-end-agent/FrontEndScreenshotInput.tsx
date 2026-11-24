@@ -106,7 +106,7 @@ export function FrontEndScreenshotInput({
   return (
     <label className="block">
       <span className="text-xs font-medium text-token-secondary">截图现象 / 设计稿差异描述</span>
-      <p className="mt-1 text-[11px] text-violet-200/55">
+      <p className="mt-1 text-[11px] text-violet-200/75">
         支持 Ctrl+V 直接粘贴截图，也可上传图片；可叠加文字说明差异点。
       </p>
       <textarea
@@ -156,7 +156,7 @@ export function FrontEndScreenshotInput({
       <button
         type="button"
         onClick={() => imageInputRef.current?.click()}
-        className="fea-btn mt-2 h-8 px-3 rounded-lg border border-violet-400/20 bg-violet-500/10 hover:bg-violet-500/15 text-xs text-violet-100 inline-flex items-center gap-1.5"
+        className="fea-btn mt-2 h-8 px-3 rounded-lg border border-violet-400/20 bg-violet-500/10 hover:bg-violet-500/15 text-xs text-[color:var(--accent-fg-violet)] inline-flex items-center gap-1.5"
       >
         <ImageIcon className="w-3.5 h-3.5" />
         上传截图

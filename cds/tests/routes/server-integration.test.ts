@@ -9,13 +9,17 @@ const AUTH_ENV_KEYS = [
   'CDS_AUTH_MODE',
   'CDS_USERNAME',
   'CDS_PASSWORD',
+  'CDS_PUBLIC_BASE_URL',
   'CDS_GITHUB_CLIENT_ID',
   'CDS_GITHUB_CLIENT_SECRET',
+  'CDS_PASSKEYS_ENABLED',
+  'CDS_SYSTEM_PASSWORD_APPROVER_IDS',
   'CDS_SSO_ENABLED',
   'CDS_SSO_AUTHORIZATION_URL',
   'CDS_SSO_TOKEN_URL',
   'CDS_SSO_CLIENT_ID',
   'CDS_SSO_CLIENT_SECRET',
+  'CDS_PUBLIC_HEALTH_DETAILS',
 ] as const;
 const savedAuthEnv = new Map<string, string | undefined>();
 beforeAll(() => {
@@ -48,6 +52,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import type { ActiveHttpRequestRecord, HttpActiveRequestFilter, HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
+import { loadCdsEnvFile } from '../../src/load-env.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -160,6 +165,42 @@ async function requestJson(
   });
 }
 
+async function requestRaw(
+  server: http.Server,
+  method: string,
+  urlPath: string,
+  payload: string | Buffer,
+  headers: http.OutgoingHttpHeaders = {},
+): Promise<HttpResponse> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: addr.port,
+      path: urlPath,
+      method,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(payload)),
+        ...headers,
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+      res.on('end', () => resolve({
+        status: res.statusCode!,
+        contentType: (res.headers['content-type'] || '').toString(),
+        body: raw,
+        headers: res.headers,
+      }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Promise<http.Server> {
   const forwarder = http.createServer((req, res) => {
     if ((req.url || '').startsWith('/__forwarder/active')) {
@@ -179,6 +220,35 @@ async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Pr
 }
 
 describe('Server route ordering (regression)', () => {
+  it('直连健康路径变体脱敏但保留真实故障状态，并兼容显式诊断与深探', async () => {
+    const app = buildRealServerWithEvents([]);
+    server = await startServer(app);
+    for (const url of ['/healthz', '/healthz/', '/HEALTHZ', '/HeAlThZ/?lightweight=0']) {
+      const result = await request(server, url);
+      expect(result.status).toBe(503); // 本夹具未提供可用 Docker，不能伪装为健康。
+      expect(JSON.parse(result.body)).toEqual({ ok: false, port: 9900 });
+      expect(result.headers['x-powered-by']).toBeUndefined();
+    }
+    expect(JSON.parse((await request(server, '/healthz?probe=routes')).body).checks).toHaveProperty('routesHttp');
+    for (const headers of [{ 'X-Forwarded-For': '127.0.0.1' }, { Forwarded: 'for=127.0.0.1' }]) {
+      const publicProbe = await request(server, '/healthz?probe=routes', headers);
+      expect(publicProbe.status).toBe(503);
+      expect(JSON.parse(publicProbe.body)).toEqual({ ok: false, port: 9900 });
+    }
+    const original = process.env.CDS_PUBLIC_HEALTH_DETAILS;
+    process.env.CDS_PUBLIC_HEALTH_DETAILS = '1';
+    try {
+      const detailed = await request(server, '/healthz?probe=routes');
+      expect(detailed.status).toBe(503);
+      expect(JSON.parse(detailed.body).checks).toHaveProperty('routesHttp');
+      const live = await request(server, '/healthz?lightweight=1');
+      expect(live.status).toBe(200);
+      expect(JSON.parse(live.body)).toEqual({ ok: true, port: 9900 });
+    } finally {
+      if (original === undefined) delete process.env.CDS_PUBLIC_HEALTH_DETAILS;
+      else process.env.CDS_PUBLIC_HEALTH_DETAILS = original;
+    }
+  });
   let tmpDir: string;
   let webDir: string;
   let server: http.Server | null = null;
@@ -278,12 +348,21 @@ describe('Server route ordering (regression)', () => {
     logs: HttpLogRecord[],
     active: ActiveHttpRequestRecord[] = [],
     onFindActiveFilter?: (filter: HttpActiveRequestFilter) => void,
+    captureWrites = false,
+    serverEvents: Array<Record<string, unknown>> = [],
   ): express.Express {
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
     stateService.load();
     const httpLogStore: HttpLogSink = {
-      record() {},
+      record(record) {
+        if (!captureWrites) return;
+        logs.push({
+          ...record,
+          _id: `captured-${logs.length + 1}`,
+          ts: new Date(),
+        });
+      },
       async findRecent(filter = {}) {
         const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
         return logs
@@ -330,8 +409,63 @@ describe('Server route ordering (regression)', () => {
       shell: new MockShellExecutor(),
       config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
       httpLogStore,
+      serverEventLogStore: {
+        record(record) { serverEvents.push(record as unknown as Record<string, unknown>); },
+      },
     });
   }
+
+  it.each([68, 512 * 1024])('preserves %i-byte screenshots across asynchronous basic authentication and HTTP logging', async (size) => {
+    const logs: HttpLogRecord[] = [];
+    vi.stubEnv('CDS_AUTH_MODE', 'basic');
+    vi.stubEnv('CDS_USERNAME', 'fixture-admin');
+    vi.stubEnv('CDS_PASSWORD', 'fixture-password');
+    vi.stubEnv('CDS_AI_ACCESS_KEY', 'fixture-upload-key');
+    vi.stubEnv('CDS_CACHE_BASE', path.join(tmpDir, 'cache'));
+    try {
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true);
+      // A persisted-session lookup can yield while the request body arrives.
+      vi.spyOn(app.locals.cdsAuthService, 'validateSession').mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return null;
+      });
+      server = await startServer(app);
+      const pngSource = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+      const png = Buffer.alloc(size);
+      pngSource.copy(png);
+      const upload = await requestRaw(server, 'POST', '/api/reports/assets', png, {
+        'Content-Type': 'image/png', 'X-AI-Access-Key': 'fixture-upload-key',
+      });
+      expect(upload.status).toBe(201);
+      const { asset } = JSON.parse(upload.body);
+      expect(asset.sizeBytes).toBe(png.length);
+      const download = await request(server, new URL(asset.url, 'http://localhost').pathname);
+      expect(download.status).toBe(200);
+      expect(download.contentType).toContain('image/png');
+      expect(fs.readFileSync(path.join(tmpDir, 'report-assets', asset.name))).toEqual(png);
+      const log = logs.find((row) => row.path === '/api/reports/assets');
+      expect(log?.status).toBe(201);
+      expect(log?.request?.bodyBytes).toBe(png.length);
+      expect(log?.request?.bodyPreview).toContain('omitted binary body');
+      // Reports bypass the global JSON parser as well; the same async gap
+      // must preserve large text bodies, while normal JSON logging still works.
+      const content = '# Uploaded report\n' + 'evidence '.repeat(15_000);
+      const report = await requestJson(server, 'POST', '/api/reports', {
+        title: 'Upload regression', format: 'md', content,
+      }, { 'X-AI-Access-Key': 'fixture-upload-key' });
+      expect(report.status).toBe(201);
+      const meta = JSON.parse(report.body).report;
+      expect(fs.readFileSync(path.join(tmpDir, 'reports', `${meta.id}.md`), 'utf8')).toBe(content);
+      expect(logs.find((row) => row.path === '/api/reports')?.request?.bodyBytes).toBeGreaterThan(100 * 1024);
+      const denied = await requestRaw(server, 'POST', '/api/reports/assets', png, {
+        'Content-Type': 'image/png', 'X-AI-Access-Key': 'invalid-key',
+      });
+      expect(denied.status).toBe(401);
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('real createServer exposes queryable /api/server-events before branch router fallback', async () => {
     const app = buildRealServerWithEvents([
@@ -410,12 +544,28 @@ describe('Server route ordering (regression)', () => {
     const prevMode = process.env.CDS_AUTH_MODE;
     const prevUser = process.env.CDS_USERNAME;
     const prevPass = process.env.CDS_PASSWORD;
+    const prevPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL;
     try {
       delete process.env.CDS_AUTH_MODE;
       process.env.CDS_USERNAME = 'operator';
       process.env.CDS_PASSWORD = 'secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
 
-      const app = buildRealServerWithEvents([]);
+      const app = buildRealServerWithEvents([], (stateService) => {
+        const now = new Date().toISOString();
+        stateService.addProject({
+          id: 'auth-secret-project',
+          slug: 'auth-secret-project',
+          name: 'Auth Secret Project',
+          kind: 'git',
+          dockerNetwork: 'cds-proj-auth-secret',
+          legacyFlag: false,
+          customEnv: { OWNER_ONLY_SECRET: 'visible-to-owner' },
+          createdAt: now,
+          updatedAt: now,
+        });
+        stateService.setCustomEnvVar('GLOBAL_OWNER_ONLY', 'global-owner-value', '_global');
+      });
       server = await startServer(app);
 
       const res = await request(server, '/api/auth/public-status');
@@ -430,6 +580,11 @@ describe('Server route ordering (regression)', () => {
           github: false,
           local: true,
           sso: false,
+        },
+        capabilities: {
+          userManagement: true,
+          userActivity: true,
+          durableUsers: false,
         },
         sso: {
           enabled: false,
@@ -472,28 +627,168 @@ describe('Server route ordering (regression)', () => {
         req.end();
       });
       expect(login.status).toBe(200);
-      const rawCookie = Array.isArray(login.headers['set-cookie'])
-        ? login.headers['set-cookie'][0]
-        : String(login.headers['set-cookie'] || '');
+      const loginSetCookies = Array.isArray(login.headers['set-cookie'])
+        ? login.headers['set-cookie']
+        : [String(login.headers['set-cookie'] || '')];
+      const rawCookie = loginSetCookies[0];
       const cookie = rawCookie.split(';')[0];
+      expect(rawCookie).toContain('; Secure');
+      expect(loginSetCookies).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+      ]));
 
       const authedMe = await request(server, '/api/me', { Cookie: cookie });
       expect(authedMe.status).toBe(200);
       const meBody = JSON.parse(authedMe.body);
       expect(meBody.user).toMatchObject({
         username: 'operator',
-        authProvider: 'local',
+        authProvider: 'legacy',
         isSystemOwner: true,
       });
 
-      const headerToken = cookie.slice('cds_token='.length);
-      const headerAuthedMe = await request(server, '/api/me', { 'X-CDS-Token': headerToken });
-      expect(headerAuthedMe.status).toBe(200);
-      expect(JSON.parse(headerAuthedMe.body).user).toMatchObject({
-        username: 'operator',
-        authProvider: 'local',
-        isSystemOwner: true,
+      expect(cookie).toMatch(/^cds_token=/);
+      const humanToken = cookie.slice('cds_token='.length);
+      const machineToken = crypto.createHash('sha256').update('cds:operator:secret').digest('hex');
+      expect(humanToken).not.toBe(machineToken);
+      const headerAuthedApi = await request(server, '/api/branches', { 'X-CDS-Token': machineToken });
+      expect(headerAuthedApi.status).toBe(200);
+      const replayedMachineCookie = await request(server, '/api/me', {
+        Cookie: `cds_token=${machineToken}`,
       });
+      expect(replayedMachineCookie.status).toBe(401);
+      const replayedHumanHeader = await request(server, '/api/branches', {
+        'X-CDS-Token': humanToken,
+      });
+      expect(replayedHumanHeader.status).toBe(401);
+
+      // The unified local-login endpoint must preserve the original account,
+      // even though it now also accepts persisted local users.
+      const compatibleLogin = await requestJson(server, 'POST', '/api/auth/login', {
+        username: 'operator',
+        password: 'secret',
+      });
+      expect(compatibleLogin.status).toBe(200);
+      const compatibleSetCookies = Array.isArray(compatibleLogin.headers['set-cookie'])
+        ? compatibleLogin.headers['set-cookie']
+        : [String(compatibleLogin.headers['set-cookie'] || '')];
+      const compatibleCookie = compatibleSetCookies[0].split(';')[0];
+      expect(compatibleCookie).toMatch(/^cds_token=/);
+      expect(compatibleSetCookies).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+      ]));
+
+      const duplicateLegacyUser = await requestJson(server, 'POST', '/api/auth/users', {
+        username: 'operator',
+        password: 'another-password-1',
+      }, { Cookie: compatibleCookie });
+      expect(duplicateLegacyUser.status).toBe(409);
+      expect(JSON.parse(duplicateLegacyUser.body)).toMatchObject({ code: 'username_taken' });
+
+      // The original account is the system owner and can provision a persisted
+      // local member without any GitHub OAuth configuration.
+      const created = await requestJson(server, 'POST', '/api/auth/users', {
+        username: 'member',
+        password: 'member-password-1',
+        name: 'Member',
+      }, { Cookie: compatibleCookie });
+      expect(created.status).toBe(201);
+      expect(JSON.parse(created.body).user).toMatchObject({
+        username: 'member',
+        authProvider: 'local',
+        isSystemOwner: false,
+      });
+
+      const memberLogin = await requestJson(server, 'POST', '/api/auth/login', {
+        username: 'member',
+        password: 'member-password-1',
+      });
+      expect(memberLogin.status).toBe(200);
+      const memberSetCookies = Array.isArray(memberLogin.headers['set-cookie'])
+        ? memberLogin.headers['set-cookie']
+        : [String(memberLogin.headers['set-cookie'] || '')];
+      const memberCookie = memberSetCookies[0].split(';')[0];
+      expect(memberCookie).toMatch(/^cds_gh_session=/);
+      expect(memberSetCookies).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+      ]));
+
+      expect(JSON.parse((await request(server, '/api/auth/status', { Cookie: memberCookie })).body).approvalCapabilities)
+        .toEqual({ operator: false, accessRequests: false });
+      const memberMe = await request(server, '/api/me', { Cookie: memberCookie });
+      expect(memberMe.status).toBe(200);
+      expect(JSON.parse(memberMe.body).user).toMatchObject({
+        username: 'member',
+        authProvider: 'local',
+        isSystemOwner: false,
+      });
+      const deniedUsers = await request(server, '/api/auth/users', { Cookie: memberCookie });
+      expect(deniedUsers.status).toBe(403);
+      const deniedOperator = await request(server, '/api/cds-system/operator/ops', { Cookie: memberCookie });
+      expect(deniedOperator.status).toBe(403);
+
+      const memberProjects = await request(server, '/api/projects', { Cookie: memberCookie });
+      expect(JSON.parse(memberProjects.body).projects).toEqual([]);
+      const memberId = JSON.parse(created.body).user.id;
+      const unauthorizedDetail = await request(server, '/api/projects/auth-secret-project', { Cookie: memberCookie });
+      expect(unauthorizedDetail.status).toBe(403);
+      const cannotSelfGrant = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: ['auth-secret-project'],
+      }, { Cookie: memberCookie });
+      expect(cannotSelfGrant.status).toBe(403);
+      const grant = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: ['auth-secret-project'],
+      }, { Cookie: compatibleCookie });
+      expect(grant.status).toBe(200);
+      const authorizedProjects = await request(server, '/api/projects', { Cookie: memberCookie });
+      const memberSecretProject = JSON.parse(authorizedProjects.body).projects.find(
+        (project: { id: string }) => project.id === 'auth-secret-project',
+      );
+      expect(memberSecretProject.customEnv).toBeUndefined();
+      const memberEnv = await request(server, '/api/env?scope=_all', { Cookie: memberCookie });
+      expect(memberEnv.status).toBe(403);
+      const memberDelete = await requestJson(server, 'DELETE', '/api/projects/auth-secret-project', {}, { Cookie: memberCookie });
+      expect(memberDelete.status).toBe(403);
+      const revoked = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: [],
+      }, { Cookie: compatibleCookie });
+      expect(revoked.status).toBe(200);
+      expect(JSON.parse((await request(server, '/api/projects', { Cookie: memberCookie })).body).projects).toEqual([]);
+      expect((await request(server, '/api/projects/auth-secret-project', { Cookie: memberCookie })).status).toBe(403);
+
+      const persistedOwnerCreated = await requestJson(server, 'POST', '/api/auth/users', {
+        username: 'persisted-owner',
+        password: 'persisted-owner-password-1',
+        name: 'Persisted Owner',
+        isSystemOwner: true,
+      }, { Cookie: compatibleCookie });
+      expect(persistedOwnerCreated.status).toBe(201);
+      const persistedOwnerLogin = await requestJson(server, 'POST', '/api/auth/login', {
+        username: 'persisted-owner',
+        password: 'persisted-owner-password-1',
+      });
+      const persistedOwnerCookie = (persistedOwnerLogin.headers['set-cookie'] as string[])[0].split(';')[0];
+      const ownerOperator = await request(server, '/api/cds-system/operator/ops', { Cookie: persistedOwnerCookie });
+      expect(ownerOperator.status).toBe(200);
+      const ownerProjects = await request(server, '/api/projects', { Cookie: persistedOwnerCookie });
+      const ownerSecretProject = JSON.parse(ownerProjects.body).projects.find(
+        (project: { id: string }) => project.id === 'auth-secret-project',
+      );
+      expect(ownerSecretProject.customEnv).toEqual({ OWNER_ONLY_SECRET: 'visible-to-owner' });
+      const ownerEnv = await request(server, '/api/env?scope=_all', { Cookie: persistedOwnerCookie });
+      expect(JSON.parse(ownerEnv.body).env._global).toEqual({ GLOBAL_OWNER_ONLY: 'global-owner-value' });
+
+      const ownerUsers = await request(server, '/api/auth/users', { Cookie: compatibleCookie });
+      expect(ownerUsers.status).toBe(200);
+      expect(JSON.parse(ownerUsers.body).users).toHaveLength(2);
+
+      const ownerActivity = await request(server, '/api/auth/activity', { Cookie: compatibleCookie });
+      expect(ownerActivity.status).toBe(200);
+      expect(JSON.parse(ownerActivity.body).activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({ action: 'create-user', targetId: JSON.parse(created.body).user.id }),
+      ]));
     } finally {
       if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
       else process.env.CDS_AUTH_MODE = prevMode;
@@ -501,7 +796,440 @@ describe('Server route ordering (regression)', () => {
       else process.env.CDS_USERNAME = prevUser;
       if (prevPass === undefined) delete process.env.CDS_PASSWORD;
       else process.env.CDS_PASSWORD = prevPass;
+      if (prevPublicBaseUrl === undefined) delete process.env.CDS_PUBLIC_BASE_URL;
+      else process.env.CDS_PUBLIC_BASE_URL = prevPublicBaseUrl;
     }
+  });
+
+  it('通行证复制响应的密码不进入HTTP日志，审计路径保持原资源范围',async()=>{
+    const logs:HttpLogRecord[]=[];
+    const app=buildRealServerWithHttpLogs(logs,[],undefined,true);
+    const route='/api/branches/qa/resources/infra%3Apostgres/database-passes/0123456789abcdefabcd/credentials';
+    const canary='temporary-pass-password-canary';
+    app.get(route,(_req,res)=>res.json({username:'cdsp_test',password:canary,tlsCa:'public-test-ca'}));
+    // 只替换业务响应，保留真实服务器在分支 Router 前安装的认证和日志中间件。
+    const stack=(app as any)._router.stack;
+    const responseLayer=stack.pop();
+    const branchRouterIndex=stack.findIndex((layer:any)=>layer.handle?.stack?.some((nested:any)=>
+      nested.route?.path==='/branches/:id/resources/:resourceId/database-passes/:passId/credentials'));
+    expect(branchRouterIndex).toBeGreaterThan(-1);
+    stack.splice(branchRouterIndex,0,responseLayer);
+    server=await startServer(app);
+    const response=await request(server,route+'?unused='+canary,{'User-Agent':canary});
+    expect(response.status).toBe(200);expect(JSON.parse(response.body).password).toBe(canary);
+    const log=logs.find(row=>row.path===route);
+    expect(log).toBeDefined();expect(JSON.stringify(log)).not.toContain(canary);
+    expect(log?.response?.bodyPreview||'').not.toContain('public-test-ca');
+  });
+
+  it('密封存储全部 Express 路径变体在解析和认证前抑制请求材料', async () => {
+    const prevMode = process.env.CDS_AUTH_MODE;
+    const prevUser = process.env.CDS_USERNAME;
+    const prevPass = process.env.CDS_PASSWORD;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      process.env.CDS_AUTH_MODE = 'basic';
+      process.env.CDS_USERNAME = 'operator';
+      process.env.CDS_PASSWORD = 'secret';
+      const logs: HttpLogRecord[] = [];
+      const events: Array<Record<string, unknown>> = [];
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true, events);
+      server = await startServer(app);
+      const canary = 'sealed-storage-log-canary';
+
+      const routes = [
+        `/api/cds-system/sealed-storage/initialize?value=${canary}`,
+        `/_cds/api/cds-system/sealed-storage/initialize?value=${canary}`,
+        `/api/CDS-SYSTEM/SEALED-STORAGE/INITIALIZE/?value=${canary}`,
+        `/_cds/api/CDS-SYSTEM/SEALED-STORAGE/INITIALIZE/?value=${canary}`,
+      ];
+      for (const route of routes) {
+        const response = await requestJson(server, 'POST', route, { value: canary }, {
+          'User-Agent': canary,
+          Referer: `https://example.test/${canary}`,
+          'X-CDS-Trigger': canary,
+          'X-CDS-Request-Id': canary,
+          'X-Forwarded-For': canary,
+          'X-Forwarded-Proto': canary,
+          Host: canary,
+        });
+        expect(response.status).toBe(401);
+        expect(response.headers['x-cds-suppress-activity']).toBeUndefined();
+        expect(JSON.stringify(response.headers)).not.toContain(canary);
+      }
+
+      const malformed = `{\"value\":\"${canary}\"`;
+      const oversized = JSON.stringify({ value: `${canary}${'x'.repeat(110_000)}` });
+      for (const [route, payload] of [
+        ['/api/cds-system/sealed-storage/initialize/', malformed],
+        ['/_cds/api/CDS-SYSTEM/SEALED-STORAGE/INITIALIZE', oversized],
+      ] as const) {
+        const response = await requestRaw(server, 'POST', route, payload, {
+          'User-Agent': canary,
+          Referer: `https://example.test/${canary}`,
+          'X-CDS-Trigger': canary,
+          'X-CDS-Request-Id': canary,
+          'X-Forwarded-For': canary,
+          'X-Forwarded-Proto': canary,
+          Host: canary,
+        });
+        expect(response.status).toBe(401);
+        expect(response.body).not.toContain(canary);
+        expect(JSON.stringify(response.headers)).not.toContain(canary);
+      }
+
+      expect(logs).toHaveLength(routes.length + 2);
+      for (const log of logs) {
+        expect(log.path).toBe('/api/cds-system/sealed-storage/initialize');
+        expect(log.request.bodyPreview).toBe('[cds request body omitted]');
+        expect(log.request.headers).toEqual({});
+        expect(JSON.stringify(log)).not.toContain(canary);
+      }
+      expect(JSON.stringify(events)).not.toContain(canary);
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(canary);
+    } finally {
+      warnSpy.mockRestore();
+      if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
+      else process.env.CDS_AUTH_MODE = prevMode;
+      if (prevUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = prevUser;
+      if (prevPass === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = prevPass;
+    }
+  });
+
+  it('人工初始化不会把任意请求头写入 HTTP 或持久审计日志', async () => {
+    const previous = {
+      mode: process.env.CDS_AUTH_MODE,
+      user: process.env.CDS_USERNAME,
+      pass: process.env.CDS_PASSWORD,
+      publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL,
+      envFile: process.env.CDS_ENV_FILE,
+      secret: process.env.CDS_SECRET_KEY,
+    };
+    const envFile = path.join(tmpDir, 'sealed.env');
+    const canary = 'sealed-header-canary-must-not-survive';
+    try {
+      process.env.CDS_AUTH_MODE = 'basic';
+      process.env.CDS_USERNAME = 'operator';
+      process.env.CDS_PASSWORD = 'secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
+      process.env.CDS_ENV_FILE = envFile;
+      delete process.env.CDS_SECRET_KEY;
+      const logs: HttpLogRecord[] = [];
+      const events: Array<Record<string, unknown>> = [];
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true, events);
+      server = await startServer(app);
+
+      const login = await requestJson(server, 'POST', '/api/login', {
+        username: 'operator',
+        password: 'secret',
+      });
+      const rawCookie = Array.isArray(login.headers['set-cookie'])
+        ? login.headers['set-cookie'][0]
+        : String(login.headers['set-cookie'] || '');
+      const cookie = rawCookie.split(';')[0];
+      const initialized = await requestRaw(
+        server,
+        'POST',
+        '/api/cds-system/sealed-storage/initialize',
+        '',
+        {
+          Cookie: cookie,
+          'X-CDS-Human-Action': 'initialize-sealed-storage',
+          'User-Agent': canary,
+          Referer: `https://example.test/${canary}`,
+          'X-CDS-Trigger': canary,
+          'X-CDS-Request-Id': canary,
+          'X-Forwarded-For': canary,
+          'X-Forwarded-Proto': canary,
+          Host: canary,
+        },
+      );
+
+      expect(initialized.status).toBe(200);
+      expect(initialized.headers['x-cds-suppress-activity']).toBeUndefined();
+      expect(JSON.stringify(initialized.headers)).not.toContain(canary);
+      const sealedLog = logs.find((log) => log.path === '/api/cds-system/sealed-storage/initialize');
+      expect(sealedLog?.request.headers).toEqual({});
+      expect(JSON.stringify(sealedLog)).not.toContain(canary);
+      expect(JSON.stringify(events)).not.toContain(canary);
+      expect(events.some((event) => event.source === 'sealed-storage-bootstrap')).toBe(true);
+      expect(events.some((event) => event.source === 'api-mutation')).toBe(true);
+    } finally {
+      const restore = (key: string, value: string | undefined) => {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      };
+      restore('CDS_AUTH_MODE', previous.mode);
+      restore('CDS_USERNAME', previous.user);
+      restore('CDS_PASSWORD', previous.pass);
+      restore('CDS_PUBLIC_BASE_URL', previous.publicBaseUrl);
+      restore('CDS_ENV_FILE', previous.envFile);
+      restore('CDS_SECRET_KEY', previous.secret);
+    }
+  });
+
+  describe('environment owner password rotation', () => {
+    const owner = 'fixture-environment-owner';
+    const oldPassword = 'Synthetic-before-Q8a61yR!';
+    const newPassword = 'Synthetic-after-X4c73kD!';
+    const unrelatedPassword = 'Synthetic-stale-Z9u65pL!';
+    const member = 'fixture-local-member';
+    const memberPassword = 'Synthetic-member-V7r32gW!';
+    const nextMemberPassword = 'Synthetic-member-next-P6j17nK!';
+    const agentKey = 'cdsp_rotation_synthetic_project_key';
+    const projectId = 'rotation-fixture-project';
+    const rotatePath = '/api/auth/change-password';
+    const agentHeaders = { 'X-AI-Access-Key': agentKey };
+    const authority = 'https://cds-rotation.example.org';
+    const trustedBrowser = { Host: new URL(authority).host, Origin: authority };
+    const passkeyId = Buffer.from('approved-fixture-device').toString('base64url');
+    const approverName = 'named-admin';
+    let passkeysEnabled = false;
+
+    beforeEach(() => {
+      for (const name of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, name).mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    function configure(enableApproval = false) {
+      passkeysEnabled = enableApproval;
+      const envFile = path.join(tmpDir, 'selected-auth.env');
+      const decoy = path.join(tmpDir, '.cds.env');
+      const content = (password: string) => [
+        '# Synthetic owner configuration',
+        `export CDS_USERNAME="${owner}"`,
+        '',
+        `CDS_PASSWORD='${password}'`,
+        '# Adjacent values retain exact bytes',
+        "export CDS_MODE='standalone'",
+        '',
+      ].join('\n');
+      fs.writeFileSync(envFile, content(oldPassword), { mode: 0o600 });
+      fs.writeFileSync(decoy, content(unrelatedPassword), { mode: 0o600 });
+      vi.stubEnv('CDS_ENV_FILE', envFile);
+      vi.stubEnv('CDS_AUTH_MODE', 'basic');
+      vi.stubEnv('CDS_USERNAME', undefined);
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_MODE', 'standalone');
+      vi.stubEnv('CDS_SSO_ENABLED', 'false');
+      vi.stubEnv('CDS_PASSKEYS_ENABLED', enableApproval ? '1' : undefined);
+      vi.stubEnv('CDS_SYSTEM_PASSWORD_APPROVER_IDS', enableApproval ? passkeyId : undefined);
+      vi.stubEnv('CDS_PUBLIC_BASE_URL', enableApproval ? authority : undefined);
+      loadCdsEnvFile();
+      return { envFile, decoy, content };
+    }
+
+    function createFixtureServer(authStore?: MemoryAuthStore) {
+      return startServer(buildRealServerWithEvents([], state => {
+        if (state.getProject(projectId)) return;
+        const now = new Date().toISOString();
+        state.addProject({ id: projectId, slug: projectId, name: 'Synthetic project', kind: 'git', createdAt: now, updatedAt: now });
+        state.addAgentKey(projectId, { id: 'rotation-fixture-key', label: 'synthetic', scope: 'rw',
+          hash: crypto.createHash('sha256').update(agentKey).digest('hex'), createdAt: now });
+      }, authStore));
+    }
+
+    function login(password: string, username = owner, endpoint = '/api/auth/login') {
+      return requestJson(server!, 'POST', endpoint, { username, password }, passkeysEnabled ? trustedBrowser : {});
+    }
+
+    function browserCookie(loginResponse: HttpResponse, name = 'cds_token') {
+      expect(loginResponse.status).toBe(200);
+      const cookieName = passkeysEnabled ? `__Host-${name}` : name;
+      const cookie = loginResponse.headers['set-cookie']?.find(value => value.startsWith(`${cookieName}=`))?.split(';')[0];
+      expect(Boolean(cookie), 'expected an authenticated browser cookie').toBe(true);
+      return { Cookie: cookie!, ...(passkeysEnabled ? trustedBrowser : {}) };
+    }
+
+    function rotate(before: string, after: string, headers: http.OutgoingHttpHeaders = {}, approval?: unknown) {
+      return requestJson(server!, 'POST', rotatePath, { oldPassword: before, newPassword: after, approval }, headers);
+    }
+
+    async function approvalFixture() {
+      const memory = new MemoryAuthStore();
+      const approver = await memory.createLocalUser({
+        username: approverName, passwordHash: 'unused', passwordSalt: 'unused', isSystemOwner: true,
+      });
+      const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const { x, y } = publicKey.export({ format: 'jwk' });
+      const coseKey = Buffer.concat([
+        Buffer.from('a5010203262001215820', 'hex'), Buffer.from(x!, 'base64url'),
+        Buffer.from('225820', 'hex'), Buffer.from(y!, 'base64url'),
+      ]);
+      const key = { id: passkeyId, counter: 0, userId: approver.id, publicKey: coseKey.toString('base64url'), createdAt: new Date().toISOString() };
+      const authStore = Object.assign(memory, { passkeys: {
+        find: async (id: string) => id === key.id ? { ...key } : null,
+        list: async (id: string) => id === key.userId ? [{ ...key }] : [],
+        insert: async () => {},
+        advanceCounter: async (id: string, previous: number, next: number) => {
+          if (id !== key.id || previous !== key.counter || next <= previous) return false;
+          key.counter = next;
+          return true;
+        },
+      } });
+      server = await createFixtureServer(authStore);
+      const approve = async (browser: ReturnType<typeof browserCookie>, verified = true) => {
+        const response = await requestJson(server!, 'POST', rotatePath + '/approval',
+          { oldPassword, newPassword }, browser);
+        expect(response.status).toBe(200);
+        const { challenge, allowCredentials, userVerification } = JSON.parse(response.body);
+        expect(allowCredentials).toEqual([{ id: passkeyId, type: 'public-key' }]);
+        expect(userVerification).toBe('required');
+        const ticket = response.headers['set-cookie']?.find(value => value.startsWith('__Host-cds-system-password-approval='))?.split(';')[0];
+        expect(Boolean(ticket)).toBe(true);
+        const authenticatorData = Buffer.alloc(37);
+        crypto.createHash('sha256').update(new URL(authority).hostname).digest().copy(authenticatorData);
+        authenticatorData[32] = verified ? 5 : 1;
+        authenticatorData.writeUInt32BE(key.counter + 1, 33);
+        const clientData = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge, origin: authority }));
+        const signedData = Buffer.concat([authenticatorData, crypto.createHash('sha256').update(clientData).digest()]);
+        const signature = crypto.sign('sha256', signedData, privateKey);
+        const assertion = {
+          id: passkeyId, rawId: passkeyId, type: 'public-key', clientExtensionResults: {},
+          response: { authenticatorData: authenticatorData.toString('base64url'), clientDataJSON: clientData.toString('base64url'), signature: signature.toString('base64url') },
+        };
+        return { headers: { ...browser, Cookie: `${browser.Cookie}; ${ticket}` }, assertion };
+      };
+      return { authStore, approver, approve };
+    }
+
+    function machineCredential(password: string) {
+      return { 'X-CDS-Token': crypto.createHash('sha256').update(`cds:${owner}:${password}`).digest('hex') };
+    }
+
+    function checkUnmodified(filename: string, expected: string) {
+      expect(fs.readFileSync(filename, 'utf8') === expected, 'configuration bytes were preserved').toBe(true);
+    }
+
+    function errorCode(response: HttpResponse): unknown {
+      try { return JSON.parse(response.body).code; } catch { return undefined; }
+    }
+
+    it('requires one explicit approval for the exact password and audits the administrator across restart', async () => {
+      const { envFile, decoy, content } = configure(true);
+      const { authStore, approver, approve } = await approvalFixture();
+      const oldBrowser = browserCookie(await login(oldPassword));
+      const oldLegacyLogin = browserCookie(await login(oldPassword, owner, '/api/login'));
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      const localUser = await requestJson(server, 'POST', '/api/auth/users', { username: member, password: memberPassword }, oldBrowser);
+      expect(localUser.status).toBe(201);
+      const memberBrowser = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+
+      expect((await rotate(oldPassword, newPassword, oldBrowser)).status).toBe(403);
+      checkUnmodified(envFile, content(oldPassword));
+      const mismatched = await approve(oldBrowser);
+      expect((await rotate(oldPassword, unrelatedPassword, mismatched.headers, mismatched.assertion)).status).toBe(403);
+      expect((await rotate(oldPassword, newPassword, mismatched.headers, mismatched.assertion)).status).toBe(403);
+      const unverified = await approve(oldBrowser, false);
+      expect((await rotate(oldPassword, newPassword, unverified.headers, unverified.assertion)).status).toBe(403);
+      const rejected = await approve(oldBrowser);
+      expect((await rotate(oldPassword, newPassword, rejected.headers, { ...rejected.assertion, id: 'unlisted-device' })).status).toBe(403);
+      const approved = await approve(oldBrowser);
+      expect((await rotate(oldPassword, newPassword, { ...approved.headers, ...agentHeaders }, approved.assertion)).status).toBe(403);
+      expect((await rotate(oldPassword, newPassword, approved.headers, approved.assertion)).status).toBe(200);
+      const updated = fs.readFileSync(envFile, 'utf8');
+      const passwordAssignment = /^\s*(?:export\s+)?CDS_PASSWORD=/;
+      const withoutRotation = (text: string) => text.split('\n')
+        .filter(line => !passwordAssignment.test(line) && !line.startsWith('# CDS_SYSTEM_PASSWORD_ROTATION ')).join('\n');
+      expect(withoutRotation(updated) === withoutRotation(content(oldPassword)), 'unrelated settings are preserved').toBe(true);
+      expect(updated.split('\n').filter(line => passwordAssignment.test(line)).length).toBe(1);
+      expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
+      checkUnmodified(decoy, content(unrelatedPassword));
+      for (const prior of [oldBrowser, oldLegacyLogin]) expect((await request(server, '/api/me', prior)).status).toBe(401);
+      for (const route of ['/api/auth/login', '/api/login']) {
+        expect((await login(oldPassword, owner, route)).status).toBe(401);
+        expect((await request(server, '/api/me', browserCookie(await login(newPassword, owner, route)))).status).toBe(200);
+      }
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(401);
+      expect((await request(server, '/api/projects', machineCredential(newPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+      const activity = JSON.parse((await request(server, '/api/auth/activity', browserCookie(await login(newPassword)))).body).activity;
+      expect(activity.filter((event: any) => event.action === 'system-password.rotate')).toEqual([
+        expect.objectContaining({ userId: approver.id, userLogin: approverName, at: expect.any(String) }),
+      ]);
+      expect(JSON.stringify(activity)).not.toContain(newPassword);
+      const memberAudit = JSON.parse((await request(server, '/api/auth/activity', memberBrowser)).body).activity;
+      expect(memberAudit.some((event: any) => event.action === 'system-password.rotate')).toBe(false);
+
+      await flushAllJsonStateStores();
+      const previousServer = server;
+      await new Promise<void>(resolve => previousServer.close(() => resolve()));
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      loadCdsEnvFile();
+      server = await createFixtureServer(authStore);
+      expect((await login(oldPassword)).status).toBe(401);
+      expect((await request(server, '/api/me', browserCookie(await login(newPassword)))).status).toBe(200);
+      expect((await request(server, '/api/me', oldBrowser)).status).toBe(401);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+      const afterRestart = JSON.parse((await request(server, '/api/auth/activity', browserCookie(await login(newPassword)))).body).activity;
+      expect(afterRestart.filter((event: any) => event.action === 'system-password.rotate')).toHaveLength(1);
+    });
+
+    it('rejects anonymous, scoped-key, machine, incorrect and weak attempts and preserves local-account password changes', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      for (const headers of [{}, agentHeaders, machineCredential(oldPassword)]) {
+        expect([401, 403]).toContain((await rotate(oldPassword, newPassword, headers)).status);
+        checkUnmodified(envFile, content(oldPassword));
+      }
+      const unavailable = await rotate(oldPassword, newPassword, cookie);
+      expect(unavailable.status).toBe(409);
+      expect(errorCode(unavailable)).toBe('system_password_approval_unavailable');
+      checkUnmodified(envFile, content(oldPassword));
+
+      expect((await requestJson(server, 'POST', '/api/auth/users', {
+        username: member, password: memberPassword, isSystemOwner: true,
+      }, cookie)).status).toBe(201);
+      const local = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+      expect((await request(server, '/api/auth/users', local)).status).toBe(200);
+      expect((await rotate(oldPassword, newPassword, local)).status).toBe(400);
+      expect((await rotate(memberPassword, nextMemberPassword, local)).status).toBe(200);
+      expect((await request(server, '/api/me', local)).status).toBe(401);
+      expect((await login(memberPassword, member)).status).toBe(401);
+      expect((await login(nextMemberPassword, member)).status).toBe(200);
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      checkUnmodified(envFile, content(oldPassword));
+    });
+
+    it('leaves the externally replaced authority and active sessions intact when the file disagrees', async () => {
+      const { envFile, decoy, content } = configure(true);
+      const { approve } = await approvalFixture();
+      const cookie = browserCookie(await login(oldPassword));
+      const approved = await approve(cookie);
+      fs.writeFileSync(envFile, content(unrelatedPassword));
+      const denied = await rotate(oldPassword, newPassword, approved.headers, approved.assertion);
+      expect(denied.status).toBe(409);
+      expect(errorCode(denied) === 'system_password_source_mismatch').toBe(true);
+      checkUnmodified(envFile, content(unrelatedPassword));
+      checkUnmodified(decoy, content(unrelatedPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      expect((await login(oldPassword)).status).toBe(200);
+      expect((await login(newPassword)).status).toBe(401);
+    });
+
+    it('rejects a concurrent writer lock without taking over the selected file', async () => {
+      const { envFile, content } = configure(true);
+      const { approve } = await approvalFixture();
+      const cookie = browserCookie(await login(oldPassword));
+      const approved = await approve(cookie);
+      const lock = `${envFile}.write.lock`;
+      fs.mkdirSync(lock, { mode: 0o700 });
+      fs.writeFileSync(path.join(lock, 'owner'), `${process.pid}\nsynthetic-owner\n`, { mode: 0o600 });
+      expect((await rotate(oldPassword, newPassword, approved.headers, approved.assertion)).status).toBe(409);
+      expect(fs.existsSync(path.join(lock, 'owner'))).toBe(true);
+      checkUnmodified(envFile, content(oldPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+    });
   });
 
   it('real createServer gates protected routes when SSO is the only login method', async () => {
@@ -540,6 +1268,98 @@ describe('Server route ordering (regression)', () => {
       delete process.env.CDS_SSO_TOKEN_URL;
       delete process.env.CDS_SSO_CLIENT_ID;
       delete process.env.CDS_SSO_CLIENT_SECRET;
+    }
+  });
+
+  it('reports human approval capabilities separately from project-key authentication', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'basic'); vi.stubEnv('CDS_USERNAME', 'operator'); vi.stubEnv('CDS_PASSWORD', 'secret'); vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    try {
+      const key = 'cdsp_approval_fixture-project-key';
+      const app = buildRealServerWithEvents([], state => {
+        state.addProject({ id: 'approval-project', slug: 'approval-project', name: 'Approval Project', kind: 'git', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        state.addAgentKey('approval-project', { id: 'approval-key', label: 'fixture', scope: 'rw', hash: crypto.createHash('sha256').update(key).digest('hex'), createdAt: new Date().toISOString() });
+      });
+      server = await startServer(app);
+      const machine = { 'X-AI-Access-Key': key };
+      const machineStatus = await request(server, '/api/auth/status', machine);
+      expect(machineStatus.status).toBe(200);
+      expect(JSON.parse(machineStatus.body).approvalCapabilities).toEqual({ operator: false, accessRequests: false });
+      expect((await request(server, '/api/cds-system/operator/requests', machine)).status).toBe(403);
+      expect((await request(server, '/api/access-requests', machine)).status).toBe(403);
+      const login = await requestJson(server, 'POST', '/api/login', { username: 'operator', password: 'secret' });
+      expect(login.status).toBe(200);
+      const raw = login.headers['set-cookie']; const cookie = (Array.isArray(raw) ? raw[0] : String(raw)).split(';')[0];
+      const human = { Cookie: cookie };
+      expect(JSON.parse((await request(server, '/api/auth/status', human)).body).approvalCapabilities)
+        .toEqual({ operator: true, accessRequests: true });
+      expect((await request(server, '/api/cds-system/operator/requests', human)).status).toBe(200);
+      expect((await request(server, '/api/access-requests', human)).status).toBe(200);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('keeps disabled-mode access requests available without claiming human operator permission', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'disabled'); vi.stubEnv('CDS_USERNAME', ''); vi.stubEnv('CDS_PASSWORD', ''); vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    try {
+      server = await startServer(buildRealServerWithEvents([]));
+      expect(JSON.parse((await request(server, '/api/auth/status')).body).approvalCapabilities)
+        .toEqual({ operator: false, accessRequests: true });
+      expect((await request(server, '/api/cds-system/operator/requests')).status).toBe(403);
+      expect((await request(server, '/api/access-requests')).status).toBe(200);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it.each(['basic', 'sso-only'] as const)('keeps %s Ticket SSO project access without granting system ownership', async (mode) => {
+    const previousUser = process.env.CDS_USERNAME;
+    const previousPassword = process.env.CDS_PASSWORD;
+    try {
+      if (mode === 'basic') {
+        process.env.CDS_USERNAME = 'operator';
+        process.env.CDS_PASSWORD = 'secret';
+      } else {
+        delete process.env.CDS_USERNAME;
+        delete process.env.CDS_PASSWORD;
+      }
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true,
+        data: { subject: 'provider:compat-user', username: 'sso-user', displayName: 'SSO User' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+      const app = buildRealServerWithEvents([], state => {
+        state.addProject({ id: 'sso-compat-project', slug: 'sso-compat-project', name: 'SSO兼容项目', kind: 'git',
+          dockerNetwork: 'sso-compat', legacyFlag: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        state.addBranch({ id: 'sso-compat-branch', projectId: 'sso-compat-project', branch: 'main', status: 'idle',
+          worktreePath: tmpDir, services: {}, createdAt: new Date().toISOString() });
+        state.setSsoConfig({ enabled: true, providerId: 'ticket-sso', label: '使用 SSO 登录',
+          authorizationUrl: 'https://provider.example/authorize', tokenUrl: 'https://provider.example/token',
+          clientId: 'cds-console', clientSecret: 'fake-sso-secret', defaultRedirect: '/project-list' });
+      });
+      server = await startServer(app);
+      const start = await request(server, '/api/auth/sso/start');
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      expect(state).toBeTruthy();
+      const exchange = await requestJson(server, 'POST', '/api/auth/sso/exchange', { code: 'a'.repeat(43), state });
+      expect(exchange.status).toBe(200);
+      const rawCookie = Array.isArray(exchange.headers['set-cookie']) ? exchange.headers['set-cookie'][0] : String(exchange.headers['set-cookie'] || '');
+      const headers = { Cookie: rawCookie.split(';')[0] };
+      const status = await request(server, '/api/auth/status', headers);
+      expect(JSON.parse(status.body).user).toMatchObject({ authProvider: 'ticket-sso', isSystemOwner: false });
+      expect(JSON.parse(status.body).approvalCapabilities).toEqual({ operator: false, accessRequests: mode === 'sso-only' });
+      const projects = await request(server, '/api/projects', headers);
+      expect(projects.status).toBe(200);
+      expect(JSON.parse(projects.body).projects.map((project: { id: string }) => project.id)).toContain('sso-compat-project');
+      const branches = await request(server, '/api/branches?project=sso-compat-project', headers);
+      expect(branches.status).toBe(200);
+      expect(JSON.parse(branches.body).branches.map((branch: { id: string }) => branch.id)).toEqual(['sso-compat-branch']);
+      expect((await request(server, '/api/projects/sso-compat-project', headers)).status).toBe(200);
+      expect((await request(server, '/api/auth/sso/config', headers)).status).toBe(403);
+      expect((await requestJson(server, 'PUT', '/api/auth/sso/config', { enabled: false }, headers)).status).toBe(403);
+      const logout = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, headers);
+      expect(logout.status).toBe(200);
+      expect((await request(server, '/api/projects', headers)).status).toBe(401);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = previousUser;
+      if (previousPassword === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = previousPassword;
     }
   });
 
@@ -654,11 +1474,12 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
-  it('invalidates the persisted GitHub session when the unified SSO logout route is used', async () => {
+  it('preserves and invalidates the existing HTTPS GitHub session when passkeys are disabled', async () => {
     try {
       process.env.CDS_AUTH_MODE = 'github';
       process.env.CDS_GITHUB_CLIENT_ID = 'test-client';
       process.env.CDS_GITHUB_CLIENT_SECRET = 'test-secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
       const authStore = new MemoryAuthStore();
       const user = await authStore.upsertUser({
         githubId: 42,
@@ -677,6 +1498,13 @@ describe('Server route ordering (regression)', () => {
       const app = buildRealServerWithEvents([], undefined, authStore);
       server = await startServer(app);
 
+      const existing = await request(server, '/api/me', { Cookie: `cds_gh_session=${session.token}` });
+      expect(existing.status).toBe(200);
+      expect(JSON.parse(existing.body).user.id).toBe(user.id);
+      const siteStatus = await request(server, '/api/hosted-sso/panel/status');
+      expect(siteStatus.status).toBe(200);
+      expect(JSON.parse(siteStatus.body)).toEqual({ enabled: false });
+
       const response = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, {
         Cookie: `cds_gh_session=${session.token}; cds_token=legacy-basic-token`,
       });
@@ -685,14 +1513,78 @@ describe('Server route ordering (regression)', () => {
       expect(await authStore.findSessionByToken(session.token)).toBeNull();
       const cleared = response.headers['set-cookie'] as string[];
       expect(cleared).toEqual(expect.arrayContaining([
-        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
-        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0.*; Secure/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0.*; Secure/),
       ]));
     } finally {
       delete process.env.CDS_AUTH_MODE;
       delete process.env.CDS_GITHUB_CLIENT_ID;
       delete process.env.CDS_GITHUB_CLIENT_SECRET;
+      delete process.env.CDS_PUBLIC_BASE_URL;
+    }
+  });
+
+  it('requires recent Passkey verification for release, project grants and secret reads on the CDS authority', async () => {
+    const authority = 'https://cds.example.org';
+    vi.stubEnv('CDS_AUTH_MODE', 'github');
+    vi.stubEnv('CDS_GITHUB_CLIENT_ID', 'test-client');
+    vi.stubEnv('CDS_GITHUB_CLIENT_SECRET', 'test-secret');
+    vi.stubEnv('CDS_PUBLIC_BASE_URL', authority);
+    vi.stubEnv('CDS_PASSKEYS_ENABLED', '1');
+    try {
+      const authStore = Object.assign(new MemoryAuthStore(), {
+        passkeys: {
+          find: async () => null,
+          list: async () => [],
+          insert: async () => {},
+          advanceCounter: async () => false,
+        },
+      });
+      const user = await authStore.upsertUser({
+        githubId: 42, githubLogin: 'verification-user', email: null, name: 'Verification User', avatarUrl: null, orgs: [],
+      });
+      const session = { userId: user.id, ttlMs: 3600_000, userAgent: 'integration-test', ipAddress: '127.0.0.1' };
+      const password = await authStore.createSession(session);
+      const verified = { ...session, passkeyAuthenticated: true as const };
+      const stale = await authStore.createSession(verified, new Date(Date.now() - 360_000));
+      const fresh = await authStore.createSession(verified);
+      const listener = await startServer(buildRealServerWithEvents([], undefined, authStore));
+      server = listener;
+      const authorityHeaders = { Host: new URL(authority).host, Origin: authority };
+      const oldCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `cds_gh_session=${fresh.token}` });
+      expect(oldCookie.status).toBe(401);
+      const verifiedCookie = await request(listener, '/api/me', { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` });
+      expect(verifiedCookie.status).toBe(200);
+      const browserSession = { ...authorityHeaders, Cookie: `__Host-cds_gh_session=${fresh.token}` };
+      expect((await request(listener, '/_cds/api/me', browserSession)).status).toBe(200);
+      const sibling = await request(listener, '/_cds/api/me', {
+        ...browserSession, Origin: 'https://preview.example.org', 'Sec-Fetch-Site': 'same-site',
+      });
+      expect(sibling.status).toBe(403);
+      expect(JSON.parse(sibling.body).code).toBe('cds_browser_origin_required');
+      for (const [method, route] of [
+        ['POST', '/api/releases/branches/fixture-missing/runs'],
+        ['PUT', '/api/auth/users/fixture-missing/projects'],
+        ['GET', '/api/branches/fixture-missing/effective-env/reveal'],
+      ] as const) {
+        for (const { token } of [password, stale, fresh]) {
+          const headers = {
+            Host: new URL(authority).host,
+            Origin: authority,
+            Cookie: `__Host-cds_gh_session=${token}`,
+          };
+          const response = method === 'GET' ? await request(listener, route, headers) : await requestJson(listener, method, route, {}, headers);
+          if (token === fresh.token) {
+            expect(response.body).not.toContain('passkey_verification_required');
+          } else {
+            expect(response.status).toBe(403);
+            expect(JSON.parse(response.body).code).toBe('passkey_verification_required');
+          }
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
@@ -1243,6 +2135,29 @@ describe('Server route ordering (regression)', () => {
     expect(unknown.body).not.toContain('DASHBOARD');
   });
 
+  it('react mount: forbids framing every shell entry while preserving report raw embedding policy', async () => {
+    const app = buildApp();
+    const reactDist = path.join(tmpDir, 'react-dist');
+    fs.mkdirSync(reactDist, { recursive: true });
+    fs.writeFileSync(path.join(reactDist, 'index.html'), '<html><head></head><body>CONTROL_PLANE</body></html>');
+    app.get('/api/reports/fixture/raw', (_req, res) => {
+      res.setHeader('Content-Security-Policy', 'sandbox allow-scripts');
+      res.type('html').send('<p>REPORT_CONTENT</p>');
+    });
+    installSpaFallback(app, webDir, reactDist);
+    server = await startServer(app);
+    for (const route of ['/', '/project-list', '/branch-list', '/release-center', '/reports', '/unknown-entry']) {
+      const page = await request(server, route);
+      expect(page.status).toBe(200);
+      expect(page.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+      expect(page.headers['x-frame-options']).toBe('DENY');
+    }
+    const raw = await request(server, '/api/reports/fixture/raw');
+    expect(raw.body).toContain('REPORT_CONTENT');
+    expect(raw.headers['content-security-policy']).toBe('sandbox allow-scripts');
+    expect(raw.headers['x-frame-options']).toBeUndefined();
+  });
+
   it('react mount: serves a missing hashed asset from the previous web generation', async () => {
     const app = buildApp();
     const reactDist = path.join(tmpDir, 'react-dist');
@@ -1263,6 +2178,9 @@ describe('Server route ordering (regression)', () => {
     expect(asset.contentType).toContain('application/javascript');
     expect(asset.body).toContain('generation = "previous"');
     expect(asset.headers['cache-control']).toContain('immutable');
+    const missing = await request(server, '/assets/ProjectListPage-not-retained.js');
+    expect(missing.status).toBe(404);
+    expect(missing.body).not.toContain('CURRENT');
   });
 
   it('react mount: serves the previous index during the directory switch gap', async () => {

@@ -257,14 +257,14 @@ public sealed class GitHubPrClient : IGitHubClient
                 throw GitHubException.TokenExpired();
 
             case HttpStatusCode.Forbidden:
-                if (IsRateLimited(prResp))
+                if (GitHubRateLimit.IsExhausted(prResp))
                 {
-                    throw GitHubException.RateLimited(ExtractResetHint(prResp));
+                    throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(prResp));
                 }
                 throw GitHubException.Forbidden();
 
             case (HttpStatusCode)429:
-                throw GitHubException.RateLimited(ExtractResetHint(prResp));
+                throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(prResp));
 
             case HttpStatusCode.NotFound:
                 await DisambiguateNotFoundAsync(client, owner, repo, number, ct);
@@ -298,9 +298,9 @@ public sealed class GitHubPrClient : IGitHubClient
         }
         if (resp.StatusCode == HttpStatusCode.Forbidden)
         {
-            if (IsRateLimited(resp))
+            if (GitHubRateLimit.IsExhausted(resp))
             {
-                throw GitHubException.RateLimited(ExtractResetHint(resp));
+                throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(resp));
             }
             // 能看到"被禁止"说明仓库存在
             throw GitHubException.PrNumberInvalid(owner, repo, number);
@@ -311,33 +311,6 @@ public sealed class GitHubPrClient : IGitHubClient
         }
         // 其他异常（5xx 等）
         throw GitHubException.Upstream((int)resp.StatusCode);
-    }
-
-    private static bool IsRateLimited(HttpResponseMessage resp)
-    {
-        if (resp.Headers.TryGetValues("X-RateLimit-Remaining", out var remaining))
-        {
-            var first = remaining.FirstOrDefault();
-            if (first != null && int.TryParse(first, out var r) && r == 0)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static string? ExtractResetHint(HttpResponseMessage resp)
-    {
-        if (resp.Headers.TryGetValues("X-RateLimit-Reset", out var reset))
-        {
-            var first = reset.FirstOrDefault();
-            if (first != null && long.TryParse(first, out var unix))
-            {
-                var when = DateTimeOffset.FromUnixTimeSeconds(unix).ToLocalTime();
-                return when.ToString("HH:mm:ss");
-            }
-        }
-        return null;
     }
 
     private static PrReviewSnapshot MapToSnapshot(GitHubPullRequestDto dto)

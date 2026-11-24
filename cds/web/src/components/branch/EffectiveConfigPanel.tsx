@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * EffectiveConfigPanel — 分支生效配置检查器(波2)。
  *
@@ -11,9 +12,11 @@
  * 挂载点:BranchDetailDrawer 的「配置」tab + BranchDetailPage。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Layers, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Layers, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
+import { DbProbePanel } from '@/components/branch/DbProbePanel';
 
 type EnvSource =
   | 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch'
@@ -41,6 +44,8 @@ interface EffectiveConfigProfile {
   dbScope: 'shared' | 'per-branch';
   dbScopeSource: 'branch-override' | 'baseline' | 'default';
   envProvenance: EnvKeyProvenance[];
+  /** 分支独立库没跟随的连接串（收敛 2）：库名段指向别的库，CDS 没改它 */
+  dbUrlUnfollowed?: Array<{ key: string; reason: string }>;
   envError?: string;
 }
 
@@ -74,22 +79,22 @@ type PanelState =
 const SOURCE_META: Record<EnvSource, { label: string; cls: string }> = {
   'cds-builtin': { label: 'CDS 注入', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
   'cds-derived': { label: '项目身份', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
-  mirror: { label: '镜像加速', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' },
-  global: { label: '全局', cls: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300' },
-  project: { label: '项目', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
-  branch: { label: '分支', cls: 'border-amber-500/45 bg-amber-500/15 text-amber-700 dark:text-amber-300' },
+  mirror: { label: '镜像加速', cls: 'border-warn/30 bg-warn-soft text-warn' },
+  global: { label: '全局', cls: 'border-info/30 bg-info-soft text-info' },
+  project: { label: '项目', cls: 'border-ok/30 bg-ok-soft text-ok' },
+  branch: { label: '分支', cls: 'border-warn/45 bg-warn-soft text-warn' },
   profile: { label: '服务底座', cls: 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
   'extra-service': { label: '临时服务', cls: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' },
-  'branch-override': { label: '分支覆盖', cls: 'border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300' },
+  'branch-override': { label: '分支覆盖', cls: 'border-warn/40 bg-warn-soft text-warn' },
   'deploy-mode': { label: '部署模式', cls: 'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300' },
   'platform-injected': { label: '平台注入', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
-  'per-branch-db': { label: '分支库改写', cls: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' },
+  'per-branch-db': { label: '分支库改写', cls: 'border-ok/40 bg-ok-soft text-ok' },
 };
 
 function SourceBadge({ source }: { source: EnvSource }): JSX.Element {
   const meta = SOURCE_META[source] || { label: source, cls: 'border-[hsl(var(--hairline))]' };
   return (
-    <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[11px] leading-none ${meta.cls}`}>
+    <span className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[0.6875rem] leading-none ${meta.cls}`}>
       {meta.label}
     </span>
   );
@@ -110,13 +115,13 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
           {profile.isExtra ? <SourceBadge source="extra-service" /> : null}
           {profile.hasOverride ? <SourceBadge source="branch-override" /> : null}
           {profile.dbScope === 'per-branch' ? (
-            <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+            <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">
               分支独立库{profile.dbScopeSource === 'branch-override' ? '(本分支覆盖)' : ''}
             </span>
           ) : null}
           <span className="font-mono">:{profile.containerPort}</span>
-          {profile.activeDeployMode ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[11px]">{profile.activeDeployMode}</span> : null}
-          <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[11px]">env×{profile.envProvenance.length}</span>
+          {profile.activeDeployMode ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.6875rem]">{profile.activeDeployMode}</span> : null}
+          <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.6875rem]">env×{profile.envProvenance.length}</span>
         </span>
       </button>
       {open ? (
@@ -125,13 +130,23 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
             镜像 {profile.dockerImage}{profile.prebuilt ? '(预构建)' : ''}
           </div>
           {profile.envError ? (
-            <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <div className="mb-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">
               该服务 env 解析失败(部署时也会以同样原因被拦):{profile.envError}
+            </div>
+          ) : null}
+          {profile.dbUrlUnfollowed && profile.dbUrlUnfollowed.length > 0 ? (
+            <div className="mb-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn" data-db-url-unfollowed={profile.dbUrlUnfollowed.length}>
+              <div className="font-medium">连接串未跟随分支独立库：</div>
+              <ul className="mt-1 space-y-0.5">
+                {profile.dbUrlUnfollowed.map((u) => (
+                  <li key={u.key}><span className="font-mono">{u.key}</span>：{u.reason}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
           {profile.envProvenance.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] text-xs">
+              <table className="w-full min-w-[32.5rem] text-xs">
                 <thead>
                   <tr className="text-left text-muted-foreground">
                     <th className="py-1 pr-3 font-medium">变量</th>
@@ -143,14 +158,15 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
                 <tbody>
                   {profile.envProvenance.map((p) => (
                     <tr key={p.key} className="border-t border-[hsl(var(--hairline))]/60 align-top">
-                      <td className="max-w-[180px] truncate py-1.5 pr-3 font-mono" title={p.key}>{p.key}</td>
-                      <td className="max-w-[220px] truncate py-1.5 pr-3 font-mono text-muted-foreground" title={p.value}>
+                      <td className="max-w-[11.25rem] truncate py-1.5 pr-3 font-mono" title={p.key}>{p.key}</td>
+                      <td className="max-w-[13.75rem] truncate py-1.5 pr-3 font-mono text-muted-foreground" title={p.value}>
                         {p.value}
-                        {p.templated ? <span className="ml-1 rounded border border-blue-500/30 bg-blue-500/10 px-1 text-[10px] text-blue-700 dark:text-blue-300">模板展开</span> : null}
+                        {p.templated ? <span className="ml-1 rounded border border-info/30 bg-info-soft px-1 text-[0.625rem] text-info">模板展开</span> : null}
                       </td>
                       <td className="py-1.5 pr-3">
                         <SourceBadge source={p.source} />
-                        {p.detail === 'per-branch-db-suffix' ? <span className="ml-1 text-[10px] text-muted-foreground">库名加分支后缀</span> : null}
+                        {p.detail === 'per-branch-db-suffix' ? <span className="ml-1 text-[0.625rem] text-muted-foreground">库名加分支后缀</span> : null}
+                        {p.detail === 'per-branch-db-url' ? <span className="ml-1 text-[0.625rem] text-ok">连接串已跟随库名</span> : null}
                       </td>
                       <td className="py-1.5">
                         {p.shadowed && p.shadowed.length > 0 ? (
@@ -176,6 +192,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
 }
 
 export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<PanelState>({ status: 'idle' });
   const [copying, setCopying] = useState(false);
 
@@ -227,12 +244,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
         </Button>
       </div>
 
-      {state.status === 'loading' || state.status === 'idle' ? (
-        <div className="flex items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-4 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在解析生效配置…
-        </div>
-      ) : null}
+      {state.status === 'loading' || state.status === 'idle' ? <ContentLoading label="读取生效配置" variant="rows" /> : null}
 
       {state.status === 'error' ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -252,7 +264,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                 {!state.data.derivedFrom.sourceStillExists ? <span className="ml-1">;来源分支已删除</span> : null}
                 <span className="ml-1">配置为快照拷贝,两边各自独立。</span>
               </div>
-              {state.data.derivedFrom.sourceStillExists ? (
+              {state.data.derivedFrom.sourceStillExists && canManageConsole ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -300,6 +312,9 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
             ) : null}
           </div>
 
+          {/* 收敛 0：配置说的 / 容器持有 / 连上的库并排——上面的溯源只是「配置说的」，这里给实测值 */}
+          <DbProbePanel branchId={branchId} onToast={onToast} />
+
           {/* CDS 预计做什么(部署计划预览,记录态) */}
           <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -310,9 +325,9 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                 <div key={c.profileId} className="flex flex-wrap items-center gap-1.5">
                   <span className="text-muted-foreground">起容器</span>
                   <span className="font-mono">{c.containerName}</span>
-                  <span className="max-w-[240px] truncate font-mono text-muted-foreground" title={c.dockerImage}>({c.dockerImage}:{c.containerPort})</span>
+                  <span className="max-w-[15rem] truncate font-mono text-muted-foreground" title={c.dockerImage}>({c.dockerImage}:{c.containerPort})</span>
                   {c.isExtra ? <SourceBadge source="extra-service" /> : null}
-                  {c.prebuilt ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px]">预构建</span> : null}
+                  {c.prebuilt ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem]">预构建</span> : null}
                 </div>
               ))}
               <div className="flex flex-wrap items-center gap-1.5">
@@ -336,7 +351,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                   ))}
                 </div>
               ) : null}
-              <div className="pt-1 text-[11px] text-muted-foreground">
+              <div className="pt-1 text-[0.6875rem] text-muted-foreground">
                 以上基于当前记录状态推算;共享基础设施(数据库/缓存)为项目级容器,所有分支共用同一实例。
               </div>
             </div>

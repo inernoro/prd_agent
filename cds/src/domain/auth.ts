@@ -20,7 +20,7 @@
  * Optional for backward compatibility: existing OAuth users persisted before
  * this field existed read as `undefined`, which callers treat as `github`.
  */
-export type CdsAuthProvider = 'github' | 'local' | 'sso';
+export type CdsAuthProvider = 'github' | 'local' | 'legacy' | 'sso';
 
 /** A CDS user. Sourced from GitHub OAuth, or provisioned as a local account. */
 export interface CdsUser {
@@ -87,6 +87,8 @@ export interface CdsSession {
   userId: string;
   /** ISO timestamp when the session was created. */
   createdAt: string;
+  /** True when the session started with verified WebAuthn user verification. */
+  passkeyAuthenticated?: true;
   /** ISO timestamp when the session expires (TTL in P2, mongo TTL index in P3). */
   expiresAt: string;
   /** Last time this session made a request. */

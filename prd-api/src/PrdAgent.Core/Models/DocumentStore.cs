@@ -54,7 +54,7 @@ public class DocumentStore
     /// 缺省时前端按 tag 名哈希自动分色。详见 prd-admin/src/lib/tagPalette.ts。</summary>
     public Dictionary<string, string> TagColors { get; set; } = new();
 
-    /// <summary>空间内文档数量（冗余计数，便于列表展示）</summary>
+    /// <summary>空间内条目数量（含文件夹及订阅目录，沿用创建流程的冗余计数）</summary>
     public int DocumentCount { get; set; }
 
     /// <summary>点赞数（冗余计数，便于列表排序）</summary>
@@ -111,6 +111,18 @@ public class DocumentStore
     public string? PeerSyncLastResult { get; set; }
 
     /// <summary>
+    /// 这个库上一次「CDS 验收报告导入」是从哪个 CDS 拉的。
+    ///
+    /// **单独一个字段，不复用 `PeerSyncNodeBaseUrl`。** 那个字段归「知识库跨库同步」
+    /// 那套功能所有：同一个库若同时走过 peer-sync，`MarkPeerSyncAsync` 会把它改写成
+    /// 对端 MAP 的地址；每小时的 CDS 报告同步再拿它当 CDS 源去解析凭据，必然找不到
+    /// 对应的 active 连接，于是这个库每小时被静默跳过一次（Codex review P2）。
+    /// 两套功能各记各的来源，谁也别动谁的状态。
+    /// </summary>
+    public string? CdsReportSourceBaseUrl { get; set; }
+
+
+    /// <summary>
     /// 是否开启后台自动同步（用户在「同步中心」显式开启）。开启后 PeerSyncScheduleWorker 按
     /// PeerSyncIntervalMinutes 周期复用最近一次同步的对端 + 方向，自动 push/pull/both（非破坏性，绝不删条目）。
     /// 默认 false —— 历史上手动同步过一次的库不会被动开始发流量，避免「意料之外」的对端请求。
@@ -155,6 +167,15 @@ public class DocumentStore
     /// 非空时从个人知识库列表隐藏，只在 shitu-agent 内嵌知识库 tab 访问。
     /// </summary>
     public string? ShituCategoryRef { get; set; }
+
+    /// <summary>回收状态；null 为正常数据，恢复时只解除此标记。</summary>
+    public DocumentTrashState? Trash { get; set; }
+
+    /// <summary>回收操作的跨实例互斥租约，不改变正常编辑权限。</summary>
+    public string? TrashLeaseToken { get; set; }
+    public DateTime? TrashLeaseUntil { get; set; }
+    /// <summary>尚未完成的回收计数回执；与计数原子写入，完成后移除。</summary>
+    public List<string> TrashCountReceipts { get; set; } = new();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

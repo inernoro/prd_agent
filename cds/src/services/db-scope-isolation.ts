@@ -30,19 +30,12 @@
  *
  * 保留旧无前缀的 key 是为了向后兼容 Phase 8.8 之前导入的项目。
  */
-export const PER_BRANCH_DB_ENV_KEYS = [
-  // Phase 8.8 之后:CDS_* 前缀(cdscli scan 生成的标准命名)
-  'CDS_MYSQL_DATABASE',
-  'CDS_POSTGRES_DB',
-  'CDS_MARIADB_DATABASE',
-  'CDS_MONGO_INITDB_DATABASE',
-  // 向后兼容:Phase 8.8 之前导入的项目用的无前缀名
-  'MYSQL_DATABASE',
-  'MARIADB_DATABASE',
-  'POSTGRES_DB',
-  'POSTGRESQL_DB',
-  'MONGO_INITDB_DATABASE',
-];
+import {
+  PER_BRANCH_DB_ENV_KEYS, classifyDbEnvKeys, isDbUrl, dbUrlDbSegment, rewriteRelationalUrlDb,
+} from './db-env-keys.js';
+
+// 白名单本体在 db-env-keys.ts（与分类器同源）；这里保留同名导出，老调用方不必改 import
+export { PER_BRANCH_DB_ENV_KEYS } from './db-env-keys.js';
 
 /**
  * 把 git branch name 规范化成 DNS-friendly slug,与 preview-slug.ts 的 slugify 一致风格,
@@ -78,18 +71,106 @@ export function applyPerBranchDbIsolation(
   branch: string,
 ): Record<string, string> {
   if (dbScope !== 'per-branch') return env;
-  const slug = slugifyBranchForDb(branch);
-  if (!slug) return env;
-  const suffix = `_${slug}`;
+  const rows = explainPerBranchDbIsolation(env, dbScope, branch);
+  if (rows.length === 0) return env;
   const result: Record<string, string> = { ...env };
-  for (const key of PER_BRANCH_DB_ENV_KEYS) {
-    const original = result[key];
-    if (typeof original !== 'string' || original === '') continue;
-    // 幂等:已含 _<slug> 后缀就不重复加
-    if (original.endsWith(suffix)) continue;
-    result[key] = `${original}${suffix}`;
+  for (const row of rows) {
+    if (row.to !== undefined) result[row.key] = row.to;
   }
   return result;
+}
+
+export type PerBranchDbRewriteKind =
+  /** 白名单库名变量加后缀 */
+  | 'db-name-suffix'
+  /** 框架 / 引擎中立库名变量：已识别，按项目约定不加后缀 */
+  | 'db-name-kept'
+  /** 连接串库名段跟着同名库名变量一起加了后缀（或服务只有硬编码连接串，直接加后缀） */
+  | 'url-followed'
+  /** 连接串库名段是 ${...} 模板，展开后自然跟随，不动 */
+  | 'url-template'
+  /** 连接串库名段对不上任何库名变量（指向别的库）——不动，但必须让用户看见 */
+  | 'url-unfollowed'
+  /** 连接串跟着的是不加后缀的框架变量，同样不动（保持一致） */
+  | 'url-kept';
+
+export interface PerBranchDbRewriteRow {
+  key: string;
+  kind: PerBranchDbRewriteKind;
+  from: string;
+  /** 有改写才有 to */
+  to?: string;
+  reason?: string;
+}
+
+const DB_SEGMENT_SAFE = /^[A-Za-z0-9_]+$/;
+
+/**
+ * 分支独立库会对这份 env 的每个库相关变量做什么（收敛 2 的 SSOT；applyPerBranchDbIsolation 只是
+ * 把这里的 to 套回去）。规则：
+ *   1. 白名单库名变量加 `_<slug>` 后缀；框架 / 引擎中立变量只识别不改（按项目约定）。
+ *   2. 数据库连接串（mysql / mariadb / postgres / jdbc:* / mongodb）的库名段：
+ *      - 等于某个**被改写**变量的原值 → 跟着改成同一个新库名；
+ *      - 等于某个**不改写**变量的值 → 不动（url-kept，与变量一致）；
+ *      - 服务里没有任何库名变量、只有硬编码连接串 → 直接给库名段加后缀（此前这类项目的
+ *        分支独立库是假的：变量改了，应用读的串没改）；
+ *      - 是 ${...} 模板 → 不动，展开后自然跟随；
+ *      - 对不上任何库名变量 → 不动，报 url-unfollowed 让配置检查器标「连接串未跟随」。
+ *   3. 幂等：已带后缀的一律不重复加。
+ */
+export function explainPerBranchDbIsolation(
+  env: Record<string, string>,
+  dbScope: 'shared' | 'per-branch' | undefined,
+  branch: string,
+): PerBranchDbRewriteRow[] {
+  if (dbScope !== 'per-branch') return [];
+  const slug = slugifyBranchForDb(branch);
+  if (!slug) return [];
+  const suffix = `_${slug}`;
+  const rows: PerBranchDbRewriteRow[] = [];
+  const classified = classifyDbEnvKeys(env);
+  // 原值 → 新值（被改写的）；原值 → 原值（保持的）
+  const rewrittenValues = new Map<string, string>();
+  const keptValues = new Set<string>();
+  for (const k of classified) {
+    const original = env[k.key];
+    if (k.rewritten) {
+      const to = original.endsWith(suffix) ? original : `${original}${suffix}`;
+      if (to !== original) rows.push({ key: k.key, kind: 'db-name-suffix', from: original, to });
+      rewrittenValues.set(original, to);
+      if (original.endsWith(suffix)) rewrittenValues.set(original, original);
+    } else {
+      rows.push({ key: k.key, kind: 'db-name-kept', from: original, reason: '已识别，按项目约定不加后缀' });
+      keptValues.add(original);
+    }
+  }
+  const hasDbNameKeys = classified.length > 0;
+  for (const [key, value] of Object.entries(env)) {
+    if (!isDbUrl(value)) continue;
+    const segment = dbUrlDbSegment(value);
+    if (!segment) continue;
+    if (segment.includes('${')) { rows.push({ key, kind: 'url-template', from: value }); continue; }
+    if (!DB_SEGMENT_SAFE.test(segment)) continue;
+    if (segment.endsWith(suffix)) continue; // 幂等
+    const target = rewrittenValues.get(segment);
+    if (target !== undefined) {
+      if (target === segment) continue;
+      const to = rewriteRelationalUrlDb(value, segment, target);
+      if (to) rows.push({ key, kind: 'url-followed', from: value, to });
+      continue;
+    }
+    if (keptValues.has(segment)) { rows.push({ key, kind: 'url-kept', from: value, reason: '库名变量按项目约定不加后缀，连接串保持一致' }); continue; }
+    if (!hasDbNameKeys) {
+      const to = rewriteRelationalUrlDb(value, segment, `${segment}${suffix}`);
+      if (to) rows.push({ key, kind: 'url-followed', from: value, to });
+      continue;
+    }
+    rows.push({
+      key, kind: 'url-unfollowed', from: value,
+      reason: `连接串里的库名 ${segment} 对不上本服务任何库名变量，分支独立库没有改它——请确认它是否该跟随，或改用 \${变量} 引用`,
+    });
+  }
+  return rows;
 }
 
 /**
@@ -103,16 +184,7 @@ export function previewPerBranchDbDiff(
   dbScope: 'shared' | 'per-branch' | undefined,
   branch: string,
 ): Array<{ key: string; from: string; to: string }> {
-  if (dbScope !== 'per-branch') return [];
-  const slug = slugifyBranchForDb(branch);
-  if (!slug) return [];
-  const suffix = `_${slug}`;
-  const diffs: Array<{ key: string; from: string; to: string }> = [];
-  for (const key of PER_BRANCH_DB_ENV_KEYS) {
-    const original = env[key];
-    if (typeof original !== 'string' || original === '') continue;
-    if (original.endsWith(suffix)) continue;
-    diffs.push({ key, from: original, to: `${original}${suffix}` });
-  }
-  return diffs;
+  return explainPerBranchDbIsolation(env, dbScope, branch)
+    .filter((r): r is PerBranchDbRewriteRow & { to: string } => r.to !== undefined)
+    .map((r) => ({ key: r.key, from: r.from, to: r.to }));
 }

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Services.AgentTools;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
@@ -34,6 +35,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly IDynamicSidecarRegistry _registry;
     private readonly IConfiguration _configuration;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ITaskScopedRuntimeGrantIssuer? _runtimeGrantIssuer;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
@@ -42,7 +44,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         IDynamicSidecarRegistry registry,
         IConfiguration configuration,
         IHttpContextAccessor httpContextAccessor,
-        ILogger<ClaudeSidecarRouter> logger)
+        ILogger<ClaudeSidecarRouter> logger,
+        ITaskScopedRuntimeGrantIssuer? runtimeGrantIssuer = null)
     {
         _httpFactory = httpFactory;
         _options = options;
@@ -51,6 +54,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         _configuration = configuration;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
+        _runtimeGrantIssuer = runtimeGrantIssuer;
     }
 
     public bool IsConfigured =>
@@ -68,6 +72,22 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         SidecarRunRequest request,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // 所有现有与未来的侧车业务都先进入平台许可。issuer 只在已验证任务下冻结模型并换短 key。
+        TaskExecutionAdmissionException? rejection = null;
+        try
+        {
+            if (_runtimeGrantIssuer is null)
+                throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
+                    "执行器尚未接入平台任务保护，本次执行已停止；请稍后重试或联系管理员。", 403);
+            request = await _runtimeGrantIssuer.PrepareAsync(request, ct);
+        }
+        catch (TaskExecutionAdmissionException ex) { rejection = ex; }
+        if (rejection is not null)
+        {
+            yield return new SidecarEvent
+            { Type = SidecarEventType.Error, ErrorCode = rejection.Code, Message = rejection.Message };
+            yield break;
+        }
         if (!IsConfigured)
         {
             yield return new SidecarEvent
@@ -831,9 +851,6 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
 
         var domain = FirstConfigValue("MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain");
-        if (string.IsNullOrWhiteSpace(domain))
-            domain = "miduo.org";
-
         var slug = ComputePreviewSlug(branch, project);
         if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
             return null;
@@ -953,6 +970,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             workspaceRoot = string.IsNullOrWhiteSpace(req.WorkspaceRoot) ? null : req.WorkspaceRoot,
             gitRepository = string.IsNullOrWhiteSpace(req.GitRepository) ? null : req.GitRepository,
             gitRef = string.IsNullOrWhiteSpace(req.GitRef) ? null : req.GitRef,
+            // null 时整个字段不下发，sidecar 沿用进程级默认；空数组必须原样下发
+            // （它表达的是「一个内置工具都不开」，不是「没指定」）。
+            builtinTools = req.BuiltinTools,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");
@@ -1031,6 +1051,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 ToolUseId = TryStr(root, "tool_use_id"),
                 ToolInput = TryClone(root, "tool_input"),
                 Content = TryStrOrJson(root, "content"),
+                IsError = TryReadBool(root, "is_error"),
                 FinalText = TryStr(root, "final_text"),
                 InputTokens = TryLong(root, "input_tokens"),
                 OutputTokens = TryLong(root, "output_tokens"),

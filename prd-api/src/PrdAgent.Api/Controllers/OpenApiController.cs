@@ -13,6 +13,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers;
 
@@ -119,7 +120,8 @@ public class OpenApiController : ControllerBase
             RequestBody = body,
             Stream = stream,
             IncludeThinking = false,
-            TimeoutSeconds = 300
+            TimeoutSeconds = 300,
+            Context = new GatewayRequestContext { RequestId = requestId, UserId = key.OwnerUserId },
         };
 
         using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -392,7 +394,8 @@ public class OpenApiController : ControllerBase
                 EndpointPath = "/v1/images/generations",
                 ExpectedModel = resolution.ActualModel,
                 RequestBody = body,
-                TimeoutSeconds = 600
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext { RequestId = requestId, UserId = key.OwnerUserId },
             };
 
             var resp = await _gateway.SendRawWithResolutionAsync(raw, resolution, CancellationToken.None);

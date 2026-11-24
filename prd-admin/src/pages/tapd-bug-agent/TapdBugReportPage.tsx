@@ -87,7 +87,7 @@ function FieldLabel({ children, required }: { children: ReactNode; required?: bo
   return (
     <label className="text-[12px] font-semibold flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
       {children}
-      {required && <span style={{ color: '#ef4444' }}>必填</span>}
+      {required && <span style={{ color: 'var(--accent-fg-danger)' }}>必填</span>}
     </label>
   );
 }
@@ -326,7 +326,7 @@ export function TapdBugReportPage() {
 
             {normalizedDraft.missingFields.length > 0 && (
               <div className="mb-4 rounded-xl p-3 border flex items-start gap-2" style={{ borderColor: 'rgba(245,158,11,0.35)', background: 'rgba(245,158,11,0.08)' }}>
-                <AlertCircle size={16} style={{ color: '#f59e0b' }} />
+                <AlertCircle size={16} style={{ color: 'var(--accent-fg-amber)' }} />
                 <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
                   还缺：{normalizedDraft.missingFields.join('、')}。请在下方补齐后再提交。
                 </div>
@@ -482,9 +482,9 @@ export function TapdBugReportPage() {
           {error && (
             <GlassCard className="p-5" style={{ borderColor: 'rgba(239,68,68,0.45)' }}>
               <div className="flex items-start gap-2">
-                <AlertCircle size={18} style={{ color: '#ef4444' }} />
+                <AlertCircle size={18} style={{ color: 'var(--accent-fg-danger)' }} />
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: '#ef4444' }}>操作失败</div>
+                  <div className="text-sm font-semibold" style={{ color: 'var(--accent-fg-danger)' }}>操作失败</div>
                   <div className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{error}</div>
                 </div>
               </div>

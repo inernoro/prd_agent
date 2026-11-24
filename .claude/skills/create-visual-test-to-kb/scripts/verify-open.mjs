@@ -1,6 +1,7 @@
 // 验收 · 归档后「自查能否打开」(项目无关，存储无关)
 // 用途：归档拿到可达链接后，headless 打开真页面断言报告确实渲染（标题 + 正文 + 截图），
 //       并全量核对交互报告的内部链接目标，真实点击当前桌面路径可见链接验证章节滚动。
+//       标准报告另逐张点击证据卡片，核对报告自身地址、正文图和返回证据列表。
 //       而不是"建了条目但点开空白"。空/打不开 → 退出码 2，调用方据此重新推送验收。
 // 链接来源（任选其一，脚本本身不关心存储）：
 //   - CDS 匿名分享链 /r/<token>（E6，无需登录，headless 可直接断言——首选）。
@@ -11,6 +12,7 @@
 //   例：node verify-open.mjs https://<cds-host>/r/<report-id> "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
 import { createRequire } from 'module';
+import { isConfiguredCdsTargetHost } from './report-view.mjs';
 const require = createRequire(import.meta.url);
 const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
 const { chromium } = require(PW);
@@ -18,13 +20,25 @@ const { chromium } = require(PW);
 const url = process.argv[2];
 const mustText = process.argv[3] || '';
 const minImg = parseInt(process.argv[4] || '1', 10);
+const requiredTexts = process.argv.slice(5).map((value) => value.trim()).filter(Boolean);
 if (!url) { console.error('用法: node verify-open.mjs <shareUrl> "<必现文字>" [最少图片数]'); process.exit(64); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS || '3', 10) || 3);
 const retryDelayMs = Math.max(0, parseInt(process.env.VERIFY_OPEN_RETRY_DELAY_MS || '10000', 10) || 10000);
 const settleTimeoutMs = Math.max(5000, parseInt(process.env.VERIFY_OPEN_SETTLE_TIMEOUT_MS || '25000', 10) || 25000);
 
-const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+// 与 harness.launch 同一套 env 口子：镜像预装的 Chromium 版本常与 playwright 包要求的
+// 对不上，受限沙箱里又跑不了 `npx playwright install`，没有这个口子整条自查就走不下去。
+// ACC_BROWSER_PROXY 同理：出口代理环境下不配代理连不上 CDS。
+const browser = await chromium.launch({
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    ...(process.env.ACC_BROWSER_ARGS ? process.env.ACC_BROWSER_ARGS.split(/\s+/).filter(Boolean) : []),
+  ],
+  ...(process.env.ACC_BROWSER_EXECUTABLE ? { executablePath: process.env.ACC_BROWSER_EXECUTABLE } : {}),
+  ...(process.env.ACC_BROWSER_PROXY ? { proxy: { server: process.env.ACC_BROWSER_PROXY } } : {}),
+});
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: true });
 // CDS 登录态深链的安全回退：匿名分享不适合内部报告时，允许调用方仅通过环境变量
 // 注入 CDS access key。密钥不写入 URL、日志或报告。
@@ -33,16 +47,16 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, 
 const cdsAccessKey = (process.env.CDS_PROJECT_KEY || process.env.AI_ACCESS_KEY || '').trim();
 let targetHost = '';
 try { targetHost = new URL(url).host; } catch {}
-const isCdsHost = (host) => /(^|\.)cds\.miduo\.org$/i.test(host || '');
+const trustedTargetHost = isConfiguredCdsTargetHost(targetHost, process.env.CDS_HOST || '');
 // 关键：ctx.setExtraHTTPHeaders 会给 context 内「所有」请求带上 header，
 // 报告页里的外链图片 / iframe / 三方子资源都会被附上密钥，造成密钥泄漏到非 CDS host。
-// 改用 route 逐请求判定：仅当该请求的 host 是目标 CDS host 时才注入密钥头。
-if (cdsAccessKey && isCdsHost(targetHost)) {
+// 逐请求判定：只有目标与已配置 CDS_HOST 精确同主机，且子请求仍为该主机才注入密钥头。
+if (cdsAccessKey && trustedTargetHost) {
   await ctx.route('**/*', async (route) => {
     const req = route.request();
     let reqHost = '';
     try { reqHost = new URL(req.url()).host; } catch {}
-    if (isCdsHost(reqHost)) {
+    if (reqHost.toLowerCase() === targetHost.toLowerCase()) {
       const headers = { ...req.headers(), 'x-ai-access-key': cdsAccessKey };
       await route.continue({ headers });
     } else {
@@ -73,10 +87,85 @@ async function waitForRenderedContent(text, minImages) {
   while (Date.now() < deadline) {
     snapshot = await inspectRenderedContent();
     const hasText = text ? snapshot.text.includes(text) : snapshot.text.trim().length > 200;
-    if (hasText && snapshot.imgCount >= minImages) return snapshot;
+    const hasRequiredTexts = requiredTexts.every((required) => snapshot.text.includes(required));
+    if (hasText && hasRequiredTexts && snapshot.imgCount >= minImages) return snapshot;
     await sleep(500);
   }
   return snapshot;
+}
+
+async function waitForEvidenceAnchor(frame, id) {
+  try {
+    const position = await frame.waitForFunction((targetId) => {
+      const target = document.getElementById(targetId)?.getBoundingClientRect();
+      return decodeURIComponent(location.hash.slice(1)) === targetId
+        && target && target.top >= -2 && target.top < innerHeight;
+    }, id, { timeout: settleTimeoutMs });
+    await position.dispose();
+  } catch (error) {
+    throw new Error(`报告地址锚点或可视位置未到达 #${id}`, { cause: error });
+  }
+}
+
+async function readEvidenceImageSource(image) {
+  return image.evaluate(async (element, timeoutMs) => {
+    let timer;
+    try {
+      await Promise.race([
+        element.decode(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('等待证据图片超时')), timeoutMs);
+        }),
+      ]);
+      if (!element.currentSrc || !element.naturalWidth) throw new Error('证据图片无法读取');
+      return element.currentSrc;
+    } finally {
+      clearTimeout(timer);
+    }
+  }, settleTimeoutMs, { timeout: 5000 });
+}
+
+async function auditEvidenceCards(frame) {
+  const cards = frame.locator('#evidence-gallery a.evidence-card');
+  const figureCount = await frame.locator('#reportBody .figure-anchor + figure.shot').count();
+  const cardCount = await cards.count();
+  let checked = 0;
+  let label = '证据缩略图';
+  try {
+    if (cardCount !== figureCount) throw new Error(`卡片 ${cardCount} 张，正文图 ${figureCount} 张`);
+    if (!cardCount) return { expected: 0, checked, errors: [] };
+    const fullView = frame.locator('button[data-view-mode="full"]');
+    if (await fullView.isVisible()) await fullView.click({ timeout: 5000 });
+    const all = frame.locator('button[data-filter="all"]');
+    if (await all.isVisible()) await all.click({ timeout: 5000 });
+    const contents = frame.locator('button[data-side-tab="contents"]');
+    if (await contents.isVisible()) await contents.click({ timeout: 5000 });
+
+    const targets = new Set();
+    for (const card of await cards.all()) {
+      const href = await card.getAttribute('href', { timeout: 5000 });
+      label = href || '证据缩略图';
+      if (!href?.startsWith('#fig-')) throw new Error('缺少对应正文图号');
+      const id = decodeURIComponent(href.slice(1));
+      const figure = frame.locator(`#reportBody .figure-anchor[id=${JSON.stringify(id)}] + figure.shot`);
+      if (targets.has(id) || await figure.count() !== 1) throw new Error('图卡和正文锚点无法唯一对应');
+      targets.add(id);
+      const thumbnailSource = await readEvidenceImageSource(card.locator('img'));
+      await card.click({ timeout: 5000 });
+      await waitForEvidenceAnchor(frame, id);
+      const figureSource = await readEvidenceImageSource(figure.locator('.shot-frame img'));
+      if (figureSource !== thumbnailSource) throw new Error('正文图片与缩略图不一致');
+      await figure.locator('a[data-return-evidence][href="#evidence-gallery"]').click({ timeout: 5000 });
+      await waitForEvidenceAnchor(frame, 'evidence-gallery');
+      if (!await frame.locator('button[data-side-tab="evidence"][aria-selected="true"]').count()) {
+        throw new Error('返回后未切回证据导航');
+      }
+      checked += 1;
+    }
+    return { expected: figureCount, checked, errors: [] };
+  } catch (error) {
+    return { expected: figureCount, checked, errors: [`${label}: ${String(error.message || error).split('\n')[0]}`] };
+  }
 }
 
 async function auditInteractiveReports() {
@@ -103,6 +192,7 @@ async function auditInteractiveReports() {
       const links = frame.locator('a[href^="#"]');
       const count = await links.count();
       let clicked = 0;
+      const clickedTargets = new Set();
       for (let index = 0; index < count; index += 1) {
         const link = links.nth(index);
         const href = await link.getAttribute('href');
@@ -112,6 +202,8 @@ async function auditInteractiveReports() {
           clickErrors.push(`${href}: 锚点编码无效`);
           continue;
         }
+        if (clickedTargets.has(targetId)) continue;
+        clickedTargets.add(targetId);
         const targetCount = await frame.evaluate(
           (id) => document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length,
           targetId,
@@ -126,24 +218,32 @@ async function auditInteractiveReports() {
             const target = document.getElementById(id);
             if (!target) return false;
             const rect = target.getBoundingClientRect();
-            return rect.bottom > 0 && rect.top < window.innerHeight;
+            return rect.top >= -2 && rect.top < window.innerHeight;
           }, targetId);
           if (!targetVisible) clickErrors.push(`${label}: 点击后目标 #${targetId} 未进入可视区`);
         } catch (error) {
           clickErrors.push(`${label}: ${error && error.message ? error.message.split('\n')[0] : String(error)}`);
         }
       }
-      reports.push({ ...staticAudit, clicked, clickErrors });
+      const standard = await frame.locator('meta[name="map-acceptance-template"][content="interactive-html-v2"]').count();
+      const evidence = standard ? await auditEvidenceCards(frame) : undefined;
+      reports.push({ ...staticAudit, clicked, clickErrors: [...clickErrors, ...(evidence?.errors ?? [])], evidence });
     } catch (error) {
       reports.push({ linkCount: 0, clicked: 0, broken: [], clickErrors: [String(error)] });
     }
   }
   const broken = reports.flatMap((report) => report.broken || []);
   const clickErrors = reports.flatMap((report) => report.clickErrors || []);
+  const evidenceExpected = reports.reduce((sum, report) => sum + (report.evidence?.expected ?? 0), 0);
+  if (reports.some(report => report.evidence) && evidenceExpected < minImg) {
+    clickErrors.push(`标准报告正文证据图 ${evidenceExpected} 张，需至少 ${minImg} 张`);
+  }
   return {
     reportCount: reports.length,
     linkCount: reports.reduce((sum, report) => sum + (report.linkCount || 0), 0),
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
+    evidenceExpected,
+    evidenceChecked: reports.reduce((sum, report) => sum + (report.evidence?.checked || 0), 0),
     broken,
     clickErrors,
     ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
@@ -159,19 +259,23 @@ async function runAttempt(attempt) {
     await page.getByText(new RegExp(mustText)).first().waitFor({ state: 'visible', timeout: settleTimeoutMs }).catch(() => {});
   }
   const rendered = await waitForRenderedContent(mustText, minImg);
+  await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete), null, {
+    timeout: settleTimeoutMs,
+  }).catch(() => {});
   await sleep(1000);
   const finalRendered = await inspectRenderedContent();
   const txt = finalRendered.text || rendered.text;
   const imgCount = Math.max(finalRendered.imgCount, rendered.imgCount);
   const hasText = mustText ? txt.includes(mustText) : txt.length > 200;
+  const hasRequiredTexts = requiredTexts.every((required) => txt.includes(required));
   const okImg = imgCount >= minImg;
   const interaction = await auditInteractiveReports();
   // 死页判定只在「内容没渲染出来」时才有意义：报告正文完全可能合法地包含
   // "不存在 / 已失效" 等词（如缺陷描述、整改记录），全文扫词会把正常报告误杀。
   // 故仅当 必现文字未命中 或 图片数不达标 时，才用关键词区分"死页"与"内容缺失"。
   const deadKeywordHit = ['暂无可预览', '未对外开放', '页面不存在', '链接已失效', '无权访问', '404'].some((k) => txt.includes(k));
-  const dead = (!hasText || !okImg) && deadKeywordHit;
-  return { attempt, hasText, imgCount, minImg, dead, interaction, ok: !dead && hasText && okImg && interaction.ok };
+  const dead = (!hasText || !hasRequiredTexts || !okImg) && deadKeywordHit;
+  return { attempt, hasText, hasRequiredTexts, imgCount, minImg, dead, interaction, ok: !dead && hasText && hasRequiredTexts && okImg && interaction.ok };
 }
 
 let code = 2;
@@ -181,8 +285,9 @@ try {
     try {
       const result = await runAttempt(attempt);
       attempts.push(result);
-      console.log(`  第${attempt}次：必现文字命中=${result.hasText}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
+      console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
       console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
+      console.log(`  第${attempt}次证据卡片及返回：${result.interaction.evidenceChecked}/${result.interaction.evidenceExpected}`);
       if (result.interaction.broken.length) {
         console.log(`  断链明细：${result.interaction.broken.map((item) => `${item.text || item.href} -> ${item.href}`).join(' | ')}`);
       }

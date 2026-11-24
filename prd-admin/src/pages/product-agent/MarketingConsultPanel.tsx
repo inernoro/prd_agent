@@ -209,7 +209,7 @@ function ConsultListView({
           <option value="">全部模版</option>
           {MARKETING_TEMPLATES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
         </select>
-        <button onClick={onNew} className="ml-auto flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30">
+        <button onClick={onNew} className="ml-auto flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30">
           <Plus size={14} /> 问策
         </button>
       </div>
@@ -374,7 +374,7 @@ function ComposeView({
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <button onClick={generate} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-200 hover:bg-cyan-500/30">
+            <button onClick={generate} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30">
               <Sparkles size={14} /> {pickCustomerId && !input.trim() ? '一键问策' : '生成问策评估'}
             </button>
             {phase === 'failed' && <span className="text-xs text-rose-300/80">上次生成未完成，可重试。</span>}
@@ -403,7 +403,7 @@ function ConsultDetailView({
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <button onClick={onBack} className="flex items-center gap-1 text-xs text-token-muted hover-text-primary"><ArrowLeft size={13} /> 返回问策列表</button>
-        <button onClick={onNew} className="ml-auto flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/25"><Plus size={13} /> 新问策</button>
+        <button onClick={onNew} className="ml-auto flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25"><Plus size={13} /> 新问策</button>
       </div>
       <div className="flex gap-4">
         <div className="min-w-0 flex-1">

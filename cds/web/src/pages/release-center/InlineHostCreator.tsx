@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /**
  * 就地添加服务器 —— 加环境的第一步不再把人踢去 CDS 系统设置。
  *
@@ -14,7 +15,7 @@
  */
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+
 import { Check, Copy, Loader2, Plus, ServerCog, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -198,8 +199,8 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
         {testResult ? (
           <div className={`mt-2 rounded-md px-2.5 py-1.5 text-xs ${
             testResult.ok
-              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-              : 'bg-red-500/10 text-red-600 dark:text-red-300'
+              ? 'bg-ok-soft text-ok'
+              : 'bg-bad-soft text-bad'
           }`}
           >
             {testResult.message}
@@ -234,7 +235,7 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
         <input
           value={quickInput}
           onChange={(event) => applyQuickInput(event.target.value)}
-          placeholder="ssh root@map.ebcone.net -p 22   或   root@1.2.3.4:22"
+          placeholder="ssh root@host.example.com -p 22   或   root@1.2.3.4:22"
           className={INPUT_CLASS}
         />
       </label>
@@ -242,7 +243,7 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
       <div className="grid gap-2 md:grid-cols-4">
         <label className="grid gap-1 text-sm md:col-span-2">
           <span className="text-muted-foreground">主机</span>
-          <input value={host} onChange={(event) => setHost(event.target.value)} placeholder="map.ebcone.net" className={INPUT_CLASS} />
+          <input value={host} onChange={(event) => setHost(event.target.value)} placeholder="host.example.com" className={INPUT_CLASS} />
         </label>
         <label className="grid gap-1 text-sm">
           <span className="text-muted-foreground">端口</span>
@@ -313,7 +314,7 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
       ) : null}
 
       {error ? (
-        <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">{error}</div>
+        <div className="rounded-md bg-bad-soft px-3 py-2 text-xs text-bad">{error}</div>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">

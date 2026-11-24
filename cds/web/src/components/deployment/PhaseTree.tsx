@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
 import { CheckCircle2, Circle, Loader2, Maximize2, XCircle } from 'lucide-react';
 import type { PhaseKey, PhaseState } from '@/lib/deploymentPhases';
@@ -63,10 +64,10 @@ function tailLines(text: string, n: number | null | undefined): string {
 
 function PhaseIcon({ status }: { status: PhaseState['status'] }): JSX.Element {
   if (status === 'running') {
-    return <Loader2 className="h-4 w-4 animate-spin text-sky-500" aria-label="进行中" />;
+    return <Loader2 className="h-4 w-4 animate-spin text-info" aria-label="进行中" />;
   }
   if (status === 'success') {
-    return <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label="已完成" />;
+    return <CheckCircle2 className="h-4 w-4 text-ok" aria-label="已完成" />;
   }
   if (status === 'error') {
     return <XCircle className="h-4 w-4 text-destructive" aria-label="失败" />;
@@ -98,12 +99,7 @@ function PhaseLogPreview({
   tail: number | null | undefined;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return (
-      <div className="mt-2 flex items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        正在加载容器日志…
-      </div>
-    );
+    return <ContentLoading label="加载阶段日志" variant="log" />;
   }
   if (state.status === 'error') {
     return (
@@ -121,7 +117,7 @@ function PhaseLogPreview({
     );
   }
   return (
-    <pre className="mt-2 max-h-[260px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
+    <pre className="mt-2 max-h-[16.25rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[0.6875rem] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
       {text}
     </pre>
   );
@@ -149,7 +145,7 @@ function PhaseLogDetails({
         {controls?.onMaximize ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
+            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[0.6875rem] hover:border-[hsl(var(--hairline-strong))]"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -167,7 +163,7 @@ function PhaseLogDetails({
           {controls!.services.map((svc) => {
             const active = svc.profileId === controls!.selected;
             const dot = svc.status === 'running'
-              ? 'bg-emerald-500'
+              ? 'bg-ok'
               : svc.status === 'error'
                 ? 'bg-destructive'
                 : 'bg-muted-foreground/40';
@@ -180,7 +176,7 @@ function PhaseLogDetails({
                   e.stopPropagation();
                   controls!.onSelect(svc.profileId);
                 }}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[0.6875rem] transition-colors ${
                   active
                     ? 'border-primary bg-primary/10 text-foreground'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'

@@ -1,0 +1,130 @@
+/**
+ * 团队看板 —— 藏书阁「公共」二字的另一半。
+ *
+ * 书单解决「新人不知道该会什么」，这块解决「你不知道新人到底会不会」。
+ * 所以它默认对全队可见：藏起来就退回原来那个「什么都不跟我说」的状态了。
+ *
+ * 视觉沿用页面的粗野骨架（墨边 + 纯偏移硬投影），颜色全部走 token。
+ */
+import { Users, TrendingDown } from 'lucide-react';
+import { VOLUMES } from '@/lib/bookshelf/catalog';
+import { useTeamBoard } from './useTeamBoard';
+
+const EDGE = '3px solid var(--shelf-edge)';
+const EDGE_THIN = '2.5px solid var(--shelf-edge)';
+
+export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: string }[] }) {
+  // 取数与防御在 useTeamBoard —— 手机档整屏看板共用同一份，不抄第二遍。
+  const { state, raw: data, memberCount, passedByVolume, blindByVolume, blindTotal, members, weakest } = useTeamBoard();
+
+  return (
+    <section className="mt-6 p-6 sm:p-7 rounded-[28px]" style={{ background: 'var(--shelf-surface)', border: EDGE, boxShadow: '6px 6px 0 var(--shelf-edge)' }}>
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <Users size={19} strokeWidth={2.6} />
+        <h3 className="text-[20px] font-black tracking-[-0.02em]">团队看板</h3>
+        {state === 'ready' && data && (
+          <span className="px-2.5 py-1 rounded-full text-[11.5px] font-bold" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+            {memberCount} 人有记录
+          </span>
+        )}
+        {state === 'ready' && blindTotal > 0 && (
+          <span className="px-2.5 py-1 rounded-full text-[11.5px] font-bold" style={{ background: 'var(--bg-base)', border: EDGE_THIN, color: 'var(--text-muted)' }}>
+            {blindTotal} 次没读就考过
+          </span>
+        )}
+      </div>
+
+      {state === 'loading' && (
+        <p className="mt-3 text-[13px] font-medium" style={{ color: 'var(--text-muted)' }}>正在读取团队进度…</p>
+      )}
+
+      {state === 'failed' && (
+        <p className="mt-3 text-[13px] font-medium leading-[1.7]" style={{ color: 'var(--text-muted)' }}>
+          team 接口没取到数据，团队进度暂时看不了。你自己的进度不受影响，照常记录。
+        </p>
+      )}
+
+      {state === 'ready' && data && memberCount === 0 && (
+        <p className="mt-3 text-[13px] font-medium leading-[1.7]" style={{ color: 'var(--text-secondary)' }}>
+          还没有人开始读。你标记第一本书之后，这里就会出现记录——这块存在的意义就是让「谁读到哪」不用靠问。
+        </p>
+      )}
+
+      {state === 'ready' && data && memberCount > 0 && (
+        <>
+          {/* 结论先行：一句挂着数字的判断，而不是让人自己读一排数去算 */}
+          {weakest && (
+            <div className="mt-4 flex items-start gap-2.5 px-4 py-3 rounded-[16px]" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+              <TrendingDown size={17} strokeWidth={2.6} className="shrink-0 mt-0.5" style={{ color: volumeSkin[weakest.i]?.fg }} />
+              <p className="text-[13.5px] font-bold leading-[1.65]">
+                全队最薄弱的是<span style={{ color: volumeSkin[weakest.i]?.fg }}>「{weakest.vol.name}」</span>——
+                {memberCount} 人里只有 {weakest.n} 人通关。{weakest.vol.painQuote}
+              </p>
+            </div>
+          )}
+
+          {/* 每卷通关人数 */}
+          <div className="mt-4 grid gap-2 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
+            {VOLUMES.map((v, i) => {
+              const n = passedByVolume[v.id] ?? 0;
+              const blind = blindByVolume[v.id] ?? 0;
+              const pct = memberCount > 0 ? Math.round((n / memberCount) * 100) : 0;
+              const skin = volumeSkin[i % volumeSkin.length];
+              return (
+                <div key={v.id} className="p-3 rounded-[16px]" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+                  <div className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>卷{'一二三四五六七'[i]}</div>
+                  <div className="text-[14px] font-black tracking-[-0.01em] leading-[1.3]">{v.name}</div>
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--shelf-surface)', border: '2px solid var(--shelf-edge)' }}>
+                      <div className="h-full transition-[width] duration-500" style={{ width: `${pct}%`, background: skin.fg }} />
+                    </div>
+                    <span className="text-[11px] font-bold shrink-0">{n}</span>
+                  </div>
+                  {blind > 0 && (
+                    <div className="mt-1 text-[10.5px] font-bold" style={{ color: 'var(--text-muted)' }}>
+                      另有 {blind} 人没读就考过
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 成员行 */}
+          <div className="mt-4 flex flex-col gap-2">
+            {members.map((m) => (
+              <div key={m.userId} className="flex items-center gap-3 px-4 py-2.5 rounded-[14px] flex-wrap" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+                <span className="text-[13.5px] font-black min-w-[96px]">
+                  {m.displayName ?? '未知成员'}
+                </span>
+                <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  已读 {m.readCount} 本
+                </span>
+                {/* 「已读」是自己点的勾，「心得」是真写下过的字 —— 后者才说明读进去了 */}
+                <span className="text-[12.5px] font-bold" style={{ color: (m.noteCount ?? 0) > 0 ? 'var(--accent-fg-emerald)' : 'var(--text-muted)' }}>
+                  心得 {m.noteCount ?? 0} 条
+                </span>
+                <span className="text-[12.5px] font-bold" style={{ color: 'var(--text-secondary)' }}>
+                  通关 {m.passedCount} / {VOLUMES.length} 卷
+                </span>
+                <div className="flex gap-1 ml-auto">
+                  {VOLUMES.map((v, i) => (
+                    <span
+                      key={v.id}
+                      title={v.name}
+                      className="w-3.5 h-3.5 rounded-[4px]"
+                      style={{
+                        background: m.passedVolumeIds.includes(v.id) ? volumeSkin[i % volumeSkin.length].fg : 'transparent',
+                        border: '2px solid var(--shelf-edge-soft)',
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}

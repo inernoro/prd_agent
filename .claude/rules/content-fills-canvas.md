@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.tsx"
+  - "cds/web/src/**/*.tsx"
+---
+
 # 内容区填满画布（Content Fills the Canvas）
 
 **一句话**：主产物区必须撑满可用空间并占视觉主导，高度要从外壳一路传到产物，断一层就塌成小盒子加大片留白。

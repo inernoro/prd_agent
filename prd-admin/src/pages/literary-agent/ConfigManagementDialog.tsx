@@ -326,7 +326,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
         className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex items-center gap-1"
         style={{
           background: 'rgba(59, 130, 246, 0.12)',
-          color: 'rgba(59, 130, 246, 0.95)',
+          color: 'var(--accent-fg-blue)',
           border: '1px solid rgba(59, 130, 246, 0.28)',
         }}
         title="下载次数"
@@ -341,7 +341,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
         className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
         style={{
           background: 'rgba(34, 197, 94, 0.12)',
-          color: 'rgba(34, 197, 94, 0.95)',
+          color: 'var(--accent-fg-success)',
           border: '1px solid rgba(34, 197, 94, 0.28)',
         }}
       >
@@ -356,7 +356,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
             style={{
               background: 'rgba(168, 85, 247, 0.12)',
-              color: 'rgba(168, 85, 247, 0.95)',
+              color: 'var(--accent-fg-violet)',
               border: '1px solid rgba(168, 85, 247, 0.28)',
             }}
             title="全局共享（所有场景可用）"
@@ -371,7 +371,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
             className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
             style={{
               background: 'rgba(34, 197, 94, 0.12)',
-              color: 'rgba(34, 197, 94, 0.95)',
+              color: 'var(--accent-fg-success)',
               border: '1px solid rgba(34, 197, 94, 0.28)',
             }}
             title="文章配图专用"

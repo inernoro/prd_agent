@@ -1,0 +1,4 @@
+interface:
+  display_name: "平台密钥轮换"
+  short_description: "安全轮换 CDS 与应用密钥，先验证新密钥再撤销旧密钥"
+  default_prompt: "Use $rotate-platform-secrets to rotate platform credentials without exposing values or revoking the old credential before verification."

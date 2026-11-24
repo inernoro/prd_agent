@@ -171,7 +171,7 @@ export function ProductsSection() {
           )}
           <button
             onClick={() => setEditing('new')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
           >
             <Plus size={15} /> 新建产品
           </button>
@@ -208,7 +208,6 @@ export function ProductsSection() {
                   </span>
                   <div className="min-w-0 flex-1">
                   <div className="text-token-primary font-medium truncate">{p.name}</div>
-                  <div className="text-[11px] text-token-muted mt-0.5">{p.productNo}</div>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -256,7 +255,7 @@ export function ProductsSection() {
                       e.stopPropagation();
                       void confirmDelete(p);
                     }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/70 hover:text-red-300 hover:bg-red-500/10"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10"
                   >
                     <Trash2 size={12} /> 删除
                   </button>
@@ -304,12 +303,6 @@ export function ProductsSection() {
               header: formatListSectionTitle('产品名称', visibleProducts.length),
               defaultWidth: 180,
               render: (p) => <TruncateCell text={p.name} maxChars={24} className="text-token-primary font-medium" />,
-            },
-            {
-              key: 'productNo',
-              header: '编号',
-              defaultWidth: 120,
-              render: (p) => <span className="font-mono text-xs text-token-secondary">{p.productNo}</span>,
             },
             {
               key: 'grade',
@@ -377,7 +370,7 @@ export function ProductsSection() {
                   <button
                     type="button"
                     onClick={() => void confirmDelete(p)}
-                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-red-300/70 hover:bg-red-500/10 hover:text-red-300"
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)]"
                   >
                     <Trash2 size={12} /> 删除
                   </button>
@@ -546,7 +539,7 @@ function ProductEditModal({
           <button
             onClick={save}
             disabled={!name.trim() || saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
           >
             {saving ? <MapSpinner size={14} /> : <Plus size={14} />} {isNew ? '创建' : '保存'}
           </button>

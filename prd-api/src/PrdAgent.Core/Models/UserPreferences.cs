@@ -26,9 +26,33 @@ public class UserPreferences
     public List<string>? NavHidden { get; set; }
 
     /// <summary>
+    /// 导航布局（NavOrder / NavHidden）最近一次改动时间。与 <see cref="UpdatedAt"/> 分开：
+    /// 后者任何偏好（皮肤、Agent 切换器等）一动就变，不能当「导航改动时间」来排序展示。
+    /// </summary>
+    public DateTime? NavLayoutUpdatedAt { get; set; }
+
+    /// <summary>
     /// 主题/皮肤配置
     /// </summary>
     public ThemeConfig? ThemeConfig { get; set; }
+
+    /// <summary>
+    /// 网页托管「向我提问」的个人默认值。
+    /// null 表示沿用系统默认（当前为关闭）；站点单独设置过 AskEnabled 时仍以站点设置为准。
+    /// </summary>
+    public bool? WebPageAskEnabled { get; set; }
+
+    /// <summary>
+    /// 转录词云的个人词典。默认继承系统级（AppSettings.TranscriptLexicon），
+    /// 这里只放自己额外要保住的词。
+    /// </summary>
+    public List<string>? TranscriptLexicon { get; set; }
+
+    /// <summary>
+    /// 从系统级词典里屏蔽掉的词。系统表是全局的，某个词对别人有用、对我是噪音时，
+    /// 得能单独摘掉——否则用户只能忍着，或者要求改全局表。
+    /// </summary>
+    public List<string>? TranscriptLexiconMuted { get; set; }
 
     /// <summary>
     /// 视觉代理偏好设置

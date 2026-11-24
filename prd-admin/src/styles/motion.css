@@ -311,7 +311,7 @@
 .sa-btn.llm-json-sa-failed .sa-message,
 .sa-btn.llm-json-sa-failed .sa-button-text span,
 .sa-btn.llm-json-sa-failed .sa-icon {
-  color: rgba(239, 68, 68, 0.95) !important;
+  color: var(--accent-fg-danger) !important;
 }
 
 .sa-btn.llm-json-sa-passed::before {
@@ -328,7 +328,7 @@
 .sa-btn.llm-json-sa-passed .sa-message,
 .sa-btn.llm-json-sa-passed .sa-button-text span,
 .sa-btn.llm-json-sa-passed .sa-icon {
-  color: rgba(34, 197, 94, 0.95) !important;
+  color: var(--accent-fg-success) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -340,14 +340,14 @@
   }
 }
 
-/* Radix Dialog：从小到大弹出（用于“背景停 -> 弹窗出场”的顺序感） */
+/* 遮罩只动画背景色：Content嵌在Overlay内，动画父opacity会让实底内容一同透底。 */
 @keyframes prdDialogOverlayIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { background-color: transparent; }
+  to { background-color: var(--dialog-overlay); }
 }
 @keyframes prdDialogContentIn {
-  from { opacity: 0; transform: scale(0.96); }
-  to   { opacity: 1; transform: scale(1); }
+  from { transform: scale(0.96); }
+  to   { transform: scale(1); }
 }
 
 .prd-dialog-content {
@@ -358,8 +358,11 @@
   animation: prdDialogOverlayIn 200ms ease-out both;
 }
 
+/* 只用 backwards，不用 both：出场结束后不许把 transform: scale(1) 永久留在弹窗上。
+   任何非 none 的 transform 都会让弹窗成为 fixed 子元素的参照系并按 overflow 裁切，
+   挂进弹窗的下拉菜单（AnchoredMenu）就会错位、被切掉。 */
 .prd-dialog-content[data-state="open"] {
-  animation: prdDialogContentIn 260ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+  animation: prdDialogContentIn 260ms cubic-bezier(0.2, 0.9, 0.2, 1) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1200,4 +1203,22 @@
   .showcase-aurora::after {
     animation: none;
   }
+}
+
+/* 站点缩略图占位的扫光（设计稿 omShimmer）：正在取正文时让占位有「在动」的产物感，
+   而不是一块死掉的斜纹。尊重 prefers-reduced-motion。 */
+@keyframes sitePreviewShimmer {
+  0% { transform: translateX(-60%); }
+  100% { transform: translateX(160%); }
+}
+.site-preview-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, var(--border-faint), transparent);
+  animation: sitePreviewShimmer 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-preview-shimmer::after { animation: none; }
 }

@@ -7,7 +7,7 @@
  * 不发 HTTP、不 IO、不 throw(参数缺陷返 null)。
  *
  * 匹配优先级(从高到低):
- *   1. host:精确 host 优先于通配 *.miduo.org;通配只匹配单级子域(a.b 不会被 *.b 匹配错位)
+ *   1. host：精确 host 优先于通配根域；通配只匹配单级子域
  *   2. weight=0 跳过(等于禁用)
  *   3. pathPrefix:有定义的按长度降序优先(更具体先);空串视为 "/"
  *   4. 等权重等优先级时按 _id 字典序稳定选第一条
@@ -35,9 +35,9 @@ interface Candidate {
  * 规则:
  *   - 精确字符串(无通配 `*`):大小写不敏感全等
  *   - `*.suffix`:host 必须严格"单级子域 + 同 suffix",即 host = `<label>.suffix`
- *     - `*.miduo.org` 命中 `demo.miduo.org` (yes)
- *     - `*.miduo.org` 不命中 `a.b.miduo.org` (no,走显式 `*.b.miduo.org` 或精确)
- *     - `*.miduo.org` 不命中 `miduo.org` 本身 (no)
+ *     - `*.example.com` 命中 `demo.example.com` (yes)
+ *     - `*.example.com` 不命中 `a.b.example.com` (no,走显式 `*.b.example.com` 或精确)
+ *     - `*.example.com` 不命中 `example.com` 本身 (no)
  *   - 其他形式(如中间带 `*`)目前不支持,返回 false
  */
 export function hostMatches(pattern: string, host: string): boolean {
@@ -52,7 +52,7 @@ export function hostMatches(pattern: string, host: string): boolean {
     if (!suffix) return false;
     if (!h.endsWith(`.${suffix}`)) return false;
     const label = h.slice(0, h.length - suffix.length - 1); // 去掉 .suffix
-    if (!label) return false; // *.miduo.org 不应命中 miduo.org 本身
+    if (!label) return false; // 通配根域不应命中根域本身
     if (label.includes('.')) return false; // 不允许多级
     return true;
   }

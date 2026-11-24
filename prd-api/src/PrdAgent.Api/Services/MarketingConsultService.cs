@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
 
@@ -54,8 +55,6 @@ public class MarketingConsultService
                     new JsonObject { ["role"] = "user", ["content"] = sb.ToString() }
                 },
                 ["temperature"] = 0.4,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,

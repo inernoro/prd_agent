@@ -18,6 +18,7 @@ import os from 'node:os';
 import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
+import { buildReportsOverview } from '../../src/services/acceptance-overview.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 interface Res { status: number; body: any; rawBody: Buffer; headers: http.IncomingHttpHeaders; }
@@ -141,6 +142,23 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect((res.body.reports as Array<{ id: string }>).map((report) => report.id)).toEqual([reportA.id]);
   });
 
+  it('交叉分类在创建、修改与列表真实路径生效，不越项目、不重复计数', async () => {
+    const classification = { categories: ['result', 'billing', 'upstream'], primarySystem: 'map', relatedSystems: ['llmgw'], environments: ['production', 'test'] };
+    const made = await call(server, 'POST', '/api/reports', { projectKey: 'proj-a', body: { title: '交叉分类验证', format: 'md', content: '# 验证', classification } });
+    expect(made.status).toBe(201);
+    expect(made.body.report.classification).toEqual(classification);
+    const list = await call(server, 'GET', '/api/reports?categories=billing,upstream&systems=llmgw&environments=test', { projectKey: 'proj-a' });
+    expect(list.body.reports.map((r: any) => r.id)).toEqual([made.body.report.id]);
+    expect((await call(server, 'GET', '/api/reports?categories=billing&systems=map&environments=production', { projectKey: 'proj-b' })).body.reports).toEqual([]);
+    expect((await call(server, 'PATCH', `/api/reports/${made.body.report.id}`, { projectKey: 'proj-b', body: { classification } })).status).toBe(403);
+    const invalid = await call(server, 'PATCH', `/api/reports/${made.body.report.id}`, { projectKey: 'proj-a', body: { title: '不得部分写入', classification: { ...classification, environments: ['invented'] } } });
+    expect(invalid.status).toBe(400);
+    expect(service.getAcceptanceReport(made.body.report.id)!.title).toBe('交叉分类验证');
+    const changed = await call(server, 'PATCH', `/api/reports/${made.body.report.id}`, { projectKey: 'proj-a', body: { classification: { ...classification, categories: ['acceptance'] } } });
+    expect(changed.status).toBe(200);
+    expect(changed.body.report.classification.categories).toEqual(['acceptance']);
+  });
+
   it('downloads an offline ZIP containing body, metadata and referenced assets', async () => {
     const assetName = `${'a'.repeat(64)}.png`;
     service.writeReportAsset(assetName, Buffer.from([1, 2, 3, 4]));
@@ -212,6 +230,25 @@ describe('Acceptance report routes — project-scoped key access', () => {
     const list = await call(server, 'GET', '/api/reports', { projectKey: 'proj-a' });
     const ids = (list.body.reports as Array<{ id: string }>).map((r) => r.id);
     expect(ids).toContain(created.body.report.id);
+  });
+
+  it.each([
+    { title: '普通失败验收', reportType: 'code-review' },
+    { title: '代码审查报告 · 普通失败验收' },
+    { title: '代码审查报告 · 普通失败验收 · 2026-11-07' },
+  ])('普通验收不能靠类型或标题绕开质量统计：$title', async fields => {
+    const created = await call(server, 'POST', '/api/reports', {
+      projectKey: 'proj-a', body: { ...fields, format: 'md', content: '# 失败验收', verdict: 'fail', defectCounts: { p0: 1 } },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.report.reportType).not.toBe('code-review');
+    const report = service.getAcceptanceReport(created.body.report.id)!;
+    expect(report.reportType).toBe('acceptance');
+    // The aggregation window has an exclusive end; keep this classification test inside its own window.
+    const overview = buildReportsOverview([report], [], { to: new Date(Date.parse(report.createdAt) + 1) });
+    expect(overview.totals.counted).toBe(1);
+    expect(overview.totals.fail).toBe(1);
+    expect(overview.kinds).toEqual([{ kind: '其他', count: 1 }]);
   });
 
   it('project key cannot create a report under another project', async () => {

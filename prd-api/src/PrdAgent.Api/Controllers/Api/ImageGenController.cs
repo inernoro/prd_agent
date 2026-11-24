@@ -19,6 +19,7 @@ using System.Text.RegularExpressions;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -31,6 +32,9 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("visual-agent", AdminPermissionCatalog.VisualAgentUse)]
 public class ImageGenController : ControllerBase
 {
+    // 能力标识的唯一来源在 Core 的 GatewayCapabilityIds，此处只做本文件内的短别名。
+    private const string ImageLayeringCapabilityId = PrdAgent.Core.Models.GatewayCapabilityIds.ImageLayering;
+
     private readonly MongoDbContext _db;
     private readonly IModelDomainService _modelDomain;
     private readonly IImageGenerationClient _imageClient;
@@ -42,6 +46,7 @@ public class ImageGenController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IRunEventStore _runStore;
     private readonly IMultiImageComposeService _composeService;
+    private readonly PrdAgent.Api.Services.IVisualModelPolicyService _visualModels;
 
     // 硬编码的 appCallerCode（应用身份隔离原则）
     private static class AppCallerCodes
@@ -50,6 +55,13 @@ public class ImageGenController : ControllerBase
         public const string Img2Img = "visual-agent.image.img2img::generation";
         public const string VisionGen = "visual-agent.image.vision::generation";
     }
+
+    private static readonly string[] ImageGenAppCallerCodes =
+    [
+        AppCallerCodes.Text2Img,
+        AppCallerCodes.Img2Img,
+        AppCallerCodes.VisionGen,
+    ];
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -64,7 +76,8 @@ public class ImageGenController : ControllerBase
         IAssetStorage assetStorage,
         IHttpClientFactory httpClientFactory,
         IRunEventStore runStore,
-        IMultiImageComposeService composeService)
+        IMultiImageComposeService composeService,
+        PrdAgent.Api.Services.IVisualModelPolicyService visualModels)
     {
         _db = db;
         _modelDomain = modelDomain;
@@ -77,6 +90,7 @@ public class ImageGenController : ControllerBase
         _httpClientFactory = httpClientFactory;
         _runStore = runStore;
         _composeService = composeService;
+        _visualModels = visualModels;
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -88,6 +102,27 @@ public class ImageGenController : ControllerBase
         return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
     }
 
+    /// <summary>
+    /// 同步生图接口必须使用与模型目录相同的具体场景身份。
+    ///
+    /// 模型目录按 Text2Img / Img2Img / VisionGen 三个 appCaller 合并展示；如果提交时改用
+    /// 旧的通用 ImageGen.Generate，带显式白名单的逻辑模型会出现“目录能选、提交即拒绝”。
+    /// </summary>
+    internal static string ResolveGenerateAppCallerCode(bool isLayering, int imageCount, bool hasLegacyReference)
+    {
+        if (isLayering) return VisualAgent.Image.Layering;
+
+        var referenceCount = Math.Max(0, imageCount);
+        if (referenceCount == 0 && hasLegacyReference) referenceCount = 1;
+
+        return referenceCount switch
+        {
+            > 1 => VisualAgent.Image.VisionGen,
+            1 => VisualAgent.Image.Img2Img,
+            _ => VisualAgent.Image.Text2Img,
+        };
+    }
+
     #region 模型池查询（硬编码 appCallerCode，应用身份隔离）
 
     /// <summary>
@@ -96,23 +131,25 @@ public class ImageGenController : ControllerBase
     [HttpGet("models")]
     public async Task<IActionResult> GetImageGenModels(CancellationToken ct)
     {
-        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img, AppCallerCodes.VisionGen };
         const string modelType = "generation";
 
-        var seen = new HashSet<string>();
         var merged = new List<ModelPoolForAppResult>();
 
-        foreach (var code in codes)
+        try
         {
-            var pools = (await _gateway.GetAvailablePoolsAsync(code, modelType, ct))
-                .Select(pool => MapAvailablePool(pool, modelType));
-            foreach (var pool in pools)
-            {
-                if (seen.Add(pool.Id))
-                {
-                    merged.Add(pool);
-                }
-            }
+            merged = ToSelectableModels(await _visualModels.ListAsync(null, ct), modelType);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+        {
+            var requestId = HttpContext.TraceIdentifier;
+            _logger.LogWarning(ex,
+                "[ImageGenModels] LLM Gateway 模型目录读取失败 RequestId={RequestId}", requestId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<List<ModelPoolForAppResult>>.Fail(
+                    "LLM_GATEWAY_UNAVAILABLE",
+                    "模型网关暂时不可用，系统已记录故障并通知管理员。请稍后重试。",
+                    requestId: requestId,
+                    source: "llm-gateway"));
         }
 
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
@@ -124,9 +161,7 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/text2img")]
     public async Task<IActionResult> GetText2ImgModels(CancellationToken ct)
     {
-        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Text2Img, "generation", ct))
-            .Select(pool => MapAvailablePool(pool, "generation"))
-            .ToList();
+        var result = ToSelectableModels(await _visualModels.ListAsync(AppCallerCodes.Text2Img, ct), "generation");
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
@@ -136,9 +171,7 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/img2img")]
     public async Task<IActionResult> GetImg2ImgModels(CancellationToken ct)
     {
-        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.Img2Img, "generation", ct))
-            .Select(pool => MapAvailablePool(pool, "generation"))
-            .ToList();
+        var result = ToSelectableModels(await _visualModels.ListAsync(AppCallerCodes.Img2Img, ct), "generation");
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
 
@@ -148,19 +181,37 @@ public class ImageGenController : ControllerBase
     [HttpGet("models/vision")]
     public async Task<IActionResult> GetVisionGenModels(CancellationToken ct)
     {
-        var result = (await _gateway.GetAvailablePoolsAsync(AppCallerCodes.VisionGen, "generation", ct))
-            .Select(pool => MapAvailablePool(pool, "generation"))
-            .ToList();
+        var result = ToSelectableModels(await _visualModels.ListAsync(AppCallerCodes.VisionGen, ct), "generation");
         return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(result));
     }
+
+    /// <summary>
+    /// 「选择模型」列表只放用户真的可以挑来生图的模型。
+    ///
+    /// 分层这类能力需要一张输入图、不吃提示词、也没有尺寸概念，摆进模型列表会让用户
+    /// 以为选了它就能生图（2026-08-07 用户实际撞上：底部 chip 变成「图片分层」，
+    /// 旁边还挂着对它毫无意义的 1K·1:1）。它只允许由快捷栏的具体动作按能力标识点名调用。
+    ///
+    /// 过滤只此一处：四个 models 端点全部经过它，新增端点也必须走，
+    /// 否则下一个接进来的操作类能力会从没过滤的那条路重新漏出去。
+    /// </summary>
+    private static List<ModelPoolForAppResult> ToSelectableModels(
+        IEnumerable<AvailableModelPool> pools,
+        string modelType)
+        => pools
+            .Where(pool => !GatewayCapabilityIds.IsOperationOnly(pool.Code, pool.Capabilities))
+            .Select(pool => MapAvailablePool(pool, modelType))
+            .ToList();
 
     private static ModelPoolForAppResult MapAvailablePool(AvailableModelPool pool, string modelType)
     {
         return new ModelPoolForAppResult
         {
+            Capabilities = pool.Capabilities?.ToList() ?? [],
             Id = pool.Id,
             Name = pool.Name,
             Code = pool.Code,
+            Description = pool.Description,
             Priority = pool.Priority,
             ModelType = modelType,
             IsDefaultForType = pool.IsDefault,
@@ -169,12 +220,16 @@ public class ImageGenController : ControllerBase
                 ModelId = model.ModelId,
                 PlatformId = model.PlatformId,
                 Priority = model.Priority,
-                HealthStatus = model.HealthStatus
+                HealthStatus = model.HealthStatus,
+                IsRecoveryProbeAvailable = model.IsRecoveryProbeAvailable
             }).ToList(),
             ResolutionType = pool.ResolutionType,
             IsDedicated = pool.IsDedicated,
             IsDefault = pool.IsDefault,
-            IsLegacy = false
+            IsLegacy = false,
+            AverageDurationMs = pool.AverageDurationMs,
+            RecentTenRequests = pool.RecentTenRequests,
+            RecentTenSuccessRatePercent = pool.RecentTenSuccessRatePercent,
         };
     }
 
@@ -412,57 +467,51 @@ public class ImageGenController : ControllerBase
     }
 
     /// <summary>
-    /// 获取模型适配信息（尺寸选项、能力等，纯静态注册表查询，无需数据库）
+    /// 获取 MAP 已开放模型的网关能力（尺寸选项、参考图等）
     /// </summary>
-    /// <param name="modelId">平台侧模型ID（如 doubao-seedream-4-5、gpt-image-1.5）</param>
+    /// <param name="modelId">网关公开逻辑模型标识</param>
     [HttpGet("adapter-info")]
-    public IActionResult GetAdapterInfo([FromQuery] string modelId)
+    public async Task<IActionResult> GetAdapterInfo([FromQuery] string modelId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(modelId))
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
         }
 
-        var adapterInfo = Infrastructure.LLM.ImageGenModelAdapterRegistry.GetAdapterInfo(modelId.Trim());
-        if (adapterInfo == null || !adapterInfo.Matched)
+        var requestedModelId = modelId.Trim();
+        var policy = await _visualModels.ReadAsync(ct);
+        if (policy.Select(requestedModelId) is null)
+            return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_NOT_ALLOWED", "该模型未开放，请重新选择。"));
+        try
         {
+            var item = (await _visualModels.DiscoverAsync(null, ct)).FirstOrDefault(x => x.Model.Code == requestedModelId);
+            var info = item?.ImageCapabilities;
+            if (info is null)
+                return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_CAPABILITIES_UNAVAILABLE", "该模型的能力信息暂不可用，请刷新或选择其他模型。"));
             return Ok(ApiResponse<object>.Ok(new
             {
-                matched = false,
-                modelId = modelId.Trim(),
+                matched = info.Matched,
+                modelId = requestedModelId,
+                adapterName = info.AdapterName,
+                displayName = item!.Model.Name,
+                info.Provider,
+                info.OfficialDocUrl,
+                info.LastUpdated,
+                sizeConstraint = new { type = info.SizeConstraintType, description = info.SizeConstraintDescription },
+                info.SizesByResolution,
+                info.SizeParamFormat,
+                info.SizesNotApplicable,
+                sizeControl = new { source = "llmgw" },
+                limitations = new { info.MustBeDivisibleBy, info.MaxWidth, info.MaxHeight, info.MinWidth, info.MinHeight, info.MaxPixels, info.Notes },
+                info.SupportsImageToImage,
+                info.SupportsInpainting,
+                info.IsAdaptive,
             }));
         }
-
-        return Ok(ApiResponse<object>.Ok(new
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
         {
-            matched = true,
-            modelId = modelId.Trim(),
-            adapterName = adapterInfo.AdapterName,
-            displayName = adapterInfo.DisplayName,
-            provider = adapterInfo.Provider,
-            officialDocUrl = adapterInfo.OfficialDocUrl,
-            lastUpdated = adapterInfo.LastUpdated,
-            sizeConstraint = new
-            {
-                type = adapterInfo.SizeConstraintType,
-                description = adapterInfo.SizeConstraintDescription,
-            },
-            sizesByResolution = adapterInfo.SizesByResolution,
-            sizeParamFormat = adapterInfo.SizeParamFormat,
-            limitations = new
-            {
-                mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
-                maxWidth = adapterInfo.MaxWidth,
-                maxHeight = adapterInfo.MaxHeight,
-                minWidth = adapterInfo.MinWidth,
-                minHeight = adapterInfo.MinHeight,
-                maxPixels = adapterInfo.MaxPixels,
-                notes = adapterInfo.Notes,
-            },
-            supportsImageToImage = adapterInfo.SupportsImageToImage,
-            supportsInpainting = adapterInfo.SupportsInpainting,
-            isAdaptive = adapterInfo.IsAdaptive,
-        }));
+            return StatusCode(503, ApiResponse<object>.Fail("LLM_GATEWAY_UNAVAILABLE", "模型能力暂时无法读取，请稍后重试。"));
+        }
     }
 
     #endregion
@@ -855,11 +904,30 @@ public class ImageGenController : ControllerBase
     public async Task<IActionResult> Generate([FromBody] ImageGenGenerateRequest request, CancellationToken ct)
     {
         var adminId = GetAdminId();
+        var operation = (request?.Operation ?? "generate").Trim().ToLowerInvariant();
+        if (operation is not ("generate" or "layering"))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "operation 仅支持 generate 或 layering"));
+        }
+        var isLayering = operation == "layering";
         var prompt = (request?.Prompt ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(prompt))
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
         }
+
+        // 先归一参考图输入，再按真实场景选 appCaller。模型解析与最终发送必须使用同一个身份。
+        var images = request?.Images?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
+        var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
+        var initImageUrl = (request?.InitImageUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageUrl)) initImageUrl = null;
+        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
+        var hasLegacyReference = !string.IsNullOrWhiteSpace(initImageBase64)
+                                 || !string.IsNullOrWhiteSpace(initImageUrl)
+                                 || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+        var appCallerCode = ResolveGenerateAppCallerCode(isLayering, images.Count, hasLegacyReference);
 
         var modelId = (request?.ModelId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
@@ -867,9 +935,16 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = VisualAgent.ImageGen.Generate;
+        var requiredLogicalModelPublicId = isLayering ? ImageLayeringCapabilityId : null;
         GatewayModelResolution? resolved = null;
-        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
+        if (isLayering)
+        {
+            // MAP 只依赖 LLMGW 发布的通用能力标识，不感知 fal.ai、Exchange 或具体模型。
+            modelId = null;
+            platformId = null;
+            modelName = null;
+        }
+        else if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId))
         {
             resolved = await _gateway.ResolveModelAsync(appCallerCode, "generation", ct: ct);
             if (resolved != null)
@@ -886,21 +961,12 @@ public class ImageGenController : ControllerBase
 
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
-        // 统一参考图列表：优先使用 Images 字段，兼容旧的 InitImageBase64/Url/Sha256
-        var images = request?.Images?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
-
-        var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
-        var initImageUrl = (request?.InitImageUrl ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(initImageUrl)) initImageUrl = null;
-        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
-
         // 说明：即使后续因"Volces 降级"或其它原因把 initImageBase64 清空，也希望日志能追溯"用户是否提供过参考图"
-        var initImageProvided = images.Count > 0
-                                || !string.IsNullOrWhiteSpace(initImageBase64)
-                                || !string.IsNullOrWhiteSpace(initImageUrl)
-                                || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+        var initImageProvided = images.Count > 0 || hasLegacyReference;
+        if (isLayering && !initImageProvided)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片分层必须提供一张输入图片"));
+        }
 
         // 兼容：允许前端只传 URL / sha，服务端负责下载/读取并转为 base64（避免浏览器 CORS 与性能问题）
         if (initImageBase64 == null && !string.IsNullOrWhiteSpace(initImageAssetSha256))
@@ -1001,7 +1067,12 @@ public class ImageGenController : ControllerBase
         }
         var maskB64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim();
         var res = await _imageClient.GenerateUnifiedAsync(prompt, n, size, responseFormat, ct, appCallerCode,
-            images: images.Count > 0 ? images : null, modelId, platformId, modelName, maskBase64: maskB64);
+            images: images.Count > 0 ? images : null,
+            modelId,
+            platformId,
+            modelName,
+            maskBase64: maskB64,
+            requiredLogicalModelPublicId: requiredLogicalModelPublicId);
         if (!res.Success)
         {
             // 将 LLM_ERROR 映射为 502，其他保持 400
@@ -1393,7 +1464,7 @@ public class ImageGenController : ControllerBase
 
         if (items.Count == 0)
         {
-            await WriteEventAsync("run", new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = "items 不能为空" }, cancellationToken);
+            await WriteEventAsync("run", new { type = "error", errorCode = ErrorCodes.INVALID_FORMAT, errorMessage = "没有可生成的图片描述，请至少添加一条有效描述后重试" }, cancellationToken);
             return;
         }
 
@@ -1529,6 +1600,12 @@ public class ImageGenController : ControllerBase
                         }
                         catch (Exception ex)
                         {
+                            _logger.LogError(
+                                ex,
+                                "批量生图任务异常: RunId={RunId}, ItemIndex={ItemIndex}, ImageIndex={ImageIndex}",
+                                runId,
+                                currentItemIndex,
+                                imageIndex);
                             await writeLock.WaitAsync(cancellationToken);
                             try
                             {
@@ -1544,8 +1621,8 @@ public class ImageGenController : ControllerBase
                                     modelId,
                                     platformId,
                                     modelName,
-                                    errorCode = ErrorCodes.LLM_ERROR,
-                                    errorMessage = ex.Message
+                                    errorCode = ErrorCodes.IMAGE_GEN_UNAVAILABLE,
+                                    errorMessage = "当前生图服务暂时不可用，请稍后重试。若持续出现，请联系管理员。"
                                 }, cancellationToken);
                             }
                             finally
@@ -1609,7 +1686,17 @@ public class ImageGenController : ControllerBase
         if (string.IsNullOrWhiteSpace(modelNameLegacy)) modelNameLegacy = null;
         modelId ??= modelNameLegacy;
 
-        if (!string.IsNullOrWhiteSpace(cfgModelId))
+        if (string.IsNullOrWhiteSpace(request?.AppKey) || request.AppKey == "visual-agent")
+        {
+            var selected = (await _visualModels.ReadAsync(ct)).Select(modelId);
+            if (selected is null || !string.IsNullOrWhiteSpace(cfgModelId)
+                || (!string.IsNullOrWhiteSpace(platformId) && platformId != "logical-model"))
+                return BadRequest(ApiResponse<object>.Fail("VISUAL_MODEL_NOT_ALLOWED",
+                    "当前模型未开放或默认模型尚未配置，请重新选择或联系管理员。"));
+            modelId = selected;
+            platformId = "logical-model";
+        }
+        else if (!string.IsNullOrWhiteSpace(cfgModelId))
         {
             var m = await _db.LLMModels.Find(x => x.Id == cfgModelId && x.Enabled).FirstOrDefaultAsync(ct);
             if (m == null)
@@ -1634,7 +1721,7 @@ public class ImageGenController : ControllerBase
         var items = request?.Items ?? new List<ImageGenRunPlanItemInput>();
         if (items.Count == 0)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "items 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可生成的图片描述，请至少添加一条有效描述后重试"));
         }
         // 清洗与限制：单条最多 5 张，总计最多 20 张
         var plan = new List<ImageGenRunPlanItem>();
@@ -1652,7 +1739,7 @@ public class ImageGenController : ControllerBase
         }
         if (plan.Count == 0)
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "items 不能为空（无有效 prompt）"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片描述为空，请填写有效描述后重试"));
         }
         if (total > 20)
         {
@@ -1711,6 +1798,15 @@ public class ImageGenController : ControllerBase
 
         // 文学创作场景：关联的配图标记索引
         var articleMarkerIndex = request?.ArticleMarkerIndex;
+        // 盖上发起时的配图方案版本：改稿 / 重新规划后，这个还在跑的旧任务不能再回填到新一版的标记上
+        // （Worker 按版本过滤回填；MCP 发起的任务一直带版本，网页这条路此前漏了）。
+        int? articleWorkflowVersion = null;
+        if (articleMarkerIndex.HasValue && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            var markerWs = await _db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).FirstOrDefaultAsync(ct);
+            if (markerWs?.ScenarioType == "article-illustration" && markerWs.ArticleWorkflow != null)
+                articleWorkflowVersion = markerWs.ArticleWorkflow.Version;
+        }
 
         // 参考图风格提示词（用于追加到生图 prompt）
         string? referenceImagePrompt = null;
@@ -1752,6 +1848,7 @@ public class ImageGenController : ControllerBase
 
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,
@@ -1764,7 +1861,9 @@ public class ImageGenController : ControllerBase
             // 用户显式选择优先：同 ImageMasterController.CreateWorkspaceImageGenRun。
             ModelResolutionType = string.Equals(platformId, "logical-model", StringComparison.OrdinalIgnoreCase)
                 ? PrdAgent.Core.Models.ModelResolutionType.LogicalModel
-                : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
+                : string.Equals(platformId, "model-pool", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : PrdAgent.Core.Models.ModelResolutionType.DirectModel,
             Size = size,
             ResponseFormat = responseFormat,
             MaxConcurrency = maxConc,
@@ -1779,9 +1878,9 @@ public class ImageGenController : ControllerBase
             AppCallerCode = resolvedAppCallerCode,
             AppKey = appKey,
             ArticleMarkerIndex = articleMarkerIndex,
+            ArticleWorkflowVersion = articleWorkflowVersion,
             InitImageAssetSha256 = initImageAssetSha256,
             MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1871,6 +1970,15 @@ public class ImageGenController : ControllerBase
                 run.ModelGroupName,
                 run.Size,
                 run.ResponseFormat,
+                run.ExpectedImageRefCount,
+                imageRefs = run.ImageRefs?.Select(imageRef => new
+                {
+                    imageRef.RefId,
+                    imageRef.AssetSha256,
+                    imageRef.Url,
+                    imageRef.Label,
+                    imageRef.Role
+                }),
                 run.MaxConcurrency,
                 run.Total,
                 run.Done,
@@ -1883,6 +1991,111 @@ public class ImageGenController : ControllerBase
             },
             items
         }));
+    }
+
+    /// <summary>
+    /// 下载当前用户已生成的图片。对象存储通常与管理端跨域，浏览器不会执行跨域链接的 download 语义，
+    /// 因此只允许代理数据库中属于当前用户且已经完成的精确结果 URL。
+    /// </summary>
+    [HttpGet("download")]
+    public async Task<IActionResult> DownloadGeneratedImage([FromQuery] string url, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        var normalizedUrl = (url ?? string.Empty).Trim();
+        if (!Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片地址无效，请刷新作品后重试"));
+        }
+
+        // 公网 URL 的 path 可能包含 CDN 基础路径，不能据此反推对象存储 key。
+        // 只从当前用户已有的运行项、产物登记或工作区资产中解析内容哈希，
+        // 同步单图流程没有 ImageGenRunItem，必须允许本人 UploadArtifact 独立证明归属。
+        var ownedItem = await _db.ImageGenRunItems
+            .Find(item => item.OwnerAdminId == adminId
+                          && item.Status == ImageGenRunItemStatus.Done
+                          && item.Url == normalizedUrl)
+            .SortByDescending(item => item.EndedAt)
+            .FirstOrDefaultAsync(ct);
+        var outputArtifact = await _db.UploadArtifacts
+            .Find(artifact => artifact.CreatedByAdminId == adminId
+                              && artifact.Kind == "output_image"
+                              && artifact.CosUrl == normalizedUrl)
+            .SortByDescending(artifact => artifact.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (outputArtifact == null && ownedItem != null)
+        {
+            // 带水印运行项保存展示 URL，而 UploadArtifact 保存原图 URL。
+            // 由本人已完成运行项的确定性请求 ID 关联原图登记，兼容已有历史数据。
+            var ownedRequestId = $"{ownedItem.RunId}-{ownedItem.ItemIndex}-{ownedItem.ImageIndex}";
+            outputArtifact = await _db.UploadArtifacts
+                .Find(artifact => artifact.CreatedByAdminId == adminId
+                                  && artifact.Kind == "output_image"
+                                  && artifact.RequestId == ownedRequestId)
+                .SortByDescending(artifact => artifact.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+        ImageAsset? imageAsset = null;
+        if (outputArtifact == null
+            || (ownedItem != null && string.IsNullOrWhiteSpace(ownedItem.DisplaySha256)))
+        {
+            imageAsset = await _db.ImageAssets
+                .Find(asset => asset.OwnerUserId == adminId
+                               && (asset.Url == normalizedUrl || asset.OriginalUrl == normalizedUrl))
+                .SortByDescending(asset => asset.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (ownedItem == null && outputArtifact == null && imageAsset == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "图片不存在或无权下载"));
+        }
+
+        // 精确下载当前展示 URL 对应的对象。水印结果不能回退到同一请求登记的原图 SHA，
+        // 否则“下载”会在不提示用户的情况下移除水印。
+        var sha256 = ownedItem?.DisplaySha256
+                     ?? (imageAsset?.Url == normalizedUrl ? imageAsset.DisplaySha256 : null)
+                     ?? outputArtifact?.Sha256
+                     ?? imageAsset?.OriginalSha256
+                     ?? imageAsset?.Sha256;
+        if (string.IsNullOrWhiteSpace(sha256))
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片暂时无法下载，请稍后重试"));
+        }
+
+        var originalSha256 = outputArtifact?.Sha256
+                             ?? imageAsset?.OriginalSha256
+                             ?? imageAsset?.Sha256;
+        var selectedDisplaySha256 = ownedItem?.DisplaySha256
+                                    ?? (imageAsset?.Url == normalizedUrl ? imageAsset.DisplaySha256 : null);
+        var assetDomain = !string.IsNullOrWhiteSpace(selectedDisplaySha256)
+                          && string.Equals(sha256, selectedDisplaySha256, StringComparison.OrdinalIgnoreCase)
+                          && !string.Equals(sha256, originalSha256, StringComparison.OrdinalIgnoreCase)
+            ? AppDomainPaths.DomainWatermark
+            : AppDomainPaths.DomainVisualAgent;
+        var stored = await _assetStorage.TryReadByShaAsync(
+            sha256,
+            ct,
+            domain: assetDomain,
+            type: AppDomainPaths.TypeImg);
+        if (stored == null || stored.Value.bytes.Length == 0)
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片暂时无法下载，请稍后重试"));
+        }
+
+        var mime = stored.Value.mime.Trim();
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_UNAVAILABLE, "图片内容无效，请重新生成后再试"));
+        }
+
+        return File(stored.Value.bytes, mime);
     }
 
     /// <summary>
@@ -1973,12 +2186,15 @@ public class ImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
         }
 
-        var res = await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == runId && x.OwnerAdminId == adminId,
-            Builders<ImageGenRun>.Update.Set(x => x.CancelRequested, true),
-            cancellationToken: ct);
+        var res = await PrdAgent.Api.Services.ImageGenRunCancellation.RequestAsync(
+            _db,
+            _runStore,
+            runId,
+            adminId,
+            appKey: null,
+            ct);
 
-        if (res.MatchedCount == 0)
+        if (!res.Found)
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, "run 不存在"));
         }
@@ -2134,6 +2350,7 @@ public class ImageGenPlanItem
 
 public class ImageGenGenerateRequest
 {
+    public string? Operation { get; set; }
     public string Prompt { get; set; } = string.Empty;
     public string? ModelId { get; set; }
     public string? PlatformId { get; set; }

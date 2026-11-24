@@ -10,7 +10,7 @@
 开始修改或验收前必须完整阅读：
 
 - `doc/rule.platform.production-release-safety.md`：唯一规则 SSOT。
-- `doc/debt.platform.production-release.md`：尚未偿还的实现缺口。
+- 在 CDS 工程债务的 `platform.production-release` 模块查看尚未偿还的实现缺口。
 
 硬约束：公网 HTML 与入口资源是完成门；API/容器健康不能替代；静态站必须原子切换；旧命令必须兼容；发布必须留下可追溯证据。
 

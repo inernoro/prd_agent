@@ -70,6 +70,13 @@ public sealed class SidecarEvent
     public string? ToolUseId { get; init; }
     public System.Text.Json.JsonElement? ToolInput { get; init; }
     public string? Content { get; init; }
+
+    /// <summary>
+    /// 工具结果是成是败。null 表示运行时没给出这个信息（旧版本运行时），
+    /// 消费方此时不得默认当成功——那正是「失败的工具显示成完成」的来源。
+    /// </summary>
+    public bool? IsError { get; init; }
+
     public string? FinalText { get; init; }
     public long? InputTokens { get; init; }
     public long? OutputTokens { get; init; }
@@ -82,7 +89,13 @@ public sealed class SidecarEvent
 /// <summary>调用 sidecar 的运行请求；序列化时由 router 负责，业务层不直接拼 JSON。</summary>
 public sealed class SidecarRunRequest
 {
+    /// <summary>服务端业务归属；不能通过请求 JSON 设置，也不构成执行授权。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SubjectUserId { get; init; }
+
     public string RunId { get; init; } = string.Empty;
+    /// <summary>服务端任务准入签发的业务编号；与 sidecar 工具回调 RunId 独立。</summary>
+    public string? GatewayRunId { get; init; }
     public string Model { get; init; } = "claude-opus-4-5";
     public string SystemPrompt { get; init; } = string.Empty;
     public List<SidecarChatMessage> Messages { get; init; } = new();
@@ -138,6 +151,13 @@ public sealed class SidecarRunRequest
 
     /// <summary>Git ref/branch for diagnostics and future workspace preparation.</summary>
     public string? GitRef { get; init; }
+
+    /// <summary>
+    /// per-request 覆盖运行时自带的内置工具（Read/Grep/Glob 之类）。
+    /// null = 沿用 sidecar 进程级默认（历史调用方行为不变）；
+    /// 空数组 = 一个内置工具都不开。通用对话走空数组，避免聊天顺带带上仓库读取能力。
+    /// </summary>
+    public IReadOnlyList<string>? BuiltinTools { get; init; }
 }
 
 public sealed class SidecarChatMessage

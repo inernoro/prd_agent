@@ -1,21 +1,49 @@
+import { partialRead } from '@/lib/partialRead';
+import { MotionLink } from '@/components/layout/RouteMotion';
+import { AnchoredPopover } from '@/components/ui/anchored-popover';
+import { CiImageNotice } from '@/components/branch/CiImageNotice';
+import type { CiDiagnosisView } from '@/lib/ci-image-notice';
+import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
+import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import { DatabaseExecutionNotice } from '@/components/branch/DatabaseExecutionNotice';
+import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Server, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
+import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { useCanManageConsole, useFocusTrap, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
+import { githubPullRequestUrl } from '@/lib/github-urls';
+import { createLatestWinsGate } from '@/lib/latest-wins';
+import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { BranchDrawerSkeleton } from '@/components/branch/BranchDrawerSkeleton';
+import { DRAWER_TAB_BUTTON_CLASS, DRAWER_TAB_NAV_CLASS, drawerTabs, type DrawerTab } from '@/components/branch/drawerTabs';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
+import { WebEntryConfigDialog } from '@/components/branch/WebEntryConfigDialog';
+import {
+  OverviewPanel,
+  seedMetricSeries,
+  type MetricSeries,
+  type OverviewDeployment,
+  type OverviewService,
+} from '@/components/branch/OverviewPanel';
 import { Layers, Lock, Plus } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
+import { BranchDbKeepList, type BranchDbChoice } from '@/components/branch/BranchDbKeepList';
+import { DbProbePanel } from '@/components/branch/DbProbePanel';
+import { ReferencesPanel } from '@/components/branch/ReferencesPanel';
+import { RelationCard } from '@/components/branch/RelationCard';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -59,6 +87,8 @@ interface BranchDetailData {
   id: string;
   projectId: string;
   branch: string;
+  /** 父实例镜像来的只读分支（预览实例专用） */
+  mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: string;
   previewSlug?: string;
   previewUrl?: string;
@@ -67,6 +97,14 @@ interface BranchDetailData {
   replicaSets?: Record<string, ProfileReplicaSetView>;
   resources?: BranchResource[];
   createdAt?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciDiagnosis?: CiDiagnosisView | null;
+  ciTargetSha?: string;
+  ciWorkflowConclusion?: string;
+  ciImageError?: string;
+  ciWorkflowRunUrl?: string;
   commitSha?: string;
   subject?: string;
   githubRepoFullName?: string;
@@ -88,10 +126,13 @@ interface BranchDetailData {
   currentVersionId?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
+    prebuilt?: boolean;
     label: string;
     title: string;
     pendingPublish?: boolean;
   };
+  /** 播种端的来路说明；以「演示数据」开头即为预览实例的演示分支（isDemoBranch） */
+  notes?: string;
 }
 
 interface BuildProfileOverride {
@@ -263,29 +304,13 @@ interface DrawerActivityEvent {
   errorSummary?: string;
 }
 
-// GET /api/branches/:id/subdomain-aliases → gatewayUrls[]（声明了 cds.subdomain 的服务的命名入口）。
-interface GatewayUrlEntry {
-  subdomain: string;
+// GET /api/branches/:id/subdomain-aliases → 用户可见 Web 入口。
+interface WebEntryUrl {
+  subdomain?: string;
+  serviceId?: string;
   name: string;
   url: string;
-  /**
-   * 这条入口是不是可登录的网关控制台（而非 API 引擎的健康检查入口）。
-   *
-   * 由服务端 computeBranchGatewayUrls 下发，前端不再按子域名字自己判：
-   * 2026-07-29 控制台子域从 `llmgw-web` 改名为 `llmgw` 时，这里原本硬编码的
-   * 4 处 `=== 'llmgw-web'` 全部失效——控制台被当成健康检查入口标注、排序也不再
-   * 排在最前（Codex P2）。判据在 cds/src/services/preview-entrypoints.ts。
-   *
-   * 可选：老后端不返回该字段时退回按名字判，避免前后端版本错位时整块失灵。
-   */
-  isConsole?: boolean;
-}
-
-/** 老后端没有 isConsole 时的兜底（与 preview-entrypoints 的别名表同口径）。 */
-function isConsoleEntry(gw: GatewayUrlEntry): boolean {
-  if (typeof gw.isConsole === 'boolean') return gw.isConsole;
-  const sub = gw.subdomain.toLowerCase();
-  return sub === 'llmgw' || sub === 'llmgw-web';
+  primary: boolean;
 }
 
 // 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
@@ -342,7 +367,7 @@ export interface BranchDeploymentItem {
   branchId: string;
   branchName: string;
   commitSha?: string;
-  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'open' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -359,7 +384,6 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'run' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -381,30 +405,21 @@ interface ResourceCloneInput {
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+export function availableDrawerLogModes(canManageConsole: boolean): Array<[LogsMode, string]> {
+  const modes: Array<[LogsMode, string]> = [
+    ['container', '容器日志'], ['system', '系统日志'], ['webhook', 'Webhook'], ['http', 'HTTP'],
+  ];
+  return modes.filter(([mode]) => canManageConsole || mode !== 'webhook');
+}
 // 全屏详情抽屉的日志区由父级 flex 布局分配剩余高度，不写固定像素高度。
 // 这样高屏不会在日志卡下方制造大片空白，矮屏仍由最近内容层滚动。
 const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
 const DETAIL_LOG_EMPTY_CLASS = 'flex min-h-0 flex-1 items-center px-5 text-sm leading-6 text-muted-foreground';
 
-/**
- * 方案 A「六问」分类（2026-07-26 用户拍板，9 页签收敛为 6）：每个页签回答一个问题。
- *   总览=现在怎么样（原详情 + 指标并入）；运行=跑着几个怎么分流；
- *   部署=发生过什么发布（构建日志内联到每条部署，不再跳页签）；
- *   日志=容器在说什么（只留持续流：容器/系统/Webhook/HTTP，构建模式移除归部署）；
- *   配置=下次怎么跑（生效变量 + 配置检查器 + 分支设置三分区）；资源=数据在哪。
- * 分类原则：一次性记录跟事件走、持续流水跟对象走、读与写同域合并。
- */
-const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
-  { key: 'overview', label: '总览' },
-  { key: 'run', label: '运行' },
-  { key: 'deployments', label: '部署' },
-  { key: 'logs', label: '日志' },
-  { key: 'config', label: '配置' },
-  { key: 'services', label: '资源' },
-];
+// drawerTabs / DrawerTab 的 SSOT 在 ./branch/drawerTabs.ts（与加载骨架共用同一张表）。
 
 /** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
-type ConfigSection = 'variables' | 'inspector' | 'settings';
+type ConfigSection = 'variables' | 'references' | 'inspector' | 'settings';
 
 // Phase A (2026-05-04):分支生效环境变量
 type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
@@ -456,7 +471,12 @@ interface MetricsResponse {
   services: Array<{
     profileId: string;
     containerName: string;
-    status: string;
+    /**
+     * 服务端在**本次请求时刻**读到的状态，比抽屉打开时那份 branch.services 快照新鲜。
+     * 这里如实声明成 ServiceState['status'] 而不是宽泛的 string：服务端返回的就是它，
+     * 声明宽了只会逼调用方去断言。
+     */
+    status: ServiceState['status'];
     stats: ContainerStatsResponse | null;
   }>;
 }
@@ -515,31 +535,9 @@ type TriggerLogsState =
 // 2026-05-14: webhook 日志分页 — 每页 20 条，懒加载下一页，与 buffer 1000 配合。
 const TRIGGER_LOGS_PAGE_SIZE = 20;
 
-/** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
-interface MetricSeries {
-  cpu: number[];        // %
-  mem: number[];        // % of limit
-  rxRate: number[];     // bytes/sec(由两次响应间 delta / dt 算出)
-  txRate: number[];     // bytes/sec
-}
-const METRIC_RING_SIZE = 60;
+// MetricSeries / 环形缓冲 / 系列色都在 OverviewPanel —— 图表与它的数据结构同处一地，
+// 免得改了一边忘另一边（predicate-and-wiring-discipline 形状 3）。
 
-/** 总览仪表块（2026-07-26「让总览像一个总览」）：大数字 + 语义色点 + 一句副文案 */
-function OverviewTile({ label, value, sub, tone = 'muted', mono }: {
-  label: string; value: string; sub?: string; tone?: 'good' | 'bad' | 'muted'; mono?: boolean;
-}): JSX.Element {
-  const dot = tone === 'good' ? '#10b981' : tone === 'bad' ? '#ef4444' : 'hsl(var(--muted-foreground))';
-  return (
-    <div className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-3.5 py-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
-        {label}
-      </div>
-      <div className={`mt-1 truncate text-lg font-bold ${tone === 'bad' ? 'text-destructive' : ''} ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
-      {sub ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div> : null}
-    </div>
-  );
-}
 
 function DrawerTabButton({
   tab,
@@ -553,16 +551,35 @@ function DrawerTabButton({
   return (
     <button
       type="button"
-      className={`relative inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap px-3 text-sm transition-colors ${
+      className={`${DRAWER_TAB_BUTTON_CLASS} ${
         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
       onClick={onClick}
     >
       {tab.label}
-      {tab.planned ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px] text-muted-foreground">计划</span> : null}
+      {tab.planned ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">计划</span> : null}
       {active ? <span className="absolute inset-x-2 bottom-0 h-px bg-primary" /> : null}
     </button>
   );
+}
+
+/**
+ * 页签之上的说明区有没有东西可说。三种内容各自的显示条件抄自渲染处，收成一个判据，
+ * 让「不渲染空 section」和「里面画什么」不会各判各的（形状 3：判据分裂）。
+ */
+export function branchNoticeVisible(branch: Pick<BranchDetailData, 'status' | 'lastStoppedAt'>, failureReason: string | null | undefined): boolean {
+  const stoppedNote = Boolean(branch.lastStoppedAt) && !['running', 'building', 'starting', 'restarting'].includes(branch.status);
+  const idleNote = branch.status === 'idle' || branch.status === 'stopped';
+  return stoppedNote || Boolean(failureReason) || idleNote;
+}
+
+/**
+ * 预览实例的演示分支：没有真实容器，「构建中」永远不会变成「运行中」。
+ * 判据与播种端同一个标记词（notes 以「演示数据」开头，preview-instance-seed 的守卫扫的就是它），
+ * 不另发明一个字段——否则播种端改了标记这里就静默失效。
+ */
+function isDemoBranch(branch: Pick<BranchDetailData, 'notes'>): boolean {
+  return typeof branch.notes === 'string' && branch.notes.startsWith('演示数据');
 }
 
 function statusLabel(s: string): string {
@@ -576,14 +593,15 @@ function statusLabel(s: string): string {
 // `cds/web/src/lib/statusStyle.ts` 共享模块,见顶部 import。
 
 function deploymentStatusClass(status: BranchDeploymentItem['status']): string {
-  if (status === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-500';
-  if (status === 'success') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status === 'running') return 'border-info/30 bg-info-soft text-info';
+  if (status === 'success') return 'border-ok/30 bg-ok-soft text-ok';
   return 'border-destructive/30 bg-destructive/10 text-destructive';
 }
 
 function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
   return ({
     preview: '预览部署',
+    open: '打开预览',
     deploy: '部署',
     restart: '启动',
     pull: '拉取',
@@ -609,9 +627,6 @@ function githubBranchTreeUrl(repoFullName: string, branchName: string): string {
   return `https://github.com/${repoFullName}/tree/${encodedBranch}`;
 }
 
-function githubPullRequestUrl(repoFullName: string, prNumber: number): string {
-  return `https://github.com/${repoFullName}/pull/${prNumber}`;
-}
 
 function deploymentStages(log: string[]): string[] {
   const stages = new Set<string>();
@@ -773,26 +788,44 @@ function failureKeyLogLines(lines: string[], max = 8): string[] {
   return Array.from(new Set(selected)).slice(-max);
 }
 
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Browser permission policies can reject clipboard writes even on HTTPS.
-      // Fall through to the textarea path so the recovery button still works.
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
+/**
+ * 去重时把「同一次操作的不同叫法」归成一类（Codex P2，核对属实）。
+ *
+ * 一次「部署并打开」由 `deployBranch(..., openAfterDeploy=true)` 发起，实时那条
+ * 记录的 kind 是 `preview`；而它落库后经 `legacyLogToDeploymentItem` 回来时 kind
+ * 恒为 `deploy`。按 kind 严格相等去重就留下两条，抽屉一 reload 同一次部署在柱状图上
+ * 出现两根柱子，中位线、成功率、趋势全被带偏。
+ *
+ * `rebuild` 落库后同样回成 `deploy`，所以三种构建类叫法归一处。
+ * `open`（只打开、不构建）不在其中——它本来就不该进部署统计，见 openRunningPreview。
+ */
+const BUILD_KINDS = new Set<BranchDeploymentItem['kind']>(['deploy', 'preview', 'rebuild']);
+
+export function sameOperationKind(a: BranchDeploymentItem['kind'], b: BranchDeploymentItem['kind']): boolean {
+  if (BUILD_KINDS.has(a) && BUILD_KINDS.has(b)) return true;
+  return a === b;
+}
+
+/**
+ * 取指标失败时给用户看的那句话（Codex P1，核对属实）。
+ *
+ * `ApiError.message` 是 `api.ts` 拼给开发者的诊断串：
+ * `GET /_cds/api/branches/xxx/metrics/series?after=-1800 失败：… (HTTP 500) · requestId=…`。
+ * 之前 `seriesError` / `metricsError` 直接存它、面板直接渲染，普通用户就在总览上
+ * 看到内部路径、HTTP 状态和 requestId —— 违反 `.Codex/rules/user-readable-errors.md`
+ * 第 1、2、9 条（不透传异常原文、不出现状态码与端点、前端不得直接展示 error.message）。
+ *
+ * 这里是那条规则要求的「统一错误映射入口」：对外只给「发生了什么 + 接下来怎么做」，
+ * 原始诊断留在 console。分类对齐规则第 5 条的可预期错误集合。
+ */
+export function describeMetricsFailure(err: unknown, what: '实时指标' | '指标历史'): string {
+  console.warn(`[overview] ${what}读取失败`, err);
+  if (!(err instanceof ApiError)) return `${what}读取失败，可能是网络中断，请检查网络后重试。`;
+  if (err.status === 401 || err.status === 403) return `没有权限读取${what}，请重新登录后重试。`;
+  if (err.status === 404) return `当前 CDS 版本没有${what}接口，更新 CDS 后即可显示。`;
+  if (err.status === 429) return `请求过于频繁，${what}稍后会自动恢复。`;
+  if (err.status >= 500) return `${what}服务暂时不可用，稍后会自动重试。`;
+  return `${what}读取失败，请刷新页面重试。`;
 }
 
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
@@ -835,17 +868,27 @@ export function BranchDetailDrawer({
   deployments = [],
   activityEvents = [],
   previewUrl = '',
+  previewMode = 'multi',
   branchStatus,
   initialResourceId,
+  initialTab,
+  initialConfigSection,
   initialResourceDetailTab,
+  resourceWorkbenchDirect = false,
   onToast,
   onActionComplete,
   onRelease,
+  onOpenRelations,
+  initialRelationExpanded = false,
+  onRelationRestoreConsumed,
 }: {
   branchId: string | null;
   projectId: string;
   open: boolean;
   onClose: () => void;
+  onOpenRelations?: (branchId: string, expanded: boolean) => void;
+  initialRelationExpanded?: boolean;
+  onRelationRestoreConsumed?: () => void;
   deployments?: BranchDeploymentItem[];
   activityEvents?: DrawerActivityEvent[];
   /** 由父页面注入的 toast 函数 — 设置 tab 操作完成后用它反馈结果 */
@@ -861,8 +904,15 @@ export function BranchDetailDrawer({
    * domain configured). Drawer 仅在 running 时显示 URL chip。
    */
   previewUrl?: string;
+  /** 决定主入口是否需要保留 simple/port 模式下由调用方给出的 host。 */
+  previewMode?: PreviewMode;
   initialResourceId?: string | null;
+  initialTab?: DrawerTab;
+  initialConfigSection?: ConfigSection;
   initialResourceDetailTab?: BranchResourceDetailTab | null;
+  /* 从分支卡片的数据库 chip 直达工作台：关掉工作台直接退回分支列表，
+     不把用户留在中间这层抽屉里。 */
+  resourceWorkbenchDirect?: boolean;
   /**
    * Branch status at the time of opening, used to decide whether to
    * actually render the URL chip (only running). The Drawer also has
@@ -871,20 +921,31 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  const canManageConsole = useCanManageConsole();
+  const drawerPanel = useRef<HTMLDivElement>(null);
+  useFocusTrap(open && Boolean(branchId), drawerPanel);
+  const canOpenPreview = canUseConsolePreview(previewMode, canManageConsole);
   // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
   // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
   const now = useNowTick(open);
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
-  // 网关入口（声明了 cds.subdomain 的服务，如 LLM 网关 console/serving 获得独立命名域名）。
-  // 与主应用入口并列展示，让「多出口」在这个抽屉里可见（用户点名的「右侧面板显示两个入口和名字」）。
-  const [gatewayUrls, setGatewayUrls] = useState<GatewayUrlEntry[]>([]);
+  const [entryAliases, setEntryAliases] = useState<WebEntryCollectionLike<WebEntryUrl>>({});
+  const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(
+    () => canOpenPreview ? resolveWebEntryPresentation(
+      previewMode,
+      previewUrl || branch?.previewUrl || '',
+      entryAliases,
+    ) : { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] },
+    [branch?.previewUrl, canOpenPreview, entryAliases, previewMode, previewUrl],
+  );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
   const [deploymentVersions, setDeploymentVersions] = useState<DeploymentVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [readFailures, setReadFailures] = useState<Record<string, string>>({});
   // 2026-07-26 用户拍板：总览承载入口卡就必须坐第一号位——打开抽屉默认总览（仪表盘）
   const [activeTab, setActiveTab] = useState<DrawerTab>('overview');
   // 方案 A：配置页签内三分区（生效变量 / 配置检查器 / 分支设置）
@@ -896,9 +957,42 @@ export function BranchDetailDrawer({
   const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
+  // 手动多出口配置弹窗：入口卡右上角的「配置入口」按钮打开它（不必找 Agent 改 compose）
+  const [webEntryConfigOpen, setWebEntryConfigOpen] = useState(false);
+  useEffect(() => {
+    if (!branchId || new URLSearchParams(window.location.search).get('configureAddress') !== '1') return;
+    setWebEntryConfigOpen(true);
+    const params = new URLSearchParams(window.location.search); params.delete('configureAddress');
+    window.history.replaceState(null, '', `${window.location.pathname}${params.size ? `?${params}` : ''}`);
+  }, [branchId]);
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
+  /**
+   * 最后一次**成功**的 /metrics 响应。
+   *
+   * 一次失败的轮询会把 metricsState 整个换成 error，于是总览的服务清单退回抽屉打开
+   * 那一刻的 branch.services 快照——抽屉开着期间起来/停掉/新增/删除的服务瞬间被
+   * 打回旧状态，健康环、判断句、合计一起跳一下，等下一次轮询成功再跳回来
+   * （Codex P2，核对属实）。而这一帧数据其实还在手里，只是被错误状态盖掉了。
+   *
+   * 错误归错误（照旧在图上方显示提示条），数据归数据：失败时继续用最后一次成功的
+   * 那一帧，别退回更陈的快照。切分支时随其它 state 一起清空。
+   */
+  const [lastGoodMetrics, setLastGoodMetrics] = useState<MetricsResponse | null>(null);
+
+  /**
+   * 服务端这次实际给了什么——桶宽（秒）与它真正覆盖的时间窗。
+   *
+   * 两样都不能由前端猜（Codex P2 ×2，均核对属实）：
+   *   - 桶宽是按观测节奏自适应算的，骨架屏拿采样器的标称 45s 去估「还要等多久」，
+   *     两个方向都会说谎；
+   *   - 窗口会被网格吸附撑宽（30 分钟的请求，45s 节奏那一档实际是 27 × 70s = 31.5 分钟），
+   *     而 x 轴却写死「30 分钟前 → 现在」，峰值因此对不上时间刻度。
+   *
+   * 一次请求返回什么就用什么，没拿到就是 null（骨架屏那边不给数字，轴退回请求值）。
+   */
+  const [seriesMeta, setSeriesMeta] = useState<{ groupSeconds: number; after: number; before: number } | null>(null);
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
   // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
   // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
@@ -916,6 +1010,65 @@ export function BranchDetailDrawer({
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
+  /**
+   * 总览的服务清单：**成员集合与状态出自同一个新鲜来源**。
+   *
+   * `branch.services` 是抽屉打开时那一次加载的快照，`load()` 之后不再轮询；
+   * 而 `/metrics` 每 5 秒返回的 services 既是当下真实的成员集合，也带着服务端
+   * 当下读到的 status。
+   *
+   * 这里栽过两次，是同一个洞的两半（Codex P2 ×2，均核对属实）：
+   *   1. 先是拿陈快照的 **status** 判「跳过停机容器」——刚启动完的服务有实时读数
+   *      却被标「停止」并被排除出合计，被外部停掉的服务还挂着停机前的旧值；
+   *   2. 修完 status 之后，**成员集合**仍留在陈快照里——部署期间新增的 profile 在
+   *      总览上根本不存在（健康环、服务数、堆叠层都没有它），删掉的 profile 赖着不走。
+   *
+   * 教训是别再只刷新「每个成员的某个字段」：成员集合和它的状态是同一个问题的两面，
+   * 必须一起取自同一处。`branch.services` 只在 metrics 尚未就绪时兜底，让首帧不空白。
+   */
+  const overviewServices = useMemo<OverviewService[]>(() => {
+    // 优先这一帧；这一帧失败就用最后一次成功的那一帧；都没有才退回打开时的快照。
+    const fresh = metricsState.status === 'ok' ? metricsState.data : lastGoodMetrics;
+    if (fresh) {
+      return fresh.services.map((svc) => ({
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+      }));
+    }
+    return Object.values(branch?.services || {}).map((sv) => ({
+      profileId: sv.profileId,
+      containerName: sv.containerName,
+      status: sv.status,
+    }));
+  }, [metricsState, lastGoodMetrics, branch?.services]);
+
+  /** 图例里的「当前值」走实时快照；图本身只认服务端分桶的 series，两者口径分开。 */
+  const [liveStats, setLiveStats] = useState<Record<string, ContainerStatsResponse>>({});
+  /**
+   * series 端点自己的失败。
+   *
+   * 此前 loadSeries 的 catch 把一切都吞了，于是它持续失败时骨架屏会一直说
+   * 「约还需 45 秒出现曲线」——那是撒谎，曲线永远不会来（Codex P2，核对属实）。
+   * 两个数据源就要有两个错误面：docker stats 挂了不该藏历史图，历史挂了也不该
+   * 假装还在攒点。
+   */
+  const [seriesError, setSeriesError] = useState<string | null>(null);
+  /**
+   * 历史轮询的并发取舍（Codex P2 ×3，核对属实）。
+   *
+   * 语义与理由都写在 `lib/latest-wins.ts`——抽出去是因为它必须被**真正测到**：
+   * 这套取舍此前散在下面的 loadSeries 里，守卫只能扫源码字符串，而扫字符串
+   * 证明不了行为（把记账挪到请求之前就会丢弃每个响应，那种守卫照样全绿）。
+   */
+  const seriesGateRef = useRef(createLatestWinsGate());
+  /**
+   * 服务端这次实际用的桶宽（秒）。骨架屏用它算「还要等多久」。
+   *
+   * 分辨率是服务端按观测到的采集节奏自适应定的：抽屉开着时 5s 端点也在写，桶宽会
+   * 自己收窄；窗口里只剩稀疏样本时又会变粗。前端拿采样器的标称 45s 去算，两个方向
+   * 都会说谎（Codex P2，核对属实）。没拿到就是 null，骨架屏那边不给数字。
+   */
   // 上次响应快照,用来算 rx/tx 速率(后端只给累计值,前端做 delta/dt)。
   // 必须用 ref 而不是 state:setInterval 在 useEffect [activeTab, branchId]
   // 内创建,只会捕获**首次** loadMetrics 闭包。state 变了之后,新 loadMetrics
@@ -959,55 +1112,62 @@ export function BranchDetailDrawer({
   } | null>(null);
   const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
-  const load = useCallback(async () => {
+  const [factsUpdatedAt, setFactsUpdatedAt] = useState<number | null>(null);
+  const factsGateRef = useRef(createLatestWinsGate());
+  const sectionGateRef = useRef(createLatestWinsGate());
+  const load = useCallback(async (silent = false) => {
     if (!branchId) return;
-    setLoading(true);
+    const ticket = factsGateRef.current.begin();
+    const sectionTicket = sectionGateRef.current.begin();
+    if (!silent) setLoading(true);
     setError('');
+    const failures: Record<string, string> = {};
+    const read = <T,>(source: string, request: Promise<T>) => partialRead(source, request, failures);
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
       const [branchesRes, logsRes, runsRes, versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
-        apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
-        apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ runs: [] })),
-        apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ versions: [] })),
-        apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
-          .catch((err) => {
-            setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-            return { profiles: [] };
-          }),
-        apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
-          .catch(() => ({ services: [] })),
-        apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
-          .catch(() => ({ resources: [] })),
-        apiRequest<{ gatewayUrls?: GatewayUrlEntry[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
-          .catch(() => ({ gatewayUrls: [] as GatewayUrlEntry[] })),
+        read('部署日志', apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`)),
+        read('部署记录', apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)),
+        read('版本记录', canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`) : Promise.resolve({ versions: [] })),
+        read('分支配置', apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)),
+        read('基础设施', canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`) : Promise.resolve({ services: [] })),
+        read('资源清单', apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)),
+        apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
+          .catch((): { primaryEntry?: WebEntryUrl; webEntries: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] } => ({ webEntries: [] })),
       ]);
+      if (branchIdRef.current !== branchId) return;
+      const acceptFacts = factsGateRef.current.accept(ticket);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
-      if (!found) {
+      if (acceptFacts && !found) {
         setError('branch_not_found');
         setBranch(null);
-      } else {
+      } else if (acceptFacts && found) {
         setBranch(found);
       }
-      setLogs(logsRes.logs || []);
-      setDeploymentRuns(runsRes.runs || []);
-      setDeploymentVersions(versionsRes.versions || []);
-      setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
-      setInfraServices(infraRes.services || []);
-      setResourceSnapshot(resourcesRes.resources || found?.resources || []);
-      setGatewayUrls(aliasesRes.gatewayUrls || []);
+      if (acceptFacts) {
+        setFactsUpdatedAt(Date.now());
+        if (logsRes) setLogs(logsRes.logs || []);
+        if (runsRes) setDeploymentRuns(runsRes.runs || []);
+        if (versionsRes) setDeploymentVersions(versionsRes.versions || []);
+      }
+      if (!sectionGateRef.current.accept(sectionTicket)) return;
+      setReadFailures(failures);
+      if (profilesRes) setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
+      else setProfileState(current => current.status === 'ok' ? current : { status: 'error', message: failures['分支配置'] || '分支配置尚未确认，请重试读取。' });
+      if (infraRes) setInfraServices(infraRes.services || []);
+      if (resourcesRes) setResourceSnapshot(resourcesRes.resources || found?.resources || []);
+      setEntryAliases(aliasesRes);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      if (branchIdRef.current === branchId && factsGateRef.current.accept(ticket)) setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (branchIdRef.current === branchId) setLoading(false);
     }
-  }, [branchId, projectId]);
+  }, [branchId, projectId, canManageConsole]);
 
   const loadTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setTriggerLogsState({ status: 'loading' });
     try {
       const params = new URLSearchParams();
@@ -1048,7 +1208,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   const loadSystemLogs = useCallback(async () => {
     if (!branchId) return;
@@ -1072,7 +1232,7 @@ export function BranchDetailDrawer({
    * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
    */
   const loadMoreTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
     // updater 的执行时机；这才是这次 offset bug 的根因修复。
     const currentOffset = triggerLogsCountRef.current;
@@ -1129,7 +1289,7 @@ export function BranchDetailDrawer({
     } finally {
       triggerLogsLoadMoreInFlightRef.current = false;
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
   // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
@@ -1143,8 +1303,13 @@ export function BranchDetailDrawer({
   const failureAutoSwitchedRef = useRef(false);
   useEffect(() => {
     if (!open || !branchId) return;
-    failureAutoSwitchedRef.current = false;
-    setActiveTab(initialResourceId ? 'services' : 'overview');
+    factsGateRef.current.newSession();
+    sectionGateRef.current.newSession();
+    setFactsUpdatedAt(null);
+    setReadFailures({});
+    failureAutoSwitchedRef.current = !!initialTab;
+    setActiveTab(initialResourceId ? 'services' : initialTab || 'overview');
+    setConfigSection(initialConfigSection || 'variables');
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
@@ -1169,32 +1334,51 @@ export function BranchDetailDrawer({
     setEnvQuery('');
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
+    setLastGoodMetrics(null);
     setTriggerLogsState({ status: 'idle' });
     setCopiedFailurePrompt(false);
     // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
     // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
     setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
+    setLiveStats({});
+    setSeriesError(null);
+    // 换分支开新会话：在飞的旧请求作废，水位清零，序号仍全局单调。
+    seriesGateRef.current.newSession();
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
     void load();
-  }, [open, branchId, load]);
+  }, [open, branchId, load, initialTab, initialConfigSection]);
 
   useEffect(() => {
-    if (!open || activeTab !== 'deployments' || !branchId || !projectId) return;
-    const refreshRuns = async (): Promise<void> => {
+    if (!open || !branchId || !projectId) return;
+    let cancelled = false;
+    let inFlight = false;
+    const refreshFacts = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
+      const ticket = factsGateRef.current.begin();
       try {
-        const response = await apiRequest<{ runs: DeploymentRunSummary[] }>(
-          `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`,
-        );
-        if (branchIdRef.current === branchId) setDeploymentRuns(response.runs || []);
+        const [branches, runs, versions, history] = await Promise.all([
+          apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
+          apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`),
+          apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`),
+          apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`),
+        ]);
+        if (cancelled || branchIdRef.current !== branchId || !factsGateRef.current.accept(ticket)) return;
+        const current = branches.branches.find(b => b.id === branchId);
+        if (current) setBranch(current);
+        setFactsUpdatedAt(Date.now());
+        setDeploymentRuns(runs.runs || []);
+        setDeploymentVersions(versions.versions || []);
+        setLogs(history.logs || []);
       } catch {
-        // 保留最近一次成功快照，短暂控制面抖动不清空事实账本。
-      }
+        // 短暂失败保留最近事实，下一轮自动恢复。
+      } finally { inFlight = false; }
     };
-    const timer = window.setInterval(() => void refreshRuns(), 2_000);
-    return () => window.clearInterval(timer);
-  }, [activeTab, branchId, open, projectId]);
+    const timer = window.setInterval(() => void refreshFacts(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [branchId, open, projectId]);
 
   useEffect(() => {
     if (!open || !initialResourceId) return;
@@ -1289,13 +1473,17 @@ export function BranchDetailDrawer({
 
   useEffect(() => {
     if (activeTab !== 'logs' || !branch) return;
-    if (logsMode === 'webhook' && triggerLogsState.status === 'idle') {
+    if (canManageConsole && logsMode === 'webhook' && triggerLogsState.status === 'idle') {
       void loadTriggerLogs();
     }
     if (logsMode === 'system' && systemLogsState.status === 'idle') {
       void loadSystemLogs();
     }
-  }, [activeTab, logsMode, branch, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+  }, [activeTab, logsMode, branch, canManageConsole, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+
+  useEffect(() => {
+    if (!canManageConsole && logsMode === 'webhook') setLogsMode('system');
+  }, [canManageConsole, logsMode]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -1318,51 +1506,101 @@ export function BranchDetailDrawer({
         !('services' in raw) ||
         !Array.isArray((raw as { services: unknown }).services)
       ) {
-        setMetricsState({
-          status: 'error',
-          message: '后端响应格式异常 — 当前 CDS 可能没有 /api/branches/:id/metrics 端点,请先 self-update CDS 到最新分支。',
-        });
+        // 同样不向用户抛内部端点路径（Codex P1）。
+        setMetricsState({ status: 'error', message: '当前 CDS 版本没有实时指标接口，更新 CDS 后即可显示。' });
         return;
       }
       const data = raw as MetricsResponse;
       setMetricsState({ status: 'ok', data });
-      // 算 rate + 推 ring buffer
-      const prevTs = lastMetricsTsRef.current;
-      const prevByService = lastMetricsByServiceRef.current;
-      setMetricSeries((prev) => {
-        const next = { ...prev };
-        const dt = prevTs > 0 ? (data.ts - prevTs) / 1000 : 0;
-        for (const svc of data.services) {
-          const series = next[svc.profileId] || { cpu: [], mem: [], rxRate: [], txRate: [] };
-          const stats = svc.stats;
-          if (!stats) {
-            // 容器没在跑,push 0 占位让 sparkline 有连续 60 点
-            next[svc.profileId] = pushRing(series, 0, 0, 0, 0);
-            continue;
-          }
-          const lastStats = prevByService[svc.profileId];
-          let rxRate = 0;
-          let txRate = 0;
-          if (lastStats && dt > 0) {
-            rxRate = Math.max(0, (stats.netRxBytes - lastStats.netRxBytes) / dt);
-            txRate = Math.max(0, (stats.netTxBytes - lastStats.netTxBytes) / dt);
-          }
-          next[svc.profileId] = pushRing(series, stats.cpuPercent, stats.memPercent, rxRate, txRate);
-        }
-        return next;
-      });
-      lastMetricsTsRef.current = data.ts;
-      const lastMap: Record<string, ContainerStatsResponse> = {};
+      setLastGoodMetrics(data);
+
+      /*
+       * 这里**不再**往图的数组尾巴上追加实时点（2026-09-02 修）。
+       *
+       * 病象：X 轴在说谎，而且抽屉开得越久越离谱——恰好就是真人验收时的姿势。
+       * 病根：铺底用的是服务端的桶（自适应后每桶约 67 秒），而这里每 5 秒 append
+       * 一个点；图按数组下标等距画，于是抽屉开 5 分钟后，右边 60 个点占了 69% 的
+       * 宽度却只代表 5 分钟，左边 27 个点占 31% 却代表 30 分钟，横跨全宽差七倍。
+       * 这和最初那片锯齿是同一类病（图的几何与数据的时间对不上），只是藏在实时
+       * 更新这条路上。
+       *
+       * 现在职责分开：**图只认服务端统一分桶的 series**（一条轴一个口径），
+       * **数字认这里的实时快照**。这一趟请求仍然有用——它顺带把 5 秒一帧写进
+       * 服务端历史，也提供图例里的「当前值」。
+       */
+      const liveMap: Record<string, ContainerStatsResponse> = {};
       for (const svc of data.services) {
-        if (svc.stats) lastMap[svc.profileId] = svc.stats;
+        if (svc.stats) liveMap[svc.profileId] = svc.stats;
       }
-      lastMetricsByServiceRef.current = lastMap;
+      lastMetricsTsRef.current = data.ts;
+      lastMetricsByServiceRef.current = liveMap;
+      setLiveStats(liveMap);
     } catch (err) {
       // 同样保护:切分支后旧请求 reject 不要写到新 state
       if (branchIdRef.current !== requestForBranch) return;
-      setMetricsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setMetricsState({ status: 'error', message: describeMetricsFailure(err, '实时指标') });
     }
   }, [branchId]);
+
+  /*
+   * 图的唯一数据源：服务端分桶的 series（2026-09-02 起）。
+   *
+   * 以前是「打开时铺一次底，之后前端每 5 秒往数组尾巴 append」——两种时间粒度
+   * 混在同一个按下标等距绘制的数组里，X 轴就开始说谎（详见 loadMetrics 里的注释）。
+   * 现在整条数组每次都由服务端重算，一条轴只有一个口径；这个端点是纯内存的，
+   * 5 秒一拉不心疼，而且返回值只在新桶落成时才变，图因此是「按桶推进」而不是
+   * 每 5 秒抖一下。
+   */
+  const HISTORY_WINDOW_MINUTES = 30;
+  const loadSeries = useCallback(async () => {
+    if (!branchId) return;
+    const requestForBranch = branchId;
+    const ticket = seriesGateRef.current.begin();
+    try {
+      const data = await apiRequest<{
+        groupSeconds?: number;
+        after?: number;
+        before?: number;
+        services?: Array<{ profileId: string; points?: Array<{ cpuPercent: number | null; memUsedBytes: number | null; rxRate: number | null; txRate: number | null }> }>;
+      }>(`/api/branches/${encodeURIComponent(requestForBranch)}/metrics/series?after=-${HISTORY_WINDOW_MINUTES * 60}&points=120`);
+      if (branchIdRef.current !== requestForBranch) return;
+      // 换过会话、或比已贴上去的更旧 → 丢弃；慢但仍是最新的照常采用。
+      if (!seriesGateRef.current.accept(ticket)) return;
+      setSeriesMeta(
+        typeof data?.groupSeconds === 'number' && typeof data?.after === 'number' && typeof data?.before === 'number'
+          ? { groupSeconds: data.groupSeconds, after: data.after, before: data.before }
+          : null,
+      );
+      const next: Record<string, MetricSeries> = {};
+      for (const svc of data?.services ?? []) {
+        if (svc.points && svc.points.length > 0) next[svc.profileId] = seedMetricSeries(svc.points);
+      }
+      /*
+       * 无条件整体替换。
+       *
+       * 「非空才替换」是「铺底不覆盖已追加点」那套逻辑的遗留，现在已经没有前端追加了。
+       * 留着它有害：loadSeries 成功返回空（服务全删了 / 历史过期了）本身就是事实，
+       * 跳过 setState 会让上一次的曲线一直挂在屏幕上冒充当前数据（Codex P2）。
+       * 合并同样不行——不同批次的桶混进同一个数组就是时间轴说谎的老病根。
+       */
+      setMetricSeries(next);
+      setSeriesError(null);
+    } catch (err) {
+      if (branchIdRef.current !== requestForBranch) return;
+      // 同上：旧请求的失败不该抹掉新请求刚拿回来的曲线。
+      if (!seriesGateRef.current.accept(ticket)) return;
+      // 老版本 CDS 没有这个端点也走这里——照样要说出来，否则骨架屏会一直
+      // 承诺一条永远不会出现的曲线。面板拿到它就改画「只有实时数字」那一档。
+      setSeriesError(describeMetricsFailure(err, '指标历史'));
+    }
+  }, [branchId]);
+
+  useEffect(() => {
+    if (activeTab !== 'overview' || !branchId) return;
+    void loadSeries();
+    const timer = window.setInterval(() => void loadSeries(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, branchId, loadSeries]);
 
   useEffect(() => {
     // 方案 A：指标并入总览（原独立「指标」页签取消）——总览打开时轮询
@@ -1385,6 +1623,7 @@ export function BranchDetailDrawer({
   const runBranchAction = useCallback(async (
     action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
+    extra?: { dbs?: BranchDbChoice[] },
   ): Promise<void> => {
     if (!branchId) return;
     const actionBranchId = branchId;
@@ -1394,7 +1633,8 @@ export function BranchDetailDrawer({
         action === 'delete' ? '' : `/${action}`
       );
       const method = action === 'delete' ? 'DELETE' : 'POST';
-      await apiRequest(path, { method });
+      // 删分支带上派生库的去向（收敛 3）：默认保留，勾选丢弃的走后端门禁
+      await apiRequest(path, extra?.dbs ? { method, body: { dbs: extra.dbs.map((d) => ({ entryId: d.entryId, dbName: d.dbName, action: d.action, ...(d.confirmDbName ? { confirmDbName: d.confirmDbName } : {}) })) } } : { method });
       onToast?.(`${label} 已提交`);
       onActionComplete?.(action);
       if (action === 'delete') {
@@ -1438,7 +1678,7 @@ export function BranchDetailDrawer({
   }, [branchId, load, onActionComplete, onToast]);
 
   const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1466,12 +1706,12 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onActionComplete, onToast]);
+  }, [branchId, canManageConsole, load, onActionComplete, onToast]);
 
   // 波1 W1c:按分支切换数据库隔离档位(dbScope)。与部署模式不同,**只保存不自动重部署**——
   // 切库是重操作(应用重启后连到另一个 database),用户应自己决定重部署时机(最小惊讶)。
   const setProfileDbScope = useCallback(async (profile: ProfileRow, scope: '' | 'shared' | 'per-branch'): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1500,7 +1740,7 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -1528,7 +1768,7 @@ export function BranchDetailDrawer({
       if (activeTab === 'logs') {
         if (logsMode === 'system') {
           await loadSystemLogs();
-        } else if (logsMode === 'webhook') {
+        } else if (canManageConsole && logsMode === 'webhook') {
           await loadTriggerLogs();
         } else if (logsMode === 'container' && selectedServiceId) {
           await loadServiceLogs(selectedServiceId);
@@ -1548,6 +1788,7 @@ export function BranchDetailDrawer({
   }, [
     activeTab,
     branchId,
+    canManageConsole,
     headerRefreshing,
     load,
     loadEnv,
@@ -1565,6 +1806,30 @@ export function BranchDetailDrawer({
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
   }, [branchId, deployments]);
 
+  // ── 总览面板的派生数据 ───────────────────────────────────────────────
+  // 入口：主入口 + cds.web-entry-* 声明的页面，主入口置顶。readiness/health 探针
+  // 不是用户入口，不进这个列表。
+  const overviewEntries = useMemo(() => ([
+    ...(primaryEntryUrl
+      ? [{ name: primaryEntry?.name || '主应用入口', url: primaryEntryUrl, subdomain: primaryEntry?.subdomain, primary: true }]
+      : []),
+    ...[...webEntries]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((entry) => ({ name: entry.name, url: entry.url, subdomain: entry.subdomain, primary: false })),
+  ]), [primaryEntry, primaryEntryUrl, webEntries]);
+
+  const overviewReplicaSummary = useMemo(() => {
+    const sets = Object.values(branch?.replicaSets ?? {}).filter((rs) => rs?.enabled);
+    const members = sets.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
+    if (members === 0) return '未启用 · 单副本';
+    const bad = sets.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
+    return `${members} 副本${bad ? ' · 有异常' : ' · 入口按权重分流'}`;
+  }, [branch?.replicaSets]);
+
+  const overviewInfraSummary = useMemo(() => (
+    infraServices.length === 0 ? '无' : infraServices.map((svc) => svc.name).join(' · ')
+  ), [infraServices]);
+
   const combinedDeployments = useMemo<BranchDeploymentItem[]>(() => {
     if (!branchId) return visibleDeployments;
     const legacy = logs
@@ -1572,7 +1837,24 @@ export function BranchDetailDrawer({
       .reverse()
       .slice(0, 6)
       .map((log) => legacyLogToDeploymentItem(log, branchId));
-    const all = [...visibleDeployments, ...legacy];
+    /*
+     * 两个来源会重复：一次部署结束后，BranchListPage 的 actions 里仍留着它的完成态，
+     * 而 /branches/:id/logs 里也已经落了同一次部署的持久记录（Codex P2，核对属实）。
+     * 直接拼起来，最近那次部署会在柱状图里出现两根柱子，把中位线、成功率、趋势
+     * 一起带偏——而且只偏最近这一次，看起来像是「刚才那次特别慢/特别快」。
+     *
+     * 按「操作类型 + 起始时刻」去重：同一次部署的两份记录，kind 相同、startedAt 同源，
+     * 差别只在一个还带着实时进度。留先出现的那条（visibleDeployments 在前，它带实时
+     * 状态，正在跑的那次要靠它更新）。允许几秒误差——两边的时间戳来自同一个事件，
+     * 但序列化路径不同，不做精确相等。
+     */
+    const START_TOLERANCE_MS = 3_000;
+    const all: BranchDeploymentItem[] = [];
+    for (const item of [...visibleDeployments, ...legacy]) {
+      const dup = all.some((kept) => sameOperationKind(kept.kind, item.kind)
+        && Math.abs(kept.startedAt - item.startedAt) <= START_TOLERANCE_MS);
+      if (!dup) all.push(item);
+    }
     const sorted = all.sort((left, right) => right.startedAt - left.startedAt);
     return sorted.map((item, index) => {
       if (!item.runtimeStartedAt) return item;
@@ -1587,6 +1869,37 @@ export function BranchDetailDrawer({
     });
   }, [branch?.lastStoppedAt, branchId, visibleDeployments, logs]);
 
+  /**
+   * 部署柱状图的数据源是 `combinedDeployments`，**不是 `visibleDeployments`**。
+   *
+   * 2026-09-02（Codex P2，核对属实）：`visibleDeployments` 来自 `deployments` prop，
+   * 而那个 prop 在 BranchListPage 里是 `Object.entries(actions)` 摊平来的——`actions`
+   * 按分支 id 作键，**一个分支最多一条**（本次操作的实时状态）。按当前分支一过滤就
+   * 只剩 0-1 条，而柱状图要 3 条才画。也就是说这张卡从落地那天起就没渲染出来过，
+   * 编译过、测试绿、通读也看不出来（形状 2：建了一半）。
+   *
+   * `combinedDeployments` 把抽屉打开时 `load()` 拉回来的操作日志并了进来，才是真正
+   * 有历史的那一份。它定义在下面，所以这个 memo 也挪到了它之后。
+   *
+   * 仍然只认「构建类」记录：restart / stop / favorite 的耗时跟构建不可比，混进同一张图
+   * 会把中位线拉歪。
+   */
+  const overviewDeployments = useMemo<OverviewDeployment[]>(() => combinedDeployments
+    .filter((d) => d.kind === 'deploy' || d.kind === 'preview' || d.kind === 'rebuild')
+    .map((d) => ({
+      key: d.key,
+      kind: d.kind,
+      status: d.status,
+      commitSha: d.commitSha,
+      startedAt: d.startedAt,
+      finishedAt: d.finishedAt,
+    })), [combinedDeployments]);
+
+  const latestDeployDurationMs = useMemo(() => {
+    const latest = overviewDeployments.find((d) => d.finishedAt && d.finishedAt > d.startedAt);
+    return latest?.finishedAt ? latest.finishedAt - latest.startedAt : undefined;
+  }, [overviewDeployments]);
+
   const activeDeployment = useMemo(
     () => pickActiveDeployment(combinedDeployments, now),
     [combinedDeployments, now],
@@ -1600,7 +1913,10 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const activeDialog = document.activeElement instanceof Element ? document.activeElement.closest('[role="dialog"]') : null;
+      if (activeDialog && activeDialog !== drawerPanel.current?.closest('[role="dialog"]')) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     const previousOverflow = document.body.style.overflow;
@@ -1635,9 +1951,9 @@ export function BranchDetailDrawer({
       services: branch.services || {},
       profiles: resourceProfiles,
       infraServices,
-      previewUrl,
+      previewUrl: canOpenPreview ? previewUrl : '',
     });
-  }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
+  }, [branch, canOpenPreview, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
   // 复制集副本日志目标（2026-07-26 用户反馈「副本日志看不了 / 分不清」修复）：
   // 副本选择键形如 `pid::memberId`，在 services 里永远匹配不到——旧代码兜底到
@@ -1685,7 +2001,7 @@ export function BranchDetailDrawer({
   // 芯片快捷加副本也走执行计划（与复制集页签「草稿-保存」同一模型：有执行记录、
   // 失败可见、CDS 重启有启动收敛兜底——不许存在绕过计划的隐形执行通道）
   const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-plans`, {
         method: 'POST',
@@ -1701,12 +2017,12 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
   // 数据库保护罩（design.cds.replica-set 波4）：锁按钮一键克隆隔离副本，
   // 克隆期间芯片环绕动画，轮询进度直到 done/error（禁止空白等待）。
   const [dbGuardBusy, setDbGuardBusy] = useState<Record<string, boolean>>({});
   const startDbGuard = useCallback(async (infraId: string) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/db-guard`, {
         method: 'POST',
@@ -1738,7 +2054,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, onToast]);
+  }, [branchId, canManageConsole, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -1947,7 +2263,7 @@ export function BranchDetailDrawer({
 
   if (!open || !branchId) return null;
 
-  return (
+  const drawer = (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="分支详情">
       <button
         type="button"
@@ -1956,9 +2272,11 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
-        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl"
+        ref={drawerPanel}
+        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl md:w-2/3 md:border-l md:border-[hsl(var(--hairline))]"
         style={{ minHeight: 0 }}
       >
+        {factsUpdatedAt ? <div className="shrink-0 px-4 pt-2 text-right text-[0.625rem] text-muted-foreground" aria-label="部署事实更新时间">事实更新于 {new Date(factsUpdatedAt).toLocaleTimeString('zh-CN')} · 自动刷新</div> : null}
         <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="shrink-0 whitespace-nowrap text-sm font-semibold">分支详情</span>
@@ -1967,13 +2285,27 @@ export function BranchDetailDrawer({
                 <span className="text-muted-foreground/60">·</span>
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
                 {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
-                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                {branch.commitSha ? <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.625rem] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {isDemoBranch(branch) ? (
+                  <span
+                    className="shrink-0 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] text-warn"
+                    title={branch.notes}
+                    data-testid="drawer-demo-badge"
+                  >演示数据 · 不会真的{branch.status === 'building' || branch.status === 'starting' ? '构建' : '运行'}</span>
+                ) : null}
+                {branch.mirror ? (
+                  <span
+                    className="shrink-0 rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[0.625rem] text-info"
+                    title="父实例镜像：这是采集时刻的状态，本实例上没有对应容器；日志、exec、实时 docker stats 在这里都拿不到"
+                    data-testid="drawer-mirror-badge"
+                  >镜像 · 采集于 {new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                ) : null}
+                <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}</span>
                 {(() => {
                   const svcList = Object.values(branch.services || {});
                   if (!svcList.length) return null;
                   const up = svcList.filter((x) => (x as { status?: string }).status === 'running').length;
-                  return <span className="shrink-0 text-[11px] text-muted-foreground">服务 {up}/{svcList.length}</span>;
+                  return <span className="shrink-0 text-[0.6875rem] text-muted-foreground">服务 {up}/{svcList.length}</span>;
                 })()}
               </>
             ) : null}
@@ -2002,7 +2334,7 @@ export function BranchDetailDrawer({
                 asChild
                 variant="ghost"
                 size="icon"
-                className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                className="text-info hover:bg-info-soft hover:text-info dark:hover:text-info"
                 title="打开 GitHub 分支"
                 aria-label="打开 GitHub 分支"
               >
@@ -2038,11 +2370,18 @@ export function BranchDetailDrawer({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
-          {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
+        <div className="min-h-0 flex-1 overflow-y-auto pb-32 sm:pb-24" style={{ overscrollBehavior: 'contain' }}>
+          {/*
+                加载骨架必须是总览的形状（2026-09-17 用户反馈「先出一幅老骨架、三秒后再出一幅更像真实的骨架」）：
+                通用的「四块指标 + 两块内容」和数据到达后的「判断行 / 关系 / 入口 / 曲线」根本不是一个轮廓，
+                于是用户看到的是两副骨架接力。现在骨架期与就绪期共用同一批部件（页签表、关系卡骨架、曲线骨架），
+                数据到了是「被填上」，不是「换一幅」。
+              */}
+              {loading && !branch ? <BranchDrawerSkeleton status={branchStatus} /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
+              {!canOpenPreview ? <p role="status" className="px-5 py-3 text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
               {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
                   set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
                   原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
@@ -2052,97 +2391,14 @@ export function BranchDetailDrawer({
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
               {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
-              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
-                <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
-                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                    <Rocket className="h-4 w-4" />
-                    应用已上线
-                  </div>
-                  {/* 入口卡片列:主应用入口(主色)在上,声明了 cds.subdomain 的网关入口(中性色)在下,
-                      每条整卡可点、带图标/名称/URL/打开箭头,视觉分层清晰。 */}
-                  <div className="flex flex-col gap-1.5">
-                    <a
-                      href={previewUrl || branch.previewUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="打开主应用入口"
-                      className="group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]"
-                    >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
-                        <Rocket className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">主应用入口</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{previewUrl || branch.previewUrl}</span>
-                      </span>
-                      <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
-                    </a>
-                    {[...gatewayUrls]
-                      .sort((a, b) => {
-                        // 网关控制台(真实可登录页面)排在引擎/健康入口之前。
-                        const rank = (gw: GatewayUrlEntry) => (isConsoleEntry(gw) ? 0 : 1);
-                        return rank(a) - rank(b) || a.subdomain.localeCompare(b.subdomain);
-                      })
-                      .map((gw) => {
-                        const isConsole = isConsoleEntry(gw);
-                        return (
-                          <a
-                            key={gw.subdomain}
-                            href={gw.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={isConsole ? `打开 ${gw.name} 网关控制台` : `打开 ${gw.name} 网关引擎健康检查`}
-                            className={
-                              isConsole
-                                ? 'group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]'
-                                : 'group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]'
-                            }
-                          >
-                            <span
-                              className={
-                                isConsole
-                                  ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white'
-                                  : 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground'
-                              }
-                            >
-                              {isConsole ? <Terminal className="h-4 w-4" /> : <Server className="h-4 w-4" />}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span
-                                  className={
-                                    isConsole
-                                      ? 'text-xs font-semibold text-emerald-700 dark:text-emerald-300'
-                                      : 'text-xs font-semibold text-foreground'
-                                  }
-                                >
-                                  {isConsole ? '网关控制台' : '网关引擎 · 健康'}
-                                </span>
-                                <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{gw.subdomain}</span>
-                              </span>
-                              <span
-                                className={
-                                  isConsole
-                                    ? 'block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70'
-                                    : 'block min-w-0 truncate font-mono text-[11px] text-muted-foreground'
-                                }
-                              >
-                                {gw.url}
-                              </span>
-                            </span>
-                            <ExternalLink
-                              className={
-                                isConsole
-                                  ? 'h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300'
-                                  : 'h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600'
-                              }
-                            />
-                          </a>
-                        );
-                      })}
-                  </div>
-                </div>
-              ) : null}
+              {/* 入口卡已并入总览面板（OverviewPanel）——原先它常驻在页签之上，
+                  和总览里的「入口 N 个」计数各说各话；现在只有一处。 */}
+
+              {/* 关系卡已并入总览面板（OverviewPanel 的 relationSlot，判断行之下、入口之上）——
+                  原先常驻页签之上等于给每次打开抽屉加 350px 的「头图」，而它的信息量不配那个位置（2026-09-16）。 */}
+              {/* 说明区（上次停止 / 最近失败 / 服务未运行）只在真有话说时才渲染：
+                  运行中、构建中的分支此前也顶着一条空的 py-4 section，页签上方多出一条空带（2026-09-17 用户圈出）。 */}
+              {branchNoticeVisible(branch, currentFailureReason) ? (
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2167,12 +2423,12 @@ export function BranchDetailDrawer({
                       */}
                       {branch.lastStoppedAt &&
                       !['running', 'building', 'starting', 'restarting'].includes(branch.status) ? (
-                        <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
+                        <div className="mt-2 rounded border border-warn/30 bg-warn-soft px-2.5 py-1.5 text-[0.6875rem] leading-5 text-warn ">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">上次停止</span>
                             <span className="opacity-90">{formatDeployTimestamp(branch.lastStoppedAt)}</span>
                             {branch.lastStopSource ? (
-                              <span className="rounded border border-amber-500/40 px-1.5 py-0.5">
+                              <span className="rounded border border-warn/40 px-1.5 py-0.5">
                                 {branch.lastStopSource === 'user' ? '用户'
                                   : branch.lastStopSource === 'scheduler' ? '调度器'
                                   : branch.lastStopSource === 'executor' ? '执行器'
@@ -2192,9 +2448,9 @@ export function BranchDetailDrawer({
                     </div>
                   );
                 })()}
-                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余):
-                    URL 与顶部「应用已上线 · 主应用入口」重复,状态/commit/服务数
-                    已上移到上方 origin 卡。 */}
+                {/* 「运行中 + production URL」卡已删除(2026-07-15 用户反馈冗余)。
+                    入口 URL 现在只在总览面板的入口卡组里出现一次(2026-09-01 重排),
+                    状态 / commit / 服务数由总览的判断行承载。 */}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2202,7 +2458,7 @@ export function BranchDetailDrawer({
                       <button
                         type="button"
                         onClick={() => void copyFailurePrompt()}
-                        className={`inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/45 bg-destructive/15 px-2 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/25 ${
+                        className={`inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/45 bg-destructive/15 px-2 text-[0.6875rem] font-semibold text-destructive transition-colors hover:bg-destructive/25 ${
                           copiedFailurePrompt ? '' : 'animate-pulse'
                         }`}
                         title="复制错误上下文和大模型修复提示词"
@@ -2211,7 +2467,7 @@ export function BranchDetailDrawer({
                         {copiedFailurePrompt ? '已复制' : '复制到大模型'}
                       </button>
                     </div>
-                    <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-destructive/90">{currentFailureReason}</div>
                     {failureDiag && failureDiag.failedServices.length > 0 ? (
                       <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
                         {failureDiag.failedServices.map((diag) => {
@@ -2219,18 +2475,18 @@ export function BranchDetailDrawer({
                           return (
                           <div key={diag.profileId} className="space-y-1.5">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium uppercase">
+                              <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase">
                                 {diag.profileId}
                               </span>
-                              <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                              <span className="rounded border border-destructive/30 px-1.5 py-0.5 text-[0.625rem] uppercase tracking-wide">
                                 {diag.errorCategory.replace('-', ' ')}
                               </span>
                               {/* 主题感知的责任方徽章：白天用深色文字保证对比度（旧写法硬编码
                                   亮系 #f59e0b/#9ca3af 落在 0.15 透明底上，白天对比度约 2:1 看不清） */}
-                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                diag.responsibilitySide === 'cds' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
-                                  : diag.responsibilitySide === 'code' ? 'bg-red-500/15 text-red-700 dark:text-red-400'
-                                  : diag.responsibilitySide === 'config' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400'
+                              <span className={`rounded px-1.5 py-0.5 text-[0.625rem] font-medium ${
+                                diag.responsibilitySide === 'cds' ? 'bg-warn-soft text-warn'
+                                  : diag.responsibilitySide === 'code' ? 'bg-bad-soft text-bad'
+                                  : diag.responsibilitySide === 'config' ? 'bg-info-soft text-info'
                                   : 'bg-gray-500/15 text-gray-600 dark:text-gray-400'
                               }`}>
                                 {diag.responsibilitySide === 'cds' ? 'CDS 侧'
@@ -2243,7 +2499,7 @@ export function BranchDetailDrawer({
                               <div className="text-destructive/90">{diag.errorHint}</div>
                             ) : null}
                             {keyLines.length > 0 ? (
-                              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/85">
+                              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[0.625rem] leading-4 text-foreground/85">
                                 {keyLines.join('\n')}
                               </pre>
                             ) : null}
@@ -2256,7 +2512,7 @@ export function BranchDetailDrawer({
                             const first = failureDiag.failedServices[0];
                             openFailureLogs(first?.profileId);
                           }}
-                          className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
+                          className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[0.6875rem] font-medium text-destructive transition-colors hover:bg-destructive/20"
                         >
                           打开容器日志 →
                         </button>
@@ -2277,33 +2533,38 @@ export function BranchDetailDrawer({
                   </div>
                 ) : null}
               </section>
+              ) : null}
 
-              <nav className="cds-branch-detail-tabs sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3">
+              <nav className={DRAWER_TAB_NAV_CLASS}>
                 {drawerTabs.map((tab) => (
                   <DrawerTabButton key={tab.key} tab={tab} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
                 ))}
               </nav>
 
               <div className={activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5' : 'p-5'}>
+                {Object.keys(readFailures).length > 0 ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-2 rounded-md border border-warn/35 bg-warn-soft px-3 py-2 text-sm">
+                  <span>{Object.keys(readFailures).join('、')}读取失败，当前结果不完整；未读取到的内容不能视为不存在。</span>
+                  <Button variant="outline" size="sm" onClick={() => void load(true)}>重试读取</Button>
+                  <details className="basis-full"><summary className="cursor-pointer">查看读取错误</summary><ul className="mt-2 space-y-1">{Object.entries(readFailures).map(([source, message]) => <li key={source}>{source}：{message}</li>)}</ul></details>
+                </div> : null}
                 {activeTab === 'run' ? (
-                  <ReplicaSetPanel
+                  canManageConsole ? <ReplicaSetPanel
                     branchId={branch.id}
-                    previewUrl={branch.previewUrl || previewUrl}
+                    previewUrl={primaryEntryUrl}
                     services={branch.services || {}}
                     infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
                     entries={[
                       // 入口卡入画布（2026-07-26 用户拍板）：抽屉头部入口卡只留总览，
-                      // 运行画布的入口节点承载同一组公开入口（主应用 + 命名子域网关）
-                      ...((previewUrl || branch.previewUrl) ? [{ name: '主应用', url: (previewUrl || branch.previewUrl)! }] : []),
-                      ...[...gatewayUrls]
-                        .sort((a, b) => {
-                          const rank = (gw: GatewayUrlEntry) => (isConsoleEntry(gw) ? 0 : 1);
-                          return rank(a) - rank(b) || a.subdomain.localeCompare(b.subdomain);
-                        })
-                        .map((gw) => ({ name: isConsoleEntry(gw) ? '网关控制台' : gw.subdomain, url: gw.url })),
+                      // 运行画布的入口节点承载同一组公开入口（主应用 + 其他 Web 页面）
+                      ...(primaryEntryUrl ? [{ name: primaryEntry?.name || '主应用', url: primaryEntryUrl }] : []),
+                      ...[...webEntries]
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((entry) => ({ name: entry.name, url: entry.url })),
                     ]}
                     onToast={onToast}
-                  />
+                  /> : <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
+                    副本管理仅系统所有者可用，请联系所有者配置副本、分流实测或数据库保护。已授权分支的部署、启停和资源只读查看仍可使用。
+                  </section>
                 ) : null}
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
@@ -2314,7 +2575,7 @@ export function BranchDetailDrawer({
                         <header className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
                           <span className="text-xs font-semibold">构建日志 · {selectedBuildLog.title}</span>
                           {selectedBuildLog.commitSha ? (
-                            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{selectedBuildLog.commitSha.slice(0, 7)}</span>
+                            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">{selectedBuildLog.commitSha.slice(0, 7)}</span>
                           ) : null}
                           <button
                             type="button"
@@ -2332,7 +2593,7 @@ export function BranchDetailDrawer({
                         置顶——放在部署事实账本与版本账本之上 */}
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
-                        还没有构建记录。点击部署后，构建计划和日志会出现在这里。
+                        {readFailures['部署日志'] || readFailures['部署记录'] ? '部署记录读取不完整，请重试读取；不能据此判断是否已有部署。' : '还没有构建记录。点击部署后，构建计划和日志会出现在这里。'}
                       </section>
                     ) : null}
 
@@ -2376,13 +2637,13 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
-                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    <DeploymentVersionLedger
+                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
+                    {canManageConsole && (!readFailures['版本记录'] || deploymentVersions.length > 0) ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
                       busyVersionId={versionBusyId}
                       onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    />
+                    /> : <p className="px-1 text-sm text-muted-foreground">{canManageConsole ? '版本记录尚未确认。' : '不可变部署版本仅系统所有者可用；你仍可部署此分支并查看上方运行历史。'}</p>}
                   </div>
                 ) : null}
 
@@ -2392,12 +2653,7 @@ export function BranchDetailDrawer({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                           {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
-                          {([
-                            ['container', '容器日志'],
-                            ['system', '系统日志'],
-                            ['webhook', 'Webhook'],
-                            ['http', 'HTTP'],
-                          ] as Array<[LogsMode, string]>).map(([mode, label]) => (
+                          {availableDrawerLogModes(canManageConsole).map(([mode, label]) => (
                             <button
                               key={mode}
                               type="button"
@@ -2424,7 +2680,7 @@ export function BranchDetailDrawer({
                             variant="outline"
                             onClick={() => {
                               if (logsMode === 'system') return void loadSystemLogs();
-                              if (logsMode === 'webhook') return void loadTriggerLogs();
+                              if (canManageConsole && logsMode === 'webhook') return void loadTriggerLogs();
                               if (logsMode === 'http') return void load();
                               const target = selectedServiceId || selectedService?.profileId;
                               if (target) void loadServiceLogs(target);
@@ -2438,7 +2694,7 @@ export function BranchDetailDrawer({
                     </header>
                     {logsMode === 'system' ? (
                       <SystemLogsPanel state={systemLogsState} query={logQuery} />
-                    ) : logsMode === 'webhook' ? (
+                    ) : canManageConsole && logsMode === 'webhook' ? (
                       <TriggerLogsPanel
                         state={triggerLogsState}
                         query={logQuery}
@@ -2453,7 +2709,7 @@ export function BranchDetailDrawer({
                             此前 10 个 chip 挤一条横滚行，副本排末尾被遮住根本翻不到） */}
                         <div className="space-y-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
                           <div className="flex min-w-0 items-center gap-3">
-                            <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">主容器</span>
+                            <span className="w-14 shrink-0 font-mono text-[0.625rem] uppercase tracking-wide text-muted-foreground">主容器</span>
                             <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                               {(services.length > 0 ? services : []).map((svc) => (
                                 <button
@@ -2466,7 +2722,7 @@ export function BranchDetailDrawer({
                                   }`}
                                   onClick={() => openContainerLogs(svc.profileId)}
                                 >
-                                  <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-500' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+                                  <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-ok' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
                                   {svc.profileId}
                                   <span className="font-mono">:{svc.hostPort || '?'}</span>
                                 </button>
@@ -2476,7 +2732,7 @@ export function BranchDetailDrawer({
                           </div>
                           {memberLogTargets.length > 0 ? (
                             <div className="flex min-w-0 items-center gap-3">
-                              <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
+                              <span className="w-14 shrink-0 font-mono text-[0.625rem] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
                               <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                                 {memberLogTargets.map(({ key, pid, member: m }) => (
                                   <button
@@ -2490,7 +2746,7 @@ export function BranchDetailDrawer({
                                     title={`复制集副本容器 ${pid} · ${m.id}`}
                                     onClick={() => openContainerLogs(key)}
                                   >
-                                    <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'running' ? 'bg-emerald-500' : m.status === 'error' ? 'bg-destructive' : 'bg-amber-500'}`} />
+                                    <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'running' ? 'bg-ok' : m.status === 'error' ? 'bg-destructive' : 'bg-warn'}`} />
                                     {pid} · {m.id}
                                     <span className="font-mono">:{m.hostPort || '?'}</span>
                                   </button>
@@ -2512,13 +2768,15 @@ export function BranchDetailDrawer({
                 {activeTab === 'services' ? (
                   <ResourceConsole
                     resources={resources}
+                    readIncomplete={!!(readFailures['资源清单'] || readFailures['基础设施'])}
                     replicaProfileIds={replicaProfileIds}
                     replicaChipInfo={replicaChipInfo}
-                    onQuickReplica={quickAddReplicas}
-                    onDbGuard={startDbGuard}
+                    onQuickReplica={canManageConsole ? quickAddReplicas : undefined}
+                    onDbGuard={canManageConsole ? startDbGuard : undefined}
                     dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
+                    onWorkbenchDismiss={resourceWorkbenchDirect ? onClose : undefined}
                     serviceLogs={serviceLogs}
                     branchName={branch.branch}
                     onSelect={(resource) => {
@@ -2584,46 +2842,58 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
-                {activeTab === 'overview' ? (() => {
-                  const svcList = Object.values(branch.services || {});
-                  const upCount = svcList.filter((sv) => sv.status === 'running').length;
-                  const svcBad = svcList.some((sv) => sv.status === 'error');
-                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {};
-                  const rsList = Object.values(rsMap).filter((rs) => rs?.enabled);
-                  const memberCount = rsList.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
-                  const memberBad = rsList.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
-                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
-                  const latest = (arr?: number[]): number | null => (arr && arr.length > 0 ? arr[arr.length - 1] : null);
-                  const seriesList = Object.values(metricSeries);
-                  const cpuNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.cpu) ?? 0)) : null;
-                  const memNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.mem) ?? 0)) : null;
-                  const netNow = seriesList.length > 0
-                    ? seriesList.reduce((n, sv) => n + (latest(sv.rxRate) ?? 0) + (latest(sv.txRate) ?? 0), 0)
-                    : null;
-                  const running = branch.status === 'running' || branchStatus === 'running';
-                  return (
-                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                      <OverviewTile label="状态" value={statusLabel(branch.status)} sub={branch.branch}
-                        tone={branch.status === 'error' ? 'bad' : running ? 'good' : 'muted'} />
-                      <OverviewTile label="服务" value={`${upCount} / ${svcList.length}`} sub={svcBad ? '有服务异常' : '运行中 / 总数'}
-                        tone={svcBad ? 'bad' : upCount === svcList.length && svcList.length > 0 ? 'good' : 'muted'} />
-                      <OverviewTile label="复制集" value={memberCount > 0 ? `${memberCount} 副本` : '未启用'}
-                        sub={memberCount > 0 ? `${rsMode === 'project' ? '项目级' : '容器级'}${memberBad ? ' · 有异常' : ' · 入口按权重分流'}` : '在「运行」页签开启'}
-                        tone={memberBad ? 'bad' : memberCount > 0 ? 'good' : 'muted'} />
-                      <OverviewTile label="版本" value={branch.commitSha?.slice(0, 7) || '-'} sub="当前部署提交" mono />
-                      <OverviewTile label="CPU" value={cpuNow != null ? `${cpuNow.toFixed(0)}%` : '—'}
-                        sub={cpuNow != null ? '最忙服务瞬时值' : '监控采样中…'}
-                        tone={cpuNow != null && cpuNow > 85 ? 'bad' : 'muted'} />
-                      <OverviewTile label="内存" value={memNow != null ? `${memNow.toFixed(0)}%` : '—'}
-                        sub={memNow != null ? '最高服务占限额比' : '监控采样中…'}
-                        tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
-                      <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
-                        sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
-                      <OverviewTile label="入口" value={running && (previewUrl || branch.previewUrl) ? `${1 + gatewayUrls.length} 个` : '未上线'}
-                        sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
-                    </div>
-                  );
-                })() : null}
+                {branch.deployRuntime?.prebuilt !== false && (branch.ciImageStatus === 'failed' || branch.ciImageStatus === 'waiting') ? (
+                  <CiImageNotice branch={branch} expanded className="mx-4 my-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm" />
+                ) : null}
+                {activeTab === 'overview' ? (
+                  <OverviewPanel
+                    services={overviewServices}
+                    /*
+                     * running 优先用 SSE 带回来的实时状态（Codex P2，核对属实）。
+                     *
+                     * 原来是 `branch.status === 'running' || branchStatus === 'running'`——
+                     * 或运算意味着**只要有一边说在跑就算在跑**，而 `branch` 是抽屉打开时
+                     * 那一次加载的快照、之后不再更新。分支停掉之后快照仍写着 running，
+                     * 于是判断句说「还有服务没起来」、已运行时长继续往上涨，而实际上
+                     * 整个分支已经停了。有实时值就用实时值，没有才退回快照。
+                     */
+                    running={branchStatus ? branchStatus === 'running' : branch.status === 'running'}
+                    // 原始七档状态一并传下去：折叠成布尔值会让「正在部署」和「已停机」
+                    // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
+                    lifecycle={branchStatus || branch.status}
+                    branchName={branch.branch}
+                    commitSha={branch.runningCommitSha || undefined}
+                    targetCommitSha={branch.targetCommitSha || undefined}
+                    ciImageStatus={branch.ciImageStatus}
+                    lastReadyAt={branch.lastReadyAt}
+                    lastDeployAt={branch.lastDeployAt}
+                    deployDurationMs={latestDeployDurationMs}
+                    entries={overviewEntries}
+                    deployments={overviewDeployments}
+                    metricSeries={metricSeries}
+                    liveStats={liveStats}
+                    seriesError={seriesError ?? undefined}
+                    metricsReady={metricsState.status === 'ok'}
+                    metricsError={metricsState.status === 'error' ? metricsState.message : undefined}
+                    replicaSummary={overviewReplicaSummary}
+                    infraSummary={overviewInfraSummary}
+                    now={now}
+                    /*
+                     * 轴的长度用服务端实际返回的窗口，不是请求值——网格吸附会把
+                     * 30 分钟撑成 31.5 分钟，写死 30 会让峰值对不上刻度。
+                     */
+                    windowMinutes={seriesMeta
+                      ? (seriesMeta.before - seriesMeta.after) / 60_000
+                      : HISTORY_WINDOW_MINUTES}
+                    bucketSeconds={seriesMeta?.groupSeconds}
+                    rangeStart={seriesMeta?.after}
+                    rangeEnd={seriesMeta?.before}
+                    onRefreshMetrics={() => void loadMetrics()}
+                    onConfigureEntries={canManageConsole ? () => setWebEntryConfigOpen(true) : undefined}
+                    onOpenDeployments={() => setActiveTab('deployments')}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={canManageConsole ? () => setActiveTab('config') : undefined} variant="row" initialExpanded={initialRelationExpanded} onExpandedRestored={onRelationRestoreConsumed} onFullScreen={onOpenRelations ? expanded => onOpenRelations(branchId, expanded) : undefined} /> : null}
+                  />
+                ) : null}
 
                 {/* 方案 A：配置页签三分区（读生效值 / 逐 key 溯源 / 写分支行为）——
                     原「变量 / 配置 / 设置」三个近义页签合并，进哪儿不再靠猜 */}
@@ -2631,6 +2901,7 @@ export function BranchDetailDrawer({
                   <div className="mb-4 inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                     {([
                       ['variables', '生效变量', '当前分支实际生效的环境变量（读，含来源标签）'],
+                      ['references', '引用', '指向别的服务、分支或项目的地址；跨项目引用在这里切换分支'],
                       ['inspector', '配置检查器', '逐 key 溯源 + 部署计划'],
                       ['settings', '分支设置', '分支行为设置（写）'],
                     ] as Array<[ConfigSection, string, string]>).map(([key, label, hint]) => (
@@ -2649,9 +2920,11 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'variables' ? (
                   <VariablesPanel
+                    canManageConsole={canManageConsole}
                     state={envState}
                     revealedValues={revealedValues}
                     onToggleReveal={async (k) => {
+                      if (!canManageConsole) return;
                       // 已 revealed → 折叠回 mask;未 revealed → 调端点拉明文
                       if (revealedValues.has(k)) {
                         setRevealedValues((cur) => {
@@ -2678,6 +2951,7 @@ export function BranchDetailDrawer({
                       }
                     }}
                     onCopySecret={async (k) => {
+                      if (!canManageConsole) return;
                       // 复制 secret:已 revealed 直接用 cache,否则现取 + 复制 +
                       // 不入 cache(用户想"一次性复制"不留显示痕迹)。
                       const cached = revealedValues.get(k);
@@ -2705,10 +2979,14 @@ export function BranchDetailDrawer({
                     branchId={branchId}
                     projectId={projectId}
                     editorOpen={branchEnvEditorOpen}
-                    onToggleEditor={() => setBranchEnvEditorOpen((current) => !current)}
+                    onToggleEditor={() => { if (canManageConsole) setBranchEnvEditorOpen((current) => !current); }}
                     onEnvChanged={() => void loadEnv()}
                     onToast={(message) => onToast?.(message)}
                   />
+                ) : null}
+
+                {activeTab === 'config' && configSection === 'references' && branchId ? (
+                  <ReferencesPanel branchId={branchId} onToast={onToast} />
                 ) : null}
 
                 {activeTab === 'config' && configSection === 'inspector' && branchId ? (
@@ -2717,6 +2995,7 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'settings' ? (
                   <SettingsPanel
+                    canManageConsole={canManageConsole}
                     branch={branch}
                     projectId={projectId}
                     busy={currentActionBusy}
@@ -2731,22 +3010,10 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {/* 方案 A：指标并入总览（现在怎么样 = 状态 + 指标一屏看全） */}
-                {activeTab === 'overview' ? (
-                  <section className="mt-4">
-                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">监控</h4>
-                    <MetricsPanel
-                      state={metricsState}
-                      series={metricSeries}
-                      onRefresh={() => void loadMetrics()}
-                    />
-                  </section>
-                ) : null}
-
                 <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
-                  需要修改构建配置 / 环境变量 / 路由？打开
-                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
-                  。需要查看完整日志、Bridge、提交历史？打开
+                  {canManageConsole ? <>需要修改构建配置 / 项目环境变量 / 路由？打开
+                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>。</> : null}
+                  需要查看分支日志与提交历史？打开
                   <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
@@ -2791,27 +3058,27 @@ export function BranchDetailDrawer({
               </>
             ) : (
               <>
-                {previewUrl ? (
+                {previewUrl && canOpenPreview ? (
                   <PreviewActionSplitButton
-                    className="flex-[2_1_0]"
+                    className="cds-branch-detail-footer-primary flex-[2_1_0]"
                     fill
                     previewHref={previewUrl}
                     previewLabel="打开预览"
                     previewTitle="打开预览页"
                     previewAriaLabel="打开预览页"
-                    onRelease={onRelease && branch ? () => onRelease(branch.id) : undefined}
-                    releaseDisabled={!onRelease}
+                    onRelease={canManageConsole && onRelease && branch ? () => onRelease(branch.id) : undefined}
+                    releaseDisabled={!canManageConsole || !onRelease}
                   />
                 ) : (
-                  <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
+                  <Button className="flex-[2_1_0]" disabled title={!canOpenPreview ? MEMBER_PREVIEW_MODE_NOTICE : '当前没有可用预览地址'}>
                     <Play />
-                    等待预览页
+                    {canOpenPreview ? '等待预览页' : '预览暂不可用'}
                   </Button>
                 )}
                 <Button
                   type="button"
                   variant="outline"
-                  className="cds-branch-detail-footer-secondary flex-[1_1_0]"
+                  className="cds-branch-detail-footer-secondary col-span-2 flex-[1_1_0]"
                   onClick={() => { setConfigSection('settings'); setActiveTab('config'); }}
                 >
                   <Settings />
@@ -2822,8 +3089,21 @@ export function BranchDetailDrawer({
           </footer>
         ) : null}
       </div>
+      {branchId ? (
+        <WebEntryConfigDialog
+          open={webEntryConfigOpen}
+          branchId={branchId}
+          onClose={() => setWebEntryConfigOpen(false)}
+          onSaved={(message) => {
+            onToast?.(message);
+            // 入口卡的数据来自 /subdomain-aliases，重拉一次才能看到刚配的入口
+            void load();
+          }}
+        />
+      ) : null}
     </div>
   );
+  return typeof document === 'undefined' ? drawer : createPortal(drawer, document.body);
 }
 
 function DeploymentVersionLedger({
@@ -2860,8 +3140,8 @@ function DeploymentVersionLedger({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="font-mono text-xs text-foreground" title={version.id}>{version.id.slice(0, 15)}</span>
                 <span className="font-mono text-xs text-muted-foreground">{version.commitSha.slice(0, 7)}</span>
-                {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">当前版本</span> : null}
-                <span className={`rounded border px-1.5 py-0.5 text-[11px] ${reusable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] text-primary">当前版本</span> : null}
+                <span className={`rounded border px-1.5 py-0.5 text-[0.6875rem] ${reusable ? 'border-ok/30 bg-ok-soft text-ok' : 'border-warn/30 bg-warn-soft text-warn'}`}>
                   {reusable ? '产物可复用' : '仅记录'}
                 </span>
               </div>
@@ -2870,7 +3150,7 @@ function DeploymentVersionLedger({
                 <span>{new Date(version.createdAt).toLocaleString()}</span>
               </div>
               {!reusable && blockedReason ? (
-                <p className="mt-2 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">{blockedReason}</p>
+                <p className="mt-2 break-words text-xs leading-5 text-warn">{blockedReason}</p>
               ) : null}
               {reusable ? (
                 <Button
@@ -2921,7 +3201,7 @@ function DeploymentRunLedger({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className={`rounded border px-2 py-0.5 text-xs ${meta.className}`}>{meta.label}</span>
                 <span className="font-mono text-xs text-muted-foreground" title={run.id}>{run.id.slice(0, 15)}</span>
-                {run.id === activeRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">分支当前运行</span> : null}
+                {run.id === activeRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] text-primary">分支当前运行</span> : null}
                 <span className="text-xs text-muted-foreground">{deploymentRunTriggerLabel(run.trigger)}</span>
                 {run.commitSha ? <span className="font-mono text-xs text-muted-foreground">{run.commitSha.slice(0, 7)}</span> : null}
               </div>
@@ -2935,7 +3215,7 @@ function DeploymentRunLedger({
                 {message}
               </p>
               {run.failure?.suggestedAction ? (
-                <p className="mt-1 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">
+                <p className="mt-1 break-words text-xs leading-5 text-warn">
                   建议: {run.failure.suggestedAction}
                 </p>
               ) : null}
@@ -3003,13 +3283,13 @@ function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
     }
   }, [runId]);
 
-  if (loading) return <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在读取结构化诊断</div>;
+  if (loading) return <ContentLoading label="读取结构化诊断" variant="rows" />;
   if (!diagnosis) return <></>;
   const failure = diagnosis.failure;
   return (
     <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
       <div className="flex flex-wrap items-center gap-2">
-        {failure?.code ? <span className="rounded border border-destructive/25 bg-destructive/5 px-2 py-0.5 font-mono text-[11px] text-destructive">{failure.code}</span> : null}
+        {failure?.code ? <span className="rounded border border-destructive/25 bg-destructive/5 px-2 py-0.5 font-mono text-[0.6875rem] text-destructive">{failure.code}</span> : null}
         {failure?.owner ? <span className="text-xs text-muted-foreground">责任侧: {deploymentFailureOwnerLabel(failure.owner)}</span> : null}
         {failure ? <span className="text-xs text-muted-foreground">{failure.retryable ? '修复前置条件后可重试' : '需先修复根因'}</span> : null}
       </div>
@@ -3031,7 +3311,7 @@ function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
           {aiState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Braces />}
           {aiState.status === 'loading' ? aiState.message || 'AI 正在解释' : 'AI 解释'}
         </Button>
-        {aiState.status === 'error' ? <span className="text-xs text-amber-700 dark:text-amber-300">{aiState.message}</span> : null}
+        {aiState.status === 'error' ? <span className="text-xs text-warn">{aiState.message}</span> : null}
       </div>
     </div>
   );
@@ -3042,7 +3322,7 @@ function deploymentFailureOwnerLabel(owner: NonNullable<DeploymentRunSummary['fa
 }
 
 function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; className: string } {
-  if (status === 'running') return { label: '部署成功', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  if (status === 'running') return { label: '部署成功', className: 'border-ok/30 bg-ok-soft text-ok' };
   if (status === 'failed') return { label: '部署失败', className: 'border-destructive/30 bg-destructive/10 text-destructive' };
   if (status === 'cancelled') return { label: '已取消', className: 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300' };
   const labels: Record<Exclude<DeploymentRunStatus, 'running' | 'failed' | 'cancelled'>, string> = {
@@ -3053,7 +3333,7 @@ function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; 
     starting: '启动中',
     verifying: '验证中',
   };
-  return { label: labels[status], className: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+  return { label: labels[status], className: 'border-info/30 bg-info-soft text-info' };
 }
 
 function deploymentRunTriggerLabel(trigger: DeploymentRunSummary['trigger']): string {
@@ -3113,7 +3393,7 @@ export function DeploymentCard({
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap gap-1.5">
             {stages.length > 0 ? stages.map((stage) => (
-              <span key={stage} className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-2 py-0.5 text-[11px] text-muted-foreground">
+              <span key={stage} className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
                 {stage}
               </span>
             )) : (
@@ -3123,7 +3403,7 @@ export function DeploymentCard({
           <span className="shrink-0 text-xs text-primary">查看日志</span>
         </div>
         {deployment.suggestion ? (
-          <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+          <div className="mt-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
             {deployment.suggestion}
           </div>
         ) : null}
@@ -3149,20 +3429,20 @@ function filterServiceLogs(state: ServiceLogsState, query: string): ServiceLogsS
 // 崩溃 / 调度器降温 / janitor 回收 / 用户手动停止 / auto-restart 都会留痕。
 function systemLogTypeMeta(type: string): { label: string; cls: string } {
   switch (type) {
-    case 'deploy': return { label: '部署', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
+    case 'deploy': return { label: '部署', cls: 'border-ok/30 bg-ok-soft text-ok' };
     case 'deploy-failed': return { label: '部署失败', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
-    case 'pull': return { label: '拉取', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
-    case 'stop': return { label: '停止', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
-    case 'restart': return { label: '重启', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
+    case 'pull': return { label: '拉取', cls: 'border-info/30 bg-info-soft text-info' };
+    case 'stop': return { label: '停止', cls: 'border-warn/30 bg-warn-soft text-warn' };
+    case 'restart': return { label: '重启', cls: 'border-info/30 bg-info-soft text-info' };
     case 'crash': return { label: '崩溃', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
-    case 'branch-created': return { label: '新建', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
-    case 'branch-deleted': return { label: '回收', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
+    case 'branch-created': return { label: '新建', cls: 'border-ok/30 bg-ok-soft text-ok' };
+    case 'branch-deleted': return { label: '回收', cls: 'border-warn/30 bg-warn-soft text-warn' };
     default: return { label: type, cls: 'border-border bg-muted text-muted-foreground' };
   }
 }
 
 function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
-  if (state.status === 'loading') return <div className={DETAIL_LOG_EMPTY_CLASS}>加载系统日志…</div>;
+  if (state.status === 'loading') return <ContentLoading label="加载系统日志" variant="log" />;
   if (state.status === 'error') {
     return <div className={`${DETAIL_LOG_EMPTY_CLASS} text-destructive`}>加载失败：{state.message}</div>;
   }
@@ -3215,7 +3495,7 @@ function dispatchActionClass(action: GithubWebhookDelivery['dispatchAction']): s
   switch (action) {
     case 'deploy':
     case 'branch-created':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      return 'border-ok/30 bg-ok-soft text-ok';
     case 'error':
       return 'border-destructive/35 bg-destructive/10 text-destructive';
     case 'ignored':
@@ -3259,7 +3539,7 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
       summary: branch.githubRepoFullName
         ? `最近由 ${branch.githubRepoFullName} 的 GitHub 事件或关联提交驱动`
         : '该分支带有 GitHub 提交元数据，可在 Webhook 日志中追溯触发记录',
-      className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+      className: 'border-info/35 bg-info-soft text-info',
     };
   }
   if ((branch.deployCount || 0) > 0 || (branch.pullCount || 0) > 0 || (branch.stopCount || 0) > 0) {
@@ -3272,7 +3552,7 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
   return {
     label: '待配置',
     summary: '还没有部署/拉取记录，也没有 webhook 关联。建议先检查项目设置，再执行首次部署',
-    className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    className: 'border-warn/35 bg-warn-soft text-warn',
   };
 }
 
@@ -3350,7 +3630,7 @@ function TriggerLogsPanel({
                   : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
               }`}
             >
-              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+              <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
                 <span className={`rounded border px-1.5 py-0.5 ${dispatchActionClass(item.dispatchAction)}`}>
                   {dispatchActionLabel(item.dispatchAction)}
                 </span>
@@ -3368,20 +3648,20 @@ function TriggerLogsPanel({
                 </div>
 
                 <div className="flex min-w-0 flex-wrap gap-1.5">
-                  <span className={`rounded border px-1.5 py-0.5 ${item.signatureValid ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-destructive/35 bg-destructive/10 text-destructive'}`}>
+                  <span className={`rounded border px-1.5 py-0.5 ${item.signatureValid ? 'border-ok/30 bg-ok-soft text-ok' : 'border-destructive/35 bg-destructive/10 text-destructive'}`}>
                     验签{item.signatureValid ? '通过' : '失败'}
                   </span>
                   {item.deployDispatched ? (
-                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">已派发部署</span>
+                    <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-ok">已派发部署</span>
                   ) : null}
                   {item.deployDispatchError ? (
                     <span className="rounded border border-destructive/35 bg-destructive/10 px-1.5 py-0.5 text-destructive">派发失败</span>
                   ) : null}
                   {item.deployDedupSkipped ? (
-                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">重复触发已去重</span>
+                    <span className="rounded border border-warn/30 bg-warn-soft px-1.5 py-0.5 text-warn">重复触发已去重</span>
                   ) : null}
                   {item.selfStatusBroadcast ? (
-                    <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">左下角更新提示已刷新</span>
+                    <span className="rounded border border-info/30 bg-info-soft px-1.5 py-0.5 text-info">左下角更新提示已刷新</span>
                   ) : null}
                   {item.branchId ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-muted-foreground">{item.branchId}</span> : null}
                 </div>
@@ -3453,7 +3733,7 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
           </div>
         </div>
         <div className={DETAIL_LOG_VIEWPORT_CLASS}>
-          <div className="grid grid-cols-[150px_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-[9.375rem_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
             <span>Time</span>
             <span>Message</span>
           </div>
@@ -3462,7 +3742,7 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
           ) : (
             <div className="divide-y divide-[hsl(var(--hairline))]">
               {rows.map((row) => (
-                <div key={row.key} className="grid grid-cols-[150px_minmax(0,1fr)] gap-3 px-4 py-2 text-xs">
+                <div key={row.key} className="grid grid-cols-[9.375rem_minmax(0,1fr)] gap-3 px-4 py-2 text-xs">
                   <span className="font-mono text-muted-foreground">{time || '-'}</span>
                   <pre className="min-w-0 whitespace-pre-wrap break-words font-mono leading-5 text-muted-foreground">{row.text}</pre>
                 </div>
@@ -3501,11 +3781,11 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
       <div className="space-y-2">
         {rows.map((row) => (
           <div key={row.key} className={`rounded-md border px-3 py-2 ${row.status === 'error' ? 'border-destructive/35 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'}`}>
-            <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <div className="mb-1 flex items-center gap-2 text-[0.6875rem] text-muted-foreground">
               <span className={`rounded border px-1.5 py-0.5 ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
               <span>{row.time}</span>
             </div>
-            <pre className="whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground">{row.text}</pre>
+            <pre className="whitespace-pre-wrap font-mono text-[0.6875rem] leading-5 text-muted-foreground">{row.text}</pre>
           </div>
         ))}
       </div>
@@ -3560,6 +3840,7 @@ function resourceInitialDetailTab(
 
 function ResourceConsole({
   resources,
+  readIncomplete = false,
   replicaProfileIds,
   replicaChipInfo,
   onQuickReplica,
@@ -3567,6 +3848,7 @@ function ResourceConsole({
   dbGuardBusy,
   selectedResource,
   initialDetailTab,
+  onWorkbenchDismiss,
   serviceLogs,
   branchName,
   onSelect,
@@ -3579,6 +3861,7 @@ function ResourceConsole({
   onCopy,
 }: {
   resources: BranchResource[];
+  readIncomplete?: boolean;
   /** 已复制集化（含运行成员）的 profileId 集合 —— 卡片加堆叠徽章特殊标识 */
   replicaProfileIds?: Set<string>;
   /** 芯片级复制集信息：成员数 + 是否有启动中成员（光环动画） */
@@ -3591,6 +3874,8 @@ function ResourceConsole({
   dbGuardBusy?: Record<string, boolean>;
   selectedResource: BranchResource | null;
   initialDetailTab?: BranchResourceDetailTab | null;
+  /* 直达工作台时由抽屉传入：关掉工作台 = 关掉整个抽屉，退回分支列表。 */
+  onWorkbenchDismiss?: () => void;
   serviceLogs: ServiceLogsState;
   branchName: string;
   onSelect: (resource: BranchResource) => void;
@@ -3611,7 +3896,8 @@ function ResourceConsole({
   const [detailTab, setDetailTab] = useState<BranchResourceDetailTab>(() => resourceInitialDetailTab(selectedResource, initialDetailTab));
   // 菜单锚点带屏幕坐标：菜单经 createPortal 挂 body（验收 P1-2：渲染在
   // overflow-x-auto 芯片行内会被裁剪到肉眼不可见，frontend-modal 规则第 2 条）
-  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; left: number; top: number } | null>(null);
+  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; anchor: HTMLButtonElement } | null>(null);
+  const plusAnchor = useMemo(() => ({ current: plusMenuFor?.anchor ?? null }), [plusMenuFor]);
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
@@ -3619,6 +3905,25 @@ function ResourceConsole({
     permissions: ResourcePermissionSummary | null;
     message?: string;
   }>({ status: 'idle', permissions: null });
+
+  /* chip 横条的滑动提示：只有「右边确实还有东西」时才盖那层渐变。
+     常驻渐变会在资源不多、根本不需要滑的时候平白糊掉最后一个 chip。 */
+  const chipScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [chipScrollHint, setChipScrollHint] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+  const updateChipScrollHint = useCallback(() => {
+    const el = chipScrollerRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setChipScrollHint({ left: el.scrollLeft > 4, right: max > 4 && el.scrollLeft < max - 4 });
+  }, []);
+  useEffect(() => {
+    updateChipScrollHint();
+    const el = chipScrollerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => updateChipScrollHint());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [updateChipScrollHint, resources.length]);
 
   useEffect(() => {
     setDetailTab(resourceInitialDetailTab(selectedResource, initialDetailTab));
@@ -3653,7 +3958,7 @@ function ResourceConsole({
   if (resources.length === 0) {
     return (
       <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
-        当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。
+        {readIncomplete ? '资源清单尚未确认，请重试读取；不能据此判断是否已部署资源。' : '当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。'}
       </section>
     );
   }
@@ -3706,11 +4011,21 @@ function ResourceConsole({
         </div>
       </header>
 
-      <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
-        <div className="flex gap-3 overflow-x-auto pb-1">
+      {/* 方案 B（2026-09-01 用户选定）：底色不动，靠分层把「糊在一起」拆开——
+          chip 区自成一个凹陷带、分区标题带竖分隔、chip 抬到 raised 层。
+          右侧渐变是滑动提示：横向还有内容时才出现，让人知道这条能滑。 */}
+      <div className="relative border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-4 py-3">
+        {/* 纵向内边距不是装饰：overflow-x:auto 会把纵轴一并变成裁剪轴，而 chip 右上角的
+            「加副本 / 保护罩」小圆钮挂在 -top-1、选中态还有 1px 外环——没有这段留白，
+            它们连同 chip 的第一行文字一起被切掉（2026-09-01 用户截图）。 */}
+        <div
+          ref={chipScrollerRef}
+          onScroll={updateChipScrollHint}
+          className="flex gap-3 overflow-x-auto px-1 pb-2 pt-2"
+        >
           {groups.map((group) => (
-            <div key={group.kind} className="flex shrink-0 items-center gap-2">
-              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <div key={group.kind} className="flex shrink-0 items-center gap-2 pr-1">
+              <span className="shrink-0 border-r border-[hsl(var(--hairline-strong))] pr-3 text-[0.6875rem] font-bold uppercase tracking-[0.1em] text-foreground/70">
                 {resourceKindLabel(group.kind)}
               </span>
               {group.items.map((resource) => {
@@ -3728,14 +4043,14 @@ function ResourceConsole({
                   <span key={resource.id} className="relative inline-flex shrink-0">
                     <button
                       type="button"
-                      className={`inline-flex h-10 min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 text-left transition-colors ${
+                      className={`inline-flex min-h-[2.75rem] min-w-[8.25rem] shrink-0 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left leading-tight transition-colors ${
                         active
-                          ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
-                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
-                      } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
+                          ? 'border-primary bg-primary/12 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
+                          : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] shadow-[shadow:var(--shadow-chip)] hover:bg-[hsl(var(--accent))]'
+                      } ${resource.access === 'external' ? 'ring-1 ring-info/30' : ''} ${
                         isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
                       } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${
-                        guarding ? 'animate-pulse ring-2 ring-emerald-400/70' : ''
+                        guarding ? 'animate-pulse ring-2 ring-ok/70' : ''
                       } ${canQuickReplica || canGuard ? 'pr-7' : ''}`}
                       onClick={() => onSelect(resource)}
                       title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? `\n复制集：${(chipInfo?.members ?? 0) + 1} 个实例并排运行` : ''}`}
@@ -3747,11 +4062,11 @@ function ResourceConsole({
                           {isReplicaSet ? (
                             <span className="inline-flex items-center gap-0.5 text-indigo-500">
                               <Layers className="h-3 w-3 shrink-0" />
-                              <span className="text-[10px] font-bold tabular-nums">x{(chipInfo?.members ?? 0) + 1}</span>
+                              <span className="text-[0.625rem] font-bold tabular-nums">x{(chipInfo?.members ?? 0) + 1}</span>
                             </span>
                           ) : null}
                         </span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
+                        <span className="block truncate font-mono text-[0.6875rem] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
                       </span>
                       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
                     </button>
@@ -3763,8 +4078,7 @@ function ResourceConsole({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (plusMenuFor?.id === resource.id) { setPlusMenuFor(null); return; }
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          setPlusMenuFor({ id: resource.id, left: Math.max(8, rect.right - 160), top: rect.bottom + 6 });
+                          setPlusMenuFor({ id: resource.id, anchor: e.currentTarget });
                         }}
                       >
                         <Plus className="h-3 w-3" />
@@ -3774,32 +4088,30 @@ function ResourceConsole({
                       <button
                         type="button"
                         disabled={guarding}
-                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-emerald-500/50 bg-emerald-500/15 text-emerald-600 transition-colors hover:bg-emerald-500 hover:text-white disabled:opacity-60"
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-ok/50 bg-ok-soft text-ok transition-colors hover:bg-ok hover:text-status-ink disabled:opacity-60"
                         title={guarding ? '正在整库克隆隔离副本…' : '保护罩：一键把当前库克隆成隔离副本（保留在数据快照列表，可随时删除）'}
                         onClick={(e) => { e.stopPropagation(); void onDbGuard?.(infraId); }}
                       >
                         {guarding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
                       </button>
                     ) : null}
-                    {plusMenuFor?.id === resource.id ? createPortal(
-                      <div
-                        className="fixed z-[300] w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
-                        style={{ left: plusMenuFor.left, top: plusMenuFor.top }}
+                    {plusMenuFor?.id === resource.id ? (
+                      <AnchoredPopover open anchorRef={plusAnchor} widthRem={10} align="end" onDismiss={() => setPlusMenuFor(null)} role="menu" aria-label="添加副本"
+                        className="z-[300] rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
                       >
-                        <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[11px] text-muted-foreground">加几个副本？</div>
+                        <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[0.6875rem] text-muted-foreground">加几个副本？</div>
                         {[1, 2, 3].map((n) => (
                           <button
                             key={n}
-                            type="button"
+                            type="button" role="menuitem"
                             className="flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-indigo-500/10"
                             onClick={() => { setPlusMenuFor(null); void onQuickReplica?.(profileId, n); }}
                           >
                             <span>{n} 个副本</span>
-                            <span className="text-[10px] text-muted-foreground">确认</span>
+                            <span className="text-[0.625rem] text-muted-foreground">确认</span>
                           </button>
                         ))}
-                      </div>,
-                      document.body,
+                      </AnchoredPopover>
                     ) : null}
                   </span>
                 );
@@ -3807,9 +4119,21 @@ function ResourceConsole({
             </div>
           ))}
         </div>
+        {chipScrollHint.left ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-3 left-0 w-10 bg-gradient-to-r from-[hsl(var(--surface-sunken))] to-transparent"
+          />
+        ) : null}
+        {chipScrollHint.right ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-3 right-0 w-12 bg-gradient-to-l from-[hsl(var(--surface-sunken))] to-transparent"
+          />
+        ) : null}
       </div>
 
-      <div className="min-h-[620px] min-w-0">
+      <div className="min-h-[38.75rem] min-w-0">
         {selectedResource ? (
           <>
             <div className="flex min-w-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
@@ -3903,7 +4227,7 @@ function ResourceConsole({
                     }}
                   />
                 ) : null}
-                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} /> : null}
+                {detailTab === 'data' ? <ResourceDataPanel key={`${selectedResource.branchId}:${selectedResource.id}:${selectedResource.runtime}`} resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
                 {detailTab === 'backups' ? (
                   <ResourceBackupsPanel
                     resource={selectedResource}
@@ -3955,12 +4279,12 @@ function ResourceOverview({ resource, branchName }: { resource: BranchResource; 
         ))}
       </div>
       {(resource.dependsOn || []).length > 0 ? (
-        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+        <div className="rounded-md border border-info/25 bg-info-soft px-3 py-2 text-xs leading-5 text-info">
           依赖关系：{resource.displayName} 依赖 {resource.dependsOn.join(', ')}。连接变化后应提示重新部署依赖应用。
         </div>
       ) : null}
       {(resource.consumers || []).length > 0 ? (
-        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+        <div className="rounded-md border border-info/25 bg-info-soft px-3 py-2 text-xs leading-5 text-info">
           被依赖：{resource.consumers.join(', ')} 使用 {resource.displayName}。连接变量变更后建议重新部署这些应用。
         </div>
       ) : null}
@@ -3971,6 +4295,20 @@ function ResourceOverview({ resource, branchName }: { resource: BranchResource; 
       ) : null}
     </div>
   );
+}
+
+interface ResourceTcpCapability {
+  enabled: boolean;
+  host: string;
+  reason?: string;
+  passportEnabled?: boolean;
+}
+
+export function ResourceTcpConnectionStatus({ capability }: { capability: ResourceTcpCapability | null }): JSX.Element {
+  if (!capability) return <ContentLoading label="读取实例直连配置" variant="inline" />;
+  return <span>{capability.enabled
+    ? `直连主机：${capability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。`
+    : capability.reason || TCP_DISABLED_DESCRIPTION}</span>;
 }
 
 function ResourceConnection({
@@ -3997,10 +4335,25 @@ function ResourceConnection({
   const externalAddress = resource.externalUrl || resource.externalAccess?.address || '';
   const externalEnabled = resource.externalAccess?.enabled || resource.access === 'external';
   const dependentApps = resource.consumers || [];
+  const savedAllowlist = (resource.externalAccess?.allowlist || []).join('\n');
   const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
   const [connectionBusy, setConnectionBusy] = useState<'external' | 'internal' | null>(null);
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [externalError, setExternalError] = useState('');
+  const [sshTarget, setSshTarget] = useState('');
+  const [sshLocalPort, setSshLocalPort] = useState('13306');
+  const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
+  const [sshBusy, setSshBusy] = useState(false);
+  const infraLocalOnly = resource.source === 'infra';
+  const [tcpCapability, setTcpCapability] = useState<ResourceTcpCapability | null>(null);
+  useEffect(() => {
+    setTcpCapability(null);
+    if (!resource.branchId || !infraLocalOnly) return;
+    let cancelled = false;
+    void apiRequest<ResourceTcpCapability>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
+    return () => { cancelled = true; };
+  }, [resource.branchId, resource.id, infraLocalOnly]);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
@@ -4030,20 +4383,49 @@ function ResourceConnection({
     },
     {
       label: '内部连接串（容器内）',
-      value: resource.connectionString || resource.internalUrl || '-',
+      value: externalEnabled ? resource.internalUrl || '-' : resource.connectionString || resource.internalUrl || '-',
       connectionScope: resource.source === 'infra' ? 'internal' as const : undefined,
       copyLabel: '复制容器内用',
       help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
     },
-  ];
+  ].filter((row) => !infraLocalOnly || externalEnabled || !row.label.startsWith('外部'));
   useEffect(() => {
-    setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
+    setExternalError('');
+    setSshGuide(null);
+    setConnectionMessage(null);
+    setSshLocalPort(resource.runtime === 'PostgreSQL' ? '15432' : resource.runtime === 'MongoDB' ? '27018' : resource.runtime === 'Redis' ? '16379' : '13306');
+    setAllowlistDraft(savedAllowlist);
     setTtlDraft(resource.externalAccess?.expiresAt ? '120' : '120');
-  }, [resource.id, resource.externalAccess?.allowlist, resource.externalAccess?.expiresAt]);
+  }, [resource.id, savedAllowlist, resource.externalAccess?.expiresAt]);
+  async function generateSshGuide(copyString = false): Promise<void> {
+    if (!resource.branchId) return;
+    setSshBusy(true);
+    setExternalError('');
+    setConnectionMessage(null);
+    try {
+      const result = await apiRequest<{ sshCommand: string; maskedConnectionString: string; connectionString: string; localPort: number }>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/connection-string?scope=ssh&localPort=${encodeURIComponent(sshLocalPort)}&sshTarget=${encodeURIComponent(sshTarget)}`,
+      );
+      setSshGuide({ sshCommand: result.sshCommand, maskedConnectionString: result.maskedConnectionString, localPort: result.localPort });
+      if (copyString) { await onCopy(result.connectionString); setConnectionMessage('本地连接串已复制。请先在终端保持 SSH 隧道运行，再用数据库客户端连接。'); }
+    } catch (err) {
+      setSshGuide(null);
+      setExternalError(err instanceof ApiError ? err.message : String(err));
+    } finally { setSshBusy(false); }
+  }
+  async function toggleExternal(input: ResourceExternalAccessInput): Promise<void> {
+    setExternalError('');
+    setConnectionMessage(null);
+    if (input.enabled && infraLocalOnly && (!input.allowlist?.length || !Number.isInteger(input.ttlMinutes) || input.ttlMinutes! < 1 || input.ttlMinutes! > 1440)) { setExternalError('请填写至少一个 IPv4/CIDR 白名单，并设置 1–1440 分钟有效期。'); return; }
+    try { await onToggleExternalAccess(input); setConnectionMessage(input.enabled ? '临时直连已开启，只有白名单 IP 可以连接，到期自动断开。' : '临时直连已关闭。'); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
+  }
   async function resetCredentials(): Promise<void> {
     const confirmResourceName = window.prompt(`重置会让 ${resource.displayName} 的旧连接失效。请输入资源名确认：${resource.serviceName}`);
     if (!confirmResourceName) return;
-    await onResetCredentials(confirmResourceName);
+    setExternalError('');
+    try { await onResetCredentials(confirmResourceName); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
   }
   async function copyConnectionString(scope: 'external' | 'internal'): Promise<void> {
     if (!resource.branchId) return;
@@ -4063,6 +4445,7 @@ function ResourceConnection({
   }
   return (
     <div className="space-y-3">
+      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={copyTextToClipboard} /> : null}
       {rows.map((row) => (
         <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
           <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
@@ -4088,15 +4471,39 @@ function ResourceConnection({
               </Button>
             ) : null}
           </div>
-          {row.help ? <div className="mt-2 text-[11px] leading-4 text-muted-foreground">{row.help}</div> : null}
+          {row.help ? <div className="mt-2 text-[0.6875rem] leading-4 text-muted-foreground">{row.help}</div> : null}
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
-      <div className="grid gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold">外部访问控制</div>
-            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时必须填写 IP allowlist、临时有效期和凭据重置记录。</div>
+      {externalError ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">{externalError}</div> : null}
+      {infraLocalOnly ? (
+        <div className="space-y-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs leading-5">
+          <div className="font-semibold">本地数据库客户端 · SSH 隧道</div>
+          <p className="text-muted-foreground">也可使用已有 SSH 账号把数据库映射到本机；DataGrip、Navicat 等客户端连接本地地址。</p>
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem]">
+            <label className="grid gap-1">SSH 主机或配置别名<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" placeholder="user@server 或 SSH 别名" value={sshTarget} onChange={(event) => { setSshTarget(event.target.value); setSshGuide(null); }} /></label>
+            <label className="grid gap-1">本地端口<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" inputMode="numeric" value={sshLocalPort} onChange={(event) => { setSshLocalPort(event.target.value); setSshGuide(null); }} /></label>
+          </div>
+          <Button type="button" size="sm" variant="outline" disabled={sshBusy || !canInjectConnection} onClick={() => void generateSshGuide()}>
+            {sshBusy ? <Loader2 className="animate-spin" /> : <Terminal />}生成连接说明
+          </Button>
+          {!canInjectConnection ? <p className="text-muted-foreground">{resourcePermissionReason(permissions, 'connection-inject')}</p> : null}
+          {sshGuide ? <div className="space-y-2">
+            <p>1. 在本机终端执行并保持运行；关闭终端即可断开隧道：</p>
+            <pre className="overflow-auto rounded border border-[hsl(var(--hairline))] bg-background p-2 font-mono">{sshGuide.sshCommand}</pre>
+            <Button type="button" size="sm" variant="outline" onClick={() => void onCopy(sshGuide.sshCommand)}><Copy />复制 SSH 命令</Button>
+            <p>2. 客户端地址：127.0.0.1，端口：{sshGuide.localPort}。使用数据库账号密码；也可复制完整连接串。</p>
+            <code className="block break-all font-mono">{sshGuide.maskedConnectionString}</code>
+            <Button type="button" size="sm" variant="outline" disabled={sshBusy} onClick={() => void generateSshGuide(true)}><Copy />复制本地连接串</Button>
+          </div> : null}
+        </div>
+      ) : null}
+      {(!tcpCapability?.passportEnabled || !['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) || externalEnabled) ? <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">临时 TCP 直连</div>
+            <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
+            {infraLocalOnly ? <div className="mt-1"><ResourceTcpConnectionStatus capability={tcpCapability} /></div> : null}
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -4114,7 +4521,7 @@ function ResourceConnection({
             type="button"
             size="sm"
             variant="outline"
-            disabled={externalBusy || !canTemporaryExternal}
+            disabled={externalBusy || !canTemporaryExternal || (!externalEnabled && infraLocalOnly && !tcpCapability?.enabled)}
             title={!canTemporaryExternal ? resourcePermissionReason(permissions, 'external-temporary-access') : undefined}
             onClick={() => {
               const allowlist = allowlistDraft
@@ -4122,7 +4529,7 @@ function ResourceConnection({
                 .map((item) => item.trim())
                 .filter(Boolean);
               const ttlMinutes = Number(ttlDraft);
-              void onToggleExternalAccess({
+              void toggleExternal({
                 enabled: !externalEnabled,
                 ttlMinutes: !externalEnabled && Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : undefined,
                 allowlist,
@@ -4130,32 +4537,34 @@ function ResourceConnection({
             }}
           >
             {externalBusy ? <Loader2 className="animate-spin" /> : externalEnabled ? <PowerOff /> : <ExternalLink />}
-            {externalEnabled ? '关闭公网' : '临时开启'}
+            {externalEnabled ? '关闭直连' : '临时开启'}
           </Button>
         </div>
-        <div className="grid gap-2 md:grid-cols-[140px_minmax(0,1fr)]">
-          <label className="grid gap-1">
-            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">有效期（分钟）</span>
+        <div className="grid items-start gap-3 md:grid-cols-2">
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[0.6875rem] text-warn/80">有效期（分钟，开启时生效）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
-              className="h-8 rounded-md border border-amber-500/30 bg-background px-2 font-mono text-xs outline-none focus:border-amber-500"
+              className="h-10 w-full min-w-0 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
               inputMode="numeric"
               placeholder="120"
+              type="number" min={1} max={1440} step={1}
             />
           </label>
-          <label className="grid gap-1">
-            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[0.6875rem] text-warn/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
-              className="min-h-[64px] resize-y rounded-md border border-amber-500/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-amber-500"
+              className="h-10 min-h-10 w-full min-w-0 resize-y rounded-md border border-warn/30 bg-background px-2 py-2.5 font-mono text-xs outline-none focus:border-warn"
               placeholder="203.0.113.10/32"
+              rows={1}
               spellCheck={false}
             />
           </label>
         </div>
-      </div>
+      </div> : null}
       {resource.kind === 'database' ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -4196,8 +4605,12 @@ interface DbTableSummary {
 
 interface DbQueryResult {
   columns: string[];
-  rows: string[][];
+  rows: Array<Array<string | null>>;
   rowCount: number;
+  statement?: string;
+  resultSets?: DbQueryResult[];
+  output?: string;
+  truncated?: boolean;
 }
 
 interface WorkbenchCommandResult {
@@ -4336,16 +4749,16 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
   };
 }
 
-function ResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function ResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
   const adapter = resourceWorkbenchAdapter(resource);
   if (adapter.runner === 'redis-readonly') {
-    return <RedisResourceDataPanel resource={resource} />;
+    return <RedisResourceDataPanel resource={resource} onWorkbenchDismiss={onWorkbenchDismiss} />;
   }
   if (adapter.runner === 'mongo') {
-    return <MongoResourceDataPanel resource={resource} />;
+    return <MongoResourceDataPanel resource={resource} onWorkbenchDismiss={onWorkbenchDismiss} />;
   }
   if (adapter.runner === 'sql') {
-    return <SqlResourceDataPanel resource={resource} adapter={adapter} />;
+    return <SqlResourceDataPanel resource={resource} adapter={adapter} onWorkbenchDismiss={onWorkbenchDismiss} />;
   }
   return <PlannedResourceWorkbenchPanel resource={resource} adapter={adapter} />;
 }
@@ -4363,11 +4776,11 @@ function PlannedResourceWorkbenchPanel({ resource, adapter }: { resource: Branch
             <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
               {adapter.treeLabel}，右上执行 {adapter.consoleLabel}，右下查看{adapter.resultModes.map(resultModeLabel).join(' / ')}。{adapter.note}
             </div>
-            <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+            <div className="mt-2 font-mono text-[0.6875rem] text-muted-foreground">
               {resource.displayName} · :{resource.port || resource.containerPort || '?'}
             </div>
           </div>
-          <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-700 dark:text-amber-300">
+          <span className="rounded-md border border-warn/30 bg-warn-soft px-2.5 py-1 text-xs text-warn">
             执行器待接入
           </span>
         </div>
@@ -4379,7 +4792,7 @@ function PlannedResourceWorkbenchPanel({ resource, adapter }: { resource: Branch
         {adapter.customPanels.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {adapter.customPanels.map((panel) => (
-              <span key={panel} className="rounded border border-[hsl(var(--hairline))] bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+              <span key={panel} className="rounded border border-[hsl(var(--hairline))] bg-background/60 px-2 py-1 font-mono text-[0.6875rem] text-muted-foreground">
                 {panel}
               </span>
             ))}
@@ -4424,27 +4837,27 @@ function highlightedCode(value: string, language: 'sql' | 'json' | 'mongo'): Rea
     const text = match[0];
     const className = language === 'sql'
       ? match[1]
-        ? 'text-sky-600 dark:text-sky-300'
+        ? 'text-info'
         : match[2]
-          ? 'text-emerald-700 dark:text-emerald-300'
+          ? 'text-ok'
           : match[3]
             ? 'text-muted-foreground'
-            : 'text-amber-700 dark:text-amber-300'
+            : 'text-warn'
       : language === 'mongo'
         ? match[1]
-          ? 'text-sky-600 dark:text-sky-300'
+          ? 'text-info'
           : match[2]
-            ? 'text-emerald-700 dark:text-emerald-300'
+            ? 'text-ok'
             : match[3]
               ? 'text-violet-600 dark:text-violet-300'
-              : 'text-amber-700 dark:text-amber-300'
+              : 'text-warn'
       : match[1]
-        ? 'text-sky-600 dark:text-sky-300'
+        ? 'text-info'
         : match[2]
-          ? 'text-emerald-700 dark:text-emerald-300'
+          ? 'text-ok'
           : match[3]
             ? 'text-violet-600 dark:text-violet-300'
-            : 'text-amber-700 dark:text-amber-300';
+            : 'text-warn';
     nodes.push(<span key={`${match.index}-${text}`} className={className}>{text}</span>);
     lastIndex = pattern.lastIndex;
   }
@@ -4474,7 +4887,7 @@ function CodeEditor({
         <pre
           aria-hidden
           className="pointer-events-none absolute inset-0 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs leading-5"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
         >
           {value ? highlightedCode(value, language) : <span className="text-muted-foreground/55">{placeholder || ''}</span>}
         </pre>
@@ -4482,7 +4895,7 @@ function CodeEditor({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className="relative z-10 w-full resize-y bg-transparent px-3 py-2 font-mono text-xs leading-5 text-transparent caret-foreground outline-none selection:bg-primary/20"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
           spellCheck={false}
           placeholder={placeholder}
         />
@@ -4518,12 +4931,12 @@ function ResourceWorkbenchLauncher({
             {title}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">{description}</div>
-          <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+          <div className="mt-2 font-mono text-[0.6875rem] text-muted-foreground">
             {resource.displayName} · :{resource.port || resource.containerPort || '?'}
           </div>
         </div>
         <Button type="button" onClick={onOpen}>
-          <Maximize2 className="h-4 w-4" />
+          <Maximize2 />
           打开工作台
         </Button>
       </div>
@@ -4551,10 +4964,10 @@ function ResourceWorkbenchModal({
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{title}</div>
-            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{subtitle}</div>
+            <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{subtitle}</div>
           </div>
           <Button type="button" size="sm" variant="ghost" onClick={onClose} aria-label="关闭工作台">
-            <X className="h-4 w-4" />
+            <X />
           </Button>
         </div>
         {/* Body: on phones the panes stack and the whole body scrolls vertically
@@ -4579,7 +4992,8 @@ function resultModeLabel(mode: WorkbenchResultMode): string {
   return '输出';
 }
 
-function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
@@ -4594,7 +5008,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const [writeForm, setWriteForm] = useState<{ action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string }>({
     action: 'updateMany', collection: '', document: '{\n  \n}', filter: '{\n  \n}', update: '{\n  "$set": {}\n}', confirm: '',
   });
-  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
+  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string; failure?: DatabaseFailure }>({ status: 'idle' });
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -4621,7 +5035,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         return nextDatabase;
       });
     } catch (err) {
-      setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
+      setDatabasesState({ status: 'error', databases: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4639,7 +5053,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       setSelectedCollection(nextCollection);
       setCommand(defaultMongoCommand(nextCollection));
     } catch (err) {
-      setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCollectionsState({ status: 'error', collections: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4652,7 +5066,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       setResultMode('table');
       setSelectedDocumentIndex(0);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4688,7 +5102,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       setSelectedDocumentIndex(0);
       if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
       setResultMode('output');
     }
   }
@@ -4719,7 +5133,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       void loadDocuments(selectedDatabase, coll);
       void loadCollections(selectedDatabase, coll);
     } catch (err) {
-      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setWriteState({ status: 'error', failure: databaseFailure(err, 'mongo') });
     }
   }
 
@@ -4742,21 +5156,21 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         open={workbenchOpen}
         title={`MongoDB :${resource.port || resource.containerPort || '?'}`}
         subtitle={`${databaseLabel}.${selectedCollection || '-'} · ${resource.displayName}`}
-        onClose={() => setWorkbenchOpen(false)}
+        onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
-        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">数据库 / collection</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={resource.displayName}>{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
                   <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
                 </Button>
               </div>
-              {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-background/55 px-2 py-1.5 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
+              {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-background/55 px-2 py-1.5 text-[0.6875rem] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
             </div>
             <div className="min-h-0 max-h-[40vh] overflow-auto p-2 lg:max-h-none lg:flex-1">
               {databasesState.status === 'error' ? (
@@ -4779,15 +5193,15 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                           }}
                         >
                           <span className="text-muted-foreground">{activeDatabase ? '▾' : '▸'}</span>
-                          <Database className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                          <Database className="h-3.5 w-3.5 shrink-0 text-ok" />
                           <span className="min-w-0 flex-1 truncate font-mono">{db.name}</span>
-                          {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
-                          {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
+                          {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[0.625rem] text-primary">默认</span> : null}
+                          {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">系统</span> : null}
                         </button>
                         {activeDatabase ? (
                           <div className="ml-6 mt-1 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
                             {collectionsState.status === 'error' ? (
-                              <div className="px-2 py-2 text-[11px] leading-5 text-destructive">{collectionsState.message}</div>
+                              <div className="px-2 py-2 text-[0.6875rem] leading-5 text-destructive">{collectionsState.message}</div>
                             ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => {
                               const activeCollection = collection.name === selectedCollection;
                               return (
@@ -4806,7 +5220,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                                 </button>
                               );
                             }) : (
-                              <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                              <div className="px-2 py-2 text-[0.6875rem] text-muted-foreground">
                                 {collectionsState.status === 'loading' ? '读取 collection...' : '暂无 collection'}
                               </div>
                             )}
@@ -4817,17 +5231,17 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   })}
                 </div>
               ) : (
-                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : '没有数据库信息。'}</div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? <ContentLoading label="读取数据库列表" /> : '没有数据库信息。'}</div>
               )}
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
-            <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_auto_minmax(0,1fr)]">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">只读</span></div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+                  <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">只读</span></div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
                 </div>
                 <Button type="button" size="sm" disabled={!selectedDatabase || !command.trim() || commandState.status === 'loading'} onClick={() => void runMongoCommand()}>
                   {commandState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
@@ -4852,7 +5266,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   minHeight={120}
                   placeholder="db.getCollection('users').find({}).limit(50);"
                 />
-                <div className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                <div className="mt-2 text-[0.6875rem] leading-5 text-muted-foreground">
                   命令行仅执行只读查询（find/findOne/countDocuments/distinct）。写操作请用下方「结构化写入」面板——
                   服务端固定 action + JSON 参数、不 eval 命令文本，从根上杜绝注入。
                 </div>
@@ -4868,6 +5282,9 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
               </div>
             </section>
 
+            <div className="shrink-0" data-testid="mongo-write-feedback">
+              {writeState.status === 'error' ? <DatabaseExecutionNotice failure={writeState.failure || { summary: writeState.message || '写入未完成。', recovery: '请修正填写内容后重试。' }} showDiagnostics={canManageConsole} /> : null}
+            </div>
             <MongoDocumentsView
               state={commandState}
               collection={selectedCollection}
@@ -4901,11 +5318,11 @@ function MongoStructuredWritePanel({
   onSubmit: () => void;
 }): JSX.Element {
   const inputCls = 'w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-2 py-1.5 text-xs outline-none focus:border-primary';
-  const jsonCls = `${inputCls} min-h-[64px] font-mono leading-5`;
+  const jsonCls = `${inputCls} min-h-[4rem] font-mono leading-5`;
   const canSubmit = !disabled && state.status !== 'loading' && (form.collection || selectedCollection).trim().length > 0 && form.confirm.trim().length > 0;
   return (
-    <details className="mt-3 rounded-md border border-amber-400/35 bg-amber-400/5">
-      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+    <details className="mt-3 rounded-md border border-warn/35 bg-warn/5">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-warn">
         结构化写入（insertOne / updateMany / deleteMany）
       </summary>
       <div className="space-y-2 border-t border-[hsl(var(--hairline))] p-3">
@@ -4928,18 +5345,18 @@ function MongoStructuredWritePanel({
         </div>
         {form.action === 'insertOne' ? (
           <label className="block">
-            <span className="text-[11px] text-muted-foreground">document (JSON)</span>
+            <span className="text-[0.6875rem] text-muted-foreground">document (JSON)</span>
             <textarea className={jsonCls} value={form.document} onChange={(e) => onFormChange({ ...form, document: e.target.value })} spellCheck={false} />
           </label>
         ) : (
           <label className="block">
-            <span className="text-[11px] text-muted-foreground">filter (JSON){form.action === 'deleteMany' ? '（deleteMany 必须非空）' : ''}</span>
+            <span className="text-[0.6875rem] text-muted-foreground">filter (JSON){form.action === 'deleteMany' ? '（deleteMany 必须非空）' : ''}</span>
             <textarea className={jsonCls} value={form.filter} onChange={(e) => onFormChange({ ...form, filter: e.target.value })} spellCheck={false} />
           </label>
         )}
         {form.action === 'updateMany' ? (
           <label className="block">
-            <span className="text-[11px] text-muted-foreground">update (JSON，含 $set 等操作符)</span>
+            <span className="text-[0.6875rem] text-muted-foreground">update (JSON，含 $set 等操作符)</span>
             <textarea className={jsonCls} value={form.update} onChange={(e) => onFormChange({ ...form, update: e.target.value })} spellCheck={false} />
           </label>
         ) : null}
@@ -4955,10 +5372,8 @@ function MongoStructuredWritePanel({
             执行写入
           </Button>
         </div>
-        {state.status === 'error' ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">{state.message}</div>
-        ) : state.status === 'ok' ? (
-          <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[11px] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
+        {state.status === 'ok' ? (
+          <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[0.6875rem] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
         ) : null}
       </div>
     </details>
@@ -4996,11 +5411,11 @@ function MongoDocumentsView({
   const activeMode: WorkbenchResultMode = viewMode === 'table' && !hasDocuments ? 'output' : viewMode;
 
   return (
-    <div className="grid min-h-[300px] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
+    <div className="grid min-h-[18.75rem] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold">结果</div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+          <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">
             {collection || '-'} · {hasDocuments ? `${state.documents.length} rows` : 'command output'}
           </div>
         </div>
@@ -5009,7 +5424,7 @@ function MongoDocumentsView({
             <button
               key={mode}
               type="button"
-              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[0.6875rem] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => onViewModeChange(mode)}
             >
               {mode === 'table' ? <Table2 className="h-3.5 w-3.5" /> : mode === 'json' ? <Braces className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
@@ -5019,12 +5434,7 @@ function MongoDocumentsView({
         </div>
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          执行中
-        </div>
-      ) : activeMode === 'table' && hasDocuments ? (
+      {state.status === 'loading' ? <ContentLoading label="读取文档结果" variant="table" /> : activeMode === 'table' && hasDocuments ? (
         <MongoDocumentTable documents={state.documents} selectedIndex={selectedIndex} onSelectIndex={onSelectIndex} />
       ) : activeMode === 'json' ? (
         <pre className="min-h-0 overflow-auto p-3 font-mono text-xs leading-5">
@@ -5051,7 +5461,7 @@ function MongoDocumentTable({
   const columns = mongoDocumentColumns(documents);
   return (
     <div className="min-h-0 overflow-auto">
-      <table className="w-full min-w-[920px] text-left text-xs">
+      <table className="w-full min-w-[57.5rem] text-left text-xs">
         <thead className="sticky top-0 z-10 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
           <tr>
             <th className="w-12 px-3 py-2 font-medium">#</th>
@@ -5075,7 +5485,7 @@ function MongoDocumentTable({
               >
                 <td className="px-3 py-2 font-mono text-muted-foreground">{rowIndex + 1}</td>
                 {columns.map((column) => (
-                  <td key={`${rowIndex}-${column}`} className="max-w-[280px] truncate px-3 py-2 font-mono text-muted-foreground" title={mongoValuePreview(row[column])}>
+                  <td key={`${rowIndex}-${column}`} className="max-w-[17.5rem] truncate px-3 py-2 font-mono text-muted-foreground" title={mongoValuePreview(row[column])}>
                     {mongoValuePreview(row[column])}
                   </td>
                 ))}
@@ -5140,7 +5550,9 @@ interface RedisKeyDetail extends RedisKeySummary {
   };
 }
 
-function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
+  // Redis 面板没有工作台弹窗，直达入口不适用；接住这个 prop 只为签名统一。
+  void onWorkbenchDismiss;
   const [pattern, setPattern] = useState('*');
   const [cursor, setCursor] = useState('0');
   const [keysState, setKeysState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; keys: RedisKeySummary[]; nextCursor: string; message?: string }>({ status: 'idle', keys: [], nextCursor: '0' });
@@ -5201,13 +5613,13 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 
   return (
     <div className="grid gap-3 text-sm">
-      <div className="grid min-h-[420px] gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="grid min-h-[26.25rem] gap-3 lg:grid-cols-[17.5rem_minmax(0,1fr)]">
         <aside className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
           <div className="grid gap-2 border-b border-[hsl(var(--hairline))] px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-xs font-semibold">Key Browser</div>
-                <div className="mt-0.5 text-[11px] text-muted-foreground">SCAN · 只读</div>
+                <div className="mt-0.5 text-[0.6875rem] text-muted-foreground">SCAN · 只读</div>
               </div>
               <Button type="button" size="sm" variant="outline" disabled={keysState.status === 'loading'} onClick={() => void loadKeys('0')}>
                 <RefreshCw className={keysState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5223,7 +5635,7 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
               <Button type="button" size="sm" variant="outline" onClick={() => void loadKeys('0')}>过滤</Button>
             </div>
           </div>
-          <div className="max-h-[340px] overflow-auto p-2">
+          <div className="max-h-[21.25rem] overflow-auto p-2">
             {keysState.status === 'error' ? (
               <div className="px-2 py-3 text-xs leading-5 text-destructive">{keysState.message}</div>
             ) : keysState.keys.length > 0 ? (
@@ -5238,8 +5650,8 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                       onClick={() => setSelectedKey(item.key)}
                     >
                       <span className="min-w-0 truncate font-mono">{item.key}</span>
-                      <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px]">{item.type}</span>
-                      <span className="col-span-2 text-[11px] text-muted-foreground">
+                      <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[0.625rem]">{item.type}</span>
+                      <span className="col-span-2 text-[0.6875rem] text-muted-foreground">
                         TTL {formatRedisTtl(item.ttl)} · {item.memoryBytes ? formatBytes(item.memoryBytes) : 'memory -'}
                       </span>
                     </button>
@@ -5247,7 +5659,7 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                 })}
               </div>
             ) : (
-              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? '扫描中...' : '没有匹配的 key。'}</div>
+              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? <ContentLoading label="读取键列表" /> : '没有匹配的 key。'}</div>
             )}
           </div>
           <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-3 py-2 text-xs text-muted-foreground">
@@ -5261,9 +5673,7 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         <div className="grid min-w-0 gap-3">
           <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Key Detail</div>
-            {detailState.status === 'loading' ? (
-              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取 key</div>
-            ) : detailState.status === 'error' ? (
+            {detailState.status === 'loading' ? <ContentLoading label="读取数据详情" variant="rows" /> : detailState.status === 'error' ? (
               <div className="px-3 py-3 text-xs leading-5 text-destructive">{detailState.message}</div>
             ) : detailState.detail ? (
               <div className="grid gap-3 p-3">
@@ -5273,7 +5683,7 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   <MetricChip label="Memory" value={detailState.detail.memoryBytes ? formatBytes(detailState.detail.memoryBytes) : '-'} />
                   <MetricChip label="Preview" value={detailState.detail.preview.kind} />
                 </div>
-                <pre className="max-h-[260px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
+                <pre className="max-h-[16.25rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
                   {formatRedisPreview(detailState.detail.preview)}
                 </pre>
               </div>
@@ -5313,7 +5723,7 @@ function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 function MetricChip({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className="mt-1 truncate font-mono text-xs">{value}</div>
     </div>
   );
@@ -5364,20 +5774,92 @@ function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): str
   return `\`${table.name.replace(/`/g, '``')}\``;
 }
 
-type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string; failure?: DatabaseFailure; batchWrite?: boolean };
 
-function sqlCommandIsReadOnly(sql: string): boolean {
-  const head = sql.trim().replace(/;+$/g, '').match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
-  return ['select', 'show', 'describe', 'desc', 'explain'].includes(head);
+/**
+ * 只读语句头。**必须与后端 src/services/sql-statement-policy.ts 的 READ_STATEMENT_HEADS
+ * 逐字一致**（守卫测试 branch-db-identity.test.ts 会比对两边）：前端据此决定走 /data/query
+ * 还是 /data/query-write，两边不一致就会出现「前端当读发过去、后端当写拒绝」的死语句。
+ */
+const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', 'with', 'table', 'values'];
+
+/**
+ * 写关键字表。**必须与后端 sql-statement-policy.ts 的 WRITE_KEYWORDS_IN_READ_PATH
+ * 逐字一致**（守卫测试比对两边源码）：两边不一致就会出现「前端当读发过去、后端当写
+ * 拒绝」或反过来的死语句。
+ */
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock|into)\b/i;
+
+/**
+ * 与后端 stripSqlComments(sql, { maskLiterals: true, dialect }) 同一套扫描：
+ * 注释剥掉，字面量内容抹成空格。
+ *
+ * `hashStartsComment` 必须跟着方言走：`#` 在 MySQL 是行注释，在 PostgreSQL 是 JSON
+ * 运算符（`#>>` / `#>` / `#-`）。当成注释就会把后面的代码整段吞掉，
+ * `WITH x AS (SELECT payload #>> '{a}' FROM src) UPDATE target SET n = 1` 于是被判成
+ * 只读、直接发去 /data/query（Codex P1，2026-09-01）。默认按「不是注释」处理。
+ */
+function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): string {
+  let out = '';
+  let quote: string | null = null;
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (quote) {
+      out += ch === quote ? ch : ' ';
+      if (ch === '\\') { out += ' '; i += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (!hashStartsComment && ch === '$' && !/[A-Za-z0-9_$\u0080-\uffff]/.test(sql[i-1] || ' ')) {
+      const tag=sql.slice(i).match(/^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/)?.[0];
+      if(tag){
+        const close=sql.indexOf(tag,i+tag.length),end=close<0?sql.length:close+tag.length;
+        out += true ? "'"+' '.repeat(end-i)+"'" : sql.slice(i,end);i=end-1;continue;
+      }
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
+    if (ch === '/' && next === '*') {
+      let cursor=i+2,depth=1;
+      while(cursor<sql.length && depth){
+        if(!hashStartsComment && sql[cursor]==='/'&&sql[cursor+1]==='*'){depth++;cursor+=2;}
+        else if(sql[cursor]==='*'&&sql[cursor+1]==='/'){depth--;cursor+=2;}
+        else cursor++;
+      }
+      i=cursor-1;out+=' ';continue;
+    }
+    const dashComment = ch === '-' && next === '-' && (!hashStartsComment || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
+    if (dashComment || (ch === '#' && hashStartsComment)) {
+      const end = sql.indexOf('\n', i);
+      i = end === -1 ? sql.length : end;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
-function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter }): JSX.Element {
+function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
+  const body = sql.trim().replace(/;+$/g, '').trim();
+  const head = body.match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
+  if (!READ_STATEMENT_HEADS.includes(head)) return false;
+  // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
+  // ——判据看代码本身，与后端同一条。`#` 只有 MySQL 才是注释。
+  if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'))) return false;
+  if (/\/\*!/.test(body)) return false;
+  return stripSqlCommentsAndLiterals(body, runtime === 'MySQL').split(';').filter((part) => part.trim()).every((part) => READ_STATEMENT_HEADS.includes(part.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || ''));
+}
+
+function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
   const [selectedTableKey, setSelectedTableKey] = useState('');
   const [sql, setSql] = useState('SELECT 1');
   const [resultState, setResultState] = useState<DbResultState>({ status: 'idle' });
   const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
+  const [activeResult, setActiveResult] = useState(0);
   const [initSql, setInitSql] = useState('');
   const [migrationCommand, setMigrationCommand] = useState('');
   const [initBusy, setInitBusy] = useState<'init-sql' | 'migration' | null>(null);
@@ -5388,18 +5870,21 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
     : '';
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
+  const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);
 
-  const loadTables = useCallback(async () => {
+  const loadTables = useCallback(async (autoSelect = true) => {
     if (!basePath) return;
     setTablesState((current) => ({ ...current, status: 'loading', message: undefined }));
     try {
       const res = await apiRequest<{ database?: string; tables: DbTableSummary[] }>(`${basePath}/tables`);
       const tables = res.tables || [];
       setTablesState({ status: 'ok', tables, database: res.database });
-      setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
-      setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      if (autoSelect) {
+        setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
+        setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      }
     } catch (err) {
-      setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
+      setTablesState({ status: 'error', tables: [], message: databaseFailure(err, 'sql').summary });
     }
   }, [basePath, resource]);
 
@@ -5410,9 +5895,11 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
       const schemaQs = table.schema ? `&schema=${encodeURIComponent(table.schema)}` : '';
       const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table.name)}${schemaQs}&limit=50`);
       setResultState({ status: 'ok', result: preview });
+      setActiveResult(0);
       setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure });
       setResultMode('output');
     }
   }, [basePath]);
@@ -5424,10 +5911,10 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
   useEffect(() => {
     if (!selectedTable) return;
     void loadTablePreview(selectedTable);
-  }, [loadTablePreview, selectedTable]);
+  }, [loadTablePreview, selectedTable?.name, selectedTable?.schema]);
 
   async function runInitializationSql(): Promise<void> {
-    if (!basePath || !initSql.trim()) return;
+    if (!canManageConsole || !basePath || !initSql.trim()) return;
     setInitBusy('init-sql');
     setInitError('');
     try {
@@ -5445,7 +5932,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
   }
 
   async function runMigrationCommand(): Promise<void> {
-    if (!resource.branchId || !migrationCommand.trim()) return;
+    if (!canManageConsole || !resource.branchId || !migrationCommand.trim()) return;
     setInitBusy('migration');
     setInitError('');
     try {
@@ -5463,23 +5950,25 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
   }
 
   async function runSqlCommand(): Promise<void> {
-    if (!basePath || !sql.trim()) return;
+    if (!basePath || !sql.trim() || (!canManageConsole && !sqlReadOnly)) return;
+    if (resultState.status === 'loading') return;
+    setActiveResult(0);
     setResultState({ status: 'loading' });
     try {
-      const readOnly = sqlCommandIsReadOnly(sql);
+      const readOnly = sqlReadOnly;
       const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
       });
       setResultState({ status: 'ok', result });
-      setResultMode(result.columns.length > 0 ? 'table' : 'output');
-      if (!readOnly) {
-        void loadTables();
-        if (selectedTable) void loadTablePreview(selectedTable);
-      }
+      setResultMode(result.columns.length > 0 || result.resultSets?.length ? 'table' : 'output');
+      if (!readOnly) void loadTables(false);
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const partialResult = err instanceof ApiError ? (err.body as { partialResult?: DbQueryResult })?.partialResult : undefined;
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure, batchWrite: !sqlReadOnly, result: partialResult });
       setResultMode('output');
+      if (!sqlReadOnly) void loadTables(false);
     }
   }
 
@@ -5488,22 +5977,22 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
       <ResourceWorkbenchLauncher
         resource={resource}
         title={adapter.label}
-        description={`${adapter.treeLabel}，右上执行一条命令，右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
+        description={`${adapter.treeLabel}，右上执行 SQL，多个查询按页签查看，修改结果连续显示；右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
         onOpen={() => setWorkbenchOpen(true)}
       />
       <ResourceWorkbenchModal
         open={workbenchOpen}
         title={`${resource.runtime} :${resource.port || resource.containerPort || '?'}`}
         subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : ''} · ${resource.displayName}`}
-        onClose={() => setWorkbenchOpen(false)}
+        onClose={() => { setWorkbenchOpen(false); onWorkbenchDismiss?.(); }}
       >
-        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="flex min-h-0 flex-col text-sm lg:grid lg:h-full lg:grid-cols-[20rem_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">{adapter.treeLabel}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={`${resource.displayName} · ${tablesState.database || '-'}`}>{resource.displayName} · {tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
                   <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5534,32 +6023,34 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                         >
                           <Table2 className="h-3.5 w-3.5 shrink-0" />
                           <span className="min-w-0 flex-1 truncate font-mono">{table.schema && resource.runtime === 'PostgreSQL' ? `${table.schema}.${table.name}` : table.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
+                          <span className="text-[0.625rem] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
               ) : (
-                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? <ContentLoading label="读取表列表" /> : '没有表。'}</div>
               )}
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[245px_minmax(0,1fr)]">
-            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
-              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
                 </div>
-                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
+                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading' || (!canManageConsole && !sqlReadOnly)} onClick={() => void runSqlCommand()}>
                   {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行
                 </Button>
               </div>
+              <p className="shrink-0 px-3 pt-2 text-[0.6875rem] text-muted-foreground">多条 SQL 使用同一连接执行；查询结果按页签展示，修改结果连续显示。遇错停止，已提交修改不会自动回滚。</p>
               <div
-                className="p-3"
+                className="min-h-0 flex-1 overflow-y-auto p-3"
+                style={{ overscrollBehavior: 'contain' }}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault();
@@ -5572,25 +6063,50 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                   value={sql}
                   onChange={setSql}
                   language="sql"
-                  minHeight={158}
+                  minHeight={120}
                   placeholder="SELECT * FROM users LIMIT 50"
                 />
               </div>
             </section>
 
-            <DbResultTable
-              state={resultState}
-              emptyLabel="选择表或执行 SQL 后在这里显示结果。"
-              viewMode={resultMode}
-              onViewModeChange={setResultMode}
-            />
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              {resultState.result?.resultSets?.length ? (
+                <div role="tablist" aria-label="SQL 查询结果" className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3 py-1">
+                  {resultState.result.resultSets.map((item, index) => (
+                    <button key={index} role="tab" aria-selected={activeResult === index} title={item.statement} type="button"
+                      className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === index ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                      onClick={() => { setActiveResult(index); setResultMode('table'); }}>
+                      查询 {index + 1} · {item.rowCount} 行
+                    </button>
+                  ))}
+                  <button role="tab" aria-selected={activeResult === -1} type="button"
+                    className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === -1 ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                    onClick={() => { setActiveResult(-1); setResultMode('output'); }}>执行记录</button>
+                </div>
+              ) : null}
+              {resultState.result?.truncated ? (
+                <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  <span>结果太多，已缩减显示。修改语句可能已执行，请先核对数据，避免重复提交。</span>
+                  <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => { setActiveResult(-1); setResultMode('output'); }}>查看已有执行记录</button>
+                </div>
+              ) : null}
+              {resultState.status === 'error' && resultState.failure ? <DatabaseExecutionNotice failure={resultState.failure} batchWrite={resultState.batchWrite} showDiagnostics={canManageConsole} /> : null}
+              <div className="grid min-h-0 flex-1">
+                <DbResultTable
+                  state={resultState.result?.resultSets?.[activeResult] ? { status: 'ok', result: resultState.result.resultSets[activeResult] } : resultState}
+                  emptyLabel="选择表或执行 SQL 后在这里显示结果。"
+                  viewMode={resultMode}
+                  onViewModeChange={setResultMode}
+                />
+              </div>
+            </div>
           </main>
-          <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
+          {canManageConsole ? <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
             <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
               <summary className="cursor-pointer text-xs font-semibold">初始化 / 迁移 / 重试</summary>
               <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className="space-y-2">
-                  <div className="text-[11px] font-medium text-muted-foreground">执行初始化 SQL</div>
+                  <div className="text-[0.6875rem] font-medium text-muted-foreground">执行初始化 SQL</div>
                   <textarea
                     className="min-h-28 w-full resize-y rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={initSql}
@@ -5608,7 +6124,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <div className="text-[11px] font-medium text-muted-foreground">执行迁移命令</div>
+                  <div className="text-[0.6875rem] font-medium text-muted-foreground">执行迁移命令</div>
                   <input
                     className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-background px-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={migrationCommand}
@@ -5621,7 +6137,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                   </Button>
                   {initError ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{initError}</div> : null}
                   {initResult ? (
-                    <pre className="max-h-32 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+                    <pre className="max-h-32 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-2 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
                       {(initResult.error ? `[exit ${initResult.exitCode ?? 1}]\n${initResult.error}\n\n` : '') + (initResult.output || (initResult.ok === false ? '执行失败' : '执行完成'))}
                       {initResult.truncated ? '\n...(输出已截断)' : ''}
                     </pre>
@@ -5629,7 +6145,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                 </div>
               </div>
             </details>
-          </section>
+          </section> : <p className="border-t border-[hsl(var(--hairline))] p-3 text-xs text-muted-foreground lg:col-span-2">普通账号仅支持只读查询；写入、初始化和迁移请联系系统所有者。</p>}
         </div>
       </ResourceWorkbenchModal>
     </>
@@ -5653,19 +6169,21 @@ function DbResultTable({
     ? state.result.rows.map((row) => Object.fromEntries(state.result!.columns.map((column, index) => [column, row[index] ?? null])))
     : [];
   const outputText = state.status === 'error'
-    ? state.message || '执行失败'
+    ? [state.result?.output, state.message || '执行失败'].filter(Boolean).join('\n\n')
     : state.result
-      ? state.result.columns.length > 0
+      ? state.result.output
+        ? `${state.result.output}${state.result.truncated ? '\n输出已截断。' : ''}`
+        : state.result.columns.length > 0
         ? `返回 ${state.result.rowCount} 行。`
         : `执行完成，返回 ${state.result.rowCount} 行。`
       : emptyLabel;
 
   return (
-    <div className="grid min-h-[300px] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
+    <div className="grid min-h-[18.75rem] grid-rows-[auto_minmax(0,1fr)] bg-background/20 lg:min-h-0">
       <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
         <div className="min-w-0">
           <div className="text-xs font-semibold">结果</div>
-          <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+          <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">
             {hasRows ? `${state.result?.rowCount || 0} rows` : 'command output'}
           </div>
         </div>
@@ -5674,7 +6192,7 @@ function DbResultTable({
             <button
               key={mode}
               type="button"
-              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[0.6875rem] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => onViewModeChange(mode)}
             >
               {mode === 'table' ? <Table2 className="h-3.5 w-3.5" /> : mode === 'json' ? <Braces className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
@@ -5684,11 +6202,9 @@ function DbResultTable({
         </div>
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />执行中</div>
-      ) : activeMode === 'table' && hasRows ? (
+      {state.status === 'loading' ? <ContentLoading label="读取查询结果" variant="table" /> : activeMode === 'table' && hasRows ? (
         <div className="min-h-0 overflow-auto">
-          <table className="w-full min-w-[720px] text-left text-xs">
+          <table className="w-full min-w-[45rem] text-left text-xs">
             <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
               <tr>
                 {state.result!.columns.map((column) => <th key={column} className="px-3 py-2 font-medium">{column}</th>)}
@@ -5702,8 +6218,8 @@ function DbResultTable({
                   className="border-t border-[hsl(var(--hairline))] hover:bg-[hsl(var(--surface-sunken))]/70"
                 >
                   {state.result!.columns.map((column, columnIndex) => (
-                    <td key={`${column}-${columnIndex}`} className="max-w-[260px] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
-                      {row[columnIndex] || 'NULL'}
+                    <td key={`${column}-${columnIndex}`} className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
+                      {row[columnIndex] ?? 'NULL'}
                     </td>
                   ))}
                 </tr>
@@ -5876,7 +6392,7 @@ function ResourceBackupsPanel({
         <div className="mb-2 flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-semibold text-muted-foreground">备份文件</div>
-            {backupState.database ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">{backupState.database}</div> : null}
+            {backupState.database ? <div className="mt-1 font-mono text-[0.6875rem] text-muted-foreground">{backupState.database}</div> : null}
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" variant="outline" disabled={backupState.status === 'loading'} onClick={() => void loadBackups()}>
@@ -5889,9 +6405,7 @@ function ResourceBackupsPanel({
             </Button>
           </div>
         </div>
-        {backupState.status === 'loading' ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取备份列表</div>
-        ) : backupState.status === 'error' ? (
+        {backupState.status === 'loading' ? <ContentLoading label="读取备份列表" variant="rows" /> : backupState.status === 'error' ? (
           <div className="text-xs leading-5 text-destructive">{backupState.message}</div>
         ) : backupState.supported === false ? (
           <div className="text-xs leading-5 text-muted-foreground">{backupState.message || '当前数据库类型的资源级备份恢复待接入。'}</div>
@@ -5929,7 +6443,7 @@ function ResourceBackupsPanel({
                   <div className="font-medium">{task.mode} · {task.strategy}</div>
                   <div className="truncate text-muted-foreground">{task.progressMessage || task.status}</div>
                 </div>
-                <span className={`rounded border px-2 py-0.5 ${task.status === 'completed' ? 'border-emerald-500/30 text-emerald-600' : task.status === 'failed' ? 'border-destructive/30 text-destructive' : 'border-amber-500/30 text-amber-600'}`}>
+                <span className={`rounded border px-2 py-0.5 ${task.status === 'completed' ? 'border-ok/30 text-ok' : task.status === 'failed' ? 'border-destructive/30 text-destructive' : 'border-warn/30 text-warn'}`}>
                   {task.progress}%
                 </span>
               </div>
@@ -5982,12 +6496,7 @@ function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.E
   }, [loadMetrics]);
 
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取 {resource.displayName} 指标…
-      </div>
-    );
+    return <ContentLoading label="读取资源指标" variant="panel" />;
   }
 
   if (state.status === 'error') {
@@ -6046,7 +6555,7 @@ function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.E
           <div key={metric.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
             <div className="text-xs text-muted-foreground">{metric.label}</div>
             <div className="mt-1 font-mono text-sm">{metric.value}</div>
-            {'sub' in metric && metric.sub ? <div className="mt-0.5 text-[10px] text-muted-foreground">{metric.sub}</div> : null}
+            {'sub' in metric && metric.sub ? <div className="mt-0.5 text-[0.625rem] text-muted-foreground">{metric.sub}</div> : null}
           </div>
         ))}
       </div>
@@ -6082,12 +6591,7 @@ function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Elem
   }, [loadLogs]);
 
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取 {resource.displayName} 日志…
-      </div>
-    );
+    return <ContentLoading label="读取资源日志" variant="log" />;
   }
 
   if (state.status === 'error') {
@@ -6117,7 +6621,7 @@ function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Elem
         </Button>
       </div>
       {logs ? (
-        <pre className="max-h-[420px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 font-mono text-[11px] leading-5 text-foreground">
+        <pre className="max-h-[26.25rem] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 font-mono text-[0.6875rem] leading-5 text-foreground">
           {logs}
         </pre>
       ) : (
@@ -6202,7 +6706,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
 
   return (
     <div className="space-y-3 text-sm">
-      <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${permissions ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+      <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${permissions ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground' : 'border-warn/30 bg-warn-soft text-warn'}`}>
         当前权限：{permissions ? permissions.role : '加载中'}。生产相关资源：{permissions?.productionLike ? '是' : '否'}。
         {permissions?.role === 'member' ? '普通成员只能查看连接信息，写入类按钮会被禁用。' : null}
       </div>
@@ -6232,7 +6736,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
               <textarea
                 value={dangerSql}
                 onChange={(event) => setDangerSql(event.target.value)}
-                className="min-h-[84px] resize-y rounded-md border border-destructive/25 bg-background px-3 py-2 font-mono text-xs outline-none focus:border-destructive"
+                className="min-h-[5.25rem] resize-y rounded-md border border-destructive/25 bg-background px-3 py-2 font-mono text-xs outline-none focus:border-destructive"
                 placeholder="INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE"
                 spellCheck={false}
               />
@@ -6255,9 +6759,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
       </div>
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
         <div className="mb-2 text-xs font-semibold text-muted-foreground">最近审计</div>
-        {auditState.status === 'loading' ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />加载中</div>
-        ) : auditState.status === 'error' ? (
+        {auditState.status === 'loading' ? <ContentLoading label="读取设置审计" variant="rows" /> : auditState.status === 'error' ? (
           <div className="text-xs text-destructive">{auditState.message}</div>
         ) : auditState.logs.length > 0 ? (
           <div className="space-y-2">
@@ -6279,7 +6781,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
   );
 }
 
-function ServiceLogsPanel({
+export function ServiceLogsPanel({
   service,
   state,
   replica,
@@ -6307,7 +6809,7 @@ function ServiceLogsPanel({
             <span className="flex min-w-0 items-center gap-2">
               {replica ? (
                 <>
-                  <span className="shrink-0 rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">复制集副本</span>
+                  <span className="shrink-0 rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-indigo-600 dark:text-indigo-400">复制集副本</span>
                   <span className="truncate">{replica.pid} · <b className="font-mono text-foreground">{replica.memberId}</b> 的容器日志</span>
                 </>
               ) : (
@@ -6325,11 +6827,13 @@ function ServiceLogsPanel({
             <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
               {state.message}
             </div>
+          ) : state.status === 'loading' && isCurrent ? (
+            <div className={`${serviceLogViewportClass} rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3`}>
+              <ContentLoading label="读取服务日志" variant="log" />
+            </div>
           ) : (
-            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground`}>
-              {state.status === 'loading' && isCurrent
-                ? '正在读取 docker logs...'
-                : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
+            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground`}>
+              {visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
             </pre>
           )}
         </div>
@@ -6408,7 +6912,7 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
           return (
             <div key={`${event.id || index}-${event.ts || ''}`} className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs">
               <span className="font-mono text-muted-foreground">{event.method || '-'}</span>
-              <span className={`rounded border px-1.5 py-0.5 ${ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
+              <span className={`rounded border px-1.5 py-0.5 ${ok ? 'border-ok/30 bg-ok-soft text-ok' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
                 {event.status || '-'}
               </span>
               <span className="min-w-0 truncate font-mono text-muted-foreground" title={event.path || event.label || ''}>
@@ -6417,7 +6921,7 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
               <span className="font-mono text-muted-foreground">{duration}</span>
               <span className="text-muted-foreground">{event.ts ? new Date(event.ts).toLocaleTimeString() : ''}</span>
               {!ok && (event.errorSummary || event.requestId) ? (
-                <div className="col-span-5 rounded border border-destructive/25 bg-destructive/10 px-2 py-1 font-mono text-[11px] leading-5 text-destructive">
+                <div className="col-span-5 rounded border border-destructive/25 bg-destructive/10 px-2 py-1 font-mono text-[0.6875rem] leading-5 text-destructive">
                   {event.errorSummary || '后端未返回错误摘要'}
                   {event.requestId ? <span className="ml-2 text-destructive/75">requestId={event.requestId}</span> : null}
                 </div>
@@ -6471,7 +6975,8 @@ export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; o
 //   - 搜索框过滤 key
 // ──────────────────────────────────────────────────────────────────────────
 
-function VariablesPanel({
+export function VariablesPanel({
+  canManageConsole,
   state,
   revealedValues,
   onToggleReveal,
@@ -6486,6 +6991,7 @@ function VariablesPanel({
   onEnvChanged,
   onToast,
 }: {
+  canManageConsole: boolean;
   state: EffectiveEnvState;
   /** 已 reveal 的 secret key → 明文。未 reveal 的不在 map 里。 */
   revealedValues: Map<string, string>;
@@ -6502,12 +7008,7 @@ function VariablesPanel({
   onToast: (message: string) => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取该分支的生效环境变量…
-      </section>
-    );
+    return <ContentLoading label="读取生效环境变量" variant="table" />;
   }
   if (state.status === 'error') {
     return (
@@ -6541,26 +7042,26 @@ function VariablesPanel({
             <HelpCircle className="h-3.5 w-3.5" />
           </button>
           <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-md border border-[hsl(var(--hairline))] bg-popover p-3 text-xs leading-5 text-popover-foreground shadow-xl group-hover/help:block group-focus-within/help:block">
-            这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。
+            {canManageConsole ? '这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。' : '这里只读展示生效变量；修改或查看密钥请联系系统所有者。'}
           </span>
         </span>
         <span className="text-xs text-muted-foreground">
           共 {data.total ?? 0} 个 · 分支覆盖 {branchOverrideCount} · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
           镜像 {data.bySource?.mirror ?? 0} · CDS 内置 {(data.bySource?.['cds-builtin'] ?? 0) + (data.bySource?.['cds-derived'] ?? 0)}
         </span>
-        <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
+        {canManageConsole ? <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
           <ExternalLink />编辑本分支
-        </Button>
+        </Button> : null}
         <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
           <RefreshCw />刷新
         </Button>
       </header>
-      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[11px] leading-5 text-muted-foreground">
-        当前编辑范围:<span className="mx-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-700 dark:text-amber-300">仅本分支</span>
+      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
+        当前编辑范围:<span className="mx-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 font-medium text-warn">仅本分支</span>
         。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
-        项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
+        {canManageConsole ? <>项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。</> : '变量仅供查看，修改或查看密钥请联系系统所有者。'}
       </div>
-      {editorOpen ? (
+      {canManageConsole && editorOpen ? (
         <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/18 px-4 py-3">
           <EnvEditor
             scope={branchId}
@@ -6570,7 +7071,7 @@ function VariablesPanel({
             onToast={onToast}
             onChanged={onEnvChanged}
             topContent={(
-              <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+              <div className="rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
                 保存目标是分支 scope <code className="font-mono">{branchId}</code>，不会写入项目环境变量。
               </div>
             )}
@@ -6600,6 +7101,7 @@ function VariablesPanel({
           {filtered.map((v) => (
             <EnvRow
               key={v.key}
+              canRevealSecrets={canManageConsole}
               entry={v}
               revealedPlain={revealedValues.get(v.key)}
               onToggleReveal={() => { void onToggleReveal(v.key); }}
@@ -6609,9 +7111,9 @@ function VariablesPanel({
         </ul>
       )}
 
-      <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[11px] leading-5 text-muted-foreground">
+      <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         优先级:project &gt; global &gt; mirror &gt; cds-derived &gt; cds-builtin。同名 key 后写覆盖前写。
-        敏感值默认隐藏,点眼睛图标按条解锁。
+        {canManageConsole ? '敏感值默认隐藏,点眼睛图标按条解锁。' : '敏感值保持隐藏，查看请联系系统所有者。'}
       </footer>
     </section>
   );
@@ -6632,11 +7134,13 @@ function maskedEnvValue(entry: EffectiveEnvVar, isSecretFromKey: boolean): strin
 }
 
 function EnvRow({
+  canRevealSecrets,
   entry,
   revealedPlain,
   onToggleReveal,
   onCopySecret,
 }: {
+  canRevealSecrets: boolean;
   entry: EffectiveEnvVar;
   /** 已 reveal 的明文。undefined 表示尚未 reveal(secret)或非 secret。 */
   revealedPlain: string | undefined;
@@ -6644,7 +7148,7 @@ function EnvRow({
   onCopySecret: () => void;
 }): JSX.Element {
   const effectiveIsSecret = entry.isSecret || isSensitiveEnvKey(entry.key);
-  const isRevealed = revealedPlain !== undefined;
+  const isRevealed = canRevealSecrets && revealedPlain !== undefined;
   // 后端 isSecret=false 但 key 看起来敏感时,列表里的 entry.value 可能是明文;
   // 未 reveal 前必须用前端 mask 兜底,避免 GITHUB_PAT 等直接暴露。
   const displayValue = effectiveIsSecret
@@ -6655,7 +7159,7 @@ function EnvRow({
     : displayValue;
   return (
     <li className="flex items-center gap-3 px-4 py-2 text-sm">
-      <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[10px] font-medium ${envSourceClass(entry.source)}`}>
+      <span className={`inline-flex h-5 shrink-0 items-center rounded-md border px-1.5 text-[0.625rem] font-medium ${envSourceClass(entry.source)}`}>
         {entry.source === 'branch' ? <AlertCircle className="mr-1 h-3 w-3" aria-hidden /> : null}
         {envSourceLabel(entry.source)}
       </span>
@@ -6664,11 +7168,11 @@ function EnvRow({
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
-        title={effectiveIsSecret && !isRevealed ? '点击右侧眼睛查看真实值' : safeDisplayValue}
+        title={effectiveIsSecret && !isRevealed ? (canRevealSecrets ? '点击右侧眼睛查看真实值' : '敏感值仅系统所有者可查看') : safeDisplayValue}
       >
         {safeDisplayValue}
       </span>
-      {effectiveIsSecret ? (
+      {effectiveIsSecret && canRevealSecrets ? (
         <button
           type="button"
           onClick={onToggleReveal}
@@ -6679,7 +7183,7 @@ function EnvRow({
           {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       ) : null}
-      <button
+      {!effectiveIsSecret || canRevealSecrets ? <button
         type="button"
         onClick={() => {
           // secret 走 reveal 端点取明文再复制,non-secret 直接 entry.value
@@ -6691,7 +7195,7 @@ function EnvRow({
         aria-label="复制"
       >
         <Copy className="h-4 w-4" />
-      </button>
+      </button> : null}
     </li>
   );
 }
@@ -6706,13 +7210,13 @@ function envSourceLabel(s: EnvSource): string {
 function envSourceClass(s: EnvSource): string {
   switch (s) {
     case 'branch':
-      return 'border-amber-500/45 bg-amber-500/15 text-amber-700 dark:text-amber-300';
+      return 'border-warn/45 bg-warn-soft text-warn';
     case 'project':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      return 'border-ok/30 bg-ok-soft text-ok';
     case 'global':
-      return 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300';
+      return 'border-info/30 bg-info-soft text-info';
     case 'mirror':
-      return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+      return 'border-warn/30 bg-warn-soft text-warn';
     case 'cds-derived':
     case 'cds-builtin':
       return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
@@ -6740,7 +7244,7 @@ function hasProfileOverrideFields(override: BuildProfileOverride): boolean {
 }
 
 function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
-  if (kind === 'release') return 'border-emerald-400/35 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300';
+  if (kind === 'release') return 'border-ok/35 bg-ok/10 text-ok';
   if (kind === 'mixed') return 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300';
   return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
 }
@@ -6756,7 +7260,8 @@ function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
 // 或停止 — 不再需要关抽屉回卡片找按钮。
 // ──────────────────────────────────────────────────────────────────────────
 
-function SettingsPanel({
+export function SettingsPanel({
+  canManageConsole,
   branch,
   projectId,
   busy,
@@ -6769,6 +7274,7 @@ function SettingsPanel({
   onSetProfileDbScope,
   onToast,
 }: {
+  canManageConsole: boolean;
   branch: BranchDetailData | null;
   projectId: string;
   busy: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null;
@@ -6779,16 +7285,16 @@ function SettingsPanel({
   onRunAction: (
     action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
+    extra?: { dbs?: BranchDbChoice[] },
   ) => void;
   onSetProfileDeployMode: (profile: ProfileRow, mode: string) => void;
   onSetProfileDbScope: (profile: ProfileRow, scope: '' | 'shared' | 'per-branch') => void;
   onToast?: (message: string) => void;
 }): JSX.Element {
+  const [dbChoices, setDbChoices] = useState<BranchDbChoice[]>([]);
   if (!branch) {
     return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        正在加载分支信息…
-      </section>
+      <ContentLoading label="读取分支设置" variant="rows" />
     );
   }
   const isRunning = branch.status === 'running';
@@ -6805,7 +7311,8 @@ function SettingsPanel({
               本分支运行模式
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。
+              {canManageConsole ? '这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。'
+                : '配置仅供查看，修改运行模式或数据库隔离请联系系统所有者。'}
             </div>
           </div>
           <span
@@ -6816,9 +7323,7 @@ function SettingsPanel({
             {runtime?.label || '源码'}
           </span>
         </div>
-        {profileState.status === 'loading' || profileState.status === 'idle' ? (
-          <div className="text-sm text-muted-foreground">正在加载容器模式…</div>
-        ) : null}
+        {profileState.status === 'loading' || profileState.status === 'idle' ? <ContentLoading label="读取容器模式" variant="rows" /> : null}
         {profileState.status === 'error' ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {profileState.message}
@@ -6845,21 +7350,26 @@ function SettingsPanel({
                     <div className="truncate text-sm font-medium">{profile.profileName || profile.profileId}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span className="font-mono">{profile.profileId}</span>
-                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-[hsl(var(--hairline))]'}`}>
+                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-warn/40 bg-warn-soft text-warn' : 'border-[hsl(var(--hairline))]'}`}>
                         {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
                       </span>
-                      {(dbScopeOverride ?? inheritedDbScope) === 'per-branch' ? (
-                        <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
-                          分支独立库
-                        </span>
-                      ) : null}
+                      {/* 数据库隔离来源必须一眼可辨：项目默认 vs 本分支覆盖（层级别再倒置） */}
+                      <span
+                        className={`rounded border px-1.5 py-0.5 ${dbScopeOverride !== undefined ? 'border-warn/40 bg-warn-soft text-warn' : 'border-[hsl(var(--hairline))]'}`}
+                        title={dbScopeOverride !== undefined ? '本分支钉住了自己的数据库隔离档位，不跟随项目默认' : '跟随项目设置 → 数据库隔离 里的项目默认'}
+                        data-db-scope-source={dbScopeOverride !== undefined ? 'branch-override' : 'project-default'}
+                      >
+                        {dbScopeOverride !== undefined
+                          ? `数据库：本分支覆盖 · ${dbScopeOverride === 'per-branch' ? '分支独立库' : '共享库'}`
+                          : `数据库：项目默认 · ${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'}`}
+                      </span>
                     </div>
                   </div>
                   <select
-                    className="h-9 min-w-[170px] rounded-md border border-input bg-background px-3 text-sm"
+                    className="h-9 min-w-[10.625rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={activeMode}
-                    onChange={(event) => onSetProfileDeployMode(profile, event.target.value)}
-                    disabled={entries.length === 0 || modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDeployMode(profile, event.target.value); }}
+                    disabled={!canManageConsole || entries.length === 0 || modeSavingProfileId === profile.profileId}
                     title="只切换当前分支的这个容器"
                   >
                     <option value="">热加载 / 源码</option>
@@ -6870,20 +7380,47 @@ function SettingsPanel({
                     ))}
                   </select>
                   <select
-                    className="h-9 min-w-[150px] rounded-md border border-input bg-background px-3 text-sm"
+                    className="h-9 min-w-[11.875rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={dbScopeOverride ?? ''}
-                    onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
-                    disabled={modeSavingProfileId === profile.profileId}
-                    title="数据库隔离:分支独立库会给 DB 名追加分支后缀;切换后需重新部署生效"
+                    onChange={(event) => { if (canManageConsole) onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch'); }}
+                    disabled={!canManageConsole || modeSavingProfileId === profile.profileId}
+                    title="高级：只覆盖本分支的数据库隔离；项目默认在项目设置 → 数据库隔离 里改。切换后需重新部署生效"
                   >
-                    <option value="">{`数据库:继承(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
-                    <option value="shared">数据库:共享库</option>
-                    <option value="per-branch">数据库:分支独立库</option>
+                    <option value="">{`数据库:继承项目默认(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
+                    <option value="shared">数据库:本分支覆盖为共享库</option>
+                    <option value="per-branch">数据库:本分支覆盖为分支独立库</option>
                   </select>
+                  {canManageConsole && dbScopeOverride !== undefined ? (
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
+                      disabled={modeSavingProfileId === profile.profileId}
+                      onClick={() => onSetProfileDbScope(profile, '')}
+                      title="删掉本分支的数据库隔离覆盖，重新跟随项目默认；重新部署后生效"
+                    >
+                      恢复继承
+                    </button>
+                  ) : null}
                   {modeSavingProfileId === profile.profileId ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
                 </div>
               );
             })}
+            {canManageConsole && profileState.profiles.length > 0 ? (
+              <div className="text-xs text-muted-foreground">
+                数据库隔离的项目默认在
+                <a
+                  href={`/settings/${encodeURIComponent(projectId)}#db-isolation`}
+                  className="mx-1 text-primary underline-offset-2 hover:underline"
+                >
+                  项目设置 → 数据库隔离
+                </a>
+                里改；这里的下拉只是本分支的高级覆盖。
+              </div>
+            ) : null}
+            {profileState.profiles.length > 0 ? (
+              /* 收敛 0：档位是「配置说的」，紧挨着给「容器持有 / 连上的库」实测值，切完档位重新部署后在这里核对 */
+              <DbProbePanel branchId={branch.id} onToast={onToast} />
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -6926,8 +7463,8 @@ function SettingsPanel({
 
       {/* 异常恢复 */}
       {isError ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <div className="mb-2 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+        <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3">
+          <div className="mb-2 flex items-center gap-2 text-sm text-warn">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>分支处于异常状态。修代码后重新部署,或先重置异常清空错误标记。</span>
           </div>
@@ -6960,34 +7497,35 @@ function SettingsPanel({
       </div>
 
       {/* 跳转 */}
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+      {canManageConsole ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          配置入口
+          项目级配置
         </div>
+        <p className="mb-3 text-xs text-muted-foreground">以下入口修改整个项目的配置，不只影响当前分支。请在项目设置中确认生效范围与时机。</p>
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm" variant="outline">
-            <a href={`/settings/${encodeURIComponent(projectId)}`}>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?fromBranch=${encodeURIComponent(branch.id)}`}>
               <Settings />
               项目设置
-            </a>
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=env&fromBranch=${encodeURIComponent(branch.id)}`}>
               环境变量
-            </a>
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=build`}>
-              构建配置
-            </a>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=services&fromBranch=${encodeURIComponent(branch.id)}`}>
+              构建与启动
+            </MotionLink>
           </Button>
           <Button asChild size="sm" variant="ghost" className="text-muted-foreground">
-            <a href={`/settings/${encodeURIComponent(projectId)}?tab=routing`}>
-              路由规则
-            </a>
+            <MotionLink to={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=routing&fromBranch=${encodeURIComponent(branch.id)}`}>
+              自定义路由
+            </MotionLink>
           </Button>
         </div>
-      </div>
+      </div> : null}
 
       {/* 危险操作 */}
       <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
@@ -7000,12 +7538,14 @@ function SettingsPanel({
             <div className="text-sm text-destructive">
               将停止 {Object.keys(branch.services || {}).length} 个服务并删除该分支的工作区。**git 历史不会被删**(只是 CDS 端忘记这个分支)。继续?
             </div>
+            {/* 收敛 3：删之前先展示会留下什么——派生库默认保留，丢弃走门禁 */}
+            <BranchDbKeepList branchId={branch.id} choices={dbChoices} onChange={setDbChoices} />
             <div className="flex gap-2">
               <Button
                 type="button"
                 variant="destructive"
                 size="sm"
-                onClick={() => onRunAction('delete', '删除分支')}
+                onClick={() => onRunAction('delete', '删除分支', { dbs: dbChoices })}
                 disabled={isAnyBusy}
               >
                 {busy === 'delete' ? <Loader2 className="animate-spin" /> : <Trash2 />}
@@ -7084,145 +7624,8 @@ function SettingsActionButton({
 // 不持久化(关抽屉就丢)— 这是观测视图,不是审计。
 // ──────────────────────────────────────────────────────────────────────────
 
-function pushRing(
-  series: MetricSeries,
-  cpu: number,
-  mem: number,
-  rxRate: number,
-  txRate: number,
-): MetricSeries {
-  const trim = (arr: number[], v: number): number[] => {
-    const next = [...arr, v];
-    return next.length > METRIC_RING_SIZE ? next.slice(next.length - METRIC_RING_SIZE) : next;
-  };
-  return {
-    cpu: trim(series.cpu, cpu),
-    mem: trim(series.mem, mem),
-    rxRate: trim(series.rxRate, rxRate),
-    txRate: trim(series.txRate, txRate),
-  };
-}
 
-function MetricsPanel({
-  state,
-  series,
-  onRefresh,
-}: {
-  state: MetricsState;
-  series: Record<string, MetricSeries>;
-  onRefresh: () => void;
-}): JSX.Element {
-  if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在采集 docker stats…
-      </section>
-    );
-  }
-  if (state.status === 'error') {
-    return (
-      <section className="rounded-md border border-destructive/30 bg-destructive/10 px-5 py-4 text-sm text-destructive">
-        <div className="flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>读取失败:{state.message}</span>
-          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
-            <RefreshCw />重试
-          </Button>
-        </div>
-      </section>
-    );
-  }
-  const data = state.data;
-  if (data.services.length === 0) {
-    return (
-      <section className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        该分支没有任何 service。先去构建配置 / 部署。
-      </section>
-    );
-  }
 
-  return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>共 {data.totalCount} 个 service · 运行中 {data.runningCount} · 每 5s 自动刷新 · 5min 滚动窗口</span>
-        <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={onRefresh}>
-          <RefreshCw />立即刷新
-        </Button>
-      </div>
-      {data.services.map((svc) => (
-        <ServiceMetricCard
-          key={svc.profileId}
-          profileId={svc.profileId}
-          containerName={svc.containerName}
-          status={svc.status}
-          stats={svc.stats}
-          series={series[svc.profileId]}
-        />
-      ))}
-    </section>
-  );
-}
-
-function ServiceMetricCard({
-  profileId,
-  containerName,
-  status,
-  stats,
-  series,
-}: {
-  profileId: string;
-  containerName: string;
-  status: string;
-  stats: ContainerStatsResponse | null;
-  series: MetricSeries | undefined;
-}): JSX.Element {
-  const isRunning = status === 'running' && stats !== null;
-  return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(status)}`} aria-hidden />
-            <span className="font-mono text-sm font-medium">{profileId}</span>
-            <span className={`inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] ${statusClass(status)}`}>
-              {status}
-            </span>
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={containerName}>
-            {containerName}
-          </div>
-        </div>
-      </div>
-
-      {!isRunning ? (
-        <div className="text-xs text-muted-foreground">服务未运行,无指标可读。</div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          <MetricBar label="CPU" value={stats!.cpuPercent} unit="%" max={100} />
-          <MetricBar
-            label="内存"
-            value={stats!.memPercent}
-            unit="%"
-            max={100}
-            sub={`${formatBytes(stats!.memUsedBytes)} / ${formatBytes(stats!.memLimitBytes)}`}
-          />
-          <MetricRate label="网络入站(rx)" rate={series?.rxRate.at(-1) || 0} />
-          <MetricRate label="网络出站(tx)" rate={series?.txRate.at(-1) || 0} />
-        </div>
-      )}
-
-      {/* CPU sparkline — 5min 滚动窗口 */}
-      {isRunning && series && series.cpu.length >= 2 ? (
-        <div className="mt-3 flex items-center gap-3">
-          <span className="text-[11px] text-muted-foreground">CPU 5min 趋势</span>
-          <Sparkline data={series.cpu} max={Math.max(100, ...series.cpu)} />
-          <span className="text-[11px] text-muted-foreground">峰值 {Math.max(...series.cpu).toFixed(1)}%</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function MetricBar({
   label,
@@ -7240,8 +7643,8 @@ function MetricBar({
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   const colorClass =
     pct > 85 ? 'bg-destructive'
-      : pct > 65 ? 'bg-amber-500'
-        : 'bg-emerald-500';
+      : pct > 65 ? 'bg-warn'
+        : 'bg-ok';
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between text-xs">
@@ -7251,55 +7654,12 @@ function MetricBar({
       <div className="h-1.5 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
         <div className={`h-full ${colorClass} transition-[width] duration-500`} style={{ width: `${pct}%` }} />
       </div>
-      {sub ? <div className="mt-0.5 text-[10px] text-muted-foreground">{sub}</div> : null}
+      {sub ? <div className="mt-0.5 text-[0.625rem] text-muted-foreground">{sub}</div> : null}
     </div>
   );
 }
 
-function MetricRate({ label, rate }: { label: string; rate: number }): JSX.Element {
-  return (
-    <div>
-      <div className="mb-1 text-xs text-muted-foreground">{label}</div>
-      <div className="font-mono text-sm font-medium">{formatBytes(rate)}/s</div>
-    </div>
-  );
-}
 
-/**
- * 极简内联 SVG sparkline。zero-dep,~30 行,viewBox 0..100 × 0..30,
- * 父容器用 className 控制实际像素尺寸。data 不足 2 点时不渲染。
- */
-function Sparkline({ data, max, className }: { data: number[]; max: number; className?: string }): JSX.Element | null {
-  if (data.length < 2) return null;
-  const width = 100;
-  const height = 30;
-  const safeMax = max > 0 ? max : 1;
-  const points = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * width;
-      const y = height - (v / safeMax) * height;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
-  return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      className={`flex-1 h-6 ${className || ''}`}
-      aria-label="趋势"
-    >
-      <polyline
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={points}
-        className="text-primary"
-      />
-    </svg>
-  );
-}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';

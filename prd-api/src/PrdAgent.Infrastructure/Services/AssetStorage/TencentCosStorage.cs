@@ -289,13 +289,13 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         // 重要说明：
         // - COS 的“目录”是对象 Key 的前缀，不是真目录；
         // - 任何“删除目录”的实现，本质上都是枚举前缀后批量 DeleteObject，风险极高；
-        // - 目前阶段：为了避免误用/滥用/AI 误改造成灾难性数据删除，DeleteAsync 仅允许删除测试目录 `_it/` 下的对象。
+        // - 默认只允许 `_it/` 测试对象和 AssetStorageDeletePolicy 能验证归属形态的单个业务对象。
         //
         // 严禁：
         // - 实现“按前缀批量删除”（等价于删目录）
         // - 放开删除到生产 `assets/` 前缀
         //
-        // 如未来必须支持生产删除：必须引入多重保护（显式开关、白名单前缀、审计日志、强限流、二次确认、最小权限密钥）。
+        // 更宽的生产删除必须引入多重保护（显式开关、白名单前缀、审计日志、强限流、二次确认、最小权限密钥）。
         if (!IsSafeDeleteAllowed(k, out var reason))
         {
             _logger.LogWarning(
@@ -305,7 +305,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                 _enableSafeDelete,
                 reason,
                 _safeDeleteAllowPrefixes);
-            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许删除 _it 测试目录下对象，或启用受控删除并命中白名单前缀");
+            throw new InvalidOperationException("COS 删除被安全策略拦截：仅允许受保护的单对象键，或启用受控删除并命中白名单前缀");
         }
 
         try
@@ -329,6 +329,9 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     /// <summary>
     /// 判断对象是否存在。\n    /// </summary>
     public async Task<bool> ExistsAsync(string key, CancellationToken ct)
+        => await ProbeExistsAsync(key, ct).ConfigureAwait(false) == true;
+
+    private async Task<bool?> ProbeExistsAsync(string key, CancellationToken ct)
     {
         ThrowIfDisposed();
         var k = NormalizeKey(key);
@@ -347,7 +350,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                 TryGetIntMember(result, "StatusCode");
 
             if (httpCode is >= 200 and < 300) return true;
-            return false;
+            return httpCode == 404 ? false : null;
         }
         catch (CosServerException ex) when (LooksLikeNotFound(ex))
         {
@@ -377,13 +380,32 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var key = BuildObjectKey(d, t, sha, ext);
 
         // 去重：存在则不重复上传（即使重复上传也不会影响正确性，但浪费带宽）
-        if (!await ExistsAsync(key, ct).ConfigureAwait(false))
+        var existed = await ProbeExistsAsync(key, ct).ConfigureAwait(false);
+        if (existed != true)
         {
             await UploadBytesAsync(key, bytes, safeMime, ct).ConfigureAwait(false);
         }
 
         var url = BuildPublicUrl(key);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = existed.HasValue ? !existed.Value : null };
+    }
+
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null)
+    {
+        ThrowIfDisposed();
+        if (bytes == null || bytes.Length == 0) return null;
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
+        var sha = Sha256Hex(bytes);
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
+        return BuildObjectKey(d, t, sha, ext);
     }
 
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
@@ -396,8 +418,11 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 支持常见图片/字体/文本扩展
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        // 视频域只探测成片扩展，避免对其他安全护栏路径发起无效请求。
+        var exts = string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                   && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
+            ? new[] { "mp4" }
+            : new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)
         {
             // 1) 新规则（domain/type）
@@ -423,8 +448,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 由于 ext 可能未知，这里按常见图片/字体/文本扩展逐个尝试删除（不存在视为成功）
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             try
@@ -438,6 +462,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             }
             catch (Exception ex)
             {
+                if (ext == "mp4"
+                    && string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                    && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+                {
+                    throw;
+                }
                 // DeleteAsync 可能被安全护栏拦截；这里不抛出以免影响上层业务（上层会决定是否降级）。
                 _logger.LogWarning(ex, "COS deleteBySha failed. sha={Sha}", sha);
             }
@@ -460,6 +490,17 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return BuildPublicUrl(key);
     }
 
+    private static string[] CandidateExtensions(string? domain, string? type)
+    {
+        if (string.Equals(domain, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+            return ["mp4"];
+        if (string.Equals(domain, AppDomainPaths.DomainVisualAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeImg, StringComparison.Ordinal))
+            return ["png", "jpg", "jpeg", "webp", "gif"];
+        return ["png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt"];
+    }
+
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         await UploadBytesAsync(key, bytes, contentType, ct, cacheControl).ConfigureAwait(false);
@@ -468,6 +509,16 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     public string BuildUrlForKey(string key)
     {
         return BuildPublicUrl(key);
+    }
+
+    /// <summary>
+    /// 逻辑 key 套上**本桶**的前缀再拼地址。跨站搬来的 key 带的是源站前缀，
+    /// 调用方已经剥掉，这里补本站那一份（DS31）。
+    /// </summary>
+    public string BuildUrlForLogicalKey(string logicalKey)
+    {
+        var k = (logicalKey ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        return BuildPublicUrl(string.IsNullOrWhiteSpace(_prefix) ? k : $"{_prefix}/{k}");
     }
 
     public async Task DeleteByKeyAsync(string key, CancellationToken ct)
@@ -717,6 +768,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "audio/webm" => "weba",
             // 视频
             "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
             "video/webm" => "webm",
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
@@ -756,6 +808,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "weba" => "audio/webm",
             // 视频
             "mp4" => "video/mp4",
+            "m4v" => "video/x-m4v",
             "webm" => "video/webm",
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",
@@ -785,6 +838,44 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         if (IsItTestKey(normalizedKey))
         {
             reason = "_it";
+            return true;
+        }
+
+        // 自服务头像使用用户哈希和内容哈希组成的单对象键；只允许精确删除该形态，
+        // 不允许删除头像目录、旧式文件名或任何前缀集合。
+        if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
+        {
+            reason = "superseded_avatar";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedVideoKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_video";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedImageKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_image";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
+        {
+            reason = "owned_design_workspace_metadata";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_file";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsHostedSiteOptimizationTemporaryKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_optimization_temp";
             return true;
         }
 
@@ -1044,4 +1135,3 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return null;
     }
 }
-

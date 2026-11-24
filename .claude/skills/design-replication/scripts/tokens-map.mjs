@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+/**
+ * 把量出来的设计规格（extract-spec 的 spec.json）逐档对到项目的 token 文件，
+ * 分成三类：**已有 token** / **接近但不等（多半是被写歪的那一档）** / **缺 token**。
+ *
+ * 为什么这一步必须在写组件之前：设计稿有 40 多档值，token 文件里只有一半；
+ * 缺的那一半如果不先补进 token 层，写组件时就只能一处处硬编码，
+ * 既撞双皮肤棘轮（`.claude/rules/admin-dual-theme.md`），又让「这一档到底是多少」
+ * 散落在几十个文件里，第二屏必然漂移。
+ *
+ * 用法：
+ *   node tokens-map.mjs --spec <spec.json> --tokens <tokens.css> \
+ *   node tokens-map.mjs --export <design-spec.json> --board board-01 [--theme dark] --tokens <tokens.css> \
+ *     [--dims color,background,borderColor,radius,fontSize,fontFamily] \
+ *     [--min-count 2] [--out <目录>]
+ *
+ * --min-count 过滤只出现一两次的偶发值（浏览器默认值、一次性微调），默认 2。
+ * 退出码 1 = 存在缺 token 的档位。这是**闸门**：先补 token，再写组件。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+
+function arg(name, dflt) {
+  const i = process.argv.indexOf(name);
+  return i < 0 ? dflt : process.argv[i + 1];
+}
+const specPath = arg('--spec');
+// 也接固化好的导出规格：scratchpad 里的 spec.json 会话一结束就没了，而导出那份在仓库里，
+// 随时能直接对 token，不必为了回答「这一屏有几档圆角」把整条取证重跑一遍。
+const exportPath = arg('--export');
+const exportBoard = arg('--board');
+const exportTheme = arg('--theme', 'dark');
+const tokensPath = arg('--tokens');
+const outDir = arg('--out', null);
+const minCount = Number(arg('--min-count', '2'));
+const dims = arg('--dims', 'color,background,borderColor,radius,fontSize,fontFamily')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+if ((!specPath && !exportPath) || !tokensPath) {
+  console.error('必填：--tokens <tokens.css>，外加 --spec <spec.json> 或 --export <design-spec.json> --board <id>');
+  process.exit(2);
+}
+
+/** 把导出规格里某一屏某一主题的档位，还原成 spec.json 那种 { counts: {...} } 形状 */
+function fromExport(file, boardId, theme) {
+  const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!boardId) {
+    console.error(`--export 需要同时给 --board。这份规格里有：${(doc.boards || []).map((b) => `${b.id}(${b.label})`).join(' / ')}`);
+    process.exit(2);
+  }
+  const board = (doc.boards || []).find((b) => b.id === boardId);
+  if (!board) {
+    console.error(`规格里没有 ${boardId}。有的是：${(doc.boards || []).map((b) => b.id).join(' / ')}`);
+    process.exit(2);
+  }
+  const scales = board.scales?.[theme];
+  if (!scales) {
+    console.error(`${boardId} 没有 ${theme} 这一套档位（有的是：${Object.keys(board.scales || {}).join(' / ')}）。`
+      + '缺哪一套就别拿另一套顶——浅色底色对不上深色 token，出来的映射是错的。');
+    process.exit(2);
+  }
+  console.log(`用导出规格：${doc.design} / ${board.id} ${board.label} / ${theme}`
+    + `（来源 ${doc.source?.file}，量于 ${doc.extractedAt}）`);
+  return { counts: scales };
+}
+
+const spec = exportPath
+  ? fromExport(exportPath, exportBoard, exportTheme)
+  : JSON.parse(fs.readFileSync(specPath, 'utf8'));
+/** 报告抬头要说清这份档位是哪来的：走导出规格时 specPath 是空的，直接 path.resolve 会当场炸 */
+const specLabel = exportPath
+  ? `${path.resolve(exportPath)}（${exportBoard} / ${exportTheme}）`
+  : path.resolve(specPath);
+const css = fs.readFileSync(tokensPath, 'utf8');
+
+/** 解析 `--name: value;` 声明。同名 token 在多个主题块里会各有一条，全都收下 ——
+ *  设计稿量到的浅色值本来就该对上 `[data-theme="light"]` 那一份。 */
+const tokens = [];
+for (const m of css.matchAll(/(--[\w-]+)\s*:\s*([^;{}]+);/g)) {
+  tokens.push({ name: m[1], raw: m[2].trim() });
+}
+
+const clamp255 = (n) => Math.max(0, Math.min(255, Math.round(n)));
+/** 颜色归一成 [r,g,b,a]；认不出来返回 null（渐变、var() 引用、关键字等） */
+function toRgba(v) {
+  const s = String(v).trim().toLowerCase();
+  let m = s.match(/^#([0-9a-f]{3,8})$/);
+  if (m) {
+    let h = m[1];
+    if (h.length === 3) h = [...h].map((c) => c + c).join('');
+    if (h.length === 4) h = [...h].map((c) => c + c).join('');
+    if (h.length !== 6 && h.length !== 8) return null;
+    const n = (i) => parseInt(h.slice(i, i + 2), 16);
+    return [n(0), n(2), n(4), h.length === 8 ? n(6) / 255 : 1];
+  }
+  m = s.match(/^rgba?\(([^)]+)\)$/);
+  if (m) {
+    const parts = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    if (parts.length < 3 || parts.slice(0, 3).some(Number.isNaN)) return null;
+    return [clamp255(parts[0]), clamp255(parts[1]), clamp255(parts[2]), parts.length > 3 ? parts[3] : 1];
+  }
+  return null;
+}
+const sameColor = (a, b) => a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && Math.abs(a[3] - b[3]) < 0.02;
+/** 感知距离够近 = 多半是同一档被写歪，值得点名而不是当成新档 */
+function nearColor(a, b) {
+  if (!a || !b) return false;
+  if (Math.abs(a[3] - b[3]) > 0.08) return false;
+  return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) <= 18;
+}
+
+const px = (v) => {
+  const m = String(v).trim().match(/^(-?[\d.]+(?:e[+-]?\d+)?)px$/i);
+  return m ? Number(m[1]) : null;
+};
+const firstFamily = (v) => String(v).split(',')[0].replace(/["']/g, '').trim().toLowerCase();
+
+/**
+ * 每个「长度类」维度该在哪些 token 里找。
+ *
+ * 不加这层限制的话，比的是**纯数值**：字号 18px 会配上 `--radius-lg: 18px`，报告写「已有 token」，
+ * 而那两件事毫无关系——照着它写代码就是把圆角变量当字号用（形状 6：判据读的不是真正生效的那个值）。
+ *
+ * 另一半作用：某个维度**一个候选 token 都没有**，说明这个项目压根不用 token 管它
+ * （本仓库就不用 token 管字号，字号走 Tailwind 任意值）。那种情况该报「本项目不这么管」，
+ * 而不是把每一档都算成「缺」——每屏多出五六条假缺失，整张表很快就没人看了。
+ */
+const DIM_TOKEN_NAMES = {
+  radius: [/^--radius-/],
+  fontSize: [/^--font-size-/, /^--text-size-/, /^--fs-/],
+  // 注意别把 `--hairline` 算进来：它在本仓库是**颜色**（rgba），不是宽度。
+  // 算进来的话候选非空、但没有一个能解析成 px，于是每一档都被判「缺」——
+  // 一个纯粹由匹配口径造出来的假缺失。
+  borderWidth: [/^--border-width-/, /^--stroke-width-/],
+  letterSpacing: [/^--tracking-/, /^--letter-spacing-/],
+};
+
+/** 该维度的候选 token；返回空数组 = 本项目不用 token 管这个维度 */
+function candidates(dim) {
+  const pats = DIM_TOKEN_NAMES[dim];
+  if (!pats) return tokens;
+  return tokens.filter((t) => pats.some((re) => re.test(t.name)));
+}
+
+function classify(dim, value) {
+  const isColor = ['color', 'background', 'borderColor'].includes(dim);
+  const isPx = ['radius', 'fontSize', 'borderWidth', 'letterSpacing'].includes(dim);
+
+  if (isColor) {
+    const want = toRgba(value);
+    if (!want) return { kind: 'skip' };
+    const exact = tokens.filter((t) => sameColor(toRgba(t.raw), want));
+    if (exact.length) return { kind: 'have', tokens: exact.map((t) => t.name) };
+    const near = tokens.filter((t) => nearColor(toRgba(t.raw), want));
+    if (near.length) return { kind: 'near', tokens: near.map((t) => `${t.name}=${t.raw}`) };
+    return { kind: 'missing' };
+  }
+  if (isPx) {
+    const pool = candidates(dim);
+    if (!pool.length) return { kind: 'untracked' };
+    // 圆角是四角写法（"10px 10px 10px 10px" 或 "10px"），取第一角比
+    const want = px(String(value).split(' ')[0]);
+    if (want === null) return { kind: 'skip' };
+    const exact = pool.filter((t) => px(t.raw) === want);
+    if (exact.length) return { kind: 'have', tokens: exact.map((t) => t.name) };
+    const near = pool.filter((t) => px(t.raw) !== null && Math.abs(px(t.raw) - want) <= 1);
+    if (near.length) return { kind: 'near', tokens: near.map((t) => `${t.name}=${t.raw}`) };
+    return { kind: 'missing' };
+  }
+  if (dim === 'fontFamily') {
+    const want = firstFamily(value);
+    // 系统兜底字族不算设计决策
+    // 系统/画布兜底字族不算设计决策：Arial、Helvetica 这些是浏览器与导出工具的默认值，
+    // 设计师并没有「选」它们。把它们算成缺 token，就是逼人给一个默认值补 token。
+    const FALLBACK_FAMILIES = [
+      'ui-sans-serif', 'system-ui', 'sans-serif', 'serif', 'monospace', '-apple-system',
+      'arial', 'helvetica', 'helvetica neue', 'segoe ui', 'roboto', 'times new roman',
+    ];
+    if (!want || FALLBACK_FAMILIES.includes(want.toLowerCase())) return { kind: 'skip' };
+    const exact = tokens.filter((t) => firstFamily(t.raw) === want);
+    return exact.length ? { kind: 'have', tokens: exact.map((t) => t.name) } : { kind: 'missing' };
+  }
+  return { kind: 'skip' };
+}
+
+const DIM_LABEL = {
+  color: '文字色', background: '底色', borderColor: '描边色', borderWidth: '描边粗细',
+  radius: '圆角', fontSize: '字号', fontFamily: '字族', letterSpacing: '字距',
+};
+
+const lines = ['# 设计规格 → token 对照', '',
+  `规格：${specLabel}`, `token：${path.resolve(tokensPath)}（解析到 ${tokens.length} 条声明）`,
+  `口径：只看出现 ≥${minCount} 次的档位（更低的多半是偶发值，不是设计档）`, ''];
+let missingTotal = 0;
+let nearTotal = 0;
+
+for (const dim of dims) {
+  const rows = (spec.counts?.[dim] || []).filter((r) => r.count >= minCount);
+  if (!rows.length) continue;
+  const graded = rows.map((r) => ({ ...r, ...classify(dim, r.value) })).filter((r) => r.kind !== 'skip');
+  if (!graded.length) continue;
+  if (graded.every((r) => r.kind === 'untracked')) {
+    lines.push(`## ${DIM_LABEL[dim] || dim} — 共 ${graded.length} 档：**本项目不用 token 管这个维度**`, '',
+      `token 文件里没有任何 ${dim} 类命名的声明，所以这 ${graded.length} 档不算「缺」。`
+      + '值本身仍然是设计事实，写组件时照 spec 抄；要改成 token 管理是另一件事。', '',
+      `档位：${graded.map((r) => `\`${r.value}\`×${r.count}`).join(' · ')}`, '');
+    continue;
+  }
+  const miss = graded.filter((r) => r.kind === 'missing');
+  const near = graded.filter((r) => r.kind === 'near');
+  missingTotal += miss.length;
+  nearTotal += near.length;
+
+  lines.push(`## ${DIM_LABEL[dim] || dim} — 共 ${graded.length} 档：已有 ${graded.length - miss.length - near.length} · 接近 ${near.length} · 缺 ${miss.length}`, '',
+    '| 设计值 | 次数 | 结论 | token |', '|---|---|---|---|');
+  for (const r of graded) {
+    const verdict = r.kind === 'have' ? '已有' : r.kind === 'near' ? '接近但不等' : '**缺**';
+    lines.push(`| \`${r.value}\` | ${r.count} | ${verdict} | ${(r.tokens || []).slice(0, 3).join(' / ') || '—'} |`);
+  }
+  lines.push('');
+}
+
+lines.push('## 怎么用这张表', '',
+  '- **已有**：直接 `var(--x)`，不要再写字面量。',
+  '- **接近但不等**：先判是不是同一档被写歪了。是 → 用已有 token，把差异记进偏差台账；',
+  '  不是（设计稿真的多了一档）→ 当成「缺」补新 token，别硬套最近的那个。',
+  '- **缺**：在 token 文件里补一条**有语义名字**的（`--bg-rail` 不是 `--gray-7`），',
+  '  暗浅两套都要写；写完再回来重跑这个脚本，直到缺项为 0 再开始写组件。', '');
+
+const report = `${lines.join('\n')}\n`;
+if (outDir) {
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, 'tokens-map.md'), report);
+  console.log(`对照表：${path.join(outDir, 'tokens-map.md')}`);
+} else {
+  process.stdout.write(report);
+}
+
+console.log(`\n缺 token ${missingTotal} 档 · 接近但不等 ${nearTotal} 档`);
+if (missingTotal > 0) {
+  console.log('闸门：先把缺的档位补进 token 层（暗浅双写）再写组件，否则这些值会以硬编码散进几十个文件。');
+  process.exitCode = 1;
+}

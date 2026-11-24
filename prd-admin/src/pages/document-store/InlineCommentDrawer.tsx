@@ -167,7 +167,7 @@ export function InlineCommentDrawer({
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
               style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.2)' }}>
-              <MessageSquareText size={15} style={{ color: 'rgba(216,180,254,0.95)' }} />
+              <MessageSquareText size={15} style={{ color: 'var(--accent-fg-violet)' }} />
             </div>
             <div className="min-w-0">
               <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -243,7 +243,7 @@ export function InlineCommentDrawer({
                 style={{
                   background: 'rgba(168,85,247,0.12)',
                   border: '1px solid rgba(168,85,247,0.25)',
-                  color: 'rgba(216,180,254,0.95)',
+                  color: 'var(--accent-fg-violet)',
                 }}>
                 {submitting ? <MapSpinner size={11} /> : <Send size={11} />}
                 添加评论
@@ -339,7 +339,7 @@ function CommentCard({
           style={{
             background: 'rgba(96,165,250,0.1)',
             border: '1px solid rgba(96,165,250,0.22)',
-            color: 'rgba(147,197,253,0.95)',
+            color: 'var(--accent-fg-blue)',
           }}>
           全文评论
         </div>
@@ -361,7 +361,7 @@ function CommentCard({
       <div className="flex items-start gap-2 mb-2">
         <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
           style={{ background: 'rgba(59,130,246,0.1)' }}>
-          <UserCircle2 size={13} style={{ color: 'rgba(96,165,250,0.95)' }} />
+          <UserCircle2 size={13} style={{ color: 'var(--accent-fg-blue)' }} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">

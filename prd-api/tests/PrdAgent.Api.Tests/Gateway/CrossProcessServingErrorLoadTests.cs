@@ -14,6 +14,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
@@ -51,6 +52,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
     [MemberData(nameof(GatewayMatrixCells.TransportIds), MemberType = typeof(GatewayMatrixCells))]
     public async Task TransportCell(string id)
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var cell = GatewayMatrixCells.GetTransport(id);
         var baseUrl = _farm.BaseUrl(cell.Gateway);
         var client = BuildClient(baseUrl, cell.AuthOk ? TestKey : "WRONG-KEY");
@@ -193,7 +195,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = key,
         }).Build();
-        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
     }
 
     // ─────────────────────── HostFarm：4 个 stub 上游各一个常驻 host ───────────────────────
@@ -219,7 +221,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             await Start("empty", new EmptyGateway());
         }
 
-        private async Task Start(string name, PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway)
+        private async Task Start(string name, PrdAgent.Core.LlmGateway.ILlmGateway gateway)
         {
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
@@ -227,6 +229,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
             builder.Services.AddSingleton(gateway);
             builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+            GatewayAuthorizedTaskFixture.Register(builder.Services);
             var app = builder.Build();
             app.MapGatewayServingEndpoints(PascalJson, TestKey, "selftest-commit");
             await app.StartAsync();
@@ -248,7 +251,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
     };
 
     // echo：回显 appCallerCode；stream 固定 "hel"+"lo"；resolve 带 SECRET ApiKey（验跨进程剥离）。
-    private sealed class EchoGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class EchoGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public Task<GatewayResponse> SendAsync(GatewayRequest r, CancellationToken ct = default)
             => Task.FromResult(GatewayResponse.Ok(r.AppCallerCode, Res()));
@@ -284,7 +287,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
         }
     }
 
-    private sealed class FailingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class FailingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public Task<GatewayResponse> SendAsync(GatewayRequest r, CancellationToken ct = default)
             => Task.FromResult(GatewayResponse.Fail("UPSTREAM_DOWN", "stub upstream intentional failure", 502));
@@ -300,7 +303,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
             => throw new NotSupportedException();
     }
 
-    private sealed class ThrowingGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class ThrowingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public Task<GatewayResponse> SendAsync(GatewayRequest r, CancellationToken ct = default)
             => throw new InvalidOperationException("stub upstream boom");
@@ -317,7 +320,7 @@ public class CrossProcessServingErrorLoadTests : IClassFixture<CrossProcessServi
     }
 
     // empty：成功但内容为空（验空内容兜底）。
-    private sealed class EmptyGateway : PrdAgent.Infrastructure.LlmGateway.ILlmGateway
+    private sealed class EmptyGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
         public Task<GatewayResponse> SendAsync(GatewayRequest r, CancellationToken ct = default)
             => Task.FromResult(GatewayResponse.Ok("", Res()));

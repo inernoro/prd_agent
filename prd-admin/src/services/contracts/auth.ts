@@ -32,11 +32,14 @@ export type SsoLoginOption = {
 export type SsoOptionsResponse = {
   items: SsoLoginOption[];
   passwordLoginDisabled: boolean;
+  cdsEnabled?: boolean;
 };
 
 export type GetSsoOptionsContract = () => Promise<ApiResponse<SsoOptionsResponse>>;
 
 export type MiduoPlanetLoginContract = (token: string) => Promise<ApiResponse<LoginResponse>>;
+
+export type SyntheticLoginContract = (code: string) => Promise<ApiResponse<LoginResponse>>;
 
 export type ResetPasswordResponse = {
   userId: string;
@@ -44,3 +47,13 @@ export type ResetPasswordResponse = {
 };
 
 export type ResetPasswordContract = (userId: string, newPassword: string, confirmPassword: string, accessToken?: string) => Promise<ApiResponse<ResetPasswordResponse>>;
+
+/**
+ * 自助改密：凭旧密码随时改，改完服务端会作废别处的会话，
+ * 并把当前这一端换成一副新令牌（所以返回的是完整登录态，不是一个 ok）。
+ */
+export type ChangePasswordContract = (
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string,
+) => Promise<ApiResponse<LoginResponse>>;

@@ -11,6 +11,10 @@ internal sealed record RawGatewayOutputImage(
 internal sealed record RawGatewayUsage(
     int? InputTokens,
     int? OutputTokens,
+    int? ReasoningTokens,
+    int? CacheReadInputTokens,
+    int? CacheCreationInputTokens,
+    bool CacheCreationCountedInsideInput,
     int? ImageSuccessCount,
     string? FinishReason,
     decimal? ProviderReportedCost,
@@ -20,6 +24,9 @@ internal sealed record RawGatewayUsage(
     public bool HasReportedUsage =>
         InputTokens is not null
         || OutputTokens is not null
+        || ReasoningTokens is not null
+        || CacheReadInputTokens is not null
+        || CacheCreationInputTokens is not null
         || ImageSuccessCount is not null
         || ProviderReportedCost is not null;
 }
@@ -48,6 +55,41 @@ internal static class RawGatewayUsageParser
             var outputTokens =
                 ReadInt(usage, "completion_tokens", "output_tokens", "candidatesTokenCount")
                 ?? ReadInt(usageMetadata, "candidatesTokenCount", "outputTokenCount");
+            /*
+              缓存 token 也要读出来，兼容入口这条路此前一律记 null。
+
+              后果分两头，都不是小数：OpenAI 把命中缓存的部分**含在** prompt_tokens 里，
+              不读出来就按输入全价收，账比实际高；Anthropic 分三个数报，不读出来那两截
+              直接不进账，账比实际低。两种都会让 EstimatedCostUsd 失真，而预算闸读的就是它。
+              判据与计价那一侧同源（GatewayCostCalculator.CacheReadCountedInsideInput 按协议分）。
+            */
+            /*
+              明细挂在哪个字段下要跟着接口形态走：Chat Completions 那套报 prompt_tokens_details，
+              Responses 那套报 input_tokens_details——上一版只认前者，于是走 Responses 的调用
+              拿不到缓存这一截，而 input_tokens 里**含着**它，结果是每个命中缓存的 token
+              都按输入全价收，账与预算一起虚高（形状 1：判据比它该管的范围窄，
+              同一个数换个字段名就读不到了）。两种形态、两种大小写都认。
+            */
+            var promptDetails = TryGetObject(usage ?? default, "prompt_tokens_details")
+                ?? TryGetObject(usage ?? default, "promptTokensDetails")
+                ?? TryGetObject(usage ?? default, "input_tokens_details")
+                ?? TryGetObject(usage ?? default, "inputTokensDetails");
+            var outputDetails = TryGetObject(usage ?? default, "completion_tokens_details")
+                ?? TryGetObject(usage ?? default, "completionTokensDetails")
+                ?? TryGetObject(usage ?? default, "output_tokens_details")
+                ?? TryGetObject(usage ?? default, "outputTokensDetails");
+            // reasoning_tokens 已包含在 output_tokens 中，只作为可解释用量保存，不另行计费。
+            var reasoningTokens = ReadInt(outputDetails, "reasoning_tokens", "reasoningTokens");
+            var cacheReadTokens =
+                ReadInt(usage, "cache_read_input_tokens")
+                ?? ReadInt(promptDetails, "cached_tokens", "cachedTokens")
+                ?? ReadInt(usageMetadata, "cachedContentTokenCount");
+            // OpenAI Responses 的 nested cache_write_tokens 已经算在 input_tokens 里；Claude 根级
+            // cache_creation_input_tokens 则是独立用量。nested 优先，避免同一响应同时给两种兼容字段时重复计费。
+            var nestedCacheCreationTokens = ReadInt(promptDetails, "cache_write_tokens", "cacheWriteTokens");
+            var cacheCreationTokens = nestedCacheCreationTokens
+                ?? ReadInt(usage, "cache_creation_input_tokens");
+
             var providerReportedCost =
                 ReadDecimal(usage, "cost", "cost_usd", "total_cost")
                 ?? ReadDecimal(root, "cost", "cost_usd", "total_cost");
@@ -65,6 +107,10 @@ internal static class RawGatewayUsageParser
             return new RawGatewayUsage(
                 inputTokens,
                 outputTokens,
+                reasoningTokens,
+                cacheReadTokens,
+                cacheCreationTokens,
+                nestedCacheCreationTokens is not null,
                 imageSuccessCount,
                 finishReason,
                 providerReportedCost,
@@ -93,7 +139,7 @@ internal static class RawGatewayUsageParser
         }
     }
 
-    private static RawGatewayUsage Empty() => new(null, null, null, null, null, null, []);
+    private static RawGatewayUsage Empty() => new(null, null, null, null, null, false, null, null, null, null, []);
 
     private static JsonElement? TryGetObject(JsonElement element, string name)
     {

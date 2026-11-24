@@ -1,3 +1,4 @@
+import { SelfUpdateDeferredError } from '../../src/services/webhook-maintenance-retry.js';
 /**
  * Integration tests for the /api/github/webhook receiver.
  *
@@ -7,17 +8,19 @@
  * behaviour is covered by github-webhook-dispatcher.test.ts.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { StateService } from '../../src/services/state.js';
+import { createProjectsRouter } from '../../src/routes/projects.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { getHttpFixtureTrace, listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
 import {
   createGithubWebhookRouter,
   __resetWebhookDedupForTests,
@@ -53,6 +56,8 @@ async function request(
           port: addr.port,
           path: urlPath,
           method,
+          // 每例都会重建临时 server，不复用上一例正在关闭的空闲连接。
+          agent: false,
           headers: {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(body),
@@ -63,6 +68,12 @@ async function request(
           let raw = '';
           res.on('data', (c: Buffer) => (raw += c.toString()));
           res.on('end', () => {
+            const fixture = getHttpFixtureTrace(server);
+            if (!fixture || res.headers['x-cds-fixture-id'] !== fixture.id
+              || res.headers['x-cds-fixture-pid'] !== String(fixture.pid)) {
+              reject(new Error('HTTP 测试响应不属于当前夹具，请检查监听地址及响应身份'));
+              return;
+            }
             try {
               resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null, headers: res.headers });
             } catch {
@@ -139,7 +150,7 @@ describe('GitHub webhook route', () => {
         deployCalls.push({ branchId, commitSha });
       }),
     }));
-    return app.listen(0);
+    return listenLoopbackFixture(app);
   }
 
   beforeEach(() => {
@@ -376,6 +387,64 @@ describe('GitHub webhook route', () => {
     expect(deployCalls).toHaveLength(0);
   });
 
+  // 2026-09-08 宿主过载复盘：噪声投递不再落投递日志——此前每条都 state 全量 save。
+  it('cheap-acks noise without recording a delivery: unsupported events and inert check_run/workflow_run actions', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    server = startServer();
+    const before = stateService.getGithubWebhookDeliveries(100).length;
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['workflow_job', { action: 'completed', repository: { full_name: 'octocat/repo' } }, 'ignored-unsubscribed'],
+      ['check_suite', { action: 'completed', repository: { full_name: 'octocat/repo' } }, 'ignored-unsubscribed'],
+      ['check_run', { action: 'created', check_run: { external_id: 'x', head_sha: 'a'.repeat(40) }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+      ['check_run', { action: 'completed', check_run: { external_id: 'x', head_sha: 'a'.repeat(40) }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+      ['workflow_run', { action: 'in_progress', workflow_run: { id: 1 }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+    ];
+    for (const [event, payload, expectedAction] of cases) {
+      const body = JSON.stringify(payload);
+      const res = await request(server, 'POST', '/api/github/webhook', body, {
+        'X-GitHub-Event': event,
+        'X-Hub-Signature-256': sign('whsec-test', body),
+      });
+      expect(res.status, event).toBe(200);
+      expect(res.body.action, event).toBe(expectedAction);
+      expect(res.headers['x-cds-suppress-activity']).toBe('1');
+    }
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stateService.getGithubWebhookDeliveries(100).length).toBe(before);
+    expect(deployCalls).toHaveLength(0);
+  });
+
+  /**
+   * Codex 四轮 P2：廉价 ack 不写 HTTP 日志，这些请求就从「按日志统计 webhook 耗时」
+   * 的口径里整个消失；只看那个口径，改前改后对比会把「不再观测」读成「不再耗时」。
+   * 所以被压掉的请求仍花掉的 master 时间必须在内存里如实记账，度量尺据此对齐口径。
+   */
+  it('accounts for the master time cheap-acked noise still costs', async () => {
+    const { getWebhookNoiseStats } = await import('../../src/routes/github-webhook.js');
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    server = startServer();
+    // 让 handler 内每次读时钟都前进，被压掉的请求耗时必然为正（真实环境常是个位数毫秒）
+    const realNow = Date.now.bind(Date);
+    let tick = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (tick += 3));
+    try {
+      const baseline = getWebhookNoiseStats()?.suppressedDurationMs ?? 0;
+      for (const event of ['workflow_job', 'check_suite', 'status']) {
+        const body = JSON.stringify({ action: 'completed', repository: { full_name: 'octocat/repo' } });
+        const res = await request(server, 'POST', '/api/github/webhook', body, {
+          'X-GitHub-Event': event,
+          'X-Hub-Signature-256': sign('whsec-test', body),
+        });
+        expect(res.status, event).toBe(200);
+      }
+      const stats = getWebhookNoiseStats();
+      expect(stats?.suppressedTotal).toBeGreaterThanOrEqual(3);
+      expect(stats!.suppressedDurationMs).toBeGreaterThan(baseline);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('returns 200 (ok:false) — NOT 500 — when the dispatcher throws', async () => {
     stateService.setGithubAppWhitelistOwners(['octocat']);
     // Wire a worktree mock that explodes so handlePush throws synchronously
@@ -413,7 +482,7 @@ describe('GitHub webhook route', () => {
       githubApp: null,
       dispatchDeploy: async (b, s) => { deployCalls.push({ branchId: b, commitSha: s }); },
     }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
 
     const payload = {
       ref: 'refs/heads/unknown-branch',
@@ -435,6 +504,39 @@ describe('GitHub webhook route', () => {
     // No deploy should have been dispatched.
     await new Promise((r) => setTimeout(r, 20));
     expect(deployCalls).toHaveLength(0);
+  });
+
+  it('自更新拒绝派发持久化排队，返回已接收且不将分支伪装成部署失败', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    stateService.addProject({ id: 'pZ', slug: 'sample', name: 'Sample', kind: 'git', createdAt: '', updatedAt: '',
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42 });
+    server = startServer(undefined, async () => { throw new SelfUpdateDeferredError('draining'); });
+    const body = JSON.stringify({ ref: 'refs/heads/feature-deferred', after: 'a'.repeat(40), repository: { full_name: 'octocat/repo' }, installation: { id: 42 } });
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push', 'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    expect(res.status).toBe(200); expect(stateService.getGithubWebhookDeliveries(1)[0].dispatchAction, JSON.stringify(res.body)).toBe('skipped');
+    expect(stateService.getGithubWebhookDeliveries(1)[0].dispatchReason).toContain('自动补发');
+    const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'state.json'), 'utf8'));
+    const savedBranch = Object.values(saved.branches)[0] as any;
+    expect(savedBranch.maintenanceDeferredDeploy).toMatchObject({ commitSha: 'a'.repeat(40), attempts: 0 });
+    expect(savedBranch.status).not.toBe('error');
+  });
+
+  it('补发队列落盘失败不谎报排队成功，也不抛出异步未处理异常', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    stateService.addProject({ id: 'pZ', slug: 'sample', name: 'Sample', kind: 'git', createdAt: '', updatedAt: '',
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42 });
+    server = startServer(undefined, async () => { throw new SelfUpdateDeferredError('draining'); });
+    const body = JSON.stringify({ ref: 'refs/heads/feature-deferred', after: 'a'.repeat(40), repository: { full_name: 'octocat/repo' }, installation: { id: 42 } });
+    const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('store unavailable'));
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push', 'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    flush.mockRestore();
+    expect(res.status).toBe(200);
+    expect(res.body.deployDispatchError).toContain('保存失败');
+    expect(stateService.getAllBranches()[0].maintenanceDeferredDeploy).toBeUndefined();
   });
 
   it('dedups repeated (branchId, sha) deploy dispatches within the window', async () => {
@@ -617,6 +719,21 @@ describe('POST /api/projects/:id/github/link', () => {
         (req as { rawBody?: Buffer }).rawBody = buf;
       },
     }));
+    /*
+     * 生产上鉴权中间件会把「这把钥匙绑在哪个项目」盖到 req 上；这个测试只挂了
+     * 路由，所以用一个测试头模拟那一步。不模拟的话 assertProjectAccess 走的是
+     * 「bootstrap / cookie，无作用域」那一档，永远放行——用例就测不到越权。
+     */
+    app.use((req, _res, next) => {
+      const bound = req.headers['x-test-project-key'];
+      if (typeof bound === 'string' && bound) {
+        (req as { cdsProjectKey?: { projectId: string; keyId: string } }).cdsProjectKey = {
+          projectId: bound,
+          keyId: 'k-test',
+        };
+      }
+      next();
+    });
     const shell = new MockShell();
     const worktree = new MockWorktree(shell);
     app.use('/api', createGithubWebhookRouter({
@@ -627,7 +744,8 @@ describe('POST /api/projects/:id/github/link', () => {
       githubApp: null,
       dispatchDeploy: async () => {},
     }));
-    return app.listen(0);
+    app.use('/api', createProjectsRouter({ stateService, shell }));
+    return listenLoopbackFixture(app);
   }
 
   beforeEach(() => {
@@ -681,6 +799,238 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(project.githubAutoDeploy).toBe(true);
   });
 
+  it('绑定返回当前版本，随后旧页面不能覆盖并发修改', async () => {
+    server = startServer();
+    const linked = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }));
+    expect(linked.status).toBe(200);
+    const version = linked.body.project.identityVersion;
+    expect(version).toBe(stateService.getProject('p1')!.identityHistory!.at(-1)!.id);
+    expect(version).toBeTruthy();
+    const concurrent = await request(server, 'PUT', '/api/projects/p1',
+      JSON.stringify({ name: '另一处修改', expectedIdentityVersion: version }));
+    expect(concurrent.status).toBe(200);
+    expect(concurrent.body.project.identityVersion).not.toBe(version);
+    const stale = await request(server, 'PUT', '/api/projects/p1',
+      JSON.stringify({ name: '旧页面覆盖', expectedIdentityVersion: version }));
+    expect(stale.status).toBe(409);
+    expect(stateService.getProject('p1')!.name).toBe('另一处修改');
+  });
+
+  it('显式 Git 地址保持时，绑定与解绑仍留存真实操作者、前后关联并推进版本', async () => {
+    stateService.updateProject('p1', { gitRepoUrl: 'https://example.test/explicit.git' });
+    const before = structuredClone(stateService.getProject('p1')!);
+    server = startServer();
+    const payload = JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', actor: 'spoofed-user' });
+    const linked = await request(server, 'POST', '/api/projects/p1/github/link', payload, { 'x-test-project-key': 'p1' });
+    expect(linked.status).toBe(200);
+    expect(linked.body.project.identityVersion).not.toBe(before.identityHistory!.at(-1)!.id);
+    const bound = stateService.getProject('p1')!.identityHistory!.at(-1)!;
+    expect(bound.before?.repository).toBe('https://example.test/explicit.git');
+    expect(bound.after.repository).toBe(bound.before?.repository);
+    expect(bound.before?.githubRepository).toBeUndefined();
+    expect(bound.after.githubRepository).toBe('octocat/repo');
+    expect(bound.actor).toBe('agent:k-test');
+    expect(bound.requestId).toBeTruthy();
+    const count = stateService.getProject('p1')!.identityHistory!.length;
+    await request(server, 'POST', '/api/projects/p1/github/link', payload, { 'x-test-project-key': 'p1' });
+    expect(stateService.getProject('p1')!.identityHistory).toHaveLength(count);
+    const removed = await request(server, 'DELETE', '/api/projects/p1/github/link', '', { 'x-test-project-key': 'p1' });
+    expect(removed.status).toBe(200);
+    const unbound = stateService.getProject('p1')!.identityHistory!.at(-1)!;
+    expect(unbound.id).not.toBe(bound.id);
+    expect(unbound.before?.githubRepository).toBe('octocat/repo');
+    expect(unbound.after.githubRepository).toBeUndefined();
+    expect(unbound.actor).toBe('agent:k-test');
+    expect(unbound.requestId).not.toBe(bound.requestId);
+    expect(stateService.getProject('p1')!.gitRepoUrl).toBe(before.gitRepoUrl);
+    expect(removed.body.ok).toBe(true);
+    expect(removed.body.project.identityVersion).toBe(unbound.id);
+    expect(removed.body.project.identityHistory).toBeUndefined();
+    expect(removed.body.project.githubRepoFullName).toBeUndefined();
+    const nextSave = await request(server, 'PUT', '/api/projects/p1', JSON.stringify({
+      name: '解绑后保存', expectedIdentityVersion: removed.body.project.identityVersion,
+    }), { 'x-test-project-key': 'p1' });
+    expect(nextSave.status).toBe(200);
+    expect(nextSave.body.project.name).toBe('解绑后保存');
+    const lastVersion = nextSave.body.project.identityVersion;
+    await stateService.flush();
+    const restarted = new StateService(path.join(tmp, 'state.json'));
+    restarted.load();
+    expect(restarted.getProject('p1')!.identityHistory!.at(-1)!.id).toBe(lastVersion);
+  });
+
+  it('同项目机器凭据绑定仓库只返回版本摘要，不返回完整设置记录', async () => {
+    stateService.updateProject('p1', { name: '更新后的名称' }, { actor: 'user:history-owner', requestId: 'history-request' });
+    server = startServer();
+    const linked = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }), { 'x-test-project-key': 'p1' });
+    expect(linked.status).toBe(200);
+    expect(linked.body.project.identityVersion).toBe(stateService.getProject('p1')!.identityHistory!.at(-1)!.id);
+    expect(linked.body.project).not.toHaveProperty('identityHistory');
+    expect(JSON.stringify(linked.body)).not.toContain('history-owner');
+    expect(JSON.stringify(linked.body)).not.toContain('history-request');
+    expect(stateService.getProject('p1')!.identityHistory).toHaveLength(3);
+  });
+
+  it('绑一个已被别的项目绑走的仓库：默认拦住，并回兄弟项目名', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+    );
+    expect(res.status).toBe(409);
+    // 带上「划没划范围」，确认弹窗才能按分档说话，不一律吓成「每次全部重建」
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other', scoped: false }]);
+    expect(res.body.siblingCount).toBe(1);
+  });
+
+  it('已划范围的兄弟标 scoped，确认文案据此分档', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    stateService.addBuildProfile({
+      id: 'p2-app', projectId: 'p2', name: 'app', dockerImage: 'node:22', workDir: '.',
+      containerPort: 3000, hostPortPreference: 0, buildCommand: 'echo build',
+      buildScope: ['other/**'],
+    } as never);
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+    );
+    expect(res.body.siblings).toEqual([{ id: 'p2', name: 'Other', scoped: true }]);
+  });
+
+  it('机器凭据看不到兄弟项目的 id 与名字，只知道有几个', async () => {
+    // 建项目那条路径上刚修过同一个泄露；同一份判断的第二处不能漏（Codex 第四轮）。
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+      { 'X-AI-Access-Key': 'cdsp_someprojectkey' },
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.siblings).toEqual([]);
+    expect(res.body.siblingCount).toBe(1);
+    expect(res.body.message).not.toContain('Other');
+  });
+
+  it('带 allowShared 才放行，两个项目共用同一个仓库', async () => {
+    stateService.addProject({
+      id: 'p2', slug: 'other', name: 'Other', kind: 'git',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+    });
+    server = startServer();
+    const res = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', allowShared: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(stateService.findProjectsByRepoFullName('octocat/repo').map((p) => p.id).sort())
+      .toEqual(['p1', 'p2']);
+  });
+
+  it('只授权了别的项目的 key 不能绑本项目的仓库 —— allowShared 也不行', async () => {
+    /*
+     * 这个 router 单独挂载，鉴权中间件只认出调用方是谁，没判目标项目。于是一把
+     * 只授权了 p2 的项目级 key 能 POST 到 p1 把 p1 的仓库改掉；本 PR 新加的
+     * allowShared 让它连「已被别人绑走」那道拦截也绕过（Codex 第九轮 P1）。
+     */
+    const res = await request(server = startServer(), 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', allowShared: true }),
+      { 'X-Test-Project-Key': 'p2' },
+    );
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('project_mismatch');
+    // 关键是**没改成**，不只是回了 403
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBeUndefined();
+  });
+
+  it('解绑同样要判目标项目 —— 别只堵一半', async () => {
+    stateService.updateProject('p1', {
+      githubRepoFullName: 'octocat/repo',
+      githubInstallationId: 42,
+    });
+    const res = await request(server = startServer(), 'DELETE', '/api/projects/p1/github/link', '',
+      { 'X-Test-Project-Key': 'p2' },
+    );
+    expect(res.status).toBe(403);
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBe('octocat/repo');
+  });
+
+  it('解绑请求只命中自有 IPv4 夹具，拒绝同端口竞争', async () => {
+    stateService.updateProject('p1', { githubRepoFullName: 'octocat/repo', githubInstallationId: 42 });
+    server = startServer();
+    let intendedArrivals = 0;
+    let foreignArrivals = 0;
+    server.prependListener('request', () => { intendedArrivals++; });
+    const foreignId = randomUUID();
+    const competing = http.createServer((_req, res) => {
+      foreignArrivals++;
+      res.setHeader('x-cds-fixture-id', foreignId);
+      res.writeHead(404).end('owned competing fixture');
+    });
+    try {
+      if (!server.listening) await new Promise<void>((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      const listener = server.address() as { port: number };
+      const collision = await new Promise<string>((resolve) => {
+        competing.once('error', (error: NodeJS.ErrnoException) => resolve(error.code || 'unknown'));
+        competing.listen(listener.port, '127.0.0.1', () => resolve('listening'));
+      });
+      const res = await request(server, 'DELETE', '/api/projects/p1/github/link', '',
+        { 'X-Test-Project-Key': 'p2' });
+      expect(res.status, JSON.stringify({ listener: server.address(), collision, intendedArrivals,
+        foreignArrivals, responseFixture: res.headers['x-cds-fixture-id'] })).toBe(403);
+      expect(stateService.getProject('p1')!.githubRepoFullName).toBe('octocat/repo');
+      expect(collision).toBe('EADDRINUSE');
+      const trace = getHttpFixtureTrace(server)!;
+      expect(res.headers['x-cds-fixture-id']).toBe(trace.id);
+      expect(res.headers['x-cds-fixture-pid']).toBe(String(trace.pid));
+      expect(trace.arrivals).toHaveLength(1);
+      expect(trace.arrivals[0]).toMatchObject({ localAddress: '127.0.0.1', status: 403 });
+      expect(intendedArrivals).toBe(1);
+      expect(foreignArrivals).toBe(0);
+    } finally {
+      if (competing.listening) await new Promise<void>((resolve) => competing.close(() => resolve()));
+    }
+  });
+
+  it('完整接收解绑响应后，身份不属本夹具就拒收业务结果', async () => {
+    stateService.updateProject('p1', { githubRepoFullName: 'octocat/repo', githubInstallationId: 42 });
+    server = startServer();
+    server.prependListener('request', (_req, res) => {
+      const setHeader = res.setHeader.bind(res);
+      vi.spyOn(res, 'setHeader').mockImplementation((name, value) =>
+        setHeader(name, name.toLowerCase() === 'x-cds-fixture-id' ? randomUUID() : value));
+    });
+    await expect(request(server, 'DELETE', '/api/projects/p1/github/link', '',
+      { 'X-Test-Project-Key': 'p2' })).rejects.toThrow('HTTP 测试响应不属于当前夹具');
+    expect(getHttpFixtureTrace(server)!.arrivals[0]).toMatchObject({ status: 403 });
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBe('octocat/repo');
+  });
+
+  it('授权的就是本项目时照常放行', async () => {
+    const res = await request(server = startServer(), 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }),
+      { 'X-Test-Project-Key': 'p1' },
+    );
+    expect(res.status).toBe(200);
+    expect(stateService.getProject('p1')!.githubRepoFullName).toBe('octocat/repo');
+  });
+
   it('rejects linking a repo whose owner is not whitelisted', async () => {
     server = startServer();
     const res = await request(server, 'POST', '/api/projects/p1/github/link',
@@ -721,5 +1071,113 @@ describe('POST /api/projects/:id/github/link', () => {
     const project = stateService.getProject('p1')!;
     expect(project.githubRepoFullName).toBeUndefined();
     expect(project.githubInstallationId).toBeUndefined();
+  });
+});
+
+describe('GitHub webhook route · 一仓多项目分发', () => {
+  let tmp: string;
+  let stateService: StateService;
+  let server: http.Server;
+  let deployCalls: Array<{ branchId: string; commitSha: string }>;
+
+  const REPO = 'octocat/monorepo';
+  const SHA = 'abc123def456789012345678901234567890aaaa';
+
+  function startServer(): http.Server {
+    const app = express();
+    app.use(express.json({
+      verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = buf; },
+    }));
+    const shell = new MockShell();
+    const worktree = new MockWorktree(shell);
+    deployCalls = [];
+    app.use('/api', createGithubWebhookRouter({
+      stateService,
+      worktreeService: worktree,
+      shell,
+      config: buildConfig(),
+      githubApp: null,
+      dispatchDeploy: async (branchId, commitSha) => { deployCalls.push({ branchId, commitSha }); },
+    }));
+    return listenLoopbackFixture(app);
+  }
+
+  function addProject(id: string, slug: string, name: string): void {
+    stateService.addProject({
+      id, slug, name, kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: REPO,
+      githubInstallationId: 42,
+    });
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-webhook-fanout-'));
+    stateService = new StateService(path.join(tmp, 'state.json'), tmp);
+    stateService.load();
+    __resetWebhookDedupForTests();
+  });
+
+  afterEach(async () => {
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await flushAllJsonStateStores();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  /**
+   * 这是本次改动最容易静默退化的一处：dispatcher 会为第二个项目产出 deployRequest，
+   * 但如果路由只看主结果、不遍历 fanout，第二个项目就会「分支建好了、却没人替它
+   * 部署」——页面上看得见分支、永远是 idle，没有任何报错。
+   */
+  it('同仓库两个项目各自的部署都被真的派发出去', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    addProject('p-self', 'self-proj', '自托管项目');
+    server = startServer();
+
+    const body = JSON.stringify({
+      ref: 'refs/heads/feature/x',
+      after: SHA,
+      repository: { id: 1, full_name: REPO },
+      commits: [{ added: [], modified: ['src/app.ts'], removed: [] }],
+    });
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'x-github-event': 'push',
+      'x-github-delivery': 'd-fanout-1',
+      'x-hub-signature-256': sign('whsec-test', body),
+    });
+
+    expect(res.status).toBe(200);
+    expect(deployCalls).toHaveLength(2);
+    const dispatched = deployCalls.map((c) => c.branchId).sort();
+    expect(dispatched.some((id) => id.includes('main-proj'))).toBe(true);
+    expect(dispatched.some((id) => id.includes('self-proj'))).toBe(true);
+    expect(deployCalls.every((c) => c.commitSha === SHA)).toBe(true);
+
+    // 响应体要能看出发生了多项目分发，否则投递记录里这件事不可观测
+    expect(res.body.fanoutProjects).toBe(1);
+    expect(res.body.fanoutDeployDispatched).toBe(1);
+  });
+
+  it('单项目仓库：只派发一次，且响应体不出现 fanout 字段', async () => {
+    addProject('p-main', 'main-proj', '主项目');
+    server = startServer();
+
+    const body = JSON.stringify({
+      ref: 'refs/heads/feature/y',
+      after: SHA,
+      repository: { id: 1, full_name: REPO },
+      commits: [{ added: [], modified: ['src/app.ts'], removed: [] }],
+    });
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'x-github-event': 'push',
+      'x-github-delivery': 'd-fanout-2',
+      'x-hub-signature-256': sign('whsec-test', body),
+    });
+
+    expect(res.status).toBe(200);
+    expect(deployCalls).toHaveLength(1);
+    expect(res.body.fanoutProjects).toBeUndefined();
+    expect(res.body.fanoutDeployDispatched).toBeUndefined();
   });
 });

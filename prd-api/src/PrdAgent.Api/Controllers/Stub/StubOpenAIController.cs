@@ -111,6 +111,21 @@ public class StubOpenAIController : ControllerBase
                     task_type = new[] { "image_generation" },
                     modalities = new { input_modalities = new[] { "text", "image" }, output_modalities = new[] { "image" } },
                     features = new { tools = new { function_calling = false } }
+                },
+                // 必须在这里登记，否则「无 key 也能端到端自测检索」这句话是假的：
+                // 走正常模型同步配出来的 stub 平台根本看不到 embedding 模型，
+                // 而 embedding 已经改成专属池不可用即失败关闭，于是卡在 ResolveModelAsync，
+                // 压根到不了下面那个 /v1/embeddings 端点。端点存在 ≠ 能力可达
+                // （no-rootless-tree：声明的能力必须运行时可验证）。
+                new
+                {
+                    id = "stub-embedding",
+                    name = "Stub Embedding",
+                    status = "Active",
+                    domain = "embedding",
+                    task_type = new[] { "embedding" },
+                    modalities = new { input_modalities = new[] { "text" }, output_modalities = new[] { "embedding" } },
+                    features = new { tools = new { function_calling = false } }
                 }
             }
         };
@@ -374,6 +389,117 @@ public class StubOpenAIController : ControllerBase
                 modelVersion = model
             };
             return Ok(responsePayload);
+        }
+    }
+
+    /// <summary>
+    /// Stub 向量化：OpenAI 兼容的 /v1/embeddings。
+    ///
+    /// 存在的理由是**让整条检索链路在没有真实 embedding key 时也能端到端跑通并被验收**：
+    /// 解析模型 → 网关 → HTTP → 解析响应 → 存向量 → 检索，一步不少走真路径。
+    /// 接了真实供应商之后，这里一行都不用改，换的只是平台配置。
+    ///
+    /// 向量怎么造：字符 bigram 哈希到固定维度 + L2 归一化。它不是语义向量，但满足两个
+    /// 让检索测试有意义的性质——**同文本恒等**（可复现）、**共享子串越多越接近**
+    /// （所以"暗号命中"和"跨库隔离"这类断言是真的在考检索，而不是在考随机数）。
+    /// </summary>
+    [HttpPost("v1/embeddings")]
+    [RequestSizeLimit(StubEmbeddingBodyLimitBytes)]
+    public IActionResult Embeddings([FromBody] StubEmbeddingRequest request)
+    {
+        var model = (request?.Model ?? "stub-embedding").Trim();
+        // 非法元素（空串 / 非字符串）整体拒绝，不过滤——过滤会让后续元素前移一位，
+        // 按 index 归位的客户端就会把向量安到错误的原文上。理由见 TryReadInputs。
+        if (request == null || !request.TryReadInputs(out var inputs))
+            return BadRequest(new { error = new { message = "input 必须是非空字符串或非空字符串数组", type = "invalid_request_error" } });
+        if (inputs.Count == 0)
+            return BadRequest(new { error = new { message = "input 不能为空", type = "invalid_request_error" } });
+
+        // 这条路由在生产是**公开代理、且没有鉴权**的（整个 Stub 控制器都是）。
+        // 一次 POST 里塞一个装着几万条短字符串的紧凑数组，请求体本身可能只有几 MB，
+        // 却会在这里放大成「每条一个 256 维向量 + 各自序列化」——几百 MB 级的分配，
+        // 按请求数计的限流拦不住这种「单次放大」。所以在造向量**之前**先按条数与总字符卡住。
+        if (inputs.Count > MaxStubEmbeddingInputs)
+            return BadRequest(new { error = new { message = $"input 最多 {MaxStubEmbeddingInputs} 条", type = "invalid_request_error" } });
+
+        var totalChars = 0L;
+        foreach (var t in inputs)
+        {
+            totalChars += t?.Length ?? 0;
+            if (totalChars > MaxStubEmbeddingTotalChars)
+                return BadRequest(new { error = new { message = $"input 总字符数最多 {MaxStubEmbeddingTotalChars}", type = "invalid_request_error" } });
+        }
+
+        var dim = StubEmbeddingDimension;
+        var data = new List<object>(inputs.Count);
+        for (var i = 0; i < inputs.Count; i++)
+        {
+            data.Add(new
+            {
+                @object = "embedding",
+                index = i,                      // 显式给 index：调用方按 index 归位
+                embedding = BuildDeterministicVector(inputs[i], dim),
+            });
+        }
+
+        return Ok(new
+        {
+            @object = "list",
+            model,
+            data,
+            usage = new { prompt_tokens = inputs.Sum(t => t.Length), total_tokens = inputs.Sum(t => t.Length) },
+        });
+    }
+
+    /// <summary>Stub 向量化的请求体字节上限。远小于全局上限，卡在模型绑定之前。</summary>
+    private const long StubEmbeddingBodyLimitBytes = 512 * 1024;
+
+    /// <summary>单次最多几条输入。与真实供应商的批量上限同量级，够自测用。</summary>
+    private const int MaxStubEmbeddingInputs = 256;
+
+    /// <summary>单次输入总字符上限。防「条数不多但每条极长」绕过条数闸。</summary>
+    private const int MaxStubEmbeddingTotalChars = 200_000;
+
+    /// <summary>Stub 向量维度。取 256：够区分，又不至于让测试数据体积失控。</summary>
+    private const int StubEmbeddingDimension = 256;
+
+    internal static float[] BuildDeterministicVector(string text, int dim)
+    {
+        var vec = new float[dim];
+        var s = (text ?? string.Empty).Trim();
+        if (s.Length == 0) { vec[0] = 1f; return vec; }
+
+        // 字符 bigram（中文没有空格分词，bigram 是最省事又有效的粒度）
+        for (var i = 0; i < s.Length; i++)
+        {
+            var gram = i + 1 < s.Length ? s.Substring(i, 2) : s.Substring(i, 1);
+            var h = StableHash(gram);
+            vec[(int)(h % (uint)dim)] += 1f;
+        }
+
+        // L2 归一化，让余弦相似度等价于点积，且不受文本长度影响
+        var norm = MathF.Sqrt(vec.Sum(v => v * v));
+        if (norm > 0)
+            for (var i = 0; i < dim; i++) vec[i] /= norm;
+        return vec;
+    }
+
+    /// <summary>
+    /// FNV-1a。刻意不用 string.GetHashCode()——它按进程随机化种子，
+    /// 同一段文本在两次部署里会哈到不同槽位，向量就不可复现了，
+    /// 而"同文本恒等"正是这个 stub 唯一要保证的性质。
+    /// </summary>
+    private static uint StableHash(string s)
+    {
+        unchecked
+        {
+            var hash = 2166136261u;
+            foreach (var c in s)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+            return hash;
         }
     }
 
@@ -968,6 +1094,49 @@ public sealed class StubChatMessage
 {
     public string Role { get; set; } = "user";
     public JsonElement Content { get; set; }
+}
+
+/// <summary>
+/// OpenAI 的 /embeddings 里 input 既可以是字符串也可以是字符串数组，
+/// 所以按 JsonElement 收，再自己摊平——直接声明成 string[] 会让单条调用 400。
+/// </summary>
+public sealed class StubEmbeddingRequest
+{
+    public string? Model { get; set; }
+    public JsonElement Input { get; set; }
+
+    /// <summary>
+    /// 摊平 input。**不过滤、不跳过**：数组里有空串或非字符串元素时整体判非法，
+    /// 由调用方回 400。
+    ///
+    /// 过滤会让后面的元素**整体前移一位**——`["a", "", "c"]` 过滤后 "c" 拿到 index 1，
+    /// 而它在调用方眼里是 index 2。任何按 index 归位的 OpenAI 兼容客户端都会把向量
+    /// 安到错误的原文上，且全程不报错。这正是 EmbeddingService 那边「空白输入整批拒绝、
+    /// 不做过滤」的同一条理由，stub 必须保持同样的语义，否则用它跑出来的端到端自测
+    /// 会掩盖真实供应商上同样的错位。
+    /// </summary>
+    public bool TryReadInputs(out List<string> inputs)
+    {
+        inputs = new List<string>();
+        if (Input.ValueKind == JsonValueKind.String)
+        {
+            var s = Input.GetString();
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            inputs.Add(s!);
+            return true;
+        }
+
+        if (Input.ValueKind != JsonValueKind.Array) return false;
+
+        foreach (var item in Input.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String) return false;
+            var s = item.GetString();
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            inputs.Add(s!);
+        }
+        return true;
+    }
 }
 
 public sealed class StubImageGenRequest

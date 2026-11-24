@@ -1,3 +1,5 @@
+import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-plan.js';
+import { projectResourceNamespace } from '../services/preview-slug.js';
 /**
  * Pending imports — Agent-submitted CDS compose YAML awaiting operator approval.
  *
@@ -29,10 +31,13 @@
  */
 
 import { Router } from 'express';
+import yaml from 'js-yaml';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
+import { lintComposeYaml } from '../services/topology-lint.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
@@ -238,6 +243,9 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       }
     } catch { /* parser already succeeded once above */ }
 
+    // 拓扑体检（plan.cds.service-relations 第一批）：提交时算好挂在记录上，审批页直接展示；
+    // error 级在审批时阻断（见 approve），提交本身不拒，让 Agent 能看到完整发现清单再改。
+    const lint = lintComposeYaml(composeYaml);
     const item: PendingImport = {
       id: newId(),
       projectId: project.id,
@@ -247,6 +255,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       summary,
       submittedAt: new Date().toISOString(),
       status: 'pending',
+      ...(lint ? { lint } : {}),
     };
     stateService.addPendingImport(item);
 
@@ -341,6 +350,50 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       return;
     }
 
+    // Partial profile imports must retain the complete project source. Opt in
+    // explicitly and compare the source version before any state mutation.
+    let composeSource = item.composeYaml;
+    if (req.body?.mergeSource === true) {
+      if (!project.composeYaml || req.body.expectedComposeVersion !== (project.composeVersion ?? 0)) {
+        res.status(409).json({ error: 'compose_source_version_conflict', message: '项目完整配置已变化或尚未保存，请重新读取后审查导入' });
+        return;
+      }
+      try {
+        const base = yaml.load(project.composeYaml) as Record<string, any>;
+        const patch = yaml.load(item.composeYaml) as Record<string, any>;
+        if (!base?.services || !patch?.services
+            || Object.keys(patch).some(key => !['services', 'x-cds-deploy-modes'].includes(key))
+            || Object.keys(patch.services).some(key => !Object.hasOwn(base.services, key))
+            || Object.keys(patch['x-cds-deploy-modes'] || {}).some(key => !Object.hasOwn(patch.services, key))) {
+          throw new Error('部分导入只允许更新完整配置中已有服务及其部署模式');
+        }
+        const modes = { ...base['x-cds-deploy-modes'] };
+        for (const [key, value] of Object.entries(patch['x-cds-deploy-modes'] || {})) {
+          modes[key] = { ...modes[key], ...(value as object) };
+        }
+        composeSource = yaml.dump({ ...base, services: { ...base.services, ...patch.services },
+          'x-cds-deploy-modes': modes }, { lineWidth: -1, noRefs: true });
+        const mergedLint = lintComposeYaml(composeSource);
+        if (!parseCdsCompose(composeSource) || (mergedLint && mergedLint.summary.errors > 0)) {
+          throw new Error('合并后的完整配置未通过解析或拓扑校验');
+        }
+      } catch {
+        res.status(409).json({ error: 'compose_source_merge_refused', message: '部分配置无法安全合并，请仅提交已有服务及其部署模式，并检查完整配置拓扑' });
+        return;
+      }
+    }
+
+    // 体检 error 级阻断导入（已拍板：前缀冲突、探活前缀没有合法场景）。操作员可显式 force 放行。
+    const lint = lintComposeYaml(item.composeYaml);
+    const force = (req.body as { force?: boolean } | undefined)?.force === true;
+    if (lint && lint.summary.errors > 0 && !force) {
+      res.status(409).json({
+        error: 'topology_lint_blocked',
+        message: `拓扑体检有 ${lint.summary.errors} 个错误级问题，先按修法改 compose 再导入；确认要放行可带 force: true`,
+        lint,
+      });
+      return;
+    }
     const parsed = parseCdsCompose(item.composeYaml);
     if (!parsed) {
       res.status(400).json({
@@ -353,14 +406,21 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // Apply build profiles. Non-legacy projects auto-suffix the id with
     // the project slug so two projects can share "api" and "admin"
     // without colliding. This matches the /quickstart convention.
-    const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
+    const idSuffix = project.legacyFlag ? '' : `-${projectResourceNamespace(project)}`;
+    // depends_on / cds.calls 写的是 compose 服务名；id 加了项目后缀后由同一个助手对齐（与克隆导入、
+    // Quickstart 同一份规则），否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离。
+    const approvedIds = new Set(parsed.buildProfiles.map(profile => `${profile.id}${idSuffix}`));
+    const profileSource = req.body?.mergeSource === true ? parseCdsCompose(composeSource)! : parsed;
+    const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
+      (profileSource.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
+      idSuffix,
+    ).filter(profile => approvedIds.has(profile.id));
+    try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));}
+    catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
+    try { stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     const appliedProfiles: string[] = [];
-    for (const profile of parsed.buildProfiles as BuildProfile[]) {
-      const scoped: BuildProfile = {
-        ...profile,
-        id: `${profile.id}${idSuffix}`,
-        projectId: project.id,
-      };
+    for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
         stateService.updateBuildProfile(scoped.id, scoped);
@@ -383,6 +443,8 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // Phase 8 — env metadata + defaultEnv 同步落库(同上 projects.ts /clone 路径逻辑)
     if (parsed.envMeta && Object.keys(parsed.envMeta).length > 0) {
       stateService.setEnvMeta(project.id, parsed.envMeta);
+      // 导入即补齐内部密钥，面板上立刻能看到「已由 CDS 生成」，不必等第一次部署。
+      stateService.ensureGeneratedEnvKeys(project.id);
     }
     if (Object.keys(parsed.envVars || {}).length > 0) {
       stateService.setDefaultEnv(project.id, parsed.envVars || {});
@@ -402,7 +464,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       // "mongodb" without colliding on `cds-infra-mongodb`.
       const containerName = project.legacyFlag
         ? `cds-infra-${def.id}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${def.id}`;
+        : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${def.id}`;
       const service: InfraService = {
         id: def.id,
         projectId: project.id,
@@ -433,7 +495,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // 配置、也无从检测漂移。现在 approve 即固化。
     const composeVersion = stateService.setProjectCompose(
       project.id,
-      item.composeYaml,
+      composeSource,
       'import-approved',
     );
 
@@ -465,6 +527,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
 
     res.json({
       applied: true,
+      composeVersion,
       appliedProfiles,
       appliedInfra,
       appliedEnvKeys,

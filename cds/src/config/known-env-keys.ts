@@ -35,7 +35,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   // ── auth ──
   { key: 'CDS_USERNAME', description: 'Dashboard 登录用户名', isSecret: false, group: 'auth' },
   { key: 'CDS_PASSWORD', description: 'Dashboard 登录密码', isSecret: true, group: 'auth' },
-  { key: 'CDS_AUTH_MODE', description: '认证模式（password / oauth-only）', isSecret: false, group: 'auth' },
+  { key: 'CDS_AUTH_MODE', description: '认证模式（disabled / basic / github）', isSecret: false, group: 'auth' },
   { key: 'CDS_SSO_ENABLED', description: '允许通用票据 SSO 登录', isSecret: false, group: 'auth' },
   { key: 'CDS_SSO_PROVIDER_ID', description: 'SSO 提供方稳定标识', isSecret: false, group: 'auth' },
   { key: 'CDS_SSO_LABEL', description: 'SSO 登录按钮名称', isSecret: false, group: 'auth' },
@@ -80,6 +80,10 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_MONGO_CONTAINER', description: 'MongoDB 容器名（exec_cds.sh 启动前置使用）', isSecret: false, group: 'storage' },
   { key: 'CDS_REPOS_BASE', description: '多项目 git clone 根目录（每项目一个子目录）', isSecret: false, group: 'storage' },
   { key: 'CDS_DOCKER_HOST', description: 'Docker daemon 主机地址（默认本地 socket）', isSecret: false, group: 'storage' },
+  { key: 'CDS_INFRA_PUBLISH_HOST', description: '基础设施端口的私网或回环绑定地址（逗号分隔；全网卡地址会被拒绝）', isSecret: false, group: 'storage' },
+  { key: 'CDS_BACKUP_DIR', description: '基础设施备份落盘目录', isSecret: false, group: 'storage' },
+  { key: 'CDS_EXTERNAL_PORT_AUDIT_BASE_URL', description: '宿主公网端口外部扫描服务基址', isSecret: false, group: 'misc' },
+  { key: 'CDS_EXTERNAL_PORT_AUDIT_INTERVAL_HOURS', description: '宿主公网端口双栈扫描间隔小时数', isSecret: false, group: 'misc' },
 
   // ── domain / routing ──
   { key: 'CDS_ROOT_DOMAINS', legacyAliases: ['ROOT_DOMAINS'], description: '根域名列表（逗号分隔）', isSecret: false, group: 'domain' },
@@ -94,6 +98,9 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_DIRECT_PROXY_IMMUTABLE_PATHS', description: '直连生产静态不可变资源路径（逗号分隔，如 /_next/static/；未配置则不额外改缓存）', isSecret: false, group: 'domain' },
   { key: 'CDS_SWITCH_DOMAIN', legacyAliases: ['SWITCH_DOMAIN'], description: '流量切换域名', isSecret: false, group: 'domain' },
   { key: 'CDS_PUBLIC_BASE_URL', description: '公网访问基础 URL（GitHub check-run details_url 用）', isSecret: false, group: 'domain' },
+  { key: 'CDS_DASHBOARD_API_MODE', description: 'same-origin 固定使用本实例 API；未设置时保留主控直通', isSecret: false, group: 'domain' },
+  { key: 'CDS_PUBLIC_PREVIEW_DISCOVERY', description: '未知预览域名页面是否展示运行中的分支与预览地址（公网实例建议关闭）', isSecret: false, group: 'domain' },
+  { key: 'CDS_PUBLIC_HEALTH_DETAILS', description: '公网 /healthz 是否返回完整宿主与控制面诊断（公网实例建议关闭）', isSecret: false, group: 'domain' },
 
   // ── github ──
   { key: 'CDS_GITHUB_CLIENT_ID', description: 'CDS Dashboard 登录用 GitHub OAuth App ID', isSecret: false, group: 'github' },
@@ -105,7 +112,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_GITHUB_APP_SLUG', description: 'CDS GitHub App slug（仅展示）', isSecret: false, group: 'github' },
 
   // ── misc ──
-  { key: 'CDS_ENV_FILE', description: '.cds.env 文件路径覆盖', isSecret: false, group: 'misc' },
+  { key: 'CDS_ENV_FILE', description: '仅限进程启动时覆盖 .cds.env 路径，不得写入 .cds.env', isSecret: false, group: 'misc' },
   { key: 'CDS_SMOKE_SCRIPT_DIR', description: '冒烟测试脚本目录（默认 ./scripts）', isSecret: false, group: 'misc' },
   { key: 'CDS_CONFIG', description: '配置文件路径覆盖（默认 cds.config.json）', isSecret: false, group: 'misc' },
   { key: 'CDS_BUG_REPORT_MAP_BASE_URL', description: '快捷提缺陷的 MAP 服务基址（推荐改由 CDS 系统设置托管）', isSecret: false, group: 'misc' },
@@ -114,6 +121,8 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_HOST', description: '运行时自动注入容器的 host 占位（无需手填）', isSecret: false, group: 'misc' },
   { key: 'CDS_MAX_CONCURRENT_BUILDS', description: '全局构建并发上限（默认 3）；超出时分支构建排队，避免多构建同时把宿主 CPU 吃满', isSecret: false, group: 'misc' },
   { key: 'CDS_BUILD_NICE', description: '源码 build/install 命令的 nice 优先级（默认 10，1-19，0/off 关闭）；让编译不饿死同机预览，非 docker 资源硬限', isSecret: false, group: 'misc' },
+  { key: 'CDS_BUILD_LOAD_FACTOR', description: '构建准入的宿主过载系数（默认 1.2）：load1 超过核数 x 系数时新构建只在没有构建在跑时放行，其余排队等负载回落；0/off 关闭，退回纯并发上限', isSecret: false, group: 'misc' },
+  { key: 'CDS_WORKLOAD_CGROUP_PARENT', description: '托管容器（分支 app / 共享 infra / 构建 job）挂到的 cgroup 父节点，默认 system-cdsworkloads.slice（低权重，让 CDS 控制面争抢时先拿 CPU/IO；不是容器上限）；0/off 关闭。docker 需为 systemd cgroup driver 权重才生效', isSecret: false, group: 'misc' },
 ];
 
 export type EnvClassification = 'cds-canonical' | 'cds-legacy' | 'unknown';

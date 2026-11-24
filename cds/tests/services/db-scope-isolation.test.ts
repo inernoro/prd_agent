@@ -167,3 +167,89 @@ describe('previewPerBranchDbDiff(给 SSE 摘要用)', () => {
     expect(previewPerBranchDbDiff(env, 'per-branch', 'main')).toEqual([]);
   });
 });
+
+/**
+ * 收敛 2（2026-09-03）：分支独立库接入连接串改写。
+ *
+ * 此前 per-branch 只给库名变量加后缀，应用真正读的连接串（DATABASE_URL / SPRING_DATASOURCE_URL /
+ * mongodb://…）里写死的库名原样不动——分支独立库对这类项目是假的。规则：
+ *   - 连接串库名段等于某个**被改写**的库名变量原值 → 跟着改（同一个库，同一个后缀）；
+ *   - 服务里根本没有库名变量、只有硬编码连接串 → 连接串库名段直接加后缀；
+ *   - 库名段是模板 `${CDS_POSTGRES_DB}` → 不动（模板展开后自然跟随）；
+ *   - 库名段对不上任何库名变量（指向别的库）→ 不动，但 explain 报「连接串未跟随」让用户看见；
+ *   - 框架家族变量按项目约定不加后缀，其连接串同样不动（保持一致）；
+ *   - redis:// 之类不是数据库连接串的不碰；幂等。
+ */
+import { explainPerBranchDbIsolation } from '../../src/services/db-scope-isolation.js';
+
+describe('applyPerBranchDbIsolation — 连接串跟随（收敛 2）', () => {
+  it('库名变量 + 同库连接串：变量与连接串一起加后缀，保留凭据/端口/查询串', () => {
+    const out = applyPerBranchDbIsolation({
+      CDS_MYSQL_DATABASE: 'app',
+      DATABASE_URL: 'mysql://u:p%40w@mysql:3306/app?charset=utf8',
+    }, 'per-branch', 'feat/x');
+    expect(out.CDS_MYSQL_DATABASE).toBe('app_feat_x');
+    expect(out.DATABASE_URL).toBe('mysql://u:p%40w@mysql:3306/app_feat_x?charset=utf8');
+  });
+
+  it('只有硬编码 JDBC 串、没有库名变量的服务：串里的库名段直接加后缀', () => {
+    const out = applyPerBranchDbIsolation({
+      SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/imp?useSSL=false&serverTimezone=UTC',
+      SPRING_DATASOURCE_USERNAME: 'imp',
+    }, 'per-branch', 'feat/x');
+    expect(out.SPRING_DATASOURCE_URL).toBe('jdbc:mysql://mysql:3306/imp_feat_x?useSSL=false&serverTimezone=UTC');
+    expect(out.SPRING_DATASOURCE_USERNAME).toBe('imp');
+  });
+
+  it('模板库名段不动（展开后自然跟随）；指向别的库的连接串不动；redis 不碰', () => {
+    const env = {
+      CDS_POSTGRES_DB: 'shop',
+      DATABASE_URL: 'postgres://db:5432/${CDS_POSTGRES_DB}',
+      REPORTING_URL: 'postgres://db:5432/reporting',
+      REDIS_URL: 'redis://redis:6379/0',
+    };
+    const out = applyPerBranchDbIsolation(env, 'per-branch', 'feat/x');
+    expect(out.CDS_POSTGRES_DB).toBe('shop_feat_x');
+    expect(out.DATABASE_URL).toBe('postgres://db:5432/${CDS_POSTGRES_DB}');
+    expect(out.REPORTING_URL).toBe('postgres://db:5432/reporting');
+    expect(out.REDIS_URL).toBe('redis://redis:6379/0');
+  });
+
+  it('框架家族变量按约定不加后缀，其 mongodb 连接串同样不动', () => {
+    const env = { MongoDB__DatabaseName: 'prdagent', MongoDB__ConnectionString: 'mongodb://mongo:27017/prdagent?authSource=admin' };
+    expect(applyPerBranchDbIsolation(env, 'per-branch', 'feat/x')).toEqual(env);
+  });
+
+  it('幂等：连接串库名段已带后缀不重复加', () => {
+    const env = { CDS_MYSQL_DATABASE: 'app_feat_x', DATABASE_URL: 'mysql://mysql:3306/app_feat_x' };
+    expect(applyPerBranchDbIsolation(env, 'per-branch', 'feat/x')).toEqual(env);
+  });
+
+  it('shared 仍是 noop', () => {
+    const env = { SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/imp' };
+    expect(applyPerBranchDbIsolation(env, 'shared', 'feat/x')).toBe(env);
+  });
+});
+
+describe('explainPerBranchDbIsolation — 每个变量发生了什么，给配置检查器标「连接串已跟随 / 未跟随」', () => {
+  it('分别报出：库名加后缀、连接串已跟随、连接串未跟随（指向别的库）、模板跟随、框架变量按约定不动', () => {
+    const rows = explainPerBranchDbIsolation({
+      CDS_MYSQL_DATABASE: 'app',
+      DATABASE_URL: 'mysql://mysql:3306/app',
+      REPORTING_URL: 'mysql://mysql:3306/reporting',
+      TPL_URL: 'mysql://mysql:3306/${CDS_MYSQL_DATABASE}',
+      MongoDB__DatabaseName: 'legacy',
+    }, 'per-branch', 'feat/x');
+    const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+    expect(byKey.CDS_MYSQL_DATABASE).toMatchObject({ kind: 'db-name-suffix', from: 'app', to: 'app_feat_x' });
+    expect(byKey.DATABASE_URL).toMatchObject({ kind: 'url-followed', to: 'mysql://mysql:3306/app_feat_x' });
+    expect(byKey.REPORTING_URL.kind).toBe('url-unfollowed');
+    expect(byKey.REPORTING_URL.reason).toContain('reporting');
+    expect(byKey.TPL_URL.kind).toBe('url-template');
+    expect(byKey.MongoDB__DatabaseName.kind).toBe('db-name-kept');
+  });
+
+  it('shared → 空', () => {
+    expect(explainPerBranchDbIsolation({ CDS_MYSQL_DATABASE: 'app' }, 'shared', 'feat/x')).toEqual([]);
+  });
+});

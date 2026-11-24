@@ -2,6 +2,7 @@ using System.Text.Json;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 

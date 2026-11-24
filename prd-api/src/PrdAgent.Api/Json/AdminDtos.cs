@@ -233,6 +233,7 @@ public class InitializeUsersResponse
 {
     public long DeletedCount { get; set; }
     public string AdminUserId { get; set; } = string.Empty;
+    public string AdminUsername { get; set; } = string.Empty;
     public List<string> BotUserIds { get; set; } = new();
 }
 
@@ -298,6 +299,45 @@ public class AssetStorageReadinessResponse
     public long ProbeBytes { get; set; }
     public DateTime CheckedAt { get; set; }
     public long DurationMs { get; set; }
+}
+
+/// <summary>
+/// 应用业务依赖就绪检查响应。错误仅暴露稳定错误码，不返回连接信息或底层异常。
+/// </summary>
+public class ApplicationReadinessResponse
+{
+    public string Status { get; set; } = string.Empty;
+    public string? ErrorCode { get; set; }
+    public string Provider { get; set; } = string.Empty;
+    public string? ExpectedProvider { get; set; }
+    public bool WriteVerified { get; set; }
+    public bool InternalReadVerified { get; set; }
+    public bool PublicReadVerified { get; set; }
+    public bool CleanupVerified { get; set; }
+    public long ProbeBytes { get; set; }
+    public List<ApplicationReadinessComponent> Components { get; set; } = [];
+
+    /// <summary>
+    /// 启动巡检确认不存在的关键人工索引（集合.索引名）。只读附加信息，不影响 Status；
+    /// 巡检还没跑完时为 null。清单见 RequiredMongoIndexCatalog。
+    /// </summary>
+    public List<string>? MissingIndexes { get; set; }
+
+    /// <summary>启动巡检列不出索引（权限不足或连不上）、结论未知的那几条。</summary>
+    public List<string>? UnverifiedIndexes { get; set; }
+
+    /// <summary>上面两项来自哪一刻的巡检；DBA 补建索引后要重启才会刷新。</summary>
+    public DateTime? IndexesCheckedAt { get; set; }
+
+    public DateTime CheckedAt { get; set; }
+    public long DurationMs { get; set; }
+}
+
+public class ApplicationReadinessComponent
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Ready { get; set; }
+    public string? ErrorCode { get; set; }
 }
 
 /// <summary>

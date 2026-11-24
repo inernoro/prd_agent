@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Production helper for the LLM Gateway cutover: make a verified chat model the
+# Production helper for the LLM Gateway: make a verified chat model the
 # first healthy candidate in the configured chat pool. Dry-run is the default;
 # execute mode takes a Mongo backup first.
 

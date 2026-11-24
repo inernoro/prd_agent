@@ -2,8 +2,8 @@
 """Read-only LLM Gateway production health preflight.
 
 This script never calls model providers. It checks the public health endpoint
-and optional auth boundaries before a costly protocol canary or release gate
-run. Its main purpose is to prove which commit is actually deployed.
+and optional auth boundaries before a costly protocol canary or a production
+release. Its main purpose is to prove which commit is actually deployed.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASE = "https://map.ebcone.net"
+DEFAULT_BASE = os.environ.get("LLMGW_PROD_BASE_URL", "").strip()
 
 
 def _normalize_commit(value: object) -> str:

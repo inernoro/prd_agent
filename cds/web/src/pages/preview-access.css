@@ -1,0 +1,57 @@
+body:has(.pv-access) .cds-agent-access-floating { display: none; }
+
+.pv-access {
+  --pv-base: hsl(var(--background));
+  --pv-card: hsl(var(--card));
+  --pv-ink: hsl(var(--foreground));
+  --pv-muted: hsl(var(--muted-foreground));
+  --pv-line: hsl(var(--hairline));
+  --pv-accent: hsl(var(--primary));
+  --pv-accent-ink: hsl(var(--primary-ink));
+  --pv-warn: hsl(var(--warn));
+  --pv-warn-bg: hsl(var(--warn-soft));
+  --pv-error: hsl(var(--destructive));
+  min-height: 100dvh;
+  background: var(--pv-base);
+  color: var(--pv-ink);
+  font-size: 14px;
+}
+.pv-access > header { height: 52px; display: flex; justify-content: space-between; align-items: center; padding-inline: min(5vw, 36px); border-bottom: 1px solid var(--pv-line); background: var(--pv-card); }
+.pv-access > header > a { display: flex; align-items: center; gap: 9px; font-weight: 650; }
+.pv-access > header > button { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--pv-line); border-radius: 7px; }
+.pv-access svg { width: 16px; height: 16px; flex: none; vertical-align: middle; }
+.pv-stage { display: grid; place-items: center; min-height: calc(100dvh - 52px); padding: 20px; }
+.pv-card { width: min(100%, 440px); padding: 20px; border: 1px solid var(--pv-line); border-radius: 12px;
+  background: var(--pv-card); display: grid; gap: 12px; overflow-wrap: anywhere; }
+.pv-card[data-inbox=true] { width: min(100%, 640px); }
+.pv-card h1 { font-size: 20px; font-weight: 650; line-height: 1.35; margin: 4px 0 0; }
+.pv-card p { line-height: 1.45; margin: 0; }
+.pv-card small { color: var(--pv-muted); }
+.pv-label { padding: 10px 12px; display: grid; gap: 3px; border: 1px solid color-mix(in srgb, var(--pv-accent) 45%, var(--pv-line)); border-radius: 8px;
+  background: repeating-linear-gradient(135deg, var(--pv-warn-bg), var(--pv-warn-bg) 9px, var(--pv-card) 9px, var(--pv-card) 18px); }
+.pv-label strong, .pv-form-note { display: flex; align-items: center; gap: 6px; color: var(--pv-warn); }
+.pv-primary, .pv-secondary { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 5px 10px;
+  border-radius: 7px; background: var(--pv-accent); color: hsl(24 36% 10%); border: 1px solid transparent; font-weight: 650; }
+.pv-primary:disabled, .pv-secondary:disabled { opacity: .55; cursor: not-allowed; }
+.pv-secondary { background: var(--pv-card); color: var(--pv-ink); border-color: var(--pv-line); }
+.pv-why summary, .pv-link { color: var(--pv-accent-ink); text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.pv-why[open] p { padding: 7px 0 0; color: var(--pv-muted); font-size: 13px; }
+.pv-native { border-top: 1px solid var(--pv-line); padding-top: 8px; }
+.pv-native summary { cursor: pointer; color: var(--pv-muted); font-size: 13px; }
+.pv-card form { display: grid; gap: 9px; }
+.pv-native form { margin-top: 10px; }
+.pv-card form label { display: grid; gap: 4px; }
+.pv-card input, .pv-card select, .pv-card textarea { border: 1px solid var(--pv-line); border-radius: 6px; min-height: 36px; padding: 5px 8px;
+  background: var(--pv-card); color: var(--pv-ink); }
+.pv-card textarea { min-height: 65px; }
+.pv-error { color: var(--pv-error); }
+.pv-denied { background: var(--pv-warn-bg); border-radius: 8px; padding: 9px; display: flex; gap: 8px; }
+.pv-denied strong { color: var(--pv-warn); }
+.pv-denied h1, .pv-approved h1 { margin: 0 0 .125rem; font-size: 1rem; }
+.pv-denied > svg, .pv-approved > svg, .pv-status-note > svg { margin-top: .125rem; }
+.pv-approved { display: flex; gap: .5rem; padding: .625rem; border-radius: .5rem; background: hsl(var(--ok-soft)); color: hsl(var(--ok)); }
+.pv-status-note { display: flex; gap: .5rem; padding: .625rem; border-radius: .5rem; background: hsl(var(--surface-sunken)); color: var(--pv-muted); }
+.pv-inbox { list-style: none; margin: 0; padding: 0; }
+.pv-inbox li { border-block-start: 1px solid var(--pv-line); display: flex; justify-content: space-between; align-items: center; gap: 9px; padding: 9px 0; }
+.pv-inbox li > button { flex: none; }
+@media (pointer: coarse) { .pv-primary, .pv-secondary { min-height: 42px; } }

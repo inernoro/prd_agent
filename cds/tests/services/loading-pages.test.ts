@@ -1,5 +1,5 @@
 /**
- * loading-pages SSOT 契约（doc/debt.cds.md「CDS Loading Pages」 D2，2026-07-09）。
+ * loading-pages SSOT 契约（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS Loading Pages」 D2，2026-07-09）。
  *
  * 迁移纪律：页面从散落文件迁入 SSOT 时**只搬不改**——快照锁住输出，
  * 任何有意的样式调整必须显式更新快照（评审可见），杜绝「迁移顺手改样式」
@@ -7,6 +7,7 @@
  */
 
 import vm from 'node:vm';
+import { buildGemStorySvg, buildWaitingGemSvg, WAITING_GEM_CSS } from '../../src/loading-pages/gem.js';
 import { describe, expect, it } from 'vitest';
 import { buildForwarderWaitingPageHtml, buildNginxWaitingHtml } from '../../src/loading-pages/index.js';
 import { buildForwarderWaitingPageHtml as legacyExport } from '../../src/forwarder/waiting-page.js';
@@ -88,5 +89,36 @@ describe('loading-pages SSOT', () => {
     expect(html).toContain('cds-gem-story');
     expect(html).not.toContain('class="spinner"');
     expect(html).toMatchSnapshot();
+  });
+});
+
+
+describe('等待页六芒星', () => {
+  it('复用十二个品牌切面及其相位，保留六个完整星尖，不增加镂空或边光覆盖层', () => {
+    const original = buildGemStorySvg('galaxy', 40);
+    const waiting = buildWaitingGemSvg(40);
+    const points = (svg: string) => [...svg.matchAll(/points="([^"]+)"/g)].map(match => match[1]);
+    const phases = (svg: string) => [...svg.matchAll(/--gi:(\d+)/g)].map(match => Number(match[1]));
+    expect(points(waiting)).toEqual(points(original));
+    expect(points(waiting)).toHaveLength(12);
+    expect(phases(waiting)).toEqual(phases(original));
+    expect(waiting.match(/class="cds-gem-story-facet cds-waiting-gem-core"/g)).toHaveLength(6);
+    expect(waiting.match(/fill="#f8f8fb"/g)).toHaveLength(6);
+    expect(waiting).not.toContain('<mask');
+    expect(waiting).not.toContain('cds-waiting-gem-edge');
+  });
+
+  it('中央暗面使用不透明纯黑，外围沿用组装 / 呼吸 / 碎裂动作并支持减少动态效果', () => {
+    expect(WAITING_GEM_CSS).toContain('animation:cds-gem-story var(--cds-gem-dur,2.9s)');
+    expect(WAITING_GEM_CSS).toContain('animation-name:cds-waiting-core-black');
+    expect(WAITING_GEM_CSS).toContain('43%,47%{opacity:1;fill:#000000;stroke:#000000}');
+    expect(WAITING_GEM_CSS).toContain('88%{transform:scale(.5) rotate(-10deg);opacity:0}');
+    expect(WAITING_GEM_CSS).toContain('@media(prefers-reduced-motion:reduce){.cds-waiting-gem .cds-gem-story-facet{animation:none;transform:none;opacity:1}}');
+  });
+
+  it('双主题按切面着色，覆盖页面旧的单类反色规则以保留实际绘制的纯黑暗面', () => {
+    expect(WAITING_GEM_CSS).toContain('.cds-gem-story.cds-waiting-gem{display:block;filter:none}');
+    expect(WAITING_GEM_CSS).toContain('@media(prefers-color-scheme:light){.cds-waiting-gem .cds-gem-story-facet{--cds-waiting-face:var(--cds-waiting-face-light)');
+    expect(buildWaitingGemSvg(40).match(/--cds-waiting-face-light:/g)).toHaveLength(12);
   });
 });

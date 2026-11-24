@@ -1,156 +1,87 @@
-// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 localStorage（7 天 + 用后自动续期）→ 跳控制台首页。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Activity, ArrowLeft, BarChart3, Building2, KeyRound, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
+import { ArrowLeft, ArrowRight, Volume2, VolumeX } from 'lucide-react';
 import { getHealth } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
-import { Button } from '@/components/ui';
+import { ConsciousnessScene } from '@/components/entry/ConsciousnessScene';
+import { EntryAudio } from '@/components/entry/entryAudio';
+import { gatewayLoginDestination, markQuickstartArrival } from '@/components/entry/quickstartArrival';
+import './GatewayEntry.css';
 
 export { resolveMapHomeHref } from '@/lib/mapNavigation';
-
 export function LoginPage() {
   const { login, sessionExpiredReason } = useAuth();
-  // 「返回 MAP」的地址等 healthz 回来才准，订阅一下让它到达时重算。
   usePlatformMapHome();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from || '/';
-
+  const candidate = (location.state as { from?: string } | null)?.from;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const audioTransferred = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const [healthState, setHealthState] = useState<'checking' | 'ok' | 'unavailable'>('checking');
-  // 被动踢回登录页时说清原因和去向，用户不会以为自己「被莫名其妙登出」。
-  const expiredNotice = sessionExpiredReason === 'revoked'
-    ? '账号的租户成员关系或角色已变更，原登录状态已作废，请重新登录。'
-    : sessionExpiredReason === 'expired'
-      ? '登录状态已过期，请重新登录。登录后会回到你刚才的页面。'
-      : null;
-
+  const [sound, setSound] = useState(() => { try { return localStorage.getItem('llmgw-entry-sound') !== 'off'; } catch { return true; } });
+  const audio = useRef<EntryAudio | null>(null);
+  const mounted = useRef(true);
+  const pending = useRef(false);
+  useEffect(() => { void getHealth().catch(() => {}); }, []);
   useEffect(() => {
-    let active = true;
-    getHealth()
-      .then((res) => {
-        if (active) setHealthState(res.success && res.data?.status === 'ok' ? 'ok' : 'unavailable');
-      })
-      .catch(() => {
-        if (active) setHealthState('unavailable');
-      });
-    return () => {
-      active = false;
-    };
+    mounted.current = true;
+    audio.current = new EntryAudio();
+    audio.current.setEnabled(sound);
+    const silence = () => { if (document.visibilityState !== 'visible') audio.current?.stop(); };
+    document.addEventListener('visibilitychange', silence);
+    return () => { mounted.current = false; if (!audioTransferred.current) audio.current?.dispose(); document.removeEventListener('visibilitychange', silence); };
   }, []);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!username.trim() || !password) {
-      setError('请输入用户名和密码');
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    const res = await login(username.trim(), password);
-    setSubmitting(false);
-    if (res.success) {
-      navigate(from, { replace: true });
-    } else {
-      setError(res.error?.message || '登录失败，请检查账号密码');
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (pending.current || !username.trim() || !password) return;
+    pending.current = true; setBusy(true); setError(null);
+    if (sound) audio.current?.unlock();
+    try {
+      const res = await login(username.trim(), password);
+      if (!mounted.current) return;
+      if (!res.success) { setError(res.error?.message || '登录失败，请检查账号密码'); return; }
+      const from = gatewayLoginDestination(candidate, res.data?.tenant);
+      if (!res.data?.mustChangePassword && from.split(/[?#]/)[0] === '/quickstart') {
+        audioTransferred.current = markQuickstartArrival(sound ? audio.current : null);
+      }
+      navigate(res.data?.mustChangePassword ? '/change-password' : from, { replace: true });
+    } catch {
+      if (mounted.current) setError('暂时无法连接，请稍后重试');
+    } finally {
+      pending.current = false;
+      if (mounted.current) setBusy(false);
     }
   };
-
-  const healthCopy = healthState === 'ok'
-    ? 'Gateway 服务正常'
-    : healthState === 'checking'
-      ? '正在检查 Gateway 服务'
-      : '暂时无法确认服务状态';
-
-  return (
-    <main className="lg-login-page">
-      <section className="lg-login-shell" aria-labelledby="llmgw-login-title">
-        <div className="lg-login-intro">
-          <div className="lg-login-brand">
-            <span className="lg-login-brand-icon" aria-hidden="true"><Activity size={21} /></span>
-            <div>
-              <strong>LLM Gateway</strong>
-              <span>独立租户控制台</span>
-            </div>
-          </div>
-
-          <div className="lg-login-hero">
-            <div className={`lg-login-health is-${healthState}`} role="status" aria-live="polite">
-              <span className="lg-login-health-dot" />
-              {healthCopy}
-            </div>
-            <h1 id="llmgw-login-title">登录后，查看属于你的租户数据</h1>
-            <p>这里不是空白演示站。为了避免跨租户泄露，首页、请求、模型、密钥和费用只会在身份校验通过后出现。</p>
-          </div>
-
-          <div className="lg-login-capabilities" aria-label="登录后可用功能">
-            <div><Rocket size={18} /><span><strong>快速接入</strong><small>生成应用密钥，网页内直接测试四种协议</small></span></div>
-            <div><BarChart3 size={18} /><span><strong>使用与费用</strong><small>查看请求趋势、模型、用户和费用可信度</small></span></div>
-            <div><ShieldCheck size={18} /><span><strong>租户隔离</strong><small>只展示会话所属租户的配置、日志与审计</small></span></div>
-          </div>
-
-          <a href={resolveMapHomeHref()} className="lg-login-back-link">
-            <ArrowLeft size={15} />返回 MAP 首页
-          </a>
+  const toggleSound = () => {
+    const enabled = !sound; setSound(enabled); audio.current?.setEnabled(enabled);
+    try { localStorage.setItem('llmgw-entry-sound', enabled ? 'on' : 'off'); } catch { /* device preference only */ }
+    if (enabled) { audio.current?.unlock(); audio.current?.play('verified'); } else audio.current?.stop();
+  };
+  return <div className="gateway-entry cinema-login gateway-login" data-phase={busy ? 'verifying' : 'idle'} data-sound={sound ? 'on' : 'off'}>
+    <ConsciousnessScene stillLogin />
+    <main className="cinema-login-center" aria-labelledby="llmgw-login-title">
+      <div className="gateway-login-form">
+        <h1 className="cinema-form-heading" id="llmgw-login-title">登录模型网关</h1>
+        <p className="cinema-form-description">使用你的独立租户账号</p>
+        <form onSubmit={submit} aria-busy={busy}>
+          <label htmlFor="llmgw-username">用户名</label><input id="llmgw-username" autoComplete="username" placeholder="输入用户名" value={username} onChange={e => setUsername(e.target.value)} readOnly={busy} required />
+          <label htmlFor="llmgw-password">密码</label><input id="llmgw-password" type="password" autoComplete="current-password" placeholder="输入密码" value={password} onChange={e => setPassword(e.target.value)} readOnly={busy} required />
+          {error && <div className="gateway-login-message" role="alert">{error}</div>}
+          {!error && sessionExpiredReason && <div className="gateway-login-message" role="status">{sessionExpiredReason === 'revoked' ? '账号权限已变更，请重新登录。' : '登录状态已过期，请重新登录。'}</div>}
+          <button className="gateway-login-submit" type="submit" disabled={busy || !username.trim() || !password}>{busy ? '正在验证账号…' : '开始身份确认'}<ArrowRight size={15} /></button>
+        </form>
+        <details className="gateway-account-help"><summary>账号与登录帮助</summary><p>MAP 与 Gateway 账号相互独立。没有账号，请联系租户管理员；应用密钥不能登录控制台。</p></details>
+        <div className="gateway-login-actions">
+          <a className="gateway-back" href={resolveMapHomeHref()}><ArrowLeft size={14} />返回 MAP</a>
+          <button className="gateway-sound" type="button" aria-pressed={sound} onClick={toggleSound} aria-label={sound ? '关闭进入音效' : '开启进入音效'}>
+            {sound ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          </button>
         </div>
-
-        <div className="lg-login-panel">
-          <div className="lg-login-panel-heading">
-            <span>租户工作区</span>
-            <h2>登录 Gateway 控制台</h2>
-            <p>使用租户管理员为你创建的控制台账号。</p>
-          </div>
-
-          <form onSubmit={submit} className="lg-login-form">
-            <label htmlFor="llmgw-username">用户名</label>
-            <div className="lg-login-input-wrap">
-              <User size={17} aria-hidden="true" />
-              <input
-                id="llmgw-username"
-                placeholder="输入用户名"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </div>
-            <label htmlFor="llmgw-password">密码</label>
-            <div className="lg-login-input-wrap">
-              <Lock size={17} aria-hidden="true" />
-              <input
-                id="llmgw-password"
-                type="password"
-                placeholder="输入密码"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-
-            {!error && expiredNotice ? (
-              <div className="lg-login-notice" role="status">{expiredNotice}</div>
-            ) : null}
-
-            {error ? (
-              <div className="lg-login-error" role="alert">{error}</div>
-            ) : null}
-
-            <Button type="submit" variant="primary" size="md" disabled={submitting} className="lg-login-submit">
-              {submitting ? '正在验证账号…' : '进入租户工作区'}
-            </Button>
-          </form>
-
-          <div className="lg-login-account-help">
-            <strong>没有控制台账号？</strong>
-            <div><Building2 size={15} /><span>请让租户 Owner 或 Admin 在“团队与成员”中添加你。</span></div>
-            <div><KeyRound size={15} /><span><code>gwk_</code> 是应用调用密钥，不能登录控制台。</span></div>
-          </div>
-          <p className="lg-login-security-note">MAP 账号与 Gateway 账号彼此独立。新环境首位管理员首次登录后需要设置自己的密码，请勿共享他人的账号或密钥。</p>
-        </div>
-      </section>
+      </div>
+      <p className="gateway-login-service" role="status">{busy ? '正在验证账号…' : ''}</p>
     </main>
-  );
+  </div>;
 }

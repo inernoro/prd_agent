@@ -57,11 +57,15 @@ export interface ReleaseTargetChange {
 export const RELEASE_TARGET_TRACKED_PATHS: ReadonlyArray<{ path: string; label: string }> = [
   { path: 'name', label: '站点名称' },
   { path: 'isEnabled', label: '是否启用' },
+  { path: 'governance.required', label: '是否要求独立批准' },
   { path: 'lifecycle', label: '生命周期' },
   { path: 'environment', label: '环境' },
   { path: 'isCanonical', label: '是否主发布目标' },
   { path: 'strategy.mode', label: '发布模式' },
   { path: 'strategy.command', label: '发布命令' },
+  { path: 'strategy.scriptFile', label: '项目发布脚本文件' },
+  { path: 'strategy.ciWorkflowFile', label: '项目发布 CI 工作流' },
+  { path: 'strategy.script', label: 'CDS 独立脚本正文' },
   { path: 'strategy.composeFile', label: 'Compose 文件' },
   { path: 'strategy.composeProject', label: 'Compose 项目名' },
   { path: 'strategy.buildCommand', label: '构建命令' },
@@ -140,14 +144,15 @@ function rawTrackedValue(raw: unknown): string | undefined {
  * 取**原值**做单向哈希（见 rawTrackedValue）：sha256 不可逆，指纹里不残留任何明文，
  * 落库安全；而用脱敏值会让「命令换了但掩码后一样」的两个配置撞成同一个指纹。
  */
-export function releaseTargetConfigFingerprint(target: ReleaseTarget | undefined): string {
+export function releaseTargetConfigFingerprint(target: ReleaseTarget | undefined, fullDigest = false): string {
   if (!target) return '';
   const parts = RELEASE_TARGET_TRACKED_PATHS.map(({ path: dottedPath }) => {
     // 字段名与值一起进哈希，避免「A 字段清空、B 字段填上同一个值」互相抵消。
     const value = rawTrackedValue(readPath(target, dottedPath));
     return `${dottedPath}=${value ?? ''}`;
   });
-  return fingerprint(parts.join('\n'));
+  // 批准是安全边界：使用完整摘要及无歧义字段编码；既有预检/批次缓存保持原身份。
+  return fullDigest ? `ref:${crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex')}` : fingerprint(parts.join('\n'));
 }
 
 export function formatTrackedValue(raw: unknown, dottedPath: string): string | undefined {

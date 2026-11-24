@@ -10,15 +10,49 @@
  *  - 组件变了 / 判不出来 → 必须重编，不许复用（宁可慢也不能静默发旧代码）。
  */
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { ShellExecutor } from '../../src/services/shell-executor.js';
+import type { IShellExecutor } from '../../src/types.js';
 import {
   shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
-  normalizeBuildScope,
+  normalizeBuildScope, normalizeImageRevision, proveFallbackImage, latestCommitImage, componentInputComparator,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
 const SHA_C = 'c'.repeat(40);
 const REPO = 'ghcr.io/inernoro/prd_agent/prdagent-admin';
+
+describe('可信项目仓库的真实构建输入比较', () => {
+  it('固定A/B提交逐路径比较：无关改动可复用，组件变化/未知历史/缺隔离读取不可复用', async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-artifact-git-'));
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    try {
+      git('init', '--initial-branch=main');
+      fs.mkdirSync(path.join(repo, 'prd-api'));
+      fs.writeFileSync(path.join(repo, 'prd-api', 'app.txt'), 'A');
+      const commit = () => { git('add', '.'); git('-c', 'user.name=artifact-test', '-c', 'user.email=artifact@example.invalid', 'commit', '-m', '测试夹具'); return git('rev-parse', 'HEAD'); };
+      const A = commit();
+      fs.writeFileSync(path.join(repo, 'unrelated.txt'), 'B'); const B = commit();
+      fs.writeFileSync(path.join(repo, 'prd-api', 'app.txt'), 'C'); const C = commit();
+      const real = new ShellExecutor(); const commands: string[] = [];
+      const shell: IShellExecutor = { exec: real.exec.bind(real), execBackgroundObservation: async (command, options) => {
+        commands.push(command); return real.exec(command, options);
+      } };
+      const compare = componentInputComparator(shell, repo);
+      await expect(compare(A, B, ['prd-api/**'])).resolves.toBe(true);
+      await expect(compare(A, C, ['prd-api/**'])).resolves.toBe(false);
+      await expect(compare('f'.repeat(40), B, ['prd-api/**'])).resolves.toBe(false);
+      await expect(componentInputComparator(real, repo)(A, B, ['prd-api/**'])).resolves.toBe(false);
+      expect(commands).toHaveLength(3);
+      expect(commands.every(command => command.includes(`'-C' '${repo}' 'diff' '--no-ext-diff' '--quiet'`))).toBe(true);
+      expect(commands.some(command => /fetch|worktree|checkout/.test(command))).toBe(false);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  });
+});
 
 describe('镜像引用解析', () => {
   it('per-SHA tag 取得出 sha', () => {
@@ -183,5 +217,90 @@ describe('CI 构建范围（buildScope）的规整与拒绝', () => {
     expect(normalizeBuildScope([])).toBeNull();
     expect(normalizeBuildScope(['', '   '])).toBeNull();
     expect(normalizeBuildScope('prd-api/**' as unknown as string[])).toBeNull();
+  });
+});
+
+describe('浮动回退镜像的源码归属证明', () => {
+  it('OCI revision 必须是完整 commit SHA', () => {
+    expect(normalizeImageRevision(` ${SHA_A.toUpperCase()}\n`)).toBe(SHA_A);
+    expect(normalizeImageRevision('abc1234')).toBeNull();
+    expect(normalizeImageRevision('<no value>')).toBeNull();
+  });
+
+  it('revision 正好等于目标提交时直接接受', async () => {
+    const proof = await proveFallbackImage({ revision: SHA_A, targetSha: SHA_A });
+    expect(proof).toMatchObject({ accepted: true, reason: 'exact-target' });
+  });
+
+  it('旧 revision 只有在完整构建范围无差异时才接受', async () => {
+    const calls: unknown[][] = [];
+    const proof = await proveFallbackImage({
+      revision: SHA_B,
+      targetSha: SHA_A,
+      buildScope: ['prd-api/**', 'Directory.Packages.props'],
+      isComponentUnchangedSince: async (...args) => { calls.push(args); return true; },
+    });
+    expect(proof).toMatchObject({ accepted: true, reason: 'component-unchanged' });
+    expect(calls).toEqual([[SHA_B, SHA_A, ['prd-api/**', 'Directory.Packages.props']]]);
+  });
+
+  it('缺 revision、缺范围、缺比较器或组件已变化时一律拒绝', async () => {
+    await expect(proveFallbackImage({ revision: null, targetSha: SHA_A }))
+      .resolves.toMatchObject({ accepted: false, reason: 'missing-revision' });
+    await expect(proveFallbackImage({ revision: SHA_B, targetSha: SHA_A }))
+      .resolves.toMatchObject({ accepted: false, reason: 'missing-build-scope' });
+    await expect(proveFallbackImage({ revision: SHA_B, targetSha: SHA_A, buildScope: ['prd-api/**'] }))
+      .resolves.toMatchObject({ accepted: false, reason: 'missing-comparator' });
+    await expect(proveFallbackImage({
+      revision: SHA_B,
+      targetSha: SHA_A,
+      buildScope: ['prd-api/**'],
+      isComponentUnchangedSince: async () => false,
+    })).resolves.toMatchObject({ accepted: false, reason: 'component-changed-or-unverifiable' });
+  });
+
+  it('Git 比较抛错时按无法证明处理，不能静默运行旧镜像', async () => {
+    await expect(proveFallbackImage({
+      revision: SHA_B,
+      targetSha: SHA_A,
+      buildScope: ['prd-api/**'],
+      isComponentUnchangedSince: async () => { throw new Error('git history missing'); },
+    })).resolves.toMatchObject({ accepted: false, reason: 'component-changed-or-unverifiable' });
+  });
+});
+
+/**
+ * 方案甲（2026-10-08 mdimp）：CDS 记下的提交停在 09-30，部署却 pull 到当天的代码，
+ * 按旧提交找镜像扑空、回退宿主编译。部署要先试刚 pull 到的提交的镜像。
+ */
+describe('latestCommitImage', () => {
+  const locked = 'a'.repeat(40);
+  const latest = 'b'.repeat(40);
+  const image = `ghcr.io/md-imp/mdimp/mdimp-admin-api:sha-${locked}`;
+
+  it('最新提交比锁定的新：换成同仓库、最新提交的 per-SHA 镜像', () => {
+    expect(latestCommitImage(image, latest)).toBe(`ghcr.io/md-imp/mdimp/mdimp-admin-api:sha-${latest}`);
+  });
+
+  it('大写提交号按小写比较与拼接（CI 打的标签是小写）', () => {
+    expect(latestCommitImage(image, latest.toUpperCase())).toBe(`ghcr.io/md-imp/mdimp/mdimp-admin-api:sha-${latest}`);
+    expect(latestCommitImage(image, locked.toUpperCase())).toBeNull();
+  });
+
+  it('同一个提交、短提交号、空值都不额外尝试', () => {
+    expect(latestCommitImage(image, locked)).toBeNull();
+    expect(latestCommitImage(image, 'b'.repeat(7))).toBeNull();
+    expect(latestCommitImage(image, '')).toBeNull();
+    expect(latestCommitImage(image, undefined)).toBeNull();
+  });
+
+  it('目标镜像不是 per-SHA 标签（浮动标签 / 带端口的仓库）不换', () => {
+    expect(latestCommitImage('ghcr.io/acme/api:branch-main', latest)).toBeNull();
+    expect(latestCommitImage('registry.local:5000/acme/api:latest', latest)).toBeNull();
+  });
+
+  it('带端口的私有仓库也只换标签，不动仓库地址', () => {
+    expect(latestCommitImage(`registry.local:5000/acme/api:sha-${locked}`, latest))
+      .toBe(`registry.local:5000/acme/api:sha-${latest}`);
   });
 });

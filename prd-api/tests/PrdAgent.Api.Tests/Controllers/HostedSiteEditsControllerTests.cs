@@ -1,0 +1,1676 @@
+using System.Security.Claims;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using Moq;
+using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Controllers;
+
+public sealed class HostedSiteEditsControllerTests
+{
+    [Theory]
+    [InlineData("model")]
+    [InlineData("MODELBASEURL")]
+    [InlineData("baseUrl")]
+    [InlineData("apiKey")]
+    [InlineData("modelApiKey")]
+    [InlineData("modelPoolId")]
+    [InlineData("modelPolicy")]
+    [InlineData("auditOwner")]
+    [InlineData("appCallerCode")]
+    [InlineData("sourceSystem")]
+    [InlineData("authority")]
+    public async Task CreateRun_ShouldRejectClientRuntimeAuthorityOverrides(string field)
+    {
+        var request = JsonSerializer.Deserialize<CreateHostedSiteEditRunRequest>(
+            $$"""{"instruction":"调整版式","runtime":"open-design","{{field}}":"attacker-value"}""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(request);
+
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var providers = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", request);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(
+            badRequest.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            DesignArtifactRequestAuthorityGuard.ErrorCode,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        sites.VerifyNoOtherCalls();
+        providers.VerifyNoOtherCalls();
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void GenerateRequest_ShouldCaptureProtectedRuntimeAuthorityOverrides()
+    {
+        var request = JsonSerializer.Deserialize<CreateDesignArtifactRunRequest>(
+            """{"artifactType":"web-page","instruction":"生成网页","model":"attacker-model","baseUrl":"https://attacker.invalid/v1","auditOwner":"attacker"}""",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(request);
+        Assert.Equal(
+            ["auditOwner", "baseUrl", "model"],
+            DesignArtifactRequestAuthorityGuard.FindProtectedOverrides(request.AdditionalProperties?.Keys));
+    }
+
+    [Fact]
+    public async Task CreateRun_LegacyMapGatewayRequestShouldUseOpenDesignForMultiFileSite()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>", fileCount: 2));
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化"));
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.MapGateway,
+        });
+
+        Assert.IsType<ConflictObjectResult>(result);
+        providers.VerifyAll();
+        knowledge.VerifyAll();
+        queue.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
+    /// 2026-09-23 用户：「只接受单个 HTML 文件、不能带脚本的网页，这肯定是有问题的」。
+    /// OpenDesign 拿到整站文件、产物按整包校验放行包内脚本，入口不该再按直连的规则拦它。
+    /// 判据：请求越过了单文件/无脚本闸门、走到了知识解析这一步（这里让知识解析返回冲突以便在入库前停下）。
+    /// </summary>
+    [Theory]
+    [InlineData("<!doctype html><html><body>safe</body></html>", 2)]
+    [InlineData("<!doctype html><html><body><script>document.title='交互'</script></body></html>", 1)]
+    public async Task CreateRun_OpenDesignShouldAcceptMultiFileOrScriptedSites(string html, int fileCount)
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(html, fileCount: fileCount));
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化"));
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+        });
+
+        Assert.IsType<ConflictObjectResult>(result);
+        knowledge.VerifyAll();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public void ValidateEditInputCompatibility_ShouldAllowMarkdownWrapperWithSourceAsset()
+    {
+        var editable = BuildEditableEntry(
+            "<!doctype html><html><body><h1>原始标题</h1></body></html>",
+            fileCount: 2,
+            wrappedAssetType: "markdown");
+
+        var normalized = HostedSiteEditsController.ValidateEditInputCompatibility(editable);
+
+        Assert.Contains("原始标题", normalized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateRun_LegacyMapGatewayRequestShouldUseOpenDesignForScriptedSite()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(
+                "<!doctype html><html><body><script>fetch('https://evil.example')</script></body></html>"));
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化"));
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.MapGateway,
+        });
+
+        Assert.IsType<ConflictObjectResult>(result);
+        providers.VerifyAll();
+        knowledge.VerifyAll();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CreateRun_ShouldReturnConflictForStaleKnowledgeBeforePersistingOrQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化，请刷新来源后重试"));
+        var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            knowledge.Object,
+            queue.Object,
+            events: events.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            KnowledgeReferences =
+            [
+                new HostedSiteKnowledgeReference
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    ContentHash = new string('a', 64),
+                },
+            ],
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(conflict.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            DesignKnowledgeSnapshotResolver.ContentChangedCode,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        queue.VerifyNoOtherCalls();
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GenerateRun_ShouldReturnConflictForStaleKnowledgeBeforePersistingOrQueueing()
+    {
+        var providers = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        providers.Setup(service => service.FindAsync(
+                "owner-user",
+                DesignArtifactRuntimes.OpenDesign,
+                CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.OpenDesign,
+                "OpenDesign",
+                DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent,
+                DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.WebPage],
+                [DesignArtifactOperations.Generate],
+                [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase],
+                Configured: true,
+                Healthy: true,
+                Enabled: true,
+                Reason: null));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化，请刷新来源后重试"));
+        var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = new DesignArtifactsController(
+            NewLazyDb(),
+            events.Object,
+            queue.Object,
+            providers.Object,
+            knowledge.Object,
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_hash_unit_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.CreateRun(new CreateDesignArtifactRunRequest
+        {
+            ArtifactType = DesignArtifactTypes.WebPage,
+            SourceSurface = DesignArtifactSourceSurfaces.KnowledgeBase,
+            Runtime = DesignArtifactRuntimes.MapGateway,
+            Instruction = "生成产品说明网页",
+            KnowledgeReferences =
+            [
+                new DesignKnowledgeReferenceRequest
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    ContentHash = new string('a', 64),
+                },
+            ],
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(conflict.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            DesignKnowledgeSnapshotResolver.ContentChangedCode,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        queue.VerifyNoOtherCalls();
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GenerateRun_OpenDesignUnavailableShouldFailWithoutFallingBackOrQueueing()
+    {
+        var providers = DisabledOpenDesignProvider(DesignArtifactOperations.Generate);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = new DesignArtifactsController(
+            NewLazyDb(),
+            events.Object,
+            queue.Object,
+            providers.Object,
+            knowledge.Object,
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_unavailable_unit_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.CreateRun(new CreateDesignArtifactRunRequest
+        {
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Runtime = DesignArtifactRuntimes.MapGateway,
+            Instruction = "生成产品说明网页",
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal("RUNTIME_NOT_READY", ResponseErrorCode(conflict));
+        providers.VerifyAll();
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task EditRun_OpenDesignUnavailableShouldFailWithoutFallingBackOrQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var providers = DisabledOpenDesignProvider(DesignArtifactOperations.Edit);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.MapGateway,
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal("RUNTIME_NOT_READY", ResponseErrorCode(conflict));
+        providers.VerifyAll();
+        sites.VerifyNoOtherCalls();
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task KnowledgePreflight_ShouldReturnHashMetadataWithoutAuthoritativeContent()
+    {
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(
+            [
+                new DesignKnowledgeSnapshot
+                {
+                    EntryId = "entry-a",
+                    StoreId = "store-a",
+                    StoreName = "测试知识库",
+                    Title = "测试条目",
+                    Content = "不得返回的权威正文",
+                    ContentHash = new string('a', 64),
+                },
+            ]);
+        var controller = new DesignArtifactsController(
+            NewLazyDb(),
+            Mock.Of<IRunEventStore>(),
+            Mock.Of<IRunQueue>(),
+            Mock.Of<IDesignArtifactProviderCatalog>(),
+            knowledge.Object,
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_preflight_unit_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.ResolveKnowledgeReferences(new ResolveDesignKnowledgeReferencesRequest
+        {
+            KnowledgeReferences =
+            [
+                new DesignKnowledgeReferenceRequest { EntryId = "entry-a", StoreId = "store-a" },
+            ],
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var item = payload.GetProperty("data").GetProperty("items")[0];
+        Assert.Equal(new string('a', 64), item.GetProperty("contentHash").GetString());
+        Assert.False(item.TryGetProperty("content", out _));
+        Assert.DoesNotContain("不得返回的权威正文", payload.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateRun_ShouldRejectSerializedRemotePackageOverOneMegabyteBeforeQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(
+                $"<!doctype html><html><body>{new string('a', 800_000)}</body></html>"));
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(
+                Array.Empty<DesignKnowledgeSnapshot>(),
+                new DesignKnowledgeOriginalSnapshot()));
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.Codex,
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("打包后超过远程工作区 1MB 上限", ResponseMessage(badRequest), StringComparison.Ordinal);
+        queue.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task GetRun_ShouldRequireMatchingOwnerAndSite()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = new DesignArtifactRun
+        {
+            UserId = "owner-user",
+            TargetSiteId = "site-a",
+            Operation = DesignArtifactOperations.Edit,
+            Status = RunStatuses.Running,
+            Progress = 42,
+            CreatedAt = new DateTime(2026, 11, 5, 1, 0, 0, DateTimeKind.Utc),
+            Phase = "正在生成修改草稿",
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var ownerResult = await BuildController(fixture.Db, "owner-user").GetRun("site-a", run.Id);
+        var ok = Assert.IsType<OkObjectResult>(ownerResult);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(run.Id, payload.GetProperty("data").GetProperty("runId").GetString());
+        Assert.Equal(42, payload.GetProperty("data").GetProperty("progress").GetInt32());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("data").GetProperty("completedAt").ValueKind);
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Done)
+                .Set(item => item.CompletedAt, run.CreatedAt.AddSeconds(142)));
+        var completed = Assert.IsType<OkObjectResult>(await BuildController(fixture.Db, "owner-user").GetRun("site-a", run.Id));
+        var completedData = JsonSerializer.SerializeToElement(completed.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
+        Assert.Equal(142d, (completedData.GetProperty("completedAt").GetDateTime()
+            - completedData.GetProperty("createdAt").GetDateTime()).TotalSeconds);
+
+        var wrongSite = await BuildController(fixture.Db, "owner-user").GetRun("site-b", run.Id);
+        Assert.IsType<NotFoundObjectResult>(wrongSite);
+
+        var wrongUser = await BuildController(fixture.Db, "other-user").GetRun("site-a", run.Id);
+        Assert.IsType<NotFoundObjectResult>(wrongUser);
+    }
+
+    [Theory]
+    [InlineData(null, "网页修改")]
+    [InlineData("", "网页修改")]
+    [InlineData("   ", "网页修改")]
+    [InlineData("  测试站点  ", "测试站点")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldPersistProviderConnectionAndNormalizedSiteTitle(
+        string? siteTitle,
+        string expectedTitle)
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(
+                "<!doctype html><html><body>safe</body></html>",
+                siteTitle: siteTitle));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(Array.Empty<DesignKnowledgeSnapshot>(), new DesignKnowledgeOriginalSnapshot()));
+        var queue = new Mock<IRunQueue>();
+        var policyConfiguration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["DesignArtifactRuntime:Model"] = "server-edit-model", ["DesignArtifactRuntime:RequestPolicy:TopP"] = "0.92" }).Build();
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            knowledge.Object,
+            queue.Object,
+            configuration: policyConfiguration);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            AdditionalProperties = new Dictionary<string, JsonElement>
+            { ["llmRequestPolicy"] = JsonSerializer.SerializeToElement(new { model = "client-model", topP = 0.1 }) },
+        });
+
+        Assert.IsType<AcceptedResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
+        Assert.Equal("connection-1", persisted.RuntimeConnectionId);
+        Assert.Equal(expectedTitle, persisted.Title);
+        policyConfiguration["DesignArtifactRuntime:Model"] = "later-model";
+        var reloaded = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == persisted.Id).SingleAsync();
+        Assert.Equal("server-edit-model", reloaded.LlmRequestPolicy!.Model);
+        Assert.Equal(0.92, reloaded.LlmRequestPolicy.TopP);
+        queue.Verify(service => service.EnqueueAsync(RunKinds.DesignArtifact, persisted.Id, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldInheritPublishedRevisionContext_AndRestartKeepsFrozenValues()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        const string revisionId = "revision-generated";
+        var source = FrozenGeneratedRun("generated-source", "owner-user", revisionId);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = revisionId,
+            SiteId = "site-a",
+            CreatedByUserId = source.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Baseline,
+            SourceRunId = source.Id,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Html = "<!doctype html><html><body><h1>源页面</h1></body></html>",
+            PublishedContentVersion = DateTime.UtcNow,
+        });
+        var editable = BuildEditableEntry("<!doctype html><html><body><h1>源页面</h1></body></html>");
+        editable.Site.PublishedRevisionId = revisionId;
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", source.UserId, CancellationToken.None))
+            .ReturnsAsync(editable);
+        var knowledge = EmptyKnowledge(source.UserId);
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var queue = new Mock<IRunQueue>();
+        var events = new InMemoryRunEventStore();
+        var settings = new Mock<IDesignGenerationSettingsService>(MockBehavior.Strict);
+        var editController = BuildController(
+            fixture.Db,
+            source.UserId,
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object,
+            events: events,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await editController.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "只把主行动文案改成预约演示",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.Operation == DesignArtifactOperations.Edit)
+            .SingleAsync();
+        Assert.Equal("只把主行动文案改成预约演示", edit.Instruction);
+        Assert.Equal(JsonSerializer.Serialize(source.DesignBrief), JsonSerializer.Serialize(edit.DesignBrief));
+        Assert.Equal(JsonSerializer.Serialize(source.BrandPackage), JsonSerializer.Serialize(edit.BrandPackage));
+        Assert.Equal(JsonSerializer.Serialize(source.DesignDirection), JsonSerializer.Serialize(edit.DesignDirection));
+        Assert.Equal(DesignArtifactContextSources.InheritedSiteRevision, edit.DesignContextProvenance?.Source);
+        Assert.Equal(source.Id, edit.DesignContextProvenance?.SourceRunId);
+        Assert.Equal(revisionId, edit.DesignContextProvenance?.SourceRevisionId);
+        Assert.Equal(source.DesignBrief!.Fingerprint, edit.DesignContextProvenance?.ParentDesignBriefFingerprint);
+        Assert.Equal(source.BrandPackage!.Fingerprint, edit.DesignContextProvenance?.ParentBrandPackageFingerprint);
+        settings.VerifyNoOtherCalls();
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == edit.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.Status, RunStatuses.Error)
+                .Set(item => item.PhaseCode, DesignArtifactPhaseCodes.Interrupted)
+                .Set(item => item.Phase, HostedSiteEditRunWorker.RestartInterruptedMessage)
+                .Set(item => item.Error, HostedSiteEditRunWorker.RestartInterruptedMessage));
+        var restartController = new DesignArtifactsController(
+            fixture.Db,
+            events,
+            queue.Object,
+            providers.Object,
+            knowledge.Object,
+            new LlmGatewayDataContext(fixture.ConnectionString, $"gateway_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(),
+            new ConfigurationBuilder().Build(),
+            sites.Object);
+        restartController.ControllerContext = editController.ControllerContext;
+
+        var restartedResult = Assert.IsType<AcceptedResult>(await restartController.RestartRun(
+            edit.Id,
+            new RestartDesignArtifactRunRequest { IdempotencyKey = "inherit-context-restart" }));
+        var restartedId = JsonSerializer.SerializeToElement(
+                restartedResult.Value,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            .GetProperty("data").GetProperty("runId").GetString();
+        var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == restartedId).SingleAsync();
+        Assert.Equal(JsonSerializer.Serialize(edit.DesignBrief), JsonSerializer.Serialize(restarted.DesignBrief));
+        Assert.Equal(JsonSerializer.Serialize(edit.BrandPackage), JsonSerializer.Serialize(restarted.BrandPackage));
+        Assert.Equal(JsonSerializer.Serialize(edit.DesignContextProvenance), JsonSerializer.Serialize(restarted.DesignContextProvenance));
+
+        const string editRevisionId = "revision-after-restart";
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == restarted.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.Status, RunStatuses.Done)
+                .Set(item => item.ArtifactSiteId, "site-a")
+                .Set(item => item.ArtifactRevisionId, editRevisionId));
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = editRevisionId,
+            SiteId = "site-a",
+            CreatedByUserId = source.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.AiEdit,
+            SourceRunId = restarted.Id,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Html = "<!doctype html><html><body><h1>第一次修改</h1></body></html>",
+            PublishedContentVersion = DateTime.UtcNow,
+        });
+        editable.Site.PublishedRevisionId = editRevisionId;
+
+        Assert.IsType<AcceptedResult>(await editController.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "再调整一次页脚",
+        }));
+        var followUp = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.Instruction == "再调整一次页脚")
+            .SingleAsync();
+        Assert.Equal(JsonSerializer.Serialize(source.DesignBrief), JsonSerializer.Serialize(followUp.DesignBrief));
+        Assert.Equal(JsonSerializer.Serialize(source.BrandPackage), JsonSerializer.Serialize(followUp.BrandPackage));
+        Assert.Equal(restarted.Id, followUp.DesignContextProvenance?.SourceRunId);
+        Assert.Equal(source.DesignBrief!.Fingerprint, followUp.DesignContextProvenance?.ParentDesignBriefFingerprint);
+        Assert.Equal(source.BrandPackage!.Fingerprint, followUp.DesignContextProvenance?.ParentBrandPackageFingerprint);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_GeneratedBaselineWithoutPublishedPointer_ShouldInheritSiteSourceAcrossSharing()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        const string baselineId = "baseline_site-a_638958000000000000";
+        var source = FrozenGeneratedRun("generated-with-unpublished-baseline", "owner-user", baselineId);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
+        var editable = BuildEditableEntry("<!doctype html><html><body><h1>新生成页面</h1></body></html>");
+        editable.Site.SourceType = "design-agent";
+        editable.Site.SourceRef = source.Id;
+        editable.Site.PublishedRevisionId = null;
+        editable.Site.Visibility = "public";
+        editable.Site.PublishedAt = DateTime.UtcNow;
+        editable.Site.SharedTeamIds = ["team-a"];
+        await fixture.Db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink
+        {
+            SiteId = editable.Site.Id,
+            ShareType = "single",
+            Purpose = "share",
+            CreatedBy = source.UserId,
+            Visibility = "public",
+        });
+        Assert.Empty(await fixture.Db.HostedSiteRevisions.Find(_ => true).ToListAsync());
+
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", source.UserId, CancellationToken.None))
+            .ReturnsAsync(editable);
+        var settings = new Mock<IDesignGenerationSettingsService>(MockBehavior.Strict);
+        var controller = BuildController(
+            fixture.Db,
+            source.UserId,
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            EmptyKnowledge(source.UserId).Object,
+            new Mock<IRunQueue>().Object,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "只调整首屏标题",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.Operation == DesignArtifactOperations.Edit)
+            .SingleAsync();
+        Assert.Equal(JsonSerializer.Serialize(source.DesignDirection), JsonSerializer.Serialize(edit.DesignDirection));
+        Assert.Equal(JsonSerializer.Serialize(source.DesignBrief), JsonSerializer.Serialize(edit.DesignBrief));
+        Assert.Equal(JsonSerializer.Serialize(source.BrandPackage), JsonSerializer.Serialize(edit.BrandPackage));
+        Assert.Equal(DesignArtifactContextSources.InheritedSiteSourceRun, edit.DesignContextProvenance?.Source);
+        Assert.Equal(source.Id, edit.DesignContextProvenance?.SourceRunId);
+        Assert.Equal(baselineId, edit.DesignContextProvenance?.SourceRevisionId);
+        Assert.Equal(source.DesignBrief!.Fingerprint, edit.DesignContextProvenance?.ParentDesignBriefFingerprint);
+        Assert.Equal(source.BrandPackage!.Fingerprint, edit.DesignContextProvenance?.ParentBrandPackageFingerprint);
+        Assert.Equal("personal:brand-a", edit.BrandPackage?.Ref);
+        Assert.Equal("personal-style", edit.BrandPackage?.Source);
+        Assert.Equal("minimal", edit.BrandPackage?.DesignSystemId);
+        Assert.Equal(source.BrandPackage.TokenContext, edit.BrandPackage?.TokenContext);
+        settings.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_LegacySiteWithoutFrozenContext_ShouldUseExplicitDeterministicFallback()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var editable = BuildEditableEntry("<!doctype html><html><body>旧站点</body></html>");
+        editable.Site.SourceType = "team-copy";
+        editable.Site.SourceRef = "site-original";
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(editable);
+        var settings = FallbackSettings();
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            EmptyKnowledge("owner-user").Object,
+            new Mock<IRunQueue>().Object,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整旧站点版式",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
+        Assert.Equal(DesignArtifactContextSources.LegacyEditDeterministicFallback, edit.DesignContextProvenance?.Source);
+        Assert.Null(edit.DesignContextProvenance?.SourceRunId);
+        Assert.Null(edit.DesignContextProvenance?.SourceRevisionId);
+        Assert.Equal("editorial", edit.BrandPackage?.Ref);
+        Assert.Equal("design-style-preset", edit.BrandPackage?.Source);
+        settings.Verify(service => service.FreezeAsync(null, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldNotInheritFrozenContextAcrossUsers()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        const string revisionId = "revision-other-user";
+        var other = FrozenGeneratedRun("other-user-run", "other-user", revisionId);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(other);
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = revisionId,
+            SiteId = "site-a",
+            CreatedByUserId = other.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            SourceRunId = other.Id,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Html = "<!doctype html><html><body>他人页面</body></html>",
+        });
+        var editable = BuildEditableEntry("<!doctype html><html><body>团队可编辑页面</body></html>");
+        editable.Site.SourceType = "design-agent";
+        editable.Site.SourceRef = other.Id;
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(editable);
+        var settings = FallbackSettings();
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            EmptyKnowledge("owner-user").Object,
+            new Mock<IRunQueue>().Object,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整团队页面",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns.Find(item => item.UserId == "owner-user").SingleAsync();
+        Assert.Equal(DesignArtifactContextSources.LegacyEditDeterministicFallback, edit.DesignContextProvenance?.Source);
+        Assert.Null(edit.DesignContextProvenance?.SourceRunId);
+        Assert.NotEqual(other.BrandPackage?.Fingerprint, edit.BrandPackage?.Fingerprint);
+        Assert.Equal("editorial", edit.BrandPackage?.Ref);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldNotInheritSiteSourceAcrossDeployments()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var otherDeployment = FrozenGeneratedRun("other-deployment-run", "owner-user", "baseline-other");
+        otherDeployment.DeploymentSlug = "another-deployment";
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(otherDeployment);
+        var editable = BuildEditableEntry("<!doctype html><html><body>当前环境页面</body></html>");
+        editable.Site.SourceType = "design-agent";
+        editable.Site.SourceRef = otherDeployment.Id;
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(editable);
+        var settings = FallbackSettings();
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            EmptyKnowledge("owner-user").Object,
+            new Mock<IRunQueue>().Object,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整当前环境页面",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.DeploymentSlug == DeploymentScope.Current)
+            .SingleAsync();
+        Assert.Equal(DesignArtifactContextSources.LegacyEditDeterministicFallback, edit.DesignContextProvenance?.Source);
+        Assert.Null(edit.DesignContextProvenance?.SourceRunId);
+        Assert.NotEqual(otherDeployment.BrandPackage?.Fingerprint, edit.BrandPackage?.Fingerprint);
+        settings.Verify(service => service.FreezeAsync(null, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldReturnDurableRunWhenRedisAndImmediateQueueAreUnavailable()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(Array.Empty<DesignKnowledgeSnapshot>(), new DesignKnowledgeOriginalSnapshot()));
+        var events = new Mock<IRunEventStore>();
+        events.Setup(store => store.SetRunAsync(
+                It.IsAny<string>(),
+                It.IsAny<RunMeta>(),
+                It.IsAny<TimeSpan?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis unavailable"));
+        var queue = new Mock<IRunQueue>();
+        queue.Setup(service => service.EnqueueAsync(
+                RunKinds.DesignArtifact,
+                It.IsAny<string>(),
+                CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("queue unavailable"));
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            knowledge.Object,
+            queue.Object,
+            events: events.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+        });
+
+        Assert.IsType<AcceptedResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
+        Assert.Equal(RunStatuses.Queued, persisted.Status);
+        Assert.Null(persisted.RecoveryEnqueuedAt);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task StreamRun_ShouldReturnTerminalDraftFromMongoWhenRedisIsUnavailable()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = new DesignArtifactRun
+        {
+            Id = "run-mongo-stream-fallback",
+            UserId = "owner-user",
+            Status = RunStatuses.Done,
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Operation = DesignArtifactOperations.Edit,
+            SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+            TargetSiteId = "site-a",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Progress = 100,
+            Phase = "草稿已生成",
+            ProducedArtifactSiteId = "site-a",
+            ProducedArtifactRevisionId = "revision-draft",
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var events = new Mock<IRunEventStore>();
+        events.Setup(store => store.GetEventsAsync(
+                RunKinds.DesignArtifact,
+                run.Id,
+                It.IsAny<long>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis unavailable"));
+        var controller = BuildController(fixture.Db, "owner-user", events: events.Object);
+        controller.Response.Body = new MemoryStream();
+
+        await controller.StreamRun("site-a", run.Id, ct: CancellationToken.None);
+
+        controller.Response.Body.Position = 0;
+        var stream = await new StreamReader(controller.Response.Body).ReadToEndAsync();
+        Assert.Contains("event: phase", stream, StringComparison.Ordinal);
+        Assert.Contains("event: done", stream, StringComparison.Ordinal);
+        Assert.Contains("revision-draft", stream, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListRevisions_ShouldReadMarkdownWrapperBaselineAndExposeRollbackTargetSeparatelyFromParentRevision()
+    {
+        var contentVersion = DateTime.UtcNow;
+        var rollback = new HostedSiteRevision
+        {
+            Id = "revision-rollback",
+            SiteId = "site-a",
+            CreatedByUserId = "owner-user",
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Rollback,
+            ParentRevisionId = "revision-current-before-rollback",
+            RollbackTargetRevisionId = "revision-selected-history",
+            Html = "<!doctype html><html><body>restored</body></html>",
+            BasedOnContentVersion = DateTime.UtcNow.AddMinutes(-1),
+            PublishedContentVersion = contentVersion,
+        };
+        var markdownEntry = BuildEditableEntry(rollback.Html, wrappedAssetType: "markdown", contentVersion: contentVersion);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.EnsureCurrentSnapshotAsync(
+                "site-a", "owner-user", markdownEntry, CancellationToken.None))
+            .ReturnsAsync(rollback);
+        revisions.Setup(service => service.ListAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync([rollback]);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(markdownEntry);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites: sites.Object,
+            revisions: revisions.Object);
+
+        var result = await controller.ListRevisions("site-a");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var item = payload.GetProperty("data")[0];
+        Assert.Equal("revision-current-before-rollback", item.GetProperty("parentRevisionId").GetString());
+        Assert.Equal("revision-selected-history", item.GetProperty("rollbackTargetRevisionId").GetString());
+        Assert.True(item.GetProperty("isCurrent").GetBoolean());
+        sites.Verify(service => service.GetEditableEntryHtmlAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ListRevisions_WhenCurrentEntryCannotBeRead_ShouldReturnStableHistoryUnavailableWithoutCreatingBaseline()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync(
+                "site-a", "owner-user", CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("storage-specific detail must not escape"));
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites: sites.Object,
+            revisions: revisions.Object);
+
+        var result = await controller.ListRevisions("site-a");
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(
+            badRequest.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(
+            "版本记录暂时不可用，请检查网页文件后重试",
+            payload.GetProperty("error").GetProperty("message").GetString());
+        revisions.Verify(service => service.EnsureCurrentSnapshotAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<HostedSiteEditableEntry?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        revisions.Verify(service => service.ListAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        sites.VerifyAll();
+        revisions.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("markdown", true)]
+    [InlineData("MARKDOWN", true)]
+    [InlineData("pdf", false)]
+    [InlineData("video", false)]
+    public void RevisionReadableWrapperPolicy_ShouldOnlyAllowSelfContainedMarkdown(
+        string? wrappedAssetType,
+        bool expected)
+    {
+        Assert.Equal(expected, HostedSiteService.IsRevisionReadableWrapper(wrappedAssetType));
+    }
+
+    [Fact]
+    public async Task RejectRevision_ShouldCallDomainServiceAndExposeRejectionAuditFields()
+    {
+        var rejectedAt = DateTime.UtcNow;
+        var revision = new HostedSiteRevision
+        {
+            Id = "revision-draft",
+            SiteId = "site-a",
+            Status = HostedSiteRevisionStatuses.Rejected,
+            CreatedByUserId = "owner-user",
+            RejectedAt = rejectedAt,
+            RejectedByUserId = "owner-user",
+            RejectionReason = "版式不符合要求",
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                revision.Id,
+                "owner-user",
+                "版式不符合要求",
+                CancellationToken.None))
+            .ReturnsAsync((revision, true));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.RejectRevision(
+            "site-a",
+            revision.Id,
+            new RejectHostedSiteRevisionRequest { Reason = " 版式不符合要求\n" });
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.True(payload.GetProperty("data").GetProperty("changed").GetBoolean());
+        var item = payload.GetProperty("data").GetProperty("revision");
+        Assert.Equal(HostedSiteRevisionStatuses.Rejected, item.GetProperty("status").GetString());
+        Assert.Equal("owner-user", item.GetProperty("rejectedByUserId").GetString());
+        Assert.Equal("版式不符合要求", item.GetProperty("rejectionReason").GetString());
+        Assert.Equal(rejectedAt, item.GetProperty("rejectedAt").GetDateTime());
+        Assert.False(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RejectRevision_WhenAlreadyRejected_ShouldSuppressDuplicateHttpActivity()
+    {
+        var revision = new HostedSiteRevision
+        {
+            Id = "revision-rejected",
+            SiteId = "site-a",
+            Status = HostedSiteRevisionStatuses.Rejected,
+            CreatedByUserId = "owner-user",
+            RejectedAt = DateTime.UtcNow,
+            RejectedByUserId = "owner-user",
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                revision.Id,
+                "owner-user",
+                null,
+                CancellationToken.None))
+            .ReturnsAsync((revision, false));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.RejectRevision("site-a", revision.Id, new RejectHostedSiteRevisionRequest());
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.False(payload.GetProperty("data").GetProperty("changed").GetBoolean());
+        Assert.True(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RejectRevision_ShouldMapInvalidReasonAndStateConflictWithoutFalseSuccess()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var invalid = await controller.RejectRevision(
+            "site-a",
+            "revision-draft",
+            new RejectHostedSiteRevisionRequest
+            {
+                Reason = new string('a', HostedSiteRevisionRules.MaxRejectionReasonLength + 1),
+            });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(invalid);
+        Assert.Contains("不能超过", ResponseMessage(badRequest), StringComparison.Ordinal);
+        revisions.VerifyNoOtherCalls();
+
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                "revision-published",
+                "owner-user",
+                null,
+                CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("只有草稿可以拒绝"));
+        var conflict = await controller.RejectRevision(
+            "site-a",
+            "revision-published",
+            new RejectHostedSiteRevisionRequest());
+
+        var conflictResult = Assert.IsType<ConflictObjectResult>(conflict);
+        var payload = JsonSerializer.SerializeToElement(
+            conflictResult.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("REVISION_CONFLICT", payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.False(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RejectRevision_WhenRevisionOrSiteIsMissing_ShouldReturnNotFound()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.RejectAsync(
+                "site-a",
+                "revision-missing",
+                "owner-user",
+                null,
+                CancellationToken.None))
+            .ThrowsAsync(new KeyNotFoundException("版本不存在"));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.RejectRevision(
+            "site-a",
+            "revision-missing",
+            new RejectHostedSiteRevisionRequest());
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(result);
+        var payload = JsonSerializer.SerializeToElement(
+            notFound.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(ErrorCodes.NOT_FOUND, payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.False(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task PublishRevision_WhenAlreadyCurrent_ShouldSuppressDuplicateHttpActivity()
+    {
+        var site = BuildEditableEntry("<!doctype html><html>current</html>").Site;
+        var revision = new HostedSiteRevision
+        {
+            Id = "revision-current",
+            SiteId = site.Id,
+            Status = HostedSiteRevisionStatuses.Published,
+            PublishedContentVersion = site.ContentVersion,
+        };
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.PublishAsync(
+                site.Id, revision.Id, "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevisionMutationResult(revision, site, false));
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var result = await controller.PublishRevision(site.Id, revision.Id);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.True(controller.HttpContext.Items.ContainsKey(
+            PrdAgent.Api.Filters.ActivityLogActionFilter.SuppressItemKey));
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RollbackRevision_ShouldRequireAndForwardIdempotencyKey()
+    {
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var controller = BuildController(NewLazyDb(), "owner-user", revisions: revisions.Object);
+
+        var missing = await controller.RollbackRevision("site-a", "revision-old", null);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(missing);
+        var missingPayload = JsonSerializer.SerializeToElement(
+            badRequest.Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("IDEMPOTENCY_KEY_REQUIRED", missingPayload.GetProperty("error").GetProperty("code").GetString());
+        revisions.VerifyNoOtherCalls();
+
+        var site = BuildEditableEntry("<!doctype html><html>restored</html>").Site;
+        var revision = new HostedSiteRevision { Id = "rollback-copy", SiteId = site.Id };
+        revisions.Setup(service => service.RollbackAsync(
+                "site-a", "revision-old", "owner-user", "stable-request-key", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevisionMutationResult(revision, site, true));
+
+        var accepted = await controller.RollbackRevision("site-a", "revision-old", "stable-request-key");
+
+        Assert.IsType<OkObjectResult>(accepted);
+        revisions.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_MapQueued_ShouldImmediatelyBecomeCancelledAndNeverCreateArtifact()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("map-queued", DesignArtifactRuntimes.MapGateway, RunStatuses.Queued);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var events = new InMemoryRunEventStore();
+        var controller = BuildController(fixture.Db, run.UserId, events: events);
+
+        var result = await controller.CancelRun(run.TargetSiteId!, run.Id);
+
+        Assert.IsType<OkObjectResult>(result);
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Cancelled, persisted.Status);
+        Assert.NotNull(persisted.CancelRequestedAt);
+        Assert.NotNull(persisted.CancelledAt);
+        Assert.Null(persisted.ArtifactSiteId);
+        Assert.Null(persisted.ArtifactRevisionId);
+        Assert.Null(persisted.ProducedArtifactSiteId);
+        Assert.Null(persisted.ProducedArtifactRevisionId);
+        var records = await events.GetEventsAsync(RunKinds.DesignArtifact, run.Id, 0, 10);
+        Assert.Contains(records, item => item.EventName == "cancelled");
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_MapRunning_ShouldOnlyRequestCancellationUntilWorkerOwnsTerminal()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("map-running", DesignArtifactRuntimes.MapGateway, RunStatuses.Running);
+        run.LeaseOwnerId = "worker-map";
+        run.LeaseExpiresAt = DateTime.UtcNow.AddMinutes(2);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var controller = BuildController(fixture.Db, run.UserId, events: new InMemoryRunEventStore());
+
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.TargetSiteId!, run.Id));
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.TargetSiteId!, run.Id));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Running, persisted.Status);
+        Assert.NotNull(persisted.CancelRequestedAt);
+        Assert.Equal(run.UserId, persisted.CancelRequestedByUserId);
+        Assert.Equal("worker-map", persisted.LeaseOwnerId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_OpenDesignV2_ShouldUseNativeAuthoritativeLifecycle()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("open-design-queued", DesignArtifactRuntimes.OpenDesign, RunStatuses.Queued);
+        run.ContractVersion = DesignArtifactContractVersions.Current;
+        run.LifecycleVersion = 1;
+        run.LifecycleEventSequence = 1;
+        run.WorkspaceRef = new DesignArtifactWorkspaceRef
+        {
+            WorkspaceId = $"web-page-{run.Id}",
+            Kind = DesignArtifactWorkspaceKinds.RemotePackage,
+            BaseRevision = "base-revision",
+            Adapter = WebPageDesignArtifactLifecycleAdapter.AdapterId,
+        };
+        run.VersionBoundary = new DesignArtifactVersionBoundary
+        {
+            BaseArtifactId = run.TargetSiteId,
+            BaseVersion = "base-revision",
+            BaseContentHash = new string('a', 64),
+        };
+        run.LifecycleEvents =
+        [
+            new DesignArtifactEventEnvelope
+            {
+                RunId = run.Id,
+                ArtifactType = run.ArtifactType,
+                Sequence = 1,
+                Type = DesignArtifactLifecycleEventTypes.Run,
+                Phase = run.Phase,
+                Progress = run.Progress,
+                Authoritative = true,
+            },
+        ];
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        var controller = BuildController(
+            fixture.Db,
+            run.UserId,
+            events: new InMemoryRunEventStore(),
+            lifecycle: lifecycle);
+
+        Assert.IsType<OkObjectResult>(await controller.CancelRun(run.TargetSiteId!, run.Id));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Cancelled, persisted.Status);
+        Assert.Equal(DesignArtifactLifecycleEventTypes.Cancelled, persisted.LifecycleEvents[^1].Type);
+        Assert.True(persisted.LifecycleEvents[^1].Authoritative);
+        Assert.Null(persisted.LifecycleFailureCode);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CancelRun_ShouldHideOtherUsersRunAndRejectCommittingBoundary()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var run = CancellableEditRun("commit-boundary", DesignArtifactRuntimes.MapGateway, RunStatuses.Committing);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var otherUser = BuildController(fixture.Db, "another-user", events: new InMemoryRunEventStore());
+        Assert.IsType<NotFoundObjectResult>(await otherUser.CancelRun(run.TargetSiteId!, run.Id));
+
+        var owner = BuildController(fixture.Db, run.UserId, events: new InMemoryRunEventStore());
+        Assert.IsType<ConflictObjectResult>(await owner.CancelRun(run.TargetSiteId!, run.Id));
+        var unchanged = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Committing, unchanged.Status);
+        Assert.Null(unchanged.CancelRequestedAt);
+    }
+
+    [Fact]
+    public async Task PreviewRevision_ShouldMarkTheLiveRevisionAsCurrent()
+    {
+        // 预览接口曾传 null 判「是不是线上这一版」，刚生成的唯一版本被标成「历史线上版本」。
+        var version = new DateTime(2026, 9, 24, 4, 39, 42, DateTimeKind.Utc);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.GetAsync("site-a", "rev-live", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "rev-live",
+                SiteId = "site-a",
+                Status = HostedSiteRevisionStatuses.Published,
+                PublishedContentVersion = version,
+                Html = "<!doctype html><p>live</p>",
+            });
+        revisions.Setup(service => service.GetAsync("site-a", "rev-old", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "rev-old",
+                SiteId = "site-a",
+                Status = HostedSiteRevisionStatuses.Published,
+                PublishedContentVersion = version.AddMinutes(-5),
+                Html = "<!doctype html><p>old</p>",
+            });
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetByIdAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSite { Id = "site-a", OwnerUserId = "owner-user", ContentVersion = version });
+        var controller = BuildController(NewLazyDb(), "owner-user", sites.Object, revisions: revisions.Object);
+
+        Assert.True(IsCurrent(await controller.PreviewRevision("site-a", "rev-live")));
+        Assert.False(IsCurrent(await controller.PreviewRevision("site-a", "rev-old")));
+
+        static bool IsCurrent(IActionResult result)
+        {
+            var ok = Assert.IsType<OkObjectResult>(result);
+            var json = JsonSerializer.SerializeToNode(ok.Value)!;
+            return json["Data"]!["revision"]!["isCurrent"]!.GetValue<bool>();
+        }
+    }
+
+    private static HostedSiteEditsController BuildController(
+        MongoDbContext db,
+        string userId,
+        IHostedSiteService? sites = null,
+        IDesignArtifactProviderCatalog? providers = null,
+        IDesignKnowledgeSnapshotResolver? knowledgeSnapshots = null,
+        IRunQueue? queue = null,
+        IHostedSiteRevisionService? revisions = null,
+        IRunEventStore? events = null,
+        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
+        IDesignArtifactLifecycleService? lifecycle = null,
+        IConfiguration? configuration = null,
+        IDesignGenerationSettingsService? generationSettings = null)
+    {
+        var controller = new HostedSiteEditsController(
+            sites ?? Mock.Of<IHostedSiteService>(),
+            revisions ?? Mock.Of<IHostedSiteRevisionService>(),
+            events ?? Mock.Of<IRunEventStore>(),
+            queue ?? Mock.Of<IRunQueue>(),
+            db,
+            NullLogger<HostedSiteEditsController>.Instance,
+            providers ?? Mock.Of<IDesignArtifactProviderCatalog>(),
+            knowledgeSnapshots ?? Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            publicLifecycle ?? Mock.Of<IWebPageDesignArtifactLifecycleAdapter>(),
+            new DesignArtifactCancellationCoordinator(
+                db,
+                lifecycle ?? Mock.Of<IDesignArtifactLifecycleService>()),
+            configuration ?? new ConfigurationBuilder().Build(),
+            generationSettings);
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }, "test")),
+            },
+        };
+        return controller;
+    }
+
+    private static MongoDbContext NewLazyDb() => new(
+        "mongodb://127.0.0.1:27017",
+        $"hosted_site_edit_unit_{Guid.NewGuid():N}");
+
+    private static Mock<IDesignArtifactProviderCatalog> EnabledProvider(string runtime)
+    {
+        var provider = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        provider.Setup(service => service.FindAsync("owner-user", runtime, CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                runtime,
+                runtime,
+                DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent,
+                DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.WebPage],
+                [DesignArtifactOperations.Edit],
+                [DesignArtifactSourceSurfaces.WebHosting],
+                Configured: true,
+                Healthy: true,
+                Enabled: true,
+                Reason: null,
+                ConnectionId: "connection-1"));
+        return provider;
+    }
+
+    private static Mock<IDesignArtifactProviderCatalog> DisabledOpenDesignProvider(string operation)
+    {
+        var provider = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        provider.Setup(service => service.FindAsync(
+                "owner-user",
+                DesignArtifactRuntimes.OpenDesign,
+                CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.OpenDesign,
+                "OpenDesign",
+                DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent,
+                DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.WebPage],
+                [operation],
+                [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase],
+                Configured: true,
+                Healthy: false,
+                Enabled: false,
+                Reason: "设计服务暂未就绪"));
+        return provider;
+    }
+
+    private static HostedSiteEditableEntry BuildEditableEntry(
+        string html,
+        int fileCount = 1,
+        string? siteTitle = "测试站点",
+        string? wrappedAssetType = null,
+        DateTime? contentVersion = null)
+    {
+        var site = new HostedSite
+        {
+            Id = "site-a",
+            OwnerUserId = "owner-user",
+            Title = siteTitle ?? string.Empty,
+            WrappedAssetType = wrappedAssetType,
+            EntryFile = "index.html",
+            Files = Enumerable.Range(0, fileCount)
+                .Select(index => new HostedSiteFile
+                {
+                    Path = index == 0 ? "index.html" : $"assets/{index}.css",
+                    CosKey = $"site-a/{index}",
+                    Size = index == 0 ? System.Text.Encoding.UTF8.GetByteCount(html) : 10,
+                    MimeType = index == 0 ? "text/html" : "text/css",
+                })
+                .ToList(),
+        };
+        return new HostedSiteEditableEntry(site, html, contentVersion ?? DateTime.UtcNow);
+    }
+
+    private static Mock<IDesignKnowledgeSnapshotResolver> EmptyKnowledge(string userId)
+    {
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                userId,
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(
+                Array.Empty<DesignKnowledgeSnapshot>(),
+                new DesignKnowledgeOriginalSnapshot()));
+        return knowledge;
+    }
+
+    private static Mock<IDesignGenerationSettingsService> FallbackSettings()
+    {
+        var settings = new Mock<IDesignGenerationSettingsService>();
+        settings.Setup(service => service.FreezeAsync(null, CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactDesignDirection
+            {
+                StyleId = "editorial",
+                StyleName = "编辑排版",
+                DesignSystemId = "editorial",
+                StyleDescription = "清晰的编辑排版",
+                BrandSource = "design-style-preset",
+                PromptFingerprint = "fallback12345",
+            });
+        return settings;
+    }
+
+    private static DesignArtifactRun FrozenGeneratedRun(string id, string userId, string revisionId) => new()
+    {
+        Id = id,
+        DeploymentSlug = DeploymentScope.Current,
+        UserId = userId,
+        Status = RunStatuses.Done,
+        ArtifactType = DesignArtifactTypes.WebPage,
+        Operation = DesignArtifactOperations.Generate,
+        Runtime = DesignArtifactRuntimes.OpenDesign,
+        ArtifactSiteId = "site-a",
+        ArtifactRevisionId = revisionId,
+        Instruction = "生成品牌发布页",
+        DesignDirection = new DesignArtifactDesignDirection
+        {
+            StyleId = "personal:brand-a",
+            StyleName = "品牌 A",
+            DesignSystemId = "minimal",
+            StyleDescription = "克制、清晰",
+            BrandSource = "personal-style",
+            BrandColors = ["#102030", "#f7f2e8", "#d06030"],
+            BrandFonts = ["Inter"],
+            PromptFingerprint = "prompt123456",
+        },
+        DesignBrief = new DesignArtifactDesignBrief
+        {
+            Goal = "生成品牌发布页",
+            Audience = "采购负责人",
+            PrimaryMessage = "可靠协作",
+            PrimaryAction = "预约演示",
+            BrandKitRef = "personal:brand-a",
+            Fingerprint = "brief1234567",
+        },
+        BrandPackage = new DesignArtifactBrandPackage
+        {
+            Ref = "personal:brand-a",
+            Source = "personal-style",
+            DesignSystemId = "minimal",
+            ApprovedColors = ["#102030", "#f7f2e8", "#d06030"],
+            Fonts = ["Inter"],
+            TokenContext = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["--fg"] = "#102030",
+                ["--bg"] = "#f7f2e8",
+                ["--accent"] = "#d06030",
+            },
+            Fingerprint = "brand1234567",
+        },
+        DesignContextProvenance = new DesignArtifactContextProvenance
+        {
+            Source = DesignArtifactContextSources.DeterministicNewRun,
+        },
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+    };
+
+    private static DesignArtifactRun CancellableEditRun(string id, string runtime, string status) => new()
+    {
+        Id = id,
+        UserId = "owner-user",
+        Status = status,
+        ArtifactType = DesignArtifactTypes.WebPage,
+        Operation = DesignArtifactOperations.Edit,
+        SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
+        Runtime = runtime,
+        TargetSiteId = "site-a",
+        Instruction = "调整页面标题",
+        Progress = status == RunStatuses.Queued ? 2 : 42,
+        Phase = status == RunStatuses.Queued ? "修改任务已进入队列" : "页面正在生成",
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+    };
+
+    private static string ResponseMessage(BadRequestObjectResult result)
+    {
+        var payload = JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return payload.GetProperty("error").GetProperty("message").GetString() ?? string.Empty;
+    }
+
+    private static string ResponseErrorCode(ObjectResult result)
+    {
+        var payload = JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return payload.GetProperty("error").GetProperty("code").GetString() ?? string.Empty;
+    }
+
+    private sealed class HostedSiteEditMongoFixture : IAsyncDisposable
+    {
+        private readonly MongoClient _client;
+        private readonly string _databaseName;
+
+        private HostedSiteEditMongoFixture(MongoClient client, string connectionString, string databaseName)
+        {
+            _client = client;
+            _databaseName = databaseName;
+            ConnectionString = connectionString;
+            Db = new MongoDbContext(connectionString, databaseName);
+        }
+
+        internal MongoDbContext Db { get; }
+        internal string ConnectionString { get; }
+
+        internal static async Task<HostedSiteEditMongoFixture> CreateAsync()
+        {
+            var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                                   ?? "mongodb://127.0.0.1:27017";
+            var settings = MongoClientSettings.FromConnectionString(connectionString);
+            settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
+            var client = new MongoClient(settings);
+            await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+            return new HostedSiteEditMongoFixture(
+                client,
+                connectionString,
+                $"hosted_site_edit_test_{Guid.NewGuid():N}");
+        }
+
+        public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
+    }
+}

@@ -152,13 +152,13 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
   const drawer = (
     <div className="fixed inset-0 z-[100] flex justify-end" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
       <aside
-        className="h-full border-l border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col"
+        className="surface-tone-dark h-full border-l border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col"
         style={{ width: 'min(94vw, 620px)', maxHeight: '100vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-indigo-300" />
+            <Sparkles className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
             <h2 className="text-base font-semibold text-token-primary">AI 邮件助手</h2>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft text-token-secondary">
@@ -301,7 +301,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
                         toast.success('已应用到正文');
                       }}
                       disabled={!output}
-                      className="h-7 px-2 rounded-md text-[11px] text-indigo-200 hover:bg-indigo-500/15 inline-flex items-center gap-1 disabled:opacity-40"
+                      className="h-7 px-2 rounded-md text-[11px] text-[color:var(--accent-fg-blue)] hover:bg-indigo-500/15 inline-flex items-center gap-1 disabled:opacity-40"
                     >
                       应用到正文
                     </button>

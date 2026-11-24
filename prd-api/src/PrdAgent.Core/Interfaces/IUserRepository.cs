@@ -13,6 +13,12 @@ public interface IUserRepository
     Task UpdateLastLoginAsync(string userId);
     Task UpdateLastActiveAsync(string userId, DateTime atUtc);
     Task UpdatePasswordAsync(string userId, string passwordHash);
+
+    /// <summary>
+    /// 只有当库里的散列仍然是 <paramref name="expectedHash"/> 时才换。
+    /// 返回是否真的换成了——两个会话同时改密时，只有一个能拿到 true。
+    /// </summary>
+    Task<bool> TryReplacePasswordAsync(string userId, string expectedHash, string passwordHash);
     Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword);
 }
 

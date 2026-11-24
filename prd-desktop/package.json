@@ -14,7 +14,7 @@
     "tauri:icons:force": "tauri icon ./icon.png --output src-tauri/icons",
     "pretauri:dev": "pnpm tauri:icons && node ../scripts/build-recent-updates.mjs",
     "tauri:dev": "tauri dev",
-    "pretauri:build": "pnpm tauri:icons && node ../scripts/build-recent-updates.mjs",
+    "pretauri:build": "node scripts/require-default-api-url.mjs && pnpm tauri:icons && node ../scripts/build-recent-updates.mjs",
     "tauri:build": "tauri build",
     "build:recent-updates": "node ../scripts/build-recent-updates.mjs",
     "lint": "eslint src --ext ts,tsx",

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Check, CloudUpload, FileText, Clock3 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, CloudUpload, FileText, Clock3, RefreshCw, AlertTriangle } from 'lucide-react';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -7,37 +8,93 @@ import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
-import { listTranscribeStyles } from '@/services';
+import { listTranscribeStyles, retryRecordingArchive, triggerSync } from '@/services';
+import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
 
-function formatBackgroundDuration(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+const MINUTE_SECONDS = 60;
+const HOUR_SECONDS = 60 * MINUTE_SECONDS;
+const DAY_SECONDS = 24 * HOUR_SECONDS;
+/** 超过这个时长就不该再说「已等待」——它暗示马上就好，而实际上多半要人来点重试。 */
+const ARCHIVE_STALLED_SECONDS = HOUR_SECONDS;
+
+/**
+ * 等待时长的人话。此前只有 mm:ss，没有小时和天的进位——
+ * 一条 7 月 24 日卡住的记录在 8 月 11 日会显示「已等待 26573:16」，
+ * 数字本身没算错，但没人能从这串数里看出「这条已经卡了 18 天」。
+ */
+export function formatBackgroundDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  if (seconds >= DAY_SECONDS)
+    return `${Math.floor(seconds / DAY_SECONDS)} 天 ${Math.floor((seconds % DAY_SECONDS) / HOUR_SECONDS)} 小时`;
+  if (seconds >= HOUR_SECONDS)
+    return `${Math.floor(seconds / HOUR_SECONDS)} 小时 ${Math.floor((seconds % HOUR_SECONDS) / MINUTE_SECONDS)} 分`;
+  const minutes = Math.floor(seconds / MINUTE_SECONDS);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % MINUTE_SECONDS).padStart(2, '0')}`;
+}
+
+/**
+ * 后台归档等了多久、还该不该按「就快好了」来讲。
+ *
+ * 卡了一个小时以上的，用户要知道的是**什么时候开始的**和**它已经不正常了**，
+ * 而不是一个还在每秒往上跳的计数器——那只会让人以为系统还在推进。
+ */
+export function describeArchiveWait(startedAt?: string, now = Date.now()): {
+  seconds: number;
+  stalled: boolean;
+  /** 卡住时给出开始时刻，让人能判断「这是哪天的事」 */
+  startedLabel: string | null;
+} {
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(startedMs)) return { seconds: 0, stalled: false, startedLabel: null };
+  const seconds = Math.max(0, Math.floor((now - startedMs) / 1000));
+  const stalled = seconds >= ARCHIVE_STALLED_SECONDS;
+  if (!stalled) return { seconds, stalled, startedLabel: null };
+  const started = new Date(startedMs);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return {
+    seconds,
+    stalled,
+    startedLabel: `${started.getFullYear()}-${pad(started.getMonth() + 1)}-${pad(started.getDate())} ${pad(started.getHours())}:${pad(started.getMinutes())}`,
+  };
+}
+
+const RECORDING_ARCHIVE_STALE_MS = 10 * 60 * 1000;
+
+export function isStaleRecordingArchive(startedAt?: string, now = Date.now()): boolean {
+  if (!startedAt) return false;
+  const startedMs = new Date(startedAt).getTime();
+  return Number.isFinite(startedMs) && now - startedMs >= RECORDING_ARCHIVE_STALE_MS;
 }
 
 function RecordingArchiveProgress({
   hasPlayback,
   hasTranscript,
   startedAt,
-  waitingForRetry,
+    waitingForRetry,
+  entryId,
 }: {
   hasPlayback: boolean;
   hasTranscript: boolean;
   startedAt?: string;
   waitingForRetry: boolean;
+  entryId: string;
 }) {
-  const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
-  const [elapsed, setElapsed] = useState(() => (
-    Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0
-  ));
+  // 每次从 startedAt 重算，不做 +1 累加：累加会随标签页休眠漂移，
+  // 也会在「这条其实是几天前的」时候装作自己一直在跟进。
+  const [wait, setWait] = useState(() => describeArchiveWait(startedAt));
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setElapsed(value => value + 1), 1000);
+    setWait(describeArchiveWait(startedAt));
+    // 已经卡成天级的，没必要每秒重算一遍——那个数字一分钟也不会变一次。
+    if (describeArchiveWait(startedAt).stalled) return undefined;
+    const timer = window.setInterval(() => setWait(describeArchiveWait(startedAt)), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [startedAt]);
+  const elapsed = wait.seconds;
 
   const stages = [
     { label: '录音已保存', state: 'done' as const, icon: Check },
@@ -60,12 +117,14 @@ function RecordingArchiveProgress({
       <div className="flex items-start gap-3">
         <span
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
-          style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.98)' }}>
+          style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)' }}>
           <CloudUpload size={18} />
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[13px] font-semibold text-token-primary">
-            {waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
+            {wait.stalled
+              ? '云端副本长时间没有完成，多半要手动重试'
+              : waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
             {waitingForRetry
@@ -120,11 +179,58 @@ function RecordingArchiveProgress({
       </div>
 
       <p className="mt-3 text-center text-[10px] tabular-nums text-token-muted">
-        {waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'}
-        {' · '}{waitingForRetry ? '已等待' : '已处理'} {formatBackgroundDuration(elapsed)}
+        {wait.stalled
+          ? `${wait.startedLabel} 开始，已经卡了 ${formatBackgroundDuration(elapsed)}`
+          : `${waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'} · ${waitingForRetry ? '已等待' : '已处理'} ${formatBackgroundDuration(elapsed)}`}
       </p>
+      {waitingForRetry && (
+        <button
+          type="button"
+          disabled={retrying}
+          onClick={() => {
+            setRetrying(true);
+            void retryRecordingArchive(entryId)
+              .then((result) => {
+                if (!result.success) {
+                  toast.error('重试未启动', result.error?.message);
+                  return;
+                }
+                toast.success(result.data.completed ? '云端副本已完成' : '已立即重新尝试保存云端副本');
+              })
+              .finally(() => setRetrying(false));
+          }}
+          className="mx-auto mt-3 flex min-h-11 items-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold disabled:opacity-50"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)', color: 'var(--text-primary)' }}>
+          <RefreshCw size={13} className={retrying ? 'animate-spin motion-reduce:animate-none' : ''} />
+          {retrying ? '正在唤醒后台任务' : '立即重试'}
+        </button>
+      )}
     </section>
   );
+}
+
+/**
+ * 移动端 HTML 报告字号档位（CSS zoom，作用于 srcDoc body）：
+ * 周报/验收报告等 HTML 产物按 980px 桌面纸面设计，手机上正文与等宽小字偏小且
+ * sandbox iframe 内无法双指缩放——给读者一个显式放大手段。zoom 会触发真实重排
+ * （非截图式缩放），流式布局按更窄的等效视口重新换行，不会出横向滚动条。
+ * 档位状态由调用方（DocBrowser 工具栏）持有并经 htmlZoom prop 下发——控件与
+ * 其他阅读动作同一行，不单独占行；本组件只负责把 zoom 应用到 srcDoc body。
+ * 纯 UI 偏好，发版后旧值无害 → 允许 localStorage（.claude/rules/no-localstorage.md）。
+ */
+export const HTML_ZOOM_STORAGE_KEY = 'doc-html-preview-zoom';
+export const HTML_ZOOM_MIN = 1;
+export const HTML_ZOOM_MAX = 1.6;
+export const HTML_ZOOM_STEP = 0.15;
+
+export function readStoredHtmlZoom(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(HTML_ZOOM_STORAGE_KEY) ?? '');
+    if (Number.isFinite(v) && v >= HTML_ZOOM_MIN && v <= HTML_ZOOM_MAX) {
+      return Math.round(v * 100) / 100;
+    }
+  } catch { /* ignore */ }
+  return 1;
 }
 
 /**
@@ -146,14 +252,33 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, onRestyleTranscript, htmlBleedX, htmlZoom }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
   transcriptNoteMd?: string | null;
   /** 保存用户在原文句子上的直接校对。 */
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
+  /** 打开知识库智能体，并以当前录音原文作为上下文。 */
+  onAskRecording?: () => void;
+  /** 重新生成整理结果；设计稿把它放在结果页「会议纪要」标题右侧 */
+  onRestyleTranscript?: () => void;
+  /** 移动端 HTML 预览左右出血像素：抵消调用方内容区的水平 padding，让报告纸面满铺卡片宽度。 */
+  htmlBleedX?: number;
+  /** HTML 报告字号档位（受控，由调用方工具栏持有；缺省 1 = 100%）。 */
+  htmlZoom?: number;
 }) {
+  const isMobile = useIsMobile();
+  const htmlIframeRef = useRef<HTMLIFrameElement | null>(null);
+  // onLoad 闭包里读的是挂载时的 zoom，用 ref 镜像保证 iframe 重载后应用的是当前档位
+  const htmlZoomRef = useRef(htmlZoom ?? 1);
+  useEffect(() => {
+    htmlZoomRef.current = htmlZoom ?? 1;
+    // 已渲染的 srcDoc 文档就地应用（allow-same-origin 可达）；重排后 ResizeObserver 会自动跟高
+    const body = htmlIframeRef.current?.contentDocument?.body;
+    if (body) body.style.setProperty('zoom', String(htmlZoom ?? 1));
+  }, [htmlZoom]);
+
   if (!entry) {
     return (
       <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -212,27 +337,45 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   const liveTranscript = entry.metadata?.liveTranscript?.trim() || null;
   const effectiveTranscript = transcriptNoteMd?.trim() || liveTranscript;
   const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
-  const archiveWaitingForRetry = entry.metadata?.audioArchiveNeedsRetry === 'true';
+  const archiveWaitingForRetry = entry.metadata?.audioArchiveNeedsRetry === 'true'
+    || isStaleRecordingArchive(entry.createdAt);
   if (isAudio && fileUrl) {
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex min-h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
+      /*
+        没有转录笔记时此前是 `justify-center`：播放器被顶到整块可用高度的正中间，
+        上面那张状态卡与它之间空出五百多像素——失败/无语音/排队这几屏的版式失分
+        全部出在这里（内容区没被填满，主产物也不在它该在的位置）。
+        播放器就该紧跟状态卡，那才是「这段音频还在，现在就能听」的落点。
+      */
+      <div className={`flex min-h-full w-full flex-col items-center gap-5 justify-start ${effectiveTranscript ? 'py-2' : 'py-4'}`}>
         {archivePending && (
           <RecordingArchiveProgress
             hasPlayback
             hasTranscript={Boolean(effectiveTranscript)}
             startedAt={entry.createdAt}
             waitingForRetry={archiveWaitingForRetry}
+            entryId={entry.id}
           />
         )}
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {effectiveTranscript ? (
           <AudioDocumentPreview
+            /*
+             * key 认这条录音。阅读器里换一条录音只是换 props，组件被复用——
+             * 而跟读组件里压着「正在编辑第几句」和那句的草稿：A 的编辑框还开着就切到 B，
+             * 一保存写进去的是 A 的草稿、落到 B 的对应句上（Codex 第四十一轮 P1；
+             * 结果页那处早就按录音重挂了，阅读器这条路漏了）。
+             * 顺带把「原文/整理」页签也复位——那也是绑在这条录音身上的状态。
+             */
+            key={entry.id}
             src={fileUrl}
             noteMd={effectiveTranscript}
             styleKey={entry.metadata?.transcribe_style_key}
             onSaveNote={onSaveTranscriptNote}
+            onAskRecording={onAskRecording}
+            onRestyleTranscript={onRestyleTranscript}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
       </div>
@@ -250,6 +393,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
           hasTranscript={Boolean(liveTranscript)}
           startedAt={entry.createdAt}
           waitingForRetry={archiveWaitingForRetry}
+          entryId={entry.id}
         />
         {liveTranscript ? (
           <section
@@ -287,8 +431,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // 视口排版再缩放进窄 iframe → 整页看起来很小。srcDoc 正文可注入 viewport + 流式 CSS
     // 让其按设备宽度重排（fileUrl 上传文件无法注入，由生成端补 viewport 兜底）。
     const srcDocHtml = !fileUrl ? ensureResponsiveHtml(text ?? '') : null;
-    return (
+    // 移动端满铺：负 margin 抵消调用方内容区的水平 padding，纸面横向撑满卡片
+    // （mobile-first-density：手机端只留一层 gutter，不让三层 padding 叠加吃掉屏宽）。
+    // 仅 srcDoc 走满铺/字号（fileUrl 依赖 height:100% 链，包一层 div 会塌高，保持原样）。
+    const bleed = isMobile && !fileUrl && htmlBleedX ? htmlBleedX : 0;
+    const iframeEl = (
       <iframe
+        ref={htmlIframeRef}
         {...(fileUrl ? { src: fileUrl } : { srcDoc: srcDocHtml ?? '' })}
         title={entry.title}
         // srcDoc（导入/手写 HTML，与父同源可量高）：用 allow-same-origin（仍未给 allow-scripts，
@@ -310,6 +459,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
+            // 用户设过字号档位 → 文档一挂载就应用，避免先按 100% 排完再跳一次
+            if (d.body && htmlZoomRef.current !== 1) {
+              d.body.style.setProperty('zoom', String(htmlZoomRef.current));
+            }
             // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若**连续**写高
             // 迟迟不收敛，说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——
             // 此时必须停手，否则 RO 每帧触发，主线程被打满、整页卡死。
@@ -433,11 +586,21 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
-        className="w-full rounded-lg border border-token-subtle"
+        // 满铺时去掉左右描边与圆角（纸面直抵卡片边缘，只留上下分隔线）
+        className={`w-full border-token-subtle ${bleed ? 'border-y' : 'rounded-lg border'}`}
         // overflowAnchor none：把 iframe 从外层滚动器的 scroll anchoring 候选里摘出去，
         // 自增高过程中浏览器不再为"补偿高度变化"回调 scrollTop（滚动阻滞感的另一半根因）。
         style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, background: '#fff', overflowAnchor: 'none' }}
       />
+    );
+    if (!bleed) return iframeEl;
+    // overflowX clip：zoom 重排的亚像素舍入偶尔会让内容超宽 1-2px，
+    // 阅读列因此变成可横移容器（overflow-y:auto 会把 overflow-x 也算成 auto），
+    // 竖滑手势被横向分量搅得发飘——阅读区一律禁止横向滚动
+    return (
+      <div style={{ marginLeft: -bleed, marginRight: -bleed, overflowX: 'clip' }}>
+        {iframeEl}
+      </div>
     );
   }
 
@@ -487,7 +650,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
           rel="noopener noreferrer"
           download={entry.title}
           className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-          style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.9)' }}
+          style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'var(--accent-fg-blue)' }}
         >
           下载文件
         </a>
@@ -505,8 +668,11 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     const repo = md.github_repo;
     const path = md.github_path;
     const branch = md.github_branch || 'main';
+    // 逐段转义：目录名里合法的 # 会把后半段变成 URL 片段，「在 GitHub 打开」就落到别的目录去了
+    const seg = (v: string) => encodeURIComponent(v);
+    const encodedPath = (path ?? '').split('/').filter(Boolean).map(seg).join('/');
     const ghUrl = owner && repo
-      ? `https://github.com/${owner}/${repo}/tree/${branch}/${path ?? ''}`.replace(/\/$/, '')
+      ? `https://github.com/${seg(owner)}/${seg(repo)}/tree/${seg(branch)}/${encodedPath}`.replace(/\/$/, '')
       : (md.sourceUrl || entry.metadata?.sourceUrl);
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
@@ -521,10 +687,11 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             {owner}/{repo} · {path || '/'} · {branch}
           </div>
         )}
+        <GithubDirectorySyncStatus entry={entry} />
         {ghUrl && (
           <a href={ghUrl} target="_blank" rel="noopener noreferrer"
             className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-            style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.9)' }}>
+            style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'var(--accent-fg-blue)' }}>
             在 GitHub 打开
           </a>
         )}
@@ -540,11 +707,78 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   );
 }
 
-function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
+/**
+ * GitHub 目录订阅的同步状态条：正常时只是一行淡字，失败时把原因整段摊开并给「重试同步」。
+ *
+ * 为什么必须摊开：后台同步失败此前完全不可见——目录条目在文件树里和普通条目长得一模一样，
+ * 用户等了五分钟没等到文档，也不知道是没拉完、还是授权断了、还是仓库没权限（验收 P2）。
+ */
+function GithubDirectorySyncStatus({ entry }: { entry: DocBrowserEntry }) {
+  const [busy, setBusy] = useState(false);
+
+  const status = entry.syncStatus;
+  const failed = status === 'error' && !!entry.syncError;
+  // 只认服务端报的状态，不做「我点过了所以算同步中」的乐观显示。
+  // 乐观标记要成立，得有人把新状态送回来；这张卡片够不到页面的条目状态，
+  // 于是它只能停在自己编的「同步中」上，还顺手把重试按钮锁死。
+  // 与其为它再接一条回传链路，不如不编——文案本来就写着「稍后刷新查看结果」。
+  const syncing = status === 'syncing';
+
+  const retry = async () => {
+    setBusy(true);
+    const res = await triggerSync(entry.id);
+    setBusy(false);
+    if (res.success) {
+      toast.success('已重新触发同步', '后台正在重试，稍后刷新查看结果');
+    } else {
+      toast.error('触发同步失败', res.error?.message);
+    }
+  };
+
+  if (failed) {
+    return (
+      <div className="max-w-[460px] w-full flex flex-col gap-2 px-3.5 py-3 rounded-[10px] text-left"
+        style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.18)' }}>
+        <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--accent-fg-error)' }}>
+          <AlertTriangle size={13} /> 上次同步失败
+        </div>
+        <div className="text-[11.5px] leading-[1.7]" style={{ color: 'var(--text-secondary)' }}>
+          {entry.syncError}
+        </div>
+        <div>
+          <button onClick={() => void retry()} disabled={busy || syncing}
+            className="h-7 px-3 rounded-[8px] text-[11.5px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+            {busy ? <MapSpinner size={11} /> : <RefreshCw size={11} />}
+            {syncing ? '同步中…' : '重试同步'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (syncing) {
+    return (
+      <div className="flex items-center gap-2 text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+        <MapSpinner size={11} /> 正在同步该目录，完成后文档会出现在左侧目录里
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+      {entry.lastSyncAt ? `上次同步：${new Date(entry.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步'}
+    </div>
+  );
+}
+
+function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecording, onRestyleTranscript }: {
   src: string;
   noteMd: string;
   styleKey?: string;
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
+  onAskRecording?: () => void;
+  onRestyleTranscript?: () => void;
 }) {
   const summary = extractTranscriptSummary(noteMd);
   const [tab, setTab] = useState<'raw' | 'organized'>('raw');
@@ -591,6 +825,8 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
           noteMd={noteMd}
           documentMode
           onSaveNote={onSaveNote}
+          onAskRecording={onAskRecording}
+          onRestyle={onRestyleTranscript}
         />
       )}
     </div>

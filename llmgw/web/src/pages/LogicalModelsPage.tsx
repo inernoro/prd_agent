@@ -16,43 +16,81 @@
 //
 // 本路由被 e2e/llmgw-layout-drift.mjs 监测：新增上游与新建模型都必须留在页面内联表单里，
 // 不要改成抽屉或对话框——被测的扁平 DOM 一旦变成浮层，量到的就不是这一页的版式了。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  createLogicalModel,
   createModelOffering,
+  checkLogicalModelDeletion,
+  deleteLogicalModel,
+  deleteModelOffering,
+  getExchangeMeta,
   getExchanges,
   getLogicalModels,
+  getLogicalModelUsage,
   getModels,
+  getPlatforms,
   setLogicalModelEnabled,
   setModelOfferingEnabled,
+  recoverModelOffering,
   updateLogicalModel,
   updateModelOffering,
 } from '@/lib/api';
 import type {
-  CreateLogicalModelRequest,
   CreateModelOfferingRequest,
   ExchangeItem,
+  ExchangeOptionItem,
   LogicalModelItem,
+  LogicalModelUsageItem,
   ModelItem,
+  PlatformItem,
+  ModelOfferingItem,
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
-import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose } from '@/components/PageShell';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
-import { CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
+import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, METRIC_CAPTION, MONO_META } from '@/lib/typography';
+import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
+import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
+import { CallTracePanel } from '@/components/CallTracePanel';
+import { ModelUpgradePanel } from '@/components/ModelUpgradePanel';
+import './LogicalModelsPage.css';
+import { Link, useSearchParams } from 'react-router-dom';
+import { appCallerDefaultModel, callerWorkspaceReturnHref } from '@/lib/appCallerDefaultModel';
+import { ModelOfferingTestPanel } from '@/components/ModelOfferingTestPanel';
+import { ModelCreationPanel } from '@/components/ModelCreationPanel';
+import { CollectionView, CollectionDetailPane, CollectionPaneTab } from '@/components/CollectionView';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
 };
 const labelStyle: React.CSSProperties = FIELD_LABEL;
-
 export function LogicalModelsPage() {
+  const [taskParams] = useSearchParams();
+  const taskCaller = (taskParams.get('caller') || '').trim();
+  const taskType = (taskParams.get('requestType') || '').trim();
+  const requestedPublicId = (taskParams.get('publicId') || '').trim();
+  const taskOpened = useRef('');
+  const reloadSerial = useRef(0);
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { promptText } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
+  const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
+  const [modelTypes, setModelTypes] = useState<ExchangeOptionItem[]>([]);
+  const [modelTypesError, setModelTypesError] = useState<string | null>(null);
+  // 近 30 天用量：列表那条趋势线与花费列的唯一数据源。拉不到就整列不渲染，
+  // 不画一条假的平滑曲线——「没数据」和「用量平稳」是两件事，画成一样会误导。
+  const [usage, setUsage] = useState<Map<string, LogicalModelUsageItem> | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
+  /** 正在看调用全貌的那个模型。和「展开」分开：一个给配置，一个给推演。 */
+  const [traceFor, setTraceFor] = useState<string | null>(null);
+  const [upgradeFor, setUpgradeFor] = useState<string | null>(null);
+  const [batchProgress, setBatchProgress] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   // 带 tone 的提示：此前是裸字符串 + 固定 tone="ok"，10 个写入点里有 6 个是失败路径，
   // 于是「更新路由策略失败」会渲染成一条绿色成功条 —— 运维会以为改动生效了（Codex P2）。
@@ -60,57 +98,74 @@ export function LogicalModelsPage() {
   const okNotice = (text: string) => setNotice({ tone: 'ok', text });
   const failNotice = (text: string) => setNotice({ tone: 'error', text });
   const [createOpen, setCreateOpen] = useState(false);
+  const [aliasDraft, setAliasDraft] = useState<{ id: string; value: string } | null>(null);
   const [offeringFor, setOfferingFor] = useState<string | null>(null);
+  const [testingOfferingId, setTestingOfferingId] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [draft, setDraft] = useState<CreateLogicalModelRequest>({
-    publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'],
-    allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
-  });
+  const [routingRefreshFailed, setRoutingRefreshFailed] = useState(false);
+  const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
+  const [allowlistDraft, setAllowlistDraft] = useState<{ id: string; value: string } | null>(null);
   const [offeringDraft, setOfferingDraft] = useState<CreateModelOfferingRequest>({
     targetKind: 'model', targetId: '', priority: 100, weight: 100,
   });
 
   async function reload() {
+    const serial = ++reloadSerial.current;
     setError(null);
-    const [logicalRes, modelsRes, exchangesRes] = await Promise.all([
-      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }),
+    try {
+    const [logicalRes, modelsRes, exchangesRes, usageRes, metaRes, platformsRes] = await Promise.all([
+      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30), getExchangeMeta(), getPlatforms(),
     ]);
+    if (serial !== reloadSerial.current) return;
+    if (platformsRes.success) setPlatforms(platformsRes.data.items.filter(item => item.authority === 'llm_gateway'));
+    setModelTypes(metaRes.success ? metaRes.data.modelTypes : []);
+    setModelTypesError(metaRes.success && metaRes.data.modelTypes.length > 0 ? null : '模型用途目录暂不可用，请刷新后再创建。');
     if (!logicalRes.success) {
       setError(logicalRes.error?.message || '加载逻辑模型失败');
-      setItems([]);
       return;
     }
     setItems(logicalRes.data.items);
+    setRoutingRefreshFailed(false);
     if (modelsRes.success) setModels(modelsRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     if (exchangesRes.success) setExchanges(exchangesRes.data.items.filter((x) => x.authority === 'llm_gateway'));
+    // 用量只是锦上添花，取不到不该让整页报错——列表照常渲染，那一列留空。
+    setUsage(usageRes.success ? new Map(usageRes.data.items.map((x) => [x.publicId, x])) : null);
+    } catch { if (serial === reloadSerial.current) setError('模型目录读取未完成，请重新读取。'); }
+  }
+
+  // 一条线路的变更会影响所有兄弟线路的排队位置，只读服务端完整队列，不在客户端拼接。
+  async function refreshRoutes(): Promise<boolean> {
+    try {
+      const res = await getLogicalModels();
+      if (res.success) {
+        setItems(res.data.items);
+        setRoutingRefreshFailed(false);
+        setNotice(null);
+        return true;
+      }
+    } catch { /* 写入已成功，读取失败需要单独呈现，不能让用户重复提交写入。 */ }
+    setRoutingRefreshFailed(true);
+    failNotice('上游变更已保存，但最新线路状态未读取成功。请刷新线路状态后再确认主备与可用性。');
+    return false;
   }
 
   useEffect(() => { void reload(); }, []);
 
-  const targets = useMemo(() => offeringDraft.targetKind === 'model'
-    ? models.map((x) => ({ id: x.id, label: `${x.name || x.modelName} · ${x.modelName}` }))
-    : exchanges.map((x) => ({ id: x.id, label: x.name })), [models, exchanges, offeringDraft.targetKind]);
+  useEffect(() => {
+    if (!items || (!requestedPublicId && (!taskCaller || !taskType))) return;
+    const taskKey = requestedPublicId ? `public:${requestedPublicId}` : `${taskCaller}:${taskType}`;
+    if (taskOpened.current === taskKey) return;
+    taskOpened.current = taskKey;
+    const current = requestedPublicId ? items.find(item => item.publicId === requestedPublicId) : appCallerDefaultModel(items, taskCaller, taskType).model;
+    if (current) { setExpanded(current.id); setConfigurationOpen(true); }
+  }, [items, taskCaller, taskType, requestedPublicId]);
 
-  async function submitLogical(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy('create-logical');
-    setNotice(null);
-    const request = {
-      ...draft,
-      publicId: draft.publicId.trim(), name: draft.name.trim(),
-      capabilities: draft.capabilities.map((x) => x.trim()).filter(Boolean),
-      allowedAppCallerCodes: draft.allowedAppCallerCodes.map((x) => x.trim()).filter(Boolean),
-      description: draft.description?.trim() || undefined,
-    };
-    const res = await createLogicalModel(request);
-    setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '创建失败'); return; }
-    setItems((prev) => [...(prev || []), res.data]);
-    setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'], allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
-    setCreateOpen(false);
-    okNotice(`逻辑模型「${res.data.name}」已创建，请继续添加至少一个上游 Offering`);
-  }
+  useEffect(() => { setSelectedIds(new Set()); }, [taskCaller, taskType]);
+
+  const targets = useMemo(() => offeringDraft.targetKind === 'model'
+    ? models.map((x) => ({ id: x.id, label: `${platforms.find(platform => platform.id === x.platformId)?.name || (x.platformId ? `上游 ${x.platformId.slice(0, 8)}` : '未识别上游')} · ${x.modelName}${x.name && x.name !== x.modelName ? ` · ${x.name}` : ''}` }))
+    : exchanges.map((x) => ({ id: x.id, label: `${x.name} · ${x.transformerType}` })), [models, exchanges, platforms, offeringDraft.targetKind]);
 
   async function submitOffering(event: React.FormEvent, logical: LogicalModelItem) {
     event.preventDefault();
@@ -123,14 +178,13 @@ export function LogicalModelsPage() {
           rateLimitPerMinute: offeringDraft.rateLimitPerMinute ?? 0,
         })
       : await createModelOffering(logical.id, offeringDraft);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '添加 Offering 失败'); return; }
+    const refreshed = await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '添加 Offering 失败'); return; }
-    setItems((prev) => prev?.map((x) => x.id === logical.id
-      ? { ...x, offerings: editingOfferingId ? x.offerings.map((o) => o.id === editingOfferingId ? res.data : o) : [...x.offerings, res.data] }
-      : x) || null);
     setOfferingFor(null);
     setEditingOfferingId(null);
     setOfferingDraft({ targetKind: 'model', targetId: '', priority: 100, weight: 100 });
+    if (!refreshed) return;
     okNotice(editingOfferingId ? `已更新「${logical.name}」的上游 ${res.data.targetName}` : `已为「${logical.name}」添加上游 ${res.data.targetName}`);
   }
 
@@ -141,6 +195,18 @@ export function LogicalModelsPage() {
     if (!res.success) { failNotice(res.error?.message || '更新路由策略失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === item.id ? res.data : x) || null);
     okNotice(`「${item.name}」已切换为${routingStrategy === 'weighted' ? '权重负载均衡' : '优先级与故障切换'}`);
+  }
+
+  async function saveAliases(item: LogicalModelItem, value: string) {
+    setBusy(`aliases:${item.id}`);
+    try {
+      const res = await updateLogicalModel(item.id, { aliases: value.split(/\r?\n/).map(x => x.trim()).filter(Boolean) });
+      if (!res.success) { failNotice(res.error?.message || '兼容标识未保存，请刷新后重试'); return; }
+      setItems(prev => prev?.map(x => x.id === item.id ? res.data : x) || null);
+      setAliasDraft(null);
+      okNotice(`「${item.name}」的兼容标识已保存`);
+    } catch { failNotice('兼容标识保存结果未确认，请刷新核对后再试'); }
+    finally { setBusy(null); }
   }
 
   function openNewOffering(logicalId: string) {
@@ -166,6 +232,68 @@ export function LogicalModelsPage() {
     });
   }
 
+  /**
+   * 设为 / 取消「这个用途的默认」。
+   *
+   * 换兜底模型会改变线上行为：从此以后所有不点名模型的请求都走它。所以顶掉了谁必须
+   * 当场说清楚，不能让人点完一个开关、几天后才发现默认悄悄换了人。
+   */
+  /**
+   * 改「对这些调用方而言我是默认」。
+   *
+   * 与「设为默认」是两件事：那个管「这个用途所有人不点名时用谁」，这个管「某几个
+   * 调用方不点名时用谁」，后者优先。模型池能做而对外模型此前做不到的就是后一件——
+   * 少了它，把最后一个走池的调用方切过来时它会掉到全局默认上，换了模型。
+   *
+   * 同用途下一个调用方最多被一个模型认领，服务端会把别人手上的同名调用方摘掉并
+   * 如实回给我们；本地列表也要跟着改，否则会同时显示两个模型认领同一个人。
+   */
+  async function saveClaims(item: LogicalModelItem, raw: string) {
+    const codes = raw.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+    setBusy(`claims:${item.id}`);
+    const res = await updateLogicalModel(item.id, { defaultForAppCallerCodes: codes });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '保存认领失败'); return; }
+    setItems((prev) => prev?.map((x) => {
+      if (x.id === item.id) return res.data;
+      if (x.modelType !== item.modelType) return x;
+      const kept = x.defaultForAppCallerCodes.filter((c) => !codes.includes(c));
+      return kept.length === x.defaultForAppCallerCodes.length ? x : { ...x, defaultForAppCallerCodes: kept };
+    }) || null);
+    setClaimDraft(null);
+    okNotice(codes.length === 0
+      ? `已取消「${item.name}」的全部认领；这些调用方不点名时会回落到 ${item.modelType} 用途的默认`
+      : `${codes.length} 个调用方不点名时，从现在起走「${item.name}」`);
+  }
+
+  async function saveAllowlist(item: LogicalModelItem, raw: string) {
+    const codes = raw.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+    setBusy(`allowlist:${item.id}`);
+    const res = await updateLogicalModel(item.id, { allowedAppCallerCodes: codes });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '保存允许调用方失败'); return; }
+    setItems((prev) => prev?.map((x) => x.id === item.id ? res.data : x) || null);
+    setAllowlistDraft(null);
+    okNotice(`${item.name} 允许调用方已更新：${describeScope(res.data.allowedAppCallerCodes)}`);
+  }
+
+  async function toggleDefault(item: LogicalModelItem) {
+    const next = !item.isDefaultForType;
+    setBusy(`default:${item.id}`);
+    const res = await updateLogicalModel(item.id, { isDefaultForType: next });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '设置默认失败'); return; }
+    setItems((prev) => prev?.map((x) => {
+      if (x.id === item.id) return res.data;
+      // 同用途的旧默认被服务端清掉了，本地列表也要跟着改，否则会同时显示两个「没点名时用它」
+      if (next && x.modelType === item.modelType && x.isDefaultForType) return { ...x, isDefaultForType: false };
+      return x;
+    }) || null);
+    okNotice(next
+      ? `${item.modelType} 用途没点名模型时，从现在起走「${item.name}」`
+      : `已取消「${item.name}」的默认；${item.modelType} 用途没点名的请求会失败，直到你给它设一个新的默认`);
+  }
+
   async function toggleLogical(item: LogicalModelItem) {
     setBusy(item.id);
     const res = await setLogicalModelEnabled(item.id, !item.enabled);
@@ -174,95 +302,371 @@ export function LogicalModelsPage() {
     setItems((prev) => prev?.map((x) => x.id === item.id ? { ...x, enabled: res.data.enabled } : x) || null);
   }
 
+  // Offering 是逻辑模型自己的下挂路由，没有别处引用，所以删除是连带删而不是阻挡。
+  // 但连带删对运维是「一次点击删掉 N 条」，必须先把 N 报出来再让他确认。
+  async function removeLogical(item: LogicalModelItem) {
+    // 还在接不点名请求的模型，服务端会拒（409）。但把人放进「输 publicId 确认」那一步
+    // 再拒，等于让他白走一趟——在这里先说清它挡在哪、下一步做什么。
+    // 判据与服务端同一对字段，不另写近似。
+    const catching: string[] = [];
+    if (item.isDefaultForType) catching.push(`它是「${item.modelType}」的默认模型`);
+    if (item.defaultForAppCallerCodes.length > 0) {
+      catching.push(`它认领着 ${item.defaultForAppCallerCodes.length} 个调用方`);
+    }
+    if (catching.length > 0) {
+      failNotice(
+        `「${item.name}」还在接不点名的请求：${catching.join('；')}。`
+        + '直接删会让那些请求当场失败，或者悄悄换成另一个模型。'
+        + '先把默认与认领转给别的模型，再回来删',
+      );
+      return;
+    }
+
+    setBusy(`delete-check:${item.id}`);
+    let check;
+    try { check = await checkLogicalModelDeletion(item.id); }
+    catch { failNotice('删除检查未完成，本次未删除，请检查网络后重试。'); return; }
+    finally { setBusy(null); }
+    if (!check.success) { failNotice(check.error?.message || '删除检查未完成，请重试。'); return; }
+    if (!check.data.canDelete) { failNotice(`「${item.name}」已保留：${check.data.reasons.join('；')}`); return; }
+    const typed = await promptText({
+      title: `删除逻辑模型「${item.name}」`,
+      description: `${item.publicId}\n它名下全部 ${check.data.offerings} 条线路（包含已被替换的旧版线路）会一并删除，无法撤销。`,
+      inputLabel: '确认请输入 publicId',
+      requireExact: item.publicId,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== item.publicId) { failNotice('输入的 publicId 不一致，已取消删除'); return; }
+    setBusy(item.id);
+    setNotice(null);
+    const res = await deleteLogicalModel(item.id);
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '删除失败'); return; }
+    setItems((prev) => prev?.filter((x) => x.id !== item.id) || null);
+    okNotice(`已删除「${item.name}」，连带 ${res.data.offeringsDeleted} 条 Offering`);
+  }
+
+  async function removeSelected() {
+    const selected = (items ?? []).filter(item => selectedIds.has(item.id));
+    if (!canWrite || busy !== null || !selected.length) return;
+    const active = selected.filter(item => item.enabled || item.isDefaultForType || item.defaultForAppCallerCodes.length);
+    if (active.length) { failNotice(`先停用并转移默认或调用方认领：${active.map(item => item.name).join('、')}`); return; }
+    setBusy('batch-check'); setBatchProgress(`正在检查 0/${selected.length} 项`);
+    const eligible: LogicalModelItem[] = []; const blocked: string[] = [];
+    const offeringCounts = new Map<string, number>();
+    try {
+      for (const item of selected) {
+        setBatchProgress(`正在检查 ${eligible.length + blocked.length + 1}/${selected.length} 项：${item.name}`);
+        const result = await checkLogicalModelDeletion(item.id);
+        if (!result.success) { failNotice('部分模型删除检查未完成，本次未删除，请刷新后重试。'); return; }
+        if (result.data.canDelete) { eligible.push(item); offeringCounts.set(item.id, result.data.offerings); }
+        else blocked.push(`${item.name}：${result.data.reasons.join('；')}`);
+      }
+    } catch { failNotice('删除检查连接中断，本次未删除，请重试。'); return; }
+    finally { setBusy(null); setBatchProgress(null); }
+    if (!eligible.length) { failNotice(`所选模型均已保留：${blocked.join('；')}`); return; }
+    const phrase = `删除 ${eligible.length} 个模型`;
+    const typed = await promptText({ title: '批量删除预检完成', description: eligible.map(item => `${item.name}（${item.publicId}）· 全部 ${offeringCounts.get(item.id)} 条线路（含被替换的旧版）`).join('\n') + '\n以上删除无法撤销。' + (blocked.length ? '\n以下项目被保护并保留：\n' + blocked.join('\n') : '') + '\n确认后仍会逐项重新检查依赖。', inputLabel: `请输入「${phrase}」`, requireExact: phrase, confirmLabel: '删除检查通过项', tone: 'danger' });
+    if (typed !== phrase) return;
+    setBusy('batch-delete'); setNotice(null); setBatchProgress(`正在删除检查通过的 ${eligible.length} 项`);
+    const removed: string[] = []; const failures: string[] = [];
+    try {
+      for (const item of eligible) {
+        setBatchProgress(`正在删除 ${removed.length + failures.length + 1}/${eligible.length} 项：${item.name}`);
+        const result = await deleteLogicalModel(item.id);
+        if (result.success) removed.push(item.id);
+        else failures.push(`${item.name}：${result.error?.message || '未删除'}`);
+      }
+      setItems(previous => previous?.filter(item => !removed.includes(item.id)) ?? null);
+      setSelectedIds(new Set(selected.filter(item => !removed.includes(item.id)).map(item => item.id)));
+      setNotice({ tone: failures.length || blocked.length ? 'error' : 'ok', text: `已删除 ${removed.length}/${selected.length} 项。${[...blocked, ...failures].join('；')}` });
+    } catch { failNotice(`已确认删除 ${removed.length} 项，其余结果未确认，请刷新核对后操作。`); await reload(); }
+    finally { setBusy(null); setBatchProgress(null); }
+  }
+
+  async function removeOffering(logical: LogicalModelItem, offering: ModelOfferingItem) {
+    if (!canWrite || busy !== null) return;
+    if (offering.enabled) { failNotice('请先停用这条线路，再确认删除'); return; }
+    setBusy(offering.id); setNotice(null);
+    try {
+      const typed = await promptText({
+        title: '删除已停用线路',
+        description: `${logical.name}（${logical.publicId}）\n${offering.targetName || offering.upstreamModelId || offering.targetId}\n线路 ID：${offering.id}\n仅删除这条已停用线路，无法撤销。公开模型、兼容标识及 MAP 配置会保留；仍会检查业务依赖和进行中的任务。`,
+        inputLabel: '请输入线路 ID 确认',
+        requireExact: offering.id,
+        tone: 'danger',
+        confirmLabel: '删除线路',
+      });
+      if (typed === null) return;
+      if (typed.trim() !== offering.id) { failNotice('线路 ID 不一致，已取消删除'); return; }
+      const result = await deleteModelOffering(logical.id, offering.id);
+      if (!result.success) { failNotice(result.error?.message || '线路未删除，请刷新列表后重试'); return; }
+      setItems(previous => previous?.map(item => item.id === logical.id
+        ? { ...item, offerings: item.offerings.filter(itemOffering => itemOffering.id !== offering.id) }
+        : item) || null);
+      if (!await refreshRoutes()) return;
+      okNotice('已删除停用线路，公开模型和 MAP 配置已保留');
+    } catch { failNotice('线路删除结果未确认，请刷新列表核对后再操作'); }
+    finally { setBusy(null); }
+  }
+
   async function toggleOffering(logical: LogicalModelItem, offeringId: string, enabled: boolean) {
     setBusy(offeringId);
     const res = await setModelOfferingEnabled(logical.id, offeringId, !enabled);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '操作失败'); return; }
+    await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '操作失败'); return; }
-    setItems((prev) => prev?.map((x) => x.id === logical.id
-      ? { ...x, offerings: x.offerings.map((o) => o.id === offeringId ? res.data : o) }
-      : x) || null);
   }
 
-  const offeringCount = items?.reduce((sum, x) => sum + x.offerings.length, 0) ?? 0;
+
+  /**
+   * 手动恢复一条被熔断摘掉的线路：立刻给它进半开的资格，省掉冷却期的等待。
+   *
+   * 这个按钮存在的理由是一句话的兑现：所有线路都摘掉时那条提示写着「或在展开里手动恢复一条」，
+   * 而在它之前页面上根本没有这个动作——提示指向一个做不到的下一步（第 79 轮 review）。
+   * 端点回的不是线路对象（只有 offeringId 与 halfOpenPending），所以这里重拉一次列表，
+   * 而不是拿返回值就地改那一行：就地改会把健康状态写成一个我们没拿到的值。
+   */
+  async function recoverOffering(logical: LogicalModelItem, offeringId: string) {
+    setBusy(offeringId);
+    const res = await recoverModelOffering(logical.id, offeringId);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '恢复失败'); return; }
+    await refreshRoutes();
+    setBusy(null);
+  }
+
+  const selectedItem = items?.find((item) => item.id === (expanded || traceFor || upgradeFor));
+  function renderSelectedDetails() {
+    if (!selectedItem) return null;
+    const item = selectedItem;
+    if (upgradeFor === item.id) return <ModelUpgradePanel key={item.id} logicalModelId={item.id} onRoutingChanged={() => void reload()} />;
+    const routes = describeRoutes(item, models);
+    const health = summarizeHealth(item, routes);
+    const tracing = traceFor === item.id;
+    const open = expanded === item.id;
+    return <>
+                  {tracing ? (
+                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)` }}>
+                      <CallTracePanel logicalModelId={item.id} />
+                    </div>
+                  ) : null}
+
+                  {open ? (
+                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+                      {health.tone === 'warn' && health.advice ? <InlineAlert tone="info">{health.advice}</InlineAlert> : null}
+
+                      <div className={configurationOpen ? "lg-collection-model-config" : "lg-collection-hidden"}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                        <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+                        <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+                        <span style={HINT_TEXT}>{item.capabilities.join(' · ') || '未声明能力'}</span>
+                        {canWrite ? (
+                          <>
+                            <span style={{ flex: 1 }} />
+                            <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}>
+                              <option value="priority">优先级与故障切换</option>
+                              <option value="weighted">权重负载均衡</option>
+                            </select>
+                            <Button size="sm" disabled={busy === `default:${item.id}`} onClick={() => void toggleDefault(item)}>
+                              {item.isDefaultForType ? '取消默认' : '设为默认'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={claimDraft?.id === item.id}
+                              onClick={() => setClaimDraft((x) => (x?.id === item.id
+                                ? null
+                                : { id: item.id, value: item.defaultForAppCallerCodes.join(', ') }))}
+                            >
+                              指定调用方
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={allowlistDraft?.id === item.id}
+                              onClick={() => setAllowlistDraft((x) => (x?.id === item.id
+                                ? null
+                                : { id: item.id, value: item.allowedAppCallerCodes.join(', ') }))}
+                            >
+                              允许调用方
+                            </Button>
+                            <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
+                            {item.identityKind === 'stable' ? <Button size="sm" variant="ghost" onClick={() => setAliasDraft({ id: item.id, value: (item.aliases ?? []).join('\n') })}>兼容旧标识</Button> : null}
+                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
+                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
+                          </>
+                        ) : null}
+                      </div>
+
+                      {aliasDraft?.id === item.id && canWrite ? <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                        <span style={HINT_TEXT}>兼容旧标识，一行一个</span>
+                        <textarea aria-label={`${item.name} 兼容旧标识`} value={aliasDraft.value} rows={3} onChange={e => setAliasDraft({ id: item.id, value: e.target.value })} style={{ ...inputStyle, height: 'auto' }} />
+                        <div><Button size="sm" disabled={busy === `aliases:${item.id}`} onClick={() => void saveAliases(item, aliasDraft.value)}>保存兼容标识</Button><Button size="sm" variant="ghost" disabled={busy === `aliases:${item.id}`} onClick={() => setAliasDraft(null)}>取消</Button></div>
+                      </div> : null}
+
+                      {claimDraft?.id === item.id && canWrite ? (
+                        <div data-testid="logical-model-claims" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
+                            这些调用方不点名模型时走它，优先于「{item.modelType} 用途的默认」。逗号或空格分隔；留空表示取消认领。
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                            <input
+                              aria-label={`${item.name} 指定的调用方`}
+                              value={claimDraft.value}
+                              placeholder="document-store.transcribe-summary::chat"
+                              onChange={(e) => setClaimDraft({ id: item.id, value: e.target.value })}
+                              style={{ flex: '1 1 200px', minWidth: 0, width: '100%' }}
+                            />
+                            <Button
+                              size="sm"
+                              disabled={busy === `claims:${item.id}`}
+                              onClick={() => void saveClaims(item, claimDraft.value)}
+                            >
+                              保存
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setClaimDraft(null)}>取消</Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {allowlistDraft?.id === item.id && canWrite ? (
+                        <div data-testid="logical-model-allowlist" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
+                            这些调用方可以使用此模型，不改变默认调用方。逗号或空格分隔；留空表示当前租户全部调用方可用。
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                            <input
+                              aria-label={`${item.name} 允许的调用方`}
+                              value={allowlistDraft.value}
+                              onChange={(e) => setAllowlistDraft({ id: item.id, value: e.target.value })}
+                              style={{ ...inputStyle, flex: '1 1 200px', minWidth: 0, width: '100%' }}
+                            />
+                            <Button size="sm" disabled={busy === `allowlist:${item.id}`} onClick={() => void saveAllowlist(item, allowlistDraft.value)}>保存</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setAllowlistDraft(null)}>取消</Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      </div>
+                      {!configurationOpen ? <div className="lg-collection-subhead"><Chip label={`${routes.length} 条线路`} color="var(--accent)" bg="var(--accent-soft)" /><span style={HINT_TEXT}>{item.routingStrategy === "weighted" ? "权重负载均衡" : "主备与故障切换"}</span><span style={{flex:1}} />{canWrite ? <Button size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>添加上游</Button> : null}</div> : null}
+                      {offeringFor === item.id && canWrite ? (
+                        <form onSubmit={(e) => submitOffering(e, item)} style={INSET_BLOCK}>
+                          <FormGrid>
+                            <label style={labelStyle}>
+                              <span>上游类型</span>
+                              <select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}>
+                                <option value="model">Provider 模型</option>
+                                <option value="exchange">协议适配器（fal 等）</option>
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>上游及实际型号</span>
+                              <select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}>
+                                <option value="">请选择</option>
+                                {targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>
+                                上游模型标识
+                                <HelpPopover label="上游模型标识">
+                                  留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
+                                  协议与 Endpoint path 两栏同理，填了才覆盖。
+                                </HelpPopover>
+                              </span>
+                              <input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>调用协议<HelpPopover label="调用协议">留空继承上游；OpenRouter 的兼容接口使用 OpenAI 协议。fal 等使用已配置的协议适配器，不能仅换模型名称代替格式转换。保存后按实际线路核对。</HelpPopover></span>
+                              <select aria-label="调用协议" value={offeringDraft.protocol || ''} onChange={event => setOfferingDraft(value => ({...value, protocol:event.target.value || undefined}))} style={inputStyle}>
+                                <option value="">继承上游协议</option><option value="openai">OpenAI 兼容（含 OpenRouter）</option><option value="claude">Anthropic Messages</option>{offeringDraft.targetKind === 'exchange' ? <option value="exchange">已配置的协议适配器</option> : null}{offeringDraft.protocol && !['openai','claude','exchange'].includes(offeringDraft.protocol) ? <option value={offeringDraft.protocol}>当前：{offeringDraft.protocol}</option> : null}
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>请求路径<HelpPopover label="请求路径">留空沿用上游与用途的标准路径；只有上游要求其他路径时才覆盖。修改协议和路径不会自动改变请求体格式，特殊格式请选用已配置适配器。</HelpPopover></span>
+                              <input value={offeringDraft.endpointPath || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, endpointPath: e.target.value }))} placeholder="留空使用标准路径" style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>优先级</span>
+                              <input type="number" min={0} value={offeringDraft.priority ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, priority: Number(e.target.value) }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>权重</span>
+                              <input type="number" min={1} value={offeringDraft.weight ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, weight: Number(e.target.value) }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>
+                                最大并发
+                                <HelpPopover label="最大并发">
+                                  留空表示继承上游自己的并发上限；每分钟速率留空表示这一层不额外限流。
+                                  两栏都填时，本条上游与上游本身的限制同时生效，任一层触顶都会让请求切到下一个上游。
+                                </HelpPopover>
+                              </span>
+                              <input type="number" min={1} max={10000} value={offeringDraft.maxConcurrency ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, maxConcurrency: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>每分钟速率</span>
+                              <input type="number" min={1} max={1000000} value={offeringDraft.rateLimitPerMinute ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, rateLimitPerMinute: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>运维备注</span>
+                              <input value={offeringDraft.notes || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, notes: e.target.value }))} style={inputStyle} />
+                            </label>
+                            <Button type="submit" variant="primary" size="sm" disabled={busy === `offering:${item.id}`}>{busy === `offering:${item.id}` ? '保存中' : editingOfferingId ? '保存修改' : '保存绑定'}</Button>
+                            {editingOfferingId ? <Button type="button" size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>取消编辑</Button> : null}
+                          </FormGrid>
+                        </form>
+                      ) : null}
+
+                      <CollectionView continuous className={configurationOpen ? "lg-collection-hidden" : "lg-collection-route-list"} filters={[{value: "enabled", label: "线路启用", matches: (route) => route.offering.enabled}, {value: "disabled", label: "线路停用", matches: (route) => !route.offering.enabled}]} allFilterLabel="全部线路" items={routes} placeholder="搜索上游模型、供应方或备注" searchText={(route) => [route.label, route.upstreamModelId, route.providerName, route.offering.targetName, route.offering.notes, route.protocol].filter(Boolean).join(' ')}>
+                        {(pageRoutes) => <>{pageRoutes.map((route) => (
+                        <div className="lg-logical-model-route-detail" key={`detail-${route.id}`}>
+                          <div className="lg-collection-route-heading"><strong title={route.upstreamModelId || route.offering.targetName || route.label}>{route.upstreamModelId || route.offering.targetName || route.label}</strong><Chip label={route.roleLabel} color="var(--accent)" bg="var(--accent-soft)" /></div>
+                          <div className="lg-collection-route-meta"><span title={route.label}>{route.providerName || route.label} · 优先级 {route.priority}</span><span title={route.priceOrigin}>{route.price}</span></div>
+                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" onClick={() => setTestingOfferingId(value => value === route.id ? null : route.id)}>{testingOfferingId === route.id ? '收起测试' : '测试'}</Button><Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button><Button size="sm" variant="ghost" disabled={busy !== null || route.offering.enabled} title={route.offering.enabled ? '请先停用这条线路' : '删除此线路，保留公开模型与 MAP 配置'} onClick={() => void removeOffering(item, route.offering)}>删除线路</Button></> : null}</div>
+                          {canWrite && testingOfferingId === route.id ? <ModelOfferingTestPanel key={route.id} logical={item} offering={route.offering} providerId={models.find(model => model.id === route.offering.targetId)?.platformId}/> : null}
+                          <details className="lg-collection-route-properties"><summary>线路参数</summary><div>{route.label} · {route.priceOrigin}<br />优先级 {route.priority} · 权重 {route.weight} · {route.governance}</div></details>
+                        </div>
+                      ))}</>}
+                      </CollectionView>
+                    </div>
+                  ) : null}
+    </>;
+  }
 
   return (
     <PageShell>
       <PageHeader
-        title="逻辑模型目录"
-        subtitle="应用只选择稳定的模型标识，接哪个上游由它下面的 Offering 决定。"
-        summary={items ? (
-          <>
-            <span>模型 <strong>{items.length}</strong></span>
-            <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            <span>Offering <strong>{offeringCount}</strong></span>
-          </>
-        ) : undefined}
-        actions={canWrite ? (
-          <Button variant="primary" size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '添加逻辑模型'}</Button>
-        ) : null}
+        title="公开模型"
+        actions={<>
+          <HelpPopover label="模型帮助">公开标识供业务请求使用。配置上游后，请核对启用状态、用途与允许范围，并测试线路；删除会检查使用位置和运行中任务。</HelpPopover>
+          {canWrite ? <Button variant="primary" size="sm" onClick={() => setCreateOpen(value => !value)}>{createOpen ? '收起新建' : '新建模型'}</Button> : null}
+        </>}
       />
 
-      <PageBody>
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+      <PageBody className="lg-collection-page">
+        {taskCaller && taskType ? <section className="lg-caller-model-context" aria-label="调用方模型上下文">
+          <div><strong>{taskCaller}</strong><span>{taskType} · 默认模型配置</span><span>未点名模型时使用；显式指定模型的请求不变。</span></div>
+          <Link to={callerWorkspaceReturnHref(taskCaller, taskType, taskParams.get('callerReturn') || '')}>返回调用方并重新读取</Link>
+        </section> : null}
+        {error ? <InlineAlert tone="error">{error}<Button size="sm" variant="ghost" onClick={() => void reload()}>重新读取</Button></InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
+        {routingRefreshFailed ? <Button size="sm" disabled={busy !== null} onClick={async () => { setBusy('refresh-routes'); await refreshRoutes(); setBusy(null); }}>{busy === 'refresh-routes' ? '读取中…' : '刷新线路状态'}</Button> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
+        {createOpen && canWrite ? <Card style={CARD_BODY}>
+          {modelTypesError ? <InlineAlert tone="error">{modelTypesError}</InlineAlert> : null}
+          <ModelCreationPanel models={models} exchanges={exchanges} modelTypes={modelTypes} onCancel={() => setCreateOpen(false)} onCreated={(item, needsBinding) => {
+            setItems(previous => [...(previous ?? []).filter(existing => existing.id !== item.id), item]);
+            setCreateOpen(false); setTraceFor(null); setUpgradeFor(null); setExpanded(item.id); setConfigurationOpen(false);
+            if (needsBinding) openNewOffering(item.id);
+            okNotice(needsBinding ? `「${item.name}」已创建，请绑定上游。` : `「${item.name}」已登记并绑定上游。`);
+            void reload();
+          }} />
+        </Card> : null}
 
-        {createOpen && canWrite ? (
-          <Card style={CARD_BODY}>
-            <form onSubmit={submitLogical}>
-              <FormGrid>
-                <label style={labelStyle}>
-                  <span>公开模型标识</span>
-                  <input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  <span>显示名称</span>
-                  <input required value={draft.name} onChange={(e) => setDraft((x) => ({ ...x, name: e.target.value }))} placeholder="例如 GPT Image 2" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  <span>模型类型</span>
-                  <select value={draft.modelType} onChange={(e) => setDraft((x) => ({ ...x, modelType: e.target.value }))} style={inputStyle}>
-                    <option value="generation">generation</option>
-                    <option value="vision">vision</option>
-                    <option value="chat">chat</option>
-                    <option value="video-gen">video-gen</option>
-                  </select>
-                </label>
-                <label style={labelStyle}>
-                  <span>
-                    路由策略
-                    <HelpPopover label="路由策略">
-                      优先级与故障切换按 priority 从小到大依次尝试，上一个上游不可用才轮到下一个；
-                      权重负载均衡按 weight 在健康的上游之间分配流量。建好之后随时可以在卡片右上角改。
-                    </HelpPopover>
-                  </span>
-                  <select value={draft.routingStrategy} onChange={(e) => setDraft((x) => ({ ...x, routingStrategy: e.target.value as 'priority' | 'weighted' }))} style={inputStyle}>
-                    <option value="priority">优先级与故障切换</option>
-                    <option value="weighted">按权重负载均衡</option>
-                  </select>
-                </label>
-                <label style={labelStyle}>
-                  <span>能力，逗号分隔</span>
-                  <input value={draft.capabilities.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, capabilities: e.target.value.split(',') }))} style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  <span>
-                    允许的 appCaller
-                    <HelpPopover label="允许的 appCaller" align="end">
-                      多个用逗号分隔。留空表示当前租户里的全部 appCaller 都能用这个模型标识；
-                      填了就只有列出来的调用方能用，其余请求会被拒绝。
-                    </HelpPopover>
-                  </span>
-                  <input value={draft.allowedAppCallerCodes.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, allowedAppCallerCodes: e.target.value.split(',').filter(Boolean) }))} style={inputStyle} />
-                </label>
-                <Button type="submit" variant="primary" size="sm" disabled={busy === 'create-logical'}>{busy === 'create-logical' ? '保存中' : '保存逻辑模型'}</Button>
-              </FormGrid>
-            </form>
-          </Card>
-        ) : null}
-
-        {items === null ? <SectionLoader text="正在加载逻辑模型目录" /> : null}
+        {items === null && !error ? <SectionLoader text="正在加载逻辑模型目录" /> : null}
 
         {items !== null && items.length === 0 ? (
           <Card style={{ ...CARD_BODY, flex: 1, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
@@ -270,124 +674,277 @@ export function LogicalModelsPage() {
           </Card>
         ) : null}
 
-        {(items ?? []).map((item) => (
-          <Card key={item.id} style={CARD_BODY}>
-            <div style={{ display: 'flex', gap: GAP.section, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <strong style={{ fontSize: 'var(--fs-body)' }}>{item.name}</strong>
-                  <code style={MONO_META}>{item.publicId}</code>
-                  <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
-                  <Chip label={item.routingStrategy === 'weighted' ? '权重路由' : '优先级路由'} color="var(--text-secondary)" bg="var(--bg-elevated)" />
-                  <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+        {items !== null && items.length > 0 && !routingRefreshFailed ? (
+          <div className="lg-collection-workspace">
+          <Card className="lg-logical-model-list lg-collection-list" style={{ padding: 0 }}>
+            <CollectionView continuous pageSize={20} initialFilter="enabled" toolbarActions={canWrite && !taskCaller ? <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set(items.filter(item => !item.enabled).map(item => item.id)))}>选择已停用</Button> : null} afterToolbar={canWrite && !taskCaller && selectedIds.size > 0 ? <div className="lg-model-batch-actions"><span style={HINT_TEXT}>已选 {selectedIds.size} 项</span>{batchProgress ? <SectionLoader text={batchProgress}/> : null}<Button size="sm" disabled={busy !== null || !selectedIds.size} onClick={() => void removeSelected()}>删除所选</Button>{selectedIds.size ? <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>取消选择</Button> : null}</div> : null} items={taskCaller && taskType ? items.filter(item => item.modelType === taskType) : items} placeholder="搜索模型名称或公开标识" searchText={(item) => `${item.name} ${item.publicId}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
+            {(pageItems) => <>
+            <div className="lg-logical-model-grid lg-logical-model-heading" style={{ ...ROW_GRID, ...ROW_HEAD }}>
+              <span style={COL_CAP}>模型</span>
+              <span style={COL_CAP}>上游线路与单价</span>
+              <span style={COL_CAP}>近 30 天 Gateway 估算</span>
+              <span style={COL_CAP}>状态</span>
+              <span />
+            </div>
+
+            {pageItems.map((item) => {
+              const routes = describeRoutes(item, models);
+              const stat = usage?.get(item.publicId) ?? null;
+              const open = expanded === item.id;
+              const health = summarizeHealth(item, routes);
+              return (
+                <div key={item.id} style={{
+                  borderTop: '1px solid var(--border-subtle)',
+                  background: selectedItem?.id === item.id ? 'var(--accent-soft)' : health.tone === 'warn' ? 'var(--warn-bg)' : undefined,
+                  // 选中行与详情对应；未选中异常保留风险提示，默认身份仍由标签完整说明。
+                  boxShadow: selectedItem?.id === item.id ? 'inset 3px 0 0 var(--accent)' : health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : undefined,
+                }}>
+                  <div className="lg-logical-model-grid" style={ROW_GRID}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
+                      {canWrite && !taskCaller ? <input type="checkbox" aria-label={`选择 ${item.name}`} checked={selectedIds.has(item.id)} onChange={event => setSelectedIds(previous => { const next = new Set(previous); if (event.target.checked) next.add(item.id); else next.delete(item.id); return next; })} /> : null}<UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
+                      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{item.name}</strong>
+                        <span className="lg-collection-model-identity" title={`${item.publicId} · ${describeScope(item.allowedAppCallerCodes)}`}><code>{item.publicId}</code><Chip label={item.identityKind === 'stable' ? '跟随升级' : '固定版本'} color="var(--text-secondary)" bg="var(--bg-elevated)" />{item.isDefaultForType ? <Chip label="默认" color="var(--accent)" bg="var(--accent-soft)" title="没点名时用它" /> : null}{item.defaultForAppCallerCodes.length ? <Chip label={`指定 ${item.defaultForAppCallerCodes.length}`} color="var(--ok)" bg="var(--ok-bg)" title={item.defaultForAppCallerCodes.join('\n')} /> : null}</span>
+                      </span>
+                    </span>
+
+                    <span className="lg-collection-routes-summary lg-logical-model-routes">
+                      <span>{routes.length} 条线路 · {item.routingStrategy === 'weighted' ? '权重负载均衡' : '主备切换'}</span>
+                      <span style={HINT_TEXT}>{routes[0] ? `${routes[0].label} · ${routes[0].price}` : '没有上游线路'}</span>
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
+                      <span className="lg-logical-model-field-label">近 30 天用量</span>
+                      {stat ? (
+                        <>
+                          <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
+                          <span style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsageCost(stat.totalCostUsd, stat.unpricedCalls)}</span>
+                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次{stat.unpricedCalls > 0 ? ` · ${formatCount(stat.unpricedCalls)} 次未计价` : ''}</span>
+                          </span>
+                        </>
+                      ) : <span style={HINT_TEXT}>暂无</span>}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
+                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, flexShrink: 0, background: health.dot }} />
+                      <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
+                    </span>
+
+                    <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                      {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
+                          「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setConfigurationOpen(false); setTraceFor(null); setUpgradeFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '查看'}</span>
+                      </Button>{canWrite ? <><Button size="sm" variant="ghost" onClick={() => { setTraceFor(null); setUpgradeFor(null); setExpanded(item.id); setConfigurationOpen(false); openNewOffering(item.id); }}>绑定上游</Button><Button size="sm" variant="ghost" disabled={!item.offerings.some(offering => offering.enabled)} onClick={() => { setTraceFor(null); setUpgradeFor(null); setExpanded(item.id); setConfigurationOpen(false); setOfferingFor(null); setEditingOfferingId(null); setTestingOfferingId(item.offerings.find(offering => offering.enabled)?.id || null); }}>测试</Button><Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void removeLogical(item)}>删除</Button></> : null}
+                    </span>
+                  </div>
+
+
                 </div>
-                <div style={{ ...HINT_TEXT, marginTop: GAP.tight }}>{item.capabilities.join(' · ') || '未声明能力'} · {item.offerings.length} 个 Offering</div>
-                <div style={{ ...HINT_TEXT, marginTop: GAP.tight }}>可用 appCaller：{item.allowedAppCallerCodes.length > 0 ? item.allowedAppCallerCodes.join('、') : '当前租户全部 appCaller'}</div>
-              </div>
-              {canWrite ? <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
-                <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}><option value="priority">优先级与故障切换</option><option value="weighted">权重负载均衡</option></select>
-                <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
-              </div> : null}
-            </div>
-
-            {offeringFor === item.id && canWrite ? (
-              <form onSubmit={(e) => submitOffering(e, item)} style={{ ...INSET_BLOCK, marginTop: GAP.section }}>
-                <FormGrid>
-                  <label style={labelStyle}>
-                    <span>目标类型</span>
-                    <select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}>
-                      <option value="model">Provider 模型</option>
-                      <option value="exchange">Exchange</option>
-                    </select>
-                  </label>
-                  <label style={labelStyle}>
-                    <span>上游目标</span>
-                    <select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}>
-                      <option value="">请选择</option>
-                      {targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-                    </select>
-                  </label>
-                  <label style={labelStyle}>
-                    <span>
-                      上游模型标识
-                      <HelpPopover label="上游模型标识">
-                        留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
-                        协议与 Endpoint path 两栏同理，填了才覆盖。
-                      </HelpPopover>
-                    </span>
-                    <input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>协议</span>
-                    <input value={offeringDraft.protocol || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, protocol: e.target.value }))} placeholder="openai / google / exchange" style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>Endpoint path</span>
-                    <input value={offeringDraft.endpointPath || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, endpointPath: e.target.value }))} placeholder="例如 v1beta/models/{model}:generateContent" style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>优先级</span>
-                    <input type="number" min={0} value={offeringDraft.priority ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, priority: Number(e.target.value) }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>权重</span>
-                    <input type="number" min={1} value={offeringDraft.weight ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, weight: Number(e.target.value) }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>
-                      最大并发
-                      <HelpPopover label="最大并发">
-                        留空表示继承上游自己的并发上限；每分钟速率留空表示这一层不额外限流。
-                        两栏都填时，本条上游与上游本身的限制同时生效，任一层触顶都会让请求切到下一个上游。
-                      </HelpPopover>
-                    </span>
-                    <input type="number" min={1} max={10000} value={offeringDraft.maxConcurrency ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, maxConcurrency: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>每分钟速率</span>
-                    <input type="number" min={1} max={1000000} value={offeringDraft.rateLimitPerMinute ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, rateLimitPerMinute: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>运维备注</span>
-                    <input value={offeringDraft.notes || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, notes: e.target.value }))} style={inputStyle} />
-                  </label>
-                  <Button type="submit" variant="primary" size="sm" disabled={busy === `offering:${item.id}`}>{busy === `offering:${item.id}` ? '保存中' : editingOfferingId ? '保存修改' : '保存 Offering'}</Button>
-                  {editingOfferingId ? <Button type="button" size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>取消编辑</Button> : null}
-                </FormGrid>
-              </form>
-            ) : null}
-
-            <div style={{ marginTop: GAP.section, overflowX: 'auto' }}>
-              <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
-                <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={TABLE_HEAD_CELL}>{x}</th>)}</tr></thead>
-                <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={td}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
-                  <tr key={o.id}>
-                    <td style={td}><strong>{o.targetName}</strong><div style={HINT_TEXT}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>
-                    <td style={td}>{o.targetKind}</td><td style={td}>{o.protocol || '继承目标'}</td><td style={td}>{o.priority} / {o.weight}</td>
-                    <td style={td}>{o.healthStatus === 0 ? '健康' : o.healthStatus === 1 ? '降权' : '不可用'}{o.consecutiveFailures > 0 ? ` · 连续失败 ${o.consecutiveFailures}` : ''}</td>
-                    <td style={td}>{o.maxConcurrency ? `并发 ${o.maxConcurrency}` : '继承上游'}{o.rateLimitPerMinute ? ` · ${o.rateLimitPerMinute}/分钟` : ''}</td>
-                    <td style={td}>{canWrite ? <div style={{ display: 'flex', gap: GAP.tight }}><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, o)}>编辑</Button><Button size="sm" variant="ghost" disabled={busy === o.id} onClick={() => void toggleOffering(item, o.id, o.enabled)}>{o.enabled ? '停用' : '启用'}</Button></div> : (o.enabled ? '已启用' : '已停用')}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
+              );
+            })}
+            </>}
+            </CollectionView>
           </Card>
-        ))}
+          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); setUpgradeFor(null); setOfferingFor(null); setEditingOfferingId(null); setTestingOfferingId(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setConfigurationOpen(false);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setConfigurationOpen(true);setTraceFor(null);setUpgradeFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setExpanded(null);setUpgradeFor(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab>{selectedItem.identityKind === 'stable' ? <CollectionPaneTab active={upgradeFor === selectedItem.id} onClick={() => {setExpanded(null);setTraceFor(null);setUpgradeFor(selectedItem.id);}}>升级策略</CollectionPaneTab> : null}</>}>
+            {renderSelectedDetails()}
+          </CollectionDetailPane> : null}
+          </div>
+        ) : null}
 
-        <DetailsBlock title="工作原理：逻辑模型、Offering 与模型池的分工">
-          <Prose>
-            应用侧只写一个稳定的模型标识，Provider、Endpoint、协议、密钥、限流和故障切换全部由它下面的
-            Offering 维护；换供应商、换 Endpoint、加一路备用上游都不需要业务改代码。
-          </Prose>
-          <Prose>
-            模型池是另一件事：它只负责请求没有指定模型时的默认选择与兜底，指定了模型标识的请求一律走这里的
-            Offering 列表。一个逻辑模型没有可用 Offering 时不会承接请求，也不会被模型池顶上。
-          </Prose>
-          <TutorialLink chapter="chapter-18">查看教程：第 18 章 逻辑模型与 Offering</TutorialLink>
-        </DetailsBlock>
       </PageBody>
     </PageShell>
   );
 }
 
-const td: React.CSSProperties = TABLE_CELL_MUTED;
+// ── 列表行的版式常量 ──────────────────────────────────────────────
+// 列定义走同一 CSS 规则：宽屏对齐列头，容器不足时按行重排，不能让名称列缩到零。
+const ROW_GRID: React.CSSProperties = {
+  display: 'grid',
+  alignItems: 'center',
+  gap: GAP.normal,
+  padding: `${GAP.section}px ${CARD_PADDING}px`,
+};
+const ROW_HEAD: React.CSSProperties = { background: 'var(--bg-base)', paddingTop: GAP.normal, paddingBottom: GAP.normal };
+const COL_CAP: React.CSSProperties = { ...METRIC_CAPTION, fontSize: 'var(--fs-secondary)', whiteSpace: 'normal', overflowWrap: 'anywhere' };
+
+/**
+ * 团队授权只给数量，不平铺名字。
+ *
+ * 平铺的写法在样例数据下看着挺好（「研发、产品」），一旦部门多起来或者名字长起来
+ * 就会把整行撑爆，而列宽是定死的。数量不会变长，名字留在展开态里看。
+ */
+function describeScope(allowedAppCallerCodes: string[]): string {
+  return allowedAppCallerCodes.length === 0 ? '全部 appCaller' : `限 ${allowedAppCallerCodes.length} 个 appCaller`;
+}
+
+type RouteView = {
+  id: string;
+  offering: ModelOfferingItem;
+  label: string;
+  providerName?: string | null;
+  upstreamModelId?: string | null;
+  price: string;
+  /** 价格是不是真有值。没值时那一格是说明文字，不该用等宽排版——中文在等宽下发虚。 */
+  priced: boolean;
+  priceOrigin: string;
+  protocol: string;
+  priority: number;
+  weight: number;
+  governance: string;
+  health: RouteHealth;
+  roleLabel: string;
+};
+
+/**
+ * 把一个逻辑模型的 Offering 列表翻译成「线路」——列表上一条线路一行。
+ *
+ * 单价取的是这条线路指向的那个物理模型自己的价格：同一个模型走官网和走中转单价不同，
+ * 不折算成一个统一价（用户口径：几条线路就报几个价，统计诚实即可）。
+ * Exchange 线路当前没有价格字段，如实写「未登记」，不拿别处的价顶上。
+ */
+function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[] {
+  // 排队名次由服务端下发（CallTracePlanner，与运行时 GatewayRouteSelection 由行为对照测试钉死）。
+  // 这里**不再自己判**谁在扛流量：此前那份「enabled && healthStatus === 0」比运行时严——
+  // 运行时照样会用降级线路，只是把它排在健康的后面，于是全部降级时页面显示「没有主」，
+  // 而实际一直有一条在承接。判据分裂三份，漂了也没人发现。
+  const modelById = new Map(models.map((model) => [model.id, model]));
+  const ordered = [...item.offerings].sort(
+    (a, b) => (a.queuePosition || 999) - (b.queuePosition || 999) || a.priority - b.priority || a.id.localeCompare(b.id));
+  const liveId = ordered.find((x) => x.queuePosition === 1)?.id ?? null;
+
+  return ordered.map((offering) => {
+    const model = offering.targetKind === 'model' ? modelById.get(offering.targetId) : undefined;
+    /*
+      不参与排队有三种成因，下一步完全不同，所以不能合成一个「熔断」：
+        线路自己被停用  → 去把这条线路启用回来；
+        上游被停用      → 去把那个模型或 Provider 启用回来，**没有任何冷却能让它自愈**；
+        连续失败被摘掉  → 什么都不用做，冷却期满系统会自己拿一条真实请求去试探。
+      判的是状态（enabled / targetUsable），不是 skipReason 那句中文——匹配文案的话，
+      文案一改判据就悄悄失灵。顺序与服务端 CallTracePlanner.SkipReason 逐条对齐。
+    */
+    const health: RouteHealth = offering.skipReason
+      ? (!offering.enabled ? 'disabled' : offering.targetUsable === false ? 'blocked' : 'down')
+      : offering.id === liveId ? 'live'
+      : 'standby';
+    return {
+      id: offering.id,
+      offering,
+      label: offering.providerName || offering.targetName || offering.targetId,
+      providerName: offering.providerName,
+      upstreamModelId: offering.upstreamModelId,
+      price: formatRoutePrice(model),
+      priced: hasPrice(model),
+      priceOrigin: describePriceOrigin(model),
+      protocol: offering.protocol || '继承目标',
+      priority: offering.priority,
+      weight: offering.weight,
+      governance: offering.maxConcurrency ? `并发 ${offering.maxConcurrency}` : '并发继承上游',
+      health,
+      roleLabel: offering.skipReason
+        ? (!offering.enabled ? '已停用' : offering.targetUsable === false ? '上游停用' : '熔断')
+        : offering.id === liveId ? '主' : '备',
+    };
+  });
+}
+
+function hasPrice(model: ModelItem | undefined): boolean {
+  if (!model) return false;
+  return model.pricePerCall != null || model.inputPricePerMillion != null || model.outputPricePerMillion != null;
+}
+
+/** 单价文案。没登记就说没登记——缺价不挡调用，但也不能假装有价。 */
+function formatRoutePrice(model: ModelItem | undefined): string {
+  if (!model) return '单价未登记';
+  if (model.pricePerCall != null) return `${formatUsd(model.pricePerCall)} / 次`;
+  const input = model.inputPricePerMillion;
+  const output = model.outputPricePerMillion;
+  if (input == null && output == null) return '单价未登记';
+  return `${input == null ? '—' : formatUsd(input)} / ${output == null ? '—' : formatUsd(output)}`;
+}
+
+function describePriceOrigin(model: ModelItem | undefined): string {
+  if (!model) return '单价未登记';
+  if (model.priceCurrency && model.priceCurrency !== 'USD') return `价格按 ${model.priceCurrency} 记，未换算成美金`;
+  if (!hasPrice(model)) return '单价未登记，这条线路的调用算不出钱';
+  const source = model.priceSource === 'upstream' ? '上游返回'
+    : model.priceSource === 'admin' ? '人工录入'
+    : model.priceSource === 'migrated' ? '历史价换算' : '来源不详';
+  const age = model.priceAgeDays == null ? '' : `，${model.priceAgeDays} 天前取的`;
+  return `价格${source}${age}${model.priceStale ? '（已过复核期）' : ''}`;
+}
+
+type HealthSummary = { text: string; dot: string; tone: 'ok' | 'warn'; advice?: string };
+
+/** 一行只给一句结论：要不要管。细节留给展开态。 */
+function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSummary {
+  if (!item.enabled) return { text: '已停用', dot: 'var(--text-muted)', tone: 'ok' };
+  if (routes.length === 0) {
+    return { text: '没有上游', dot: 'var(--warn)', tone: 'warn', advice: '这个模型下面还没有上游线路，它不会承接任何请求。先添加一条上游。' };
+  }
+  const down = routes.filter((x) => x.health === 'down');
+  // 上游被停用要单独说：它不会自愈，等冷却是白等（第 60 轮 review）。
+  const blocked = routes.filter((x) => x.health === 'blocked');
+  const live = routes.find((x) => x.health === 'live');
+  if (blocked.length > 0 && live) {
+    return {
+      text: '有线路等人处理',
+      dot: 'var(--warn)',
+      tone: 'warn',
+      advice: `${blocked.map((x) => x.label).join('、')} 指向的上游模型或 Provider 被停用了，流量正走 ${live.label}。`
+        + '这一条不会自己回来——去上游页把那个模型或它的 Provider 启用回来。',
+    };
+  }
+  if (down.length > 0 && live) {
+    return {
+      text: '已自动切走',
+      dot: 'var(--warn)',
+      tone: 'warn',
+      advice: `${down.map((x) => x.label).join('、')} 连续失败已被摘掉，流量正走 ${live.label}。冷却期满后系统会拿一条真实请求去试探，成功就自己回来，不用等人处理。`,
+    };
+  }
+  if (!live) {
+    if (routes.every((route) => route.health === 'disabled')) {
+      return {
+        text: '线路已手动停用',
+        dot: 'var(--warn)',
+        tone: 'warn',
+        advice: '所有上游线路都已手动停用，这个模型当前不会承接请求。请在下方启用至少一条线路；手动停用不会在冷却后自动恢复。',
+      };
+    }
+    return blocked.length > 0
+      ? {
+          text: '无可用线路',
+          dot: 'var(--err)',
+          tone: 'warn',
+          advice: `所有上游线路都不可用，这个模型当前会解析失败。其中 ${blocked.map((x) => x.label).join('、')} `
+            + '是上游模型或 Provider 被停用了——去上游页把它启用回来，等冷却没有用。',
+        }
+      : {
+          text: '无可用线路',
+          dot: 'var(--err)',
+          tone: 'warn',
+          advice: '这个模型当前没有可用线路。手动停用的线路需要在下方重新启用；'
+            + '连续失败的线路才会在冷却后试探恢复，也可点「手动恢复」不等冷却。若仍不可用，请检查上游密钥与配额。',
+        };
+  }
+  if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
+  return { text: '正常', dot: 'var(--ok)', tone: 'ok' };
+}
+
+/** 合计只包含已计价部分；有缺价调用时不能把零合计展示成完整费用。 */
+function formatUsageCost(value: number, unpricedCalls: number): string {
+  if (unpricedCalls > 0) return value > 0 ? `已计价部分 ${formatUsd(value)}` : '费用未知';
+  return formatUsd(value);
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return '$0.00';
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+function formatCount(value: number): string {
+  if (value >= 10000) return `${(value / 10000).toFixed(1)} 万`;
+  return value.toLocaleString('en-US');
+}

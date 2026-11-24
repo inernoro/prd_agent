@@ -1,7 +1,10 @@
-import { lazy, Suspense, useEffect } from 'react';
+import HostedCollectionPage from '@/pages/hosted-collections/HostedCollectionPage';
+import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
-import { initializeTheme } from '@/stores/themeStore';
+import { useEntrySkinStore } from '@/stores/entrySkinStore';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { initializeTheme, useThemeStore } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
@@ -10,13 +13,13 @@ import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
-import { BranchBadge } from '@/components/BranchBadge';
 import { NavigationProgressBar } from '@/components/effects/NavigationProgressBar';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { NAV_REGISTRY } from '@/app/navRegistry';
 import { initBehaviorTracker, trackRouteChange } from '@/lib/behaviorTracker';
+import { installAuthzAutoRefresh } from '@/lib/authzAutoRefresh';
+import type { UserRole } from '@/types/admin';
 
 /**
  * BehaviorTrackerMount — 行为信号采集（行为洞察面板的数据来源）。
@@ -66,13 +69,18 @@ function NavigationBridge() {
 //   2. AppShell 内但不进 launcher 的路由（admin 后端菜单 / 移动端 / 子路由）
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const SyntheticLoginPage = lazy(() => import('@/pages/SyntheticLoginPage'));
 const ConsoleSsoAuthorizePage = lazy(() => import('@/pages/ConsoleSsoAuthorizePage'));
+const DataSyncAuthorizePage = lazy(() => import('@/pages/data-sync/DataSyncAuthorizePage'));
+const DataSyncCallbackPage = lazy(() => import('@/pages/data-sync/DataSyncCallbackPage'));
 const InlineCommentBubbleMockupPage = lazy(() => import('@/pages/_mockup/InlineCommentBubbleMockupPage'));
 const InlineCommentOverlayProbe = lazy(() => import('@/pages/_mockup/InlineCommentOverlayProbe'));
+const SelectionDiffProbe = lazy(() => import('@/pages/_mockup/SelectionDiffProbe'));
 const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
+const PublicActiveTaskBoardPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.PublicBoardPage })));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
 const LiquidGlassDemoPage = lazy(() => import('@/pages/labs/LiquidGlassDemoPage'));
@@ -82,6 +90,8 @@ const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversat
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
 const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
+const WebHostingShareDemo = lazy(() => import('@/pages/_dev/WebHostingShareDemo'));
+const WebHostingCardsDemo = lazy(() => import('@/pages/_dev/WebHostingCardsDemo'));
 const StreamingTextLab = lazy(() => import('@/pages/_dev/StreamingTextLab'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
@@ -95,9 +105,13 @@ const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m =>
 const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
 const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
 const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
+const MonthlyReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.MonthlyReportDetailPage })));
+const MonthlyReportEditorPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.MonthlyReportEditorPage })));
 const ReviewAgentSubmitPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentSubmitPage })));
 const ReviewAgentResultPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentResultPage })));
 const ReviewAgentAllPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentAllPage })));
+const ReviewAssessmentListPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAssessmentListPage })));
+const ReviewAssessmentDetailPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAssessmentDetailPage })));
 const WeeklyPosterWizardPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterWizardPage'));
 const WeeklyPosterEditorPage = lazy(() => import('@/pages/weekly-poster/WeeklyPosterEditorPage'));
 
@@ -119,12 +133,13 @@ const MobileNotificationsPage = lazy(() => import('@/pages/MobileNotificationsPa
 // 首页 Agent Launcher（既是 / 的 IndexPage，也是 /agent-launcher 的目标）
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 
-/** 首页路由：移动端渲染 MobileHomePage，桌面端渲染 Agent 选择页。 */
+/** 标准移动首页保持原入口；开启角色皮肤后使用沉浸首页。 */
 function IndexPage() {
   const loaded = useAuthStore((s) => s.permissionsLoaded);
+  const cinematic = useEntrySkinStore((s) => s.skin === 'companion');
   const { isMobile } = useBreakpoint();
   if (!loaded) return null;
-  if (isMobile) return <MobileHomePage />;
+  if (isMobile && !cinematic) return <MobileHomePage />;
   return <AgentLauncherPage />;
 }
 
@@ -141,20 +156,66 @@ export default function App() {
   const location = useLocation();
 
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isLoginRoute = location.pathname.replace(/\/$/, '') === '/login';
+  // During the authorization callback, the login page exchanges the new session itself.
+  const hasWorkspaceSession = isAuthenticated && !isLoginRoute;
   const setPermissions = useAuthStore((s) => s.setPermissions);
   const permissionsLoaded = useAuthStore((s) => s.permissionsLoaded);
   const setPermissionsLoaded = useAuthStore((s) => s.setPermissionsLoaded);
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
   const setPermFingerprint = useAuthStore((s) => s.setPermFingerprint);
+  const patchUser = useAuthStore((s) => s.patchUser);
+  const currentUserId = useAuthStore((s) => s.user?.userId);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
+  const authzRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const lastSyncedUserIdRef = useRef<string | null>(null);
+
+  const refreshCurrentAuthz = useCallback(() => {
+    if (authzRefreshInFlightRef.current) return authzRefreshInFlightRef.current;
+
+    const request = (async () => {
+      const res = await getAdminAuthzMe();
+      if (!res.success) {
+        // 仅 UNAUTHORIZED 才注销；网络中断/服务不可用不应导致注销。
+        // apiClient 已在 401 响应时处理了 logout+跳转，这里只作兜底。
+        const code = res.error?.code;
+        if (!code || code === 'UNAUTHORIZED') logout();
+        return;
+      }
+
+      // 每次都覆盖权限快照。用户级 allow/deny 不改变全局权限指纹，若只在
+      // permissionsLoaded=false 时写入，管理员刚授予的权限会一直卡到下次登录。
+      setPermissions(res.data.effectivePermissions || []);
+      setIsRoot(res.data.isRoot ?? false);
+      setPermissionsLoaded(true);
+      patchUser({
+        displayName: res.data.displayName,
+        role: res.data.role as UserRole,
+        systemRoleKey: res.data.systemRoleKey,
+      });
+      setCdnBaseUrl(res.data.cdnBaseUrl || '', res.data.legacyCdnBaseUrl);
+      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
+      lastSyncedUserIdRef.current = res.data.userId;
+    })().finally(() => {
+      authzRefreshInFlightRef.current = null;
+    });
+
+    authzRefreshInFlightRef.current = request;
+    return request;
+  }, [logout, patchUser, setCdnBaseUrl, setIsRoot, setPermFingerprint, setPermissions, setPermissionsLoaded]);
 
   // 初始化主题（应用启动时立即执行）
   useEffect(() => {
     initializeTheme();
   }, []);
+
+  const loadTheme = useThemeStore((s) => s.loadFromServer);
+  useEffect(() => {
+    if (hasWorkspaceSession) void loadTheme();
+  }, [currentUserId, hasWorkspaceSession, loadTheme]);
 
   // 教程数据预加载:与 TipsDrawer 的条件挂载解耦。TipsDrawer 在 /home/login 等页不挂载,
   // 若只靠它 load(),用户停在登录后默认落地页 /home 时 tips 不会预拉,等导航到第一个有教程的
@@ -163,37 +224,29 @@ export default function App() {
   const loadTips = useDailyTipsStore((s) => s.load);
   const tipsLoaded = useDailyTipsStore((s) => s.loaded);
   useEffect(() => {
-    if (isAuthenticated && !tipsLoaded) void loadTips();
-  }, [isAuthenticated, tipsLoaded, loadTips]);
+    if (hasWorkspaceSession && !tipsLoaded) void loadTips();
+  }, [hasWorkspaceSession, tipsLoaded, loadTips]);
 
-  // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
-  // cdnBaseUrl 每次都刷新（后端切换存储 Provider 后域名会变）
+  // 首次进入、切换账号或权限指纹使缓存失效时，立即刷新完整权限快照。
   useEffect(() => {
-    if (!isAuthenticated) return;
-    (async () => {
-      const res = await getAdminAuthzMe();
-      if (!res.success) {
-        // 仅 UNAUTHORIZED 才注销；网络中断/服务不可用不应导致注销
-        // apiClient 已在 401 响应时处理了 logout+跳转，这里只作兜底
-        const code = res.error?.code;
-        if (!code || code === 'UNAUTHORIZED') {
-          logout();
-        }
-        return;
-      }
-      if (!permissionsLoaded) {
-        setPermissions(res.data.effectivePermissions || []);
-        setIsRoot(res.data.isRoot ?? false);
-        setPermissionsLoaded(true);
-      }
-      if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
-      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
-    })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, setPermFingerprint, logout]);
+    if (!hasWorkspaceSession || !currentUserId) {
+      lastSyncedUserIdRef.current = null;
+      return;
+    }
+    if (lastSyncedUserIdRef.current !== currentUserId || !permissionsLoaded) {
+      void refreshCurrentAuthz();
+    }
+  }, [currentUserId, hasWorkspaceSession, permissionsLoaded, refreshCurrentAuthz]);
+
+  // 个人权限变更后当前会话自动生效：重新聚焦立即刷新，持续停留时最多等待 30 秒。
+  useEffect(() => {
+    if (!hasWorkspaceSession) return;
+    return installAuthzAutoRefresh({ refresh: refreshCurrentAuthz });
+  }, [hasWorkspaceSession, refreshCurrentAuthz]);
 
   // 加载菜单目录
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!hasWorkspaceSession) return;
     if (menuCatalogLoaded) return;
     (async () => {
       const res = await getAdminMenuCatalog();
@@ -201,14 +254,13 @@ export default function App() {
         setMenuCatalog(res.data.items);
       }
     })();
-  }, [isAuthenticated, menuCatalogLoaded, setMenuCatalog]);
+  }, [hasWorkspaceSession, menuCatalogLoaded, setMenuCatalog]);
 
   return (
-    <AgentSwitcherProvider>
+    <AgentSwitcherProvider enabled={!isLoginRoute}>
       <ToastContainer />
-      <BranchBadge />
       <NavigationBridge />
-      <BehaviorTrackerMount />
+      {!isLoginRoute && <BehaviorTrackerMount />}
       {/* 路由切换顶栏进度条：绕过 Suspense transition 语义，立刻给用户视觉反馈 */}
       <NavigationProgressBar />
       <Suspense fallback={<SuspenseVideoLoader />}>
@@ -221,6 +273,7 @@ export default function App() {
         } />
 
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/synthetic-login" element={<SyntheticLoginPage />} />
         <Route
           path="/console-sso/authorize"
           element={
@@ -229,17 +282,40 @@ export default function App() {
             </RequireAuth>
           }
         />
+        {/* 跨 MAP 实例数据同步：源站同意页 / 目标站回跳落地页。
+            两者都不在 AppShell 里——它们是授权链路的中转屏，套上导航反而让人以为还在原来那一页。 */}
+        <Route
+          path="/data-sync/authorize"
+          element={
+            <RequireAuth>
+              <DataSyncAuthorizePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/data-sync/callback"
+          element={
+            <RequireAuth>
+              <DataSyncCallbackPage />
+            </RequireAuth>
+          }
+        />
 
         {/* 静态 mockup（无需登录），仅供评审样式 */}
         <Route path="/_mockup/inline-comment-bubble" element={<InlineCommentBubbleMockupPage />} />
         {/* 真实 InlineCommentOverlay 自测页（Playwright 取头像 img 尺寸断言） */}
         <Route path="/_mockup/inline-comment-overlay-probe" element={<InlineCommentOverlayProbe />} />
+        {/* 真实就地 diff 渲染链自测页（Playwright 断言 ins/del 着色与结构，双主题） */}
+        <Route path="/_mockup/selection-diff-probe" element={<SelectionDiffProbe />} />
 
         {/* 公开分享页面 - 无需登录 */}
+        <Route path="/s/collection/:token" element={<HostedCollectionPage />} />
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
         <Route path="/u/:username" element={<PublicProfilePage />} />
+        {/* 活动任务面板匿名视图 —— 粒度由管理员配置，默认脱敏 */}
+        <Route path="/board/active-tasks" element={<PublicActiveTaskBoardPage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
         <Route path="/s/skill/:token" element={<SkillShareViewPage />} />
         <Route path="/s/lib/:token" element={<LibraryShareViewPage />} />
@@ -249,6 +325,8 @@ export default function App() {
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
+        <Route path="/_dev/web-hosting-share" element={<WebHostingShareDemo />} />
+        <Route path="/_dev/web-hosting-cards" element={<WebHostingCardsDemo />} />
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
         <Route path="/_dev/marketplace-card-demo" element={<MarketplacePage />} />
 
@@ -358,7 +436,11 @@ export default function App() {
         <Route path="review-agent/submit" element={<RequirePermission perm="review-agent.use"><ReviewAgentSubmitPage /></RequirePermission>} />
         <Route path="review-agent/submissions/:id" element={<RequirePermission perm="review-agent.use"><ReviewAgentResultPage /></RequirePermission>} />
         <Route path="review-agent/all" element={<RequirePermission perm="review-agent.view-all"><ReviewAgentAllPage /></RequirePermission>} />
+        <Route path="review-agent/assessments" element={<RequirePermission perm="review-agent.use"><ReviewAssessmentListPage /></RequirePermission>} />
+        <Route path="review-agent/assessments/:id" element={<RequirePermission perm="review-agent.use"><ReviewAssessmentDetailPage /></RequirePermission>} />
         <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
+        <Route path="report-agent/monthly/:reportId" element={<RequirePermission perm="report-agent.use"><MonthlyReportDetailPage /></RequirePermission>} />
+        <Route path="report-agent/monthly/:reportId/edit" element={<RequirePermission perm="report-agent.use"><MonthlyReportEditorPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
         <Route path="weekly-poster/wizard" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/advanced" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterEditorPage /></RequirePermission>} />

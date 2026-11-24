@@ -80,6 +80,7 @@ public static class ErrorCodes
     
     // 用户相关
     public const string USER_NOT_FOUND = "USER_NOT_FOUND";
+    public const string TEAM_LEADER_TRANSFER_REQUIRED = "TEAM_LEADER_TRANSFER_REQUIRED";
 
     // 群组相关
     public const string GROUP_NOT_FOUND = "GROUP_NOT_FOUND";
@@ -103,6 +104,14 @@ public static class ErrorCodes
 
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
+    public const string IMAGE_GEN_UNAVAILABLE = "IMAGE_GEN_UNAVAILABLE";
+    public const string IMAGE_GEN_REQUEST_REJECTED = "IMAGE_GEN_REQUEST_REJECTED";
+    public const string IMAGE_GEN_TIMEOUT = "IMAGE_GEN_TIMEOUT";
+    public const string AVATAR_PROMPT_TOO_LONG = "AVATAR_PROMPT_TOO_LONG";
+
+    // 短视频后台任务相关
+    public const string SHORT_VIDEO_INTERRUPTED = "SHORT_VIDEO_INTERRUPTED";
+    public const string SHORT_VIDEO_TIMEOUT = "SHORT_VIDEO_TIMEOUT";
 
     public const string PLAN_TITLE_DUPLICATE = "PLAN_TITLE_DUPLICATE";
 
@@ -111,6 +120,16 @@ public static class ErrorCodes
 
     // 配额相关
     public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
+    public const string WORKSPACE_GENERATION_ACTIVE = "WORKSPACE_GENERATION_ACTIVE";
+
+    // 网页托管版本记录相关
+    public const string HOSTED_SITE_HISTORY_UNAVAILABLE = "HOSTED_SITE_HISTORY_UNAVAILABLE";
+
+    /// <summary>本页引用了私有资料，对外发出前必须带上确认（HTTP 409）</summary>
+    public const string HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_REQUIRED = "HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_REQUIRED";
+
+    /// <summary>带来的确认与当前私有引用集合对不上（确认之后引用变了），需要重新确认（HTTP 409）</summary>
+    public const string HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_STALE = "HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_STALE";
 
     // 分享相关
     public const string SHARE_EXPIRED = "SHARE_EXPIRED";

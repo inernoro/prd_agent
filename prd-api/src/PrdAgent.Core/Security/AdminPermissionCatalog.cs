@@ -15,6 +15,12 @@ public static class AdminPermissionCatalog
     /// <summary>权限管理权限</summary>
     public const string AuthzManage = "authz.manage";
 
+    /// <summary>进入独立模型网关控制台的权限</summary>
+    public const string LlmGatewayAccess = "llm-gateway.access";
+    public const string McpSpeechRead = "mcp-speech.read";
+    public const string McpSpeechGenerate = "mcp-speech.generate";
+    public const string McpSpeechManage = "mcp-speech.manage";
+
     public const string UsersRead = "users.read";
     public const string UsersWrite = "users.write";
 
@@ -25,6 +31,7 @@ public static class AdminPermissionCatalog
     public const string ModelsWrite = "mds.write";
 
     public const string LogsRead = "logs.read";
+    public const string LogsWrite = "logs.write";
 
     public const string OpenPlatformManage = "open-platform.manage";
 
@@ -63,6 +70,21 @@ public static class AdminPermissionCatalog
     /// 文学创作 Agent 权限：文章配图智能生成
     /// </summary>
     public const string LiteraryAgentUse = "literary-agent.use";
+
+    /// <summary>
+    /// 通用对话智能体权限：面向全体用户的多轮对话入口
+    /// </summary>
+    public const string ChatAgentUse = "chat-agent.use";
+
+    /// <summary>
+    /// 活动任务清单权限：维护自己的「此刻在做什么 / 备用任务 / 历史」
+    /// </summary>
+    public const string ActiveTasksUse = "active-tasks.use";
+
+    /// <summary>
+    /// 活动任务清单管理权限：看全员此刻、委派任务、配置匿名可见粒度
+    /// </summary>
+    public const string ActiveTasksManage = "active-tasks.manage";
 
     /// <summary>
     /// 缺陷管理 Agent 权限：提交和查看缺陷
@@ -298,6 +320,14 @@ public static class AdminPermissionCatalog
     public const string ProductAgentUse = "product-agent.use";
 
     /// <summary>
+    /// 版本号申领：仅访问产品管理的 T/V 申领与其必要评审链路，不包含其它产品管理页面。
+    /// </summary>
+    public const string ProductAgentVersionApply = "product-agent.version-apply";
+
+    /// <summary>仅在 T 号申领中复用其他申请人的已通过评审，不授予通用评审读取权限。</summary>
+    public const string ProductAgentVersionClaimTest = "product-agent.version-claim-test";
+
+    /// <summary>
     /// 产品管理-管理：自定义表单模板与流程定义、删除产品等管理操作
     /// </summary>
     public const string ProductAgentManage = "product-agent.manage";
@@ -368,13 +398,23 @@ public static class AdminPermissionCatalog
     /// </summary>
     public const string Super = "super";
 
+    /// <summary>
+    /// 破窗 root 账户的用户 id。它不落 Mongo，身份只由这个固定 id 认（JwtService 据此打 isRoot claim）。
+    /// 任何「这个人是不是 root」的判断都引用这里，别再各写一遍字面量。
+    /// </summary>
+    public const string RootUserId = "root";
+
     public static readonly IReadOnlyList<AdminPermissionDef> All = new List<AdminPermissionDef>
     {
         new(Access, "后台访问", "允许进入管理后台"),
         new(AuthzManage, "权限管理", "管理系统角色/用户权限"),
+        new(LlmGatewayAccess, "模型网关", "进入独立模型网关控制台"),
         new(PrdAgentUse, "PRD 解读智能体", "PRD 智能解读与问答"),
         new(VisualAgentUse, "视觉创作智能体", "高级视觉创作工作区"),
         new(LiteraryAgentUse, "文学创作智能体", "文章配图智能生成"),
+        new(ChatAgentUse, "通用对话智能体", "打开就能聊的多轮对话入口"),
+        new(ActiveTasksUse, "活动任务清单", "维护自己的此刻在做什么/备用任务/历史"),
+        new(ActiveTasksManage, "活动任务清单-管理", "看全员此刻、委派任务、配置匿名可见粒度"),
         new(DefectAgentUse, "缺陷管理智能体", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理智能体-管理", "设置模板、指派、项目/Webhook管理"),
         new(TapdBugAgentUse, "TAPD 缺陷自动提报智能体", "整理并创建 TAPD 缺陷"),
@@ -395,6 +435,7 @@ public static class AdminPermissionCatalog
         new(ModelsWrite, "模型管理-写", "编辑平台/模型/配置/调度等"),
 
         new(LogsRead, "日志-读", "查看系统/LLM/API 请求日志"),
+        new(LogsWrite, "日志-归档管理", "管理日志归档策略、校验和恢复"),
 
         new(OpenPlatformManage, "开放平台", "管理开放平台 App / 调用方 / 日志"),
 
@@ -459,6 +500,9 @@ public static class AdminPermissionCatalog
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
 
         new(SpeechAgentUse, "演讲智能体", "把长文本/文档转成思维导图风格的可演讲 PPT（首期 mindmap 模式）"),
+        new(McpSpeechRead, "基础语音-读", "查看可用音色、自己的声音预设和生成历史"),
+        new(McpSpeechGenerate, "基础语音-生成", "生成语音并保存自己的声音预设"),
+        new(McpSpeechManage, "基础语音-配置", "配置当前环境的语音模型、音色、参数与额度"),
 
         new(TaskTreeUse, "个人任务树智能体", "分层任务管理、对话摘取任务、卡点上报（创建/编辑/查看）"),
         new(TaskTreeViewAll, "个人任务树-全员卡点", "卡点墙聚合查看所有人的卡点（管理层/上级；普通成员只看自己）"),
@@ -469,6 +513,8 @@ public static class AdminPermissionCatalog
         new(PmAgentGlobal, "项目管理-全局总览", "跨全公司项目只读洞察看板（全局掌控视角，仅授予管理层）"),
 
         new(ProductAgentUse, "产品管理", "产品-版本-需求-功能-缺陷-客户全链路串联、知识图谱、知识库挂载"),
+        new(ProductAgentVersionApply, "版本号申领", "独立进入产品管理的内部/正式版本申领，选择全部产品并完成所需方案评审"),
+        new(ProductAgentVersionClaimTest, "申领测试", "T 号申领时可复用所有人的已通过方案；未开启仅可使用本人提交的方案，不跳过评审或来源防重"),
         new(ProductAgentManage, "产品管理-管理", "自定义表单模板与流程定义、删除产品等管理操作"),
         new(ProductAgentAdmin, "产品管理-管理层总览", "跨全部产品的聚合仪表盘/列表 + 全局表单/流程设置（管理层）"),
 

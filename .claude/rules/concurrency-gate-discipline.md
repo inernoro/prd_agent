@@ -1,3 +1,9 @@
+---
+paths:
+  - "cds/src/**/*.ts"
+  - "prd-api/src/**/*.cs"
+---
+
 # 并发闸/队列组件设计纪律（Concurrency Gate Discipline）
 
 **一句话**：并发闸第一版就得配齐五件套：等待可取消、持有者有身份、只锁真实资源、周期收敛、健康不变量加常态回归。缺一件迟早堵死且查不出是谁占着。
@@ -90,4 +96,4 @@
 - `blocked-state-circuit-breaker.md`：agent 面对堵死队列的行为纪律（熔断升级）；本规则管队列自身别堵死。
 - `server-authority.md`：客户端断开不取消任务——取消只能来自租约/协调器，与 #1 的取消信号源一致。
 - `compute-then-send.md`：健康判定纯函数 + 探针端点的「算/发分离」同源。
-- 事故完整档案：PR #1160、`doc/debt.cds.build-gate.md`、`changelogs/2026-07-16_cds-build-gate-overhaul.md`。
+- 事故完整档案：PR #1160、`https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.build-gate.md`、`changelogs/2026-07-16_cds-build-gate-overhaul.md`。

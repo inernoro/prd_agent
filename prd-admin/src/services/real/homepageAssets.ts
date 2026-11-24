@@ -2,7 +2,7 @@ import { apiRequest } from './apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
-import type { HomepageAssetDto, HomepageAssetsMap } from '@/services/contracts/homepageAssets';
+import type { AdoptHomepageAssetInput, HomepageAssetDto, HomepageAssetsMap } from '@/services/contracts/homepageAssets';
 
 export async function listHomepageAssets(): Promise<ApiResponse<HomepageAssetDto[]>> {
   return await apiRequest<HomepageAssetDto[]>(api.assets.homepage.list());
@@ -37,6 +37,20 @@ export async function uploadHomepageAsset(input: { slot: string; file: File }): 
       error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${res.status}）` },
     } as ApiResponse<HomepageAssetDto>;
   }
+}
+
+export async function adoptHomepageAssetFromRun(input: AdoptHomepageAssetInput): Promise<ApiResponse<HomepageAssetDto>> {
+  // apiRequest 内部会 JSON.stringify，这里传原始对象（AGENTS.md 规则 7）
+  return await apiRequest<HomepageAssetDto>(api.assets.homepage.adoptImageRun(), {
+    method: 'POST',
+    body: {
+      slot: input.slot,
+      runId: input.runId,
+      itemIndex: input.itemIndex,
+      imageIndex: input.imageIndex ?? 0,
+      prompt: input.prompt,
+    },
+  });
 }
 
 export async function getHomepageAssetsPublic(): Promise<ApiResponse<HomepageAssetsMap>> {

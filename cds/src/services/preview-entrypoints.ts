@@ -2,7 +2,7 @@
  * preview-entrypoints — 「这个分支在公网上到底发布了哪几个入口」的唯一判据。
  *
  * 背景(2026-07-29):MAP 前端此前自己在浏览器里拼网关子域 ——
- *   `${location.hostname 去掉 .miduo.org}` + `-llmgw-web` + `.miduo.org`
+ *   `${location.hostname 去掉部署根域}` + `-llmgw-web` + 部署根域
  * 这是 CDS 之外的第二份域名推算实现,违反根 CLAUDE.md 规则 #11(禁止自己 slugify /
  * 拼域名)。它拼出来的 host 有两种偏差:
  *   ① 分支名长时 `<previewSlug>-<sub>` 超过 63 octet,CDS 根本没发布这条路由,
@@ -22,11 +22,11 @@
  */
 
 import crypto from 'node:crypto';
-import { DNS_LABEL_MAX_LENGTH } from './preview-slug.js';
+import { DNS_LABEL_MAX_LENGTH, projectHistoricalSlugs, type PreviewProjectIdentity } from './preview-slug.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { StateService } from './state.js';
-import type { BranchEntry } from '../types.js';
+import type { BranchEntry, BuildProfile } from '../types.js';
 import type { PublishedEntrypointsEnv } from './env-provenance.js';
 
 /** 容器 env 里承载「本分支主入口」的 key。 */
@@ -241,7 +241,7 @@ export function buildPublishedEntrypoints(opts: {
 /**
  * 已被占用的**完整 host** → 拥有者分支 id：子域别名（按每个根域展开）+ 完整自定义域名。
  *
- * 为什么不能只按 label 判：自定义域名存的是整条 host（`foo.miduo.org`），不是标签。
+ * 为什么不能只按 label 判：自定义域名存的是整条 host（`foo.example.com`），不是标签。
  * 一条恰好等于 `<slug>-llmgw.<root>` 的自定义域名在 buildRoutes 里**先**被发出去，
  * 之后命名服务再发同一个 host、指向不同上游，resolver 按路由 id 静默选一条 ——
  * 与别名撞车完全同源，只是占位者换成了自定义域名（Codex P1）。
@@ -264,6 +264,52 @@ export function occupiedHostOwners(
     for (const domain of b.customDomains ?? []) claim(domain, b.id);
   }
   return owners;
+}
+
+/** 发布器与项目改名校验共用新旧入口的枚举口径。 */
+export function projectBranchPreviewSlugs(entry: Pick<BranchEntry, 'branch' | 'projectId'>, project: PreviewProjectIdentity | undefined): string[] {
+  return [...new Set([
+    buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug,
+    ...projectHistoricalSlugs(project).map(slug => buildPreviewUrlForProject('', entry.branch, { ...project, slug }, entry.projectId).previewSlug),
+  ].filter(Boolean))];
+}
+
+/** 成员直达子域的现有DNS编码；发布器保留同名再导出。 */
+export function dnsSafeProfile(id: string): string {
+  const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+  if (cleaned === id) return cleaned;
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
+  return `${cleaned}-${h.toString(36)}`;
+}
+
+export function replicaMemberLabel(previewSlug: string, profileId: string, memberId: string): string {
+  return `${previewSlug}-${dnsSafeProfile(profileId)}-${memberId}`;
+}
+
+export function projectBranchPublishedServiceHosts(entry: BranchEntry, project: PreviewProjectIdentity | undefined, profiles: BuildProfile[], roots: readonly string[]): string[] {
+  const labels = new Set<string>();
+  const profileIds = new Set(profiles.map(profile => profile.id));
+  for (const slug of projectBranchPreviewSlugs(entry, project)) {
+    for (const profile of profiles) {
+      const subdomain = resolveEffectiveProfile(profile, entry).subdomain;
+      if (subdomain) for (const label of publishedServiceLabels(slug, subdomain)) labels.add(label);
+    }
+    for (const replica of Object.values(entry.replicaSets ?? {})) {
+      if (!replica.enabled || !profileIds.has(replica.profileId)) continue;
+      for (const member of replica.members) {
+        if (member.status !== 'running' || typeof member.hostPort !== 'number' || member.hostPort <= 0) continue;
+        const label = replicaMemberLabel(slug, replica.profileId, member.id);
+        if (isPublishableNamedLabel(label)) labels.add(label);
+      }
+    }
+  }
+  return [...labels].flatMap(label => roots.map(root => `${label}.${root}`.trim().toLowerCase()));
+}
+
+export function projectBranchPublishedHosts(entry: BranchEntry, project: PreviewProjectIdentity | undefined, profiles: BuildProfile[], roots: readonly string[]): string[] {
+  const primaryHosts = projectBranchPreviewSlugs(entry, project).flatMap(slug => roots.map(root => `${slug}.${root}`.trim().toLowerCase()));
+  return [...new Set([...primaryHosts, ...projectBranchPublishedServiceHosts(entry, project, profiles, roots)])];
 }
 
 /**
@@ -360,6 +406,24 @@ export function resolveBranchEntrypointsEnv(
   entry: BranchEntry,
   deps: BranchEntrypointDeps,
 ): PublishedEntrypointsEnv {
+  return {
+    reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
+    env: publishedEntrypointsEnv(resolveBranchPublishedEntrypoints(entry, deps)),
+  };
+}
+
+/**
+ * 同一份组装的**结构化**结果（2026-09-09 从 resolveBranchEntrypointsEnv 提取，零行为变化）。
+ *
+ * 提取的原因：存活监控的项目级自助登记要判「这个地址是不是本项目某条分支的入口」，
+ * 需要的是入口清单本身，不是它序列化成的那串 env。另拼一份枚举就是第二个判定源
+ * （predicate-and-wiring-discipline 形状 3）——命名子域规则一改，两边立刻对不上，
+ * 表现为合法地址被判成非法、或非法地址被放行。
+ */
+export function resolveBranchPublishedEntrypoints(
+  entry: BranchEntry,
+  deps: BranchEntrypointDeps,
+): PublishedEntrypoints {
   const project = deps.getProject(entry.projectId);
   const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
   const subdomains: string[] = [];
@@ -374,19 +438,16 @@ export function resolveBranchEntrypointsEnv(
     // 存量项目里叫 llmgw 的后端 API（声明 /gw/healthz）因此不会被当成控制台。
     if (!consoleSubdomain && isGatewayConsoleEntry(sub, bp.readinessProbe?.path)) consoleSubdomain = sub;
   }
-  return {
-    reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
-    env: publishedEntrypointsEnv(buildPublishedEntrypoints({
-      previewSlug,
-      previewHost: deps.previewHost,
-      subdomains,
-      consoleSubdomain,
-      // 与发布器同一份占位表：别名按根域展开 + 完整自定义域名。
-      occupiedHosts: deps.getAllBranches && deps.previewHost
-        ? occupiedHostOwners(deps.getAllBranches(), [deps.previewHost.replace(/^https?:\/\//, '').replace(/\/+$/, '')])
-        : undefined,
-    })),
-  };
+  return buildPublishedEntrypoints({
+    previewSlug,
+    previewHost: deps.previewHost,
+    subdomains,
+    consoleSubdomain,
+    // 与发布器同一份占位表：别名按根域展开 + 完整自定义域名。
+    occupiedHosts: deps.getAllBranches && deps.previewHost
+      ? occupiedHostOwners(deps.getAllBranches(), [deps.previewHost.replace(/^https?:\/\//, '').replace(/\/+$/, '')])
+      : undefined,
+  });
 }
 
 /** 从 StateService 造 deps —— 唯一一处知道「effective profile 要过 resolveEffectiveProfile」。 */

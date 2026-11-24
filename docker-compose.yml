@@ -1,5 +1,12 @@
+x-production-logging: &production-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
 services:
   gateway:
+    logging: *production-logging
     image: nginx:1.27-alpine
     container_name: prdagent-gateway
     ports:
@@ -27,6 +34,7 @@ services:
     restart: unless-stopped
 
   mongodb:
+    logging: *production-logging
     image: mongo:8.0
     container_name: prdagent-mongodb
     volumes:
@@ -38,6 +46,7 @@ services:
     restart: unless-stopped
 
   redis:
+    logging: *production-logging
     image: redis:7-alpine
     container_name: prdagent-redis
     volumes:
@@ -47,6 +56,7 @@ services:
     restart: unless-stopped
 
   api:
+    logging: *production-logging
     # 生产环境禁止本地构建：默认拉取 :latest（由 GitHub Actions 推送）
     # 如需固定版本/自建仓库，设置 PRD_AGENT_API_IMAGE 覆盖（tag 或 digest）
     # 例：PRD_AGENT_API_IMAGE=ghcr.io/inernoro/prd_agent/prdagent-server:v1.1.1
@@ -56,6 +66,21 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
+      # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
+      - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      # 模型更新探测单独授权，不扩大其他自动任务的执行范围。
+      - LlmGateway__ModelUpgrades__CanaryEnabled=${LLMGW_MODEL_UPGRADE_CANARY_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__ScheduledCanaryEnabled=${LLMGW_MODEL_UPGRADE_SCHEDULED_CANARY_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__CanaryDeployment=${LLMGW_MODEL_UPGRADE_CANARY_DEPLOYMENT:-}
+      # 正式实例明确承担既有定时任务；共库预览仍由 CDS 标记与运行时权限拒绝。
+      - Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}
+      # 正式部署独立启用产品申领通知，其他共享任务继续使用各自的授权。
+      - ProductAgent__ClaimNotificationsEnabled=${PRODUCT_CLAIM_NOTIFICATIONS_ENABLED:-true}
+      # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。
+      # 截止线之后由仍在线旧容器创建的新任务不会进入生产 worker；显式 false 可紧急关闭。
+      - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
+      - Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}
+      - Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
@@ -64,6 +89,9 @@ services:
       - Jwt__Issuer=prdagent
       # AI 自动化超级访问密钥；认证处理器只读取容器内 AI_ACCESS_KEY。
       - AI_ACCESS_KEY=${AI_ACCESS_KEY:-}
+      # 稳定冒烟合成登录：默认关闭；启用时必须同时配置专用账号白名单。
+      - SYNTHETIC_LOGIN_ENABLED=${SYNTHETIC_LOGIN_ENABLED:-false}
+      - SYNTHETIC_LOGIN_ALLOWED_USERS=${SYNTHETIC_LOGIN_ALLOWED_USERS:-}
       # 项目数据加密密钥：用于模型平台 API key 等持久化密文，必须独立于 JWT_SECRET。
       # 生产必须显式配置；旧密文迁移期用 API_KEY_CRYPTO_LEGACY_SECRETS 注入历史 JWT/旧密钥。
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
@@ -82,8 +110,24 @@ services:
       # Root 破窗账户（可选，生产环境建议不配置或只临时使用）
       - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
+      # 首次建库与显式用户初始化凭据；未单独配置时后端会使用上面的破窗凭据。
+      - MAP_INITIAL_ADMIN_USERNAME=${MAP_INITIAL_ADMIN_USERNAME:-}
+      - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # 正式机若无法直连 arena.ai，可从另一套 CDS 的公开快照端点恢复；为空时仍走源站。
+      - ModelLeaderboard__SnapshotMirrorBaseUrl=${MODEL_LEADERBOARD_SNAPSHOT_MIRROR_BASE_URL:-}
+      # 稳定冒烟身份全部由部署环境注入，仓库不携带正式域名或固定公钥。
+      - StableSmokeAuthentication__NotificationTargetUsername=${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME:-}
+      - StableSmokeAuthentication__Keys__0__KeyId=${STABLE_SMOKE_KEY_ID:-}
+      - StableSmokeAuthentication__Keys__0__Username=${STABLE_SMOKE_USERNAME:-}
+      - StableSmokeAuthentication__Keys__0__DisplayName=${STABLE_SMOKE_DISPLAY_NAME:-}
+      - StableSmokeAuthentication__Keys__0__AllowedHost=${STABLE_SMOKE_ALLOWED_HOST:-}
+      - StableSmokeAuthentication__Keys__0__PublicKey=${STABLE_SMOKE_PUBLIC_KEY:-}
+      - StableSmokeAuthentication__Keys__0__AutoProvision=${STABLE_SMOKE_AUTO_PROVISION:-false}
+      # 是否由平台按 StableSmokeIdentityPolicy 托管巡检账号的权限（开号写入放行清单、存量缺项补齐）。
+      # 正式与本地默认关闭，只有 CDS 验证环境需要开启；关闭时账号权限完全由管理员手工决定。
+      - StableSmokeAuthentication__Keys__0__ManagePermissions=${STABLE_SMOKE_MANAGE_PERMISSIONS:-false}
       # GitHub OAuth Device Flow（PR Review Agent 使用）
       # 管理员需在 GitHub 创建 OAuth App 并勾选 "Enable Device Flow"，
       # 然后在宿主机 export 这两个变量（或写进同目录 .env 文件）。Device Flow 无需 Callback URL。
@@ -95,21 +139,33 @@ services:
       # 未配置时 video-agent 的"直出模式"会返回友好错误；配置后自动启用
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OpenRouter__Referer=${OPENROUTER_REFERER:-}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜路径），无独立渲染容器
-      # 跨进程 LLM 网关开关：生产必须显式设置。http 让 MAP 调用经 HttpLlmGatewayClient
-      # 打到 llmgw-serve；inproc 只允许破玻璃回滚脚本显式设置，禁止漏配静默回退。
-      - LlmGateway__Mode=${LLMGW_MODE}
-      - LlmGateway__LogicalModelsRequireHttp=${LLMGW_LOGICAL_MODELS_REQUIRE_HTTP:-true}
-      - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
-      - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
-      - LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}
+      # MAP 的模型调用全部经 HttpLlmGatewayClient 打到独立网关 serving（没有其它路径可切）。
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       # 旧变量保留一版兼容；运行时两者任一为 true 都会对全部 registered caller fail-closed。
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
+      # 网关库单独部署时与 serving 同一个连接串，MAP 的日志页 / 成本统计才读得到 serving 写的日志。
+      - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       # 经 gateway nginx 在两个 serving 实例间负载均衡；不再把 MAP 固定到单实例。
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
+      # 默认执行代码内固定截止线的一次性迁移；显式 true 时必须另配
+      # LEGACY_OWNER_CREATED_BEFORE_UTC，显式 false 可关闭迁移。
+      - Transcript__AdoptLegacyUnownedRuns=${TRANSCRIPT_ADOPT_LEGACY_UNOWNED_RUNS:-}
+      # 设计执行服务 design-opendesign：api 经内部网络直连，不对外发布端口。
+      # 两项都在时 OpenDesign 走 service 路径（判定只在 prd-api OpenDesignTransportResolver 一处）。
+      # 密钥由 exec_dep.sh 在 .env 缺失时自动生成一次，api 与 design-opendesign 共用。
+      # 这里不写成必填：回滚脚本等其它 compose 入口不经 exec_dep.sh，缺它时不能挡住无关的恢复动作；
+      # 真缺失时两端都会如实报「未配置设计执行服务密钥」，不会静默降级。
+      # 正式环境钉死走设计执行服务：缺密钥时 OpenDesign 明确报「未配置」，而不是自动退回 CDS 会话旧路径。
+      - DesignRuntime__OpenDesign__Transport=service
+      - DesignRuntime__OpenDesign__BaseUrl=http://design-opendesign:8093
+      - DesignRuntime__OpenDesign__ApiKey=${DESIGN_RUNTIME_API_KEY:-}
+      # 设计服务回调 api（取工作区、推预览、交结果）的公网基址；它的产物出口会拒绝内网地址，
+      # 所以只能是正式域名。模型数据面不再回调 MAP，由短期授权直达下面的 LLMGW 内网地址。
+      - DesignArtifactRuntime__PublicBaseUrl=${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
@@ -138,10 +194,11 @@ services:
     restart: unless-stopped
 
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
-  # 主库只承载 MAP 业务依赖；appCaller、模型池、平台、exchange、请求日志和 shadow 证据均从
+  # 主库只承载 MAP 业务依赖；appCaller、模型池、平台、exchange 和请求日志均从
   # LlmGateway__DatabaseName（默认 llm_gateway）读取。ApiKeyCrypto__Secret 与资产存储由两实例共享。
-  # MAP 置 LlmGateway__Mode=http 时跨进程打到这里；生产缺少 mode 时 API 拒绝启动。
+  # MAP 的全部模型调用都跨进程打到这里。
   llmgw-serve:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve
     environment:
@@ -173,7 +230,6 @@ services:
       - LlmGateway__Retention__EnableTtlIndexes=${LLMGW_RETENTION_ENABLE_TTL_INDEXES:-true}
       - LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}
       - LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}
-      - LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}
       - LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}
       - LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}
       - LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}
@@ -182,8 +238,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     healthcheck:
@@ -198,6 +252,7 @@ services:
 
   # serving 第二实例。两实例使用同一不可变镜像和 GW-owned 数据库，由 gateway nginx 做被动摘流。
   llmgw-serve-b:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve-b
     environment:
@@ -228,7 +283,6 @@ services:
       - LlmGateway__Retention__EnableTtlIndexes=${LLMGW_RETENTION_ENABLE_TTL_INDEXES:-true}
       - LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}
       - LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}
-      - LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}
       - LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}
       - LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}
       - LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}
@@ -236,8 +290,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     healthcheck:
@@ -254,34 +306,43 @@ services:
   # 与 MAP 共享同一 Mongo（读 llmrequestlogs 做观测）+ 独立 LlmGwJwt__Secret（网关自身账号鉴权，
   # 跨服务隔离见 cross-project-isolation.md）。不依赖 prd-api 任何项目，剥离失败不波及主站。
   llmgw:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw:latest}
     container_name: prdagent-llmgw
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
+      - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      - LlmGateway__ModelUpgrades__WorkerEnabled=${LLMGW_MODEL_UPGRADE_WORKER_ENABLED:-false}
+      - LlmGateway__ModelUpgrades__WorkerDeployment=${LLMGW_MODEL_UPGRADE_WORKER_DEPLOYMENT:-}
+      - LlmGateway__ModelReferences__MapDeploymentIdentity=${LLMGW_MODEL_REFERENCE_MAP_DEPLOYMENT_IDENTITY:-prd-agent:production::main}
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
-      - LlmGateway__RolloutLedgerPath=/app/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台只在已认领到 GW 的平台/模型/Exchange 上写密钥；加密密钥必须与 api / llmgw-serve 一致。
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api, llmgw and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
       - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:?must set LLMGW_JWT_SECRET in production (gateway console JWT signing key, >=32 bytes, no insecure default — empty falls back to a repo-known dev key that lets anyone forge a token to read /gw/*)}
       - LlmGwJwt__Issuer=prdagent-llmgw
-      # 控制台账号长期权威是 llm_gateway.llmgw_console_users；未设 bootstrap 口令时内置 admin/admin
-      # 并由服务端强制首登改密。LLMGW_ADMIN_PASSWORD 仅作为首次 bootstrap 或 FORCE_RESET 破玻璃输入，
-      # 不得作为每次启动覆盖数据库口令的长期权威。
+      # 默认由 llm_gateway.llmgw_console_users 托管账号；启用 ENV_AUTHORITY 后由 env 长期托管 admin，
+      # 启动时只修复漂移，不会因重复哈希而使现有会话失效。
       - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}
       - LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}
+      - LLMGW_ADMIN_ENV_AUTHORITY=${LLMGW_ADMIN_ENV_AUTHORITY:-}
+      # 网关巡检联邦登录与 MAP 的签名身份共用用户名，但默认关闭；正式环境需显式启用并限定名单。
+      - StableSmokeFederation__Enabled=${STABLE_SMOKE_FEDERATION_ENABLED:-false}
+      - StableSmokeFederation__AllowedUsernames=${STABLE_SMOKE_FEDERATION_ALLOWED_USERS:-}
+      - StableSmokeFederation__Role=${STABLE_SMOKE_FEDERATION_ROLE:-viewer}
+      - StableSmokeFederation__SessionMinutes=${STABLE_SMOKE_FEDERATION_SESSION_MINUTES:-15}
+      # 正式环境的 MAP 返回入口必须由部署环境注入，不能由前端按域名格式猜测。
+      - LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?must set LLMGW_MAP_HOME_URL in production (authoritative MAP home URL)}
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     networks:
@@ -291,10 +352,34 @@ services:
   # 独立 LLM 网关前端静态站 llmgw-web —— 独立 llmgw/web 镜像（nginx 托管构建产物，监听 80）。
   # SPA 回退 + /gw 反代到 llmgw:8090（见 llmgw/web/nginx.conf）。
   llmgw-web:
+    logging: *production-logging
     image: ${PRD_AGENT_LLMGW_WEB_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:latest}
     container_name: prdagent-llmgw-web
     depends_on:
       - llmgw
+    networks:
+      - prdagent-network
+    restart: unless-stopped
+
+  # 设计执行服务 design-opendesign（OpenDesign 引擎 + map-design-executor-v1），只供 api 经内部网络调用，
+  # 不发布端口。镜像与 api 同一个发布 ref（exec_dep.sh 钉版并同批拉取）。任务状态只在进程内存里，
+  # 发布重建容器会中断正在跑的设计任务，api 侧会把它标为「服务重启中断」并如实告知用户。
+  design-opendesign:
+    logging: *production-logging
+    image: ${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:latest}
+    container_name: prdagent-design-opendesign
+    environment:
+      - DESIGN_RUNTIME_API_KEY=${DESIGN_RUNTIME_API_KEY:-}
+      # 只允许 MAP 任务信封把模型流量送到这一条钉死的 LLMGW 原生 Responses 入口。
+      # 凭据是 API 按任务签发的短期 grant，不把 LLMGW_SERVE_KEY 下发到设计容器。
+      - DESIGN_RUNTIME_LLMGW_BASE_URL=${LLMGW_SERVE_BASE_URL:-http://gateway}/gw/v1
+    healthcheck:
+      # 匿名就绪探针：引擎健康才 200。镜像基于 node，不假定容器里有 curl。
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8093/healthz/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
     networks:
       - prdagent-network
     restart: unless-stopped

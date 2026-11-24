@@ -370,7 +370,7 @@ export function createTopologyAggregator(
         id: 'edge:nginx->forwarder',
         from: 'nginx',
         to: forwarder.id,
-        label: '*.miduo.org',
+        label: rootDomains[0] ? `*.${rootDomains[0]}` : undefined,
         trafficWeight: 100,
         dataSource: 'nginx-conf',
       });
@@ -380,7 +380,7 @@ export function createTopologyAggregator(
           id: `edge:nginx->${master.id}`,
           from: 'nginx',
           to: master.id,
-          label: 'cds.miduo.org',
+          label: rootDomains[0],
           trafficWeight: 100,
           dataSource: 'nginx-conf',
         });

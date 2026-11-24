@@ -37,7 +37,7 @@ export function RequirementLinkList({
           onClick={() => navigate(`/product-agent/p/${productId}/requirement/${r.id}`)}
           className="flex w-full items-start gap-3 rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5 text-left hover:border-cyan-400/30 hover:bg-cyan-400/5"
         >
-          <span className="shrink-0 rounded border border-cyan-400/25 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-mono text-cyan-200">
+          <span className="shrink-0 rounded border border-cyan-400/25 bg-cyan-400/10 px-1.5 py-0.5 text-[10px] font-mono text-[color:var(--accent-fg-blue)]">
             {r.requirementNo}
           </span>
           <span className="min-w-0 flex-1">
@@ -81,7 +81,7 @@ export function FeatureLinkList({
           onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
           className="flex w-full items-start gap-3 rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5 text-left hover:border-cyan-400/30 hover:bg-cyan-400/5"
         >
-          <span className="shrink-0 rounded border border-violet-400/25 bg-violet-400/10 px-1.5 py-0.5 text-[10px] font-mono text-violet-200">
+          <span className="shrink-0 rounded border border-violet-400/25 bg-violet-400/10 px-1.5 py-0.5 text-[10px] font-mono text-[color:var(--accent-fg-violet)]">
             {f.featureNo}
           </span>
           <span className="min-w-0 flex-1">

@@ -1,5 +1,5 @@
 import { prefersReducedMotion } from '@/lib/themeApplier';
-import type { MobileThemeMode } from '@/stores/mobileThemeStore';
+import { resolveThemeMode, type MobileThemeMode } from '@/stores/mobileThemeStore';
 
 type ViewTransitionLike = {
   ready: Promise<void>;
@@ -40,7 +40,8 @@ export function isSelfManagedThemePath(pathname: string): boolean {
 export function applyDocumentThemeMode(mode: MobileThemeMode, pathname: string): boolean {
   if (typeof document === 'undefined' || isSelfManagedThemePath(pathname)) return false;
 
-  if (mode === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  // 'system' 是偏好不是结论——这里统一收敛成 light / dark 再落 DOM。
+  if (resolveThemeMode(mode) === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
   return true;
 }

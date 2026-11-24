@@ -1,11 +1,15 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Api.Mcp;
 
 namespace PrdAgent.Api.Middleware;
 
@@ -126,8 +130,46 @@ public sealed class AdminPermissionMiddleware
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
+        // OpenDesign 运行时数据面由控制器用短期票据自鉴权，不能先被 AdminController 的
+        // 裸路径前缀误判为管理接口。这里只放行四条已知数据面路由及其既定方法；其他
+        // [AllowAnonymous] 端点、近似路径和额外后缀仍完整经过管理权限判定。
+        if (IsDesignArtifactRuntimeDataPlaneRequest(context))
+        {
+            await _next(context);
+            return;
+        }
+
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
+
+        // 收不回来的动作，一律不给智能体。这道门有两个维度，缺一个都出过事：
+        //
+        // 【位置】必须排在「这条路要不要 admin 权限」**之前**。上一版写在下面的 isAgentKey
+        // 分支里，而那整段在 `required == null` 早退之后 —— 没有 [AdminController] 标记的
+        // 控制器扫描器给不出 required，请求在门开之前就走掉了。
+        //
+        // 【范围】开放层（/api/open/）豁免。它要挡的是**普通业务控制器**：
+        // DELETE /api/web-pages/{id} 这类只挂 [Authorize]、从没为 API key 设计过，
+        // 却因为默认策略收 ApiKey scheme、middleware 又把 scope a:b 认成 admin 权限 a.b
+        // 而被打通的路。开放层不是这种 —— 那八个控制器每一个都显式写着
+        // [Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]，本来就是给 sk-ak
+        // 走的受控接口，各自的 scope 就是它的门。不豁免的后果上一版真发生了：
+        // llmgw/tutorial/publisher.py 的教程发布与它的回滚一起 403（见 IsCuratedOpenApiPath）。
+        var isAgentKey = string.Equals(context.User?.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
+        if (isAgentKey
+            && !McpDestructiveActions.IsCuratedOpenApiPath(path)
+            && McpDestructiveActions.IsDestructiveRequest(method, path))
+        {
+            var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogWarning("[403] AgentApiKey 破坏性动作被挡 - Path: {Path}, Method: {Method}, IP: {IP}",
+                path, method, dip);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            var blocked = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                "删除、公开发布这类收不回来的动作不开放给智能体密钥。要做请在界面上操作。");
+            await context.Response.WriteAsync(JsonSerializer.Serialize(blocked, _jsonOptions));
+            return;
+        }
 
         // 使用扫描器获取所需权限
         var required = _scanner.GetRequiredPermission(path, method);
@@ -157,7 +199,6 @@ public sealed class AdminPermissionMiddleware
         // AgentApiKey 走"纯 scope"授权，保证最小权限：M2M Key 命中匹配 scope 才放行，
         // 且【绝不】继承 owner 的 admin 权限/root（否则 root 名下的 scoped key 等于全权，最小权限失效）。
         // scope "a:b"（冒号）精确满足 admin 权限 "a.b"（点分），不跨资源泄漏。
-        var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
         if (isAgentKey)
         {
             if (HasScopeGrant(context, required) || HasDefectShareScopeGrant(context, required, path, method))
@@ -184,11 +225,44 @@ public sealed class AdminPermissionMiddleware
         var isRoot = IsRoot(context);
 
         var perms = await permissionService.GetEffectivePermissionsAsync(userId, isRoot);
-        var has = perms.Contains(AdminPermissionCatalog.Super) ||
-                  perms.Contains(required);
+        var productRequest = required.StartsWith("product-agent.", StringComparison.Ordinal)
+            && context.Request.Path.StartsWithSegments("/api/product", StringComparison.OrdinalIgnoreCase);
+        var activeColleague = context.User.FindFirst("authType") == null
+            && perms.Contains(ProductPermissionRules.OpenAccess);
+        var productCollaborator = productRequest && activeColleague;
+        string? productKnowledgeStoreId = null;
+        if (activeColleague && (required is AdminPermissionCatalog.DocumentStoreRead or AdminPermissionCatalog.DocumentStoreWrite))
+            productKnowledgeStoreId = await FindProductKnowledgeStoreIdAsync(context);
+        var productKnowledgeCollaborator = productKnowledgeStoreId != null;
+        if (productKnowledgeCollaborator)
+            context.Items[ProductKnowledgeCollaborationKey] = productKnowledgeStoreId;
+        if (productCollaborator)
+        {
+            // 产品协作权限只注入本次请求。评审使用共享数据，沿用平台已有的跨人查看和管理权限。
+            perms = perms.Concat(new[] {
+                AdminPermissionCatalog.ProductAgentUse,
+                AdminPermissionCatalog.ProductAgentManage,
+                AdminPermissionCatalog.ProductAgentAdmin,
+            }).Distinct().ToArray();
+        }
+        if (productRequest && perms.Contains(ProductPermissionRules.MapAdmin)
+            && context.Request.Path.StartsWithSegments("/api/product/review", StringComparison.OrdinalIgnoreCase))
+        {
+            perms = perms.Concat(new[] {
+                AdminPermissionCatalog.ReviewAgentUse,
+                AdminPermissionCatalog.ReviewAgentViewAll,
+                AdminPermissionCatalog.ReviewAgentManage,
+                AdminPermissionCatalog.ReviewAgentAppealReview,
+            }).Distinct().ToArray();
+        }
+
+        var has = productCollaborator || productKnowledgeCollaborator || perms.Contains(AdminPermissionCatalog.Super) ||
+                  perms.Contains(required) ||
+                  (perms.Contains(AdminPermissionCatalog.ProductAgentVersionApply)
+                   && ProductVersionApplyRoutePolicy.Allows(path, method, required));
 
         // 所有权限都必须先具备 access 权限（除了 root/super）
-        if (!isRoot &&
+        if (!productCollaborator && !productKnowledgeCollaborator && !isRoot &&
             !perms.Contains(AdminPermissionCatalog.Super) &&
             !perms.Contains(AdminPermissionCatalog.Access))
         {
@@ -199,6 +273,8 @@ public sealed class AdminPermissionMiddleware
         var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
         if (identity != null)
         {
+            if (productRequest || productKnowledgeCollaborator)
+                foreach (var stale in identity.FindAll("permissions").ToList()) identity.RemoveClaim(stale);
             foreach (var p in perms)
             {
                 identity.AddClaim(new System.Security.Claims.Claim("permissions", p));
@@ -219,5 +295,72 @@ public sealed class AdminPermissionMiddleware
         }
 
         await _next(context);
+    }
+
+    internal static readonly object ProductKnowledgeCollaborationKey = new();
+
+    private static async Task<string?> FindProductKnowledgeStoreIdAsync(HttpContext context)
+    {
+        var request = context.Request;
+        if (!request.Path.StartsWithSegments("/api/document-store", StringComparison.OrdinalIgnoreCase, out var relative))
+            return null;
+
+        var parts = (relative.Value ?? "").Trim('/').Split('/');
+        if (parts.Length is < 2 or > 3 || string.IsNullOrWhiteSpace(parts[1])) return null;
+        var subresource = parts.Length == 3 ? parts[2].ToLowerInvariant() : "";
+        var method = request.Method;
+        var isStore = parts[0].Equals("stores", StringComparison.OrdinalIgnoreCase);
+        var isEntry = parts[0].Equals("entries", StringComparison.OrdinalIgnoreCase);
+        var allowed = isStore
+            ? (HttpMethods.IsGet(method) && subresource is "" or "entries")
+                || (HttpMethods.IsPut(method) && subresource == "")
+                || (HttpMethods.IsPost(method) && subresource is "entries" or "folders" or "upload")
+            : isEntry && ((HttpMethods.IsGet(method) && subresource is "" or "content" or "download")
+                || (HttpMethods.IsPut(method) && subresource is "" or "move" or "content")
+                || (HttpMethods.IsDelete(method) && subresource == "")
+                || (HttpMethods.IsPost(method) && subresource == "replace"));
+        if (!allowed) return null;
+
+        var db = context.RequestServices.GetRequiredService<MongoDbContext>();
+        var ct = context.RequestAborted;
+        var storeId = isStore ? parts[1] : await db.DocumentEntries.Find(x => x.Id == parts[1])
+            .Project(x => x.StoreId).FirstOrDefaultAsync(ct);
+        if (string.IsNullOrEmpty(storeId)) return null;
+        return await db.Products.Find(x => !x.IsDeleted && x.KnowledgeStoreId == storeId).AnyAsync(ct)
+            ? storeId : null;
+    }
+
+    internal static bool IsDesignArtifactRuntimeDataPlaneRequest(HttpContext context)
+    {
+        if (context.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() == null)
+            return false;
+
+        var path = context.Request.Path.Value;
+        if (string.IsNullOrEmpty(path))
+            return false;
+
+        const string prefix = "/api/design-artifacts/runtime/";
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var remainder = path[prefix.Length..];
+        var runIdSeparator = remainder.IndexOf('/');
+        if (runIdSeparator <= 0 || runIdSeparator == remainder.Length - 1)
+            return false;
+
+        var operationPath = remainder[(runIdSeparator + 1)..];
+        // 这份清单必须与 DesignArtifactRuntimeController 的路由逐条对齐：漏一条，那条就会落回
+        // 父级 /api/design-artifacts 的管理员门，在 run 级模型票据被校验之前先 401。
+        // `llm/v1/responses` 曾经漏掉（Codex P1，2026-09-15），而 OpenDesign 的 Codex 运行时
+        // 正是 wire_api = "responses"——于是每一次真实模型调用都失败。
+        // 防再漏一条的守卫：DesignArtifactRuntimeDataPlaneBypassTests 反射控制器路由逐条比对。
+        return (HttpMethods.IsGet(context.Request.Method)
+                && (string.Equals(operationPath, "workspace/input", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(operationPath, "llm/v1/models", StringComparison.OrdinalIgnoreCase)))
+               || (HttpMethods.IsPost(context.Request.Method)
+                   && (string.Equals(operationPath, "workspace/result", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "workspace/preview", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "llm/v1/responses", StringComparison.OrdinalIgnoreCase)));
     }
 }

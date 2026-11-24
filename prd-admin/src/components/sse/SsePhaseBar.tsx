@@ -13,10 +13,10 @@ interface SsePhaseBarProps {
 
 const phaseConfig: Record<SsePhase, { color: string; bg: string; border: string }> = {
   idle: { color: 'var(--text-muted)', bg: 'rgba(255,255,255,0.03)', border: 'var(--border-subtle)' },
-  connecting: { color: 'rgba(120,180,255,0.9)', bg: 'rgba(120,180,255,0.08)', border: 'rgba(120,180,255,0.2)' },
-  streaming: { color: 'rgba(120,180,255,0.9)', bg: 'rgba(120,180,255,0.08)', border: 'rgba(120,180,255,0.2)' },
-  done: { color: 'rgba(120,220,180,0.9)', bg: 'rgba(120,220,180,0.08)', border: 'rgba(120,220,180,0.2)' },
-  error: { color: 'rgba(255,100,100,0.9)', bg: 'rgba(255,100,100,0.08)', border: 'rgba(255,100,100,0.2)' },
+  connecting: { color: 'var(--accent-fg-blue)', bg: 'rgba(120,180,255,0.08)', border: 'rgba(120,180,255,0.2)' },
+  streaming: { color: 'var(--accent-fg-blue)', bg: 'rgba(120,180,255,0.08)', border: 'rgba(120,180,255,0.2)' },
+  done: { color: 'var(--accent-fg-success)', bg: 'rgba(120,220,180,0.08)', border: 'rgba(120,220,180,0.2)' },
+  error: { color: 'var(--accent-fg-danger)', bg: 'rgba(255,100,100,0.08)', border: 'rgba(255,100,100,0.2)' },
 };
 
 /**

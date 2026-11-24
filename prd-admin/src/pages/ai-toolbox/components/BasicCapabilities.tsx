@@ -450,7 +450,7 @@ export function BasicCapabilities() {
                         className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                         style={{
                           background: msg.role === 'user'
-                            ? 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)'
+                            ? 'var(--button-primary-bg)'
                             : `linear-gradient(135deg, hsla(${selectedCap.hue}, 70%, 60%, 0.2) 0%, hsla(${selectedCap.hue}, 70%, 40%, 0.1) 100%)`,
                           border: msg.role === 'user'
                             ? 'none'
@@ -458,7 +458,7 @@ export function BasicCapabilities() {
                         }}
                       >
                         {msg.role === 'user' ? (
-                          <User size={14} style={{ color: 'white' }} />
+                          <User size={14} style={{ color: 'var(--button-primary-fg)' }} />
                         ) : (
                           <Bot size={14} style={{ color: `hsla(${selectedCap.hue}, 70%, 70%, 1)` }} />
                         )}
@@ -483,10 +483,11 @@ export function BasicCapabilities() {
                         <div
                           className={cn(
                             'inline-block px-3 py-2 rounded-xl text-[13px] leading-relaxed',
-                            msg.role === 'user' ? 'text-left text-token-primary' : 'surface-inset text-token-primary'
+                            msg.role === 'user' ? 'text-left' : 'surface-inset text-token-primary'
                           )}
                           style={msg.role === 'user' ? {
-                            background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)',
+                            background: 'var(--button-primary-bg)',
+                            color: 'var(--button-primary-fg)',
                           } : undefined}
                         >
                           {msg.content}

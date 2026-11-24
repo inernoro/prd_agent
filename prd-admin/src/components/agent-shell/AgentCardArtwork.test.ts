@@ -43,6 +43,8 @@ describe('AgentCardArtwork', () => {
     expect(artworkTokens.every(Boolean)).toBe(true);
     expect(new Set(artworkTokens).size).toBe(builtinAgents.length);
     expect(getAgentCardArtworkToken('visual-agent')).toBe('--agent-card-artwork-visual-agent');
+    expect(getAgentCardArtworkToken('web-pages')).toBe('--agent-card-artwork-web-pages');
+    expect(getAgentCardTask('web-pages')).toBe('生成并发布网页');
   });
 
   it('支持限制图片高度，为下部信息面板留出空间', () => {

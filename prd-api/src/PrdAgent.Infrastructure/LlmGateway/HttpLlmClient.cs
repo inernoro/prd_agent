@@ -4,6 +4,9 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.ModelPool;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -34,6 +37,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
     private readonly ILogger _logger;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
     private readonly IPoolFailoverNotifier? _failoverNotifier;
+    private readonly ITaskExecutionAuthorizer? _taskAuthorizer;
 
     public HttpLlmClient(
         IHttpClientFactory httpFactory,
@@ -51,7 +55,8 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         ILogger logger,
         ILLMRequestContextAccessor? ctxAccessor = null,
         bool defaultEnablePromptCache = true,
-        IPoolFailoverNotifier? failoverNotifier = null)
+        IPoolFailoverNotifier? failoverNotifier = null,
+        ITaskExecutionAuthorizer? taskAuthorizer = null)
     {
         _httpFactory = httpFactory;
         _baseUrl = baseUrl;
@@ -69,6 +74,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         _ctxAccessor = ctxAccessor;
         _defaultEnablePromptCache = defaultEnablePromptCache;
         _failoverNotifier = failoverNotifier;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     public string Provider => "gateway-http";
@@ -89,7 +95,7 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         // 否则跨 HTTP 后 serving 端日志关联与用户归属全断。敏感字段（密钥）本就不在 GatewayRequestContext 内。
         // S2 观测：client-stream 一定走跨进程 HTTP，故传输通道恒为 http。即便当前没有环境 LlmRequestContext
         // （无作用域的后台 / 工具型 CreateClient 调用），也必须发一个「只带 transport=http」的最小 Context，
-        // 否则 serving 端收不到 Context → 默认回落 inproc，污染这些无作用域调用的传输证据（Codex P2）。
+        // 否则 serving 端收不到 Context，这些无作用域调用的身份与传输证据会缺失（Codex P2）。
         var current = _ctxAccessor?.Current;
         var context = new GatewayRequestContext
         {
@@ -127,22 +133,22 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
             Context = context,
         };
 
-        var http = _httpFactory.CreateClient();
+        var http = _httpFactory.CreateClient(AuthorizedGatewayRequest.HttpClientName);
         http.Timeout = Timeout.InfiniteTimeSpan;
         HttpResponseMessage? resp = null;
         Stream? stream = null;
         StreamReader? reader = null;
         string? earlyError = null;
+        string? earlyErrorCode = null;
         try
         {
-            using var reqMsg = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/client-stream")
-            {
-                Content = new StringContent(JsonSerializer.Serialize(payload, _jsonOpts), Encoding.UTF8, "application/json"),
-            };
+            using var reqMsg = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/client-stream");
             reqMsg.Headers.Add("X-Gateway-Key", _gatewayKey);
             reqMsg.Headers.Add("X-Gateway-App-Caller", _appCallerCode);
             reqMsg.Headers.Add("X-Gateway-Source", "map");
             reqMsg.Headers.Add("X-Request-Id", context.RequestId);
+            await AuthorizedGatewayRequest.PrepareAsync(reqMsg, _taskAuthorizer, _appCallerCode, context, cancellationToken);
+            reqMsg.Content = new StringContent(JsonSerializer.Serialize(payload, _jsonOpts), Encoding.UTF8, "application/json");
 
             resp = await http.SendAsync(reqMsg, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!resp.IsSuccessStatusCode)
@@ -156,6 +162,11 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                 reader = new StreamReader(stream, Encoding.UTF8);
             }
         }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            earlyError = ex.Message;
+            earlyErrorCode = ex.Code;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[HttpLlmClient] client-stream 连接失败 base={Base}", _baseUrl);
@@ -165,12 +176,17 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         if (earlyError != null)
         {
             await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                _failoverNotifier, null, earlyError, null, _logger);
+                _failoverNotifier,
+                null,
+                earlyError,
+                null,
+                _pinnedModelId ?? _expectedModel,
+                _logger);
             reader?.Dispose();
             stream?.Dispose();
             resp?.Dispose();
             http.Dispose();
-            yield return new LLMStreamChunk { Type = "error", ErrorMessage = earlyError };
+            yield return new LLMStreamChunk { Type = "error", ErrorMessage = earlyError, ErrorCode = earlyErrorCode };
             yield break;
         }
 
@@ -191,10 +207,16 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                 }
                 if (chunk != null)
                 {
-                    if (string.Equals(chunk.Type, "error", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(chunk.Type, "error", StringComparison.OrdinalIgnoreCase) || chunk.BillingAlerts?.Count > 0)
                     {
                         await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                            _failoverNotifier, null, chunk.ErrorMessage, null, _logger);
+                            _failoverNotifier,
+                            chunk.ErrorCode,
+                            chunk.ErrorMessage,
+                            chunk.Platform,
+                            chunk.Model ?? _pinnedModelId ?? _expectedModel,
+                            _logger,
+                            chunk.BillingAlerts);
                     }
                     yield return chunk;
                 }

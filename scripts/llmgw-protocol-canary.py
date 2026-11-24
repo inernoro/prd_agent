@@ -195,7 +195,7 @@ def _body_for_protocol(protocol: str, max_tokens: int, prompt: str) -> tuple[str
             "temperature": 0,
         }
     if protocol == "gemini-compatible":
-        return "/v1beta/models/gateway-auto:generateContent", {
+        return "/v1beta/models/auto:generateContent", {
             "contents": [
                 {
                     "role": "user",
@@ -406,6 +406,10 @@ def _self_test() -> int:
         return 1
     if native_context.get("IngressProtocol") != "gw-native":
         print("LLM Gateway protocol canary self-test: FAIL gw-native ingress protocol", file=sys.stderr)
+        return 1
+    gemini_path, _ = _body_for_protocol("gemini-compatible", max_tokens=8, prompt="Reply with OK.")
+    if gemini_path != "/v1beta/models/auto:generateContent":
+        print(f"LLM Gateway protocol canary self-test: FAIL gemini auto route={gemini_path}", file=sys.stderr)
         return 1
     with tempfile.TemporaryDirectory(prefix="llmgw-protocol-canary-self-test-") as tmp:
         reusable_path = os.path.join(tmp, "protocol-canary.json")

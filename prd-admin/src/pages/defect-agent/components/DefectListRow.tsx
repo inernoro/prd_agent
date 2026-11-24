@@ -12,7 +12,8 @@ import {
   MessageCircle, CheckCircle, Paperclip, Image,
 } from 'lucide-react';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 import { formatDefectTitle } from '@/lib/defectTitle';
 
 interface DefectListRowProps {
@@ -140,7 +141,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         return (
           <span
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
-            style={{ background: 'rgba(120,220,180,0.15)', color: 'rgba(120,220,180,0.9)' }}
+            style={{ background: 'rgba(120,220,180,0.15)', color: 'var(--accent-fg-success)' }}
           >
             <Check size={10} />
             已完成
@@ -150,7 +151,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
       return (
         <span
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
-          style={{ background: 'rgba(255,120,120,0.15)', color: 'rgba(255,120,120,0.9)' }}
+          style={{ background: 'rgba(255,120,120,0.15)', color: 'var(--accent-fg-danger)' }}
         >
           驳回
         </span>
@@ -161,7 +162,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
       return (
         <span
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
-          style={{ background: 'rgba(180,140,255,0.15)', color: 'rgba(180,140,255,0.9)' }}
+          style={{ background: 'rgba(180,140,255,0.15)', color: 'var(--accent-fg-violet)' }}
         >
           待验收
         </span>
@@ -173,7 +174,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         <span
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0"
           style={{
-            background: 'rgba(255, 100, 100, 0.25)', color: 'rgba(255, 120, 120, 1)',
+            background: 'rgba(255, 100, 100, 0.25)', color: 'var(--accent-fg-danger)',
             border: '1px solid rgba(255, 100, 100, 0.6)',
           }}
         >
@@ -187,7 +188,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
         <span
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium flex-shrink-0"
           style={{
-            background: 'rgba(120, 220, 180, 0.25)', color: 'rgba(120, 220, 180, 1)',
+            background: 'rgba(120, 220, 180, 0.25)', color: 'var(--accent-fg-success)',
             border: '1px solid rgba(120, 220, 180, 0.6)',
           }}
         >
@@ -200,7 +201,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
     if (lastActor === 'me' && lastAction === 'comment') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-          style={{ background: 'rgba(120,220,180,0.14)', color: 'rgba(120,220,180,0.9)', border: '1px solid rgba(120,220,180,0.4)' }}>
+          style={{ background: 'rgba(120,220,180,0.14)', color: 'var(--accent-fg-success)', border: '1px solid rgba(120,220,180,0.4)' }}>
           <MessageCircle size={10} />已评
         </span>
       );
@@ -208,7 +209,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
     if (lastActor === 'me' && lastAction === 'read') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-          style={{ background: 'rgba(140,190,255,0.12)', color: 'rgba(140,190,255,0.95)', border: '1px solid rgba(140,190,255,0.45)' }}>
+          style={{ background: 'rgba(140,190,255,0.12)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(140,190,255,0.45)' }}>
           <CheckCircle size={10} />已读
         </span>
       );
@@ -216,7 +217,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
     if (lastActor === 'peer' && lastAction === 'comment') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-          style={{ background: 'rgba(120,220,180,0.14)', color: 'rgba(120,220,180,0.9)', border: '1px solid rgba(120,220,180,0.4)' }}>
+          style={{ background: 'rgba(120,220,180,0.14)', color: 'var(--accent-fg-success)', border: '1px solid rgba(120,220,180,0.4)' }}>
           <MessageCircle size={10} />对方已评
         </span>
       );
@@ -224,7 +225,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
     if (lastActor === 'peer' && lastAction === 'read') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-          style={{ background: 'rgba(140,190,255,0.12)', color: 'rgba(140,190,255,0.95)', border: '1px solid rgba(140,190,255,0.45)' }}>
+          style={{ background: 'rgba(140,190,255,0.12)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(140,190,255,0.45)' }}>
           <CheckCircle size={10} />对方已读
         </span>
       );
@@ -232,7 +233,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
     if (lastActor === 'me' && lastAction === 'create') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-          style={{ background: 'rgba(255,200,80,0.18)', color: 'rgba(255,200,80,0.95)', border: '1px solid rgba(255,200,80,0.4)' }}>
+          style={{ background: 'rgba(255,200,80,0.18)', color: 'var(--accent-fg-amber)', border: '1px solid rgba(255,200,80,0.4)' }}>
           已提交
         </span>
       );
@@ -240,7 +241,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
     if (lastActor === 'peer' && lastAction === 'create') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] flex-shrink-0"
-          style={{ background: 'rgba(255,200,80,0.18)', color: 'rgba(255,200,80,0.95)', border: '1px solid rgba(255,200,80,0.4)' }}>
+          style={{ background: 'rgba(255,200,80,0.18)', color: 'var(--accent-fg-amber)', border: '1px solid rgba(255,200,80,0.4)' }}>
           对方已提交
         </span>
       );
@@ -362,25 +363,23 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
 
       {/* 提交者 → 处理者 */}
       <div className="flex items-center gap-1 flex-shrink-0">
-        <img
+        <UserAvatar
           src={reporterAvatarUrl}
           alt={reporterDisplayName}
           className="h-4 w-4 rounded-full object-cover"
           style={{
             border: isReporterMe ? '1px solid var(--border-subtle)' : '1px solid var(--border-subtle)',
           }}
-          onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = resolveNoHeadAvatarUrl(); }}
           title={reporterDisplayName}
         />
         <ArrowRight size={10} className="opacity-40 flex-shrink-0" />
-        <img
+        <UserAvatar
           src={assigneeAvatarUrl}
           alt={assigneeDisplayName}
           className="h-4 w-4 rounded-full object-cover"
           style={{
             border: isAssigneeMe ? '1px solid var(--border-subtle)' : '1px solid var(--border-subtle)',
           }}
-          onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = resolveNoHeadAvatarUrl(); }}
           title={assigneeDisplayName}
         />
       </div>

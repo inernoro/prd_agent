@@ -245,7 +245,7 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
             key={p}
             disabled={sse.isStreaming}
             onClick={() => ask(p)}
-            className="text-[12px] px-2.5 py-1 rounded-full border border-blue-500/30 text-blue-200 bg-blue-500/10 hover:bg-blue-500/20 disabled:opacity-40"
+            className="text-[12px] px-2.5 py-1 rounded-full border border-blue-500/30 text-[color:var(--accent-fg-blue)] bg-blue-500/10 hover:bg-blue-500/20 disabled:opacity-40"
           >
             {p}
           </button>
@@ -309,7 +309,7 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
               <button
                 onClick={() => ask(input)}
                 disabled={!input.trim() || sse.isStreaming}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-500/20 text-blue-200 border border-blue-500/40 text-sm hover:bg-blue-500/30 disabled:opacity-40"
+                className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-500/20 text-[color:var(--accent-fg-blue)] border border-blue-500/40 text-sm hover:bg-blue-500/30 disabled:opacity-40"
                 title="发送"
               >
                 {sse.isStreaming ? <MapSpinner size={14} /> : <Send size={14} />}
@@ -345,7 +345,7 @@ function ActionResults({ items }: { items: PmAssistantActionResult[] }) {
         const meta = ACTION_KIND_META[r.kind] ?? { label: r.kind, color: '#94A3B8' };
         if (!r.ok) {
           return (
-            <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-[12px] text-red-200">
+            <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-[12px] text-[color:var(--accent-fg-danger)]">
               <CircleAlert size={14} className="shrink-0" />
               <span className="truncate">创建{meta.label}「{r.title}」失败：{r.error || '未知错误'}</span>
             </div>
@@ -378,11 +378,11 @@ function ActionResults({ items }: { items: PmAssistantActionResult[] }) {
 function UserRow({ text, avatar, files }: { text: string; avatar: string; files?: string[] }) {
   return (
     <div className="flex items-start gap-2 justify-end">
-      <div className="max-w-[80%] text-[13px] text-blue-50 bg-blue-500/15 border border-blue-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
+      <div className="max-w-[80%] text-[13px] text-[color:var(--accent-fg-blue)] bg-blue-500/15 border border-blue-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
         {files && files.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-1.5">
             {files.map((f, i) => (
-              <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-400/30 text-blue-100">
+              <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-400/30 text-[color:var(--accent-fg-blue)]">
                 <FileText size={10} /> {f}
               </span>
             ))}
@@ -415,7 +415,7 @@ function AiRow({ text, streaming, children }: { text?: string; streaming?: boole
         {!streaming && text && (
           <button
             onClick={copy}
-            className="absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-token-subtle text-token-secondary hover-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+            className="surface-tone-dark absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-token-subtle text-token-secondary hover-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
             title="复制内容"
           >
             {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? '已复制' : '复制'}

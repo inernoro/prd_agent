@@ -2,7 +2,7 @@
   "name": "soft-editorial",
   "upstream": "nexu-io/open-design (html-ppt-zhangzara-soft-editorial)",
   "license": "MIT",
-  "slideCount": 12,
+  "slideCount": 13,
   "layouts": [
     {
       "file": "01-s-cover.html",
@@ -80,6 +80,12 @@
       "classAttr": "slide s-process",
       "chars": 2235,
       "summary": "How we'll work xi From insight to shipped change. A five-step path each pilot follows, end"
+    },
+    {
+      "file": "13-s-table.html",
+      "layout": "s-table",
+      "classAttr": "slide s-table",
+      "summary": "Source records. A semantic table with variable source columns and rows."
     },
     {
       "file": "12-s-matrix.html",

@@ -131,7 +131,7 @@ function QuickActionsConfigDialog({
   const dialog = (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
+        className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width: 480, maxWidth: '92vw', maxHeight: '82vh' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -200,7 +200,7 @@ function QuickActionsConfigDialog({
           <button
             onClick={save}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40"
           >
             {saving ? <MapSpinner size={14} /> : null} 保存
           </button>

@@ -1,8 +1,24 @@
 import type { ApiResponse } from '@/types/api';
 
+/** 后端核验当前文档版本后的问答索引状态，时间目标由服务端判定。 */
+export type KnowledgeIndexStatus = {
+  status: 'not_indexed' | 'stale' | 'pending' | 'ready' | 'failed';
+  displayMessage: string;
+  pollingRecommended: boolean;
+  runId?: string | null;
+  phase?: string | null;
+  sourceUpdatedAt?: string | null;
+  targetSeconds: number;
+  targetAt?: string | null;
+  delayed: boolean;
+  failureCode?: string | null;
+  errorMessage?: string | null;
+};
+
 // ── 数据类型 ──
 
 export type DocumentStore = {
+  pmProjectId?: string;
   id: string;
   name: string;
   description?: string;
@@ -115,6 +131,8 @@ export type DocStoreShareView = {
 };
 
 export type DocumentEntry = {
+  /** 已存在真实发布快照；编辑下一版草稿时仍为 true。 */
+  hasWritingPublication?: boolean;
   id: string;
   storeId: string;
   parentId?: string;
@@ -230,10 +248,12 @@ export type DocumentStoreAgentRun = {
   sourceEntryId: string;
   storeId: string;
   userId: string;
-  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  status: 'publishing' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
   phase: string;
   progress: number;
   errorMessage?: string;
+  /** 机器可判定的失败类别；用于区分配置错误、音频问题和临时上游故障。 */
+  failureCode?: string;
   outputEntryId?: string;
   templateKey?: string;
   customPrompt?: string;
@@ -242,10 +262,19 @@ export type DocumentStoreAgentRun = {
   transcriptText?: string;
   /** 「换个整理方式」任务指向的原转录 run */
   restyleOfRunId?: string;
+  /**
+   * 已自动重试的次数 / 下一次自动重试的时刻（后端在转录暂时不可用时下发）。
+   * 这两个是**结构化事实**：界面据此如实说「在等重试、第几次、还要多久」，
+   * 而不是去猜 phase 文案里有没有「重试」两个字。
+   */
+  automaticRetryCount?: number;
+  automaticRetryNextAt?: string;
   /** 多轮对话历史（仅 reprocess 模式有内容） */
   messages?: ReprocessChatMessage[];
   createdAt: string;
   startedAt?: string;
+  /** Worker 存活心跳；超过一小时没有更新时允许用户启动全新重试。 */
+  heartbeatAt?: string;
   endedAt?: string;
 };
 
@@ -339,6 +368,25 @@ export type DocumentStoreWithPreview = DocumentStore & {
   ownerName?: string;
   /** 团队作用域下后端附带的创建者头像文件名 */
   ownerAvatarFileName?: string;
+};
+
+/**
+ * 「最近」标签的一条文档（跨知识库时间线，GET /api/document-store/entries/recent）。
+ * storeId + id 一起构成知识库深链，点一条就能落到那篇内容本身。
+ */
+export type RecentDocumentEntry = {
+  id: string;
+  storeId: string;
+  /** 所属知识库名称，后端联表带出——「最近」里最要紧的一句上下文就是「它存哪儿了」 */
+  storeName: string;
+  title: string;
+  contentType: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  /** 服务端判定的「这是新增而不是改动」，前端不再自己比时间戳 */
+  isNew: boolean;
+  createdByName?: string;
 };
 
 /** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */
@@ -435,7 +483,7 @@ export type ListDocumentEntriesContract = (
   page?: number,
   pageSize?: number,
   keyword?: string,
-) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[] }>>;
+) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[]; canWrite?: boolean }>>;
 
 export type UpdateDocumentEntryContract = (
   entryId: string,

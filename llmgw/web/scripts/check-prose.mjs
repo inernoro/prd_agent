@@ -32,6 +32,11 @@ const PARAGRAPH_MIN_CJK = 24;
 // 收纳解释的组件——区间内的文字不计入预算。
 const OUTLET_COMPONENTS = ['HelpPopover', 'DetailsBlock'];
 
+// 确认弹窗的文案同理不是常驻文字：只有点了破坏性操作才会看到它，
+// 和 HelpPopover「点了才看」是同一类。2026-08-11 把原生 window.confirm/prompt
+// 换成站内弹窗后，这些 title/description 被当成正文数进了预算，属于误报。
+const OUTLET_CALLS = ['confirm', 'promptText'];
+
 /**
  * 存量欠账（棘轮）。数值 = 2026-07-29 迁移组织页时的**实测值**，不是拍脑袋留的余量：
  * 已经超标的页面只许往下降，不许再涨；迁移完一页就删掉对应条目。
@@ -41,16 +46,17 @@ const OUTLET_COMPONENTS = ['HelpPopover', 'DetailsBlock'];
  * 而不是「让 CI 过一下」。
  */
 const BUDGETS = [
+  { file: 'pages/AccountSecurityPage.tsx', maxParagraphs: 3, maxCjk: 400, reason: '源码包含自动账户说明、改密成功、结果未知三段；后两为互斥操作状态，同屏最多两段。保留安全反馈，不将未知提示隐藏至帮助。' },
   // 本轮范围外的页面（用户点名的 10 页不含它们），按当前实测值封顶，只减不增。
   // 数值偏大是因为 2026-07-29 加宽了口径：此前只数 `>文本<`，把正文搬进常量数组即可绕过，
   // 学习中心旧版就是靠 TOPICS 数组藏了约 750 汉字。加宽后这些页面的真实文字量才显形。
-  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 299, reason: '本轮范围外，按加宽口径后的实测值封顶' },
+  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 303, reason: '本轮范围外，按加宽口径后的实测值封顶；2026-08-10 +4 是两处「删除」按钮文案（桌面行与移动卡各一），按钮标签属控件可供性不是正文，但守卫的 `>文本<` 口径分辨不出，只能计入' },
   { file: 'pages/PlatformsPage.tsx', maxParagraphs: 3, maxCjk: 300, reason: '本轮范围外，按加宽口径后的实测值封顶' },
   // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
   // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
-  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 420, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 433, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案' },
-  { file: 'pages/QuickstartPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '四协议接入片段常量属产品内容，且部分渲染在 HelpPopover 内' },
+  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置；2026-08-10 +1 是新增的「删除」按钮文案（与图标同段，只多算一个汉字）' },
+  { file: 'pages/ServiceKeysPage.tsx', maxParagraphs: 2, maxCjk: 534, reason: '2026-11-15：额外84字来自撤销/切换结果未知、当前目标已核对、已确认但重读失败这些互斥反馈的精确对象、时效、次级回执边界、可选查看与完整ID字段，以及独立旧共享密钥读取恢复入口；正常清单未新增说明段落；正常清单不显示该区域，不能为静态计数删除防盲重提边界。新增登记未知、签发未知与核对状态是互斥恢复视图；主表单仅新增登记/签发与不修改既有预算的操作边界。不能为源码字数删除可能已生效、明文不可重现和禁止重复签发的必要说明。' },
+  { file: 'pages/QuickstartPage.tsx', maxParagraphs: 1, maxCjk: 490, reason: '2026-11-15：默认接入表单与可选智能建议为互斥视图；新增应用/用途字段与费用归属提示，不增加默认页说明段落。不能为文字计数删除必要权限和付费边界。接入片段常量属产品内容（用户复制走的东西），不是页面解释。2026-08-27 二次改版 356→454：**上调的 98 字全部是新增的 systemPromptSnippet**——那是一段可直接粘进用户自己应用的系统提示词，与四协议 cURL/Agent Skill 片段同类，是产品交付物；它渲染在产物屏「提示词」页签的代码块里，不是常驻解释。同批把页面自己的解释继续压了：三档取用方式的说明各压到一句、第一屏副标题去掉半句、接入地址卡的注脚减半，常驻段落数仍是 1（主按钮旁那句密钥默认值说明）。守卫按常量字面量计数、看不出常量最终落到哪个出口，因此按实测值封顶登记；下次若删掉系统提示词或把它挪进 DetailsBlock，这个值要跟着降回去。2026-08-28 三次上调 454→459：**上调的 5 字全部是字段标签，不是解释**——试跑区改成「上输入 / 下输出」后新增「要发什么」「模型返回」两个字段标签，并把「请求片段」的复制按钮收进标题行（该行的结构变化让原本被 `{}` 打断、守卫数不到的「请求片段」标签也进了计数）。三者都是控件可供性（同 AppCallersPage 条目里「删除」按钮的情形），守卫的 `>文本<` 口径分辨不出标签与正文。同批**没有**新增任何解释句：新写的空态与计费提示都跟在 `{}` 表达式后、本来就不计数，计费提示按设计稿逐字回抄（复刻并排比对时发现实现把它压短了，属文案偏差）。459→460 的那 1 个字，是标签「要发什么」按设计稿改回「你要发什么」' },
 ];
 
 const CJK = /[㐀-䶿一-鿿]/g;
@@ -76,6 +82,35 @@ function maskOutlets(source) {
   return out;
 }
 
+/**
+ * 屏蔽确认弹窗调用的参数对象。
+ * 必须数括号配对而不是用非贪婪正则：文案里带模板插值
+ * （`${p.apiUrl || '无地址'}`），里面就有右花括号，正则会提前收口。
+ */
+function maskDialogCalls(source) {
+  const chars = source.split('');
+  for (const name of OUTLET_CALLS) {
+    const opener = new RegExp(`\\b${name}\\(\\{`, 'g');
+    let match;
+    const text = chars.join('');
+    while ((match = opener.exec(text)) !== null) {
+      let depth = 0;
+      let i = match.index + match[0].length - 1;
+      for (; i < chars.length; i += 1) {
+        if (chars[i] === '{') depth += 1;
+        else if (chars[i] === '}') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      for (let k = match.index; k <= Math.min(i, chars.length - 1); k += 1) {
+        if (chars[k] !== '\n') chars[k] = ' ';
+      }
+    }
+  }
+  return chars.join('');
+}
+
 /** 屏蔽 {/* prose-ok: 理由 *\/} 之后紧邻的一段（同样必须写理由）。 */
 function maskPragmas(source) {
   return source.replace(/\{\s*\/\*\s*prose-ok:[^*]*\*\/\s*\}\s*(<[^>]*>)?([^<]*)/g, (match) => blank(match));
@@ -98,6 +133,7 @@ for (const full of walk(SRC)) {
     // 注释里的中文不是界面文字。
     source = source.replace(/\/\*[^]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
     source = maskOutlets(source);
+    source = maskDialogCalls(source);
 
     // JSX 文本节点候选：`>...<` 之间的内容。
     // 只保留含汉字的 —— TS 泛型（Record<string, X>）和比较运算永远不含汉字，
@@ -151,15 +187,54 @@ for (const full of walk(SRC)) {
   }
 }
 
+/**
+ * Markdown 强调符漏进界面文案。
+ *
+ * 由来：2026-09-16「模型名录」一段写了「补完**立刻生效**」，JSX 文本节点不过 Markdown，
+ * 于是用户看到的就是带四颗星号的原文。tsc 绿、lint 绿、文字预算守卫绿（它只扫 pages/），
+ * 只有真人打开那一屏截图才看得见——正是那种「通读代码挑不出来」的形状。
+ *
+ * 判据剥掉注释之后扫全文，**不限于 JSX 文本节点**。第一版就是限在 `>…<` 里的，
+ * 而肇事的那一段恰好含 `{data.builtinCount}`，被花括号打断、一个字都没扫到——
+ * 写完跑红绿闭环才发现守卫在空转（形状 4：测试自己坏了）。
+ *
+ * 全文口径的误报风险很低：注释里的星号已经剥掉，JS 的幂运算 `a ** b` 两边有空格、
+ * 配不成 `**x**`。实测全仓零命中。真要往界面里送 Markdown 原文（交给渲染器的内容），
+ * 到时候再按文件登记豁免，而不是现在先把判据放宽。
+ *
+ * 扫描范围是 src 下全部 .tsx（不止 pages/），因为这类文案哪个组件里都可能写。
+ */
+const EMPHASIS = /\*\*[^*\n]{1,60}\*\*/g;
+for (const full of walk(SRC)) {
+  const rel = path.relative(SRC, full);
+  if (!/\.tsx$/.test(rel)) continue;
+  let source;
+  try {
+    source = fs.readFileSync(full, 'utf8')
+      .replace(/\/\*[^]*?\*\//g, blank)
+      .replace(/^[ \t]*\/\/.*$/gm, blank);
+  } catch (error) {
+    warnings.push(`${rel}  强调符扫描跳过：${error.message}`);
+    continue;
+  }
+  const lineOf = (index) => source.slice(0, index).split('\n').length;
+  for (const match of source.matchAll(EMPHASIS)) {
+    violations.push(
+      `${rel}:${lineOf(match.index)}  界面文案里有 Markdown 强调符 ${match[0].slice(0, 24)}`
+      + `  ← JSX 不过 Markdown，用户会原样看到星号；要加粗就用 <strong>`,
+    );
+  }
+}
+
 for (const warning of warnings) console.warn('文字预算守卫警告：' + warning);
 
 if (violations.length) {
   console.error('文字预算守卫未通过：\n');
   for (const violation of violations) console.error('  ' + violation);
-  console.error('\n把超出的解释挪进四个出口之一：');
+  console.error('\n超预算时，把解释挪进四个出口之一（强调符那条不适用，按上面那行改即可）：');
   console.error('  1) 字段旁的 <HelpPopover>   2) 空状态   3) 默认收起的 <DetailsBlock>   4) <TutorialLink> 深链教程');
   console.error('确有理由超预算时，在 scripts/check-prose.mjs 的 BUDGETS 里登记并写明原因。');
   process.exit(1);
 }
 
-console.log(`文字预算守卫通过：常驻正文 ≤${DEFAULT_BUDGET.maxParagraphs} 段 / ≤${DEFAULT_BUDGET.maxCjk} 汉字（出口内的解释不计入）。`);
+console.log(`文字预算守卫通过：默认常驻正文 ≤${DEFAULT_BUDGET.maxParagraphs} 段 / ≤${DEFAULT_BUDGET.maxCjk} 汉字（已登记页面例外见 BUDGETS，出口内解释不计入）；界面文案里没有 Markdown 强调符。`);

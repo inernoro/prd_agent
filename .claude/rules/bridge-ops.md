@@ -1,3 +1,8 @@
+---
+paths:
+  - "cds/src/**/*.ts"
+---
+
 # Page Agent Bridge 操作规范
 
 **一句话**：用 CDS Bridge 操作预览页面时：分支 id 放 URL、每条命令必须带中文 description、页面内跳转只能用 spa-navigate（否则登录态会丢）。

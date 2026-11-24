@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { toProductOptions } from './comboboxOptions';
 import {
   importDefects,
   importFeatures,
@@ -224,7 +226,7 @@ export function ProductHistoryImportDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
-      <div className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl" style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}>
+      <div className="surface-tone-dark flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl" style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}>
         <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
             <div className="text-base font-semibold text-token-primary">导入历史{TYPE_LABEL[type]}</div>
@@ -238,12 +240,10 @@ export function ProductHistoryImportDialog({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {needsProductPicker && (
-            <label className="mb-4 block">
+            <div role="group" aria-label="归属产品" className="mb-4 block">
               <span className="mb-1.5 block text-xs text-token-secondary">归属产品</span>
-              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none">
-                {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-              </select>
-            </label>
+              <ItemSearchSelect value={productId} onChange={setProductId} options={toProductOptions(products)} placeholder="输入产品名称或编号搜索" countUnit="个产品" />
+            </div>
           )}
           <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-token-subtle p-8 text-center hover-bg-soft">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
@@ -262,7 +262,7 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-token-muted"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
+                <thead className="surface-tone-dark bg-[#1a1c22] text-token-muted"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
                 <tbody>{rows.slice(0, 30).map((row, index) => {
                   const routeLabel = row.sourceFields?.['应用']
                     || row.sourceFields?.['所属产品']
@@ -294,7 +294,7 @@ export function ProductHistoryImportDialog({
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded-lg border border-token-subtle px-3.5 py-2 text-sm text-token-secondary hover-bg-soft hover-text-primary">取消</button>
-            <button onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
+            <button onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40">
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
             </button>
           </div>

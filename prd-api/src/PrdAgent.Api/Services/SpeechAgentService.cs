@@ -8,6 +8,8 @@ using PrdAgent.Core.Models.SpeechAgent;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.LlmGateway.ImageGen;
 
 namespace PrdAgent.Api.Services;
 
@@ -494,8 +496,6 @@ public class SpeechAgentService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage },
                 },
                 ["temperature"] = 0.5,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,

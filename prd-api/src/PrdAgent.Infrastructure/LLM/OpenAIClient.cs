@@ -8,6 +8,16 @@ using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LLM;
 
+/// <summary>只读运输构造器的默认型号；不暴露客户端实例、凭据或发送能力。</summary>
+public static class LlmTransportModelMetadata
+{
+    public static string? OpenAiDefaultModel => ConstructorDefault(typeof(OpenAIClient));
+    public static string? ClaudeDefaultModel => ConstructorDefault(typeof(ClaudeClient));
+    private static string? ConstructorDefault(Type type)
+        => type.GetConstructors().SelectMany(x => x.GetParameters())
+            .FirstOrDefault(x => x.Name == "model" && x.HasDefaultValue)?.DefaultValue as string;
+}
+
 /// <summary>
 /// OpenAI API客户端
 /// </summary>
@@ -203,6 +213,12 @@ public class OpenAIClient : ILLMClient
                     GroupId: ctx?.GroupId,
                     SessionId: ctx?.SessionId,
                     UserId: ctx?.UserId,
+                    TaskPermitId: ctx?.TaskPermitId,
+                    ExecutionOrigin: ctx?.ExecutionOrigin,
+                    TriggerCredentialId: ctx?.TriggerCredentialId,
+                    TriggerActorUserId: ctx?.TriggerActorUserId,
+                    SourceDeployment: ctx?.SourceDeployment,
+                    SourceTask: ctx?.SourceTask,
                     ViewRole: ctx?.ViewRole,
                     RequestType: ctx?.RequestType,
                     AppCallerCode: ctx?.AppCallerCode,
@@ -221,7 +237,7 @@ public class OpenAIClient : ILLMClient
                     IsStreaming: true,
                     // S2 观测标记：OpenAIClient 是"直连发送端"（绕开网关池调度：ModelDomainService 兜底、
                     // ModelLab/Arena 锁定 platform+model、健康探活）。若上下文已显式指定传输路径则尊重之，
-                    // 否则兜底为 direct。网关路径（inproc/http/shadow）由各自的日志构建点标注，不经此处。
+                    // 否则兜底为 direct。网关路径（http）由网关的日志构建点标注，不经此处。
                     GatewayTransport: ctx?.GatewayTransport ?? GatewayTransports.Direct,
                     RunId: ctx?.RunId),
                 cancellationToken);

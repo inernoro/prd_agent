@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { DockerObservationEventStream } from './docker-observation-event-stream.js';
+import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import type { IShellExecutor } from '../types.js';
 import {
   normalizeLogText,
@@ -15,9 +16,19 @@ const INTENT_TTL_MS = 5 * 60 * 1000;
 
 export type ContainerLifecycleIntentKind =
   | 'cds-stop'
+  | 'cds-restart'
   | 'cds-remove'
   | 'cds-pre-run-replace'
   | 'cds-stale-cleanup'
+  // 停止的三种语义各自成值：谁主动停的、自动降温省资源、失败之后的收尾。
+  // 合成一个 cds-stop 时，读者只能靠读 reason 原文自己判断哪一种，而失败收尾
+  // 会被说成「无需处理」——这正是把判断推给读者的写法。
+  | 'cds-stop-idle'
+  | 'cds-stop-after-failure'
+  // stop / remove / recreate 必须分开：停止可以原地重启，删除连登记都没了得重新添加，
+  // 重建会自己起新容器。合成一个值，下一步就会指向一个不存在的入口（Codex P2）。
+  | 'cds-infra-stop'
+  | 'cds-infra-remove'
   | 'cds-infra-recreate';
 
 export interface ContainerLifecycleIntent {
@@ -25,6 +36,7 @@ export interface ContainerLifecycleIntent {
   kind: ContainerLifecycleIntentKind;
   reason: string;
   requestedAt: string;
+  completedAt?: string;
   projectId?: string | null;
   branchId?: string | null;
   profileId?: string | null;
@@ -53,11 +65,11 @@ function pruneLifecycleIntents(now = Date.now()): void {
 export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIntent, 'containerName' | 'requestedAt'> & {
   containerName: string;
   requestedAt?: string;
-}): void {
+}): ContainerLifecycleIntent | undefined {
   const containerName = normalizeContainerName(intent.containerName);
   if (!containerName) return;
   pruneLifecycleIntents();
-  lifecycleIntents.set(containerName, {
+  const recorded: ContainerLifecycleIntent = {
     containerName,
     kind: intent.kind,
     reason: intent.reason,
@@ -73,7 +85,9 @@ export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIn
     operation: intent.operation ?? null,
     source: intent.source ?? null,
     details: intent.details,
-  });
+  };
+  lifecycleIntents.set(containerName, recorded);
+  return recorded;
 }
 
 export function findRecentContainerLifecycleIntent(containerName: string | undefined | null): ContainerLifecycleIntent | undefined {
@@ -145,6 +159,7 @@ export async function collectContainerDiagnostics(
   shell: IShellExecutor,
   containerRef: string,
   tailLines = 200,
+  signal?: AbortSignal,
 ): Promise<{
   inspect?: Record<string, unknown>;
   logs?: ReturnType<typeof normalizeLogText>;
@@ -154,7 +169,7 @@ export async function collectContainerDiagnostics(
   if (!safe) return { error: { message: `unsafe container reference: ${containerRef}` } };
 
   let inspect: Record<string, unknown> | undefined;
-  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000 });
+  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000, executionLane: 'observation', signal });
   if (inspectResult.exitCode === 0 && inspectResult.stdout.trim()) {
     try {
       inspect = summarizeDockerInspect(JSON.parse(inspectResult.stdout));
@@ -165,7 +180,7 @@ export async function collectContainerDiagnostics(
 
   const logsResult = await shell.exec(
     `docker logs --timestamps --tail ${Math.max(1, Math.min(tailLines, 1000))} ${shellQuote(safe)}`,
-    { timeout: 7000 },
+    { timeout: 7000, executionLane: 'observation', signal },
   );
   const rawLogs = `${logsResult.stdout || ''}${logsResult.stderr || ''}`;
   return {
@@ -234,10 +249,7 @@ function shouldRecordDockerEvent(action: string): boolean {
 }
 
 export class DockerEventMonitor {
-  private child: ChildProcess | null = null;
-  private stopping = false;
-  private restartTimer: ReturnType<typeof setTimeout> | null = null;
-
+  private readonly eventStream?: DockerObservationEventStream;
   constructor(
     private readonly shell: IShellExecutor,
     private readonly store: ServerEventLogSink | null | undefined,
@@ -254,77 +266,26 @@ export class DockerEventMonitor {
       inspect?: Record<string, unknown>;
       lifecycleIntent?: ContainerLifecycleIntent;
     }) => void | Promise<void>,
-  ) {}
+    streams?: ObservationStreamExecutor,
+  ) {
+    if (streams) this.eventStream = new DockerObservationEventStream(streams,
+      ['events', '--filter', 'label=cds.managed=true', '--format', '{{json .}}'],
+      (line, signal) => this.handleLine(line, signal),
+      reason => this.store?.record({ category: 'docker', severity: 'warn', source: 'docker-events', action: 'monitor.warning', message: reason }));
+  }
 
   start(): void {
-    if (!this.store || this.child) return;
-    this.stopping = false;
-    this.spawnMonitor();
-  }
-
-  stop(): void {
-    this.stopping = true;
-    if (this.restartTimer) clearTimeout(this.restartTimer);
-    this.restartTimer = null;
-    if (this.child && !this.child.killed) this.child.kill();
-    this.child = null;
-  }
-
-  private spawnMonitor(): void {
-    if (this.stopping || !this.store) return;
-    const child = spawn('docker', [
-      'events',
-      '--filter',
-      'label=cds.managed=true',
-      '--format',
-      '{{json .}}',
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    this.child = child;
-    let stdoutBuffer = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf8');
-      const lines = stdoutBuffer.split(/\r?\n/);
-      stdoutBuffer = lines.pop() || '';
-      for (const line of lines) {
-        if (line.trim()) void this.handleLine(line.trim());
-      }
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      const message = chunk.toString('utf8').trim();
-      if (!message) return;
-      this.store?.record({
-        category: 'docker',
-        severity: 'warn',
-        source: 'docker-events',
-        action: 'monitor.stderr',
-        message,
-      });
-    });
-    child.on('error', (err) => {
-      this.store?.record({
-        category: 'docker',
-        severity: 'error',
-        source: 'docker-events',
-        action: 'monitor.error',
-        message: err.message,
-      });
-    });
-    child.on('close', (code, signal) => {
-      this.child = null;
-      if (this.stopping) return;
-      this.store?.record({
-        category: 'docker',
-        severity: 'warn',
-        source: 'docker-events',
-        action: 'monitor.closed',
-        message: `docker events exited code=${code ?? 'null'} signal=${signal ?? 'null'}; restarting monitor`,
-      });
-      this.restartTimer = setTimeout(() => this.spawnMonitor(), 5000);
-    });
-  }
-
-  private async handleLine(line: string): Promise<void> {
     if (!this.store) return;
+    if (!this.eventStream) {
+      this.store.record({ category: 'docker', severity: 'warn', source: 'docker-events', action: 'monitor.unavailable', message: '事件读取执行器未配置，无法确认容器事件。' });
+      return;
+    }
+    this.eventStream.start();
+  }
+  stop(): Promise<void> { return this.eventStream?.stop() ?? Promise.resolve(); }
+
+  private async handleLine(line: string, signal?: AbortSignal): Promise<void> {
+    if (!this.store || signal?.aborted) return;
     let evt: any;
     try {
       evt = JSON.parse(line);
@@ -351,10 +312,20 @@ export class DockerEventMonitor {
     const severity = eventSeverity(action, attrs);
     const ref = containerName || evt.id || evt.Actor?.ID;
     const diagnostics = ref && shouldCaptureDiagnostics(action)
-      ? await collectContainerDiagnostics(this.shell, ref, 300)
+      ? await collectContainerDiagnostics(this.shell, ref, 300, signal)
       : {};
+    if (signal?.aborted) return;
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
-    const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
+    // 原地重启用不可变 CID 执行；Docker 事件同时携带名字和完整 ID。
+    const candidateIntent = findRecentContainerLifecycleIntent(evt.Actor?.ID || evt.id)
+      || findRecentContainerLifecycleIntent(containerName);
+    // 纳秒 epoch 超过 JS 安全整数；先归一为整数微秒，避免浮点毫秒把边界后的事件舍入到窗口内。
+    const eventTimeMicros = Math.round(Number(evt.timeNano) / 1_000);
+    // 仅关联重启命令执行窗口里的事件；启动后再次崩溃不能被旧重启意图掩盖。
+    const lifecycleIntent = candidateIntent?.kind !== 'cds-restart' ? candidateIntent
+      : Number.isFinite(eventTimeMicros) && eventTimeMicros >= Date.parse(candidateIntent.requestedAt) * 1_000
+        && (!candidateIntent.completedAt || eventTimeMicros < (Date.parse(candidateIntent.completedAt) + 1) * 1_000)
+        ? candidateIntent : undefined;
     const normalizedAction = action.toLowerCase();
     const exitCode = Number.isFinite(Number(state?.exitCode ?? attrs.exitCode))
       ? Number(state?.exitCode ?? attrs.exitCode)
@@ -383,7 +354,16 @@ export class DockerEventMonitor {
       severity: recordedSeverity,
       source: 'docker-events',
       action,
-      message: `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
+      // 展示面必须看得见结论。infra 容器不带 cds.branch.id / cds.profile.id，index.ts 的
+      // 分支状态同步会提前 return，那条带 reason 的事件根本不会产生——结论只剩 details 里
+      // 一份没人展开的字段。
+      // 按「技术细节：」切，不是按第一个句号切：只有匹配到 CDS 意图的那几条把结论放在首句，
+      // OOM / 正常退出 / destroy 的「这不是崩溃」「下一步去查什么」都在后面的句子里，
+      // 按句号截会把它们全丢掉，展示面就又只剩症状了（Codex 第六轮 P2）。
+      // 切掉的只有技术细节串，它原样留在 details.classification 里。
+      message: classification
+        ? `docker ${action}${containerName ? `: ${containerName}` : ''} — ${classification.reason.split('技术细节：')[0].trim()}`
+        : `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
       projectId: lifecycleIntent?.projectId || null,
       branchId: branchId || null,
       profileId: profileId || null,

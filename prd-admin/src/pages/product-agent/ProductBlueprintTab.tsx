@@ -138,7 +138,7 @@ function StructureTab({ productId, isAdmin }: { productId: string; isAdmin: bool
       <div className="flex items-center justify-between">
         <p className="text-xs text-token-muted">定义产品的功能模块 / 能力骨架，逐层展开。功能清单里可把功能挂到这些节点上。</p>
         {isAdmin && (
-          <button onClick={() => setEditing({ node: null, parentId: null })} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30">
+          <button onClick={() => setEditing({ node: null, parentId: null })} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30">
             <Plus size={14} /> 根节点
           </button>
         )}
@@ -207,7 +207,7 @@ function StructureNodeModal({ productId, node, parentId, siblingCount, onClose, 
         </div>
         <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3">
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button>
-          <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
+          <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">
             {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
           </button>
         </div>
@@ -362,7 +362,7 @@ function RulesTab({ productId, isAdmin }: { productId: string; isAdmin: boolean 
     <div className="flex max-w-3xl flex-col gap-3">
       <div className="flex items-center justify-between">
         <p className="text-xs text-token-muted">定义产品全局、核心的规则（业务规则 / 约定 / 红线）。正文支持 Markdown，可用 [[术语]] 引用字典。</p>
-        {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30"><Plus size={14} /> 规则</button>}
+        {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30"><Plus size={14} /> 规则</button>}
       </div>
       {rules.length === 0 ? (
         <div className="rounded-xl border border-dashed border-token-subtle py-12 text-center text-sm text-token-muted">还没有产品规则。{isAdmin ? '点「规则」添加第一条。' : '请联系产品管理员维护。'}</div>
@@ -434,7 +434,7 @@ function RuleModal({ productId, rule, siblingCount, onClose, onSaved }: { produc
           <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务规则 / 数据约束 / 命名约定" className={inputCls} /></div>
           <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">正文（Markdown，可用 [[术语]] 引用字典）</label><textarea value={content} onChange={(e) => setContent(e.target.value)} rows={12} placeholder="规则内容…" className={`${inputCls} resize-y`} style={{ minHeight: 220 }} /></div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button><button onClick={save} disabled={saving || !title.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
+        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button><button onClick={save} disabled={saving || !title.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
       </div>
     </div>,
     document.body,
@@ -478,7 +478,7 @@ function TermsTab({ productId, isAdmin }: { productId: string; isAdmin: boolean 
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-xs text-token-muted">定义产品核心概念与术语，统一口径。定义支持 Markdown。</p>
         <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索术语" className="w-40 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted" />
-        {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30"><Plus size={14} /> 术语</button>}
+        {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30"><Plus size={14} /> 术语</button>}
       </div>
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-token-subtle py-12 text-center text-sm text-token-muted">{terms.length === 0 ? (isAdmin ? '还没有术语。点「术语」添加第一个核心概念。' : '还没有术语。') : '没有匹配的术语。'}</div>
@@ -537,7 +537,7 @@ function TermModal({ productId, term, siblingCount, onClose, onSaved }: { produc
           <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">别名（可选，逗号分隔）</label><input value={aliasText} onChange={(e) => setAliasText(e.target.value)} placeholder="如：SKU, 货品" className={inputCls} /></div>
           <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">定义（Markdown）</label><textarea value={definition} onChange={(e) => setDefinition(e.target.value)} rows={10} placeholder="该术语的准确定义…" className={`${inputCls} resize-y`} style={{ minHeight: 180 }} /></div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button><button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
+        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button><button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
       </div>
     </div>,
     document.body,

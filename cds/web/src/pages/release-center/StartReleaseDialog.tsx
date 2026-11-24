@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 就地发布：在发布中心里选分支 → 发布前检查 → 开始发布 → 看实时日志。
  *
@@ -11,7 +12,7 @@
  *    发布中改为一行静态摘要 chips——反正也不允许改。
  * 3. **地址两端说清**。「来源」是分支预览产物（CDS API 的 previewUrl/previewUrls，
  *    SSOT，公式只兜底），「发布到」是目标的上线地址（用户配置过的那一端）。
- *    旧版只显示一个「预览地址」，用户看到 miduo.org 子域以为发错了地方。
+ *    旧版只显示一个「预览地址」，用户看到预览子域会以为发错了地方。
  * 4. **长文案折叠 + 日志自动跟最新**。判定纯函数在 lib/releaseDialogAddress.ts，
  *    日志窗格与发布记录弹窗共用 ReleaseLogPane。
  *
@@ -84,6 +85,7 @@ export function StartReleaseDialog({
 }: StartReleaseDialogProps): JSX.Element {
   const [branchId, setBranchId] = useState('');
   const [preflight, setPreflight] = useState<ReleasePreflightResult | null>(null);
+  const [forceReason, setForceReason] = useState('');
   const [preflightState, setPreflightState] = useState<'idle' | 'running' | 'error'>('idle');
   const [run, setRun] = useState<ReleaseRun | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
@@ -147,6 +149,7 @@ export function StartReleaseDialog({
         { method: 'POST', body: { targetId: intent.row.target.id, previewUrl } },
       );
       setPreflight(result);
+      setForceReason('');
       setPreflightState('idle');
     } catch (err) {
       setPreflightState('error');
@@ -154,7 +157,7 @@ export function StartReleaseDialog({
     }
   }, [intent, branchId, previewUrl, onToast]);
 
-  const start = async (): Promise<void> => {
+  const start = async (force = false): Promise<void> => {
     if (!intent || !branchId) return;
     setStarting(true);
     try {
@@ -165,7 +168,9 @@ export function StartReleaseDialog({
           body: {
             targetId: intent.row.target.id,
             previewUrl,
-            ...(intent.expectedCommitSha ? { expectedCommitSha: intent.expectedCommitSha } : {}),
+            preflightId: preflight?.preflightId,
+            expectedCommitSha: intent.expectedCommitSha || preflight?.artifact?.commitSha,
+            ...(force ? { forceReason: forceReason.trim() } : {}),
           },
         },
       );
@@ -215,11 +220,11 @@ export function StartReleaseDialog({
         className="max-w-none"
         // 发布中钉死高度：日志窗格要一块稳定的地盘来吸底滚动；
         // 发布前由内容决定高度（上限 90vh），短内容不硬撑一个空壳。
-        style={{ width: 'min(880px, calc(100vw - 24px))', ...(run ? { height: 'min(680px, 90vh)' } : {}) }}
+        style={{ width: 'min(55rem, calc(100vw - 1.5rem))', ...(run ? { height: 'min(42.5rem, 90vh)' } : {}) }}
       >
         <div className="flex shrink-0 flex-col gap-1 border-b border-[hsl(var(--hairline))] px-5 py-4">
           <DialogTitle>发布到 {intent?.row.target.name || '环境'}</DialogTitle>
-          {intent?.reason ? <p className="text-[12.5px] text-primary">{intent.reason}</p> : null}
+          {intent?.reason ? <p className="text-[0.7812rem] text-primary">{intent.reason}</p> : null}
         </div>
         {!intent ? null : (
           <>
@@ -243,12 +248,7 @@ export function StartReleaseDialog({
                     <span className="text-xs text-muted-foreground">分支</span>
                     {intent.expectedCommitSha ? (
                       <span className="truncate font-mono text-xs leading-9">{branch?.branch || intent.branchId || '-'}</span>
-                    ) : branchesLoading ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs leading-9 text-muted-foreground">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        正在读取分支
-                      </span>
-                    ) : (
+                    ) : branchesLoading ? <ContentLoading label="读取待发布分支" variant="inline" /> : (
                       <select
                         value={branchId}
                         onChange={(event) => { setBranchId(event.target.value); setPreflight(null); }}
@@ -264,7 +264,7 @@ export function StartReleaseDialog({
                   <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">Commit</div>
                     <div className="mt-1 truncate font-mono text-xs">{commitSha ? commitSha.slice(0, 12) : '-'}</div>
-                    {subject ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground" title={subject}>{subject}</div> : null}
+                    {subject ? <div className="mt-0.5 truncate text-[0.7188rem] text-muted-foreground" title={subject}>{subject}</div> : null}
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">来源（分支预览产物）</div>
@@ -299,14 +299,18 @@ export function StartReleaseDialog({
                   {etaText ? <span className="text-xs text-primary">{etaText}</span> : null}
                   <CodeText className="text-muted-foreground">{run.releaseId}</CodeText>
                 </div>
+                {run.forceReason ? <p className="break-words text-sm text-warn">强制发布 · {run.forceReason}</p> : null}
+                {run.autoRestoreStartedAt && isReleaseTerminal(run.status) ? (
+                  <p className="text-sm">{run.autoRestoredAt ? '已恢复发布前的运行版本，公网复验通过。' : '自动回滚尚未验证，请查看发布日志。'}</p>
+                ) : null}
                 <div className="grid shrink-0 gap-2 sm:grid-cols-2">
                   {progress.steps.map((step, index) => (
-                    <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[13px]">
-                      {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                        : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-red-500" />
-                          : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-sky-500" />
+                    <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[0.8125rem]">
+                      {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
+                        : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-bad" />
+                          : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
                             : <span className="h-4 w-4 shrink-0 rounded-full border border-[hsl(var(--hairline-strong))]" />}
-                      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{index + 1}/{progress.total}</span>
+                      <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{index + 1}/{progress.total}</span>
                       <span className="min-w-0 truncate">{step.label}</span>
                     </div>
                   ))}
@@ -339,6 +343,14 @@ export function StartReleaseDialog({
                     先跑一次发布前检查，确认这一版能发之后再动手。
                   </p>
                 )}
+                {preflight?.forceAvailable ? (
+                  <label className="grid gap-1 text-sm">
+                    强制发布原因
+                    <input className="rounded-md border bg-background px-3 py-2"
+                      value={forceReason} onChange={(event) => setForceReason(event.target.value)}
+                      maxLength={300} placeholder="强制发布会将外部业务依赖故障记为警告" />
+                  </label>
+                ) : null}
               </DialogBody>
             )}
 
@@ -362,6 +374,12 @@ export function StartReleaseDialog({
                       {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
                       开始发布
                     </Button>
+                    {preflight?.forceAvailable ? (
+                      <Button variant="outline" onClick={() => void start(true)}
+                        disabled={!forceReason.trim() || !preflight.artifact?.commitSha || starting}>
+                        强制发布
+                      </Button>
+                    ) : null}
                   </>
                 ) : null}
               </div>
@@ -383,31 +401,31 @@ function PreflightCheckItem({ check }: { check: ReleasePreflightResult['checks']
   const collapsed = collapseCheckMessage(check.message);
   return (
     <li
-      className={`flex min-w-0 items-start gap-2.5 rounded-md border px-3 py-2 text-[13px] ${
+      className={`flex min-w-0 items-start gap-2.5 rounded-md border px-3 py-2 text-[0.8125rem] ${
         check.status === 'fail'
-          ? 'border-red-500/35 bg-red-500/10'
+          ? 'border-bad/35 bg-bad-soft'
           : check.status === 'warn'
-            ? 'border-amber-500/35 bg-amber-500/10'
+            ? 'border-warn/35 bg-warn-soft'
             : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
       }`}
     >
       {check.status === 'pass'
-        ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-        : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-red-500' : 'text-amber-500'}`} />}
+        ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+        : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-bad' : 'text-warn'}`} />}
       <span className="min-w-0 flex-1">
         <span className="font-medium">{check.label}</span>
-        <span className="mt-0.5 block break-words text-[12px] text-muted-foreground">{collapsed.summary}</span>
+        <span className="mt-0.5 block break-words text-[0.75rem] text-muted-foreground">{collapsed.summary}</span>
         {collapsed.detail ? (
           <>
             <button
               type="button"
               onClick={() => setExpanded((current) => !current)}
-              className="mt-1 text-[12px] text-primary hover:underline"
+              className="mt-1 text-[0.75rem] text-primary hover:underline"
             >
               {expanded ? '收起完整内容' : `展开完整内容（${collapsed.lineCount} 行）`}
             </button>
             {expanded ? (
-              <pre className="mt-1.5 max-h-64 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2.5 font-mono text-[11px] leading-5" style={{ overscrollBehavior: 'contain' }}>
+              <pre className="mt-1.5 max-h-64 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2.5 font-mono text-[0.6875rem] leading-5" style={{ overscrollBehavior: 'contain' }}>
                 {collapsed.detail}
               </pre>
             ) : null}

@@ -34,7 +34,9 @@ export const menuList: MenuDef[] = [
   },
   {
     appKey: 'mds',
-    label: '模型管理',
+    // 2026-09-05：MAP 侧「模型」菜单与页面已整体下线；权限点保留，因为 api/mds 读接口
+    // 仍被视觉创作模型池选择、实验台等消费。这里只是授权矩阵里勾权限的位置，不再对应菜单。
+    label: '模型接口（页面已下线）',
     icon: 'Cpu',
     permissions: ['mds.read', 'mds.write'],
   },
@@ -44,6 +46,18 @@ export const menuList: MenuDef[] = [
     label: '视觉创作智能体',
     icon: 'Wand2',
     permissions: ['visual-agent.use'],
+  },
+  {
+    appKey: 'chat-agent',
+    label: '通用对话智能体',
+    icon: 'MessageSquare',
+    permissions: ['chat-agent.use'],
+  },
+  {
+    appKey: 'active-tasks',
+    label: '活动任务清单',
+    icon: 'ListChecks',
+    permissions: ['active-tasks.use', 'active-tasks.manage'],
   },
   {
     appKey: 'literary-agent',
@@ -67,7 +81,7 @@ export const menuList: MenuDef[] = [
     appKey: 'logs',
     label: '请求日志',
     icon: 'ScrollText',
-    permissions: ['logs.read'],
+    permissions: ['logs.read', 'logs.write'],
   },
   {
     appKey: 'team-activity',
@@ -98,6 +112,19 @@ export const menuList: MenuDef[] = [
     label: '权限管理',
     icon: 'UserCog',
     permissions: ['authz.manage'],
+  },
+  {
+    appKey: 'llm-gateway',
+    label: '模型网关',
+    icon: 'Cpu',
+    permissions: ['llm-gateway.access'],
+  },
+  {
+    // 这里只定义权限矩阵分组；业务入口复用 /mcp-console?tab=speech，不新增独立 Agent。
+    appKey: 'mcp-speech',
+    label: '基础语音（智能体接入台）',
+    icon: 'Plug',
+    permissions: ['mcp-speech.read', 'mcp-speech.generate', 'mcp-speech.manage'],
   },
   {
     appKey: 'review-agent',
@@ -237,6 +264,7 @@ export const allPermissions: PermissionDef[] = [
 
   // 日志
   { key: 'logs.read', label: '日志 - 读', description: '查看请求日志', category: 'read' },
+  { key: 'logs.write', label: '日志 - 归档管理', description: '管理日志归档策略、校验和恢复', category: 'write' },
 
   // 团队动态
   { key: 'team-activity.read', label: '团队动态 - 读', description: '查看全员工作动态时间线', category: 'read' },
@@ -268,6 +296,14 @@ export const allPermissions: PermissionDef[] = [
   // 权限管理
   { key: 'authz.manage', label: '权限管理', description: '管理系统角色和用户权限', category: 'manage' },
 
+  // 模型网关
+  { key: 'llm-gateway.access', label: '模型网关', description: '进入独立模型网关控制台', category: 'access' },
+
+  // 基础语音（智能体接入台）
+  { key: 'mcp-speech.read', label: '基础语音 - 读', description: '查看可用音色、自己的声音预设和生成历史', category: 'read' },
+  { key: 'mcp-speech.generate', label: '基础语音 - 生成', description: '生成语音并保存自己的声音预设', category: 'write' },
+  { key: 'mcp-speech.manage', label: '基础语音 - 配置', description: '配置当前环境的语音模型、音色、参数与额度', category: 'manage' },
+
   // 技能管理
   { key: 'skills.read', label: '技能 - 读', description: '查看技能配置', category: 'read' },
   { key: 'skills.write', label: '技能 - 写', description: '创建/编辑/删除技能', category: 'write' },
@@ -278,6 +314,9 @@ export const allPermissions: PermissionDef[] = [
   // Agent 权限
   { key: 'prd-agent.use', label: 'PRD 解读智能体', description: '智能解读与问答', category: 'use' },
   { key: 'visual-agent.use', label: '视觉创作智能体', description: '高级视觉创作工作区', category: 'use' },
+  { key: 'chat-agent.use', label: '通用对话智能体', description: '打开就能聊的多轮对话入口', category: 'use' },
+  { key: 'active-tasks.use', label: '活动任务清单', description: '维护自己的此刻在做什么/备用任务/历史', category: 'use' },
+  { key: 'active-tasks.manage', label: '活动任务清单 - 管理', description: '看全员此刻、委派任务、配置匿名可见粒度', category: 'write' },
   { key: 'literary-agent.use', label: '文学创作智能体', description: '文章配图智能生成', category: 'use' },
   { key: 'video-agent.use', label: '视频创作智能体', description: '文章转视频教程生成', category: 'use' },
   { key: 'review-agent.use', label: '产品评审智能体', description: '提交方案并查看自己的评审结果', category: 'use' },

@@ -227,7 +227,7 @@ export function CcasSqlAiAssistant() {
                   onClick={() => setDialect(opt.value)}
                   disabled={streaming}
                   data-active={active}
-                  className="px-3 py-1.5 rounded-md text-xs border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-amber-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 rounded-md text-xs border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-[color:var(--accent-fg-amber)] hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
                     borderColor: active ? undefined : 'var(--border-subtle)',
                     color: active ? undefined : 'var(--text-secondary)',
@@ -255,7 +255,7 @@ export function CcasSqlAiAssistant() {
                     onClick={() => setAssociationMode(opt.value)}
                     disabled={streaming}
                     data-active={active}
-                    className="px-2.5 py-1.5 rounded-md text-[11.5px] border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-amber-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2.5 py-1.5 rounded-md text-[11.5px] border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-[color:var(--accent-fg-amber)] hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       borderColor: active ? undefined : 'var(--border-subtle)',
                       color: active ? undefined : 'var(--text-secondary)',
@@ -283,7 +283,7 @@ export function CcasSqlAiAssistant() {
                 type="button"
                 onClick={() => setQuestion(ex)}
                 disabled={streaming}
-                className="px-2 py-0.5 rounded text-[11px] text-token-secondary hover:text-amber-200 hover:bg-amber-300/10 border border-token-subtle hover:border-amber-300/35 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2 py-0.5 rounded text-[11px] text-token-secondary hover:text-[color:var(--accent-fg-amber)] hover:bg-amber-300/10 border border-token-subtle hover:border-amber-300/35 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 title={ex}
               >
                 {ex.length > 14 ? ex.slice(0, 14) + '…' : ex}
@@ -352,7 +352,7 @@ export function CcasSqlAiAssistant() {
         </div>
 
         {errorMsg && (
-          <div className="rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs text-red-200/90 flex items-start gap-2">
+          <div className="rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)] flex items-start gap-2">
             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
             <span>{errorMsg}</span>
           </div>

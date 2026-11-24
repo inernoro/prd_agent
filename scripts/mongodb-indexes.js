@@ -15,6 +15,17 @@ function sameIndexDefinition(index, keys, partialFilterExpression) {
   )
 }
 
+const catalogIndexOptionNames = [
+  "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
+]
+
+function sameCatalogIndexDefinition(index, keys, options) {
+  if (JSON.stringify(index.key) !== JSON.stringify(keys)) return false
+  return catalogIndexOptionNames.every(option =>
+    JSON.stringify(index[option]) === JSON.stringify(options[option])
+  )
+}
+
 function findDuplicateGroups(collection, keys, partialFilterExpression) {
   const duplicateId = {}
   Object.keys(keys).forEach(field => {
@@ -34,10 +45,7 @@ function findDuplicateGroups(collection, keys, partialFilterExpression) {
 
 function restorableIndexOptions(index) {
   const options = { name: index.name }
-  const supportedOptions = [
-    "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
-  ]
-  supportedOptions.forEach(option => {
+  catalogIndexOptionNames.forEach(option => {
     if (index[option] !== undefined) {
       options[option] = index[option]
     }
@@ -98,6 +106,8 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
       return
     }
 
+    // prepareUnique 在现有索引仍在保护写入时阻止新的重复键；
+    // 不允许先 drop 再 create，否则在索引替换窗口会放进新重复数据。
     try {
       db.runCommand({
         collMod: collectionName,
@@ -127,6 +137,42 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
   collection.createIndex(keys, options)
 }
 
+function ensureCatalogIndex(collectionName, keys, options, legacyDefinitions = []) {
+  const collection = db.getCollection(collectionName)
+  const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
+  const existing = collectionExists
+    ? collection.getIndexes().find(index => index.name === options.name)
+    : undefined
+  if (!existing) {
+    collection.createIndex(keys, options)
+    return
+  }
+  if (sameCatalogIndexDefinition(existing, keys, options)) {
+    collection.createIndex(keys, options)
+    return
+  }
+  const sameKeysAndPartialFilter = sameIndexDefinition(existing, keys, options.partialFilterExpression)
+  const knownLegacy = sameKeysAndPartialFilter || legacyDefinitions.some(definition =>
+    sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
+  )
+  if (!knownLegacy) {
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: existing index definition differs from the catalog`
+    )
+    return
+  }
+  const restoreOptions = restorableIndexOptions(existing)
+  try {
+    collection.dropIndex(existing.name)
+    collection.createIndex(keys, options)
+  } catch (error) {
+    try { collection.createIndex(existing.key, restoreOptions) } catch (_) { }
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: ${error.message || error}`
+    )
+  }
+}
+
 // collection: users
 db.users.createIndex({ "Username": 1 })
 db.users.createIndex(
@@ -144,6 +190,48 @@ db.console_sso_tickets.createIndex(
 db.console_sso_tickets.createIndex(
   { "ExpiresAt": 1 },
   { name: "ttl_console_sso_tickets_expires_at", expireAfterSeconds: 0 }
+)
+
+// collection: cds_sso_sessions
+db.cds_sso_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_cds_sso_sessions_expires_at", expireAfterSeconds: 0 }
+)
+
+// collection: direct_video_job_ownerships
+// 旧记录在维护窗口补齐七天到期时间；新写入由模型直接设置 ExpiresAt。
+const directVideoOwnershipRetentionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+db.direct_video_job_ownerships.updateMany(
+  { "ExpiresAt": { $exists: false } },
+  { $set: { "ExpiresAt": directVideoOwnershipRetentionExpiresAt } }
+)
+db.direct_video_job_ownerships.updateMany(
+  { "JobNamespace": { $exists: false } },
+  [{
+    $set: {
+      "JobNamespace": {
+        $cond: [
+          { $and: [{ $ne: ["$OfferingId", null] }, { $ne: ["$OfferingId", ""] }] },
+          { $concat: ["offering:", "$OfferingId"] },
+          { $concat: ["model:", { $ifNull: ["$Model", "unknown"] }] }
+        ]
+      }
+    }
+  }]
+)
+db.direct_video_job_ownerships.createIndex(
+  { "AppKey": 1, "JobNamespace": 1, "JobId": 1 },
+  { name: "uniq_direct_video_job_app_namespace_job", unique: true }
+)
+const legacyDirectVideoJobIndex = db.direct_video_job_ownerships.getIndexes()
+  .find(index => index.name === "uniq_direct_video_job_app_job")
+if (legacyDirectVideoJobIndex) {
+  // 新命名空间唯一索引已成功建立后才移除旧索引，全程无无保护写入窗口。
+  db.direct_video_job_ownerships.dropIndex(legacyDirectVideoJobIndex.name)
+}
+db.direct_video_job_ownerships.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_direct_video_job_expires_at", expireAfterSeconds: 0 }
 )
 
 // collection: system_roles
@@ -229,6 +317,13 @@ db.llmrequestlogs.createIndex({ "GroupId": 1 })
 db.llmrequestlogs.createIndex({ "SessionId": 1 })
 db.llmrequestlogs.createIndex({ "Provider": 1, "Model": 1 })
 db.llmrequestlogs.createIndex({ "EndedAt": 1 })
+
+// collection: behavior_events
+// 采用度端点（GET /api/executive/adoption）按窗口 + 路由列表查这张表，并取最早一条当采集起点。
+// 这是每次路由跳转都写的高频表：无索引时那两条查询是全表扫 + 内存排序，
+// 量大后会撞上 Mongo 32MB 排序上限直接抛错。
+db.behavior_events.createIndex({ "OccurredAt": 1 })
+db.behavior_events.createIndex({ "Route": 1, "OccurredAt": 1 })
 
 // collection: apirequestlogs
 db.apirequestlogs.createIndex({ "StartedAt": -1 })
@@ -932,6 +1027,15 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_shared_teams" }
 )
 
+// collection: personal_design_styles
+// 「我的风格」：风格画廊按「我的 + 最近更新」列出，新建前按归属人计数（每人上限 20 套）。
+// 两条读法都以 OwnerUserId 为前导；没有索引时，每次打开风格画廊都整表扫描。
+db.personal_design_styles.createIndex(
+  { "OwnerUserId": 1, "UpdatedAt": -1 },
+  { name: "idx_personal_design_styles_owner_updated" }
+)
+// end collection: personal_design_styles
+
 db.document_stores.createIndex(
   { "SharedTeamIds": 1 },
   { name: "idx_document_stores_shared_teams" }
@@ -976,6 +1080,19 @@ db.report_weekly_reports.createIndex(
 db.report_weekly_reports.createIndex(
   { "UserId": 1, "PeriodEnd": -1 },
   { name: "idx_weekly_reports_user_period" }
+)
+
+// collection: report_monthly_reports
+// (UserId, TeamId, Year, Month) 唯一，防止重复月报
+db.report_monthly_reports.createIndex(
+  { "UserId": 1, "TeamId": 1, "Year": 1, "Month": 1 },
+  { name: "uniq_monthly_reports_user_team_month", unique: true }
+)
+
+// 按团队 + 年月查团队月报
+db.report_monthly_reports.createIndex(
+  { "TeamId": 1, "Year": 1, "Month": 1 },
+  { name: "idx_monthly_reports_team_month" }
 )
 
 // collection: report_daily_logs
@@ -1096,6 +1213,106 @@ db.hosted_sites.createIndex(
 db.hosted_sites.createIndex(
   { "OwnerUserId": 1, "Folder": 1 },
   { name: "idx_hosted_sites_owner_folder" }
+)
+
+// 删除站点的对象清理是「到点就扫」的周期任务：只有还欠着待删对象的站点才该进这个索引，
+// 否则清理线程每分钟都在整表扫 + 排序。
+db.hosted_sites.createIndex(
+  { "AssetCleanupNextAttemptAt": 1, "AssetCleanupLeaseExpiresAt": 1 },
+  {
+    name: "idx_hosted_sites_asset_cleanup_due",
+    partialFilterExpression: { "PendingAssetCleanupKeys.0": { $exists: true } }
+  }
+)
+
+// collection: hosted_site_deletion_tasks
+// 推迟的删除任务同样按「到点 + 租约到期」认领。
+db.hosted_site_deletion_tasks.createIndex(
+  { "NextAttemptAt": 1, "LeaseExpiresAt": 1 },
+  { name: "idx_hosted_site_deletion_due" }
+)
+
+// 回退请求持久幂等；同一站点、操作者和请求键最多产生一个回退版本。
+// collection: hosted_site_revisions
+// 版本面板按站点取最近 100 条：版本记录是全局一张表，站点越多它越长，
+// 而下面那条回退幂等索引带 partial filter、第二段也不是 CreatedAt，服务不了这个排序。
+db.hosted_site_revisions.createIndex(
+  { "SiteId": 1, "CreatedAt": -1 },
+  { name: "idx_hosted_site_revisions_site_created" }
+)
+
+ensureTightenedUniqueIndex("hosted_site_revisions",
+  { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
+  {
+    name: "uniq_hosted_site_revision_rollback_idempotency",
+    unique: true,
+    partialFilterExpression: { "RollbackIdempotencyKey": { $type: "string" } }
+  }
+)
+
+// collection: infra_agent_sessions
+// One-shot design sessions persist remote cleanup intent here. The API cleanup worker scans only
+// dated requests; the partial index keeps normal reusable sessions out of the recovery index.
+db.infra_agent_sessions.createIndex(
+  { "CleanupNextAttemptAt": 1, "CleanupRequestedAt": 1, "ActiveMessageId": 1, "Status": 1, "StopLeaseExpiresAt": 1 },
+  {
+    name: "idx_infra_agent_sessions_cleanup_requested",
+    partialFilterExpression: { "CleanupRequestedAt": { $type: "date" } }
+  }
+)
+
+// PPT 预热跨 API 副本 single-flight；认领或停止会清空 PrewarmKey。
+ensureTightenedUniqueIndex("infra_agent_sessions",
+  { "PrewarmKey": 1 },
+  {
+    name: "uniq_infra_agent_sessions_prewarm_key",
+    unique: true,
+    partialFilterExpression: { "PrewarmKey": { $type: "string" } }
+  }
+)
+db.infra_agent_sessions.createIndex(
+  { "PrewarmExpiresAt": 1 },
+  {
+    name: "idx_infra_agent_sessions_prewarm_expiry",
+    partialFilterExpression: {
+      "ClientApp": "md-to-ppt-prewarm",
+      "PrewarmExpiresAt": { $type: "date" }
+    }
+  }
+)
+
+// collection: hosted_site_optimization_sessions
+// 临时优化任务按用户与到期时间查询；后台 worker 按状态与更新时间认领。
+db.hosted_site_optimization_sessions.createIndex(
+  { "OwnerUserId": 1, "ExpiresAt": 1 },
+  { name: "idx_hosted_site_optimization_owner_expiry" }
+)
+
+db.hosted_site_optimization_sessions.createIndex(
+  { "Status": 1, "UpdatedAt": 1 },
+  { name: "idx_hosted_site_optimization_status_updated" }
+)
+
+// 优化会话是对象存储清理账本，只能由业务清理器在对象删除成功后移除。
+// 清除存量 TTL，避免清理器停机期间 MongoDB 先删记录并永久遗失对象清理线索。
+if (db.getCollectionInfos({ name: "hosted_site_optimization_sessions" }).length > 0) {
+  const collection = db.hosted_site_optimization_sessions
+  collection.getIndexes()
+    .filter(index => index.expireAfterSeconds !== undefined)
+    .forEach(index => {
+      try {
+        collection.dropIndex(index.name)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `hosted_site_optimization_sessions.${index.name}: failed to drop forbidden TTL index: ${error.message || error}`
+        )
+      }
+    })
+}
+
+db.hosted_site_optimization_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "idx_hosted_site_optimization_expiry" }
 )
 
 // collection: document_store_share_links
@@ -1262,6 +1479,69 @@ db.activity_logs.createIndex(
   { name: "idx_activity_logs_module_created" }
 )
 
+// 后台领域事实幂等键 — HTTP 动态不写此字段，sparse 避免影响普通请求留痕
+db.activity_logs.createIndex(
+  { "DeduplicationKey": 1 },
+  { name: "uniq_activity_logs_deduplication_key", unique: true, sparse: true }
+)
+
+// 生成站点发布审计恢复 — 每 15 秒只扫描尚未完成投影的终态 Run，标记写入后自动退出索引
+ensureCatalogIndex("design_artifact_runs",
+  { "CompletedAt": -1 },
+  {
+    name: "idx_design_artifact_runs_publication_audit_pending",
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityProjectionCompletedAt": null
+    }
+  },
+  [{
+    keys: { "CompletedAt": -1 },
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityRecordedAt": null
+    }
+  }]
+)
+
+// 新设计任务与旧 worker 物理隔离。恢复查询以精确部署作用域为前导，
+// 不将同分支的不同 revision 合并成一个执行范围；仅由 DBA 脚本建立索引。
+const designRunV2Indexes = [
+  [{ DeploymentSlug: 1, Status: 1, UpdatedAt: 1 }, { name: "idx_design_run_v2_scope_status_updated" }],
+  [{ DeploymentSlug: 1, Status: 1, LeaseExpiresAt: 1 }, { name: "idx_design_run_v2_scope_lease" }],
+  [{ DeploymentSlug: 1, CleanupPending: 1, Status: 1 }, { name: "idx_design_run_v2_scope_cleanup" }],
+  [{ DeploymentSlug: 1, WorkspacePendingResultAssetKey: 1 }, { name: "idx_design_run_v2_scope_pending_workspace" }],
+  [{ DeploymentSlug: 1, WorkspaceRejectedResultAssetKey: 1 }, { name: "idx_design_run_v2_scope_rejected_workspace" }],
+  [{ WorkspaceResultAssetKey: 1 }, { name: "idx_design_run_v2_result_reference", sparse: true }],
+  [{ WorkspacePendingResultAssetKey: 1 }, { name: "idx_design_run_v2_pending_reference", sparse: true }],
+  [{ DeploymentSlug: 1, CompletedAt: -1 }, {
+    name: "idx_design_run_v2_publication_audit_pending",
+    partialFilterExpression: {
+      Status: "Done", ArtifactType: "web-page", Operation: "generate",
+      ArtifactSiteId: { $type: "string" }, CompletedAt: { $type: "date" },
+      PublishedActivityProjectionCompletedAt: null
+    }
+  }]
+]
+for (const [keys, options] of designRunV2Indexes) {
+  ensureCatalogIndex("design_artifact_runs_v2", keys, options)
+}
+
+// HTML PPT 专用 Run 与公共账本的中断恢复。合同版本和同步标记先做等值过滤，
+// UpdatedAt 直接提供最旧优先顺序，避免恢复 worker 周期性全表扫描。
+ensureCatalogIndex("md_to_ppt_runs",
+  { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 },
+  { name: "idx_md_to_ppt_runs_contract_recovery" }
+)
+
 // collection: document_entry_versions
 // (EntryId, VersionNumber) 唯一 — 同一文档版本号不重复，并发重复分配被 unique 索引拦截
 db.document_entry_versions.createIndex(
@@ -1355,8 +1635,523 @@ db.document_recording_upload_chunks.createIndex(
 )
 // end collection: document_recording_upload_sessions + document_recording_upload_chunks
 
+// collection: data_sync_runs
+// 收尸扫描（DataSyncRunWorker.SweepOrphanedRunsAsync）按 Status + UpdatedAt 查，
+// **每个部署每分钟一次**。这张表只增不删，而分支预览与生产共用同一个库——
+// 没有索引就是「每个部署每分钟全表扫一遍」，随着历史增长一起拖慢共享库。
+db.data_sync_runs.createIndex(
+  { "Status": 1, "UpdatedAt": 1 },
+  { name: "idx_data_sync_runs_status_updated" }
+)
+// 同步历史列表：无过滤、按 CreatedAt 倒序取 20 条。表只增不删，
+// 没有这条索引时每次打开页面都要扫全表再在内存里排序。
+db.data_sync_runs.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_data_sync_runs_created_desc" }
+)
+// 过期 pending 清扫（DataSyncRunWorker.SweepExpiredPendingRunsAsync）按
+// Status + ExportTokenExpiresAt 查，与收尸扫描同频（每个部署每分钟一次）。
+// 上面那条 Status + UpdatedAt 支撑不了这个范围条件——只能靠它把 Status 收窄，
+// 再逐条比 ExportTokenExpiresAt。同样是共享库上的常态查询，单独给一条。
+db.data_sync_runs.createIndex(
+  { "Status": 1, "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_runs_status_token_expires" }
+)
+// end collection: data_sync_runs
+
+// collection: data_sync_grants
+// 跨实例同步的授权票据。三条匿名协议请求全部按散列查这张表：
+//   - 换取导出令牌：CodeHash（一次性授权码）
+//   - 清单 / 导出 / 交还令牌：ExportTokenHash（两小时有效期内每一页都查一次）
+// 没有索引时，票据越攒越多，这些**未鉴权前**的请求会退化成全表扫描——既慢，
+// 也把「让源站做无用功」变成一件不要钱的事。
+// 两条都带 TTL 语义之外的过期判据（ExpiresAt / ExportTokenExpiresAt），
+// 走复合索引让过期票不参与实际比较。
+db.data_sync_grants.createIndex(
+  { "CodeHash": 1, "ExpiresAt": 1 },
+  { name: "idx_data_sync_grants_code_expires" }
+)
+db.data_sync_grants.createIndex(
+  { "ExportTokenHash": 1, "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_grants_export_token_expires" }
+)
+// 过期票的清理由应用侧 DataSyncRunWorker 定期删（保留一段留痕窗口），
+// 这条索引是那次清理的查询路径；不用 TTL 索引是因为留痕窗口要能改，
+// 且 TTL 到期即删会让「刚过期就来的请求」查不到、给不出「票过期了」这句话。
+db.data_sync_grants.createIndex(
+  { "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_grants_export_expires" }
+)
+// 清理「同意了却没回来换票」那一类：ExportTokenExpiresAt 恒为 null，按 ExpiresAt 判过期。
+// 上面那两条都以散列打头，支撑不了「等值 null + 范围」这个谓词，于是每个部署的每一轮
+// 清理都要扫遍所有留存的未换票授权。
+db.data_sync_grants.createIndex(
+  { "ExportTokenExpiresAt": 1, "ExpiresAt": 1 },
+  { name: "idx_data_sync_grants_unconsumed_cleanup" }
+)
+// end collection: data_sync_grants
+
+// collection: document_entries
+// 知识库「最近」时间线（GET /api/document-store/entries/recent）按「可见库集合 + 非文件夹」
+// 取最近更新的若干条。没有这条索引时，每次打开「最近」都要扫遍全部文档条目再整体排序——
+// 条目数是全系统里增长最快的之一，扫描成本只会越来越高。
+// StoreId 在前支撑 $in 定位，UpdatedAt 倒序直接供排序，避免内存排序。
+db.document_entries.createIndex(
+  { "StoreId": 1, "UpdatedAt": -1 },
+  { name: "idx_document_entries_store_updated" }
+)
+// 卡片预览（每库最近 3 条）走的是同一条索引，不另建。
+// end collection: document_entries
+
+function verifyCatalogIndex(collectionName, name, keys, options = {}) {
+  const index = db.getCollection(collectionName).getIndexes().find(item => item.name === name)
+  if (!index
+      || JSON.stringify(index.key) !== JSON.stringify(keys)
+      || Boolean(index.unique) !== Boolean(options.unique)
+      || Boolean(index.sparse) !== Boolean(options.sparse)
+      || JSON.stringify(index.partialFilterExpression || {}) !== JSON.stringify(options.partialFilterExpression || {})) {
+    tightenedUniqueIndexMigrationFailures.push(`${collectionName}.${name}: deployed definition differs from catalog`)
+  }
+}
+
+verifyCatalogIndex(
+  "activity_logs",
+  "uniq_activity_logs_deduplication_key",
+  { "DeduplicationKey": 1 },
+  { unique: true, sparse: true }
+)
+verifyCatalogIndex(
+  "hosted_site_revisions",
+  "uniq_hosted_site_revision_rollback_idempotency",
+  { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
+  { unique: true, partialFilterExpression: { "RollbackIdempotencyKey": { $type: "string" } } }
+)
+verifyCatalogIndex(
+  "infra_agent_sessions",
+  "uniq_infra_agent_sessions_prewarm_key",
+  { "PrewarmKey": 1 },
+  { unique: true, partialFilterExpression: { "PrewarmKey": { $type: "string" } } }
+)
+verifyCatalogIndex(
+  "design_artifact_runs",
+  "idx_design_artifact_runs_publication_audit_pending",
+  { "CompletedAt": -1 },
+  {
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityProjectionCompletedAt": null
+    }
+  }
+)
+verifyCatalogIndex(
+  "md_to_ppt_runs",
+  "idx_md_to_ppt_runs_contract_recovery",
+  { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 }
+)
+for (const [keys, options] of designRunV2Indexes) {
+  verifyCatalogIndex("design_artifact_runs_v2", options.name, keys, options)
+}
+
+// collection: speech_runs
+// 语音队列、过期租约恢复、终态额度补偿以及个人资产历史。仅DBA手动执行。
+db.speech_runs.createIndex({ Environment: 1, Status: 1, CreatedAt: 1 }, { name: "idx_speech_runs_queue" });
+db.speech_runs.createIndex({ Environment: 1, Status: 1, LeaseUntil: 1 }, { name: "idx_speech_runs_lease" });
+db.speech_runs.createIndex({ Environment: 1, QuotaReleased: 1, Status: 1 }, { name: "idx_speech_runs_settlement" });
+db.speech_runs.createIndex({ OwnerUserId: 1, Environment: 1, CreatedAt: -1 }, { name: "idx_speech_runs_owner_history" });
+// end collection: speech_runs
+
+// collection: speech_presets
+db.speech_presets.createIndex({ OwnerUserId: 1, Environment: 1, UpdatedAt: -1 }, { name: "idx_speech_presets_owner_environment" });
+// end collection: speech_presets
+
+// collection: mcp_call_logs
+// 智能体接入台的调用记录。两个读法都很热：
+//   1. 面板按「我的 + 本部署 + 时间倒序」翻页（Overview 与 calls 列表）
+//   2. 日额度由 mcp_usage_counters 的确定性 _id 承担，不查这张表；这里的索引服务的是接入台面板的翻页与筛选
+// 没有索引时，第 2 条会随着记录增长把每一次工具调用都拖慢。
+db.mcp_call_logs.createIndex(
+  { "OwnerUserId": 1, "DeploymentSlug": 1, "CreatedAt": -1 },
+  { name: "idx_mcp_call_logs_owner_scope_created" }
+)
+db.mcp_call_logs.createIndex(
+  { "KeyId": 1, "CreatedAt": -1 },
+  { name: "idx_mcp_call_logs_key_created" }
+)
+// end collection: mcp_call_logs
+
+// collection: mcp_usage_counters
+// 接入台的当日用量计数器。_id 是确定性的 `{keyId}:{yyyyMMdd}:{kind}`，
+// 读写都按主键定位，不需要查询索引。
+//
+// 但它需要一条 TTL：每把密钥每天每种额度各留一行，而读的只有「今天」那几行
+// （闸门与面板都按当天的确定性 _id 直接定位，从不扫历史）。没有回收路径的话，
+// 这个集合只会随「这个库见过多少把密钥、过了多少天」单向变大，且长出来的全是死数据。
+// 90 天远超唯一的读路径（当天），留这么久只是为了人工排查上个月的用量还查得到。
+db.mcp_usage_counters.createIndex(
+  { "DayUtc": 1 },
+  {
+    name: "ttl_mcp_usage_counters_90d",
+    expireAfterSeconds: 7776000
+  }
+)
+// end collection: mcp_usage_counters
+
+// mcp_call_logs 的保留期（可选 TTL）
+// 注意别把下面这段写成 `// collection: mcp_call_logs` —— 上面那个段落标记是守卫用来定位的
+// 调用记录是用户的审计流水，删多久算合适是产品决定（用户要能回看自己的智能体做过什么），
+// 不在这里替他定。库大到要治的时候由 DBA 按策略开这一行（示例 180 天）：
+// db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
+
+
+// collection: active_task_entries
+// 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）。三条读路径：
+// 1) 个人任务台：按 userId + state 取在途，再按 OrderKey 排备用队列
+// 2) 团队此刻：按 state 扫全员在途（人数量级，不分页）
+// 3) 走过的路：按 userId + DoneAt 倒序翻历史
+db.active_task_entries.createIndex(
+  { "UserId": 1, "State": 1, "OrderKey": 1 },
+  { name: "idx_active_tasks_user_state_order" }
+)
+db.active_task_entries.createIndex(
+  { "State": 1, "UpdatedAt": -1 },
+  { name: "idx_active_tasks_state_updated" }
+)
+db.active_task_entries.createIndex(
+  { "UserId": 1, "DoneAt": -1 },
+  { name: "idx_active_tasks_user_done" }
+)
+// end collection: active_task_entries
+
+// collection: active_task_suggestions
+// 建议收件箱（和派活是两码事：提了不会变成任务，等收件人自己吸取）。两条读路径：
+// 1) 我的收件箱：按 TargetUserId + State 取待处理，按时间倒序
+// 2) 发件回溯：按 FromUserId 看我提出去的那些后来怎么了
+db.active_task_suggestions.createIndex(
+  { "TargetUserId": 1, "State": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_target_state" }
+)
+db.active_task_suggestions.createIndex(
+  { "FromUserId": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_from" }
+)
+// end collection: active_task_suggestions
+
+// collection: active_task_debts
+// 债务（doc/debt.*.md 推过来的那一份）。三条读路径：
+// 1) Key 唯一 —— 同步靠它幂等，重复推同一条只更新不会长出第二条。这条是**唯一索引**，
+//    不是为了查得快，是为了让「撞车」在写入那一刻就失败，而不是静默互相覆盖
+// 2) 面板：按状态过滤掉已了结的，按模块 + 编号排
+// 3) 「我认领的」：按 owner + 状态
+db.active_task_debts.createIndex(
+  { "Key": 1 },
+  { name: "idx_active_task_debts_key", unique: true }
+)
+db.active_task_debts.createIndex(
+  { "State": 1, "Module": 1, "Num": 1 },
+  { name: "idx_active_task_debts_state_module" }
+)
+db.active_task_debts.createIndex(
+  { "OwnerUserId": 1, "State": 1 },
+  { name: "idx_active_task_debts_owner" }
+)
+// end collection: active_task_debts
+
+// collection: active_task_absorb_preferences
+// 吸取建议时的个人偏好（上次引用了哪几个知识库）。一人一行，_id 就是 UserId，
+// 只按主键读，不需要额外索引。
+// end collection: active_task_absorb_preferences
+
+// collection: active_task_board_settings
+// 面板设置是全局单行（_id 固定为 "active-task-board"），按主键定位，不需要查询索引。
+// end collection: active_task_board_settings
+
+// collection: bookshelf_progress
+// 藏书阁的阅读进度：一个人一行（已读书目、书摘笔记、结业考结果）。
+// 唯一索引不是为了查得快，是为了兜住并发首存：保存走的是 upsert，
+// 两个请求同时为同一个人插入时，代码路径挡不住两行都写进去——之后
+// FirstOrDefault 读到哪一行是随机的，团队看板还会把同一个人数两遍。
+//
+// 用 ensureTightenedUniqueIndex 而不是直接 createIndex：库里若已经有
+// 重复行，它会先把重复组报出来让人清理，而不是抛一个没头没尾的建索引失败。
+ensureTightenedUniqueIndex("bookshelf_progress",
+  { "UserId": 1 },
+  {
+    name: "idx_bookshelf_progress_user",
+    unique: true
+  }
+)
+// end collection: bookshelf_progress
+
+
+// collection: book_digests
+// 藏书阁精读稿：一本书一篇，全队读同一份。
+// 唯一索引同样是为了兜住并发首次生成：两个人同时点开一本还没有稿子的书，
+// 两条 SSE 都查到「库里没有」，随后两个 upsert 都走 insert 分支，库里就有了
+// 两篇。之后 FirstOrDefault 读到哪一篇是随机的，「重新生成」替换的可能是
+// 另一篇——那篇公共稿子从此不确定。
+//
+// 有了这条索引，后落地的那一方会撞 E11000，代码把它当成「别人已经写好了」
+// 处理（见 BookshelfController 的保存处），不再写第二篇。
+// 复合而不是只按 BookId：同一个 CDS 项目下所有分支共用一个 Mongo，
+// 一本书在每个部署作用域各有一行（权威部署那行的 DeploymentSlug 是 null）。
+// 只按 BookId 唯一的话，第二条分支第一次生成就会撞键，永远存不下自己那篇。
+//
+// **名字必须沿用 idx_book_digests_book，不能另起一个。** 这一版之前先落过一版
+// 只按 BookId 的同名索引；换个名字建复合索引不会动到旧的那条，于是已经执行过
+// 早先清单的环境里旧索引还在，换一个 DeploymentSlug 插同一本书照样 E11000——
+// 而代码把撞键当成「别人先写成了」判成功，那条分支的稿子就永远存不下、
+// 每次点开都重烧一篇。一个把永久失败伪装成正常的组合。
+//
+// 第四个参数是这个 helper 专为此设的：同名但定义不同时，若命中已知的旧定义，
+// 就走 replaceLegacyUniqueIndex 迁移，而不是报「定义与清单不符」。
+ensureTightenedUniqueIndex("book_digests",
+  { "BookId": 1, "DeploymentSlug": 1 },
+  {
+    name: "idx_book_digests_book",
+    unique: true
+  },
+  [{
+    keys: { "BookId": 1 }
+  }]
+)
+// end collection: book_digests
+
+
+// ── llmgw 网关库 ──
+//
+// 网关的库通常与应用库分开（llmgw 有自己的连接串与库名），所以这一段只在**当前库确实是
+// 网关库**时才跑。不加这个判断的话，对着应用库跑一次脚本会凭空建出一堆空的 llmgw_* 集合，
+// 而真正的网关库反而还是没有索引。
+//
+// 判据有两个信号，满足其一即认：
+//   · 库里已经有 llmgw_* 集合——对着跑了一段时间的网关库跑，最常见的那种；
+//   · 操作者用环境变量明确点名。**第一次建网关库时库还是空的**，前一个信号必然不成立，
+//     只靠它的话照文档跑一遍会打印跳过、一条约束都建不出来（第 65 轮 review）。
+//     库是不是网关库只有操作者知道，脚本猜不出来，所以由他说：
+//       PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js
+//     下面这几条 createIndex 会顺带把缺的集合建出来，空库也能一次到位。
+//
+// 这五条以前由进程启动时自动创建，2026-09-17 起改成启动只查不建（no-auto-index），
+// 于是它们必须在这份可执行清单里有一份，否则「按文档跑一遍」跑不出这几条约束，
+// 而并发保存就会写出两个默认、两个认领、两条补登、两份契约，
+// 且代码里那些撞键翻 409 的恢复路径永远不会被走到。
+const gatewayCollectionInfos = db.getCollectionInfos({ name: { $regex: "^llmgw_" } })
+const gatewayDbDeclared = typeof process !== "undefined" && process.env
+  ? ["1", "true", "yes"].indexOf(String(process.env.PRD_GATEWAY_DB || "").trim().toLowerCase()) >= 0
+  : false
+if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
+  print("[skip] 当前库里没有任何 llmgw_* 集合，判定不是网关库，跳过网关索引。\n" +
+    "        网关库要单独跑一次：mongosh <uri>/<网关库名> scripts/mongodb-indexes.js\n" +
+    "        网关库是空的（第一次建）时集合还不存在，这时用环境变量点名：\n" +
+    "        PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
+} else {
+  // 调用链查询只使用持久化编号；这些索引由 DBA 执行，应用启动只巡检。
+  for (const field of ["RequestId", "RunId", "LogicalRequestId", "ProviderRequestId", "ProviderTaskId",
+    "ProviderAttempts.AttemptId", "ProviderAttempts.ProviderRequestId", "ProviderAttempts.ProviderTaskId"]) {
+    ensureCatalogIndex("llmrequestlogs",
+      { "TenantId": 1, [field]: 1, "StartedAt": 1, "_id": 1 },
+      { name: "idx_llmgw_trace_" + field })
+  }
+  ensureCatalogIndex("llmrequestlogs",
+    { "WriterInstanceId": 1, "Status": 1, "StartedAt": 1 },
+    { name: "idx_llmgw_logs_writer_lifecycle" })
+  ensureCatalogIndex("llmgw_log_writer_leases",
+    { "LastScannedAt": 1, "ExpiresAt": 1 },
+    { name: "idx_llmgw_writer_lease_scan" })
+  // collection: llmgw_logical_models
+  // 同一个租户、同一个用途下最多一个默认模型。
+  ensureTightenedUniqueIndex("llmgw_logical_models",
+    { "TenantId": 1, "ModelType": 1 },
+    {
+      name: "uniq_llmgw_logical_default_per_type",
+      unique: true,
+      partialFilterExpression: { "IsDefaultForType": true }
+    }
+  )
+  // 同一个租户、同一个用途下，一个调用方最多被一个模型认领。
+  // 认领存在数组里，走多键唯一索引；部分过滤器判「数组里至少有一个字符串元素」——
+  // 空数组在多键索引里记成 undefined，不排除的话所有「一个都没认领」的模型会互相撞车，
+  // 索引根本建不起来。
+  ensureTightenedUniqueIndex("llmgw_logical_models",
+    { "TenantId": 1, "ModelType": 1, "DefaultForAppCallerCodes": 1 },
+    {
+      name: "uniq_llmgw_logical_claim_per_type",
+      unique: true,
+      partialFilterExpression: { "DefaultForAppCallerCodes": { $type: "string" } }
+    }
+  )
+  // end collection: llmgw_logical_models
+
+  // collection: llmgw_model_catalog_entries
+  // 规范标识与等价写法共用一个键空间，同样走多键唯一索引 + 同样的部分过滤器。
+  //
+  // 集合名必须与控制台写入的那一个逐字相同。上一版写成 llmgw_catalog_entries（少了 model_），
+  // 而 CRUD 写的是 llmgw_model_catalog_entries：照文档跑一遍，真正那张表一条约束都没有，
+  // 并发补登可以写出两条抢同一个标识的记录（选哪一条看运气），而代码里那些撞键翻 409 的
+  // 恢复路径永远走不到；顺带还凭空建出一个空集合（第 74 轮 review）。
+  ensureTightenedUniqueIndex("llmgw_model_catalog_entries",
+    { "TenantId": 1, "Keys": 1 },
+    {
+      name: "uniq_llmgw_catalog_entry_key",
+      unique: true,
+      partialFilterExpression: { "Keys": { $type: "string" } }
+    }
+  )
+  // end collection: llmgw_model_catalog_entries
+
+  // collection: llmgw_imagegen_model_configs
+  // 同一个租户下一个匹配模式最多一条契约。
+  ensureTightenedUniqueIndex("llmgw_imagegen_model_configs",
+    { "TenantId": 1, "ModelIdPattern": 1 },
+    { name: "uniq_llmgw_imagegen_tenant_pattern", unique: true }
+  )
+  // end collection: llmgw_imagegen_model_configs
+
+  // collection: llmgw_model_offerings
+  // 线路身份里必须带上「打给上游的是哪一个模型」：一个兑换所底下挂着多个别名时，
+  // 同一个对外模型可能同时指向其中好几个，那是合法拓扑。
+  ensureTightenedUniqueIndex("llmgw_model_offerings",
+    {
+      "TenantId": 1,
+      "LogicalModelId": 1,
+      "TargetKind": 1,
+      "TargetId": 1,
+      "UpstreamModelId": 1,
+      "SupersededByOfferingId": 1
+    },
+    { name: "uniq_llmgw_offering_tenant_logical_target_v3", unique: true }
+  )
+  // 旧版身份索引比新版**更严**（少一个字段），留着它等于新索引白建：同一个兑换所的第二条
+  // 别名照样撞 E11000。所以在新索引确认建好之后再丢旧的——顺序不能反，反了会有一段时间
+  // 线路身份完全没有唯一约束。
+  //
+  // 「确认建好」的判据**不能只看名字在不在**。上面那次 ensureTightenedUniqueIndex 可能没成：
+  // 同名但定义不同、prepareUnique 转换失败、存量还有重复组——这几种它都只往
+  // tightenedUniqueIndexMigrationFailures 里记一笔就返回，索引名照样在（那是失败前就存在的
+  // 那一条）。只认名字的话，这里会把货真价实的 v2 与更早那条丢掉，脚本最后再抛错退出，
+  // 而库里只剩一条定义不对或根本不唯一的 v3 ——线路身份从此没有有效约束，重复的在跑线路
+  // 能直接写进去（第 73 轮 review；形状 8：拿一份不成立的证据当证明）。
+  //
+  // 所以重新读一遍索引，逐项核对：键要逐字相同、unique 必须为 true、而且这一趟没有为
+  // 这个集合记下任何失败。三条都成立才谈得上丢旧的。
+  const offerings = db.getCollection("llmgw_model_offerings")
+  const offeringIndexes = db.getCollectionInfos({ name: "llmgw_model_offerings" }).length > 0
+    ? offerings.getIndexes()
+    : []
+  const offeringIndexNames = offeringIndexes.map(index => index.name)
+  const offeringIdentityKeys = {
+    "TenantId": 1,
+    "LogicalModelId": 1,
+    "TargetKind": 1,
+    "TargetId": 1,
+    "UpstreamModelId": 1,
+    "SupersededByOfferingId": 1
+  }
+  const v3Index = offeringIndexes.find(index => index.name === "uniq_llmgw_offering_tenant_logical_target_v3")
+  const offeringMigrationFailed = tightenedUniqueIndexMigrationFailures
+    .some(message => String(message).indexOf("llmgw_model_offerings.") === 0)
+  const v3Verified = !!v3Index
+    && v3Index.unique === true
+    && JSON.stringify(v3Index.key) === JSON.stringify(offeringIdentityKeys)
+    && !offeringMigrationFailed
+  if (!v3Verified) {
+    print("[skip] v3 线路身份索引没有确认就绪（不存在 / 定义不符 / 不是唯一索引 / 本轮有迁移失败），" +
+      "旧索引原样留着——丢了它们而 v3 又不生效的话，线路身份会完全没有唯一约束。")
+  }
+  if (v3Verified) {
+    for (const legacyName of [
+      "uniq_llmgw_offering_tenant_logical_target_v2",
+      "uniq_llmgw_offering_tenant_logical_target"
+    ]) {
+      if (!offeringIndexNames.includes(legacyName)) continue
+      try {
+        offerings.dropIndex(legacyName)
+        print(`[ok] 已丢弃更严的旧线路身份索引 ${legacyName}（v3 已就位）`)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `llmgw_model_offerings.${legacyName}: drop failed: ${error.message || error}`
+        )
+      }
+    }
+  }
+  // end collection: llmgw_model_offerings
+
+  // collection: llmgw_runtime_grants
+  // OpenDesign 每个任务只拿一把短期授权：明文只在当前调用栈里出现，库里按哈希鉴权。
+  // 唯一索引防止哈希身份重复；TTL 清理过期授权；租户 + run 索引服务审计与撤销。
+  // 这三条只能由 DBA 清单在维护窗口创建，应用启动时不得建索引。
+  ensureTightenedUniqueIndex("llmgw_runtime_grants",
+    { "KeyHash": 1 },
+    { name: "uniq_llmgw_runtime_grant_hash", unique: true }
+  )
+  ensureCatalogIndex("llmgw_runtime_grants",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_runtime_grants", expireAfterSeconds: 0 }
+  )
+  ensureCatalogIndex("llmgw_runtime_grants",
+    { "TenantId": 1, "RunId": 1 },
+    { name: "idx_llmgw_runtime_grant_tenant_run" }
+  )
+  // end collection: llmgw_runtime_grants
+
+  // collection: llmgw_consumption_rate_windows
+  // 共享计数依赖内建唯一_id；以下仅用于人工维护过期清理和有界历史查询，不由请求触发DDL。
+  ensureCatalogIndex("llmgw_consumption_rate_windows",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_consumption_windows", expireAfterSeconds: 0 }
+  )
+  ensureCatalogIndex("llmgw_consumption_rate_windows",
+    { "TenantId": 1, "AppCallerCode": 1, "RequestType": 1, "Scope": 1, "Origin": 1,
+      "WindowSeconds": 1, "WindowStart": -1 },
+    { name: "idx_llmgw_consumption_baseline_scope_window" }
+  )
+  // end collection: llmgw_consumption_rate_windows
+
+  // collection: llmgw_consumption_alerts
+  ensureCatalogIndex("llmgw_consumption_alerts",
+    { "TenantId": 1, "Status": 1, "CreatedAt": -1 },
+    { name: "idx_llmgw_consumption_alerts_tenant_status_created" }
+  )
+  // end collection: llmgw_consumption_alerts
+
+  // collection: llmgw_consumption_retries
+  ensureCatalogIndex("llmgw_consumption_retries",
+    { "TenantId": 1, "AlertId": 1, "State": 1 },
+    { name: "idx_llmgw_consumption_retry_alert" }
+  )
+  ensureCatalogIndex("llmgw_consumption_retries",
+    { "TenantId": 1, "ServiceKeyId": 1, "AppCallerCode": 1, "State": 1, "ReadyAt": 1 },
+    { name: "idx_llmgw_consumption_retry_worker" }
+  )
+  ensureCatalogIndex("llmgw_consumption_retries",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_consumption_retry", expireAfterSeconds: 0 }
+  )
+  // end collection: llmgw_consumption_retries
+}
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
   )
 }
+
+// collection: hosted_document_groups
+// 一份文档只允许归属一个关联组，防止并发创建重复导航。
+db.hosted_document_groups.createIndex(
+  { SiteIds: 1 },
+  { unique: true, name: "ux_hosted_document_groups_member" }
+);
+// end collection: hosted_document_groups
+
+// 评论反向引用查询；原评论授权仍独立校验。
+db.hosted_site_comments.createIndex({ ReferencedSiteIds: 1, CreatedAt: -1 }, { name: "idx_hosted_comments_references" });
+db.hosted_site_comments.createIndex(
+  { AiReplyDeployment: 1, AiReplyDueAt: 1 },
+  { name: "idx_hosted_comment_ai_reply_due", partialFilterExpression: { AiReplyDueAt: { $type: "date" } } }
+);

@@ -181,7 +181,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
               {data.outputSlots.length > 0 && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded" style={{
                   background: 'rgba(34,197,94,0.08)',
-                  color: 'rgba(34,197,94,0.7)',
+                  color: 'var(--accent-fg-success)',
                 }}>
                   {data.outputSlots.length} 出
                 </span>

@@ -1,3 +1,5 @@
+import { gatewayLoginDestination } from '@/components/entry/quickstartArrival';
+import { LogTracePage } from '@/pages/LogTracePage';
 // 独立路由（自成体系，不依赖 prd-admin）：/login 登录 + /change-password 首登强制改密 + / 控制台首页（需鉴权）。
 import { useEffect } from 'react';
 import { BrowserRouter, Link, Routes, Route, Navigate, useLocation } from 'react-router-dom';
@@ -7,6 +9,7 @@ import { getHealth } from '@/lib/api';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
 import { BugReportDialog } from '@/components/BugReportDialog';
+import { DialogProvider } from '@/components/ConfirmDialog';
 import { LoginPage } from '@/pages/LoginPage';
 import { MapSsoPage } from '@/pages/MapSsoPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
@@ -14,19 +17,19 @@ import { OverviewPage } from '@/pages/HomePage';
 import { GovernancePage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { LogDetailPage } from '@/pages/LogDetailPage';
-import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
-import { PlatformsPage } from '@/pages/PlatformsPage';
+import { UpstreamsPage } from '@/pages/UpstreamsPage';
 import { ModelsPage } from '@/pages/ModelsPage';
 import { LogicalModelsPage } from '@/pages/LogicalModelsPage';
-import { ExchangesPage } from '@/pages/ExchangesPage';
+
 import { AuditsPage } from '@/pages/AuditsPage';
-import { ShadowPage } from '@/pages/ShadowPage';
 import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
 import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
+import { GatewaySettingsPage } from '@/pages/GatewaySettingsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { AccountSecurityPage } from '@/pages/AccountSecurityPage';
 import { UsagePage } from '@/pages/UsagePage';
 import { LearningCenterPage } from '@/pages/LearningCenterPage';
 import { AppCallerDetailsPage, ModelDetailsPage, ProviderDetailsPage } from '@/pages/EntityDetailsPages';
@@ -59,9 +62,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 // 改密页守卫：未登录跳登录；已登录且无需改密则不应停留在此页，回主页。
 function RequireChangePassword({ children }: { children: ReactNode }) {
-  const { authed, mustChangePassword } = useAuth();
+  const { authed, mustChangePassword, tenant } = useAuth();
   if (!authed) return <Navigate to="/login" replace />;
-  if (!mustChangePassword) return <Navigate to="/" replace />;
+  if (!mustChangePassword) return <Navigate to={gatewayLoginDestination(null, tenant)} replace />;
   return <>{children}</>;
 }
 
@@ -90,6 +93,8 @@ export function App() {
   useEffect(() => { void getHealth(); }, []);
   return (
     <AuthProvider>
+      {/* 确认弹窗挂在路由外层：换页时不会被卸载，Promise 也就不会悬着不 resolve */}
+      <DialogProvider>
       <BrowserRouter basename={getRouterBasename()}>
         <BugReportDialog />
         <Routes>
@@ -112,30 +117,37 @@ export function App() {
           >
             <Route path="/" element={<RequirePageAccess page="home"><OverviewPage /></RequirePageAccess>} />
             <Route path="/logs" element={<RequirePageAccess page="logs"><LogsPage /></RequirePageAccess>} />
+            <Route path="/logs/trace" element={<RequirePageAccess page="logs"><LogTracePage /></RequirePageAccess>} />
             <Route path="/logs/:id" element={<RequirePageAccess page="logs"><LogDetailPage /></RequirePageAccess>} />
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
             <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />
             <Route path="/app-callers/:id/prompt-policy" element={<RequirePageAccess page="promptPolicy"><PromptPolicyPage /></RequirePageAccess>} />
-            <Route path="/pools" element={<RequirePageAccess page="routeConfig"><ModelPoolsPage /></RequirePageAccess>} />
-            <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><PlatformsPage /></RequirePageAccess>} />
+            {/* 模型池已于 2026-09-15 删除（断流后池上零流量）。旧地址不留死链：
+                收藏夹、文档里、别人贴的链接还会打过来，重定向到模型页而不是 404。 */}
+            <Route path="/pools" element={<Navigate to="/logical-models" replace />} />
+            <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><UpstreamsPage /></RequirePageAccess>} />
             <Route path="/platforms/view" element={<RequirePageAccess page="routeConfig"><ProviderDetailsPage /></RequirePageAccess>} />
             <Route path="/models" element={<RequirePageAccess page="routeConfig"><ModelsPage /></RequirePageAccess>} />
             <Route path="/models/view" element={<RequirePageAccess page="routeConfig"><ModelDetailsPage /></RequirePageAccess>} />
             <Route path="/logical-models" element={<RequirePageAccess page="routeConfig"><LogicalModelsPage /></RequirePageAccess>} />
-            <Route path="/exchanges" element={<RequirePageAccess page="routeConfig"><ExchangesPage /></RequirePageAccess>} />
+            {/* 旧地址保持可达：落到同一页并自动选中「转接上游」那一段，不留死链 */}
+            <Route path="/exchanges" element={<RequirePageAccess page="routeConfig"><UpstreamsPage /></RequirePageAccess>} />
             <Route path="/audits" element={<RequirePageAccess page="audits"><AuditsPage /></RequirePageAccess>} />
             <Route path="/service-keys" element={<RequirePageAccess page="serviceKeys"><ServiceKeysPage /></RequirePageAccess>} />
             <Route path="/quickstart" element={<RequirePageAccess page="quickstart"><QuickstartPage /></RequirePageAccess>} />
             <Route path="/learn" element={<RequirePageAccess page="learn"><LearningCenterPage /></RequirePageAccess>} />
             <Route path="/organization" element={<RequirePageAccess page="organization"><OrganizationPage /></RequirePageAccess>} />
-            <Route path="/shadow" element={<RequirePageAccess page="shadow"><ShadowPage /></RequirePageAccess>} />
             <Route path="/governance" element={<RequirePageAccess page="governance"><GovernancePage /></RequirePageAccess>} />
+            <Route path="/gateway-settings" element={<RequirePageAccess page="gatewaySettings"><GatewaySettingsPage /></RequirePageAccess>} />
             <Route path="/settings" element={<RequirePageAccess page="settings"><SettingsPage /></RequirePageAccess>} />
+            {/* 管自己的登录名与口令不是租户能力，任何角色都必须能进，故不套 RequirePageAccess。 */}
+            <Route path="/account" element={<AccountSecurityPage />} />
             <Route path="/usage" element={<RequirePageAccess page="usage"><UsagePage /></RequirePageAccess>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </DialogProvider>
     </AuthProvider>
   );
 }

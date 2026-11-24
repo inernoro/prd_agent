@@ -28,6 +28,13 @@
         } catch (_) {
           /* private mode; default applies */
         }
+        // 界面尺度（cds_ui_scale：80 / 85 / 100）同样在首帧前落地；85 是默认，不写属性。
+        try {
+          var scale = localStorage.getItem('cds_ui_scale');
+          if (scale === '80' || scale === '100') document.documentElement.dataset.uiScale = scale;
+        } catch (_) {
+          /* ignore */
+        }
       })();
     </script>
   </head>

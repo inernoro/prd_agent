@@ -1,10 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Claims;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -18,10 +21,12 @@ namespace PrdAgent.Api.Controllers.Api;
 public class UserPreferencesController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IModelPoolQueryService? _modelCatalog;
 
-    public UserPreferencesController(MongoDbContext db)
+    public UserPreferencesController(MongoDbContext db, IModelPoolQueryService? modelCatalog = null)
     {
         _db = db;
+        _modelCatalog = modelCatalog;
     }
 
     private string? GetCurrentUserId()
@@ -51,9 +56,13 @@ public class UserPreferencesController : ControllerBase
         {
             navOrder = prefs?.NavOrder ?? new List<string>(),
             navHidden = prefs?.NavHidden ?? new List<string>(),
+            // 服务端是否明确持有过导航布局（哪怕是空数组）。空数组 + true = 管理员或用户主动清空过，
+            // 前端不得再拿 sessionStorage 里的旧布局回填覆盖；空数组 + false = 从没同步过，允许回填。
+            navLayoutSynced = prefs?.NavOrder != null || prefs?.NavHidden != null,
             defaultNavOrder = defaultNav?.NavOrder ?? new List<string>(),
             defaultNavHidden = defaultNav?.NavHidden ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
+            webPageAskEnabled = prefs?.WebPageAskEnabled ?? false,
             visualAgentPreferences = prefs?.VisualAgentPreferences,
             literaryAgentPreferences = prefs?.LiteraryAgentPreferences,
             agentSwitcherPreferences = prefs?.AgentSwitcherPreferences,
@@ -195,6 +204,7 @@ public class UserPreferencesController : ControllerBase
 
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, request.NavOrder)
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(
@@ -220,6 +230,7 @@ public class UserPreferencesController : ControllerBase
 
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavHidden, request.NavHidden)
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(
@@ -243,6 +254,7 @@ public class UserPreferencesController : ControllerBase
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, request.NavOrder ?? new List<string>())
             .Set(x => x.NavHidden, request.NavHidden ?? new List<string>())
+            .Set(x => x.NavLayoutUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(
@@ -251,6 +263,118 @@ public class UserPreferencesController : ControllerBase
             new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 转录词云的生效词典：系统级 ∪ 个人补充 − 个人屏蔽。
+    ///
+    /// 合并放后端做，前端只消费结果——前端不该自己维护业务数据映射表
+    /// （frontend-architecture.md 单一数据源）。词典只做「加」不做「猜」：
+    /// 它保证表里的词被完整保留，不引入新的边界猜测，
+    /// 所以不会把已经治好的半截词问题带回来。
+    /// </summary>
+    [HttpGet("transcript-lexicon")]
+    public async Task<IActionResult> GetTranscriptLexicon()
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync();
+        var preferences = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync();
+
+        var muted = new HashSet<string>(
+            (preferences?.TranscriptLexiconMuted ?? new List<string>()).Select(x => x.Trim()).Where(x => x.Length > 0),
+            StringComparer.Ordinal);
+        var terms = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        void Add(IEnumerable<string>? source, bool honorMute)
+        {
+            foreach (var raw in source ?? Enumerable.Empty<string>())
+            {
+                var term = raw.Trim();
+                // 单字进不了词云（本身就是分词残渣），过长的多半是整句误粘进来
+                if (term.Length is < 2 or > 24) continue;
+                if (honorMute && muted.Contains(term)) continue;
+                if (seen.Add(term)) terms.Add(term);
+            }
+        }
+        Add(settings?.TranscriptLexicon, honorMute: true);
+        Add(preferences?.TranscriptLexicon, honorMute: false);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            terms,
+            system = settings?.TranscriptLexicon ?? new List<string>(),
+            mine = preferences?.TranscriptLexicon ?? new List<string>(),
+            muted = preferences?.TranscriptLexiconMuted ?? new List<string>(),
+            // 前端据此决定显不显示「加入系统词典」——没有权限就不给一个点了会 403 的入口
+            canManageSystem = HasSettingsWritePermission(),
+        }));
+    }
+
+    /// <summary>
+    /// 更新个人词典与屏蔽表。系统级词典不在这里改（那是管理员的表）。
+    /// </summary>
+    [HttpPut("transcript-lexicon")]
+    public async Task<IActionResult> UpdateTranscriptLexicon([FromBody] UpdateTranscriptLexiconRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        static List<string> Normalize(List<string>? source) => (source ?? new List<string>())
+            .Select(x => x.Trim())
+            .Where(x => x.Length is >= 2 and <= 24)
+            .Distinct(StringComparer.Ordinal)
+            .Take(500)
+            .ToList();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.TranscriptLexicon, Normalize(request.Terms))
+            .Set(x => x.TranscriptLexiconMuted, Normalize(request.Muted))
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId, update, new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 更新系统级词典（全局，所有人默认引用）。要 settings.write 权限。
+    ///
+    /// 有存储没入口就是断头：字段能存、界面上没人改得了它。
+    /// 这个端点和个人词典共用同一处 UI，管理员多一个「加入系统词典」的选项而已。
+    /// </summary>
+    [HttpPut("transcript-lexicon/system")]
+    public async Task<IActionResult> UpdateSystemTranscriptLexicon([FromBody] UpdateTranscriptLexiconRequest request)
+    {
+        if (!HasSettingsWritePermission())
+            return StatusCode(403, ApiResponse<object>.Fail("FORBIDDEN", "需要设置写权限才能改系统词典"));
+
+        var terms = (request.Terms ?? new List<string>())
+            .Select(x => x.Trim())
+            .Where(x => x.Length is >= 2 and <= 24)
+            .Distinct(StringComparer.Ordinal)
+            .Take(2000)
+            .ToList();
+
+        await _db.AppSettings.UpdateOneAsync(
+            x => x.Id == "global",
+            Builders<AppSettings>.Update
+                .Set(x => x.TranscriptLexicon, terms)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { count = terms.Count }));
+    }
+
+    private bool HasSettingsWritePermission()
+    {
+        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.SettingsWrite);
     }
 
     /// <summary>
@@ -279,6 +403,27 @@ public class UserPreferencesController : ControllerBase
     }
 
     /// <summary>
+    /// 更新网页托管「向我提问」的个人默认值。
+    /// 只影响没有单独配置过提问开关的站点；站点级明确开关优先。
+    /// </summary>
+    [HttpPut("web-page-ask")]
+    public async Task<IActionResult> UpdateWebPageAskPreference([FromBody] UpdateWebPageAskPreferenceRequest request)
+    {
+        var userId = this.GetRequiredUserId();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.WebPageAskEnabled, request.Enabled)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { enabled = request.Enabled }));
+    }
+
+    /// <summary>
     /// 更新视觉代理偏好
     /// </summary>
     [HttpPut("visual-agent")]
@@ -290,6 +435,15 @@ public class UserPreferencesController : ControllerBase
 
         if (request.VisualAgentPreferences == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "visualAgentPreferences 不能为空"));
+
+        if (request.VisualAgentPreferences.ModelAuto) request.VisualAgentPreferences.ModelId = null;
+        else
+        {
+            var selection = await NormalizeModelSelectionAsync(request.VisualAgentPreferences.ModelId, "generation",
+                ["visual-agent.image.text2img::generation", "visual-agent.image.img2img::generation", "visual-agent.image.vision::generation"]);
+            if (selection.Failure is not null) return selection.Failure;
+            request.VisualAgentPreferences.ModelId = selection.Canonical;
+        }
 
         var update = Builders<UserPreferences>.Update
             .Set(x => x.VisualAgentPreferences, request.VisualAgentPreferences)
@@ -315,6 +469,14 @@ public class UserPreferencesController : ControllerBase
         if (request.LiteraryAgentPreferences == null)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "literaryAgentPreferences 不能为空"));
 
+        var image = await NormalizeModelSelectionAsync(request.LiteraryAgentPreferences.ImageModelId, "generation",
+            ["literary-agent.illustration.text2img::generation", "literary-agent.illustration.img2img::generation"]);
+        if (image.Failure is not null) return image.Failure;
+        var chat = await NormalizeModelSelectionAsync(request.LiteraryAgentPreferences.ChatModelId, "chat", ["literary-agent.content::chat"]);
+        if (chat.Failure is not null) return chat.Failure;
+        request.LiteraryAgentPreferences.ImageModelId = image.Canonical;
+        request.LiteraryAgentPreferences.ChatModelId = chat.Canonical;
+
         var update = Builders<UserPreferences>.Update
             .Set(x => x.LiteraryAgentPreferences, request.LiteraryAgentPreferences)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -325,6 +487,23 @@ public class UserPreferencesController : ControllerBase
             new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    private async Task<(string? Canonical, IActionResult? Failure)> NormalizeModelSelectionAsync(string? value, string type, string[] callers)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return (null, null);
+        try
+        {
+            if (_modelCatalog is null) throw new InvalidOperationException();
+            var rows = await Task.WhenAll(callers.Select(caller => _modelCatalog.GetModelPoolsAsync(caller, type)));
+            return PreferenceModelSelection.TryNormalize(rows.SelectMany(x => x), value, out var canonical)
+                ? (canonical, null)
+                : (null, BadRequest(ApiResponse<object>.Fail("MODEL_REFERENCE_INVALID", "原模型已变更或暂不可用，请刷新模型菜单重新选择；本次偏好未保存。")));
+        }
+        catch
+        {
+            return (null, StatusCode(503, ApiResponse<object>.Fail("MODEL_CATALOG_UNAVAILABLE", "暂时无法核对模型目录，本次偏好未保存，请稍后重试。")));
+        }
     }
 }
 
@@ -354,6 +533,11 @@ public class UpdateThemeConfigRequest
     public ThemeConfig? ThemeConfig { get; set; }
 }
 
+public class UpdateWebPageAskPreferenceRequest
+{
+    public bool Enabled { get; set; }
+}
+
 public class UpdateVisualAgentPreferencesRequest
 {
     public VisualAgentPreferences? VisualAgentPreferences { get; set; }
@@ -372,4 +556,13 @@ public class UpdateAgentSwitcherPreferencesRequest
 public class UpdateHomeLauncherPreferencesRequest
 {
     public HomeLauncherPreferences? HomeLauncherPreferences { get; set; }
+}
+
+public class UpdateTranscriptLexiconRequest
+{
+    /// <summary>个人补充的词条</summary>
+    public List<string>? Terms { get; set; }
+
+    /// <summary>从系统级词典里屏蔽掉的词条</summary>
+    public List<string>? Muted { get; set; }
 }

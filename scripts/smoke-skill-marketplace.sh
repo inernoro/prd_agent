@@ -5,12 +5,17 @@
 # 需要公开接口验证 —— 不需要 AgentApiKey 的都能直接跑
 # 需要 Key 的那几条走 JWT cookie 或 ApiKey，留 MANUAL 标签给人工跑
 set -u
-BASE="${1:-https://claude-skill-platform-open-api-gkafy.miduo.org}"
+BASE="${1:-${SMOKE_SKILL_MARKETPLACE_BASE_URL:-}}"
 PASS=0
 FAIL=0
 
-pass() { echo "✅ PASS · $1"; PASS=$((PASS+1)); }
-fail() { echo "❌ FAIL · $1  ($2)"; FAIL=$((FAIL+1)); }
+pass() { echo "PASS · $1"; PASS=$((PASS+1)); }
+fail() { echo "FAIL · $1  ($2)"; FAIL=$((FAIL+1)); }
+
+[ -n "$BASE" ] || {
+  echo "SMOKE_SKILL_MARKETPLACE_BASE_URL or the first argument is required" >&2
+  exit 1
+}
 
 echo "========================================"
 echo "  自测目标：$BASE"
@@ -95,7 +100,7 @@ echo "  结果：$PASS passed · $FAIL failed"
 echo "========================================"
 
 echo ""
-echo "⚠️  下列测试需要真人介入（需要 AgentApiKey 或 JWT cookie）："
+echo "注意：下列测试需要真人介入（需要 AgentApiKey 或 JWT cookie）："
 echo ""
 echo "  MANUAL-1 · 列表虚拟注入官方条目（AgentApiKey 鉴权，需先在 UI 建 Key）："
 echo "    KEY='sk-ak-xxxx'"
@@ -112,7 +117,7 @@ echo "    期望：以 $BASE/api/official-skills/findmapskills/download 结尾"
 echo ""
 echo "  MANUAL-3 · 浏览器端端到端验收："
 echo "    1. 打开 $BASE/marketplace"
-echo "    2. 技能 tab 首位应是 🛡️ 官方 findmapskills 卡片"
+echo "    2. 技能 tab 首位应是官方 findmapskills 卡片"
 echo "    3. 点右上角「接入 AI」→「智能体接入」→ 创建 Key"
 echo "    4. 明文态点「复制给智能体使用」粘贴到文本编辑器"
 echo "    5. 按指令 curl 下载 findmapskills.zip → unzip 后看到 SKILL.md v1.0.0"

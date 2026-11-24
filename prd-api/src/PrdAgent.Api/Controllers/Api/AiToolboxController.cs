@@ -13,6 +13,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -151,6 +152,7 @@ public class AiToolboxController : ControllerBase
         // Step 2: 创建运行记录
         var run = new ToolboxRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = ObjectId.GenerateNewId().ToString(),
             UserId = userId,
             SessionId = request.SessionId,

@@ -36,4 +36,17 @@ public class ProductImportProductRoutingTests
         Assert.False(matched);
         Assert.Equal("不存在", label);
     }
+
+    [Fact]
+    public void VersionImportRequiresOneUnambiguousProduct()
+    {
+        var products = new List<Product> { P("p1", "营销应用"), P("p2", "营销后台") };
+        var (productId, _, matched) = ProductImportProductRouting.ResolveUniqueVersionProductIdByLabel(products, "营销");
+        Assert.Null(productId);
+        Assert.False(matched);
+
+        var (exactId, _, exactMatched) = ProductImportProductRouting.ResolveUniqueVersionProductIdByLabel(products, "营销应用");
+        Assert.Equal("p1", exactId);
+        Assert.True(exactMatched);
+    }
 }

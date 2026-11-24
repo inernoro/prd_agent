@@ -1,0 +1,89 @@
+{
+  "source": {
+    "file": "/Users/inernoro/Documents/ChatGPT/point/llmgw-list-designs-20261013/index.html",
+    "sha256": "e5b4c1400919441a29fc5d22e188e755dfaf155a5c972e7c49585ec2721b7bf9"
+  },
+  "boards": [
+    "模型列表",
+    "Provider列表",
+    "Provider详情",
+    "模型详情",
+    "接入密钥"
+  ],
+  "tokensSource": "llmgw/web/src/theme.css + lib/typography.ts + lib/surface.ts",
+  "layout": {
+    "detailWidth": 440,
+    "compactDetailWidth": 360,
+    "minimumWorkspaceHeight": 360,
+    "pageSize": 10,
+    "radii": [
+      "var(--radius)",
+      "var(--radius-sm)"
+    ],
+    "fonts": [
+      "Plus Jakarta Sans Variable",
+      "PingFang SC",
+      "Noto Sans SC"
+    ],
+    "fontSizes": [
+      "var(--fs-title)",
+      "var(--fs-heading)",
+      "var(--fs-body)",
+      "var(--fs-secondary)",
+      "var(--fs-caption)"
+    ]
+  },
+  "invariants": [
+    "父列表只显示数量与摘要",
+    "搜索完整集合后再分页",
+    "全部写入和权限沿用原函数",
+    "按实际目标身份汇总Provider",
+    "未解析模型与Exchange保留",
+    "调用全貌由服务端判定"
+  ],
+  "intentionalDifferences": [
+    "真实数据替换原型示例值",
+    "线路与配置沿用完整原表单，合为一个详情页签",
+    "各清单使用真实10条分页，不使用原型占位页码",
+    "原型连接参数和统计在属性折叠区保留，避免挤占清单"
+  ],
+  "refinement": {
+    "sourceSha256": "e5b4c1400919441a29fc5d22e188e755dfaf155a5c972e7c49585ec2721b7bf9",
+    "parentRowHeight": 60,
+    "detailRowHeight": 52,
+    "paneTabsHeight": 42,
+    "splitGap": 16,
+    "paneWidth": 440,
+    "keyPaneWidth": 420,
+    "compactPaneWidth": 370,
+    "compactBreakpoint": 1450,
+    "modelColumns": [
+      31,
+      28,
+      15,
+      14,
+      12
+    ],
+    "providerColumns": [
+      24,
+      29,
+      18,
+      14,
+      15
+    ],
+    "keyColumns": [
+      25,
+      16,
+      20,
+      13,
+      13,
+      13
+    ],
+    "invariants": [
+      "完整集合先搜索再分页",
+      "原回调与权限条件保留",
+      "空清单批量登记入口保留",
+      "App实体详情布局保持原样"
+    ]
+  }
+}

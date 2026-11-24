@@ -1,3 +1,4 @@
+import { useAnchoredPosition } from '@/components/ui/anchored-popover';
 /*
  * SiteNoticeInbox — 右上角「信息中心」（合并了两条主线，2026-07-30）：
  *
@@ -23,14 +24,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bell, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { apiRequest, ApiError } from '@/lib/api';
-import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
+import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
 import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import type { DesignReviewNotice } from '../../../src/shared/design-workspace';
 
 type NoticeLevel = 'info' | 'warning' | 'danger';
 
@@ -74,11 +77,14 @@ interface NoticesResponse {
   outbound: { configured: boolean; reason?: string };
 }
 
+type PreviewAccessNotices = { pending: number; approved: Array<{ id: string; project: string }> };
+const emptyPreviewAccess: PreviewAccessNotices = { pending: 0, approved: [] };
+
 function levelClass(level: NoticeLevel = 'info'): string {
   // 语义色走 token，暗/亮双主题各自成立（禁暗色字面量 fallback）。
   if (level === 'danger') return 'border-[hsl(var(--destructive))]/35 bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))]';
-  if (level === 'warning') return 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-  return 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+  if (level === 'warning') return 'border-warn/35 bg-warn-soft text-warn';
+  return 'border-info/35 bg-info-soft text-info';
 }
 
 function NoticeIcon({ source }: { source?: string }): JSX.Element {
@@ -100,14 +106,40 @@ function outboundHint(notice: SiteNotice): string | null {
   return null;
 }
 
-export function SiteNoticeInbox(): JSX.Element {
+/** 账本记录时刻；不是上游故障发生时刻，跨轮次也不重写首次记录。 */
+export function NoticeRecordTimes({ createdAt, updatedAt }: Pick<SiteNotice, 'createdAt' | 'updatedAt'>): JSX.Element {
+  const stamp = (label: string, value: string): JSX.Element => {
+    const at = typeof value === 'string' ? Date.parse(value) : NaN;
+    return <span>{label}：{Number.isFinite(at)
+      ? <time dateTime={value} title={value}>{new Date(at).toLocaleString('zh-CN', { hour12: false })}</time>
+      : '时间未记录'}</span>;
+  };
+  return <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[0.6875rem] leading-4 text-muted-foreground">
+    {stamp('首次记录', createdAt)}
+    {stamp('最近记录', updatedAt)}
+  </div>;
+}
+
+export function SiteNoticeInbox({
+  canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests, includeOperations = true, previewAccessIdentity, designReviewIdentity,
+}: {
+  canReadAccessRequests?: boolean;
+  operatorPendingCount?: number;
+  onOpenOperatorRequests?: () => void;
+  includeOperations?: boolean;
+  previewAccessIdentity?: string;
+  designReviewIdentity?: string;
+} = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
+  const [previewSnapshot, setPreviewSnapshot] = useState<{ identity: string; data: PreviewAccessNotices }>();
+  const [designSnapshot, setDesignSnapshot] = useState<{ identity: string; notices: DesignReviewNotice[] }>();
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
   const [expandedNoticeIds, setExpandedNoticeIds] = useState<Set<string>>(() => new Set());
-  const [panelPosition, setPanelPosition] = useState<FloatingPanelPosition | null>(null);
+  const panelPosition = useAnchoredPosition({ open, anchorRef: triggerRef, panelRef, widthRem: 28, align: 'end', maxHeightRem: 48 });
   const [sourceCounts, setSourceCounts] = useState({
     access: 0,
     commit: 0,
@@ -120,33 +152,50 @@ export function SiteNoticeInbox(): JSX.Element {
   const updateSourceCount = useCallback((source: keyof typeof sourceCounts, count: number): void => {
     setSourceCounts((current) => current[source] === count ? current : { ...current, [source]: count });
   }, []);
+  useEffect(() => { if (!canReadAccessRequests) updateSourceCount('access', 0); }, [canReadAccessRequests, updateSourceCount]);
   const handleAccessCount = useCallback((count: number) => updateSourceCount('access', count), [updateSourceCount]);
   const handleCommitCount = useCallback((count: number) => updateSourceCount('commit', count), [updateSourceCount]);
   const handleImportCount = useCallback((count: number) => updateSourceCount('import', count), [updateSourceCount]);
   const handleUpdateCount = useCallback((count: number) => updateSourceCount('update', count), [updateSourceCount]);
 
-  const updatePanelPosition = useCallback((): void => {
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    setPanelPosition(floatingPanelPosition(
-      { left: rect.left, bottom: rect.bottom },
-      { width: window.innerWidth, height: window.innerHeight },
-    ));
-  }, []);
-
+  /*
+   * 点外部 / Esc 关闭（2026-08-05 用户反馈「失焦之后这个窗口应该关闭」）。
+   * 照 AppShell 的 UserAccountMenu 范式：同样是 portal 出去的浮层 + 独立 trigger，
+   * 只能走 document 级监听 + 双 ref 排除，不能靠冒泡。
+   *
+   * 判据收在 shouldDismissOnPointerDown 里（含 [role="dialog"] 豁免）——面板内的
+   * 授权/导入收件箱会把 Radix Dialog portal 到 body，不豁免的话在弹窗里一点就会把
+   * 面板连同弹窗一起卸载。
+   *
+   * 刻意不监听 scroll：面板自己的列表区可滚（下面 overflow-y-auto），滚动关闭会误伤。
+   */
   useEffect(() => {
-    if (!open) return;
-    updatePanelPosition();
-    window.addEventListener('resize', updatePanelPosition);
-    window.addEventListener('scroll', updatePanelPosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePanelPosition);
-      window.removeEventListener('scroll', updatePanelPosition, true);
+    if (!open) return undefined;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!shouldDismissOnPointerDown({
+        target: event.target,
+        owned: [panelRef.current, triggerRef.current],
+      })) return;
+      setOpen(false);
     };
-  }, [open, updatePanelPosition]);
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      // 与 pointerdown 同一套豁免：焦点在面板内 portal 出去的弹窗里时，这次 Esc 属于
+      // 那个弹窗，不能顺手把底下的面板也关了、还把焦点抢回铃铛。
+      if (!shouldDismissOnEscape({ target: event.target, activeElement: document.activeElement })) return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (!includeOperations) return;
     try {
       const res = await apiRequest<NoticesResponse>('/api/notices');
       setNotices(Array.isArray(res?.notices) ? res.notices : []);
@@ -154,9 +203,43 @@ export function SiteNoticeInbox(): JSX.Element {
     } catch {
       // 铃铛取不到账本不该炸掉整个 shell：保持上一次的展示，等下一次事件/打开时再拉。
     }
-  }, []);
+  }, [includeOperations]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!previewAccessIdentity && !designReviewIdentity) return;
+    const lifetime = new AbortController();
+    let refreshing = false;
+    const refreshPrivate = async () => {
+      if (refreshing || document.hidden) return;
+      refreshing = true;
+      const options = { signal: lifetime.signal };
+      try {
+        const [preview, design] = await Promise.allSettled([
+          previewAccessIdentity ? apiRequest<PreviewAccessNotices>('/api/auth/preview/notices', options) : undefined,
+          designReviewIdentity ? apiRequest<{ notices: DesignReviewNotice[] }>('/api/auth/design/notices', options) : undefined,
+        ]);
+        if (lifetime.signal.aborted) return;
+        const data = preview.status === 'fulfilled' ? preview.value : undefined;
+        const reviews = design.status === 'fulfilled' ? design.value?.notices : undefined;
+        setPreviewSnapshot(previewAccessIdentity && Array.isArray(data?.approved) && Number.isSafeInteger(data.pending) && data.pending >= 0
+          ? { identity: previewAccessIdentity, data } : undefined);
+        setDesignSnapshot(designReviewIdentity && Array.isArray(reviews) ? { identity: designReviewIdentity, notices: reviews } : undefined);
+      } finally { refreshing = false; }
+    };
+    void refreshPrivate();
+    const timer = window.setInterval(() => void refreshPrivate(), 10000);
+    const show = () => { void refreshPrivate(); };
+    document.addEventListener('visibilitychange', show);
+    window.addEventListener('focus', show);
+    return () => {
+      lifetime.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', show);
+      window.removeEventListener('focus', show);
+    };
+  }, [previewAccessIdentity, designReviewIdentity, open]);
 
   // 服务端记了新通知 → 实时增量刷新（不轮询）。
   useEffect(() => {
@@ -168,6 +251,7 @@ export function SiteNoticeInbox(): JSX.Element {
   // 乐观插入让铃铛立刻亮，同时 POST 到服务端账本落库（失败就靠下一次 refresh 纠正）。
   const pendingRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    if (!includeOperations) return;
     const onUpsert = (event: Event): void => {
       const detail = (event as CustomEvent<SiteNoticePayload>).detail;
       if (!detail?.id || !detail.title) return;
@@ -216,15 +300,21 @@ export function SiteNoticeInbox(): JSX.Element {
     };
     window.addEventListener('cds:notice:upsert', onUpsert);
     return () => window.removeEventListener('cds:notice:upsert', onUpsert);
-  }, []);
+  }, [includeOperations]);
 
-  const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
+  const activeNotices = useMemo(() => includeOperations ? notices.filter((item) => !item.dismissedAt) : [], [includeOperations, notices]);
+  const previewAccess = previewSnapshot && previewSnapshot.identity === previewAccessIdentity ? previewSnapshot.data : emptyPreviewAccess;
+  const designReviews = designSnapshot?.identity === designReviewIdentity ? designSnapshot?.notices ?? [] : [];
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
   const informationCount = unreadCount
     + sourceCounts.access
     + sourceCounts.commit
     + sourceCounts.import
-    + sourceCounts.update;
+    + sourceCounts.update
+    + previewAccess.pending
+    + previewAccess.approved.length
+    + designReviews.length
+    + operatorPendingCount;
 
   const dismissNotice = useCallback((id: string): void => {
     const now = new Date().toISOString();
@@ -242,7 +332,7 @@ export function SiteNoticeInbox(): JSX.Element {
   // 每个项目 id 每次会话只探一次。
   const checkedProjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!open) return;
+    if (!open || !includeOperations) return;
     const idsToCheck = [...new Set(
       notices
         .filter((item) => !item.dismissedAt && item.projectId)
@@ -273,7 +363,7 @@ export function SiteNoticeInbox(): JSX.Element {
       }
     });
     return () => { cancelled = true; };
-  }, [open, notices, dismissNotice]);
+  }, [open, includeOperations, notices, dismissNotice]);
 
   const markAllRead = (): void => {
     const now = new Date().toISOString();
@@ -283,7 +373,7 @@ export function SiteNoticeInbox(): JSX.Element {
       .catch(() => { setNotices(before); });
   };
 
-  if (!host) return <></>;
+  if (!host || (!includeOperations && previewAccess.pending + previewAccess.approved.length + designReviews.length === 0)) return <></>;
 
   return createPortal((
     <>
@@ -298,16 +388,15 @@ export function SiteNoticeInbox(): JSX.Element {
           onClick={() => {
             const nextOpen = !open;
             if (nextOpen) {
-              updatePanelPosition();
               void refresh();
-              markAllRead();
+              if (includeOperations) markAllRead();
             }
             setOpen(nextOpen);
           }}
         >
           <Bell className="h-5 w-5" />
           {informationCount > 0 ? (
-            <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
+            <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[0.625rem] leading-4 text-primary-foreground">
               {informationCount > 99 ? '99+' : informationCount}
             </span>
           ) : null}
@@ -315,35 +404,68 @@ export function SiteNoticeInbox(): JSX.Element {
       </div>
 
       {/* 授权是需要立刻决策的高优先级消息：常驻右下角，同时仍保留在信息中心。 */}
-      <AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />
+      {canReadAccessRequests ? <AccessRequestInbox placement="floating" onCountChange={handleAccessCount} /> : null}
 
-      {open && panelPosition ? createPortal((
+      {open ? createPortal((
         <div
+          ref={panelRef}
           data-testid="cds-information-center-panel"
           className="fixed z-[220] flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
-          style={panelPosition}
+          style={{ ...panelPosition, overflowY: 'hidden', overflowX: 'hidden' }}
         >
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
             <div className="min-w-0">
               <div className="text-sm font-semibold">信息中心</div>
-              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">系统动态、授权审批与服务端站内信</div>
+              {includeOperations && <div className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">系统动态、授权审批与服务端站内信</div>}
             </div>
             <button type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭信息中心">
               <X className="h-4 w-4" />
             </button>
           </div>
 
-          {!outbound.configured ? (
-            <div className="border-b border-[hsl(var(--hairline))] bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+          {includeOperations && !outbound.configured ? (
+            <div className="border-b border-[hsl(var(--hairline))] bg-warn-soft px-3 py-2 text-[0.6875rem] leading-4 text-warn">
               {outbound.reason || '未配置外发凭据，通知仅记录在 CDS 本地'}
             </div>
           ) : null}
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
-            <AccessRequestInbox />
-            <PendingImportInbox onCountChange={handleImportCount} />
-            <GlobalUpdateBadge onCountChange={handleUpdateCount} />
-            <CommitInbox onCountChange={handleCommitCount} />
+            {operatorPendingCount > 0 ? <button type="button" className="flex w-full items-center justify-between gap-3 rounded-md border border-warn/35 bg-warn-soft p-3 text-left text-sm" onClick={() => { setOpen(false); onOpenOperatorRequests?.(); }}>
+              <span><strong className="block font-medium">运维操作待授权</strong><span className="text-xs text-muted-foreground">{operatorPendingCount} 项请求尚未批准或拒绝</span></span>
+              <span className="shrink-0 text-primary">查看请求</span>
+            </button> : null}
+            {canReadAccessRequests ? <AccessRequestInbox /> : null}
+            {includeOperations && <>
+              <PendingImportInbox onCountChange={handleImportCount} />
+              <GlobalUpdateBadge onCountChange={handleUpdateCount} />
+              <CommitInbox onCountChange={handleCommitCount} />
+            </>}
+            {previewAccess.pending > 0 && (
+              <Link to="/preview-access" onClick={() => setOpen(false)}
+                className="block rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">
+                <strong className="block font-medium">分支预览访问申请</strong>
+                <span className="text-xs text-muted-foreground">{previewAccess.pending} 项待审批</span>
+              </Link>
+            )}
+            {includeOperations && previewAccessIdentity && previewAccess.pending === 0 && <Link to="/preview-access"
+              onClick={() => setOpen(false)} className="block rounded-md border p-3 text-sm">预览审批设置</Link>}
+            {previewAccess.approved.map(item => (
+              <Link key={item.id} to={`/preview-access?request=${encodeURIComponent(item.id)}`} onClick={() => setOpen(false)}
+                className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm">
+                <span className="min-w-0"><strong className="block font-medium">预览访问已批准</strong>
+                  <span className="break-words text-xs text-muted-foreground">{item.project}</span></span>
+                <span className="shrink-0 text-primary">返回原预览</span>
+              </Link>
+            ))}
+            {designReviews.map(item => (
+              <Link key={`${item.projectId}/${item.id}`} to={`/design?${new URLSearchParams({ project: item.projectId,
+                design: item.designId, version: String(item.version) })}`} onClick={() => setOpen(false)}
+                className="flex items-start justify-between gap-3 rounded-md border p-3 text-sm">
+                <span className="min-w-0"><strong className="block font-medium">{item.title} · V{item.version}</strong>
+                  <span className="break-words text-xs text-muted-foreground">设计评审{item.occurrences > 1 ? ` · 合并 ${item.occurrences} 次更新` : ''}</span></span>
+                <span className="shrink-0 text-primary">查看稿件</span>
+              </Link>
+            ))}
 
             {activeNotices.length === 0 && informationCount === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>
@@ -365,29 +487,30 @@ export function SiteNoticeInbox(): JSX.Element {
                         <div className="flex items-start gap-2">
                           <div className="min-w-0 flex-1 text-sm font-semibold leading-5">{notice.title}</div>
                           {notice.occurrences > 1 ? (
-                            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground">
+                            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground">
                               {notice.occurrences} 次
                             </span>
                           ) : null}
                         </div>
                         {noticeProjectLabel(notice) ? (
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
                             <span className="inline-flex max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">
                               <span className="shrink-0">项目</span>
                               <span className="truncate font-medium text-foreground">{noticeProjectLabel(notice)}</span>
                             </span>
                             {notice.projectSlug && notice.projectSlug !== noticeProjectLabel(notice) ? (
-                              <span className="truncate font-mono text-[10px]">{notice.projectSlug}</span>
+                              <span className="truncate font-mono text-[0.625rem]">{notice.projectSlug}</span>
                             ) : null}
                           </div>
                         ) : null}
+                        <NoticeRecordTimes createdAt={notice.createdAt} updatedAt={notice.updatedAt} />
                         <div className={`mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground ${bodyExpanded ? '' : 'line-clamp-3'}`}>
                           {notice.body}
                         </div>
                         {bodyCanExpand ? (
                           <button
                             type="button"
-                            className="mt-1 text-[11px] font-medium text-primary hover:underline"
+                            className="mt-1 text-[0.6875rem] font-medium text-primary hover:underline"
                             aria-expanded={bodyExpanded}
                             onClick={() => setExpandedNoticeIds((current) => {
                               const next = new Set(current);
@@ -400,7 +523,7 @@ export function SiteNoticeInbox(): JSX.Element {
                           </button>
                         ) : null}
                         {outboundHint(notice) ? (
-                          <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
+                          <div className="mt-1 text-[0.6875rem] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
                         ) : null}
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           {notice.href ? (

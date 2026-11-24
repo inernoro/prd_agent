@@ -23,6 +23,7 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
 import type { ReleaseExecutionMode, ReleaseRun, ReleaseStrategy, ReleaseTarget } from '../types.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { isSuccessfulReleaseRun, KEEP_SUCCESSFUL_RELEASE_RUNS } from './release-retention.js';
@@ -41,6 +42,22 @@ import { isSuccessfulReleaseRun, KEEP_SUCCESSFUL_RELEASE_RUNS } from './release-
  * 别把它读成「不删就回滚不了」。
  */
 export const RELEASE_ARTIFACT_KEEP_RECENT = KEEP_SUCCESSFUL_RELEASE_RUNS;
+
+/** Restore directories are produced from the previous run's immutable commit.
+ * Existing structured attempt evidence supplies ownership; names alone never do.
+ * Native identity, Git, mounts and live references are still rechecked later. */
+export function releaseArtifactCommitProof(runs: readonly ReleaseRun[]): Record<string, string> {
+  const byId = new Map(runs.map(run => [run.releaseId, run]));
+  const proof = Object.fromEntries(runs.map(run => [run.releaseId, run.commitSha]));
+  for (const run of runs) {
+    const previous = run.previousReleaseId ? byId.get(run.previousReleaseId) : undefined;
+    if (!run.autoRestoreStartedAt || !Number.isFinite(Date.parse(run.autoRestoreStartedAt)) || !previous
+      || previous.targetId !== run.targetId || previous.projectId !== run.projectId
+      || !/^[a-f0-9]{40}$/.test(previous.commitSha)) continue;
+    proof[`${run.releaseId}-auto-restore`] = previous.commitSha;
+  }
+  return proof;
+}
 
 /**
  * CDS 自产发布产物的目录形状：`rel_` + 16 位十六进制，可带 `-auto-restore` 后缀。
@@ -144,6 +161,8 @@ export function stripAutoRestoreSuffix(name: string): { id: string; autoRestore:
 
 /** 远端一次只读盘点的结果。路径一律是远端复算出来的绝对路径，basename 才是 releaseId。 */
 export interface RemoteReleaseInventory {
+  /** Full commit read from the current remote worktree, never inferred from the run ledger. */
+  currentCommitSha?: string;
   /** readlink current 的原值；空字符串 = 链接不存在。 */
   currentTarget: string;
   /** readlink previous 的原值；空字符串 = 链接不存在。 */
@@ -155,6 +174,10 @@ export interface RemoteReleaseInventory {
   /** 远端复算出的产物根（观测用，删除命令不吃它，见文件头第 1 条）。 */
   releaseRoot: string;
   worktreeRoot: string;
+  worktreeIdentities?: Record<string, string>;
+  versionIdentities?: Record<string, string>;
+  pendingStaticRemovals?: Record<string, { identity: string; commit: string }>;
+  queryError?: string;
 }
 
 export type ReleaseRemoteDriftStatus = 'in-sync' | 'drifted' | 'unknown' | 'not-applicable';
@@ -194,6 +217,7 @@ export function detectReleaseRemoteDrift(input: ReleaseRemoteDriftInput): Releas
       message: 'existing-script 模式由项目自己的脚本发布，CDS 未在远端建立 current 指针，无从比对',
     };
   }
+  if (input.inventory?.queryError) return { status: 'unknown', message: '远端目录扫描未完整确认：' + input.inventory.queryError };
   if (!input.inventory) {
     return {
       status: 'unknown',
@@ -261,6 +285,9 @@ export interface ReleaseArtifactRetentionInput {
   drift: ReleaseRemoteDriftStatus;
   keepRecent?: number;
   maxRemovals?: number;
+  /** 上轮已尝试窗口末项；仅改变顺序，所有引用保护仍先计算。 */
+  afterWorktree?: string;
+  afterVersion?: string;
   /**
    * generated-static 的 publicDirectory 是否被同一个 CDS 内的其他启用目标共用。
    * worktree 路径天然按 targetId 隔离，`.releases` **不隔离** —— 两个目标配了同一个
@@ -373,12 +400,25 @@ export function computeReleaseArtifactRetentionPlan(
     return out.sort();
   };
 
-  const worktreeCandidates = pickCandidates(inventory.worktrees, 'worktree');
-  const versionCandidates = pickCandidates(inventory.versions, 'version');
+  const rotateAfter = (names: string[], after?: string): string[] => {
+    if (!after) return names;
+    const next = names.findIndex(name => name > after);
+    return next > 0 ? [...names.slice(next), ...names.slice(0, next)] : names;
+  };
+  const worktreeCandidates = rotateAfter(pickCandidates(inventory.worktrees, 'worktree'), input.afterWorktree);
+  const versionCandidates = rotateAfter(pickCandidates(inventory.versions, 'version'), input.afterVersion);
   const total = worktreeCandidates.length + versionCandidates.length;
   const budget = Math.max(0, Math.floor(input.maxRemovals ?? total));
-  const removeWorktrees = worktreeCandidates.slice(0, budget);
-  const removeVersions = versionCandidates.slice(0, Math.max(0, budget - removeWorktrees.length));
+  // Dirty build worktrees may remain held for many sweeps. Share the existing
+  // budget so they cannot consume every slot before proved static outputs.
+  const removeWorktrees: string[] = [], removeVersions: string[] = [];
+  let worktreeIndex = 0, versionIndex = 0;
+  while (removeWorktrees.length + removeVersions.length < budget
+    && (worktreeIndex < worktreeCandidates.length || versionIndex < versionCandidates.length)) {
+    if (versionIndex < versionCandidates.length) removeVersions.push(versionCandidates[versionIndex++]);
+    if (removeWorktrees.length + removeVersions.length < budget && worktreeIndex < worktreeCandidates.length)
+      removeWorktrees.push(worktreeCandidates[worktreeIndex++]);
+  }
   return {
     removeWorktrees,
     removeVersions,
@@ -406,7 +446,26 @@ export function buildReleaseInventoryCommand(
   const appPath = shellQuote(target.ssh.appPath);
   const targetId = shellQuote(target.id);
   const head = `cd ${appPath} || exit 1; repo="$PWD"; parent="$(dirname "$repo")"; wt="$parent/.cds-releases/"${targetId}"/worktrees"`;
-  if (strategy.mode === 'generated-compose') {
+  const proofSource = fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8');
+  const scan = `python3 -c ${shellQuote(proofSource + `\nimport os,stat,sys,itertools
+for p,kind in zip(sys.argv[1:],['WORKTREE','VERSION']):
+ try:
+  with os.scandir(p) as entries:rows=list(itertools.islice(entries,1025))
+  if len(rows)>1024:raise ValueError('inventory-budget-exceeded')
+  for e in rows:
+   s=e.stat(follow_symlinks=False)
+   if stat.S_ISDIR(s.st_mode):
+    print('CDS_RELEASE_'+kind+'='+e.name)
+    print('CDS_RELEASE_'+kind+'_IDENTITY='+e.name+'\\t'+str(s.st_dev)+':'+str(s.st_ino))
+ except FileNotFoundError:pass
+ except Exception:print('CDS_RELEASE_SCAN_ERROR='+kind.lower()+'-inventory-unconfirmed')
+if len(sys.argv)>2:
+ try:
+  for name,identity,commit in pending_static_artifacts(pathlib.Path(sys.argv[2]),pathlib.Path(sys.argv[1]).parent):
+   print('CDS_RELEASE_VERSION='+name)
+   print('CDS_RELEASE_STATIC_REMOVAL_PROOF='+name+'\\t'+identity+'\\t'+commit)
+ except Exception:print('CDS_RELEASE_SCAN_ERROR=static-journal-inventory-unconfirmed')`)} "$wt"${strategy.mode === 'generated-static' ? ' "$root/.releases"' : ''}`;
+  if (strategy.mode === 'generated-compose' || strategy.mode === 'project-script' || strategy.mode === 'managed-script') {
     return [
       head,
       'root="$(dirname "$wt")"',
@@ -414,7 +473,8 @@ export function buildReleaseInventoryCommand(
       `printf 'CDS_RELEASE_WORKTREE_ROOT=%s\\n' "$wt"`,
       `printf 'CDS_RELEASE_CURRENT=%s\\n' "$(readlink "$root/current" 2>/dev/null)"`,
       `printf 'CDS_RELEASE_PREVIOUS=%s\\n' "$(readlink "$root/previous" 2>/dev/null)"`,
-      `ls -1 "$wt" 2>/dev/null | sed 's/^/CDS_RELEASE_WORKTREE=/'`,
+      scan,
+      `active_name="$(basename "$(readlink "$root/current" 2>/dev/null)")"; case "$active_name" in rel_*) if [ -e "$wt/$active_name/.git" ]; then printf 'CDS_RELEASE_COMMIT=%s\\n' "$(git -C "$wt/$active_name" rev-parse HEAD 2>/dev/null)"; fi;; esac`,
       'exit 0',
     ].join('; ');
   }
@@ -426,8 +486,8 @@ export function buildReleaseInventoryCommand(
     `printf 'CDS_RELEASE_WORKTREE_ROOT=%s\\n' "$wt"`,
     `printf 'CDS_RELEASE_CURRENT=%s\\n' "$(readlink "$root/current" 2>/dev/null)"`,
     `printf 'CDS_RELEASE_PREVIOUS=%s\\n' "$(readlink "$root/previous" 2>/dev/null)"`,
-    `ls -1 "$wt" 2>/dev/null | sed 's/^/CDS_RELEASE_WORKTREE=/'`,
-    `ls -1 "$root/.releases" 2>/dev/null | sed 's/^/CDS_RELEASE_VERSION=/'`,
+    scan,
+    `active_name="$(basename "$(readlink "$root/current" 2>/dev/null)")"; case "$active_name" in rel_*) if [ -e "$wt/$active_name/.git" ]; then printf 'CDS_RELEASE_COMMIT=%s\\n' "$(git -C "$wt/$active_name" rev-parse HEAD 2>/dev/null)"; fi;; esac`,
     'exit 0',
   ].join('; ');
 }
@@ -446,6 +506,9 @@ export interface RemoteReclaimOutcome {
   removedVersions: string[];
   failedWorktrees: string[];
   failedVersions: string[];
+  heldReasons?: Record<string, string>;
+  queryError?: string;
+  filesystemNetAvailableChange?: number;
 }
 
 export function parseRemoteReclaimOutcome(stdout: string): RemoteReclaimOutcome {
@@ -458,9 +521,16 @@ export function parseRemoteReclaimOutcome(stdout: string): RemoteReclaimOutcome 
     if (eq <= 0) continue;
     const key = line.slice(0, eq);
     const value = line.slice(eq + 1).trim();
+    if (key === 'CDS_RELEASE_FILESYSTEM_NET_AVAILABLE_CHANGE' && /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value))) { outcome.filesystemNetAvailableChange = Number(value); continue; }
+    if (key === 'CDS_RELEASE_QUERY_ERROR') { outcome.queryError = value; continue; }
+    if (key === 'CDS_RELEASE_HELD_WORKTREE' || key === 'CDS_RELEASE_HELD_VERSION') {
+      const [name, reason] = value.split('\t');
+      if (isReleaseArtifactId(name) && reason) (outcome.heldReasons ||= {})[`${key.endsWith('WORKTREE') ? 'worktree' : 'version'}:${name}`] = reason;
+      continue;
+    }
     if (!value || !isReleaseArtifactId(value)) continue;
-    if (key === 'CDS_RELEASE_RECLAIMED_WORKTREE') outcome.removedWorktrees.push(value);
-    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION') outcome.removedVersions.push(value);
+    if (key === 'CDS_RELEASE_RECLAIMED_WORKTREE' || key === 'CDS_RELEASE_RECLAIMABLE_WORKTREE') outcome.removedWorktrees.push(value);
+    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION' || key === 'CDS_RELEASE_RECLAIMABLE_VERSION') outcome.removedVersions.push(value);
     else if (key === 'CDS_RELEASE_RECLAIM_FAILED_WORKTREE') outcome.failedWorktrees.push(value);
     else if (key === 'CDS_RELEASE_RECLAIM_FAILED_VERSION') outcome.failedVersions.push(value);
   }
@@ -482,67 +552,48 @@ export function parseRemoteReleaseInventory(stdout: string): RemoteReleaseInvent
     if (eq <= 0) continue;
     const key = line.slice(0, eq);
     const value = line.slice(eq + 1).trim();
+    if (key === 'CDS_RELEASE_COMMIT' && /^[a-f0-9]{40}$/.test(value)) inventory.currentCommitSha = value;
     if (key === 'CDS_RELEASE_CURRENT') inventory.currentTarget = value;
     else if (key === 'CDS_RELEASE_PREVIOUS') inventory.previousTarget = value;
     else if (key === 'CDS_RELEASE_ROOT') inventory.releaseRoot = value;
     else if (key === 'CDS_RELEASE_WORKTREE_ROOT') inventory.worktreeRoot = value;
     else if (key === 'CDS_RELEASE_WORKTREE' && value) inventory.worktrees.push(value);
     else if (key === 'CDS_RELEASE_VERSION' && value) inventory.versions.push(value);
+    else if (key === 'CDS_RELEASE_WORKTREE_IDENTITY' || key === 'CDS_RELEASE_VERSION_IDENTITY') {
+      const [name, identity] = value.split('\t');
+      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '')) {
+        if (key === 'CDS_RELEASE_VERSION_IDENTITY') (inventory.versionIdentities ||= {})[name] = identity;
+        else (inventory.worktreeIdentities ||= {})[name] = identity;
+      }
+    } else if (key === 'CDS_RELEASE_STATIC_REMOVAL_PROOF') {
+      const [name, identity, commit] = value.split('\t');
+      if (isReleaseArtifactId(name) && /^\d+:\d+$/.test(identity || '') && /^[a-f0-9]{40}$/.test(commit || ''))
+        (inventory.pendingStaticRemovals ||= {})[name] = { identity, commit };
+    } else if (key === 'CDS_RELEASE_SCAN_ERROR') inventory.queryError = value;
   }
   return inventory;
 }
 
-/**
- * 删除命令。worktree 必须走 `git worktree remove --force` 而不是裸 `rm -rf`：
- * 后者会在仓库的 `.git/worktrees/` 里留一堆孤儿元数据，久了 `git worktree add`
- * 会因为「已注册但目录不存在」直接失败（worktree.ts 为此专门有 prune 兜底）。
- * static 的成品目录没有 git 元数据，`rm -rf` 即可。
- *
- * 路径同样在远端复算（见文件头第 1 条），TS 侧只传经过形状校验的 basename。
- */
+/** Native proof is repeated after policy planning. Unknown ownership, modified
+ * data, changed identities and current/stopped-container refs are held. */
 export function buildReleaseReclaimCommand(
   target: ReleaseTarget,
   strategy: ReleaseStrategy,
   plan: Pick<ReleaseArtifactRetentionPlan, 'removeWorktrees' | 'removeVersions'>,
+  proof: { commits?: Record<string,string>; identities?: Record<string,string>; versionIdentities?: Record<string,string>; dryRun?: boolean } = {},
 ): string | null {
-  if (!target.ssh) return null;
-  if (strategy.mode === 'existing-script') return null;
+  if (!target.ssh || strategy.mode === 'existing-script') return null;
   const worktrees = plan.removeWorktrees.filter(isReleaseArtifactId);
   const versions = strategy.mode === 'generated-static' ? plan.removeVersions.filter(isReleaseArtifactId) : [];
-  if (worktrees.length === 0 && versions.length === 0) return null;
-
-  const appPath = shellQuote(target.ssh.appPath);
-  const targetId = shellQuote(target.id);
-  const parts = [
-    `cd ${appPath} || exit 1`,
-    'repo="$PWD"',
-    'parent="$(dirname "$repo")"',
-    `wt="$parent/.cds-releases/"${targetId}"/worktrees"`,
-  ];
-  if (worktrees.length > 0) {
-    parts.push(
-      `for name in ${worktrees.map(shellQuote).join(' ')}; do `
-      + 'git -C "$repo" worktree remove --force "$wt/$name" >/dev/null 2>&1 || rm -rf "$wt/$name" >/dev/null 2>&1 || true; '
-      // 只在目录**真的不存在了**才报「已回收」。两条删除都失败时（只读挂载、
-      // 权限、句柄占用）printf 照样跑就会产出假证据：API 与巡检报告已删，
-      // 盘上还在、磁盘继续涨（Codex P2）。报不出来的那条走 FAILED，调用方据此
-      // 不计入 removed —— 宁可少报，绝不谎报。
-      + 'if [ -e "$wt/$name" ]; then '
-      + `printf 'CDS_RELEASE_RECLAIM_FAILED_WORKTREE=%s\\n' "$name"; else `
-      + `printf 'CDS_RELEASE_RECLAIMED_WORKTREE=%s\\n' "$name"; fi; done`,
-    );
-    parts.push('git -C "$repo" worktree prune >/dev/null 2>&1 || true');
-  }
-  if (versions.length > 0) {
-    parts.push(`root=${shellQuote(strategy.publicDirectory || '')}`);
-    parts.push(
-      `for name in ${versions.map(shellQuote).join(' ')}; do `
-      + 'rm -rf "$root/.releases/$name" >/dev/null 2>&1 || true; '
-      + 'if [ -e "$root/.releases/$name" ]; then '
-      + `printf 'CDS_RELEASE_RECLAIM_FAILED_VERSION=%s\\n' "$name"; else `
-      + `printf 'CDS_RELEASE_RECLAIMED_VERSION=%s\\n' "$name"; fi; done`,
-    );
-  }
-  parts.push('exit 0');
-  return parts.join('; ');
+  if (!worktrees.length && !versions.length) return null;
+  const source = fs.readFileSync(new URL('./static-artifact-proof.py', import.meta.url), 'utf8') + '\n'
+    + fs.readFileSync(new URL('./remote-release-reclaim.py', import.meta.url), 'utf8');
+  const spec = Buffer.from(JSON.stringify({worktrees, versions, ...proof, targetId: target.id})).toString('base64');
+  return `cd ${shellQuote(target.ssh.appPath)} || exit 1
+repo="$PWD"
+parent="$(dirname "$repo")"
+wt="$parent/.cds-releases/"${shellQuote(target.id)}"/worktrees"
+python3 - "$repo" "$wt" ${shellQuote(strategy.mode === 'generated-static' ? strategy.publicDirectory || '' : '')} ${shellQuote(spec)} <<'CDS_SAFE_RECLAIM_PY'
+${source}
+CDS_SAFE_RECLAIM_PY`;
 }

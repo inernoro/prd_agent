@@ -124,6 +124,9 @@ function startHarness(configOverrides: Partial<CdsConfig> = {}): Promise<TestHar
         setExecutorAgent: setAgent,
         getStrategy,
         setStrategy,
+        // 默认按单机部署（绑回环）——这正是签发连接码时最容易出问题的那一档：
+        // 连接码若指向裸端口，远端 executor 连不上，必须当场告警。
+        getListenDecision: () => ({ host: '127.0.0.1', reason: '单机部署（测试）', exposed: false }),
       }),
     );
 
@@ -192,8 +195,21 @@ describe('Cluster router (UI bootstrap)', () => {
       // with a localhost masterUrl. The check is that we DON'T 500 — the
       // fallback path works.
       expect(res.status).toBe(200);
-      const body = res.body as { masterUrl: string };
+      const body = res.body as { masterUrl: string; reachabilityWarning: string | null };
       expect(body.masterUrl).toContain('127.0.0.1');
+      // 这条兜底地址带显式端口，而本机只监听回环——远端 executor 拿着它注册
+      // 一定连不上。不能只把码发出去，得在这一刻说清楚。
+      expect(body.reachabilityWarning).toContain('CDS_BIND_HOST');
+    });
+
+    it('走 nginx 前置域名时不报可达性告警', async () => {
+      harness = await startHarness({ rootDomains: ['cds.miduo.org'] });
+      const res = await request(harness.server, 'POST', '/api/cluster/issue-token');
+
+      expect(res.status).toBe(200);
+      const body = res.body as { masterUrl: string; reachabilityWarning: string | null };
+      expect(body.masterUrl).toBe('https://cds.miduo.org');
+      expect(body.reachabilityWarning).toBeNull();
     });
   });
 

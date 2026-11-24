@@ -14,17 +14,17 @@ const DIALECT_TONE: Record<SqlDialect, { bg: string; border: string; fg: string 
   mssql: {
     bg: 'rgba(99, 102, 241, 0.12)',
     border: 'rgba(99, 102, 241, 0.35)',
-    fg: 'rgba(165, 180, 252, 0.95)',
+    fg: 'var(--accent-fg-blue)',
   },
   mysql: {
     bg: 'rgba(56, 189, 248, 0.12)',
     border: 'rgba(56, 189, 248, 0.35)',
-    fg: 'rgba(125, 211, 252, 0.95)',
+    fg: 'var(--accent-fg-blue)',
   },
   'mssql+mysql': {
     bg: 'rgba(244, 114, 182, 0.12)',
     border: 'rgba(244, 114, 182, 0.35)',
-    fg: 'rgba(249, 168, 212, 0.95)',
+    fg: 'var(--accent-fg-violet)',
   },
 };
 
@@ -158,7 +158,7 @@ export function CcasSqlSnippets() {
                             type="button"
                             onClick={() => setSelectedId(s.id)}
                             data-active={isActive}
-                            className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-token-secondary hover-text-primary hover-bg-soft data-[active=true]:bg-amber-300/12 data-[active=true]:text-amber-200 data-[active=true]:font-medium transition flex items-center gap-2"
+                            className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-token-secondary hover-text-primary hover-bg-soft data-[active=true]:bg-amber-300/12 data-[active=true]:text-[color:var(--accent-fg-amber)] data-[active=true]:font-medium transition flex items-center gap-2"
                           >
                             <span
                               aria-hidden
@@ -183,7 +183,7 @@ export function CcasSqlSnippets() {
         <div className="flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {selected ? (
             <article className="flex flex-col">
-              <header className="sticky top-0 z-10 px-4 py-3 border-b border-token-subtle bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
+              <header className="surface-tone-dark sticky top-0 z-10 px-4 py-3 border-b border-token-subtle bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <h3 className="text-sm font-semibold text-token-primary truncate">{selected.title}</h3>
                   <DialectBadge dialect={selected.dialect} />
@@ -192,7 +192,7 @@ export function CcasSqlSnippets() {
                 <button
                   type="button"
                   onClick={() => handleCopy(selected)}
-                  className="shrink-0 inline-flex items-center gap-1 h-7 px-3 rounded-md text-xs text-amber-200 border border-amber-300/35 bg-amber-300/10 hover:bg-amber-300/20 hover:border-amber-300/55 transition"
+                  className="shrink-0 inline-flex items-center gap-1 h-7 px-3 rounded-md text-xs text-[color:var(--accent-fg-amber)] border border-amber-300/35 bg-amber-300/10 hover:bg-amber-300/20 hover:border-amber-300/55 transition"
                   title="复制 SQL 到剪贴板"
                 >
                   <Copy className="w-3 h-3" />

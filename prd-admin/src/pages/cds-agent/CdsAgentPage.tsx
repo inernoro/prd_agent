@@ -837,7 +837,7 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
             <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.stdout}</pre>
           )}
           {typeof detail.stderr === 'string' && detail.stderr && (
-            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{detail.stderr}</pre>
+            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]">{detail.stderr}</pre>
           )}
         </div>
       );
@@ -856,10 +856,10 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
             <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{state.domTree}</pre>
           )}
           {Array.isArray(state.consoleErrors) && state.consoleErrors.length > 0 && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
           )}
           {Array.isArray(state.networkErrors) && state.networkErrors.length > 0 && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{JSON.stringify(state.networkErrors, null, 2)}</pre>
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]">{JSON.stringify(state.networkErrors, null, 2)}</pre>
           )}
         </div>
       );
@@ -2121,7 +2121,7 @@ export default function CdsAgentPage() {
             <Route size={15} />
             执行链路
           </div>
-          <div className="mt-1 text-xs leading-relaxed text-white/45">
+          <div className="mt-1 text-xs leading-relaxed text-white/55">
             从任务、runtime、沙箱到 PR/证据包的完整状态，避免用户只看到一堆日志却不知道 Agent 现在卡在哪。
           </div>
         </div>
@@ -2154,12 +2154,12 @@ export default function CdsAgentPage() {
                 }}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-white/48">{step.label}</span>
+                  <span className="text-xs font-semibold text-white/55">{step.label}</span>
                   <span
                     className="inline-flex h-7 w-7 items-center justify-center rounded-md"
                     style={{ background: isPass ? 'rgba(34,197,94,0.13)' : isWarn ? 'rgba(245,158,11,0.16)' : 'rgba(148,163,184,0.08)' }}
                   >
-                    <Icon size={14} className={isPass ? 'text-emerald-300/85' : isWarn ? 'text-amber-200/85' : 'text-white/36'} />
+                    <Icon size={14} className={isPass ? 'text-emerald-300/85' : isWarn ? 'text-amber-200/85' : 'text-white/55'} />
                   </span>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
@@ -2168,7 +2168,7 @@ export default function CdsAgentPage() {
                   </span>
                   <div className="min-w-0 truncate text-sm font-semibold text-white/82">{step.value}</div>
                 </div>
-                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">{step.detail}</div>
+                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">{step.detail}</div>
               </div>
             );
           })}
@@ -2187,7 +2187,7 @@ export default function CdsAgentPage() {
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/48">
+            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/55">
               <ListChecks size={13} />
               当前执行面板
             </div>
@@ -2220,7 +2220,7 @@ export default function CdsAgentPage() {
           <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:min-w-[190px]">
             {runtimeDiagnostics.executionStepTotal > 0 && (
               <div className="rounded-md px-2 py-1.5 text-right" style={{ background: 'rgba(15,23,42,0.5)', border: '1px solid rgba(148,163,184,0.14)' }}>
-                <div className="text-[11px] font-semibold text-white/42">执行进度</div>
+                <div className="text-[11px] font-semibold text-white/55">执行进度</div>
                 <div className="mt-0.5 text-xs font-semibold text-white/78">
                   {runtimeDiagnostics.executionPassedSteps}/{runtimeDiagnostics.executionStepTotal} 已完成 · 当前 {runtimeDiagnostics.executionStepIndex}/{runtimeDiagnostics.executionStepTotal}
                 </div>
@@ -2288,7 +2288,7 @@ export default function CdsAgentPage() {
             <button
               type="button"
               onClick={() => void copyText('当前下一步命令', runtimeDiagnostics.commercialNextCommand)}
-              className="shrink-0 rounded p-1.5 text-white/46 hover:text-white/86"
+              className="shrink-0 rounded p-1.5 text-white/55 hover:text-white/86"
               aria-label="复制当前下一步命令"
             >
               <Copy size={12} />
@@ -3548,7 +3548,7 @@ export default function CdsAgentPage() {
           className="rounded-md px-3 py-1.5 text-sm transition-colors"
           style={
             viewMode === mode
-              ? { background: 'rgba(99,179,237,0.18)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }
+              ? { background: 'rgba(99,179,237,0.18)', border: '1px solid rgba(99,179,237,0.4)', color: 'var(--accent-fg-blue)' }
               : { color: 'rgba(255,255,255,0.55)' }
           }
         >
@@ -3800,7 +3800,7 @@ export default function CdsAgentPage() {
 	            key={item}
 	            type="button"
 	            onClick={() => setPrompt(item)}
-	            className="rounded-lg px-2.5 py-1.5 text-xs text-white/46 hover:text-white/76"
+	            className="rounded-lg px-2.5 py-1.5 text-xs text-white/55 hover:text-white/76"
 	            style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}
 	          >
 	            {item}
@@ -3833,7 +3833,7 @@ export default function CdsAgentPage() {
 	          placeholder={simpleTaskMode === 'code'
 	            ? '在此输入：告诉 Agent 要巡检什么，例如「找出当前仓库最值得修复的一个小问题，并说明如何提交 PR」'
 	            : '在此输入你的问题，回车发送（无需先填仓库）'}
-	          className="no-focus-ring min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none placeholder:text-white/40"
+	          className="no-focus-ring min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none placeholder:text-white/55"
 	        />
           {/* 只在失败时显示诊断卡(含 复制诊断/traceId)。正常发送/运行/完成阶段不再弹这张
               「正在发送任务…」开发者卡片——进度已由对话里的用户气泡(sending/sent)+「正在生成回复/思考」
@@ -3854,17 +3854,17 @@ export default function CdsAgentPage() {
                       ? <ShieldCheck size={13} className="text-emerald-300/80" />
                       : <MapSpinner size={13} />}
                   <span className="font-semibold">{simpleRunState.label}</span>
-                  <span className="text-white/38">· {formatHumanDuration(simpleRunElapsedSeconds)}</span>
+                  <span className="text-white/55">· {formatHumanDuration(simpleRunElapsedSeconds)}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => void copyText('请求诊断', buildSimpleRunDiagnostic(simpleRunState))}
-                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-white/45 hover:text-white/80"
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-white/55 hover:text-white/80"
                 >
                   <Copy size={12} /> 复制诊断
                 </button>
               </div>
-              {simpleRunState.detail && <div className="mt-1 text-white/48">{simpleRunState.detail}</div>}
+              {simpleRunState.detail && <div className="mt-1 text-white/55">{simpleRunState.detail}</div>}
               {simpleRunState.errorMessage && (
                 <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-lg p-2 text-[11px] leading-relaxed text-red-100/78" style={{ background: 'rgba(0,0,0,0.24)' }}>
                   {[
@@ -3887,7 +3887,7 @@ export default function CdsAgentPage() {
 	              return (
 	                <button key={mode.value} type="button" onClick={() => setSimpleTaskMode(mode.value)}
 	                  className="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-semibold"
-	                  style={active ? { background: 'rgba(96,165,250,0.18)', color: 'rgba(191,219,254,0.96)' } : { color: 'rgba(255,255,255,0.46)' }}>
+	                  style={active ? { background: 'rgba(96,165,250,0.18)', color: 'var(--accent-fg-blue)' } : { color: 'rgba(255,255,255,0.46)' }}>
 	                  <Icon size={12} />{mode.label}
 	                </button>
 	              );
@@ -3899,13 +3899,13 @@ export default function CdsAgentPage() {
 	                  createInfraAgentSession 也没有这个字段。为避免"选了却不生效"误导用户,
 	                  暂时禁用并标注「开发中」。后端 KB 注入设计落地后再启用并接 workspaceKbId。 */}
 	              <select value="" disabled title="知识库注入开发中，暂不生效"
-	                className="h-7 min-w-[150px] flex-1 rounded-md px-2 text-xs text-white/45 outline-none cursor-not-allowed"
+	                className="h-7 min-w-[150px] flex-1 rounded-md px-2 text-xs text-white/55 outline-none cursor-not-allowed"
 	                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}>
 	                <option value="">知识库注入（开发中）</option>
 	              </select>
 	              <input value={draft.gitRepository} onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
 	                placeholder="可选：GitHub（钩子）"
-	                className="h-7 min-w-[110px] flex-1 rounded-md px-2.5 text-xs text-white outline-none placeholder:text-white/30"
+	                className="h-7 min-w-[110px] flex-1 rounded-md px-2.5 text-xs text-white outline-none placeholder:text-white/55"
 	                style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }} />
 	            </>
 	          )}
@@ -3925,7 +3925,7 @@ export default function CdsAgentPage() {
 	          {activeSessionRuntimeState.isLive && (
 	            <button type="button" onClick={() => void stopSession()} disabled={busy} title="停止"
 	              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg disabled:opacity-45"
-	              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'rgba(252,165,165,0.98)' }}>
+	              style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'var(--accent-fg-danger)' }}>
 	              <Square size={13} />
 	            </button>
 	          )}
@@ -3957,7 +3957,7 @@ export default function CdsAgentPage() {
 	            <div className="flex items-center justify-between gap-2 border-b border-token-subtle px-4 py-3">
 	              <div className="min-w-0">
 	                <div className="text-sm font-semibold text-white/82">任务</div>
-	                <div className="mt-0.5 truncate text-xs text-white/38">{sortedSessions.length} 个会话 · {activeSession ? statusLabel(activeSessionEffectiveStatus) : '待运行'}</div>
+	                <div className="mt-0.5 truncate text-xs text-white/55">{sortedSessions.length} 个会话 · {activeSession ? statusLabel(activeSessionEffectiveStatus) : '待运行'}</div>
 	              </div>
 	              <button
 	                type="button"
@@ -3986,21 +3986,21 @@ export default function CdsAgentPage() {
 	              </div>
 	            )}
 	            <label className="mx-3 mt-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
-	              <Search size={13} className="text-white/35" />
+	              <Search size={13} className="text-white/55" />
 	              <input
 	                value={sessionQuery}
 	                onChange={(e) => setSessionQuery(e.target.value)}
-                className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/55"
 	                placeholder="搜索任务、模型、状态"
 	              />
 	            </label>
 	            <div className="h-[calc(100%-116px)] space-y-3 overflow-y-auto px-3 pb-3 pt-3" style={{ overscrollBehavior: 'contain' }}>
 	              {sortedSessions.length === 0 ? (
-	                <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl text-center text-xs text-white/38" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+	                <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl text-center text-xs text-white/55" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
 	                  还没有任务
 	                </div>
 	              ) : visibleSessions.length === 0 ? (
-	                <div className="flex min-h-[180px] items-center justify-center rounded-xl text-center text-xs text-white/38" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+	                <div className="flex min-h-[180px] items-center justify-center rounded-xl text-center text-xs text-white/55" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
 	                  没有匹配的任务
 	                </div>
 	              ) : (
@@ -4009,7 +4009,7 @@ export default function CdsAgentPage() {
                   ['已完成', finishedSessions],
                 ] as const).filter(([, list]) => list.length > 0).map(([groupLabel, list]) => (
 	                  <div key={groupLabel} className="space-y-1.5">
-	                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wide text-white/34">{groupLabel} · {list.length}</div>
+	                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wide text-white/55">{groupLabel} · {list.length}</div>
 	                    {list.map((session) => {
 	                      const selected = session.id === activeSession?.id;
 	                      const sessionState = resolveSessionRuntimeState(session, nowTick);
@@ -4029,7 +4029,7 @@ export default function CdsAgentPage() {
 	                            <span className={`h-2 w-2 shrink-0 rounded-full ${live ? 'animate-pulse bg-sky-400' : selected ? 'bg-sky-400/80' : 'bg-white/18'}`} />
 	                            <span className="truncate text-sm font-medium text-white/76">{session.title}</span>
 	                          </div>
-	                          <div className="mt-1 truncate pl-4 text-xs text-white/38">{statusLabel(sessionState.effectiveStatus)} · {formatRelativePast(session.updatedAt, nowTick)}</div>
+	                          <div className="mt-1 truncate pl-4 text-xs text-white/55">{statusLabel(sessionState.effectiveStatus)} · {formatRelativePast(session.updatedAt, nowTick)}</div>
 	                        </button>
 	                      );
 	                    })}
@@ -4046,7 +4046,7 @@ export default function CdsAgentPage() {
 	                  <span className={`h-2.5 w-2.5 rounded-full ${isLiveStatus ? 'animate-pulse bg-sky-400' : activeSession ? 'bg-white/28' : 'bg-amber-300/80'}`} />
 	                  <h1 className="truncate text-base font-semibold text-white/86">{activeSession ? activeSession.title : 'CDS Agent 只读巡检'}</h1>
 	                </div>
-	                <div className="mt-1 truncate text-xs text-white/42">
+	                <div className="mt-1 truncate text-xs text-white/55">
 	                  {activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · ${activeTargetLabel}` : '填写目标和任务，点击运行后自动创建 CDS 会话'}
 	                </div>
 	              </div>
@@ -4077,7 +4077,7 @@ export default function CdsAgentPage() {
 	                    onClick={() => void startSession()}
 	                    disabled={busy}
 	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
-	                    style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }}
+	                    style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: 'var(--accent-fg-blue)' }}
 	                  >
 	                    <Play size={14} /> {primaryActionLabel(activeSessionEffectiveStatus)}
                   </button>
@@ -4088,7 +4088,7 @@ export default function CdsAgentPage() {
 	                    onClick={() => void stopSession()}
 	                    disabled={busy}
 	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
-	                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}
+	                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
 	                  >
 	                    <Square size={14} /> 停止
                   </button>
@@ -4105,7 +4105,7 @@ export default function CdsAgentPage() {
 	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
 	                    <h2 className="text-2xl font-semibold text-white/88">{simpleTaskMode === 'code' ? '要在这个仓库里检查什么？' : '想让 Agent 做什么？'}</h2>
-	                    <div className="mt-2 text-sm text-white/42">
+	                    <div className="mt-2 text-sm text-white/55">
                         {simpleTaskMode === 'code'
                           ? '输入代码巡检任务后，CDS 会创建只读 Agent 会话并沉淀过程、结果和产物。'
                           : '可以先直接对话；需要仓库、测试或 PR 建议时再切到「代码」模式。'}
@@ -4126,7 +4126,7 @@ export default function CdsAgentPage() {
 	                            border: isUser ? '1px solid rgba(96,165,250,0.28)' : '1px solid rgba(255,255,255,0.08)',
 	                          }}
 	                        >
-	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
+	                          <div className="mb-1 text-[11px] text-white/55">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
                           {block.msg.role === 'assistant' ? (
                             block.msg.id === 'assistant-stream' ? (
                               // 同一个 StreamingText 贯穿「流式中→已完成」两阶段：流式时词级动画(纯文本,
@@ -4149,7 +4149,7 @@ export default function CdsAgentPage() {
                             <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{displayMessageContent(block.msg)}</div>
                           )}
                           {(block.msg.status === 'sending' || block.msg.status === 'failed') && (
-                            <div className="mt-1 text-[11px] text-white/35">
+                            <div className="mt-1 text-[11px] text-white/55">
                               {block.msg.status === 'failed' ? '发送失败，请检查上方错误后重试。' : simpleSubmitStatus || '正在提交…'}
                             </div>
                           )}
@@ -4215,9 +4215,9 @@ export default function CdsAgentPage() {
 	                          <span className="shrink-0 font-semibold">
                             {processTitle}
                           </span>
-                          <span className="shrink-0 text-white/40">{processMeta || `${events.length} 条`} · 用时 {formatHumanDuration(durationSec)}</span>
-                          <span className="min-w-0 flex-1 truncate text-white/40">{open ? '' : processHint}</span>
-                          {!forcedOpen && <span className="shrink-0 text-white/35">{open ? '收起' : '展开'}</span>}
+                          <span className="shrink-0 text-white/55">{processMeta || `${events.length} 条`} · 用时 {formatHumanDuration(durationSec)}</span>
+                          <span className="min-w-0 flex-1 truncate text-white/55">{open ? '' : processHint}</span>
+                          {!forcedOpen && <span className="shrink-0 text-white/55">{open ? '收起' : '展开'}</span>}
                         </button>
                         {open && (
                           <div className="space-y-1.5 border-t border-token-subtle px-3 py-2">
@@ -4250,15 +4250,15 @@ export default function CdsAgentPage() {
                                         ? <Square size={12} className="shrink-0 text-red-300/70" />
                                         : <Terminal size={12} className="shrink-0" />}
                                     <span className="min-w-0 flex-1 break-words">{label}</span>
-                                    {canExpand && <span className="shrink-0 text-white/30">{stepOpen ? '收起' : '详情'}</span>}
+                                    {canExpand && <span className="shrink-0 text-white/55">{stepOpen ? '收起' : '详情'}</span>}
                                   </button>
                                   {stepOpen && canExpand && (
                                     <div className="mt-1 border-t border-token-subtle pt-1"><EventBody event={event} /></div>
                                   )}
                                   {waitingApproval && (
                                     <div className="mt-2 flex gap-2">
-                                      <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
-                                      <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
+                                      <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }}>允许</button>
+                                      <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>拒绝</button>
                                     </div>
                                   )}
                                 </div>
@@ -4317,7 +4317,7 @@ export default function CdsAgentPage() {
 	              <div className="flex items-center justify-between gap-3">
 	                <div>
 	                  <div className="text-sm font-semibold text-white/82">{showRunProgress ? '运行进展' : '准备情况'}</div>
-	                  <div className="mt-1 text-xs text-white/42">
+	                  <div className="mt-1 text-xs text-white/55">
 	                    准备项 {readinessDone}/{readinessChecklist.length} 就绪{showRunProgress ? ` · 运行项 ${runProgressDone}/${runProgressChecklist.length}` : ''}
 	                  </div>
 	                </div>
@@ -4336,14 +4336,14 @@ export default function CdsAgentPage() {
 	                      </span>
 	                      <div className="min-w-0">
 	                        <div className="text-sm font-medium text-white/76">{item.label}</div>
-	                        <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/40">{item.detail}</div>
+	                        <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/55">{item.detail}</div>
 	                      </div>
 	                    </div>
 	                  );
 	                })}
                   {showRunProgress && (
                     <div className="border-t border-token-subtle pt-3">
-                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-normal text-white/34">任务运行</div>
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-normal text-white/55">任务运行</div>
                       <div className="space-y-3">
                         {runProgressChecklist.map((item) => {
                           const done = item.state === 'pass';
@@ -4355,7 +4355,7 @@ export default function CdsAgentPage() {
                               </span>
                               <div className="min-w-0">
                                 <div className="text-sm font-medium text-white/76">{item.label}</div>
-                                <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/40">{item.detail}</div>
+                                <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/55">{item.detail}</div>
                               </div>
                             </div>
                           );
@@ -4375,12 +4375,12 @@ export default function CdsAgentPage() {
 	                </span>
 	              </div>
 	              <div className="space-y-2 text-xs">
-	                <div className="flex justify-between gap-3"><span className="text-white/38">目标</span><span className="min-w-0 truncate text-white/70" title={fullTargetLabel}>{activeTargetLabel}</span></div>
-	                <div className="flex justify-between gap-3"><span className="text-white/38">分支</span><span className="min-w-0 truncate text-white/70">{gitContext.branch || '等待 Agent 创建'}</span></div>
-	                <div className="flex justify-between gap-3"><span className="text-white/38">提交</span><span className="font-mono text-white/70">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
+	                <div className="flex justify-between gap-3"><span className="text-white/55">目标</span><span className="min-w-0 truncate text-white/70" title={fullTargetLabel}>{activeTargetLabel}</span></div>
+	                <div className="flex justify-between gap-3"><span className="text-white/55">分支</span><span className="min-w-0 truncate text-white/70">{gitContext.branch || '等待 Agent 创建'}</span></div>
+	                <div className="flex justify-between gap-3"><span className="text-white/55">提交</span><span className="font-mono text-white/70">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
 	              </div>
 	              {gitContext.prUrl && (
-	                <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>
+	                <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }}>
 	                  <Globe2 size={12} /> 打开 Pull Request
 	                </a>
 	              )}
@@ -4404,11 +4404,11 @@ export default function CdsAgentPage() {
 	                  <div key={artifact.id} className="rounded-xl p-2.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
 	                    <div className="flex items-center justify-between gap-2">
 	                      <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-xs font-semibold text-white/72">{artifactIcon(artifact.kind)} {artifact.title}</span>
-	                      <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="shrink-0 rounded p-1 text-white/40 hover:text-white/80" aria-label={`复制${artifact.title}`}>
+	                      <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="shrink-0 rounded p-1 text-white/55 hover:text-white/80" aria-label={`复制${artifact.title}`}>
 	                        <Copy size={12} />
 	                      </button>
 	                    </div>
-	                    <div className="mt-1 line-clamp-2 text-xs text-white/42">{artifact.summary}</div>
+	                    <div className="mt-1 line-clamp-2 text-xs text-white/55">{artifact.summary}</div>
 	                  </div>
 	                )) : evidenceEvents.length > 0 ? evidenceEvents.map((event) => {
 	                  const payload = parsePayload(event);
@@ -4416,13 +4416,13 @@ export default function CdsAgentPage() {
 	                    <div key={event.id} className="rounded-xl px-3 py-2 text-xs" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}>
 	                      <div className="flex items-center justify-between gap-2">
 	                        <span className="font-semibold text-white/66">{event.type === 'error' ? '错误' : event.type === 'diff' ? 'Diff' : event.type === 'file' ? '文件' : '工具结果'}</span>
-	                        <span className="font-mono text-white/30">#{event.seq}</span>
+	                        <span className="font-mono text-white/55">#{event.seq}</span>
 	                      </div>
-	                      <div className="mt-1 line-clamp-2 text-white/38">{String(payload.message ?? payload.summary ?? payload.path ?? payload.toolName ?? '已记录')}</div>
+	                      <div className="mt-1 line-clamp-2 text-white/55">{String(payload.message ?? payload.summary ?? payload.path ?? payload.toolName ?? '已记录')}</div>
 	                    </div>
 	                  );
 	                }) : (
-	                  <div className="rounded-xl px-3 py-4 text-xs leading-relaxed text-white/38" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+	                  <div className="rounded-xl px-3 py-4 text-xs leading-relaxed text-white/55" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
 	                    等待文件、diff、命令输出或日志证据。
 	                  </div>
 	                )}
@@ -4435,20 +4435,20 @@ export default function CdsAgentPage() {
 	                {simpleRunSummary.map((item) => (
 	                  <div key={item.label} className="rounded-xl px-3 py-2.5" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.055)' }}>
 	                    <div className="flex items-center justify-between gap-3">
-	                      <span className="text-xs text-white/38">{item.label}</span>
+	                      <span className="text-xs text-white/55">{item.label}</span>
 	                      <span className="min-w-0 truncate text-xs font-semibold text-white/76">{item.value}</span>
 	                    </div>
-	                    <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-white/34">{item.detail}</div>
+	                    <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-white/55">{item.detail}</div>
 	                  </div>
 	                ))}
 	              </div>
-	              <details className="mt-3 rounded-xl px-3 py-2 text-xs text-white/46" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.055)' }}>
+	              <details className="mt-3 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.055)' }}>
 	                <summary className="cursor-pointer select-none font-semibold text-white/58">调试信息</summary>
 	                <div className="mt-2 space-y-1.5">
 	                  {simpleDebugTelemetry.map((item) => (
 	                    <div key={item.label} className="flex gap-2">
-	                      <span className="w-20 shrink-0 text-white/32">{item.label}</span>
-	                      <span className="min-w-0 break-all font-mono text-white/48">{item.value}</span>
+	                      <span className="w-20 shrink-0 text-white/55">{item.label}</span>
+	                      <span className="min-w-0 break-all font-mono text-white/55">{item.value}</span>
 	                    </div>
 	                  ))}
 	                </div>
@@ -4499,9 +4499,9 @@ export default function CdsAgentPage() {
                 { label: '产物', value: metrics.artifactCount, hint: `${metrics.eventCount} 事件` },
               ].map((item) => (
                 <div key={item.label} className="min-w-0 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="text-[11px] text-white/36">{item.label}</div>
+                  <div className="text-[11px] text-white/55">{item.label}</div>
                   <div className="mt-1 truncate text-sm font-semibold text-white/82">{item.value}</div>
-                  <div className="mt-0.5 truncate text-xs text-white/38">{item.hint}</div>
+                  <div className="mt-0.5 truncate text-xs text-white/55">{item.hint}</div>
                 </div>
               ))}
             </div>
@@ -4526,9 +4526,9 @@ export default function CdsAgentPage() {
               className="min-h-[76px] rounded-xl px-4 py-3"
               style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
-              <div className="text-xs text-white/45">{item.label}</div>
+              <div className="text-xs text-white/55">{item.label}</div>
               <div className="mt-1 text-2xl font-semibold leading-none text-white/88">{item.value}</div>
-              <div className="mt-2 truncate text-xs text-white/42">{item.hint}</div>
+              <div className="mt-2 truncate text-xs text-white/55">{item.hint}</div>
             </div>
           ))}
         </section>
@@ -4540,11 +4540,11 @@ export default function CdsAgentPage() {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <div className="text-sm font-semibold text-white/78">SLA / 成本</div>
-              <div className="mt-1 text-xs text-white/42">
+              <div className="mt-1 text-xs text-white/55">
                 {slaDashboard ? `${slaDashboard.windowDays} 天窗口 · ${formatTime(slaDashboard.generatedAt)}` : '等待后端 SLA 指标'}
               </div>
             </div>
-            <div className="text-xs text-white/42">
+            <div className="text-xs text-white/55">
               {slaRuntimeFocus ? `${slaRuntimeFocus.runtime} · ${slaRuntimeFocus.runtimeAdapter}` : 'runtime 未聚合'}
             </div>
           </div>
@@ -4567,9 +4567,9 @@ export default function CdsAgentPage() {
                 className="min-h-[72px] rounded-lg px-3 py-2"
                 style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}
               >
-                <div className="text-xs text-white/42">{item.label}</div>
+                <div className="text-xs text-white/55">{item.label}</div>
                 <div className="mt-1 truncate text-xl font-semibold leading-tight text-white/84">{item.value}</div>
-                <div className="mt-1 truncate text-xs text-white/38">{item.hint}</div>
+                <div className="mt-1 truncate text-xs text-white/55">{item.hint}</div>
               </div>
             ))}
           </div>
@@ -4584,11 +4584,11 @@ export default function CdsAgentPage() {
               <div className="flex items-center gap-2 text-sm font-semibold text-white/78">
                 <CalendarClock size={15} /> 定时巡检 / 知识治理
               </div>
-              <div className="mt-1 text-xs text-white/42">
+              <div className="mt-1 text-xs text-white/55">
                 {scheduleDashboard ? `${scheduleDashboard.windowDays} 天窗口 · 只读调度视图` : '等待 workflow schedule 指标'}
               </div>
             </div>
-            <div className="text-xs text-white/42">
+            <div className="text-xs text-white/55">
               {nextCdsAgentSchedule?.nextRunAt ? `next ${formatTime(nextCdsAgentSchedule.nextRunAt)}` : '暂无下一次 cron'}
             </div>
           </div>
@@ -4611,9 +4611,9 @@ export default function CdsAgentPage() {
                 className="min-h-[72px] rounded-lg px-3 py-2"
                 style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}
               >
-                <div className="text-xs text-white/42">{item.label}</div>
+                <div className="text-xs text-white/55">{item.label}</div>
                 <div className="mt-1 truncate text-xl font-semibold leading-tight text-white/84">{item.value}</div>
-                <div className="mt-1 truncate text-xs text-white/38">{item.hint}</div>
+                <div className="mt-1 truncate text-xs text-white/55">{item.hint}</div>
               </div>
             ))}
           </div>
@@ -4631,7 +4631,7 @@ export default function CdsAgentPage() {
                     <span className="truncate text-xs font-semibold text-white/70">{nextCdsAgentSchedule.name || nextCdsAgentSchedule.workflowName}</span>
                     <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-cyan-100/70" style={{ background: 'rgba(56,189,248,0.1)' }}>{nextCdsAgentSchedule.state}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs text-white/42">{nextCdsAgentSchedule.cronExpression || nextCdsAgentSchedule.mode} · {nextCdsAgentSchedule.timezone}</div>
+                  <div className="mt-1 truncate text-xs text-white/55">{nextCdsAgentSchedule.cronExpression || nextCdsAgentSchedule.mode} · {nextCdsAgentSchedule.timezone}</div>
                 </a>
               )}
               {latestScheduledExecution && (
@@ -4646,7 +4646,7 @@ export default function CdsAgentPage() {
                     <span className="truncate text-xs font-semibold text-white/70">{latestScheduledExecution.workflowName}</span>
                     <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-emerald-100/70" style={{ background: 'rgba(34,197,94,0.1)' }}>{latestScheduledExecution.status}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs text-white/42">
+                  <div className="mt-1 truncate text-xs text-white/55">
                     {latestScheduledExecution.cdsAgentSessionId ? `CDS session ${latestScheduledExecution.cdsAgentSessionId.slice(0, 10)}` : latestScheduledExecution.traceId}
                   </div>
                 </a>
@@ -4664,7 +4664,7 @@ export default function CdsAgentPage() {
               <div className="flex items-center gap-2 text-sm font-semibold text-white/78">
                 <ShieldCheck size={15} /> 权限 / 组织治理
               </div>
-              <div className="mt-1 text-xs text-white/42">
+              <div className="mt-1 text-xs text-white/55">
                 {governanceDashboard
                   ? `${governanceDashboard.subject.teamCount} 个团队上下文 · ${governanceSummary?.passedGateCount ?? 0}/${governanceSummary?.totalGateCount ?? 0} gates`
                   : '等待治理边界指标'}
@@ -4687,9 +4687,9 @@ export default function CdsAgentPage() {
                 className="min-h-[72px] rounded-lg px-3 py-2"
                 style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}
               >
-                <div className="text-xs text-white/42">{item.label}</div>
+                <div className="text-xs text-white/55">{item.label}</div>
                 <div className="mt-1 truncate text-xl font-semibold leading-tight text-white/84">{item.value}</div>
-                <div className="mt-1 truncate text-xs text-white/38">{item.hint}</div>
+                <div className="mt-1 truncate text-xs text-white/55">{item.hint}</div>
               </div>
             ))}
           </div>
@@ -4704,7 +4704,7 @@ export default function CdsAgentPage() {
                   <span className="truncate text-xs font-semibold text-white/70">{scope.area}</span>
                   <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-cyan-100/70" style={{ background: 'rgba(56,189,248,0.1)' }}>{scope.state}</span>
                 </div>
-                <div className="mt-1 truncate text-xs text-white/42">{scope.evidence}</div>
+                <div className="mt-1 truncate text-xs text-white/55">{scope.evidence}</div>
               </div>
             ))}
           </div>
@@ -4728,12 +4728,12 @@ export default function CdsAgentPage() {
                   </span>
                 </div>
                 <div className="mt-2 grid grid-cols-[54px_1fr] gap-x-2 gap-y-1 text-xs">
-                  <span className="text-white/34">Owner</span>
+                  <span className="text-white/55">Owner</span>
                   <span className="truncate text-white/64">{policy.owner}</span>
-                  <span className="text-white/34">Scope</span>
+                  <span className="text-white/55">Scope</span>
                   <span className="truncate text-white/54">{policy.subject}</span>
                 </div>
-                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/42">{policy.evidence}</div>
+                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/55">{policy.evidence}</div>
                 <div className="mt-2 truncate text-[11px] text-amber-100/60">{policy.nextAction}</div>
               </a>
             ))}
@@ -4757,16 +4757,16 @@ export default function CdsAgentPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="text-sm font-semibold text-white/78">审计摘要</div>
-                <div className="mt-1 text-xs text-white/42">trace {activeSession.traceId}</div>
+                <div className="mt-1 text-xs text-white/55">trace {activeSession.traceId}</div>
               </div>
-              <div className="text-xs text-white/42">
+              <div className="text-xs text-white/55">
                 创建 {formatTime(activeSession.createdAt)} · 更新 {formatTime(activeSession.updatedAt)}
               </div>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
               {auditRows.map(([label, value]) => (
                 <div key={label} className="min-w-0 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="text-xs text-white/38">{label}</div>
+                  <div className="text-xs text-white/55">{label}</div>
                   <div className="mt-1 truncate text-xs text-white/68">{value}</div>
                 </div>
               ))}
@@ -4778,7 +4778,7 @@ export default function CdsAgentPage() {
           <aside className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
             <div className="space-y-3">
               <label className="block space-y-1">
-                <span className="text-xs text-white/45">CDS 连接</span>
+                <span className="text-xs text-white/55">CDS 连接</span>
                 <select
                   value={draft.connectionId}
                   onChange={(e) => setDraft((prev) => ({ ...prev, connectionId: e.target.value }))}
@@ -4792,7 +4792,7 @@ export default function CdsAgentPage() {
                 </select>
               </label>
               <label className="block space-y-1">
-                <span className="text-xs text-white/45">模型配置</span>
+                <span className="text-xs text-white/55">模型配置</span>
                 <select
                   value={draft.runtimeProfileId}
                   onChange={(e) => setDraft((prev) => ({ ...prev, runtimeProfileId: e.target.value }))}
@@ -4806,10 +4806,10 @@ export default function CdsAgentPage() {
                 </select>
               </label>
               <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div className="text-xs text-white/45">当前模型</div>
+                <div className="text-xs text-white/55">当前模型</div>
                 <div className="mt-1 break-words text-sm text-white/75">{profileSummary(activeProfile)}</div>
                 <div className="mt-1 break-words text-xs text-white/50">资源边界: {formatResourcePolicy(activeProfile)}</div>
-                <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/45" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/55" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   支持任意兼容服务：填入 baseUrl、model 和 provider secret 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
                 </div>
                 {activeProfileBlockReason && (
@@ -4874,7 +4874,7 @@ export default function CdsAgentPage() {
                   onClick={() => void importDefaultProfile()}
                   disabled={busy}
                   className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
-                  style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
+                  style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'var(--accent-fg-blue)' }}
                 >
                   {busy ? <MapSpinner size={13} /> : <Download size={13} />} 从系统主模型同步
                 </button>
@@ -4907,7 +4907,7 @@ export default function CdsAgentPage() {
                     placeholder="可选：sidecar 内 workspace 绝对路径"
                   />
                 </div>
-                <div className="mt-2 text-xs leading-relaxed text-white/42">
+                <div className="mt-2 text-xs leading-relaxed text-white/55">
                   留空时沿用 CDS sidecar 默认工作区。填写 workspaceRoot 后会作为官方 SDK cwd 下发，并在 runtime_init 事件里回显，方便审计“到底审了哪个仓库”。
                 </div>
               </div>
@@ -4915,7 +4915,7 @@ export default function CdsAgentPage() {
                 <summary className="cursor-pointer select-none text-xs font-semibold text-white/62">
                   <ShieldCheck size={13} /> 远程页面安全边界
                 </summary>
-                <div className="mt-2 text-xs leading-relaxed text-white/45">
+                <div className="mt-2 text-xs leading-relaxed text-white/55">
                   `cds_bridge_snapshot` 只读查看远程浏览器，`cds_bridge_action` 统一走危险工具审批；navigate / spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址，命中时返回 `bridge_url_blocked`。
                 </div>
               </details>
@@ -4923,7 +4923,7 @@ export default function CdsAgentPage() {
                 <summary className="cursor-pointer select-none text-xs font-semibold text-white/62">
                   <GitCompare size={13} /> Git 产物与 PR
                 </summary>
-                <div className="mt-2 text-xs leading-relaxed text-white/45">
+                <div className="mt-2 text-xs leading-relaxed text-white/55">
                   `repo_git_status`、`repo_git_diff` 和 `repo_create_pull_request` 会把分支、diff、测试输出和 PR 链接沉淀到事件与产物面板；`repo_create_pull_request` 属于危险工具，默认需要人工审批后才会提交分支并创建 PR。
                 </div>
               </details>
@@ -4935,7 +4935,7 @@ export default function CdsAgentPage() {
                     onClick={() => void importDefaultProfile()}
                     disabled={busy}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs"
-                    style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
+                    style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'var(--accent-fg-blue)' }}
                   >
                     {busy ? <MapSpinner size={13} /> : <Server size={13} />} 同步系统主模型
                   </button>
@@ -4998,7 +4998,7 @@ export default function CdsAgentPage() {
                     </div>
                   )}
                   {matchingRuntimeProfileTemplate()?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && (
-                    <div className="text-xs leading-relaxed text-white/42">
+                    <div className="text-xs leading-relaxed text-white/55">
                       这是原生 Anthropic 官方模板，只接受 `sk-ant-` provider secret。cc-switch/DeepSeek 自定义 key 可以用 `claude-sdk + anthropic protocol + 兼容 baseUrl`，不要套用此模板。
                     </div>
                   )}
@@ -5071,7 +5071,7 @@ export default function CdsAgentPage() {
                     onClick={() => void saveProfile()}
                     disabled={busy || !profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
-                    style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.32)', color: 'rgba(186,230,253,0.96)' }}
+                    style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.32)', color: 'var(--accent-fg-blue)' }}
                   >
                     {busy ? <MapSpinner size={13} /> : <Plus size={13} />} 保存配置
                   </button>
@@ -5084,7 +5084,7 @@ export default function CdsAgentPage() {
                   >
                     {busy ? <MapSpinner size={13} /> : <RefreshCw size={13} />} 更新当前配置
                   </button>
-                  <div className="text-xs leading-relaxed text-white/42">
+                  <div className="text-xs leading-relaxed text-white/55">
                     更新会覆盖当前选中的系统级配置。provider secret 只保存加密值，不会回显；留空更新会保留当前密文，重新输入则替换。
                   </div>
                 </div>
@@ -5093,7 +5093,7 @@ export default function CdsAgentPage() {
                 value={draft.title}
                 onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
                 placeholder="会话名称（留空自动从首条消息命名）"
-                className="w-full rounded-md px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+                className="w-full rounded-md px-3 py-2 text-sm text-white outline-none placeholder:text-white/55"
                 style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
               />
               <button
@@ -5101,32 +5101,32 @@ export default function CdsAgentPage() {
                 onClick={() => void createSession()}
                 disabled={busy || !canCreateSession}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-45"
-                style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}
+                style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'var(--accent-fg-blue)' }}
               >
                 {busy ? <MapSpinner size={14} /> : <Plus size={14} />} 新建远程会话
               </button>
             </div>
 
               <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/45">
+                <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/55">
                   <span>会话</span>
                   <span>{resumableCount} 个可继续</span>
                 </div>
                 <label className="flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <Search size={13} className="text-white/35" />
+                  <Search size={13} className="text-white/55" />
                   <input
                     value={sessionQuery}
                     onChange={(e) => setSessionQuery(e.target.value)}
-                    className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                    className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/55"
                     placeholder="搜索标题、模型、状态或错误"
                   />
                 </label>
               {sessions.length === 0 ? (
-                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/40" style={{ background: 'rgba(0,0,0,0.16)' }}>
+                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/55" style={{ background: 'rgba(0,0,0,0.16)' }}>
                   先保存并测试模型配置，再新建远程会话。
                 </div>
               ) : visibleSessions.length === 0 ? (
-                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/40" style={{ background: 'rgba(0,0,0,0.16)' }}>
+                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/55" style={{ background: 'rgba(0,0,0,0.16)' }}>
                   没有匹配的会话。
                 </div>
               ) : (
@@ -5142,14 +5142,14 @@ export default function CdsAgentPage() {
                     }}
                   >
                     <div className="truncate text-sm font-medium text-white/85">{session.title}</div>
-                    <div className="mt-1 text-xs text-white/45">{statusLabel(resolveSessionRuntimeState(session, nowTick).effectiveStatus)} · {session.model ?? '未配置模型'}</div>
+                    <div className="mt-1 text-xs text-white/55">{statusLabel(resolveSessionRuntimeState(session, nowTick).effectiveStatus)} · {session.model ?? '未配置模型'}</div>
                     {(session.gitRepository || session.gitRef || session.workspaceRoot) && (
-                      <div className="mt-1 truncate text-[11px] text-white/35">
+                      <div className="mt-1 truncate text-[11px] text-white/55">
                         {session.gitRepository || session.cdsProjectId} · {session.gitRef || 'ref 未指定'} · {session.workspaceRoot || '默认 workspace'}
                       </div>
                     )}
                     {(session.runtimeAdapter || session.currentRuntimeRunId) && (
-                      <div className="mt-1 truncate text-[11px] text-white/35">
+                      <div className="mt-1 truncate text-[11px] text-white/55">
                         {session.runtimeAdapter ?? 'runtime adapter 未上报'} · {shortId(session.currentRuntimeRunId)}
                       </div>
                     )}
@@ -5164,11 +5164,11 @@ export default function CdsAgentPage() {
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-token-subtle px-4 py-3">
               <div>
                 <div className="text-sm font-semibold text-white/90">{activeSession?.title ?? '未选择会话'}</div>
-                <div className="mt-1 text-xs text-white/45">
+                <div className="mt-1 text-xs text-white/55">
                   {activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · ${activeSession.runtime} · ${runtimeDiagnostics.adapter} · ${activeSession.modelBaseUrl ?? activeProfile?.baseUrl ?? '未配置 baseUrl'} · trace ${activeSession.traceId}` : '选择或新建一个远程会话'}
                 </div>
                 {activeSession && primaryActionHint(activeSessionEffectiveStatus) && (
-                  <div className="mt-1 text-xs text-white/40">{primaryActionHint(activeSessionEffectiveStatus)}</div>
+                  <div className="mt-1 text-xs text-white/55">{primaryActionHint(activeSessionEffectiveStatus)}</div>
                 )}
                 {activeRuntimePoolBlockReason && (
                   <div className="mt-1 max-w-[760px] text-xs leading-relaxed text-amber-100/75">
@@ -5177,7 +5177,7 @@ export default function CdsAgentPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
+                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'var(--accent-fg-success)' }}>
                   <Play size={13} /> {activeSession ? primaryActionLabel(activeSessionEffectiveStatus) : '启动'}
                 </button>
                 <button
@@ -5190,7 +5190,7 @@ export default function CdsAgentPage() {
                   {activeSession?.manualTakeoverEnabled ? <UserCheck size={13} /> : <PauseCircle size={13} />}
                   {activeSession?.manualTakeoverEnabled ? '恢复 Agent' : '人工接管'}
                 </button>
-                <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
+                <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>
                   <Square size={13} /> 停止
                 </button>
                 <button type="button" onClick={() => void archiveSession()} disabled={!activeSession || busy || activeSession.status === 'running' || activeSession.status === 'creating' || activeSession.status === 'stopping'} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.68)' }}>
@@ -5209,7 +5209,7 @@ export default function CdsAgentPage() {
                           {activeSession.manualTakeoverEnabled ? <UserCheck size={14} /> : <PauseCircle size={14} />}
                           {activeSession.manualTakeoverEnabled ? '人工接管中' : 'Agent 自动执行中'}
                         </div>
-                        <div className="mt-1 text-xs leading-relaxed text-white/45">
+                        <div className="mt-1 text-xs leading-relaxed text-white/55">
                           {activeSession.manualTakeoverEnabled
                             ? '发送框只记录人工输入，不会调用模型；工具审批、日志和事件仍可继续操作并持久化。'
                             : '需要检查远程页面或临时暂停自动发送时，可以开启人工接管。'}
@@ -5237,7 +5237,7 @@ export default function CdsAgentPage() {
                           <Server size={14} />
                           Runtime 调试
                         </div>
-                        <div className="mt-1 text-xs leading-relaxed text-white/42">
+                        <div className="mt-1 text-xs leading-relaxed text-white/55">
                           {activeSession
                             ? '当前显示的是后端实际记录的 adapter、run id、实例和取消能力；`Legacy fallback` 表示还未切到官方 SDK adapter。'
                             : '选择或创建会话后，这里会显示真实 adapter、run id、实例和取消能力。'}
@@ -5279,7 +5279,7 @@ export default function CdsAgentPage() {
                           className="min-h-[58px] rounded-md px-3 py-2"
                           style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)' }}
                         >
-                          <div className="text-[11px] font-semibold text-white/38">{label}</div>
+                          <div className="text-[11px] font-semibold text-white/55">{label}</div>
                           <div className="mt-1 break-all text-xs leading-relaxed text-white/72">{value}</div>
                         </div>
                       ))}
@@ -5297,7 +5297,7 @@ export default function CdsAgentPage() {
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/48">
+                          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/55">
                             <ListChecks size={13} />
                             当前执行结论
                           </div>
@@ -5310,7 +5310,7 @@ export default function CdsAgentPage() {
                             {runtimeDiagnostics.commercialNextAction}
                           </div>
                           <div className="mt-2 inline-flex max-w-4xl items-start gap-2 rounded-md px-2 py-1.5 text-xs leading-relaxed text-white/64" style={{ background: 'rgba(15,23,42,0.54)', border: '1px solid rgba(148,163,184,0.14)' }}>
-                            <GitPullRequest size={13} className="mt-0.5 shrink-0 text-white/42" />
+                            <GitPullRequest size={13} className="mt-0.5 shrink-0 text-white/55" />
                             <span>{runtimeDiagnostics.commercialDeploymentAdvice}</span>
                           </div>
                         </div>
@@ -5395,9 +5395,9 @@ export default function CdsAgentPage() {
                             className="min-h-[74px] rounded-md px-3 py-2"
                             style={{ background: 'rgba(15,23,42,0.48)', border: '1px solid rgba(148,163,184,0.14)' }}
                           >
-                            <div className="text-[11px] font-semibold text-white/40">{item.label}</div>
+                            <div className="text-[11px] font-semibold text-white/55">{item.label}</div>
                             <div className="mt-1 text-xs font-semibold text-white/78">{item.value}</div>
-                            <div className="mt-1 text-xs leading-relaxed text-white/46">{item.detail}</div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/55">{item.detail}</div>
                           </div>
                         ))}
                       </div>
@@ -5409,7 +5409,7 @@ export default function CdsAgentPage() {
                           <button
                             type="button"
                             onClick={() => void copyText('当前下一步命令', runtimeDiagnostics.commercialNextCommand)}
-                            className="shrink-0 rounded p-1.5 text-white/46 hover:text-white/86"
+                            className="shrink-0 rounded p-1.5 text-white/55 hover:text-white/86"
                             aria-label="复制当前下一步命令"
                           >
                             <Copy size={12} />
@@ -5425,7 +5425,7 @@ export default function CdsAgentPage() {
                               <ListChecks size={13} />
                               任务纵览与 ETA
                             </div>
-                            <div className="mt-1 text-xs leading-relaxed text-white/48">
+                            <div className="mt-1 text-xs leading-relaxed text-white/55">
                               后端 runtime-status 汇总的当前周期看板；用于判断已完成、当前卡点和下一步耗时。
                             </div>
                           </div>
@@ -5456,7 +5456,7 @@ export default function CdsAgentPage() {
                               <div key={item.code} className="min-h-[136px] rounded-md px-3 py-2" style={{ background, border }}>
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[11px] font-semibold text-white/40">
+                                    <div className="text-[11px] font-semibold text-white/55">
                                       {item.order}. {item.code}
                                     </div>
                                     <div className="mt-0.5 text-xs font-semibold text-white/78">{item.title}</div>
@@ -5472,7 +5472,7 @@ export default function CdsAgentPage() {
                                   ETA · {item.estimatedDuration}
                                 </div>
                                 <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/56">{item.nextAction}</div>
-                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/38">{item.evidence}</div>
+                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">{item.evidence}</div>
                               </div>
                             );
                           })}
@@ -5483,11 +5483,11 @@ export default function CdsAgentPage() {
                       <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/46">
+                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/55">
                               <Route size={13} />
                               执行 runbook
                             </div>
-                            <div className="mt-1 text-xs leading-relaxed text-white/48">
+                            <div className="mt-1 text-xs leading-relaxed text-white/55">
                               后端 runtime-status 生成的机器可读步骤；标明只读、删除、部署和 provider 调用边界。
                             </div>
                           </div>
@@ -5524,7 +5524,7 @@ export default function CdsAgentPage() {
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[11px] font-semibold text-white/40">
+                                    <div className="text-[11px] font-semibold text-white/55">
                                       {item.order}. {item.code}
                                     </div>
                                     <div className="mt-0.5 text-xs font-semibold text-white/76">{item.title}</div>
@@ -5554,13 +5554,13 @@ export default function CdsAgentPage() {
                                     </span>
                                   )}
                                 </div>
-                                <div className="mt-2 line-clamp-3 text-xs leading-relaxed text-white/46">{item.safety}</div>
+                                <div className="mt-2 line-clamp-3 text-xs leading-relaxed text-white/55">{item.safety}</div>
                                 {item.applyManifest && (
-                                  <div className="mt-2 space-y-1 rounded px-2 py-1.5 text-[11px] leading-relaxed text-white/46" style={{ background: 'rgba(2,6,23,0.32)', border: '1px solid rgba(245,158,11,0.14)' }}>
+                                  <div className="mt-2 space-y-1 rounded px-2 py-1.5 text-[11px] leading-relaxed text-white/55" style={{ background: 'rgba(2,6,23,0.32)', border: '1px solid rgba(245,158,11,0.14)' }}>
                                     <div className="font-semibold text-amber-50/72">
                                       {item.applyManifest.method} · {item.applyManifest.safety}
                                     </div>
-                                    <div className="truncate text-white/42">{item.applyManifest.endpoint}</div>
+                                    <div className="truncate text-white/55">{item.applyManifest.endpoint}</div>
                                     <div className="flex flex-wrap gap-1">
                                       {(item.applyManifest.preconditions ?? []).map((condition) => (
                                         <span
@@ -5576,7 +5576,7 @@ export default function CdsAgentPage() {
                                       ))}
                                     </div>
                                     {item.applyManifest.localPreflightCommand && (
-                                      <div className="truncate text-white/42">
+                                      <div className="truncate text-white/55">
                                         preflight: {item.applyManifest.localPreflightCommand}
                                       </div>
                                     )}
@@ -5600,11 +5600,11 @@ export default function CdsAgentPage() {
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/46">
+                          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/55">
                             <ShieldCheck size={13} />
                             商业级 readiness ledger
                           </div>
-                          <div className="mt-1 text-xs leading-relaxed text-white/48">
+                          <div className="mt-1 text-xs leading-relaxed text-white/55">
                             与 smoke-cds-agent-commercial-readiness.sh 同口径；未全绿时不能宣称上手即用。
                           </div>
                         </div>
@@ -5643,7 +5643,7 @@ export default function CdsAgentPage() {
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0">
-                                  <div className="text-[11px] font-semibold text-white/42">{gate.code}</div>
+                                  <div className="text-[11px] font-semibold text-white/55">{gate.code}</div>
                                   <div className="mt-0.5 text-xs font-semibold text-white/74">{gate.label}</div>
                                 </div>
                                 <span
@@ -5662,7 +5662,7 @@ export default function CdsAgentPage() {
                                   <span className="truncate">{gate.reasonCode}</span>
                                 </div>
                               )}
-                              <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-white/46">{gate.detail}</div>
+                              <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-white/55">{gate.detail}</div>
                             </div>
                           );
                         })}
@@ -5688,7 +5688,7 @@ export default function CdsAgentPage() {
                               <ListChecks size={13} />
                               下一周期最小闭环
                             </div>
-                            <div className="mt-1 break-words text-xs leading-relaxed text-white/48">
+                            <div className="mt-1 break-words text-xs leading-relaxed text-white/55">
                               {runtimeDiagnostics.nextCyclePlan.cycle} · {runtimeDiagnostics.nextCyclePlan.state}
                             </div>
                           </div>
@@ -5711,7 +5711,7 @@ export default function CdsAgentPage() {
                               >
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[11px] font-semibold text-white/40">{item.code}</div>
+                                    <div className="text-[11px] font-semibold text-white/55">{item.code}</div>
                                     <div className="mt-0.5 text-xs font-semibold text-white/76">{item.title}</div>
                                   </div>
                                   <span
@@ -5725,7 +5725,7 @@ export default function CdsAgentPage() {
                                   </span>
                                 </div>
                                 <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/56">{item.goal}</div>
-                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/40">{item.evidence}</div>
+                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">{item.evidence}</div>
                                 {item.nextActions && item.nextActions.length > 0 && (
                                   <div className="mt-2 text-xs leading-relaxed text-sky-50/68">{item.nextActions[0]}</div>
                                 )}
@@ -5735,7 +5735,7 @@ export default function CdsAgentPage() {
                         </div>
                         {runtimeDiagnostics.nextCyclePlan.stopConditions.length > 0 && (
                           <div className="mt-3 rounded-md px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                            <div className="text-[11px] font-semibold uppercase tracking-normal text-white/40">停止条件</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-white/55">停止条件</div>
                             <div className="mt-1 grid gap-1 md:grid-cols-2">
                               {runtimeDiagnostics.nextCyclePlan.stopConditions.map((item) => (
                                 <div key={item} className="text-xs leading-relaxed text-white/55">{item}</div>
@@ -5749,11 +5749,11 @@ export default function CdsAgentPage() {
                       <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.32)', border: '1px solid rgba(148,163,184,0.14)' }}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/46">
+                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/55">
                               <Terminal size={13} />
                               调试命令
                             </div>
-                            <div className="mt-1 text-xs leading-relaxed text-white/48">
+                            <div className="mt-1 text-xs leading-relaxed text-white/55">
                               由 runtime-status 后端生成，和当前 R1/provider gate 状态一致。
                             </div>
                           </div>
@@ -5782,7 +5782,7 @@ export default function CdsAgentPage() {
                                 <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0">
                                     <div className="text-xs font-semibold text-white/74">{item.label}</div>
-                                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/44">{item.purpose}</div>
+                                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">{item.purpose}</div>
                                   </div>
                                   <span
                                     className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
@@ -5801,7 +5801,7 @@ export default function CdsAgentPage() {
                                   <button
                                     type="button"
                                     onClick={() => void copyText(item.label, item.command)}
-                                    className="shrink-0 rounded p-1.5 text-white/42 hover:text-white/85"
+                                    className="shrink-0 rounded p-1.5 text-white/55 hover:text-white/85"
                                     aria-label={`复制${item.label}`}
                                   >
                                     <Copy size={12} />
@@ -5815,8 +5815,8 @@ export default function CdsAgentPage() {
                     )}
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">技术诊断门禁</div>
-                        <div className="text-xs text-white/38">
+                        <div className="text-[11px] font-semibold uppercase tracking-normal text-white/55">技术诊断门禁</div>
+                        <div className="text-xs text-white/55">
                           {runtimeDiagnostics.readinessGates.filter((gate) => gate.state === 'pass').length}/{runtimeDiagnostics.readinessGates.length} passed
                         </div>
                       </div>
@@ -5848,7 +5848,7 @@ export default function CdsAgentPage() {
                                   {isPass ? 'PASS' : isWarn ? 'ACTION' : 'WAIT'}
                                 </span>
                               </div>
-                              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/44">{gate.detail}</div>
+                              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">{gate.detail}</div>
                             </div>
                           );
                         })}
@@ -5858,7 +5858,7 @@ export default function CdsAgentPage() {
                       <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div>
-                            <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">Adapter 兼容性</div>
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-white/55">Adapter 兼容性</div>
                             <div className="mt-1 text-xs font-semibold text-white/72">{activeAdapterCompatibility.label}</div>
                           </div>
                           <span className="rounded px-2 py-1 text-[11px] font-semibold text-sky-100/80" style={{ background: 'rgba(56,189,248,0.1)', border: '1px solid rgba(56,189,248,0.2)' }}>
@@ -5867,37 +5867,37 @@ export default function CdsAgentPage() {
                         </div>
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
                           <div className="rounded-md px-3 py-2" style={{ background: activeAdapterCompatibility.routableByDefault ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.09)', border: activeAdapterCompatibility.routableByDefault ? '1px solid rgba(34,197,94,0.22)' : '1px solid rgba(245,158,11,0.22)' }}>
-                            <div className="text-[11px] font-semibold text-white/38">默认路由</div>
+                            <div className="text-[11px] font-semibold text-white/55">默认路由</div>
                             <div className="mt-1 text-xs font-semibold text-white/74">
                               {activeAdapterCompatibility.routableByDefault ? '允许默认进入代码审查' : '禁止默认路由'}
                             </div>
-                            <div className="mt-1 text-xs leading-relaxed text-white/42">
+                            <div className="mt-1 text-xs leading-relaxed text-white/55">
                               {(activeAdapterCompatibility.supportedTaskKinds.length > 0 ? activeAdapterCompatibility.supportedTaskKinds : ['未声明任务类型']).join(' / ')}
                             </div>
                           </div>
                           <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
-                            <div className="text-[11px] font-semibold text-white/38">证据门禁</div>
+                            <div className="text-[11px] font-semibold text-white/55">证据门禁</div>
                             <div className="mt-1 text-xs leading-relaxed text-white/66">
                               {(activeAdapterCompatibility.requiredEvidenceGates.length > 0 ? activeAdapterCompatibility.requiredEvidenceGates : ['未声明']).join(' / ')}
                             </div>
                           </div>
                           <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
-                            <div className="text-[11px] font-semibold text-white/38">支持的 profile</div>
+                            <div className="text-[11px] font-semibold text-white/55">支持的 profile</div>
                             <div className="mt-1 text-xs leading-relaxed text-white/66">
                               {(activeAdapterCompatibility.supportedProfileProtocols.length > 0 ? activeAdapterCompatibility.supportedProfileProtocols : ['未声明']).join(' / ')}
                             </div>
-                            <div className="mt-1 text-xs leading-relaxed text-white/42">
+                            <div className="mt-1 text-xs leading-relaxed text-white/55">
                               {activeAdapterCompatibility.modelHints.slice(0, 3).join(' · ') || '无模型提示'}
                             </div>
                           </div>
                           <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
-                            <div className="text-[11px] font-semibold text-white/38">不兼容形态</div>
+                            <div className="text-[11px] font-semibold text-white/55">不兼容形态</div>
                             <div className="mt-1 text-xs leading-relaxed text-white/66">
                               {activeAdapterCompatibility.knownIncompatibleProfilePatterns.slice(0, 2).join(' · ') || '未声明'}
                             </div>
                           </div>
                           <div className="rounded-md px-3 py-2 md:col-span-2" style={{ background: activeAdapterCompatibility.missingAdapterContracts.length > 0 ? 'rgba(245,158,11,0.09)' : 'rgba(34,197,94,0.08)', border: activeAdapterCompatibility.missingAdapterContracts.length > 0 ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(34,197,94,0.18)' }}>
-                            <div className="text-[11px] font-semibold text-white/38">缺失 adapter contract</div>
+                            <div className="text-[11px] font-semibold text-white/55">缺失 adapter contract</div>
                             <div className="mt-1 text-xs leading-relaxed text-white/66">
                               {activeAdapterCompatibility.missingAdapterContracts.length > 0
                                 ? activeAdapterCompatibility.missingAdapterContracts.join(' / ')
@@ -5907,20 +5907,20 @@ export default function CdsAgentPage() {
                         </div>
                         {adapterCompatibility.length > 1 && (
                           <div className="mt-2 rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.5)', border: '1px solid rgba(148,163,184,0.12)' }}>
-                            <div className="text-[11px] font-semibold text-white/38">候选 adapter 边界</div>
+                            <div className="text-[11px] font-semibold text-white/55">候选 adapter 边界</div>
                             <div className="mt-2 grid gap-2 lg:grid-cols-2">
                               {adapterCompatibility.map((item) => (
                                 <div key={item.id} className="rounded-md px-2.5 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
                                       <div className="truncate text-xs font-semibold text-white/72">{item.label}</div>
-                                      <div className="mt-0.5 text-[11px] text-white/38">{item.id}</div>
+                                      <div className="mt-0.5 text-[11px] text-white/55">{item.id}</div>
                                     </div>
                                     <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold" style={{ background: item.routableByDefault ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.1)', color: item.routableByDefault ? 'rgba(134,239,172,0.92)' : 'rgba(203,213,225,0.76)' }}>
                                       {item.routableByDefault ? 'ROUTABLE' : item.status}
                                     </span>
                                   </div>
-                                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/48">
+                                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">
                                     {(item.missingAdapterContracts.length > 0 ? item.missingAdapterContracts : item.supportedTaskKinds).join(' / ') || '未声明 contract'}
                                   </div>
                                 </div>
@@ -5932,7 +5932,7 @@ export default function CdsAgentPage() {
                           <div className="mt-2 rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.58)', border: '1px solid rgba(148,163,184,0.14)' }}>
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div>
-                                <div className="text-[11px] font-semibold text-white/38">Adapter matrix</div>
+                                <div className="text-[11px] font-semibold text-white/55">Adapter matrix</div>
                                 <div className="mt-1 text-xs text-white/58">
                                   {adapterMatrix.summary.defaultRoutableAdapterCount} default / {adapterMatrix.summary.blockedAdapterCount} blocked · {adapterMatrix.summary.profileCount} profiles
                                 </div>
@@ -5957,7 +5957,7 @@ export default function CdsAgentPage() {
                                     <div className="flex items-start justify-between gap-2">
                                       <div className="min-w-0">
                                         <div className="truncate text-xs font-semibold text-white/72">{row.label}</div>
-                                        <div className="mt-0.5 text-[11px] text-white/38">{row.adapterId} · {row.routeState}</div>
+                                        <div className="mt-0.5 text-[11px] text-white/55">{row.adapterId} · {row.routeState}</div>
                                       </div>
                                       <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold" style={{ background: blocked ? 'rgba(245,158,11,0.14)' : 'rgba(34,197,94,0.14)', color: blocked ? 'rgba(253,230,138,0.9)' : 'rgba(134,239,172,0.9)' }}>
                                         {blocked ? 'BLOCKED' : 'ROUTABLE'}
@@ -5966,7 +5966,7 @@ export default function CdsAgentPage() {
                                     <div className="mt-1 text-xs leading-relaxed text-white/50">
                                       profiles {compatibleProfiles}/{row.profileCandidates.length} · gates {row.gates.filter((gate) => gate.status === 'pass').length}/{row.gates.length}
                                     </div>
-                                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">
+                                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/55">
                                       {row.missingAdapterContracts.length > 0
                                         ? `missing ${row.missingAdapterContracts.join(' / ')}`
                                         : row.profileCandidates.find((item) => item.compatible)?.reason || row.nextActions[0] || 'contract ready'}
@@ -5980,7 +5980,7 @@ export default function CdsAgentPage() {
                         <div className="mt-2 grid gap-2 xl:grid-cols-2">
                           {activeAdapterCompatibility.notes.length > 0 && (
                             <div className="rounded-md px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                              <div className="text-[11px] font-semibold text-white/38">边界说明</div>
+                              <div className="text-[11px] font-semibold text-white/55">边界说明</div>
                               <div className="mt-1 space-y-1">
                                 {activeAdapterCompatibility.notes.slice(0, 3).map((item) => (
                                   <div key={item} className="text-xs leading-relaxed text-white/58">{item}</div>
@@ -6030,7 +6030,7 @@ export default function CdsAgentPage() {
 	                <div className="order-2 min-h-[360px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
-                    <span className="text-xs text-white/35">{messages.length} 条</span>
+                    <span className="text-xs text-white/55">{messages.length} 条</span>
                   </div>
                   {activeSessionProfileBlockReason && (
                     <div className="mb-3 rounded-lg px-3 py-2 text-sm leading-relaxed text-amber-100/85" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.26)' }}>
@@ -6038,7 +6038,7 @@ export default function CdsAgentPage() {
                     </div>
                   )}
                   {messages.length === 0 ? (
-                    <div className="flex min-h-[150px] items-center justify-center rounded-lg text-sm text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex min-h-[150px] items-center justify-center rounded-lg text-sm text-white/55" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
                       发送任务后，这里会按 user / Agent 消息展示多轮对话。
                     </div>
                   ) : (
@@ -6056,7 +6056,7 @@ export default function CdsAgentPage() {
                               border: isUser ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.08)',
                             }}
                           >
-                            <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-white/42">
+                            <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-white/55">
                               <span>{messageRoleLabel(message.role)} · {message.status}</span>
                               <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
                             </div>
@@ -6080,7 +6080,7 @@ export default function CdsAgentPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
-                        <span className="text-xs text-white/35">
+                        <span className="text-xs text-white/55">
                           {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
                         </span>
                       </div>
@@ -6141,7 +6141,7 @@ export default function CdsAgentPage() {
                     </div>
                   </div>
                   {events.length === 0 ? (
-                    <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
+                    <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-white/55">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
                   ) : (
                     displayedEvents.map((event) => {
                       const payload = parsePayload(event);
@@ -6154,17 +6154,17 @@ export default function CdsAgentPage() {
                           <div className="flex items-center justify-between gap-3">
                             <span className="min-w-0 text-xs font-semibold text-white/65">
                               {event.type} #{event.seq} · {event.traceId}
-                              {runtimeBadge && <span className="ml-2 text-white/35">{runtimeBadge}{runtimeInstance ? ` / ${runtimeInstance}` : ''}</span>}
+                              {runtimeBadge && <span className="ml-2 text-white/55">{runtimeBadge}{runtimeInstance ? ` / ${runtimeInstance}` : ''}</span>}
                             </span>
-                            <button type="button" onClick={() => void copyText('事件', renderPayload(event))} className="rounded p-1 text-white/40 hover:text-white/80" aria-label="复制事件">
+                            <button type="button" onClick={() => void copyText('事件', renderPayload(event))} className="rounded p-1 text-white/55 hover:text-white/80" aria-label="复制事件">
                               <Copy size={12} />
                             </button>
                           </div>
                           <EventBody event={event} />
                           {waitingApproval && (
                             <div className="mt-2 flex gap-2">
-                              <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
-                              <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
+                              <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }}>允许</button>
+                              <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>拒绝</button>
                             </div>
                           )}
                         </article>
@@ -6179,12 +6179,12 @@ export default function CdsAgentPage() {
                   </summary>
                   <div className="mt-3">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className="text-xs text-white/42">文件、网页、项目说明按需补充</div>
+                      <div className="text-xs text-white/55">文件、网页、项目说明按需补充</div>
                     {hasContextDraft && (
                       <button
                         type="button"
                         onClick={() => setContextDraft({ files: '', urls: '', notes: '' })}
-                        className="rounded px-2 py-1 text-xs text-white/42 hover:text-white/72"
+                        className="rounded px-2 py-1 text-xs text-white/55 hover:text-white/72"
                       >
                         清空
                       </button>
@@ -6224,10 +6224,10 @@ export default function CdsAgentPage() {
 	                    onChange={(e) => setPrompt(e.target.value)}
 	                    rows={3}
 	                    placeholder="继续要求 Agent，例如：只读巡检当前仓库，找一个最值得修复的小问题"
-	                    className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+	                    className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none placeholder:text-white/55"
 	                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}
                   />
-                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
+                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'var(--accent-fg-blue)' }}>
                     {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />} {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
                   </button>
                 </div>
@@ -6237,7 +6237,7 @@ export default function CdsAgentPage() {
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
-                    <span className="text-xs text-white/35">{artifacts.length}</span>
+                    <span className="text-xs text-white/55">{artifacts.length}</span>
                   </div>
                   <div className="mb-2 grid grid-cols-1 gap-2 xl:grid-cols-3">
                     <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -6251,11 +6251,11 @@ export default function CdsAgentPage() {
                     </button>
                   </div>
                   <label className="mb-2 flex items-center gap-2 rounded px-2 py-1.5" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                    <Globe2 size={12} className="text-white/35" />
+                    <Globe2 size={12} className="text-white/55" />
                     <input
                       value={browserBranchId}
                       onChange={(e) => setBrowserBranchId(e.target.value)}
-                      className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                      className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/55"
                       placeholder="CDS 分支 ID，例如 prd-agent-main"
                     />
                   </label>
@@ -6303,7 +6303,7 @@ export default function CdsAgentPage() {
                   </div>
                   <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
                     {artifacts.length === 0 ? (
-                      <div className="rounded-lg px-3 py-8 text-center text-sm text-white/38" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="rounded-lg px-3 py-8 text-center text-sm text-white/55" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>
                         文件树、diff、命令输出和远程页面快照会自动汇总在这里。
                       </div>
                     ) : (
@@ -6315,13 +6315,13 @@ export default function CdsAgentPage() {
                                 {artifactIcon(artifact.kind)}
                                 <span>{artifact.title}</span>
                               </div>
-                              <div className="mt-1 truncate text-xs text-white/42">{artifact.summary}</div>
+                              <div className="mt-1 truncate text-xs text-white/55">{artifact.summary}</div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
-                              <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="rounded p-1 text-white/40 hover:text-white/80" aria-label={`复制${artifact.title}`}>
+                              <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="rounded p-1 text-white/55 hover:text-white/80" aria-label={`复制${artifact.title}`}>
                                 <Copy size={12} />
                               </button>
-                              <button type="button" onClick={() => downloadText(`${artifact.title}-${activeSession?.id ?? 'session'}.txt`, artifact.body)} className="rounded p-1 text-white/40 hover:text-white/80" aria-label={`下载${artifact.title}`}>
+                              <button type="button" onClick={() => downloadText(`${artifact.title}-${activeSession?.id ?? 'session'}.txt`, artifact.body)} className="rounded p-1 text-white/55 hover:text-white/80" aria-label={`下载${artifact.title}`}>
                                 <Download size={12} />
                               </button>
                             </div>
@@ -6336,7 +6336,7 @@ export default function CdsAgentPage() {
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 运行日志</span>
-                    <button type="button" onClick={() => void copyText('日志', logs)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/45 hover:text-white/80"><Copy size={12} /> 复制</button>
+                    <button type="button" onClick={() => void copyText('日志', logs)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/55 hover:text-white/80"><Copy size={12} /> 复制</button>
                   </div>
                   <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/56">{logs || '暂无日志'}</pre>
                 </section>

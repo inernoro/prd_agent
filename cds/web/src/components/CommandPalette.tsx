@@ -1,5 +1,7 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import {
   ArrowRight,
   CornerDownLeft,
@@ -190,7 +192,7 @@ const STATIC_ACTIONS: ResultItem[] = [
   { key: 'action:snapshots',        type: 'action', label: '配置快照',           path: 'CDS 系统设置',  hint: '备份 / 回滚配置到任意时间点',    href: '/cds-settings#snapshots',        icon: 'settings' },
   { key: 'action:storage',          type: 'action', label: '存储后端',           path: 'CDS 系统设置',  hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
   { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       path: 'CDS 系统设置',  hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
-  { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: 'GitHub OAuth / basic auth',      href: '/cds-settings#auth',             icon: 'settings' },
+  { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: '本地账号 / GitHub OAuth / SSO', href: '/cds-settings#auth',             icon: 'settings' },
   { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     path: 'CDS 系统设置',  hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
 ];
 
@@ -363,7 +365,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         aria-label="关闭命令面板"
       />
       <div
-        className="cds-surface-raised cds-hairline relative z-10 mx-4 flex max-h-[72vh] w-full max-w-[560px] flex-col overflow-hidden shadow-2xl"
+        className="cds-surface-raised cds-hairline relative z-10 mx-4 flex max-h-[72vh] w-full max-w-[35rem] flex-col overflow-hidden shadow-2xl"
         style={{ animation: 'cds-overlay-fade-in 160ms ease-out' }}
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4">
@@ -379,14 +381,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             spellCheck={false}
           />
           {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
-          <kbd className="hidden rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+          <kbd className="hidden rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground sm:inline-flex">
             ESC
           </kbd>
         </div>
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1 pb-3">
           {results.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {loading ? '加载中…' : '没有匹配项'}
+              {loading ? <ContentLoading label="读取命令与搜索结果" /> : '没有匹配项'}
             </div>
           ) : (
             results.map((item, idx) => (
@@ -401,10 +403,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 <PaletteIcon kind={item.icon} />
                 <span className="min-w-0 flex-1">
                   {item.path ? (
-                    <span className="mb-0.5 block truncate text-[11px] text-muted-foreground/70">{item.path}</span>
+                    <span className="mb-0.5 block truncate text-[0.6875rem] text-muted-foreground/70">{item.path}</span>
                   ) : null}
                   <span className="block truncate text-sm font-medium">{item.label}</span>
-                  {item.hint ? <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span> : null}
+                  {item.hint ? <span className="block truncate text-[0.6875rem] text-muted-foreground">{item.hint}</span> : null}
                 </span>
                 {idx === activeIdx ? (
                   <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -415,7 +417,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             ))
           )}
         </div>
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2 text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-4 py-2 text-[0.6875rem] text-muted-foreground">
           <span>↑↓ 选择 · Enter 跳转 · Esc 关闭</span>
           <span>{results.length} 项</span>
         </div>

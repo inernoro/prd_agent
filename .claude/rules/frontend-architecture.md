@@ -1,5 +1,9 @@
 ---
-globs: ["prd-admin/src/**/*.{ts,tsx}", "prd-desktop/src/**/*.{ts,tsx}"]
+paths:
+  - "prd-admin/src/**/*.ts"
+  - "prd-admin/src/**/*.tsx"
+  - "prd-desktop/src/**/*.ts"
+  - "prd-desktop/src/**/*.tsx"
 ---
 
 # 前端架构规则

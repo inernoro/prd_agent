@@ -1,0 +1,311 @@
+<!doctype html>
+<!--
+  重大改动方案预览 · 通用模板（成品级）
+  ============================================================
+  这不是空骨架，是打开就能渲染的成品：主题系统、九个章节、图表元件、
+  以及一套可复用的演示引擎（打字机 + 工具卡 + 进度推进 + 产物出现）全部就位。
+
+  用法：
+    1. 复制到 assets/prototypes/{topic}-preview.html
+    2. 全局替换 {大括号} 占位
+    3. S1 的 script 数组按本次改动改剧本，其余章节照着已有样例增删
+    4. 对照 SKILL.md 的 13 条拒收判据自检
+
+  硬约束（改的时候别破坏）：
+    - 单文件、零外链、双主题、无 emoji
+    - 演示必须可播放，等待态必须有阶段推进，产物必须真的出现
+    - 架构图三色齐全：本次新增 / 复用现有 / 明确不碰
+  ============================================================
+-->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyCDS 外网通行证 · 方案预览</title>
+<style>
+:root{
+  color-scheme: dark;
+  --bg-base:#141418; --bg-elevated:#1e1e24; --bg-card:rgba(255,255,255,.06);
+  --bg-card-hover:rgba(255,255,255,.10); --bg-input:rgba(255,255,255,.07);
+  --bg-nested:rgba(255,255,255,.025);
+  --text-primary:#f7f7fb; --text-secondary:rgba(247,247,251,.80); --text-muted:rgba(247,247,251,.55);
+  --border-faint:rgba(255,255,255,.08); --border-subtle:rgba(255,255,255,.12);
+  --border-default:rgba(255,255,255,.18);
+  --accent:#D97757; --accent-soft:rgba(217,119,87,.16); --accent-border:rgba(217,119,87,.42);
+  --ok:#5FBF7F; --ok-soft:rgba(95,191,127,.14);
+  --warn:#E0A85C; --warn-soft:rgba(224,168,92,.14);
+  --bad:#D96A6A; --bad-soft:rgba(217,106,106,.14);
+  --info:#7BA7D9; --info-soft:rgba(123,167,217,.14);
+  --shadow:0 10px 30px -20px rgba(0,0,0,.85);
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+[data-theme="light"]{
+  color-scheme: light;
+  --bg-base:#EEEAE3; --bg-elevated:#E4DED5; --bg-card:#F8F5EF;
+  --bg-card-hover:rgba(26,26,31,.05); --bg-input:#FBF8F3;
+  --bg-nested:rgba(26,26,31,.03);
+  --text-primary:#262029; --text-secondary:rgba(38,32,41,.78); --text-muted:rgba(38,32,41,.56);
+  --border-faint:rgba(26,26,31,.08); --border-subtle:rgba(26,26,31,.14);
+  --border-default:rgba(26,26,31,.22);
+  --accent:#A64B35; --accent-soft:rgba(166,75,53,.12); --accent-border:rgba(166,75,53,.34);
+  --ok:#3F8A5C; --ok-soft:rgba(63,138,92,.12);
+  --warn:#A9762C; --warn-soft:rgba(169,118,44,.12);
+  --bad:#B04A4A; --bad-soft:rgba(176,74,74,.12);
+  --info:#3F6E9E; --info-soft:rgba(63,110,158,.12);
+  --shadow:0 10px 26px -20px rgba(89,65,50,.5);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg-base);color:var(--text-primary);overflow-x:hidden;
+  font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 100px}
+a{color:var(--accent)}
+
+header.top{position:sticky;top:0;z-index:40;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.top-inner{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-size:17px;font-weight:650;letter-spacing:.2px}
+.brand span{color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px}
+.top-spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12px;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary);white-space:nowrap}
+.pill.accent{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.pill.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-primary);
+  font-size:13px;font-family:inherit;transition:background .16s,border-color .16s,transform .1s}
+.btn:hover{background:var(--bg-card-hover);border-color:var(--border-default)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn[disabled]{opacity:.42;cursor:default}
+
+nav.secnav{position:sticky;top:57px;z-index:30;background:var(--bg-base);border-bottom:1px solid var(--border-faint)}
+.secnav-inner{max-width:1180px;margin:0 auto;padding:9px 20px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.secnav-inner::-webkit-scrollbar{display:none}
+.secnav a{flex:0 0 auto;padding:5px 11px;border-radius:8px;font-size:12.5px;text-decoration:none;
+  color:var(--text-muted);border:1px solid transparent;white-space:nowrap}
+.secnav a:hover{background:var(--bg-card);color:var(--text-primary)}
+.secnav a.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-border)}
+
+section{padding-top:52px;scroll-margin-top:112px}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.sec-num{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:1.5px;padding-top:6px}
+h2{font-size:24px;margin:0;letter-spacing:-.2px}
+.sec-sub{color:var(--text-muted);font-size:13.5px;margin:0 0 22px 0}
+h3{font-size:16px;margin:26px 0 10px}
+.card{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g5{grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:900px){.g3,.g5{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.g2,.g3,.g5{grid-template-columns:1fr}}
+
+.get{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:13px;padding:15px 15px 16px}
+.get .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);margin-bottom:10px}
+.get b{display:block;font-size:14px;margin-bottom:4px}
+.get p{margin:0;font-size:12.8px;color:var(--text-muted);line-height:1.65}
+.nots{border:1px dashed var(--border-subtle);border-radius:13px;padding:15px 18px;background:var(--bg-nested)}
+.nots ul{margin:8px 0 0;padding-left:19px;color:var(--text-muted);font-size:13px}
+.nots li{margin:3px 0}
+
+/* ---------- 演示外壳：按本次改动的真实页面结构改造 ---------- */
+.demo-frame{border:1px solid var(--border-default);border-radius:16px;overflow:hidden;background:var(--bg-elevated);box-shadow:var(--shadow)}
+.demo-bar{display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--bg-nested);border-bottom:1px solid var(--border-faint)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--border-default)}
+.urlbar{flex:1;text-align:center;font:11.5px/1 var(--mono);color:var(--text-muted);background:var(--bg-input);
+  border:1px solid var(--border-faint);border-radius:7px;padding:5px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app{display:grid;grid-template-columns:186px 214px 1fr;min-height:552px}
+@media(max-width:900px){.app{grid-template-columns:1fr}.appnav,.applist{display:none!important}}
+.appnav{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px}
+.navitem{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:9px;font-size:13px;color:var(--text-muted);cursor:default;margin-bottom:2px}
+.navitem.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.navitem.new::after{content:"新";font-size:9.5px;margin-left:auto;background:var(--accent);color:#fff;padding:1px 5px;border-radius:5px;font-weight:600}
+.navgroup{font-size:10.5px;color:var(--text-muted);opacity:.65;padding:12px 10px 5px;letter-spacing:.6px}
+.applist{background:var(--bg-nested);border-right:1px solid var(--border-faint);padding:12px 9px;overflow:auto}
+.newchat{width:100%;justify-content:center;margin-bottom:11px;font-size:12.5px;padding:7px}
+.sessitem{padding:9px 10px;border-radius:9px;margin-bottom:3px;cursor:default}
+.sessitem.on{background:var(--bg-card);border:1px solid var(--border-subtle)}
+.sessitem b{display:block;font-size:12.7px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sessitem span{font-size:11px;color:var(--text-muted)}
+.chat{display:flex;flex-direction:column;background:var(--bg-elevated);min-width:0}
+.chat-head{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--border-faint);font-size:13.5px;font-weight:600}
+.chat-head .pill{margin-left:auto;font-size:11px;padding:3px 9px}
+.stream{flex:1;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;min-height:340px;max-height:440px}
+.stream::-webkit-scrollbar{width:7px}
+.stream::-webkit-scrollbar-thumb{background:var(--border-subtle);border-radius:4px}
+.msg{display:flex;gap:11px;animation:rise .34s cubic-bezier(.2,.7,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.avatar{flex:0 0 27px;height:27px;border-radius:8px;display:grid;place-items:center;font-size:10.5px;font-weight:700;margin-top:1px}
+.msg.user .avatar{background:var(--info-soft);color:var(--info)}
+.msg.ai .avatar{background:var(--accent-soft);color:var(--accent)}
+.body{flex:1;min-width:0}
+.bubble{background:var(--bg-card);border:1px solid var(--border-faint);border-radius:12px;padding:10px 13px;font-size:13.6px;line-height:1.72;white-space:pre-wrap}
+.msg.user .bubble{background:var(--info-soft);border-color:transparent}
+.think{font-size:12.3px;color:var(--text-muted);font-style:italic;border-left:2px solid var(--border-subtle);padding:2px 0 2px 10px;margin-bottom:7px}
+.caret{display:inline-block;width:2px;height:1em;background:var(--accent);vertical-align:-2px;animation:blink .95s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.tool{border:1px solid var(--border-subtle);border-radius:12px;overflow:hidden;background:var(--bg-nested);margin-top:8px}
+.tool-head{display:flex;align-items:center;gap:9px;padding:9px 12px;font-size:12.6px;font-weight:600}
+.tool-head .tag{font:10.5px/1 var(--mono);padding:2px 6px;border-radius:5px;background:var(--bg-card);border:1px solid var(--border-faint);color:var(--text-muted);font-weight:400}
+.tool-state{margin-left:auto;font-size:11.5px;font-weight:500}
+.tool.run .tool-state{color:var(--accent)}
+.tool.done .tool-state{color:var(--ok)}
+.tool.fail .tool-state{color:var(--bad)}
+.tool-body{padding:0 12px 12px}
+.bar{height:4px;border-radius:3px;background:var(--border-faint);overflow:hidden;margin:2px 0 8px}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .5s ease}
+.steps{display:flex;gap:5px;flex-wrap:wrap;font-size:11.2px;color:var(--text-muted)}
+.steps s{text-decoration:none;padding:2px 7px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border-faint)}
+.steps s.on{background:var(--accent-soft);border-color:var(--accent-border);color:var(--accent)}
+.steps s.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+/* 产物占位：用渐变模拟图片等视觉产物，禁止外链真实图片 */
+.artwork{height:126px;border-radius:9px;margin-top:4px;position:relative;overflow:hidden;
+  background:linear-gradient(125deg,#D97757 0%,#8E4B6E 42%,#3B4E86 100%);
+  display:grid;place-items:center;color:#fff;text-align:center;animation:fadein .55s ease both}
+@keyframes fadein{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+.artwork::after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 18% 8%,rgba(255,255,255,.34),transparent 55%)}
+.artwork div{position:relative;z-index:1}
+.artwork b{display:block;font-size:16px;letter-spacing:3px}
+.artwork span{font-size:10.5px;opacity:.85;letter-spacing:1.5px}
+.kbcard{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;background:var(--ok-soft);border:1px solid transparent;font-size:12.4px;margin-top:2px}
+.kbcard .btn{margin-left:auto;padding:4px 10px;font-size:11.5px}
+.cite{font-size:11.8px;color:var(--text-muted);border-left:2px solid var(--accent-border);padding-left:9px;margin-top:7px}
+.cite b{color:var(--text-secondary);font-weight:550}
+.composer{border-top:1px solid var(--border-faint);padding:11px 16px 14px;background:var(--bg-elevated)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.chip{font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;border:1px solid var(--border-subtle);background:var(--bg-card);color:var(--text-secondary)}
+.chip:hover{border-color:var(--accent-border);color:var(--accent)}
+.inputrow{display:flex;gap:9px;align-items:center;background:var(--bg-input);border:1px solid var(--border-subtle);border-radius:11px;padding:8px 10px 8px 13px}
+.inputrow input{flex:1;background:transparent;border:0;outline:0;color:var(--text-primary);font:14px/1.5 inherit}
+.inputrow input::placeholder{color:var(--text-muted)}
+.sendbtn{width:31px;height:31px;border-radius:8px;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;cursor:pointer}
+.playbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:14px 0 0}
+.playbar .hint{font-size:12.3px;color:var(--text-muted)}
+
+/* ---------- 图表元件 ---------- */
+.figwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:14px;background:var(--bg-card);padding:16px}
+svg .bx{fill:var(--bg-nested);stroke:var(--border-subtle)}
+svg .bx.acc{fill:var(--accent-soft);stroke:var(--accent-border)}   /* 本次新增 */
+svg .bx.ok{fill:var(--ok-soft);stroke:transparent}                 /* 复用现有 */
+svg .bx.info{fill:var(--info-soft);stroke:transparent}             /* 用户侧 */
+svg .bx.warn{fill:var(--warn-soft);stroke:transparent}
+svg .bx.bad{fill:var(--bad-soft);stroke:var(--bad);stroke-dasharray:5 4} /* 明确不碰 */
+svg text{fill:var(--text-primary);font-family:inherit}
+svg .t{font-size:12.5px;font-weight:600}
+svg .s{font-size:10.8px;fill:var(--text-muted);font-weight:400}
+svg .lbl{font-size:10.5px;fill:var(--text-muted)}
+svg .ln{stroke:var(--border-default);fill:none}
+svg .ln.acc{stroke:var(--accent)}
+svg .grp{fill:none;stroke:var(--border-faint);stroke-dasharray:4 4}
+svg .grpt{font-size:10.5px;fill:var(--text-muted);letter-spacing:1px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-muted)}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+.lane{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:12px}
+.lane-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.lane-head b{font-size:14.5px}
+.lane-head .pill{font-size:11px;padding:3px 9px}
+.flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:4px}
+.step{flex:0 0 auto;min-width:126px;max-width:170px;background:var(--bg-nested);border:1px solid var(--border-faint);border-radius:10px;padding:9px 11px;font-size:12.2px}
+.step b{display:block;font-size:12.4px;margin-bottom:3px}
+.step span{color:var(--text-muted);font-size:11.3px;line-height:1.55;display:block}
+.step.end{background:var(--ok-soft);border-color:transparent}
+.step.end b{color:var(--ok)}
+.arrow{flex:0 0 auto;display:grid;place-items:center;padding:0 7px;color:var(--text-muted)}
+.endnote{margin-top:10px;font-size:12px;color:var(--text-muted);display:flex;gap:7px;align-items:flex-start}
+.endnote b{color:var(--ok)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 11px;border-bottom:1px solid var(--border-faint);vertical-align:top}
+th{font-size:11.5px;letter-spacing:.5px;color:var(--text-muted);font-weight:600;background:var(--bg-nested)}
+tbody tr:hover{background:var(--bg-card-hover)}
+td code,.mono{font:12px var(--mono);background:var(--bg-nested);padding:1px 5px;border-radius:4px}
+.tblwrap{overflow-x:auto;border:1px solid var(--border-faint);border-radius:13px}
+.yes{color:var(--ok);font-weight:600}
+.no{color:var(--bad);font-weight:600}
+
+.dd{border-radius:13px;padding:16px;border:1px solid var(--border-faint)}
+.dd.do{background:var(--ok-soft)}
+.dd.dont{background:var(--bad-soft)}
+.dd h4{margin:0 0 9px;font-size:14px;display:flex;align-items:center;gap:7px}
+.dd.do h4{color:var(--ok)}
+.dd.dont h4{color:var(--bad)}
+.dd ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+.fuse{background:var(--warn-soft);border:1px solid transparent;border-radius:13px;padding:16px;margin-top:12px}
+.fuse h4{margin:0 0 8px;color:var(--warn);font-size:14px}
+.fuse ul{margin:0;padding-left:19px;font-size:13px;line-height:1.75}
+
+.dec{border:1px solid var(--border-faint);border-radius:13px;background:var(--bg-card);padding:15px;margin-bottom:11px}
+.dec-q{font-size:14px;font-weight:600;margin-bottom:9px;display:flex;gap:9px}
+.dec-q em{font-style:normal;flex:0 0 auto;width:21px;height:21px;border-radius:6px;background:var(--accent-soft);
+  color:var(--accent);display:grid;place-items:center;font:600 11px/1 var(--mono);margin-top:2px}
+.opts{display:grid;gap:8px;grid-template-columns:1fr 1fr}
+@media(max-width:640px){.opts{grid-template-columns:1fr}}
+.opt{border:1px solid var(--border-faint);border-radius:9px;padding:9px 11px;font-size:12.5px;background:var(--bg-nested)}
+.opt.pick{border-color:var(--accent-border);background:var(--accent-soft)}
+.opt b{display:block;font-size:12.8px;margin-bottom:3px}
+.opt.pick b{color:var(--accent)}
+.opt span{color:var(--text-muted);font-size:11.6px;line-height:1.6}
+
+.phase{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--border-faint)}
+.phase:last-child{border-bottom:0}
+.phase .no{flex:0 0 auto;width:34px;height:34px;border-radius:10px;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font:600 13px/1 var(--mono)}
+.phase b{font-size:14px}
+.phase p{margin:4px 0 0;font-size:12.8px;color:var(--text-muted)}
+.phase .stop{margin-top:6px;font-size:12px;color:var(--ok)}
+
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border-faint);color:var(--text-muted);font-size:12.5px}
+</style>
+</head>
+<style>
+:root{--radius:12px} body{font-size:14px}.wrap{max-width:1320px}.workspace{display:grid;grid-template-columns:150px 1fr;min-height:600px}.rail{padding:20px 12px;border-right:1px solid var(--border-subtle);background:var(--bg-nested)}.rail b,.rail span{display:block;padding:9px}.rail b{color:var(--accent);background:var(--accent-soft);border-radius:8px}.desk{padding:22px;min-width:0}.bread{color:var(--text-muted);font-size:12px;margin-bottom:14px}.panelrow{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.state{border:1px solid var(--border-subtle);padding:5px 12px;border-radius:20px;color:var(--warn)}.state.live{color:var(--ok);background:var(--ok-soft)}.state.fail{color:var(--bad);background:var(--bad-soft)}.inputs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:20px 0}label{display:flex;flex-direction:column;gap:6px;color:var(--text-secondary);font-size:12px}select,input{width:100%;padding:9px;border:1px solid var(--border-subtle);background:var(--bg-input);color:var(--text-primary);border-radius:8px;font:inherit}.actions{display:flex;gap:8px;flex-wrap:wrap}.notice{padding:13px;border-radius:10px;background:var(--info-soft);color:var(--info);margin:15px 0}.notice.error{background:var(--bad-soft);color:var(--bad)}.receipt{display:none;margin:18px 0;border:1px solid var(--border-default);padding:16px;border-radius:12px}.receipt.show{display:block}.kv{display:grid;grid-template-columns:120px 1fr;gap:8px;font-size:12px;margin:12px 0}.kv code{word-break:break-all}.progress{display:flex;gap:8px;margin:15px 0;flex-wrap:wrap}.progress span{padding:5px 10px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:8px;font-size:12px}.progress .on{color:var(--accent);border-color:var(--accent)}.progress .ok{color:var(--ok);border-color:var(--ok)}.review{display:none;padding:14px;background:var(--warn-soft);border-radius:12px;margin:16px 0}.review.show{display:block}.audit{max-height:240px;overflow:auto;margin-top:16px}.audit table{width:100%;border-collapse:collapse;font-size:11px}.audit th,.audit td{padding:8px;border-bottom:1px solid var(--border-faint);text-align:left}.audit td:last-child{word-break:break-word}.diagram{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin-top:18px}.node{flex:1;min-width:145px;border:1px solid var(--accent-border);background:var(--accent-soft);padding:15px;border-radius:10px}.node.reuse{border-color:var(--ok);background:var(--ok-soft)}.node.exclude{border:1px dashed var(--bad);background:var(--bad-soft)}.copybox{width:100%;height:75px;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-subtle);border-radius:8px;padding:10px;font-family:var(--mono)}.small{font-size:12px;color:var(--text-muted)}.hrow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}h1{font-size:28px;margin-bottom:8px}.sticky-note{border-left:3px solid var(--warn);padding-left:12px}.flow{font-family:var(--mono);font-size:12px;line-height:2.2;white-space:pre-wrap;overflow:auto}section{padding-top:35px}button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}@media(max-width:700px){.workspace{grid-template-columns:1fr}.rail{display:none}.desk{padding:14px}.inputs{grid-template-columns:1fr}.kv{grid-template-columns:95px 1fr}.audit{max-height:280px}.wrap{padding:0 12px 50px}}
+</style><body>
+<header class="top"><div class="top-inner"><div class="brand">MyCDS 外网通行证<span>可点击方案预演</span></div><div class="top-spacer"></div><span class="pill warn">模拟：不开放真实数据库</span><button class="btn" id="themeBtn">切到白天</button></div></header>
+<nav class="secnav"><div class="secnav-inner"><a href="#s0">一页结论</a><a href="#s1">操作预演</a><a href="#s2">架构边界</a><a href="#s3">鉴权与失败</a><a href="#s4">角色路径</a><a href="#s5">怎么验收</a><a href="#s6">范围契约</a><a href="#s7">默认决策</a><a href="#s8">成本与退出</a></div></nav>
+<main class="wrap">
+<section id="s0"><h1>把外网访问变成一张有期限、能撤销的通行证</h1><p class="sec-sub">申请 → 复制连接信息 → 放行当前公网 IP · 30 分钟 → 用本地数据库工具连接。这里先预演成功、审批不过和连接失败。</p><div class="grid g3"><div class="card"><b>范围看得见</b><p>项目、分支、数据库、权限、当前 IP、账号和截止时间都出现在凭证卡。</p></div><div class="card"><b>审查不过就不开门</b><p>有明确拒绝原因、审批人和申请编号。审计记录保存失败也保持入口关闭。</p></div><div class="card"><b>失败可定位</b><p>区分网关不可用、IP 不匹配、认证失败、TLS 与数据库超时。不会把“申请成功”写成“连接成功”。</p></div></div><p class="sticky-note small">首版审查通行证权限并记录连接审计；完整 SQL 内容审计须按数据库类型接原生日志。此 Demo 不证明真实公网已接通；公网网关主机仍需指定。</p></section>
+<section id="s1"><h2>按你的实际操作顺序走一遍</h2><p class="sec-sub">默认只读 30 分钟。界面中的地址、IP、密码和审计编号均为演示值；不会向真实 CDS 发送请求。</p>
+<div class="hrow"><label>选择要预演的情况<select id="scenario"><option value="ok">正常申请与连接</option><option value="review">生产库 / 读写：等待审批</option><option value="reject">审批拒绝</option><option value="audit">审计保存失败：禁止放行</option><option value="gateway">公网网关不可达</option><option value="ip">客户端出口 IP 不匹配</option><option value="password">账号或密码错误</option><option value="tls">TLS 配置错误</option><option value="timeout">数据库连接超时</option><option value="cleanup">撤销时账号清理失败</option></select></label><button class="btn primary" id="play">播放完整预演</button><button class="btn" id="reset">重置</button><span class="small">演示期限 30 分钟；点击「模拟到期 / 重启」可快速演练回收。</span></div>
+<div class="demo-frame" style="margin-top:18px"><div class="workspace"><aside class="rail"><span>CDS / MyCDS</span><span>项目</span><span>分支</span><b>数据库资源</b><span>验收报告</span><span>审计记录</span></aside><div class="desk"><div class="bread">项目 / 验收隔离库 / test / 数据库 / 连接</div><div class="panelrow"><h3 style="margin:0">外网通行证</h3><span class="state" id="state">尚未申请</span></div><div class="inputs"><label>数据库类型<select id="engine"><option>MySQL</option><option>PostgreSQL</option><option>MongoDB</option></select></label><label>访问权限<select id="permission"><option value="read">只读（默认）</option><option value="write">读写（需要管理员审查）</option></select></label><label>白名单默认选项<select id="ipChoice"><option>我的当前公网 IP（演示）</option><option>指定客户端 IP（演示）</option></select><input id="customIp" aria-label="指定客户端 IPv4（演示）" value="203.0.113.80" placeholder="例如 203.0.113.80" hidden></label></div><p class="small" id="scope">仅授权 cds_demo 数据库 · 当前 IP 203.0.113.24/32 · 有效期 30 分钟 · 独立临时账号 · 要求 TLS</p>
+<div class="actions"><button class="btn primary" id="apply">1 申请外网通行证</button><button class="btn" id="copy" disabled>2 复制连接信息</button><button class="btn primary" id="grant" disabled>3 放行当前 IP · 30 分钟</button><button class="btn" id="probe" disabled>测试客户端连接</button><button class="btn" id="revoke" disabled>立即撤销</button><button class="btn" id="expire" disabled>模拟到期 / 重启</button></div>
+<div class="progress" id="progress"><span>申请审查</span><span>临时账号</span><span>审计落库</span><span>网络放行</span><span>连接验证</span></div><div class="notice" id="notice" role="status" aria-live="polite">点击申请。生成凭证不会自动放行网络；开始计时以通道就绪为准。</div>
+<div class="review" id="review"><b>管理员审查（模拟）</b><p id="reviewText">审批对象包含数据库、权限、IP 与期限；批准仅适用于当前申请。</p><div class="actions"><button class="btn primary" id="approve">模拟管理员批准本次</button><button class="btn" id="reject">模拟管理员拒绝本次</button></div></div>
+<div class="receipt" id="receipt"><div class="panelrow"><b>连接凭证 · 演示值</b><span class="pill" id="ttl">尚未放行，不计时</span></div><div class="kv"><span>申请编号</span><code id="passId">PASS-DEMO-001</code><span>公网地址</span><code>db-gateway.example.test</code><span>端口</span><code id="port">43101</code><span>账号</span><code>demo_pass_001（独立账号）</code><span>随机密码</span><code>DEMO_ONLY_7tx4zR9（非真实密码）</code><span>隔离范围</span><code id="receiptScope">cds_demo · 只读</code><span>TLS</span><code>必须开启并验证服务器证书</code><span>生效时间</span><code id="started">等待放行</code><span>到期时间</span><code id="deadline">等待放行</code></div><textarea id="copybox" class="copybox" readonly aria-label="演示连接信息"></textarea><p class="small">真实产品中凭据仅本人可查看或复制、加密保存、日志脱敏。数据库工具和浏览器须使用相同出口；使用 VPN 时请核对实际连接出口。</p></div>
+<div class="audit"><b>审计记录（模拟）</b><table><thead><tr><th>事件</th><th>申请人 / 审批人</th><th>范围与结果</th></tr></thead><tbody id="auditRows"><tr><td>尚无事件</td><td>—</td><td>申请后逐步留痕</td></tr></tbody></table></div>
+</div></div></div></section>
+<section id="s2"><h2>架构：谁是什么，部署在哪里</h2><div class="tblwrap"><table><thead><tr><th>名字</th><th>职责</th><th>位置 / 对外入口</th><th>此次处理</th></tr></thead><tbody><tr><td>MyCDS 控制面</td><td>身份、申请、审批、凭证和审计</td><td>现有 MyCDS 主机 / HTTPS</td><td>复用；增加通行证适配</td></tr><tr><td>frp</td><td>成熟的加密反向隧道</td><td>MyCDS 客户端 + 专用公网网关</td><td>部署现成软件；不造隧道协议</td></tr><tr><td>通行证代理</td><td>校验真实 IP、独立执行期限、断开连接</td><td>MyCDS 隔离网络 / 无独立公网域名</td><td>复用已有代理并扩展可信来源处理</td></tr><tr><td>MySQL / MongoDB / PostgreSQL</td><td>保存数据、执行账号和权限</td><td>各项目容器网络 / 原端口维持内部访问</td><td>新增受限临时账号；按引擎适配</td></tr><tr><td>miduo.org</td><td>另一个环境</td><td>独立系统</td><td>不访问、不配置、不部署</td></tr></tbody></table></div><div class="diagram"><div class="node reuse">本地数据库工具<br>原生 TCP + 数据库 TLS</div><div class="node">MyCDS 专用公网网关<br>真实来源 IP + 每证入口</div><div class="node reuse">frp 加密反向通道<br>MyCDS 主动向外连接</div><div class="node">MyCDS 通行证代理<br>白名单 + 硬期限</div><div class="node reuse">选定数据库<br>临时受限账号</div><div class="node exclude">miduo.org<br>明确不碰</div></div><div class="grid g2" style="margin-top:15px"><div class="card"><b>现成软件直接用</b><p>frp 负责隧道，数据库负责账号权限，现有 CDS 负责登录、审批、事件和报告。</p></div><div class="card"><b>只写适配</b><p>通行证状态、三库临时账号、可信 IP、网关策略和错误解释。禁止自造通用隧道协议、通用 SQL 解析器或绕过审批的万能执行接口。</p></div></div></section>
+<section id="s3"><h2>每一跳拿什么凭据，失败如何关闭</h2><div class="flow">A1 使用者 → MyCDS：现有登录会话 + 项目 / 资源权限
+A2 管理员 → 审查：独立已验证管理员会话，绑定申请内容
+A3 MyCDS → 网关：实例专属受限凭据 + 带期限的策略
+A4 MyCDS → 数据库：受限账号管理凭据，创建每证临时账号
+A5 数据库工具 → 目标库：临时账号 + 随机密码 + TLS + 来源 IP
+</div><div class="tblwrap"><table><thead><tr><th>故障</th><th>用户看到</th><th>网络 / 数据处理</th></tr></thead><tbody><tr><td>角色不符、审批拒绝</td><td>未放行、原因、申请编号、恢复方式</td><td>无公网入口、无写操作</td></tr><tr><td>审计无法保存</td><td>审计保存失败，请重试</td><td>不放行，回收准备中的账号</td></tr><tr><td>网关不可达</td><td>网关连接失败，可重试</td><td>不开始期限、不显示已连接</td></tr><tr><td>IP、密码、TLS 错误</td><td>对应原因与检查项</td><td>拒绝连接、不修改业务数据</td></tr><tr><td>到期 / 撤销 / 主控重启</td><td>已到期、已断连</td><td>独立期限关闭现有连接，重启不续期</td></tr><tr><td>账号回收失败</td><td>入口已关闭，账号回收待管理员处理</td><td>先关闭通道再报警，后台重试回收</td></tr></tbody></table></div><p class="small">真实 IP 只来自可信入口；不能信任客户端任填的请求头。TCP 转发携带的来源必须由可信隧道校验，不能把网关地址直接放入白名单当作用户 IP。</p></section>
+<section id="s4"><h2>三个角色各自拿到什么</h2><div class="grid g3"><div class="card"><b>使用者</b><p>连接页 → 申请 → 复制 → 放行 → 数据库客户端验证 → 拿到可用连接和到期时间。</p><span class="pill accent">终点：真的连接成功</span></div><div class="card"><b>产品 / 运营</b><p>查看申请状态和审计编号 → 核对数据范围 → 获得可解释的通过或拒绝结果。</p><span class="pill accent">终点：范围与结果可核对</span></div><div class="card"><b>管理员 / 开发</b><p>审查身份与权限 → 批准指定范围 → 验证结果 → 撤销 → 获得申请、审批、连接及回收记录。</p><span class="pill accent">终点：有证据的关闭与回收</span></div></div><p class="small">“请求已入队”“API 返回成功”或“复制成功”均不代表已连接。客户端实测和权限边界确认才到达终点。</p></section>
+<section id="s5"><h2>验收：不能只看一个绿色提示</h2><div class="tblwrap"><table><thead><tr><th>要证明</th><th>亲自怎么核</th><th>通过条件</th></tr></thead><tbody><tr><td>三库连接可用</td><td>外网客户端使用凭证连接并读取测试记录</td><td>MySQL / MongoDB / PostgreSQL 分别成功</td></tr><tr><td>白名单是真的</td><td>切换未授权网络，用同一凭据连接</td><td>被拒，审计可查</td></tr><tr><td>账号确实隔离</td><td>测试读写限制、跨库与跨项目访问</td><td>授权库内合法动作成功，越界被拒</td></tr><tr><td>审批不过不放行</td><td>拒绝申请、模拟审计保存失败</td><td>无可用入口、不伪报已连接</td></tr><tr><td>期限和撤销有效</td><td>保持客户端连接，等待到期 / 点击撤销 / 重启主控</td><td>已有连接断开，重新连接被拒</td></tr><tr><td>数据库控制页可操作</td><td>对抗题覆盖 CRUD、批量、事务、失败与双主题</td><td>页面结果和独立持久化核对一致</td></tr><tr><td>Agent 能发起审批</td><td>cdscli 提交具体操作，所有者审批，查询状态</td><td>审批前不执行、审批后仅执行批准内容</td></tr></tbody></table></div><p class="sticky-note small">不算数的证据：Demo 状态、只有接口 200、容器启动、测试全绿、旧截图、只截进度条、用容器内部访问冒充公网客户端。</p></section>
+<section id="s6"><h2>范围契约</h2><div class="grid g2"><div class="card"><b>本期 6 件事</b><ol><li>当前公网 IP 默认选项与 30 分钟流程</li><li>MyCDS 专用公网网关适配</li><li>每证独立账号、目标库与权限</li><li>生产 / 读写审查与全部访问留痕</li><li>到期、撤销、失败时入口关闭</li><li>三库与 cdscli 审批端到端验证</li></ol></div><div class="card"><b>后续独立列入债务</b><p>全引擎逐条 SQL 审查与 SQL 审计插件、永久公网开放、全网白名单、多地域网关、与其他环境共用入口。</p><b>停止线</b><p>触碰 miduo.org、需要业务库破坏性测试、网关目标未确认、范围超过 3 模块 / 15 文件，或连续 3 次提交没有通过的新行为时停止扩展并重新核对范围。</p></div></div></section>
+<section id="s7"><h2>默认决策与代价</h2><div class="tblwrap"><table><thead><tr><th>决策</th><th>推荐默认</th><th>另一选择及代价</th></tr></thead><tbody><tr><td>公网入口</td><td>独立 MyCDS 专用服务器</td><td>路由器公网 IPv4 映射，依赖运营商与路由器管理</td></tr><tr><td>默认权限</td><td>只读</td><td>读写必须管理员明确批准，影响数据可变更</td></tr><tr><td>默认期限</td><td>放行就绪后 30 分钟</td><td>续用重新申请，不静默延长</td></tr><tr><td>当前 IP</td><td>可信入口识别的公网出口</td><td>工具不同出口时显式更换 IP 并重新审查</td></tr><tr><td>写操作环境</td><td>验收或隔离副本</td><td>业务库须明确授权和恢复方式</td></tr></tbody></table></div></section>
+<section id="s8"><h2>分阶段落地，可以随时退出</h2><div class="phase"><div class="no">1</div><div><b>预演 + 三库对抗实测</b><p>交付本 Demo、真实结果、发现问题与缺口；现在停也保留可用验收资产。</p></div></div><div class="phase"><div class="no">2</div><div><b>一台专用网关 + MySQL 闭环</b><p>预计涉及 CDS 界面、通行证适配、部署配置 3 模块。独立验证一张凭证从申请到撤销。</p></div></div><div class="phase"><div class="no">3</div><div><b>MongoDB / PostgreSQL + 恢复演练</b><p>逐库扩展账号隔离和连接审计，不按一个引擎的成功推断另一个引擎。</p></div></div><p class="small">退出：停用 MyCDS 公网通行证开关、关闭现存凭证、撤销临时账号、停止专用网关入口；数据库原连接不迁移，业务数据不搬家。公网服务器费用待选定主机后确认。</p></section>
+<footer>本文件为方案 Demo，零外部脚本 / 图片 / 字体依赖；真实验收结果另行归档。只针对 MyCDS。</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);let stage='idle',ticket=0,approved=false,copied=false,live=false,remaining=30,timer=null,busy=false,rows=[];
+function audit(event,result,actor='演示使用者'){rows.push({event,result,actor});$('auditRows').innerHTML=rows.map(x=>'<tr><td>'+x.event+'</td><td>'+x.actor+'</td><td>'+x.result+'</td></tr>').join('');}
+function message(text,error=false){$('notice').textContent=text;$('notice').className='notice'+(error?' error':'');}
+function state(text,kind=''){$('state').textContent=text;$('state').className='state '+kind;}
+function lock(){for(const id of ['scenario','engine','permission','ipChoice','customIp','apply'])$(id).disabled=busy||stage!=='idle';$('copy').disabled=busy||!['ready','pending','active','failed'].includes(stage);$('grant').disabled=busy||!copied||!approved||!['ready','failed'].includes(stage);$('probe').disabled=busy||!live;$('revoke').disabled=busy||!live;$('expire').disabled=busy||!live;}
+function progress(index){Array.from($('progress').children).forEach((x,i)=>x.className=i<index?'ok':i===index?'on':'');}
+function wait(ms){return new Promise(r=>setTimeout(r,ms));}
+function reset(){ticket++;clearInterval(timer);timer=null;stage='idle';approved=false;copied=false;live=false;busy=false;remaining=30;rows=[];$('review').className='review';$('receipt').className='receipt';$('auditRows').innerHTML='<tr><td>尚无事件</td><td>—</td><td>申请后逐步留痕</td></tr>';$('ttl').textContent='尚未放行，不计时';$('started').textContent='等待放行';$('deadline').textContent='等待放行';progress(-1);state('尚未申请');message('点击申请。生成凭证不会自动放行网络；开始计时以通道就绪为准。');lock();}
+function ip(){return $('ipChoice').selectedIndex===0?'203.0.113.24':$('customIp').value.trim();}
+function validIp(){return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip())&&ip().split('.').every(n=>Number(n)<=255);}
+function config(){$('customIp').hidden=$('ipChoice').selectedIndex===0;$('scope').textContent='仅授权 cds_demo 数据库 · IP '+ip()+'/32 · 有效期 30 分钟 · 独立临时账号 · 要求 TLS';const e=$('engine').value;const port=e==='MySQL'?43101:e==='PostgreSQL'?43102:43103;$('grant').textContent=$('ipChoice').selectedIndex===0?'3 放行当前 IP · 30 分钟':'3 放行指定 IP · 30 分钟';$('port').textContent=port;$('receiptScope').textContent='cds_demo · '+($('permission').value==='read'?'只读':'读写');const scheme=e==='MySQL'?'mysql':e==='PostgreSQL'?'postgresql':'mongodb';$('copybox').value=scheme+'://demo_pass_001:DEMO_ONLY_7tx4zR9@db-gateway.example.test:'+port+'/cds_demo\n仅演示；TLS=必须开启并验证证书；白名单='+ip()+'/32；放行后30分钟';}
+async function apply(){if(busy||stage!=='idle')return;if(!validIp()){message('请输入有效 IPv4。当前没有申请、账号或开放入口。',true);return;}busy=true;const token=++ticket;state('申请处理中');lock();for(const [i,m] of ['核对项目和资源范围','检查角色与审批要求','准备受限临时账号','保存申请审计'].entries()){if(token!==ticket)return;progress(i);message(m+'（模拟）');await wait(500);}if(token!==ticket)return;busy=false;if($('scenario').value==='audit'){stage='blocked';state('审计失败 · 未放行','fail');audit('审计写入失败','入口保持关闭，准备中的账号已回收');message('申请审计无法保存，因此没有签发可用凭据，也没有开放端口。重置后可预演其他情况。',true);lock();return;}config();$('receipt').className='receipt show';const review=['review','reject'].includes($('scenario').value)||$('permission').value==='write';stage=review?'pending':'ready';approved=!review;audit('申请已记录','PASS-DEMO-001 / cds_demo / '+ip()+'/32 / 30分钟');if(review){state('等待管理员审查');$('review').className='review show';message('可先复制演示连接信息。当前未放行，只有管理员批准本申请后才能继续。');}else{audit('规则审查通过','只读、项目权限符合、审计已保存','系统规则');state('凭证已准备 · 未放行');message('下一步复制连接信息，然后放行当前 IP。此时还不能连接。');}progress(2);lock();}
+async function copy(){try{await navigator.clipboard.writeText($('copybox').value);message('演示连接信息已复制。点击放行后才开始 30 分钟期限。');}catch(e){$('copybox').focus();$('copybox').select();message('当前预览容器不允许自动复制；连接信息已选中，可手动复制。正式页面提供同样的恢复方式。');}copied=true;audit('查看 / 复制连接信息','仅演示凭据，不开放端口');lock();}
+function review(allow){if(stage!=='pending')return;$('review').className='review';if(!allow||$('scenario').value==='reject'){stage='rejected';approved=false;state('审批拒绝 · 未放行','fail');audit('审批拒绝','目标库读写范围未获授权，入口保持关闭','演示管理员');message('申请被拒绝：本次权限范围未获批准。不会通过重试或更换按钮绕过审批；调整权限后重新申请。',true);}else{stage='ready';approved=true;state('审批通过 · 未放行');audit('审批通过','仅绑定当前项目、资源、IP、权限和30分钟','演示管理员');message('审批已通过。复制后可放行当前 IP，计时从通道就绪开始。');}lock();}
+async function grant(){if(busy||live||!approved||!copied)return;busy=true;state('正在配置通道');lock();const token=ticket;for(const [i,m] of ['保存放行审计','确认网关和可信来源IP','安装期限与网络策略'].entries()){if(token!==ticket)return;progress(i+2);message(m+'（模拟）');await wait(600);}if(token!==ticket)return;busy=false;if($('scenario').value==='gateway'){stage='failed';state('网关连接失败 · 未放行','fail');audit('配置通道失败','网关不可达，账号停用，期限未开始');message('公网网关不可达。入口未开放、期限未开始；检查网关状态后重试。',true);lock();return;}stage='active';live=true;remaining=30;const now=new Date();$('started').textContent=now.toLocaleString()+'（模拟）';$('deadline').textContent=new Date(now.getTime()+30*60000).toLocaleString()+'（正式目标期限）';state('已放行 · 尚未验证连接','live');audit('当前IP已放行',ip()+'/32 / 独立账号 / 30分钟');message('通道已就绪。请在数据库工具连接；点击“测试客户端连接”预演实际验证结果。');$('ttl').textContent='演示倒计时 30 分钟';timer=setInterval(()=>{remaining--;$('ttl').textContent='演示剩余 '+remaining+' 分钟';if(remaining<=0)expire();},60000);lock();}
+async function probe(){if(!live||busy)return;busy=true;lock();progress(4);message('正在验证 TCP、TLS、账号与目标库（模拟）');await wait(900);if(!live){busy=false;lock();return;}busy=false;const reasons={ip:'客户端实际出口为203.0.113.80，和获准IP不同。确认VPN / 代理出口后重新申请。',password:'数据库认证失败。请使用当前通行证的临时账号密码，核对复制内容。',tls:'TLS证书验证失败。请开启SSL并核对证书和主机名；不提供忽略证书的自动绕过。',timeout:'网关可达，但目标数据库连接超时。检查数据库运行状态；当前不显示连接成功。'};const reason=reasons[$('scenario').value];if(reason){state('连接失败 · 通行证仍计时','fail');audit('客户端连接被拒 / 失败',reason);message(reason,true);}else{state('客户端连接验证成功','live');audit('连接成功','真实连接目标应为cds_demo；此处仅为Demo','演示数据库客户端');message('演示客户端已连接目标库，读取测试记录成功；其他数据库和写操作仍受账号权限约束。');progress(5);}lock();}
+function close(kind){if(!live)return;clearInterval(timer);live=false;busy=false;stage=kind==='expiry'?'expired':'revoked';state(kind==='expiry'?'已到期 · 已断连':'已撤销 · 已断连');$('ttl').textContent='入口关闭，旧凭据不可再连接';audit(kind==='expiry'?'期限到期':'手动撤销','监听关闭，已有连接断开');if($('scenario').value==='cleanup'){audit('账号回收失败','入口已关闭，后台重试并通知管理员');message('入口和已有连接已关闭；账号回收失败，已告警并重试，不会重新开放网络。',true);}else{audit('临时账号已撤销','原业务账号和原内部入口保持原状');message('入口已关闭、已有连接断开，临时账号撤销。再次使用需新申请；主控重启不续期。');}lock();}
+function expire(){close('expiry');}
+for(const id of ['engine','permission','ipChoice','customIp'])$(id).onchange=config;config();$('apply').onclick=apply;$('copy').onclick=copy;$('grant').onclick=grant;$('probe').onclick=probe;$('approve').onclick=()=>review(true);$('reject').onclick=()=>review(false);$('revoke').onclick=()=>close('revoke');$('expire').onclick=()=>{audit('模拟30分钟后 / 主控重启','仍使用原绝对截止时间');expire();};$('reset').onclick=reset;$('scenario').onchange=reset;$('themeBtn').onclick=()=>{const dark=document.documentElement.dataset.theme==='dark';document.documentElement.dataset.theme=dark?'light':'dark';$('themeBtn').textContent=dark?'切到黑天':'切到白天';};$('play').onclick=async()=>{reset();await apply();if(stage==='blocked')return;await copy();if(stage==='pending'){message('自动预演停在审批节点，请点击模拟管理员批准或拒绝；不自动替管理员决定。');return;}await grant();if(live)await probe();};reset();
+</script></body></html>

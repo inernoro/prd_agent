@@ -19,7 +19,17 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     if (projectId === false) return;
     const jobs = stateService.listScheduledJobs(projectId)
       .sort((a, b) => String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
-    res.json({ jobs });
+    // 时间轴右半边要画一串待触发点。序列一律由服务端出，前端不复制到期判定。
+    const horizon = Math.min(Math.max(Number(req.query.nextRuns || 0), 0), 64);
+    if (!horizon) { res.json({ jobs: jobs.map(job => ({ ...job, health: scheduledJobService.health(job) })) }); return; }
+    const now = new Date();
+    res.json({
+      jobs: jobs.map((job) => ({
+        ...job,
+        nextRuns: scheduledJobService.projectUpcomingRuns(job, horizon, now),
+        health: scheduledJobService.health(job, now),
+      })),
+    });
   });
 
   router.get('/scheduled-jobs/runs', (req, res) => {
@@ -86,6 +96,8 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       actions: input.actions,
       timeoutSeconds: input.timeoutSeconds,
       retryCount: input.retryCount,
+      completion: input.completion,
+      scheduleGraceSeconds: input.scheduleGraceSeconds,
       concurrencyPolicy: 'skip',
       createdAt: now,
       updatedAt: now,
@@ -114,6 +126,8 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       actions: input.actions,
       timeoutSeconds: input.timeoutSeconds,
       retryCount: input.retryCount,
+      completion: input.completion,
+      scheduleGraceSeconds: input.scheduleGraceSeconds,
       // 人工重新启用 = 认领了这条规则，连续失败计数与自动停用痕迹一并清掉；
       // 不清的话下一次失败就直接触顶，规则刚开又被关掉。
       ...(input.enabled && !existing.enabled
@@ -140,11 +154,22 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     const access = deps.assertProjectAccess(req, existing.projectId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
-      const run = await scheduledJobService.runJob(existing.id, 'manual');
+      const requestKey = req.get('Idempotency-Key');
+      if (requestKey && !/^\d{13}:[a-zA-Z0-9_.-]{8,100}$/.test(requestKey)) { res.status(400).json({ error: '幂等标识格式无效' }); return; }
+      const run = await scheduledJobService.runJob(existing.id, 'manual', { requestKey });
       res.json({ run });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  router.post('/scheduled-jobs/:id/recover', async (req, res) => {
+    const job = stateService.getScheduledJob(req.params.id);
+    if (!job) { res.status(404).json({ error: '任务不存在' }); return; }
+    const access = deps.assertProjectAccess(req, job.projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try { res.json({ run: await scheduledJobService.recoverRun(job.id, String(req.body?.runId || '')) }); }
+    catch (err) { res.status(409).json({ error: (err as Error).message }); }
   });
 
   return router;
@@ -175,6 +200,8 @@ function parseJobInput(body: any, stateService: StateService): {
   actions: ScheduledJobAction[];
   timeoutSeconds: number;
   retryCount: number;
+  completion?: ScheduledJob['completion'];
+  scheduleGraceSeconds: number;
 } | { error: string } {
   const projectId = cleanText(body?.projectId, 120);
   const name = cleanText(body?.name, 120);
@@ -183,14 +210,32 @@ function parseJobInput(body: any, stateService: StateService): {
 
   const schedule = parseSchedule(body?.schedule);
   if ('error' in schedule) return schedule;
-  const actions = parseActions(body?.actions, body?.target, { projectId, stateService });
+  const actions = parseActions(body?.actions, body?.target, {
+    projectId,
+    stateService,
+    // 只有事件驱动规则才允许留空来源分支——定时规则仍然必须绑定一个具体分支，
+    // 否则到点了没人知道要发什么。
+    allowDeferredBranch: schedule.type === 'push',
+  });
   if ('error' in actions) return actions;
 
+  let completion: ScheduledJob['completion'];
+  if (body?.completion != null) {
+    const raw = body.completion;
+    if (raw.type !== 'reports' || !Number.isInteger(raw.minCount) || raw.minCount < 1 || raw.minCount > 20
+      || (raw.requireObjectStorage !== undefined && typeof raw.requireObjectStorage !== 'boolean')
+      || (raw.allowedVerdicts !== undefined && (!Array.isArray(raw.allowedVerdicts) || !raw.allowedVerdicts.length || raw.allowedVerdicts.some((v: unknown) => !['pass', 'conditional', 'fail'].includes(v as string))))) {
+      return { error: '报告产物契约无效' };
+    }
+    completion = { type: 'reports', minCount: raw.minCount, requireObjectStorage: raw.requireObjectStorage, allowedVerdicts: raw.allowedVerdicts };
+  }
   const hasRelease = actions.some((action) => action.type === 'release');
 
   return {
     projectId,
     name,
+    completion,
+    scheduleGraceSeconds: clampInt(body?.scheduleGraceSeconds, 120, 1, 86400),
     description: cleanText(body?.description, 500) || undefined,
     enabled: body?.enabled !== false,
     schedule,
@@ -203,12 +248,23 @@ function parseJobInput(body: any, stateService: StateService): {
   };
 }
 
+const SCHEDULE_TYPES = ['manual', 'interval', 'daily', 'push'] as const;
+
 function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
-  const type = raw?.type === 'manual' || raw?.type === 'interval' || raw?.type === 'daily' ? raw.type : '';
+  const type = SCHEDULE_TYPES.includes(raw?.type) ? (raw.type as typeof SCHEDULE_TYPES[number]) : '';
   const timezone = cleanText(raw?.timezone, 80) || 'Asia/Shanghai';
   if (!type) return { error: '调度类型无效' };
   if (!isValidTimeZone(timezone)) return { error: '时区无效' };
   if (type === 'manual') return { type, timezone };
+  if (type === 'push') {
+    // 分支 glob 必须给：留空会匹配不到任何分支，规则建了却永远不触发，
+    // 而且没有任何地方会报错——这种「静默不生效」比直接拒绝糟得多。
+    const branchPattern = cleanText(raw?.branchPattern, 200);
+    if (!branchPattern) return { error: '分支匹配不能为空（例如 main 或 release/*）' };
+    const event = raw?.event === 'pr-open' ? 'pr-open' : 'push';
+    const pathPattern = cleanText(raw?.pathPattern, 200);
+    return { type, branchPattern, event, ...(pathPattern ? { pathPattern } : {}), timezone };
+  }
   if (type === 'interval') {
     return { type, intervalMinutes: clampInt(raw?.intervalMinutes, 60, 1, 60 * 24 * 30), timezone };
   }
@@ -221,6 +277,8 @@ function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
 interface ParseTargetContext {
   projectId: string;
   stateService: StateService;
+  /** push 规则专用：来源分支由事件决定，建规则时允许留空。 */
+  allowDeferredBranch?: boolean;
 }
 
 function parseActions(rawActions: any, legacyTarget: any, ctx: ParseTargetContext): ScheduledJobAction[] | { error: string } {
@@ -308,7 +366,13 @@ function parseReleaseSource(raw: any, ctx: ParseTargetContext): ReleaseJobSource
   }
   if (raw?.kind === 'branch') {
     const branchId = cleanText(raw.branchId, 120);
-    if (!branchId) return { error: '来源分支必填' };
+    // 事件驱动规则（schedule.type = 'push'）存的是分支 **glob**，发哪个分支要等事件
+    // 发生才知道，由 runPushRules 现场覆盖。所以这里允许留空——若照定时规则那样
+    // 要求填一个固定分支，`release/*` 这条规则就只能绑死其中一个 release 分支。
+    if (!branchId) {
+      if (ctx.allowDeferredBranch) return { kind: 'branch', branchId: '' };
+      return { error: '来源分支必填' };
+    }
     const branch = ctx.stateService.getBranch(branchId);
     if (!branch) return { error: `来源分支不存在: ${branchId}` };
     if (branch.projectId !== ctx.projectId) {
@@ -355,6 +419,12 @@ function normalizeScheduleForCompare(schedule: ScheduledJobSchedule): string {
     type: schedule.type,
     intervalMinutes: schedule.type === 'interval' ? schedule.intervalMinutes : undefined,
     timeOfDay: schedule.type === 'daily' ? schedule.timeOfDay : undefined,
+    // push 规则的三个字段也要参与比较：漏掉的话改了分支 glob 却被判成
+    // 「调度没变」，nextRunAt 被原样保留（push 规则恒为 null 倒是无害），
+    // 但更要命的是 UI 的「有未保存更改」判据也会跟着失灵。
+    branchPattern: schedule.type === 'push' ? schedule.branchPattern : undefined,
+    event: schedule.type === 'push' ? schedule.event : undefined,
+    pathPattern: schedule.type === 'push' ? schedule.pathPattern || '' : undefined,
     timezone: schedule.timezone || 'Asia/Shanghai',
   });
 }

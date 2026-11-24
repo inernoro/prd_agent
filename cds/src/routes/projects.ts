@@ -1,3 +1,8 @@
+import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-plan.js';
+import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
+import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
+import { addressWriteLocked } from '../services/preview-address-settings.js';
+import { bootstrapRepository, MAX_PROJECT_NAME_LENGTH } from '../services/bootstrap-target.js';
 /**
  * Projects API router.
  *
@@ -24,22 +29,44 @@
  * doc/plan.cds.multi-project-phases.md P4.
  */
 
-import { Router } from 'express';
-import { randomBytes, createHash } from 'node:crypto';
+import express, { Router } from 'express';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { StorageProvisionService } from '../services/storage-provision.js';
+import { infraStoragePlan,stableStorageVolumeName } from '../services/deployment-storage-plan.js';
 import { StateService } from '../services/state.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
+import { hasActiveGrant } from '../services/identity.js';
+import { trustedClusterIdentity } from '../services/cluster-identity-context.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
+import { retainedDedicatedContainers } from '../services/db-ledger.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
-import { repoNameFromGitRef } from '../services/preview-slug.js';
+import { repoNameFromGitRef, projectReservedIdentifiers, projectResourceNamespace } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { occupiedHostOwners, projectBranchPublishedHosts, projectBranchPublishedServiceHosts } from '../services/preview-entrypoints.js';
+import { projectIdentityActorFromRequest, projectIdentityResponse, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { resolveProjectScope } from '../services/project-scope.js';
+import { isMachineCaller } from '../services/machine-caller.js';
+import {
+  buildPrebuiltGateRejection,
+  findNonPrebuiltDefaultModes,
+  isAgentGatedRequest,
+  isAgentPrebuiltOnly,
+} from '../services/agent-prebuilt-gate.js';
+import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
+import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { normalizeBranchGroups } from '../services/branch-groups.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
-import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
+import { applyDefaultDeployModesToBranch, assertValidDefaultDeployModes, InvalidDefaultDeployModeError } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import { mergeGitAuthEnv, resolveGitAuthEnv } from '../services/git-auth-env.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
@@ -55,8 +82,11 @@ import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, Project, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
+import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
+import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -105,7 +135,7 @@ export const LEGACY_PROJECT_ID = 'default';
  * Maximum length of `Project.name` we accept on POST. Long names would
  * overflow the UI card and the docker network name derivation.
  */
-const MAX_NAME_LENGTH = 60;
+const MAX_NAME_LENGTH = MAX_PROJECT_NAME_LENGTH;
 
 /**
  * Regex for acceptable slugs. Matches kebab/alphanumeric and forbids
@@ -295,6 +325,8 @@ function formatKeyPreview(plaintext: string): string {
   return prefix + suffix.slice(0, 12) + '…' + suffix.slice(-4);
 }
 
+const bootstrapCreations = new WeakMap<StateService, Set<string>>();
+
 /**
  * Mint a project-scoped `cdsp_` Agent Key and persist it under the project.
  * Plaintext layout: `cdsp_<slugHead12>_<base64url 32 bytes>`. Only the
@@ -307,6 +339,7 @@ function mintProjectAgentKey(
   project: Project,
   label: string,
   createdBy?: string,
+  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess'> = {},
 ): { keyId: string; plaintext: string; preview: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
@@ -318,6 +351,7 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
+    ...restrictions,
     createdAt: new Date().toISOString(),
     createdBy: createdBy || undefined,
   };
@@ -408,30 +442,9 @@ export function assertNotMachineAgentKey(
  * 管理员」:人类 cookie / bootstrap 静态 key（无 stamp）或全权 'all' cdsg_ key。
  * 任何带作用域的机器 key（cdsp_ 或 projects!=='all' 的 cdsg_）一律 403。
  */
-export function assertUnscopedAdmin(
-  req: { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } },
-): null | { status: number; body: Record<string, unknown> } {
-  if (req.cdsProjectKey) {
-    return {
-      status: 403,
-      body: {
-        error: 'project_key_forbidden',
-        message: '该操作借服务器级凭据且无项目语境，仅限管理员 / 控制台会话，项目级 key 不可用。',
-      },
-    };
-  }
-  const access = req.cdsAccess?.access;
-  if (access && access.projects !== 'all') {
-    return {
-      status: 403,
-      body: {
-        error: 'scoped_key_forbidden',
-        message: '该操作借服务器级凭据且无项目语境，带作用域的全局 Key 不可用；仅限管理员会话或全权全局 Key。',
-      },
-    };
-  }
-  return null;
-}
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
+
+export { assertUnscopedAdmin };
 
 /**
  * 跨项目「清扫型」路由的作用域门卫（Codex P1，2026-07-09）。用于那些「不带 ?project=
@@ -532,13 +545,41 @@ const EMPTY_STATS: ProjectStats = {
   lastDeployedAt: null,
 };
 
+/** 同仓兄弟项目：界面要能点进去，所以带上 id 和名字。 */
+interface RepoSiblingRef {
+  id: string;
+  name: string;
+  /** 该项目声明的构建范围并集；空 = 未声明 = 每次推送都重建它 */
+  scope: string[];
+}
+
 interface ProjectSummary extends Project, ProjectStats {
+  identityVersion: string;
   /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
   resourceUsage?: ProjectResourceUsage | null;
+  /**
+   * 2026-09-02：这个仓库还喂着哪些别的项目。
+   *
+   * 只在同仓项目 >= 2 时出现 —— 单项目仓库不该看见任何多项目字样，否则等于
+   * 给所有人凭空加一个要理解的概念。只发给浏览器会话：机器凭据可能只被授权
+   * 了本项目，不该顺带认识仓库里的别的项目。
+   */
+  repoSharing?: (RepoSharingSummary & {
+    siblings: RepoSiblingRef[];
+    /**
+     * 本项目还没声明范围时，系统看出来的建议。有它，界面就不必让用户从空白开始
+     * ——直接说「看起来只关心 cds/**」并给一个采纳按钮。推断只做建议不自动生效，
+     * 理由见 build-scope-inference.ts 顶部。
+     */
+    scopeSuggestion?: { scope: string[]; why: string } | null;
+  }) | null;
 }
 
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
-  return { ...project, ...stats, resourceUsage: usage ?? null };
+  // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
+  // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
+  const { branchGroups: _branchGroups, ...rest } = projectIdentityResponse(project);
+  return { ...rest, ...stats, resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
@@ -574,9 +615,8 @@ async function resolveRemoteDefaultBranch(shell: IShellExecutor, repoPath: strin
 function hasOwnerAccess(req: unknown, projectId: string): boolean {
   const r = req as {
     cdsProjectKey?: { projectId: string };
-    _cdsCookieAuth?: boolean;
   };
-  if (r._cdsCookieAuth === true) return true;
+  if (isHumanSystemOwner(req)) return true;
   if (r.cdsProjectKey && r.cdsProjectKey.projectId === projectId) return true;
   return false;
 }
@@ -590,11 +630,56 @@ function maskEnvMap(env: Record<string, string> | undefined): Record<string, str
 
 function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T): T {
   if (hasOwnerAccess(req, summary.id)) return summary;
+  if (isScopedHuman(req)) {
+    // Members need card/workbench metadata, not the persisted Project object.
+    // A finite projection also keeps future credential fields private by default.
+    const keys = [
+      'id', 'slug', 'name', 'aliasName', 'identityVersion', 'description', 'kind', 'legacyFlag',
+      'createdAt', 'updatedAt', 'deliveryMode', 'gitRepoUrl', 'githubRepoFullName',
+      'gitDefaultBranch', 'defaultBranch', 'cloneStatus', 'resourceChipDisplay',
+      'paused', 'pausedAt', 'pauseReason', 'branchCount', 'runningBranchCount',
+      'appServiceCount', 'runningServiceCount', 'infraServiceCount', 'runningInfraServiceCount',
+      'lastDeployedAt', 'resourceUsage',
+    ] satisfies Array<keyof ProjectSummary>;
+    return {
+      ...Object.fromEntries(keys.map(key => [key, summary[key]])),
+      gitRepoUrl: summary.gitRepoUrl ? _redactUrlUserInfo(summary.gitRepoUrl) : undefined,
+      appServices: summary.appServices.map(service => ({
+        id: service.id, name: service.name, branch: service.branch, status: service.status,
+        runningCount: service.runningCount, dockerImage: service.dockerImage, containerPort: service.containerPort,
+      })),
+      infraServices: summary.infraServices.map(service => ({
+        id: service.id, name: service.name, status: service.status, dockerImage: service.dockerImage,
+      })),
+    } as T;
+  }
   return {
     ...summary,
     customEnv: maskEnvMap(summary.customEnv),
     defaultEnv: maskEnvMap(summary.defaultEnv),
   };
+}
+
+/**
+ * 分组保存请求体上限。校验能接受的最大请求约 2.4MB（30 组 × 200 个 320 字符的钉入 id + 每组 20 条
+ * 需要转义的 100 字规则），钉入 id 限定为无需 JSON 转义的字符，才让这个上界可推；用例里有最坏情形的实测。
+ */
+export const BRANCH_GROUPS_BODY_LIMIT = '4mb';
+
+/**
+ * 这个请求是不是分组保存（全局 JSON 解析器要对它放行，交给路由自带的大上限解析器）。
+ * 判据必须与 Express 路由的实际匹配一致：Express 默认大小写不敏感、接受末尾斜杠；
+ * 只认精确小写路径的话，`/branch-groups/` 这类路由照样接的请求会先被全局 100kb 上限拦成 413（Codex P2，PR #1647）。
+ */
+export function isBranchGroupsSaveRequest(method: string, path: string): boolean {
+  return method === 'PUT' && /^\/api\/projects\/[^/]+\/branch-groups\/?$/i.test(path);
+}
+
+/** 分组保存等落盘的上限：与分支状态落盘同一个环境变量口径（CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS）。 */
+function branchGroupsFlushTimeoutMs(): number {
+  const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return 30_000;
+  return Math.max(100, Math.min(raw, 30_000));
 }
 
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
@@ -608,18 +693,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // PUT /projects/:id/preview-mode、/comment-template、POST /projects/:id/files
   // 等没调的就是漏洞 —— 一把 projects:[] 的 key 仍能改现有项目状态。
   //
-  // 这里加一道**路由级门卫**:任何对 /projects/:id[/...] 的**变更**请求(非
-  // GET/HEAD/OPTIONS)在进入具体 handler 前,统一按 :id 做 assertProjectAccess。
+  // 这里加一道**路由级门卫**:任何对 /projects/:id[/...] 的请求在进入具体
+  // handler 前,统一按 :id 做 assertProjectAccess。只保护写请求会让列表看起来
+  // 已隔离,但机器 key 仍可直达其它项目详情或密钥元数据,形成读侧越权。
   // 只收紧"带作用域的机器 key":未授权/cookie 人类/bootstrap 静态 key 没有
   // cdsProjectKey/cdsAccess stamp → assertProjectAccess 返回 null → 照常放行,
   // 故不影响公开的授权申请路由与人类操作。POST /projects(建项目,无 :id)不匹配
   // 本正则,由其自身的 canCreateProjects 校验把关。
   router.use((req, res, next) => {
-    const method = req.method.toUpperCase();
-    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
-      next();
-      return;
-    }
     const m = /^\/(?:api\/)?projects\/([^/?]+)/.exec(req.path);
     if (!m) {
       next();
@@ -631,12 +712,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     } catch {
       targetProjectId = m[1];
     }
+    // 对外路径允许使用项目 slug，但 Agent Key 保存的是规范 project id。
+    // 鉴权必须先做同一套解析，否则“自己的项目用 slug 访问”会被误判成跨项目。
+    const canonicalProjectId = stateService.getProject(targetProjectId)?.id ?? targetProjectId;
     const mismatch = assertProjectAccess(
       req as unknown as {
         cdsProjectKey?: { projectId: string; keyId: string };
         cdsAccess?: { keyId: string; access: AgentKeyAccess };
       },
-      targetProjectId,
+      canonicalProjectId,
     );
     if (mismatch) {
       res.status(mismatch.status).json(mismatch.body);
@@ -645,6 +729,68 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     next();
   });
 
+  /**
+   * 这个项目和谁共用一个仓库。同仓项目少于两个时返回 null（界面据此什么都不显示）。
+   *
+   * 不给机器凭据算：一把只被授权了本项目的凭据，不该顺带认识仓库里的其它项目，
+   * 更不该看到它们的环境变量撞在了哪个 key 上。
+   *
+   * 判据是「有没有出示机器凭据」，不是「是不是 cookie 会话」—— 后者看着更直白，
+   * 但 `CDS_AUTH_MODE=disabled` 的实例根本不签会话，`_cdsCookieAuth` 永远是假，
+   * 于是真人用浏览器打开也什么都看不到。机器凭据一律走 header，浏览器走 cookie，
+   * 所以按 header 判在每种鉴权模式下都成立。
+   */
+  /**
+   * 仓库根下的一级目录 —— 划范围时的候选。读不到就返回空数组：给不出候选是可以的，
+   * 编一份假的目录清单不行（用户会照着它填一个不存在的路径）。
+   */
+  function listRepoTopLevelDirs(projectId: string): string[] {
+    const root = stateService.getProjectRepoRoot(projectId, config?.repoRoot || '');
+    if (!root) return [];
+    try {
+      return nodeFs.readdirSync(root, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
+        .map((e) => e.name)
+        .sort();
+    } catch {
+      return [];
+    }
+  }
+
+  function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
+    if (isMachineCaller(req) || isScopedHuman(req)) return null;
+    const repoFullName = project.githubRepoFullName;
+    if (!repoFullName) return null;
+    const siblings = stateService.findProjectsByRepoFullName(repoFullName);
+    if (siblings.length < 2) return null;
+    const facts = siblings.map((p) => ({
+      id: p.id,
+      name: p.name,
+      scope: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)),
+      // 必须取 getCustomEnv（继承的全局 + 旧 bucket + project.customEnv），不能取裸
+      // project.customEnv（2026-09-02 Codex P2）：真正注入容器的是前者，按后者比对会
+      // 漏掉「两个项目都继承同一个全局库地址」和存量项目那一整类真实共享。
+      // 仓库里早有同样的先例（state.ts getCustomEnv 上方那条 Bugbot 注释）。
+      env: stateService.getCustomEnv(p.id),
+    }));
+    const summary = summarizeRepoSharing(facts);
+    if (!summary) return null;
+    // 只在本项目自己没划范围时才算建议：已经划过的不需要被劝。
+    const selfScope = facts.find((f) => f.id === project.id)?.scope || [];
+    let scopeSuggestion: { scope: string[]; why: string } | null = null;
+    if (selfScope.length === 0) {
+      const inferred = inferProjectScope(stateService.getBuildProfilesForProject(project.id));
+      if (inferred && inferred.guessedCount > 0) {
+        scopeSuggestion = { scope: inferred.scope, why: inferred.why };
+      }
+    }
+    return {
+      ...summary,
+      siblings: facts.map((f) => ({ id: f.id, name: f.name, scope: f.scope })),
+      scopeSuggestion,
+    };
+  }
+
   function statsFor(project: Project): ProjectStats {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
     // projects show their real branch count instead of always 0. The
@@ -652,7 +798,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // legacy 'default' project, which preserves the pre-P4 rollup
     // behaviour for the legacy project.
     const isSharedService = project.kind === 'shared-service';
-    const branches = isSharedService ? [] : stateService.getBranchesForProject(project.id);
+    const branches = isSharedService ? [] : stateService.getBranchesForProject(project.id).filter(branch => !branch.archive);
     let runningBranchCount = 0;
     let appServiceCount = 0;
     let runningServiceCount = 0;
@@ -769,7 +915,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
   function nextAutoProfileId(project: Project, handle: string): string {
     const allIds = new Set(stateService.getBuildProfiles().map((p) => p.id));
-    const slug = profileIdSlug(project.slug || project.name || project.id);
+    const slug = profileIdSlug(projectResourceNamespace(project));
     const shortId = profileIdSlug(project.id).slice(0, 12) || 'project';
     const candidates = [handle, `${slug}-${handle}`, `${shortId}-${handle}`];
     for (const candidate of candidates) {
@@ -809,7 +955,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   function recommendedInfraVolumes(project: Project, infraId: string, image: string): InfraService['volumes'] {
     const paths = recommendedVolumePathsForImage(image);
     if (!paths) return [];
-    const prefix = project.legacyFlag ? infraId : `${project.slug.slice(0, 12)}-${infraId}`;
+    const prefix = project.legacyFlag ? infraId : `${projectResourceNamespace(project).slice(0, 12)}-${infraId}`;
     return paths.map((containerPath, idx) => ({
       name: `cds-${prefix}-data${idx === 0 ? '' : `-${idx + 1}`}`,
       containerPath,
@@ -840,16 +986,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       env: built.env,
       envVars: built.envVars,
       command: entry.command,
+      entrypoint: entry.entrypoint,
       labels: entry.labels,
     };
   }
 
-  function applyInfraPresets(
+  async function applyInfraPresets(
     project: Project,
     presetIds: string[],
     configMap?: Record<string, { dbName?: string; initSql?: string }>,
     extraInstances?: Array<{ presetId: string; dbName?: string; initSql?: string }>,
-  ): string[] {
+    provision?: {assertCurrent:()=>void;allocated:string[];strictFresh?:boolean},
+  ): Promise<string[]> {
     // 实例请求清单:每个被选预设的第 1 个实例(presetIds) + 额外同类型实例(extraInstances,第 2+ 个)。
     const requests: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
     for (const presetId of Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))))) {
@@ -864,9 +1012,36 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
     if (requests.length === 0) return [];
-
     const existing = stateService.getInfraServicesForProject(project.id);
     const existingIds = new Set(existing.map((service) => service.id));
+    if (provision) {
+      provision.assertCurrent();
+      const plannedCounts=new Map<string,number>();
+      // Explicit new-only is retry-safe and never increments past an existing birth.
+      // Ordinary UI keeps its additional-DB/singleton-noop contract; NEW IDs still
+      // receive the identical first-allocation protocol, never an R allocator.
+      if (!provision.strictFresh) for (const service of existing) {
+        const base=service.basePresetId||service.id;
+        plannedCounts.set(base,(plannedCounts.get(base)||0)+1);
+      }
+      const plannedNew: typeof requests = [];
+      for(const request of requests){
+        if(provision.strictFresh && existing.some(row=>(row.basePresetId||row.id)===request.presetId))
+          throw new Error('storage_provision_unconfirmed');
+        const index=plannedCounts.get(request.presetId)||0;
+        if(index>0&&!getInfraCatalogEntry(request.presetId)?.supportsDbName)continue;
+        plannedCounts.set(request.presetId,index+1);
+        const id=index?`${request.presetId}-${index+1}`:request.presetId;
+        // A held/unpublished original ID is NOT counted as an existing instance.
+        // Its birth blocks this exact request; do not skip it or choose a new ID.
+        if(existingIds.has(id)||stateService.getStorageBirthsForService(project.id,id).length)
+          throw new Error('storage_provision_unconfirmed');
+        plannedNew.push(request);
+      }
+      const needsStorage=plannedNew.some(r=>recommendedVolumePathsForImage(getInfraCatalogEntry(r.presetId)!.dockerImage)?.length);
+      if(needsStorage&&(!config?.storageInstanceId||!config.repoRoot))throw new Error('storage_provision_unconfirmed');
+      provision.assertCurrent();
+    }
     const countByPreset = new Map<string, number>();
     for (const service of existing) {
       const base = service.basePresetId || service.id;
@@ -892,7 +1067,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (!preset) continue;
       const containerName = project.legacyFlag
         ? `cds-infra-${instanceId}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${instanceId}`;
+        : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${instanceId}`;
       const service: InfraService = {
         id: instanceId,
         basePresetId: req.presetId,
@@ -908,9 +1083,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         ...(dbName ? { dbName } : {}),
         ...(initSql ? { initSql } : {}),
         ...(preset.command ? { command: preset.command } : {}),
+        // entrypoint 与 command 必须一起落库。只落 command 的话，nats / memcached 这类
+        // 「命令是 sh 片段、entrypoint 被覆盖成 sh」的预设会把 `-c '...'` 直接交给
+        // 镜像原本的 ENTRYPOINT（nats 那个是二进制），容器起都起不来——
+        // 而这在 catalog 里完全看不出来（建了一半，形状 2）。
+        ...(preset.entrypoint ? { entrypoint: preset.entrypoint } : {}),
         createdAt: new Date().toISOString(),
       };
-      stateService.addInfraService(service);
+      if (provision && service.volumes?.length) {
+        provision.assertCurrent();service.scope='project';
+        service.volumes=(service.volumes||[]).map((volume,index)=>{
+          if(volume.type!=='volume')throw new Error('storage_provision_unconfirmed');
+          const storage={version:1 as const,instanceId:config!.storageInstanceId!,projectId:project.id,scope:'project-shared' as const,
+            serviceId:service.id,mountKey:index?`data-${index+1}`:'data',purpose:'persistent' as const};
+          return {...volume,name:stableStorageVolumeName(storage),storage};
+        });
+        await new StorageProvisionService(stateService,shell,config!).provisionNewInfra(service,infraStoragePlan(service,config!),`storage_${randomUUID()}`,provision.assertCurrent);
+        provision.allocated.push(service.id);provision.assertCurrent();
+      } else stateService.addInfraService(service);
       applied.push(service.id);
       // 连接串:第 1 个实例零改动;第 2+ 个加 _N 后缀 + host 改写到实例别名(纯函数,见单测)。
       const connEnv = instanceConnectionEnv(preset.envVars || {}, req.presetId, instanceId, idx);
@@ -921,6 +1111,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           hint: `${service.name} 连接串，由 CDS 创建基础设施时生成`,
         };
       }
+      if(provision){
+        stateService.setEnvMeta(project.id,envMeta);
+        // Connections live on the split project document. The next P's global
+        // birth ACK cannot persist them: settle this successful item first.
+        stateService.save([{kind:'projects',id:project.id},{kind:'global'}]);
+        await stateService.flush();provision.assertCurrent();
+      }
     }
     if (Object.keys(envMeta).length > 0) {
       stateService.setEnvMeta(project.id, envMeta);
@@ -928,6 +1125,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (applied.length > 0) {
       stateService.save();
     }
+    if (provision) { provision.assertCurrent();await stateService.flush();provision.assertCurrent(); }
     return applied;
   }
 
@@ -1114,7 +1312,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return false;
     }
 
-    const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
+    const idSuffix = project.legacyFlag ? '' : `-${projectResourceNamespace(project)}`;
 
     const repoRoot = nodePath.resolve(project.repoPath || nodePath.dirname(composePath));
     const composeRoot = nodePath.dirname(nodePath.resolve(composePath));
@@ -1152,13 +1350,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     // ── BuildProfiles ──
     const appliedProfiles: string[] = [];
-    for (const candidate of parsed.buildProfiles) {
-      const runnableCandidate = inferRunnableComposeProfile(candidate as BuildProfile);
-      const scoped: BuildProfile = {
-        ...runnableCandidate,
+    // id 加项目后缀后，depends_on / cds.calls 里的 compose 服务名由同一个助手对齐（与导入审批同一份规则）
+    const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
+      parsed.buildProfiles.map((candidate) => ({
+        ...inferRunnableComposeProfile(candidate as BuildProfile),
         id: `${candidate.id}${idSuffix}`,
         projectId: project.id,
-      };
+      })),
+      idSuffix,
+    );
+    // Throw to the existing finite auto-config error path; do not fall through
+    // into heuristic imports after a retained-storage refusal.
+    assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));
+    stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles);
+    for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
         stateService.updateBuildProfile(scoped.id, scoped);
@@ -1197,6 +1402,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const derivedMeta = deriveEnvMetaForVars(parsed.envVars || {}, explicitMeta);
     if (Object.keys(derivedMeta).length > 0) {
       stateService.setEnvMeta(project.id, derivedMeta);
+      // 内部密钥（generate: secret）导入即由 CDS 生成，不让用户去造一把再粘回来。
+      stateService.ensureGeneratedEnvKeys(project.id);
       const requiredCount = Object.values(derivedMeta).filter((m) => m.kind === 'required').length;
       const autoCount = Object.values(derivedMeta).filter((m) => m.kind === 'auto').length;
       const derivedCount = Object.values(derivedMeta).filter((m) => m.kind === 'infra-derived').length;
@@ -1226,7 +1433,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (existingInfraIds.has(def.id)) continue;
       const containerName = project.legacyFlag
         ? `cds-infra-${def.id}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${def.id}`;
+        : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${def.id}`;
       const service: InfraService = {
         id: def.id,
         projectId: project.id,
@@ -1238,6 +1445,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         status: 'stopped',
         volumes: def.volumes || [],
         env: def.env || {},
+        // command / entrypoint 必须跟着落库。
+        //
+        // 解析器读得出、序列化器写得回，唯独这里建服务时把它俩丢了——一条只断在
+        // 中间的往返链（形状 2）。丢了之后有两件事静默坏掉：容器起来时没有那条
+        // 启动命令（`redis-server --requirepass ...` 直接退化成裸 redis），
+        // 而认证判据看不到启动参数，会把这台库判成「没配认证」。
+        // 后者更坏：它不报错，只是让凭据一个都发不出去（台账 E80）。
+        ...(def.command !== undefined ? { command: def.command } : {}),
+        ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
+        // restartPolicy 同理：yaml 里写了 `restart: always` 却在导入时丢掉，
+        // 容器会按兜底的 on-failure:3 跑，而 yaml 看起来明明声明过。
+        ...(def.restartPolicy !== undefined ? { restartPolicy: def.restartPolicy } : {}),
         healthCheck: def.healthCheck,
         createdAt: new Date().toISOString(),
       };
@@ -1518,14 +1737,33 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const projectScope = (
         req as unknown as { cdsProjectKey?: { projectId: string } }
       ).cdsProjectKey?.projectId;
+      // 用户级凭证（cdsu_）走到这条路由时只被盖了 cdsPrincipal，上面那句按项目级
+      // 凭证过滤对它一律不生效 —— 它会看到**全部**项目的仓库地址与配置摘要。
+      // 这条路由是身份层放行的「发现自己能干什么」入口，所以可见范围必须等于
+      // 它的授权范围：判据与自愈签发同一条（未撤销的授权算数）。
+      const principalId = (
+        req as unknown as { cdsPrincipal?: { principalId: string } }
+      ).cdsPrincipal?.principalId;
+      const grants = principalId ? stateService.getProjectGrants() : [];
+      const credentialId = (req as unknown as { cdsPrincipal?: { credentialId: string } }).cdsPrincipal?.credentialId;
+      const projectIds = stateService.getUserCredentials().find(c => c.id === credentialId)?.projectIds;
       const projects = stateService
         .getProjects()
-        .filter((project) => !projectScope || project.id === projectScope);
+        .filter((project) => canHumanAccessProject(req, stateService, project.id))
+        .filter((project) => !projectScope || project.id === projectScope)
+        .filter((project) => !principalId || (trustedClusterIdentity(req)
+          ? trustedClusterIdentity(req)!.principalProjects?.includes(project.id) === true
+          : hasActiveGrant(grants, principalId, project.id)))
+        .filter((project) => !projectIds || projectIds.includes(project.id));
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
       // not values. cdsp_ project key (matching) and cookie auth bypass.
-      const summaries = projects.map((p) => maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null)));
+      const summaries = projects.map((p) => {
+        const summary = maskProjectSummary(req, toSummary(p, statsFor(p), usageMap.get(p.id) || null));
+        summary.repoSharing = repoSharingFor(req, p);
+        return summary;
+      });
       // Sort: legacy pinned first (existing UX), then by runtime liveness
       // so projects with running services bubble up — useful once you
       // have many projects and only a few are active.
@@ -1540,7 +1778,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         if (at !== bt) return bt.localeCompare(at);
         return 0;
       });
-      res.json({ projects: summaries, total: summaries.length });
+      res.json({ projects: summaries, total: summaries.length, canManageProjects: !isScopedHuman(req) });
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
       // eslint-disable-next-line no-console
@@ -1564,11 +1802,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
       const summary = maskProjectSummary(req, toSummary(project, statsFor(project), resourceUsageLookup().get(project.id) || null));
+      summary.repoSharing = repoSharingFor(req, project);
       // CDS-CLI-007 / #551 (a)：识别"半成品"项目（cloneStatus=error 或 git
       // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
       // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
       let recovery: { state: string; nextActions: string[]; hint: string } | undefined;
-      if (project.gitRepoUrl && project.cloneStatus === 'error') {
+      if (!isScopedHuman(req) && project.gitRepoUrl && project.cloneStatus === 'error') {
         recovery = {
           state: 'clone_failed',
           nextActions: [
@@ -1579,7 +1818,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             ? `上次 clone 失败原因：${project.cloneError}`
             : '上次 clone 失败但未记录详细原因；重试一次会暴露完整 stderr。',
         };
-      } else if (project.gitRepoUrl && !project.repoPath) {
+      } else if (!isScopedHuman(req) && project.gitRepoUrl && !project.repoPath) {
         // #551 (a) 旧项目场景：git 项目但 repoPath 为空。clone 端点会自动 backfill。
         const reposBase = config?.reposBase;
         recovery = {
@@ -1668,6 +1907,238 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
   });
 
+  // ── 项目 Agent 角色声明 ──
+  //
+  // 上手助手生成上手包时把角色写到这里，项目选择列表再读回来显示。
+  // 纯展示用途，不参与鉴权；写入受本文件顶部的 /projects/:id 路由级门卫保护。
+
+  router.get('/projects/:id/agent-profile', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    res.json({ ok: true, profile: stateService.getProjectAgentProfile(req.params.id) });
+  });
+
+  router.put('/projects/:id/agent-profile', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const body = (req.body || {}) as Partial<ProjectAgentProfile>;
+    const roles: ProjectAgentProfile['role'][] = ['pm', 'owner', 'domain-expert', 'dev', 'qa'];
+    const experiences: ProjectAgentProfile['experience'][] = ['newcomer', 'experienced'];
+    if (!roles.includes(body.role as ProjectAgentProfile['role'])) {
+      res.status(400).json({ error: 'invalid_role', message: `role 必须是：${roles.join(' | ')}` });
+      return;
+    }
+    if (!experiences.includes(body.experience as ProjectAgentProfile['experience'])) {
+      res.status(400).json({
+        error: 'invalid_experience',
+        message: `experience 必须是：${experiences.join(' | ')}`,
+      });
+      return;
+    }
+    // 技能只作展示，长度和内容都设上限，避免一次声明把项目记录撑大。
+    const skills = Array.isArray(body.skills)
+      ? body.skills
+        .filter((key): key is string => typeof key === 'string' && /^[a-z0-9-]{1,64}$/.test(key))
+        .slice(0, 40)
+      : [];
+    const cardTitle = typeof body.cardTitle === 'string' ? body.cardTitle.slice(0, 40) : undefined;
+    const profile: ProjectAgentProfile = {
+      role: body.role as ProjectAgentProfile['role'],
+      experience: body.experience as ProjectAgentProfile['experience'],
+      skills,
+      ...(cardTitle ? { cardTitle } : {}),
+      declaredAt: new Date().toISOString(),
+      source: 'agent-starter',
+    };
+    if (!stateService.setProjectAgentProfile(req.params.id, profile)) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    stateService.save();
+    res.json({ ok: true, profile });
+  });
+
+  /**
+   * 分支列表的自定义分组（2026-09-29）：项目级、项目内所有人共享一套。
+   *
+   * PUT 整体替换并带乐观并发：请求里的 baseUpdatedAt 是客户端上次看到的版本，
+   * 与服务端当前不一致说明别人刚改过——返回 409 和最新版本，由界面提示后重放，
+   * 不让两个人的编辑互相静默覆盖。首次保存 baseUpdatedAt 传 null。
+   */
+  router.get('/projects/:id/branch-groups', (req, res) => {
+    const settings = stateService.getProjectBranchGroups(req.params.id);
+    if (!settings) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    // 父实例镜像来的项目（预览实例里）只读：分组跟着镜像刷新走，这里改了父实例收不到、下次刷新还会被盖掉。
+    const readOnly = Boolean(stateService.getProject(req.params.id)?.mirror);
+    res.json({ ok: true, ...settings, readOnly });
+  });
+
+  // 同一项目的分组写入排成一条链：落盘要 await，期间第二个请求若先读到还没确认落盘的新版本、
+  // 而前一个随后失败回滚，就会把第二个的结果一起冲掉（Codex P1，PR #1647）。
+  const branchGroupWriteChains = new Map<string, Promise<void>>();
+  // 整份分组每次都整体重发：上限内的合法配置（30 组 × 200 钉入 × 20 条规则）可达数百 KB，
+  // 超过全局 100kb 的 JSON 上限会在进路由前就被 413，之后这个项目再也改不了分组（Codex P2，PR #1647）。
+  // 全局解析器对这条路径放行（server.ts），这里用自带的解析器，上限按最大合法配置留足余量。
+  const branchGroupsJsonParser = express.json({ limit: BRANCH_GROUPS_BODY_LIMIT });
+  router.put('/projects/:id/branch-groups', branchGroupsJsonParser, (req, res) => {
+    // 按解析后的项目 id 分队：同一项目用 id 或 slug（大小写不同）访问时必须进同一条队（Codex P2，PR #1647）
+    const key = stateService.getProject(req.params.id)?.id ?? String(req.params.id);
+    // 排队期间客户端已断开（放弃或重试）：轮到它时直接跳过，不让死请求占着队列等满一轮落盘超时（Codex P2，PR #1647）
+    let abandoned = false;
+    res.on('close', () => { if (!res.writableEnded) abandoned = true; });
+    const previous = branchGroupWriteChains.get(key) || Promise.resolve();
+    const run = previous.then(() => (abandoned ? undefined : putBranchGroups(req, res))).catch((err) => {
+      console.error('[branch-groups] 保存分组时出现未处理的异常', err);
+      if (!res.headersSent) res.status(500).json({ error: 'persist_failed', message: '分组没有保存：服务端出错，请稍后重试' });
+    });
+    branchGroupWriteChains.set(key, run);
+    void run.finally(() => {
+      if (branchGroupWriteChains.get(key) === run) branchGroupWriteChains.delete(key);
+    });
+  });
+
+  async function putBranchGroups(req: import('express').Request, res: import('express').Response): Promise<void> {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    if (project.mirror) {
+      res.status(409).json({
+        error: 'mirror_read_only',
+        message: '这是从父实例镜像来的只读项目，分组要在父实例上改；这里改了父实例收不到，下次镜像刷新也会被覆盖',
+      });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const body = (req.body || {}) as { groups?: unknown; baseUpdatedAt?: unknown };
+    // 整份替换共享的分组，版本号必须带：不带就跳过并发检查，等于允许静默覆盖别人刚存的修改
+    // （Codex P2，PR #1647）。第一次保存（还没有分组）显式传 null。
+    if (!Object.prototype.hasOwnProperty.call(body, 'baseUpdatedAt')
+      || (body.baseUpdatedAt !== null && typeof body.baseUpdatedAt !== 'string')) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'baseUpdatedAt',
+        message: '缺少 baseUpdatedAt：填上读取分组时拿到的 updatedAt，第一次保存（还没有分组）填 null',
+      });
+      return;
+    }
+    const current = stateService.getProjectBranchGroups(project.id);
+    const normalized = normalizeBranchGroups(body.groups);
+    // 提交的内容与已存的完全相同（归一化后比较）：不写、不推进版本号、不改修改人，直接回当前版本。
+    // 否则 Agent 直接调接口的空保存会凭空推进版本号，让别人并发的真实修改撞 409、修改记录谎称改过；
+    // 成功响应丢了之后原样重试（带着旧 baseUpdatedAt）也会被判冲突——而那份内容其实已经是现状（Codex P2，PR #1647）。
+    if (normalized.ok && current && JSON.stringify(normalized.groups) === JSON.stringify(current.groups)) {
+      res.json({ ok: true, unchanged: true, ...current });
+      return;
+    }
+    if ((body.baseUpdatedAt ?? null) !== (current?.updatedAt ?? null)) {
+      res.status(409).json({
+        error: 'stale',
+        message: '分组刚被别人改过，已返回最新版本；请在最新版本上重新修改',
+        latest: current,
+      });
+      return;
+    }
+    if (!normalized.ok) {
+      res.status(400).json({ error: 'validation', field: normalized.field, message: normalized.message });
+      return;
+    }
+    // 修改人：Agent / 系统调用记执行者（ai:<name> / system:<x>）；真人优先记登录名，编辑器里好认。
+    // 按服务端鉴权盖下的凭据标记判定 Agent，而不是再去认请求头的各种写法：CDS 签发的两种 Agent Key
+    // （项目级 cdsp_ → cdsProjectKey，全局 cdsg_ → cdsAccess）无论用哪种头传来，鉴权通过后都会盖上。
+    // 通用 actor 解析只认 x-ai-access-key / x-cds-ai-token 两个头，其余写法会被记成真人（Codex P2 两条，PR #1647）；
+    // 让通用解析认全所有凭据写法是全局改动，记在 debt.cds.md。
+    // 身份只认服务端鉴权盖下的标记，不认调用方自己带的请求头：`x-cds-trigger` / `x-ai-impersonate`
+    // 谁都能加，已登录的真人带上它们就能把修改人伪造成 system:* 或任意 AI（Codex P2，PR #1647）。
+    // 所以 Agent / 系统署名只在确有 Agent 凭据时采用（此时 AI 名字取请求头里的自报名，凭据本身已被鉴权）。
+    const resolvedActor = resolveActorFromRequest(req as any);
+    const authStamps = req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown };
+    const viaAgentKey = Boolean(authStamps.cdsProjectKey || authStamps.cdsAccess);
+    const actor = viaAgentKey ? (resolvedActor.startsWith('ai') ? resolvedActor : 'ai') : 'user';
+    // CdsUser 上是 githubLogin（本地账号与 username 同值）/ username，没有 login 字段（Codex P2，PR #1647）。
+    const cdsUser = (req as unknown as { cdsUser?: { githubLogin?: string; username?: string } }).cdsUser;
+    const login = cdsUser?.githubLogin || cdsUser?.username;
+    // 版本号必须严格递增：同一毫秒内的两次写入若拿到同一个时间戳，持旧版本的客户端就能绕过 409
+    // （Codex P2，PR #1647）。撞上或落后于上一版时顺延 1 毫秒。
+    const previousAt = current?.updatedAt ? Date.parse(current.updatedAt) : Number.NaN;
+    const nowMs = Date.now();
+    const settings = {
+      groups: normalized.groups,
+      updatedAt: new Date(Number.isFinite(previousAt) && nowMs <= previousAt ? previousAt + 1 : nowMs).toISOString(),
+      updatedBy: actor === 'user' && login ? login : actor,
+    };
+    // 落盘确认之后才回成功：各存储都是延迟写（save 只排队，磁盘 / 数据库错误要到 flush 才浮出来），
+    // 只 try save() 会先回 200、再在后台丢数据（Codex P1，PR #1647）。
+    // 落盘失败或超时就把内存里的分组与版本号恢复成保存前，否则接口报失败、界面说已撤回，
+    // 下一次 GET 或冲突判定却看到这份「没存成」的分组（Codex P2，PR #1647）。
+    const previousGroups = project.branchGroups;
+    const previousProjectUpdatedAt = project.updatedAt;
+    const requestId = String((req as unknown as { cdsRequestId?: string }).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+    const logFailure = (err: unknown) => {
+      // 原始错误只进服务端日志：里面可能有文件路径、数据库细节（Codex P1，PR #1647）
+      console.error(`[branch-groups] 项目 ${project.id} 的分组落盘失败（request ${requestId || '-'}）`, err);
+    };
+    stateService.setProjectBranchGroups(project.id, settings);
+    // 记下这次写入盖上的项目时间戳：等落盘期间别的接口（改名、改配置）也可能推进它，
+    // 回滚时只在它仍是这次写入的值时才恢复，否则会把别人的更新时间倒拨回去（Codex P2，PR #1647）
+    const ownProjectUpdatedAt = stateService.getProject(project.id)?.updatedAt;
+    let flushResult: BoundedFlushResult;
+    try {
+      stateService.save();
+      flushResult = await waitForFlushWithTimeout(() => stateService.flush(), branchGroupsFlushTimeoutMs(), logFailure);
+    } catch (err) {
+      logFailure(err);
+      flushResult = 'failed';
+    }
+    if (flushResult !== 'flushed') {
+      const live = stateService.getProject(project.id);
+      if (live) {
+        if (previousGroups === undefined) delete live.branchGroups;
+        else live.branchGroups = previousGroups;
+        if (live.updatedAt === ownProjectUpdatedAt) live.updatedAt = previousProjectUpdatedAt;
+      }
+      // 把恢复后的状态也写一次并等它落盘，覆盖掉可能稍后才落下去的那份新版本。只有这次落盘确认了，
+      // 才能对用户说「已恢复」；没确认就如实说存储里是哪一版不确定（Codex P1，PR #1647）。
+      let restoreResult: BoundedFlushResult;
+      try {
+        stateService.save();
+        restoreResult = await waitForFlushWithTimeout(() => stateService.flush(), branchGroupsFlushTimeoutMs(), logFailure);
+      } catch (err) {
+        logFailure(err);
+        restoreResult = 'failed';
+      }
+      const restored = restoreResult === 'flushed';
+      const cause = flushResult === 'timeout' ? '写入存储超时' : '写入存储失败';
+      res.status(flushResult === 'timeout' ? 503 : 500).json({
+        error: 'persist_failed',
+        restored,
+        message: restored
+          ? `分组没有保存：${cause}，已恢复为保存前的版本，请稍后重试`
+          : `分组没有保存：${cause}，恢复为保存前版本的写入也没能确认完成，存储里暂时可能是任一版本；请稍后刷新，以读到的为准`,
+        requestId,
+      });
+      return;
+    }
+    res.json({ ok: true, ...settings });
+  }
+
   router.get('/projects/:id/comment-template', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
@@ -1717,6 +2188,83 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * 操作租约、归因、计数），fire-and-forget 不阻塞响应——暂停标记本身是同步落库的，
    * 新构建立刻被拦；容器停止由前端轮询反映。
    */
+  /**
+   * GET /api/projects/:id/scope-options —— 划范围这件事的全部备选。
+   *
+   * 为的是让界面不要摆一个空文本框。用户面对空框要先想「填什么」、填完还要担心
+   * 「填得对不对」，而这两个问题系统本来就有答案：仓库里有哪些目录是可以列的，
+   * 每个服务待在哪个目录是能从启动命令看出来的。所以这里一次给全：真实目录清单 +
+   * 每个服务的建议 + 建议的依据，界面只需要把建议预勾上。
+   */
+  router.get('/projects/:id/scope-options', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 '${req.params.id}' 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const suggestion = inferProjectScope(profiles);
+    res.json({
+      repoDirs: listRepoTopLevelDirs(project.id),
+      suggestion: suggestion
+        ? { scope: suggestion.scope, why: suggestion.why, guessedCount: suggestion.guessedCount }
+        : null,
+      profiles: profiles.map((profile) => {
+        const guess = inferProfileScope(profile);
+        const sources = declaredScopeSources(profile);
+        return {
+          id: profile.id,
+          name: profile.name || profile.id,
+          // 已声明的与建议的分开给：界面要区分「这是你定过的」和「这是我猜的」，
+          // 混成一个值就没法让用户判断该不该信。
+          declared: guess?.source === 'declared' ? guess.scope : [],
+          suggested: guess && guess.source !== 'declared' ? guess.scope : [],
+          why: guess?.why || '',
+          // 范围声明在部署模式上时（compose 的 cds.build-scope 带上来的就是这种），
+          // 这个对话框写的是 profile 顶层字段，改了也盖不掉模式那份 —— 判定取并集，
+          // 于是「清空」清不掉、「改窄」反而变宽。所以这种一律只读，别让界面说谎。
+          editable: sources.onDeployModes.length === 0,
+          declaredOnDeployModes: sources.onDeployModes,
+          // 顶层也声明过时同样要端出去：判定取的是「顶层 ∪ 各模式」的并集，只渲染
+          // 模式那一半，顶层那些路径就成了**看不见却照样生效**的声明——用户看着
+          // 对话框以为范围就是模式里那几条，实际推到顶层路径照样重建
+          // （2026-09-02 Codex P2）。改不了是另一回事，看不见不行。
+          declaredOnProfile: sources.onProfile,
+        };
+      }),
+    });
+  });
+
+  /**
+   * POST /api/projects/:id/scope-options/apply —— 一键采纳建议。
+   *
+   * 只写那些**自己没声明过**的服务：已经定过的是人做的决定，不能被一次猜覆盖。
+   */
+  router.post('/projects/:id/scope-options/apply', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 '${req.params.id}' 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfilesForProject(project.id);
+    const suggestion = inferProjectScope(profiles);
+    if (!suggestion || suggestion.guessedCount === 0) {
+      res.status(409).json({
+        error: 'no_suggestion',
+        message: '没有可采纳的建议：要么每个服务都已经声明过范围，要么有服务看不出待在哪个目录。',
+      });
+      return;
+    }
+    const applied: Array<{ profileId: string; scope: string[] }> = [];
+    for (const entry of suggestion.perProfile) {
+      if (!entry.guess || entry.guess.source === 'declared') continue;
+      stateService.updateBuildProfile(entry.profileId, { buildScope: entry.guess.scope });
+      applied.push({ profileId: entry.profileId, scope: entry.guess.scope });
+    }
+    stateService.save();
+    res.json({ applied, scope: suggestion.scope });
+  });
+
   router.put('/projects/:id/paused', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
@@ -1832,7 +2380,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 项目级：对已存在项目按基建目录(infra-catalog SSOT)应用预设，生成真随机密码 +
   // 自动注入连接环境变量(与一键部署同一条 applyInfraPresets 路径)。拓扑页「新增基础设施」
   // 选预设时走这里，而不是手填 change-me 占位。custom 镜像仍走 POST /api/infra。
-  router.post('/projects/:id/infra-presets', (req, res) => {
+  router.post('/projects/:id/infra-presets', async (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
@@ -1847,7 +2395,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(mismatch.status).json(mismatch.body);
       return;
     }
-    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown };
+    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown; initializeStorage?: unknown };
+    if(body.initializeStorage!==undefined && body.initializeStorage!=='new-only'){res.status(400).json({error:'storage_provision_input_invalid'});return}
     const presetIds = (Array.isArray(body.presetIds) ? body.presetIds : [])
       .filter((id): id is string => typeof id === 'string');
     if (presetIds.length === 0) {
@@ -1859,9 +2408,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
       return;
     }
-    const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
-    const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
-    res.json({ applied, services });
+    // The catalog UI already authorizes creation of fresh preset resources.
+    // Absence of the optional flag must not publish unallocated stable storage.
+    const allocated:string[]=[];
+    const instance=config?.storageInstanceId,repoRoot=config?.repoRoot,identity=JSON.stringify([project.id,project.slug,project.legacyFlag]);
+    const assertCurrent=()=>{
+      if(req.aborted||res.destroyed||assertProjectAccess(req as any,project.id)||stateService.getProject(project.id)!==project||project.paused
+        ||JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity||config?.storageInstanceId!==instance||config?.repoRoot!==repoRoot)throw new Error('storage_provision_unconfirmed');
+    };
+    try {
+      const applied = await applyInfraPresets(project,presetIds,parseInfraConfigs(body.infraConfigs),parseInfraExtra(body.infraExtra),{assertCurrent,allocated,strictFresh:body.initializeStorage==='new-only'});
+      const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
+      res.json({applied,services,storageMode:allocated.length?'allocated':'not-required'});
+    } catch {
+      res.status(409).json({error:'storage_provision_unconfirmed',allocated,recoveryRequired:true});
+    }
   });
 
   // 试运行验证(配置闭环):用一次性容器在真实仓库上测「镜像 + 启动命令 + 端口」能否跑通。
@@ -1948,7 +2509,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       send('step', { step: 'run', status: 'running', title: '创建容器 + 装载代码(docker cp)…' });
       // 用 sh -c(不是 sh -lc):login shell 会重置 PATH,导致 golang/rust 等把工具放 ENV PATH 的镜像 "go: not found"。
       const createRes = await shell.exec(
-        `docker create --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
+        `docker create ${DOCKER_LOG_LIMIT_FLAGS.join(' ')} --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${workloadCgroupFlags().map((f) => `${f} `).join('')}${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
         { timeout: 30000 },
       );
       if (createRes.exitCode !== 0) {
@@ -2289,6 +2850,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   });
 
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
+  router.get('/projects/:id/identity-history', (req, res) => {
+    if (!isAuthenticatedHuman(req) || isMachineCaller(req)) {
+      res.status(403).json({ error: 'human_required', message: '请使用已登录的人类账号查看项目设置记录。' }); return;
+    }
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+    const mismatch = assertProjectAccess(req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }, project.id);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    if (!canHumanAccessProject(req, stateService, project.id)) {
+      res.status(403).json({ error: 'project_forbidden', message: '没有权限查看此项目的设置记录。' }); return;
+    }
+    const entries = [...(project.identityHistory || [])].reverse();
+    const before = typeof req.query.before === 'string' ? req.query.before : '';
+    const cursor = before ? entries.findIndex((entry) => entry.id === before) : -1;
+    if (before && cursor < 0) { res.status(400).json({ error: 'invalid_cursor', message: '记录位置已失效，请刷新后重试。' }); return; }
+    const page = entries.slice(cursor + 1, cursor + 51);
+    res.json({ records: page.map(publicIdentityRecord), nextCursor: cursor + 51 < entries.length ? page.at(-1)?.id : null,
+      coverage: project.identityHistory?.[0]?.kind === 'created' ? 'since-creation' : 'since-baseline' });
+  });
+
   // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
   router.get('/projects/:id/activity-logs', (req, res) => {
     const project = stateService.getProject(req.params.id);
@@ -2312,6 +2893,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
+    const userCredentialId = (req as unknown as { cdsPrincipal?: { credentialId: string } }).cdsPrincipal?.credentialId;
+    if (stateService.getUserCredentials().find(c => c.id === userCredentialId)?.projectIds) {
+      res.status(403).json({ error: 'recovery_credential_project_only', message: '恢复凭据只能连接已核对的原项目，不能创建项目。' }); return;
+    }
     // 建项目授权判定。注意:单项目作用域的 cdsg_ key 现在也会 stamp cdsProjectKey
     // (作为 cdsp_ 别名继承逐路由防护,见 server.ts stampSingleProjectScope),所以这里
     // **必须先看 cdsAccess**:凡带 cdsAccess 的一律按 access.canCreateProjects 判定,
@@ -2349,6 +2934,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       composeYaml: string;
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
+      /** 显式确认「和已有项目共用同一个仓库」。不带则遇到已绑定就不绑，只回报实情。 */
+      allowSharedRepo: boolean;
       inheritGlobalEnv: boolean;
       infraPresets: string[];
       infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
@@ -2361,6 +2948,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       onboardingServices: Array<Partial<OnboardingService> & { enabled?: boolean }>;
     }>;
 
+    if (Object.hasOwn(body, 'aliasSlug') || Object.hasOwn(body, 'previewIdentifier')) {
+      res.status(400).json({ error: 'obsolete_project_slug_field', field: 'slug',
+        message: '项目只保留一个 slug。请刷新设置页面，或改为提交 slug 字段。' });
+      return;
+    }
     // — Validation —
     const name = (body.name || '').trim();
     if (!name) {
@@ -2383,6 +2975,27 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // (injected at clone time via _injectGithubTokenIfPossible).
     const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
     const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
+    const creationKey = callerAccess ? stateService.getGlobalAgentKeys().find((key) => key.id === callerAccess.keyId) : undefined;
+    if (creationKey?.oneTime) {
+      if (creationKey.revokedAt) {
+        res.status(403).json({ error: 'bootstrap_consumed', message: '一次建项目授权已失效，请连接原项目。' });
+        return;
+      }
+      const target = creationKey.creationTarget;
+      if (!target || name !== target.name || bootstrapRepository(rawGitRepoUrl) !== target.repository) {
+        res.status(403).json({ error: 'bootstrap_target_mismatch', message: '本次授权只能创建批准的项目和仓库。请恢复原目标；需要更换目标时重新申请。' });
+        return;
+      }
+    }
+    let activeCreations = bootstrapCreations.get(stateService);
+    if (!activeCreations) { activeCreations = new Set(); bootstrapCreations.set(stateService, activeCreations); }
+    const creationKeyId = creationKey?.oneTime ? creationKey.id : undefined;
+    if (creationKeyId && activeCreations.has(creationKeyId)) {
+      res.status(409).json({ error: 'bootstrap_in_progress', message: '这条申请正在创建项目，请等待原操作完成，不要重复创建。' });
+      return;
+    }
+    if (creationKeyId) activeCreations.add(creationKeyId);
+    try {
     const githubCredentialUserId = requestUserId(req);
     const hasCurrentUserGithubCredential = Boolean(
       githubCredentialUserId && stateService.getGithubDeviceAuth(githubCredentialUserId),
@@ -2420,7 +3033,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
-    const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
+    // 一个仓库喂多个项目（2026-09-02）：默认维持既有行为 —— 仓库已被别的项目绑走
+    // 时不写绑定，建项目本身照常成功。改成直接报错会打断既有自动化，而静默丢掉
+    // 绑定又让用户完全不知道发生了什么，所以取第三条路：**照旧不绑，但把实情
+    // 回给调用方**，界面据此当场问「你是要加入，还是填错了仓库」。
+    // 调用方明确知道自己在干什么时，带 allowSharedRepo 直接绑上。
+    const repoLinkedProjects = githubRepoFullName
+      ? stateService.findProjectsByRepoFullName(githubRepoFullName)
+      : [];
+    const allowSharedRepo = body.allowSharedRepo === true;
+    const githubRepoAlreadyLinked = repoLinkedProjects.length > 0 && !allowSharedRepo
+      ? repoLinkedProjects[0]
+      : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
     const gitDefaultBranch = typeof body.gitDefaultBranch === 'string' && body.gitDefaultBranch.trim()
       ? body.gitDefaultBranch.trim()
@@ -2503,7 +3127,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // named prd_agent). Capped at 99 attempts so a corrupted state
     // can't hang the request.
     const existingProjects = stateService.getProjects();
-    const takenSlugs = new Set(existingProjects.map((p) => p.slug));
+    const takenSlugs = new Set(existingProjects.flatMap((p) => projectReservedIdentifiers(p)));
     let slug = baseSlug;
     if (takenSlugs.has(slug)) {
       if (slugProvidedExplicitly) {
@@ -2636,8 +3260,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    if (creationKeyId && creationKey?.revokedAt) {
+      await removeDockerNetwork(network).catch(() => { /* 仅清理本次新建网络 */ });
+      res.status(403).json({ error: 'bootstrap_revoked', message: '创建期间授权已撤销，未创建项目。请重新申请。' });
+      return;
+    }
+
     try {
-      stateService.addProject(newProject);
+      stateService.addProject(newProject, { ...projectIdentityActorFromRequest(req),
+        slugSource: slugProvidedExplicitly ? 'explicit' : repoSlugFromGitUrl ? 'repository' : 'name' });
     } catch (err) {
       // Rollback the network we just created. Best-effort — we log the
       // rollback result but still return the original save error so the
@@ -2649,6 +3280,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    // 真实项目已保存即消费授权，即使后续签发项目密钥失败也不能再创建副本。
+    if (creationKeyId) {
+      stateService.revokeGlobalAgentKey(creationKeyId);
+      // 后续基础设施配置可能等待或保留项目后失败；先记录已经发生的创建事实。
+      const accessRequest = stateService.listAccessRequests().find(item =>
+        item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === creationKeyId);
+      if (accessRequest) {
+        stateService.updateAccessRequest(accessRequest.id, {
+          createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
+        });
+        cdsEventsBus.publish('access-request.progress', { requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id });
+      }
+    }
+
     // 少绕路:创建弹窗就地粘贴的项目环境变量,在建项目时一并写入(不必等克隆后再单独配)。
     const userEnvEntries: Array<[string, string]> = [];
     if (body.customEnv && typeof body.customEnv === 'object') {
@@ -2659,7 +3304,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         userEnvEntries.push([key, value]);
       }
     }
-    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
+    const allocatedPresetStorage: string[] = [];
+    const presetInstance = config?.storageInstanceId, presetRepoRoot = config?.repoRoot;
+    const presetIdentity = JSON.stringify([newProject.id,newProject.slug,newProject.legacyFlag]);
+    const assertFreshPresetsCurrent = () => {
+      if (req.aborted || res.destroyed || stateService.getProject(newProject.id) !== newProject || newProject.paused
+        || assertProjectAccess(req as any,newProject.id)
+        || JSON.stringify([newProject.id,newProject.slug,newProject.legacyFlag]) !== presetIdentity
+        || config?.storageInstanceId !== presetInstance || config?.repoRoot !== presetRepoRoot)
+        throw new Error('storage_provision_unconfirmed');
+    };
+    let appliedInfraPresets: string[];
+    try {
+      appliedInfraPresets = await applyInfraPresets(newProject, infraPresets,
+        parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra),
+        {assertCurrent:assertFreshPresetsCurrent,allocated:allocatedPresetStorage,strictFresh:true});
+    } catch {
+      // Keep the new project/network and every original birth, including uncertain P.
+      // Never roll back allocated volumes or silently allocate a new project on retry.
+      res.status(409).json({error:'storage_provision_unconfirmed',project:newProject,
+        allocated:allocatedPresetStorage,recoveryRequired:true});
+      return;
+    }
     // applyInfraPresets 也会写 DATABASE_URL/REDIS_URL 等连接串,会覆盖用户同名粘贴值
     // (基建预设的连接串指向刚创建的容器,优先生效)。但不能"静默"覆盖——收集被覆盖的 key
     // 回传前端 + console.warn,让用户知道粘贴的外部连接串被基建生成值取代了(PR #711 review)。
@@ -2684,7 +3350,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         // 半成品状态:project + network 已建,但 sandbox bootstrap 失败。
         // 回滚 project + network,告诉用户错误。
-        try { stateService.removeProject(id); } catch { /* state save 失败也只能 log */ }
+        try {
+          stateService.removeProject(id);
+          await stateService.waitForProjectRemoval(id);
+        } catch {
+          res.status(500).json({ error: 'state_save_failed', message: '项目回滚尚未成功保存，已保留项目及网络，请稍后重试删除' });
+          return;
+        }
         await removeDockerNetwork(network).catch(() => { /* 已记录 */ });
         if (err instanceof ProjectFileError) {
           res.status(err.status).json({
@@ -2707,6 +3379,29 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 每个新建项目发一把独立、隔离的 key,建完即可接着操作它刚建的项目(2026-07-09 统一
     // 授权模型:创建时返回 scoped key)。access.projects === 'all' 的全权 key 本就能操作
     // 所有项目,无需再发。
+    // 身份层（2026-09-01）：建项目 = 自动写一条「创建型」项目授权。
+    //
+    // 这是自愈链路的起点：有了这条授权，同一主体日后换机器、挪目录、重新 clone
+    // 导致仓库里的凭据文件丢了，都能当场补一张项目级凭证，全程零人工 —— 而不是
+    // 像今天这样「钥匙没了等于身份没了，重新申请重新批」。
+    //
+    // 判据刻意是「在不在授权名单里」而不是「是不是我建的」：创建只是拿到授权的
+    // 一种方式，页面批准是另一种，两者写进同一张表、往后一视同仁。
+    const creatorPrincipal = (req as unknown as { cdsPrincipal?: { principalId: string } }).cdsPrincipal;
+    if (creatorPrincipal) {
+      try {
+        stateService.addProjectGrant({
+          id: `pg_${randomBytes(6).toString('hex')}`,
+          projectId: newProject.id,
+          principalId: creatorPrincipal.principalId,
+          origin: 'created',
+          grantedAt: new Date().toISOString(),
+        });
+      } catch {
+        // 授权写失败不阻断建项目本身：项目已建好，管理员仍可在权限总览里补授权。
+      }
+    }
+
     let issuedProjectKey: { keyId: string; plaintext: string; preview: string } | undefined;
     if (callerAccess && callerAccess.access.projects !== 'all') {
       const already = Array.isArray(callerAccess.access.projects)
@@ -2726,16 +3421,6 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    // 页面批准产生的一次性 bootstrap key 只允许成功创建一个项目。项目级 key
-    // 已签发后立即吊销 bootstrap，避免长期保留可继续建项目的机器凭据。手动签发的
-    // create-only key 未标 oneTime，保持原有可重复建项目行为。
-    if (callerAccess) {
-      const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
-      if (callerKey?.oneTime && issuedProjectKey) {
-        stateService.revokeGlobalAgentKey(callerAccess.keyId);
-      }
-    }
-
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
@@ -2746,10 +3431,32 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       infraPresetsApplied: appliedInfraPresets,
       // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
       infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
+      // 仓库已被别的项目绑走时把实情回给调用方：本项目**没有**绑上，
+      // 界面据此当场问「你是要和它们共用这个仓库，还是填错了」。
+      // 绝大多数情况是填错，所以默认不绑；真要共用，带 allowSharedRepo 重来一次。
+      //
+      // 机器凭据只告诉它「没绑上、为什么」，不报兄弟项目的 id 与名字（2026-09-02
+      // Codex P2）：一把 create-only 的钥匙读不到别的项目，这里端出来就绕开了同一
+      // 份隔离判据（见 isMachineCaller）——同一个 PR 里一边加隔离一边开后门。
+      repoAlreadyLinked: githubRepoAlreadyLinked
+        ? {
+            repoFullName: githubRepoFullName,
+            projects: isMachineCaller(req) ? [] : repoLinkedProjects.map((p) => ({
+              id: p.id,
+              name: p.name,
+              // 同上：已划范围的兄弟不会每次推送都重建，确认文案要分档
+              scoped: resolveProjectScope(stateService.getBuildProfilesForProject(p.id)).length > 0,
+            })),
+            projectCount: repoLinkedProjects.length,
+          }
+        : undefined,
       // 给 create-only 全局 Key 返回的新项目 scoped key(明文只此一次)。cdscli 建项目后
       // 可直接切到这把 key 做后续部署/操作。全权 key 或人类 cookie 建项目时不返回。
       issuedProjectKey,
     });
+    } finally {
+      if (creationKeyId) activeCreations.delete(creationKeyId);
+    }
   });
 
   /**
@@ -2845,13 +3552,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
   // PUT /api/projects/:id — patch mutable project fields.
   //
-  // P4 Part 13 (Project Settings page). Accepts {name, description,
-  // gitRepoUrl} and delegates to StateService.updateProject which
-  // bumps updatedAt + persists. Immutable fields (id, slug, kind,
-  // legacyFlag, dockerNetwork, createdAt) are intentionally not
-  // patchable through this endpoint — changing slug would break the
-  // URL routing and changing dockerNetwork would orphan containers.
-  router.put('/projects/:id', (req, res) => {
+  // 名称、唯一 slug 和仓库来源的实际变化保存独立记录。
+  // slug 可修改，历史入口与既有资源保持兼容；id、kind、legacyFlag、
+  // dockerNetwork、createdAt 仍不可编辑，避免失去已有资源的归属。
+  router.put('/projects/:id', async (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({
@@ -2872,10 +3576,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const body = (req.body || {}) as Partial<{
       name: string;
       aliasName: string;
-      aliasSlug: string;
+      slug: string;
+      expectedIdentityVersion: string;
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      agentPrebuiltOnly: boolean;
       resourceChipDisplay: {
         icon?: boolean;
         name?: boolean;
@@ -2897,6 +3603,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       };
     }>;
 
+    if (body.slug !== undefined && addressWriteLocked(stateService)) {
+      res.status(409).json({ error: 'address_busy', message: '地址设置正在保存，请稍后重新加载后重试。' }); return;
+    }
+
+    if (body.expectedIdentityVersion !== undefined &&
+        body.expectedIdentityVersion !== projectIdentityVersion(project)) {
+      res.status(409).json({ error: 'settings_changed', message: '项目设置已被其他操作修改。请刷新页面，核对最新值后重新保存。' });
+      return;
+    }
+    if (Object.hasOwn(body, 'aliasSlug') || Object.hasOwn(body, 'previewIdentifier')) {
+      res.status(400).json({ error: 'obsolete_project_slug_field', field: 'slug',
+        message: '项目只保留一个 slug。请刷新设置页面，或改为提交 slug 字段。' });
+      return;
+    }
     // Validate name when supplied
     if (body.name !== undefined) {
       const trimmed = String(body.name).trim();
@@ -2927,49 +3647,44 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    // Validate aliasSlug when supplied. Empty string = clear. Non-empty
-    // must pass SLUG_REGEX AND not collide with any project's slug /
-    // aliasSlug (including the current project's own slug — that would
-    // be redundant and confusing).
-    if (body.aliasSlug !== undefined) {
-      const trimmed = String(body.aliasSlug).trim().toLowerCase();
-      if (trimmed !== '') {
-        if (!SLUG_REGEX.test(trimmed)) {
-          res.status(400).json({
-            error: 'validation',
-            field: 'aliasSlug',
-            message: '别名 slug 只能包含小写字母、数字和短横线，且不能以短横线开头或结尾',
-          });
-          return;
-        }
-        if (trimmed === project.slug) {
-          res.status(400).json({
-            error: 'validation',
-            field: 'aliasSlug',
-            message: '别名 slug 不能与项目原 slug 相同',
-          });
-          return;
-        }
-        // Walk every OTHER project and check both slug and aliasSlug.
-        const collision = stateService
-          .getProjects()
-          .find(
-            (p) =>
-              p.id !== project.id &&
-              (p.slug === trimmed || p.aliasSlug === trimmed),
-          );
-        if (collision) {
-          res.status(409).json({
-            error: 'duplicate',
-            field: 'aliasSlug',
-            message: `别名 slug '${trimmed}' 已被项目 '${collision.name}' 占用`,
-          });
-          return;
+    if (body.slug !== undefined) {
+      const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : '';
+      if (!slug || !SLUG_REGEX.test(slug) || (slug !== project.slug && slug.length > 50)) {
+        res.status(400).json({ error: 'validation', field: 'slug', message: '请填写有效的项目 slug：最多 50 个小写字母、数字或短横线，不能以短横线开头或结尾。' });
+        return;
+      }
+      const collision = stateService.getProjects().find((p) => p.id !== project.id && projectReservedIdentifiers(p).includes(slug));
+      if (collision) {
+        res.status(409).json({ error: 'duplicate', field: 'slug', message: `项目 slug「${slug}」已被项目「${collision.name}」使用或保留，请换一个。` });
+        return;
+      }
+      if (slug !== project.slug) {
+        const roots = config?.rootDomains?.length ? config.rootDomains : (config?.previewDomain ? [config.previewDomain] : []);
+        const branches = stateService.getAllBranches();
+        for (const branch of branches.filter(entry => entry.projectId === project.id)) {
+          const profiles = stateService.getEffectiveProfilesForBranch(branch);
+          const before = new Set(projectBranchPublishedHosts(branch, project, profiles, roots));
+          const others = branches.filter(entry => entry.id !== branch.id);
+          const occupied = occupiedHostOwners(branches, roots);
+          for (const other of others) {
+            for (const host of projectBranchPublishedHosts(other, stateService.getProject(other.projectId), stateService.getEffectiveProfilesForBranch(other), roots)) {
+              if (!occupied.has(host)) occupied.set(host, other.id);
+            }
+          }
+          const nextProject = { ...project, slug };
+          const serviceHosts = new Set(projectBranchPublishedServiceHosts(branch, nextProject, profiles, roots));
+          const conflict = projectBranchPublishedHosts(branch, nextProject, profiles, roots)
+            .find(host => !before.has(host) && occupied.has(host) && (occupied.get(host) !== branch.id || serviceHosts.has(host)));
+          if (conflict) {
+            res.status(409).json({ error: 'preview_host_conflict', field: 'slug',
+              message: '此项目 slug 会与已有分支入口冲突，设置没有保存。请换一个 slug。' });
+            return;
+          }
         }
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'slug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
     if (body.inheritGlobalEnv !== undefined) {
       if (typeof body.inheritGlobalEnv !== 'boolean') {
         res.status(400).json({
@@ -3008,6 +3723,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.
       patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
+    if (body.agentPrebuiltOnly !== undefined) {
+      // Agent 极速版门禁的开关本身只能由真人改：机器凭据能关掉它，门禁就形同虚设。
+      // 与 agent-prebuilt-gate.ts 同一口径（isMachineCaller），不看 X-CDS-Trigger——
+      // 没有任何内部派发需要改这个开关。
+      if (isMachineCaller(req)) {
+        res.status(403).json({
+          error: 'agent_prebuilt_only_human_only',
+          message: '「Agent 只允许极速版部署」开关只能由真人在项目设置页修改，Agent 凭据不得开启或关闭。',
+        });
+        return;
+      }
+      patch.agentPrebuiltOnly = body.agentPrebuiltOnly === true || body.agentPrebuiltOnly === 'true' as unknown as boolean;
     }
     if (body.resourceChipDisplay !== undefined) {
       const incoming = body.resourceChipDisplay;
@@ -3050,6 +3778,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         }
         next[profileId] = mode;
       }
+      // Agent 极速版门禁：项目默认会在建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支，
+      // 之后豁免的 webhook 部署就会在宿主上编译——机器凭据不得把它写成非极速版（Codex PR #1513 P1）。
+      if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
+        const violations = findNonPrebuiltDefaultModes(projectProfiles, next, { coverAllProfiles: true });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(project, projectProfiles, violations, { operation: 'project-default' }));
+          return;
+        }
+      }
       patch.defaultDeployModes = next;
     }
     // 自动切发布版保留为项目级单值；autoStopAfterMinutes 仅兼容旧 API，
@@ -3076,27 +3813,46 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       patch.deployReadinessFloorSeconds = Math.floor(num);
     }
     if (body.name !== undefined) patch.name = String(body.name).trim();
-    // For alias fields an empty string explicitly clears them so the UI
-    // can revert to showing `name` / `slug`. updateProject() serialises
-    // undefined fields out via spread, so we pass undefined (not '') to
-    // remove the key entirely — keeps state.json tidy.
+    // 空显示别名恢复项目名称；项目 slug 不再存在第二份覆盖字段。
     if (body.aliasName !== undefined) {
       const trimmed = String(body.aliasName).trim();
       patch.aliasName = trimmed === '' ? undefined : trimmed;
     }
-    if (body.aliasSlug !== undefined) {
-      const trimmed = String(body.aliasSlug).trim().toLowerCase();
-      patch.aliasSlug = trimmed === '' ? undefined : trimmed;
-    }
+    if (body.slug !== undefined) patch.slug = body.slug.trim().toLowerCase();
     if (body.description !== undefined) patch.description = String(body.description).trim();
     if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
 
+    const beforeSave = structuredClone(project);
+    let writtenProject: Project | undefined;
+    let applied: Project | undefined;
+    let flushResult: BoundedFlushResult = 'failed';
     try {
-      stateService.updateProject(project.id, patch);
+      try {
+        stateService.updateProject(project.id, patch, projectIdentityActorFromRequest(req));
+      } finally {
+        // save 可在安装新对象之后同步抛错，异常路径也必须取得本次恢复依据。
+        writtenProject = stateService.getProject(project.id);
+        applied = writtenProject ? { ...writtenProject } : undefined;
+      }
+      flushResult = await waitForFlushWithTimeout(() => stateService.flush(), 5000);
     } catch (err) {
-      res.status(500).json({
-        error: 'state_save_failed',
-        message: (err as Error).message,
+      console.error(`[project-settings] 项目 ${project.id} 保存失败`, err);
+    }
+    if (flushResult !== 'flushed') {
+      let reverted = false;
+      let restoreConfirmed = false;
+      try {
+        if (writtenProject && applied) {
+          reverted = stateService.restoreProjectSettingsUpdate(project.id, beforeSave, applied, Object.keys(patch) as Array<keyof Project>, writtenProject);
+          restoreConfirmed = await waitForFlushWithTimeout(() => stateService.flush(), 5000) === 'flushed';
+        }
+      } catch (err) {
+        console.error(`[project-settings] 项目 ${project.id} 恢复写入未确认`, err);
+      }
+      res.status(503).json({ error: 'state_save_pending', restored: reverted && restoreConfirmed,
+        message: restoreConfirmed
+          ? reverted ? '设置没有保存，已恢复保存前的版本。请稍后重试。' : '本次保存未确认，期间收到的最新修改已保留。请重新加载后核对。'
+          : '设置保存及恢复写入尚未确认，存储版本暂时不确定。请等待存储恢复后核对，暂时不要重复修改。',
       });
       return;
     }
@@ -3127,13 +3883,53 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(mismatch.status).json(mismatch.body);
       return;
     }
-    const defaults = project.defaultDeployModes || {};
-    if (Object.keys(defaults).length === 0) {
+    // 从没保存过默认（undefined）才拒绝；保存成空表是合法的「全部跟随构建配置基线」。
+    if (!project.defaultDeployModes) {
       res.status(400).json({ error: 'no_defaults', message: '项目未设置默认运行模式,请先在项目设置选好默认模式再对齐' });
       return;
     }
+    const defaults = project.defaultDeployModes;
     const profiles = stateService.getBuildProfilesForProject(project.id);
+    try {
+      assertValidDefaultDeployModes(defaults, profiles);
+    } catch (err) {
+      if (!(err instanceof InvalidDefaultDeployModeError)) throw err;
+      res.status(409).json({ error: err.message, code: err.code });
+      return;
+    }
+    // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
+    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。表里没有的 profile 对齐后
+    // 回到基线，基线是源码同样算（coverAllProfiles）。
+    if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
+      const violations = findNonPrebuiltDefaultModes(profiles, defaults, { coverAllProfiles: true });
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(project, profiles, violations, { operation: 'project-default' }));
+        return;
+      }
+    }
     const branches = stateService.getBranchesForProject(project.id);
+    // Validate the complete batch against unchanged live declarations. Applying
+    // defaults to a live branch first would make the retained-storage comparison
+    // see the candidate as its own original and skip admission.
+    const candidates = new Map(branches.map(branch => {
+      const candidate = structuredClone(branch);
+      applyDefaultDeployModesToBranch(candidate, defaults, profiles);
+      for (const profile of profiles) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
+          const override = candidate.profileOverrides?.[profile.id];
+          if (override) delete override.activeDeployMode;
+        }
+      }
+      return [branch.id, candidate] as const;
+    }));
+    try {
+      stateService.assertProfileStorageDeclarationsPreserved(
+        stateService.getAllBranches().map(branch => candidates.get(branch.id) || branch),
+      );
+    } catch (error) {
+      res.status(409).json({ error: 'storage_retained_profile_mutation_refused', message: (error as Error).message });
+      return;
+    }
     const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
     for (const branch of branches) {
       // 对齐前记录各 profile 当前激活模式,用于判定本次对齐是否真的改了模式。
@@ -3142,12 +3938,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         prevModes[profile.id] = branch.profileOverrides?.[profile.id]?.activeDeployMode || '';
       }
       // 复用 SSOT 写入逻辑（建分支与 webhook 自动建分支同款）
-      applyDefaultDeployModesToBranch(branch, defaults, profiles);
+      const candidate = candidates.get(branch.id)!;
       const modes: Record<string, string> = {};
       let modeChanged = false;
       for (const profile of profiles) {
-        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
-        const ov = branch.profileOverrides?.[profile.id];
+        const ov = candidate.profileOverrides?.[profile.id];
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
+          // 2026-10-08：表里没有 = 「跟随构建配置」。新分支不会拷这一项，所以对齐也要把分支覆盖里
+          // 残留的模式清掉、回到基线；只跳过会让页面写着「跟随（极速版）」而存量分支仍停在 dev。
+          if (branch.profileOverrides?.[profile.id]?.activeDeployMode === undefined) continue;
+          stateService.setBranchProfileOverride(branch.id, profile.id, ov || {});
+          modes[profile.id] = profile.activeDeployMode || '';
+          modeChanged = true;
+          continue;
+        }
         if (!ov) continue;
         stateService.setBranchProfileOverride(branch.id, profile.id, ov);
         modes[profile.id] = ov.activeDeployMode || '';
@@ -3522,6 +4326,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    // Before tombstones, state cascade or native teardown: preserve retained storage ownership.
+    try { stateService.assertProjectStorageRemovalAllowed(project.id); }
+    catch (error) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(error as Error).message}); return; }
+
     // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"
     // 导致已删项目的 infra / app 容器永远留在宿主上吃 CPU（单日取证 68 个
     // 孤儿容器）。顺序修正：**先收容器、后删网络**——网络上还挂着容器时
@@ -3558,9 +4366,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       .flatMap((rs) => rs.members.map((m) => m.containerName))
       .filter((n): n is string => Boolean(n));
     const replicaDbSnapshots = projectBranches.flatMap((b) => b.replicaDbSnapshots || []);
-    const dedicatedDbContainerNames = replicaDbSnapshots
-      .map((s) => s.dedicatedContainer)
-      .filter((n): n is string => Boolean(n));
+    // 分支删除默认保留派生库（数据台账，2026-09-03）：分支没了、快照也没了，台账里的孤儿条目
+    // 是专用隔离实例唯一的登记处——不把它们也列进来，删项目就永久漏跑一个带数据卷的容器（Codex P1）。
+    const ledgerEntries = stateService.getDbLedger(project.id);
+    const ledgerDedicatedContainers = retainedDedicatedContainers(ledgerEntries);
+    const dedicatedDbContainerNames = [...new Set([
+      ...replicaDbSnapshots.map((s) => s.dedicatedContainer).filter((n): n is string => Boolean(n)),
+      ...ledgerDedicatedContainers,
+    ])];
     const teardownContainers = [...new Set([
       ...appContainerNames,
       ...infraContainerNames,
@@ -3573,49 +4386,60 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // removeProject 之后，两次写之间进程被杀 / save 失败时，state 已无项目/分支、
     // 也无墓碑，收割器的补偿路径彻底断（删最后一个项目时尤其致命）。先写墓碑，
     // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
-    const requestedAt = new Date().toISOString();
-    if (teardownContainers.length > 0) {
-      // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
-      // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
-      // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
-      const volumeBearing = new Set(dedicatedDbContainerNames);
-      stateService.addContainerTeardownTombstones(
-        teardownContainers.map((containerName) => ({
-          containerName,
-          projectId: project.id,
-          requestedAt,
-          ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
-        })),
-      );
-    }
-
-    // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
-    // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
-    // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
-    // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
-    // 至少墓碑还在，回收路径不断。
-    stateService.addDeletedProjectWorktreeBucket(project.id);
-
-    // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
-    // belonging to this project so deleting a project no longer leaves
-    // orphans in state.json. The state service returns a summary so we
-    // can hand it back to the operator (and the next agent log replay
-    // can spot what was lost).
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
+      const requestedAt = new Date().toISOString();
+      if (teardownContainers.length > 0) {
+        // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
+        // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
+        // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
+        const volumeBearing = new Set(dedicatedDbContainerNames);
+        stateService.addContainerTeardownTombstones(
+          teardownContainers.map((containerName) => ({
+            containerName,
+            projectId: project.id,
+            requestedAt,
+            ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
+          })),
+        );
+      }
+
+      // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
+      // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
+      // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
+      // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
+      // 至少墓碑还在，回收路径不断。
+      stateService.addDeletedProjectWorktreeBucket(project.id);
+      // cascade 前保存本项目分支网络的明确删除意图；不扫描其他项目。
+      stateService.addNetworkTeardowns(projectBranches.flatMap(b =>
+        branchTeardownNetworkNames(b).map(name => ({ name, projectId: project.id }))));
+
+      // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
+      // belonging to this project so deleting a project no longer leaves
+      // orphans in state.json. The state service returns a summary so we
+      // can hand it back to the operator (and the next agent log replay
+      // can spot what was lost).
       summary = stateService.removeProject(project.id);
+      await stateService.waitForProjectRemoval(project.id);
     } catch (err) {
       // removeProject 失败 = 项目仍存活（容器仍归它所有）。回滚刚写的墓碑，
       // 否则收割器会按残留墓碑 rm -f 一个未被删除项目的在用容器（Codex P2）。
       for (const containerName of teardownContainers) {
         try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
       }
+      for (const b of projectBranches) for (const name of branchTeardownNetworkNames(b))
+        try { stateService.removeNetworkTeardown(name, project.id); } catch { /* best-effort */ }
+      let compensationConfirmed = true;
+      try { await stateService.flush(); } catch { compensationConfirmed = false; }
       res.status(500).json({
         error: 'state_save_failed',
-        message: (err as Error).message,
+        message: compensationConfirmed ? (err as Error).message : '删除未完成，恢复状态尚未保存，请稍后重试',
+        compensationConfirmed,
       });
       return;
     }
+
+    cdsEventsBus.publish('access-request.progress', { projectId: project.id, stage: 'project-deleted' });
 
     // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
     // 墓碑已在 removeProject 之前落库，异步段崩溃 / docker 暂不可用时收割器
@@ -3624,7 +4448,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     void (async () => {
       // 专用隔离实例先走 dropReplicaDb（rm -f -v，匿名数据卷一并清除）；失败留给
       // 墓碑兜底（墓碑 rm -f 不带 -v，卷会残留，但容器不会漏跑）。
-      for (const snapshot of replicaDbSnapshots) {
+      const dedicatedToDrop = [
+        ...replicaDbSnapshots.filter((s) => s.dedicatedContainer),
+        // 台账孤儿：只剩容器名与库名，够 dropReplicaDb 走「整容器 rm -f -v」那条路
+        ...ledgerEntries
+          .filter((e) => e.status !== 'dropped' && e.dedicatedContainer && !replicaDbSnapshots.some((s) => s.dedicatedContainer === e.dedicatedContainer))
+          .map((e) => ({ id: e.snapshotId ?? e.id, profileId: e.profileId ?? '', memberId: e.memberId ?? '', engine: e.engine, sourceDb: e.sourceDb ?? '', dbName: e.dbName, infraContainer: e.infraContainer, dedicatedContainer: e.dedicatedContainer, clonedAt: e.createdAt })),
+      ];
+      for (const snapshot of dedicatedToDrop) {
         if (!snapshot.dedicatedContainer) continue;
         try {
           await dropReplicaDb(snapshot, {});
@@ -3637,6 +4468,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
       }
+      await processNetworkTeardowns(shell, stateService);
       if (dockerNetwork) {
         const result = await removeDockerNetwork(dockerNetwork);
         if (!result.ok) {
@@ -3649,7 +4481,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
         (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
       );
-    })();
+    })().catch(err => console.warn(`[projects] 网络清理稍后重试: ${(err as Error).message}`));
 
     const totalCascade =
       summary.branches.length +
@@ -3711,7 +4543,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string };
+    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown };
+    if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
+      return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
+    }
+    if (body.designAccess !== undefined && body.designAccess !== 'read' && body.designAccess !== 'feedback' && body.designAccess !== 'publish') {
+      return res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读、实施反馈或稿件发布权限' });
+    }
+    if (body.planningAccess && body.designAccess) {
+      return res.status(400).json({ error: 'invalid_key_scope', message: '请为工程规划和设计分别签发凭据' });
+    }
+    if ((body.planningAccess || body.designAccess) && !isHumanSystemOwner(req)) {
+      return res.status(403).json({ error: 'owner_required', message: '仅 CDS 系统所有者可签发此类受限项目凭据' });
+    }
     const now = new Date();
     // Label: auto-generate from timestamp when the user didn't supply one.
     const defaultLabel =
@@ -3721,12 +4565,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    // Capture signer identity from the github-auth middleware when present.
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+    const account = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
 
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
-      minted = mintProjectAgentKey(stateService, project, label, ghUser?.login);
+      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
+        planningAccess: body.planningAccess, designAccess: body.designAccess,
+      });
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -3753,6 +4598,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         id: e.id,
         label: e.label,
         scope: e.scope,
+        planningAccess: e.planningAccess,
+        designAccess: e.designAccess,
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         lastUsedAt: e.lastUsedAt,

@@ -1,6 +1,8 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ContainerService, type ProjectNetworkResolver } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { withStorageImages } from '../helpers/storage-image-mock.js';
 import type { CdsConfig, BranchEntry, BuildProfile, ServiceState, InfraService } from '../../src/types.js';
 
 /**
@@ -64,7 +66,10 @@ const makeInfraService = (projectId: string, overrides?: Partial<InfraService>):
   containerName: 'cds-mongo',
   status: 'stopped',
   volumes: [],
-  env: {},
+  env: {
+    MONGO_INITDB_ROOT_USERNAME: 'root',
+    MONGO_INITDB_ROOT_PASSWORD: 'test-password',
+  },
   createdAt: '2026-04-30T00:00:00Z',
   ...overrides,
 });
@@ -82,7 +87,16 @@ describe('ContainerService 多项目网络隔离', () => {
   let prevIsolation: string | undefined;
 
   beforeEach(() => {
-    mock = new MockShellExecutor();
+    mock = withStorageImages(new MockShellExecutor());
+    // Synthetic image inventory: this network fixture declares no Dockerfile VOLUME.
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json \.Id\}\},/, () => ({
+      stdout: JSON.stringify(['sha256:' + 'a'.repeat(64), null]), stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/^docker inspect --format '\[\{\{json \.Id\}\}.*json \.Mounts/, () => ({stdout: '', stderr: '', exitCode: 0}));
+    // First-create infra precondition: exact requested name is absent, never an unknown inspect.
+    mock.addResponsePattern(/^docker inspect --format='\{\{json \.Id\}\}\|\{\{json \.State\.Status\}\}\|\{\{json \.Name\}\}' '([^']+)'$/, (match) => ({
+      stdout: '', stderr: `Error: No such object: ${match[1]}`, exitCode: 1,
+    }));
     // 本套件验证的是「项目级网络(P4)」契约：app/infra 容器跟随 project.dockerNetwork。
     // 分支级网络隔离（默认开）会把 app 容器主网换成分支网 cds-br-<id>，那是另一层、另有专门套件
     // （container-branch-network-isolation.test.ts）。这里关掉全局逃生开关，专测项目级网络解析这一层。
@@ -100,7 +114,7 @@ describe('ContainerService 多项目网络隔离', () => {
       const resolver: ProjectNetworkResolver = {
         getDockerNetwork: (id) => (id === 'proj-a' ? 'cds-proj-a' : undefined),
       };
-      const service = new ContainerService(mock, makeConfig(), resolver);
+      const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       okDockerStubs(mock);
 
@@ -117,7 +131,7 @@ describe('ContainerService 多项目网络隔离', () => {
       const resolver: ProjectNetworkResolver = {
         getDockerNetwork: (id) => (id === 'proj-b' ? 'cds-proj-b' : undefined),
       };
-      const service = new ContainerService(mock, makeConfig(), resolver);
+      const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       okDockerStubs(mock);
 
@@ -133,7 +147,7 @@ describe('ContainerService 多项目网络隔离', () => {
         // legacy 项目返回 undefined → fallback
         getDockerNetwork: () => undefined,
       };
-      const service = new ContainerService(mock, makeConfig(), resolver);
+      const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       okDockerStubs(mock);
 
@@ -144,7 +158,7 @@ describe('ContainerService 多项目网络隔离', () => {
     });
 
     it('无 networkResolver（向后兼容）全部走 config.dockerNetwork', async () => {
-      const service = new ContainerService(mock, makeConfig());
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       okDockerStubs(mock);
 
@@ -158,7 +172,7 @@ describe('ContainerService 多项目网络隔离', () => {
       const resolver: ProjectNetworkResolver = {
         getDockerNetwork: (id) => (id === 'proj-a' ? 'cds-proj-a' : undefined),
       };
-      const service = new ContainerService(mock, makeConfig(), resolver);
+      const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       // 初次 inspect 失败 → 触发 create
       let inspectCalls = 0;
@@ -178,11 +192,54 @@ describe('ContainerService 多项目网络隔离', () => {
   });
 
   describe('startInfraService 用 project.dockerNetwork', () => {
+    /**
+     * 原意图保留：**容器已经存在，不构成绕过认证门禁的理由**。
+     *
+     * 判定基准在 2026-08-18 改成了「登记时间」而不是「一刀切」——门禁上线后新建的
+     * 一律拦，之前登记的存量库限期放行（见 infra-auth-legacy-exemption.test.ts）。
+     * 所以这里把两层分开断言：夹具默认的 createdAt 是 4 月（存量），要测「新建被拦」
+     * 必须显式把登记时间挪到门禁之后，否则测的其实是豁免路径。
+     */
+    it('门禁上线后新建的无认证实例：容器就算已存在也不放行', async () => {
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      okDockerStubs(mock);
+
+      await expect(service.startInfraService(
+        makeInfraService('proj-a', { env: {}, createdAt: '2026-08-19T00:00:00Z' }),
+      )).rejects.toThrow('拒绝创建无认证');
+      expect(mock.commands.some((command) => command.includes('docker inspect'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker start'))).toBe(false);
+    });
+
+    it('门禁上线前登记的存量库：豁免窗口内限期放行，不至于把平台停掉', async () => {
+      // 2026-08-18 的教训：一刀切让五个项目十几个存量库全部起不来，
+      // 连主分支预览都部署失败，而那些库本身活得好好的。
+      //
+      // 这里要测的是「豁免窗口内，存量放行」，所以窗口必须由用例自己钉住，
+      // 不能靠今天恰好还没过默认到期日（2026-09-17）——那样这条用例是一颗时间炸弹：
+      // 写下时是绿的，到期那天全仓 CI 一起变红，而被测行为一个字都没改。
+      // 钉的是生产同一个逃生阀 CDS_INFRA_AUTH_GRACE_UNTIL，不是测试专用后门。
+      // 「过期之后照样拦」由 infra-auth-legacy-exemption.test.ts 单独把关，不在这条。
+      const prevGrace = process.env.CDS_INFRA_AUTH_GRACE_UNTIL;
+      process.env.CDS_INFRA_AUTH_GRACE_UNTIL = '2099-01-01T00:00:00.000Z';
+      try {
+        const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+        okDockerStubs(mock);
+
+        await expect(service.startInfraService(
+          makeInfraService('proj-a', { env: {}, createdAt: '2026-04-30T00:00:00Z' }),
+        )).resolves.not.toThrow();
+      } finally {
+        if (prevGrace === undefined) delete process.env.CDS_INFRA_AUTH_GRACE_UNTIL;
+        else process.env.CDS_INFRA_AUTH_GRACE_UNTIL = prevGrace;
+      }
+    });
+
     it('infra 容器跟随 service.projectId 选 network', async () => {
       const resolver: ProjectNetworkResolver = {
         getDockerNetwork: (id) => (id === 'proj-a' ? 'cds-proj-a' : undefined),
       };
-      const service = new ContainerService(mock, makeConfig(), resolver);
+      const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
       okDockerStubs(mock);
 
       await service.startInfraService(makeInfraService('proj-a'));
@@ -190,13 +247,32 @@ describe('ContainerService 多项目网络隔离', () => {
       const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
       expect(runCmd).toContain('--network cds-proj-a');
       expect(runCmd).toContain('--label cds.network=cds-proj-a');
+      expect(runCmd).toContain('--ulimit nofile=64000:64000');
+      expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
+    });
+
+    it('非Mongo基础设施保留自己的句柄策略', async () => {
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      okDockerStubs(mock);
+      await service.startInfraService(makeInfraService('proj-a', { id: 'postgres', name: 'Postgres', dockerImage: 'postgres:16', containerName: 'cds-postgres', containerPort: 5432,
+        env: { POSTGRES_PASSWORD: 'synthetic-only' } }));
+      expect(mock.commands.find(c => c.includes('docker run -d'))).not.toContain('--ulimit');
+    });
+
+    it.each(['running', 'exited'])('复用%s的Mongo不为补nofile而重建或修改运行参数', async status => {
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      okDockerStubs(mock);
+      mock.addResponsePatternFirst(/docker inspect.*json \.State.Status/, () => ({ stdout: ['a'.repeat(64), status, '/cds-mongo'].map(value => JSON.stringify(value)).join('|'), stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker start /, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      await service.startInfraService(makeInfraService('proj-a'));
+      expect(mock.commands.filter(c => /docker (?:run|create|rm)|prlimit|ulimit/.test(c))).toEqual([]);
     });
 
     it('老 infra（projectId 指向无 dockerNetwork 项目）走 config 兜底', async () => {
       const resolver: ProjectNetworkResolver = {
         getDockerNetwork: () => undefined,
       };
-      const service = new ContainerService(mock, makeConfig(), resolver);
+      const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
       okDockerStubs(mock);
 
       await service.startInfraService(makeInfraService('legacy-default'));
@@ -208,7 +284,7 @@ describe('ContainerService 多项目网络隔离', () => {
 
   describe('discover* 跨 network 工作', () => {
     it('discoverInfraContainers 不再 filter cds.network=', async () => {
-      const service = new ContainerService(mock, makeConfig());
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
       mock.addResponsePattern(/docker ps/, () => ({
         stdout: 'cds-mongo|running|cds.managed=true,cds.type=infra,cds.service.id=mongo,cds.network=cds-proj-a',
         stderr: '',
@@ -225,7 +301,7 @@ describe('ContainerService 多项目网络隔离', () => {
     });
 
     it('discoverAppContainers 同样不再 filter cds.network=', async () => {
-      const service = new ContainerService(mock, makeConfig());
+      const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
       mock.addResponsePattern(/docker ps/, () => ({
         stdout: 'cds-feat-a-api|running|cds.managed=true,cds.type=app,cds.branch.id=feat-a,cds.profile.id=api,cds.network=cds-proj-b',
         stderr: '',

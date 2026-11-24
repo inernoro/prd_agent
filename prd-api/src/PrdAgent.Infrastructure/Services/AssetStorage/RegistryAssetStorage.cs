@@ -75,9 +75,27 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
         return result;
     }
 
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null) =>
+        _inner.TryBuildContentAddressedKey(bytes, mime, domain, type, fileName, extensionHint);
+
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         return await _inner.TryReadByShaAsync(sha256, ct, domain, type);
+    }
+
+    public Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null)
+    {
+        return _inner.TryOpenReadByShaAsync(sha256, ct, domain, type);
     }
 
     public async Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
@@ -90,6 +108,9 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
     {
         return _inner.TryBuildUrlBySha(sha256, mime, domain, type);
     }
+
+    public Task<AssetReadHandle?> TryOpenReadByKeyAsync(string key, CancellationToken ct)
+        => _inner.TryOpenReadByKeyAsync(key, ct);
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
     {
@@ -112,6 +133,18 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
     public string BuildUrlForKey(string key)
     {
         return _inner.BuildUrlForKey(key);
+    }
+
+    /// <summary>
+    /// 必须显式转发给内层。
+    ///
+    /// 接口上那个默认实现会退回到本类的 <see cref="BuildUrlForKey"/>，而它只是把 key 原样
+    /// 递给内层——**本站前缀就在这一步丢了**，跨站搬来的地址又会落在错误的对象路径上。
+    /// 包装器不转发新方法是最典型的「建了一半」：编译过、测试过，只在真实跨站时才现形。
+    /// </summary>
+    public string BuildUrlForLogicalKey(string logicalKey)
+    {
+        return _inner.BuildUrlForLogicalKey(logicalKey);
     }
 
     public async Task DeleteByKeyAsync(string key, CancellationToken ct)

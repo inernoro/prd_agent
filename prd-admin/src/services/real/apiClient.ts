@@ -1,6 +1,7 @@
 import { useAuthStore } from '@/stores/authStore';
 import { api } from '@/services/api';
 import { fail, ok, type ApiResponse } from '@/types/api';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 
 function joinUrl(base: string, path: string) {
   const b = base.replace(/\/+$/, '');
@@ -14,6 +15,11 @@ function getApiBaseUrl() {
   // 如需直连后端（跨域），可通过 VITE_API_BASE_URL 显式配置完整地址
   const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
   return raw.trim().replace(/\/+$/, '');
+}
+
+/** 为原生表单等不能走 apiRequest 的浏览器请求复用同一 API 基址。 */
+export function resolveApiUrl(path: string): string {
+  return joinUrl(getApiBaseUrl(), path);
 }
 
 /**
@@ -102,33 +108,29 @@ function classifyNonContractHttpError(args: {
   contentType: string;
 }): { code: string; message: string } {
   const status = args.status;
-  const st = (args.statusText || '').trim();
-  const path = args.path;
-  const isHtml = args.maybeHtml || args.contentType.includes('text/html');
 
   // 仅当后端按契约返回 PERMISSION_DENIED 时才算“权限不足”
   // 非契约响应（尤其 HTML）上的 403 很可能是网关/反代/静态服务器拦截，属于“服务不可用/地址错误”
   if (status === 401) {
-    return { code: 'UNAUTHORIZED', message: '未登录或登录已过期（HTTP 401）' };
+    return { code: 'UNAUTHORIZED', message: '登录状态已过期，请重新登录后重试。' };
   }
 
   // 经验：在“后端挂了/端口停了/反代未就绪”时，一些网关仍可能返回 403（甚至非 HTML）
   // 为避免把断线误导成“请求被拒绝”，非契约的 403 一律归类为 SERVER_UNAVAILABLE。
   if (status === 403) {
-    const suffix = isHtml ? '或被网关拦截' : '或服务不可达';
-    return { code: 'SERVER_UNAVAILABLE', message: `服务器不可用${suffix}（HTTP 403）（${path}）` };
+    return { code: 'SERVER_UNAVAILABLE', message: '服务暂时不可用，请稍后重试。' };
   }
 
-  if ((status === 502 || status === 503 || status === 504) && isHtml) {
-    return { code: 'SERVER_UNAVAILABLE', message: `服务器暂不可用（HTTP ${status}）（${path}）` };
+  if (status === 502 || status === 503 || status === 504) {
+    return { code: 'SERVER_UNAVAILABLE', message: '服务暂时不可用，请稍后重试。' };
   }
 
   if (status >= 500) {
-    return { code: 'SERVER_ERROR', message: `服务器错误（HTTP ${status}${st ? ` ${st}` : ''}）（${path}）` };
+    return { code: 'SERVER_ERROR', message: '服务处理未完成，请稍后重试。' };
   }
 
   // 其它 4xx：默认按“请求被拒绝/不被接受”，但不冒充权限不足
-  return { code: 'REQUEST_REJECTED', message: `请求被拒绝（HTTP ${status}${st ? ` ${st}` : ''}）（${path}）` };
+  return { code: 'REQUEST_REJECTED', message: '当前请求未被接受，请检查输入后重试。' };
 }
 
 function isApiResponseLike(x: unknown): x is { success: boolean; data: unknown; error: unknown } {
@@ -153,6 +155,26 @@ function getApiErrorLike(x: unknown): { code?: string; message?: string } | null
   const code = typeof o.code === 'string' ? o.code : undefined;
   const message = typeof o.message === 'string' ? o.message : undefined;
   return code || message ? { code, message } : null;
+}
+
+const SESSION_AUTH_FAILURE_CODES = new Set([
+  'UNAUTHORIZED',
+  'AUTH_SESSION_REQUIRED',
+  'AUTH_SESSION_INVALID',
+  'AUTH_SESSION_REVOKED',
+]);
+
+/**
+ * 第三方连接（GitHub 等）的凭据失效同样带 401，但那是**上游**凭据的事，
+ * 跟当前用户的后台会话没有关系。不排除的话，GitHub token 一过期就把人踢回登录页。
+ */
+const THIRD_PARTY_CREDENTIAL_CODE_PREFIXES = ['GITHUB_'];
+
+/** 只有会话类 401 才允许刷新 Token 或退出登录；服务 Key、Agent Key、第三方连接凭据等 401 必须保留当前用户会话。 */
+export function isSessionAuthenticationFailure(status: number, code?: string): boolean {
+  if (code && code.startsWith('AUTH_')) return SESSION_AUTH_FAILURE_CODES.has(code);
+  if (code && THIRD_PARTY_CREDENTIAL_CODE_PREFIXES.some((p) => code.startsWith(p))) return false;
+  return status === 401 || (code != null && SESSION_AUTH_FAILURE_CODES.has(code));
 }
 
 /**
@@ -182,29 +204,57 @@ function checkPermissionFingerprint(res: Response): void {
   }
 }
 
-// 去重：多个并发 401 共享同一个 refresh 请求，避免 refresh 风暴
-let inflightRefresh: Promise<boolean> | null = null;
+type AuthSession = { epoch: number; userId: string | undefined };
 
-async function tryRefreshAdminToken(): Promise<boolean> {
-  if (inflightRefresh) return inflightRefresh;
-  inflightRefresh = doRefreshAdminToken();
+function captureAuthSession(): AuthSession {
+  const state = useAuthStore.getState();
+  return { epoch: state.authSessionEpoch, userId: state.user?.userId };
+}
+
+function isSameAuthSession(session: AuthSession | null): boolean {
+  if (!session) return true;
+  const state = useAuthStore.getState();
+  return state.authSessionEpoch === session.epoch && state.user?.userId === session.userId;
+}
+
+const sessionChangedMessage = '登录会话已变更，请在当前账号下重新操作。';
+function sessionChanged<T>(): ApiResponse<T> {
+  return fail('AUTH_SESSION_CHANGED', sessionChangedMessage) as ApiResponse<T>;
+}
+
+// 只让同一登录会话共享刷新；旧任务完成时不能清除新会话的刷新任务。
+let inflightRefresh: { session: AuthSession; promise: Promise<boolean> } | null = null;
+
+export async function tryRefreshAdminToken(): Promise<boolean> {
+  const session = captureAuthSession();
+  if (inflightRefresh && inflightRefresh.session.epoch === session.epoch
+    && inflightRefresh.session.userId === session.userId) return inflightRefresh.promise;
+  const task = { session, promise: doRefreshAdminToken(session) };
+  inflightRefresh = task;
   try {
-    return await inflightRefresh;
+    return await task.promise;
   } finally {
-    inflightRefresh = null;
+    if (inflightRefresh === task) inflightRefresh = null;
   }
 }
 
-async function doRefreshAdminToken(): Promise<boolean> {
+async function doRefreshAdminToken(session: AuthSession): Promise<boolean> {
   const authStore = useAuthStore.getState();
   const token = authStore.token;
   const refreshToken = authStore.refreshToken;
   const sessionKey = authStore.sessionKey;
   const userId = authStore.user?.userId;
 
-  if (!authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
+  if (!isSameAuthSession(session) || !authStore.isAuthenticated || !token || !refreshToken || !sessionKey || !userId) return false;
 
-  const url = joinUrl(getApiBaseUrl(), api.auth.refresh());
+  // 自助改密也会在同一登录会话内旋转令牌。旧 refresh 只确认当前凭据可重试，不能覆盖或退出它。
+  const hasRotatedCredentials = () => {
+    const latest = useAuthStore.getState();
+    return isSameAuthSession(session) && latest.isAuthenticated && !!latest.token
+      && latest.token !== token && !!latest.refreshToken && !!latest.sessionKey;
+  };
+
+  const url = resolveApiUrl(api.auth.refresh());
   const body = JSON.stringify({
     refreshToken,
     userId,
@@ -220,15 +270,26 @@ async function doRefreshAdminToken(): Promise<boolean> {
     });
     const text = await res.text();
     const json = await tryParseJson(text);
+    if (hasRotatedCredentials()) return true;
     if (!res.ok || !isApiResponseLike(json) || json.success !== true) return false;
     const data = (json as { data: unknown }).data;
     if (!isRefreshOkData(data)) return false;
 
-    authStore.setTokens(data.accessToken, data.refreshToken, data.sessionKey);
+    // 等待期间可能已切号或凭据已被另一条合法路径旋转，旧结果不得覆盖当前凭据。
+    const latest = useAuthStore.getState();
+    if (!isSameAuthSession(session) || latest.token !== token || latest.refreshToken !== refreshToken
+      || latest.sessionKey !== sessionKey || latest.user?.userId !== userId) return false;
+    latest.setTokens(data.accessToken, data.refreshToken, data.sessionKey);
     return true;
   } catch {
-    return false;
+    return hasRotatedCredentials();
   }
+}
+
+/** 每次明确的新操作生成一个意图，认证刷新重试沿用同一个；调用方可传稳定标识覆盖。 */
+function withTaskIntent<T extends { method?: string; headers?: Record<string, string> }>(options: T, defaultMethod = 'GET'): T {
+  if ((options.method ?? defaultMethod) === 'GET' || Object.keys(options.headers ?? {}).some(key => key.toLowerCase() === 'idempotency-key')) return options;
+  return { ...options, headers: { ...options.headers, 'Idempotency-Key': crypto.randomUUID() } };
 }
 
 export async function apiRequest<T>(
@@ -240,9 +301,239 @@ export async function apiRequest<T>(
     emptyResponseData?: T;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    signal?: AbortSignal;
   }
 ): Promise<ApiResponse<T>> {
-  return await apiRequestInner<T>(path, options, false);
+  return await apiRequestInner<T>(path, options && withTaskIntent(options), false);
+}
+
+export interface ApiDownloadedFile {
+  blob: Blob;
+  fileName: string;
+  contentType: string;
+  /** 原始响应头：有的下载端点把「这次打包漏了什么」之类的结论放在头里（如离线 HTML 导出）。 */
+  headers?: Headers;
+}
+
+/**
+ * 下载失败。message 已经过净化（可直接给人看）；code 是后端的结构化错误码，
+ * 调用方要按原因给不同下一步时按 code 分支，不要去匹配 message 里的字。
+ */
+export class ApiDownloadError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(message: string, code: string, status: number) {
+    super(message);
+    this.name = 'ApiDownloadError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export async function apiMultipartRequest<T>(
+  path: string,
+  options: {
+    method?: 'POST' | 'PUT' | 'PATCH';
+    createFormData: () => FormData;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  },
+): Promise<ApiResponse<T>> {
+  return apiMultipartRequestInner(path, withTaskIntent(options, 'POST'), false);
+}
+
+async function apiMultipartRequestInner<T>(
+  path: string,
+  options: {
+    method?: 'POST' | 'PUT' | 'PATCH';
+    createFormData: () => FormData;
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  },
+  didRefresh: boolean,
+  session = captureAuthSession(),
+): Promise<ApiResponse<T>> {
+  if (!isSameAuthSession(session)) return sessionChanged<T>();
+  const authStore = useAuthStore.getState();
+  if (!authStore.token) {
+    return fail('UNAUTHORIZED', '当前尚未登录，请登录后重试。') as unknown as ApiResponse<T>;
+  }
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${authStore.token}`,
+    'X-Client': 'admin',
+    'X-Client-Base-Url': window.location.origin,
+    ...options.headers,
+  };
+  const appName = resolveAdminAppName();
+  if (appName) headers['X-App-Name'] = appName;
+
+  let response: Response;
+  try {
+    response = await fetch(resolveApiUrl(path), {
+      method: options.method ?? 'POST',
+      headers,
+      body: options.createFormData(),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (!isSameAuthSession(session)) return sessionChanged<T>();
+    if (options.signal?.aborted) {
+      return fail('CANCELLED', '操作已取消。') as unknown as ApiResponse<T>;
+    }
+    return fail(
+      isDisconnectedError(error) ? 'DISCONNECTED' : 'NETWORK_ERROR',
+      '网络连接异常，请检查网络后重试。',
+    ) as unknown as ApiResponse<T>;
+  }
+  if (!isSameAuthSession(session)) return sessionChanged<T>();
+  checkPermissionFingerprint(response);
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    if (!isSameAuthSession(session)) return sessionChanged<T>();
+    return fail('NETWORK_ERROR', '网络连接中断，请检查网络后重试。') as unknown as ApiResponse<T>;
+  }
+  const parsed = await tryParseJson(text);
+  if (!isSameAuthSession(session)) return sessionChanged<T>();
+  const parsedError = isApiResponseLike(parsed)
+    ? getApiErrorLike((parsed as { error: unknown }).error)
+    : null;
+  const unauthorized = isSessionAuthenticationFailure(response.status, parsedError?.code);
+  if (unauthorized) {
+    const refreshed = !didRefresh && await tryRefreshAdminToken();
+    if (!isSameAuthSession(session)) return sessionChanged<T>();
+    if (refreshed) {
+      // FormData 不可假定可重放；重试时必须调用工厂重新构造 body。
+      return apiMultipartRequestInner(path, options, true, session);
+    }
+    const latestAuth = useAuthStore.getState();
+    if (latestAuth.isAuthenticated) {
+      latestAuth.logout();
+      window.location.href = '/login';
+    }
+  }
+
+  if (response.status === 413) {
+    return fail('DOCUMENT_TOO_LARGE', '文件超过当前大小限制，请缩小文件后重新上传。') as unknown as ApiResponse<T>;
+  }
+  if (isApiResponseLike(parsed)) {
+    if (parsed.success) return parsed as ApiResponse<T>;
+    const code = parsedError?.code || 'UNKNOWN';
+    return fail(code, toUserReadableErrorMessage(parsedError, {
+      code,
+      fallbackMessage: '上传未完成',
+      recoveryMessage: '请检查文件后重试。',
+    })) as unknown as ApiResponse<T>;
+  }
+  if (!response.ok) {
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    const classified = classifyNonContractHttpError({
+      status: response.status,
+      statusText: response.statusText,
+      path,
+      maybeHtml: contentType.includes('text/html') || /^\s*</.test(text),
+      contentType,
+    });
+    return fail(classified.code, classified.message) as unknown as ApiResponse<T>;
+  }
+  return fail('INVALID_FORMAT', '服务返回格式异常，请稍后重试。') as unknown as ApiResponse<T>;
+}
+
+function readDownloadFileName(header: string | null, fallback: string) {
+  if (!header) return fallback;
+  const utf8 = header.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8.replace(/^"|"$/g, ''));
+    } catch {
+      return fallback;
+    }
+  }
+  return header.match(/filename="?([^";]+)"?/i)?.[1] || fallback;
+}
+
+export async function apiDownload(
+  path: string,
+  fallbackFileName: string,
+  didRefresh = false,
+  allowAnonymous = false,
+): Promise<ApiDownloadedFile> {
+  return apiDownloadInner(path, fallbackFileName, didRefresh, allowAnonymous, captureAuthSession());
+}
+
+async function apiDownloadInner(
+  path: string,
+  fallbackFileName: string,
+  didRefresh: boolean,
+  allowAnonymous: boolean,
+  session: AuthSession,
+): Promise<ApiDownloadedFile> {
+  const assertSession = () => {
+    if (!isSameAuthSession(session)) throw new ApiDownloadError(sessionChangedMessage, 'AUTH_SESSION_CHANGED', 0);
+  };
+  assertSession();
+  const authStore = useAuthStore.getState();
+  if (!authStore.token && !allowAnonymous) throw new Error('当前尚未登录，请登录后重试。');
+
+  const headers: Record<string, string> = {
+    Accept: 'application/octet-stream',
+    'X-Client': 'admin',
+    'X-Client-Base-Url': window.location.origin,
+  };
+  if (authStore.token) headers.Authorization = `Bearer ${authStore.token}`;
+  const appName = resolveAdminAppName();
+  if (appName) headers['X-App-Name'] = appName;
+
+  let response: Response;
+  try {
+    response = await fetch(resolveApiUrl(path), { headers });
+  } catch {
+    assertSession();
+    throw new Error('网络连接异常，请检查网络后重试。');
+  }
+  assertSession();
+  checkPermissionFingerprint(response);
+
+  const errorBody = response.ok
+    ? null
+    : await response.clone().json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+  assertSession();
+  if (isSessionAuthenticationFailure(response.status, errorBody?.error?.code)) {
+    const refreshed = !didRefresh && await tryRefreshAdminToken();
+    assertSession();
+    if (refreshed) {
+      return apiDownloadInner(path, fallbackFileName, true, allowAnonymous, session);
+    }
+    const latestAuth = useAuthStore.getState();
+    if (latestAuth.isAuthenticated) {
+      latestAuth.logout();
+      window.location.href = '/login';
+    }
+  }
+  if (!response.ok) {
+    const body = errorBody;
+    const code = body?.error?.code || 'DOWNLOAD_FAILED';
+    throw new ApiDownloadError(toUserReadableErrorMessage(body?.error, {
+      code,
+      fallbackMessage: '文件下载未完成',
+      recoveryMessage: '请稍后重试。',
+    }), code, response.status);
+  }
+
+  const blob = await response.blob().catch((error: unknown) => { assertSession(); throw error; });
+  assertSession();
+  if (blob.size === 0) throw new Error('下载文件为空，请稍后重试。');
+  return {
+    blob,
+    fileName: readDownloadFileName(response.headers.get('content-disposition'), fallbackFileName),
+    contentType: response.headers.get('content-type') || blob.type || 'application/octet-stream',
+    headers: response.headers,
+  };
 }
 
 async function apiRequestInner<T>(
@@ -254,11 +545,14 @@ async function apiRequestInner<T>(
     emptyResponseData?: T;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    signal?: AbortSignal;
   } | undefined,
-  didRefresh: boolean
+  didRefresh: boolean,
+  session: AuthSession | null = (options?.auth ?? true) ? captureAuthSession() : null,
 ): Promise<ApiResponse<T>> {
+  if (!isSameAuthSession(session)) return sessionChanged<T>();
   const method = options?.method ?? 'GET';
-  const url = joinUrl(getApiBaseUrl(), path);
+  const url = resolveApiUrl(path);
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -280,7 +574,7 @@ async function apiRequestInner<T>(
       headers.Authorization = `Bearer ${token}`;
     } else {
       // 未登录时直接返回 UNAUTHORIZED，避免发出注定 401 的请求
-      return fail('UNAUTHORIZED', '未登录') as unknown as ApiResponse<T>;
+      return fail('UNAUTHORIZED', '当前尚未登录，请登录后重试。') as unknown as ApiResponse<T>;
     }
   }
 
@@ -292,12 +586,22 @@ async function apiRequestInner<T>(
 
   let res: Response;
   const timeoutMs = options?.timeoutMs;
-  const timeoutController = typeof timeoutMs === 'number' && timeoutMs > 0
+  const externalSignal = options?.signal;
+  const timeoutController = (typeof timeoutMs === 'number' && timeoutMs > 0) || externalSignal
     ? new AbortController()
     : null;
-  const timeoutId = timeoutController
+  const abortFromExternal = () => timeoutController?.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) abortFromExternal();
+    else externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+  }
+  const timeoutId = timeoutController && typeof timeoutMs === 'number' && timeoutMs > 0
     ? globalThis.setTimeout(() => timeoutController.abort(), timeoutMs)
     : null;
+  const releaseAbortResources = () => {
+    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
+  };
   try {
     res = await fetch(url, {
       method,
@@ -306,14 +610,23 @@ async function apiRequestInner<T>(
       ...(timeoutController ? { signal: timeoutController.signal } : {}),
     });
   } catch (e) {
-    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    releaseAbortResources();
+    if (!isSameAuthSession(session)) return sessionChanged<T>();
+    if (externalSignal?.aborted) {
+      return fail('CANCELLED', '操作已取消。') as unknown as ApiResponse<T>;
+    }
     if (timeoutController?.signal.aborted) {
-      return fail('TIMEOUT', '请求超时') as unknown as ApiResponse<T>;
+      return fail('TIMEOUT', '本次等待超时，请稍后重试。') as unknown as ApiResponse<T>;
     }
     if (isDisconnectedError(e)) {
-      return fail('DISCONNECTED', '已断开连接或服务器不可达') as unknown as ApiResponse<T>;
+      return fail('DISCONNECTED', '网络连接已中断，请检查网络后重试。') as unknown as ApiResponse<T>;
     }
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<T>;
+    return fail('NETWORK_ERROR', '网络连接异常，请检查网络后重试。') as unknown as ApiResponse<T>;
+  }
+
+  if (!isSameAuthSession(session)) {
+    releaseAbortResources();
+    return sessionChanged<T>();
   }
 
   // 检测权限指纹变更：后端每个响应都带 X-Perm-Fingerprint 头，
@@ -321,7 +634,7 @@ async function apiRequestInner<T>(
   checkPermissionFingerprint(res);
 
   if (res.status === 204) {
-    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    releaseAbortResources();
     const data = (options?.emptyResponseData ?? (true as unknown)) as T;
     return ok(data);
   }
@@ -329,30 +642,40 @@ async function apiRequestInner<T>(
   let text: string;
   try {
     text = await res.text();
-  } catch (e) {
-    if (timeoutController?.signal.aborted) {
-      return fail('TIMEOUT', '请求超时') as unknown as ApiResponse<T>;
+  } catch {
+    if (!isSameAuthSession(session)) return sessionChanged<T>();
+    if (externalSignal?.aborted) {
+      return fail('CANCELLED', '操作已取消。') as unknown as ApiResponse<T>;
     }
-    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<T>;
+    if (timeoutController?.signal.aborted) {
+      return fail('TIMEOUT', '本次等待超时，请稍后重试。') as unknown as ApiResponse<T>;
+    }
+    return fail('NETWORK_ERROR', '网络连接中断，请检查网络后重试。') as unknown as ApiResponse<T>;
   } finally {
-    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    releaseAbortResources();
   }
   const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
   const maybeHtml = contentType.includes('text/html') || /^\s*</.test(text) || /<html/i.test(text);
   const json = await tryParseJson(text);
+  if (!isSameAuthSession(session)) return sessionChanged<T>();
 
   // Nginx/代理层 413：避免把整段 HTML 错误页塞进 UI（会卡顿/难读）
   if (res.status === 413) {
-    return fail('DOCUMENT_TOO_LARGE', '请求体过大（HTTP 413）。请减小图片/内容大小，或调整 Nginx 的 client_max_body_size。') as unknown as ApiResponse<T>;
+    return fail('DOCUMENT_TOO_LARGE', '文件超过当前大小限制，请缩小文件后重新上传。') as unknown as ApiResponse<T>;
   }
 
-  // 处理 401 未授权：清除认证状态并跳转登录页
-  if (res.status === 401) {
+  const responseError = isApiResponseLike(json)
+    ? getApiErrorLike((json as { error: unknown }).error)
+    : null;
+
+  // 仅会话类 401 才刷新或退出；AI/Agent/服务身份 401 保留当前用户会话并展示恢复动作。
+  if (auth && isSessionAuthenticationFailure(res.status, responseError?.code)) {
     // 先尝试 refresh 一次（仅 admin 端），成功则重试本次请求
     if (!didRefresh && (options?.auth ?? true)) {
       const okRefresh = await tryRefreshAdminToken();
+      if (!isSameAuthSession(session)) return sessionChanged<T>();
       if (okRefresh) {
-        return await apiRequestInner<T>(path, options, true);
+        return await apiRequestInner<T>(path, options, true, session);
       }
     }
 
@@ -364,21 +687,15 @@ async function apiRequestInner<T>(
   }
 
   if (isApiResponseLike(json)) {
-    // 处理业务层面的 UNAUTHORIZED 错误（如 token 过期）
-    const err = getApiErrorLike((json as { error: unknown }).error);
-    if (!json.success && err?.code === 'UNAUTHORIZED') {
-      if (!didRefresh && (options?.auth ?? true)) {
-        const okRefresh = await tryRefreshAdminToken();
-        if (okRefresh) {
-          return await apiRequestInner<T>(path, options, true);
-        }
-      }
-
-      const authStore = useAuthStore.getState();
-      if (authStore.isAuthenticated) {
-        authStore.logout();
-        window.location.href = '/login';
-      }
+    if (!json.success) {
+      const rawError = getApiErrorLike((json as { error: unknown }).error);
+      const code = rawError?.code || 'UNKNOWN';
+      const message = toUserReadableErrorMessage(rawError, {
+        code,
+        fallbackMessage: '操作未完成',
+        recoveryMessage: '请检查输入后重试。',
+      });
+      return fail(code, message) as unknown as ApiResponse<T>;
     }
     return json as ApiResponse<T>;
   }
@@ -388,17 +705,17 @@ async function apiRequestInner<T>(
     const err = getApiErrorLike(jsonObj?.error);
     // 有明确业务错误码：尊重后端契约（权限拒绝/限流/会话过期等）
     if (err?.code) {
-      let message =
+      const message =
         err?.message ||
         (typeof jsonObj?.message === 'string' ? jsonObj.message : null) ||
         text ||
-        `HTTP ${res.status} ${res.statusText}`;
-      if (maybeHtml) {
-        message = `HTTP ${res.status} ${res.statusText || 'Request Failed'} (${path})`;
-      } else if (typeof message === 'string' && message.length > 1600) {
-        message = `${message.slice(0, 1600)}…`;
-      }
-      return fail(err.code, String(message || '请求失败')) as unknown as ApiResponse<T>;
+        '';
+      const safeMessage = toUserReadableErrorMessage({ code: err.code, message }, {
+        code: err.code,
+        fallbackMessage: '操作未完成',
+        recoveryMessage: '请检查输入后重试。',
+      });
+      return fail(err.code, safeMessage) as unknown as ApiResponse<T>;
     }
 
     // 非契约错误：按“断连/服务不可用/服务器错误/请求被拒绝”分类

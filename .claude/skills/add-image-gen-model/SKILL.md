@@ -1,110 +1,133 @@
 ---
 name: add-image-gen-model
-description: 添加生图模型适配器配置。输入模型匹配模式/显示名/提供商/尺寸约束等信息 → 在后端 Config + 前端 Adapter 注册新的图片生成模型。触发词："添加生图模型"、"新增生图模型配置"、"配置新的生图模型"、"add image gen model"。
+description: 添加视觉创作生图模型。优先在 LLMGW 创建逻辑模型与 Offering；只有出现新的图片协议或参数契约时才修改代码适配器。触发词："添加生图模型"、"新增生图模型配置"、"配置新的生图模型"、"add image gen model"。
 ---
 
 # 添加生图模型
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：「添加生图模型」、「新增生图模型配置」、`add image gen model`
+> 版本：v2.0.0 | 状态：已落地
 
-## 触发
+## 核心原则
 
-当用户说 "添加生图模型"、"新增生图模型配置"、"add image gen model"、"配置新的生图模型" 时触发此 skill。
+视觉创作只认识稳定的逻辑模型 PublicId；Provider、密钥、真实模型标识、Endpoint、协议和故障切换全部由 LLMGW 管理。
 
-## Purpose
+新增模型分两类：
 
-帮助用户添加新的生图模型适配器配置，包括后端和前端的配置。
+1. 配置型接入：已有协议能表达该模型，只改 LLMGW 数据，不发版。
+2. 协议型接入：上游请求或响应形态是新契约，先补代码适配器与测试，再配置 LLMGW。
 
-## Prerequisites
+禁止为了多显示几个选项而在前端硬编码模型。没有健康 Offering 的逻辑模型不进入视觉创作列表。
 
-用户需要提供以下信息（如果没有提供，需要询问）：
-1. **模型名匹配模式**（ModelIdPattern）：如 `doubao-seedream-4-5*`，支持通配符 `*`
-2. **显示名称**（DisplayName）：如 "豆包 Seedream 4.5"
-3. **提供商**（Provider）：如 "字节跳动 (火山引擎)"
-4. **支持的尺寸**（AllowedSizes）：如 `["1024x1024", "2048x2048"]`
-5. **支持的比例**（AllowedRatios）：如 `["1:1", "16:9", "9:16"]`
-6. **尺寸约束类型**（SizeConstraintType）：
-   - `whitelist` - 仅支持固定尺寸白名单
-   - `range` - 支持范围内任意尺寸
-   - `aspect_ratio` - 仅支持比例枚举
-7. **备注**（Notes）：如 `["支持 1K/2K/4K 档位"]`
+## 四层契约
 
-可选参数：
-- MustBeDivisibleBy：宽高必须整除的值（如 8、32）
-- MaxWidth/MaxHeight：最大宽高
-- MinWidth/MinHeight：最小宽高
-- MaxPixels：最大像素总量
-- SupportsImageToImage：是否支持图生图
-- SupportsInpainting：是否支持局部重绘
+### 1. 上游模型或 Exchange
 
-## Files to Modify
+在 LLMGW 的“路由 → Provider / 模型 / Exchange”创建或复用真实上游，必须确认：
 
-### 1. 后端配置文件
+- Provider、Base URL 和通讯密钥有效。
+- 上游模型标识来自供应商当前官方目录，不凭名称猜测。
+- 图片生成能力已声明；需要参考图时还要确认图片输入能力。
+- 测试与正式环境分别配置密钥。
 
-**文件路径**：`prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigs.cs`
+### 2. 逻辑模型
 
-在 `Configs` 列表末尾添加新的配置项：
+在“路由 → 逻辑模型”创建稳定 PublicId，例如：
 
-```csharp
-// ===== {显示名称} =====
-new ImageGenModelAdapterConfig
-{
-    ModelIdPattern = "{模型名匹配模式}",
-    DisplayName = "{显示名称}",
-    Provider = "{提供商}",
-    SizeConstraintType = SizeConstraintTypes.{约束类型},
-    SizeConstraintDescription = "{约束描述}",
-    AllowedSizes = new List<string>
-    {
-        // 尺寸列表
-    },
-    AllowedRatios = new List<string> { /* 比例列表 */ },
-    SizeParamFormat = SizeParamFormats.WxH, // 或 WidthHeight, AspectRatio
-    MustBeDivisibleBy = null, // 可选
-    MinWidth = null, MinHeight = null, // 可选
-    MaxWidth = null, MaxHeight = null, // 可选
-    MaxPixels = null, // 可选
-    Notes = new List<string> { /* 备注列表 */ },
-    SupportsImageToImage = false,
-    SupportsInpainting = false,
-},
-```
+- `image2`
+- `nanobanana-2`
+- `nanobanana-2-lite`
 
-### 2. 前端配置文件
+模型类型使用 `generation`，能力按真实支持范围选择：
 
-**文件路径**：`prd-admin/src/lib/imageGenAdapterConfigs.ts`
+- `image_generation`
+- `text2img`
+- `img2img`
+- `vision_generation`
 
-在 `IMAGE_GEN_ADAPTER_CONFIGS` 数组末尾添加新的配置项：
+PublicId 不含 Provider、Endpoint 或供应商版本，保存后不要随上游切换频繁改名。
 
-```typescript
-{
-  modelIdPattern: '{模型名匹配模式}',
-  displayName: '{显示名称}',
-  provider: '{提供商}',
-  sizeConstraintType: '{约束类型}', // 'whitelist' | 'range' | 'aspect_ratio'
-  allowedRatios: [/* 比例列表 */],
-  notes: [/* 备注列表 */],
-},
-```
+### 3. Offering
 
-## Execution Steps
+每个 Offering 只绑定一个上游模型或 Exchange。必须配置：
 
-1. **询问模型信息**（如果用户没有提供完整信息）
-2. **读取后端配置文件** `ImageGenModelConfigs.cs`
-3. **在 Configs 列表末尾添加新配置**
-4. **读取前端配置文件** `imageGenAdapterConfigs.ts`
-5. **在 IMAGE_GEN_ADAPTER_CONFIGS 数组末尾添加新配置**
-6. **总结变更**
+- 精确协议。
+- Endpoint path 默认留空，由协议结合 Provider Base URL 生成；只有供应商明确要求特殊相对路径时才覆盖。
+- 优先级或权重。
+- 已知的最大并发和 RPM；未知时留空，不填猜测值。
 
-## Example
+关键模型建议至少两条由不同 Provider 或 Endpoint 承载的 Offering。确定性协议、模型或权限错误只隔离该 Offering；同一逻辑模型还有健康 Offering 时仍可使用。
 
-用户说："添加一个新的生图模型配置，模型名是 my-new-model*，显示名称是 My New Model，提供商是 MyCompany，支持 1024x1024 和 2048x2048 尺寸，比例支持 1:1 和 16:9"
+OpenRouter 当前专用图片 API 使用：
 
-执行后会在两个文件中添加对应的配置项。
+- 协议：`openrouter-image`
+- 实际 Endpoint：`/api/v1/images`；Offering 的 Endpoint path 默认留空
+- 文生图字段：`model`、`prompt`、`n`、`size`
+- 多图字段：`input_references`
+- 响应：`data[].b64_json`、`data[].media_type`
 
-## Notes
+旧的 `openrouter` 协议保留给仍使用 `chat/completions + modalities` 的兼容通道，不能和专用图片 API 混用。
+如果 Provider Base URL 是 `https://openrouter.ai/api`，手填 `images` 会错误请求网页 `/api/images`。协议默认路径会正确生成 `/api/v1/images`，不要重复配置。
 
-- 后端和前端的配置需要保持一致
-- 模型名匹配模式支持通配符 `*`，如 `my-model*` 会匹配 `my-model-v1`、`my-model-pro` 等
-- 如果尺寸约束类型是 `range`，需要提供 Min/Max 宽高限制
-- 如果尺寸约束类型是 `aspect_ratio`，主要填写 `AllowedRatios`
+### 4. appCaller 可见范围
+
+视觉创作按能力授权：
+
+- `visual-agent.image.text2img::generation`
+- `visual-agent.image.img2img::generation`
+- `visual-agent.image.vision::generation`
+
+只授权真实支持的场景。未授权 appCaller、逻辑模型禁用、全部 Offering 禁用或隔离时，模型不得进入对应选择器。
+
+## 何时需要改代码
+
+只有以下情况才进入代码适配：
+
+- 新协议或新 Endpoint 形态。
+- 请求字段与现有协议不同。
+- 多图、遮罩或尺寸参数需要新的转换规则。
+- 响应图片不在现有解析形态中。
+
+相关文件：
+
+- `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs`：根据每条 Offering 的协议从 canonical 图片请求重建 HTTP 请求。
+- `prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs`：图片业务调用与响应落库。
+- `prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigs.cs`：模型尺寸、比例和参数能力。
+- `prd-admin/src/lib/imageGenAdapterConfigs.ts`：仅用于前端尺寸能力预览，不是模型目录。
+
+后端与前端尺寸配置需要保持一致；更具体的 `ModelIdPattern` 必须排在通用前缀之前。
+
+## 执行步骤
+
+1. 读取 LLMGW 当前逻辑模型、Offering、上游模型和最近请求日志。
+2. 对照供应商官方模型目录核实模型标识、输入输出能力和当前协议。
+3. 判断是配置型接入还是协议型接入。
+4. 协议型接入先添加请求重建、响应解析和单元测试；配置型接入跳过代码修改。
+5. 在测试环境创建或更新逻辑模型与 Offering，授权对应 appCaller。
+6. 发起最小真实请求并保存 requestId；文生图、图生图和多图能力分别验收。
+7. 在请求日志核对 LogicalModelPublicId、OfferingId、实际 Provider、实际模型、协议和回退轨迹。
+8. 只有真实请求成功后才允许模型进入视觉创作列表。
+9. 在正式环境重复配置，不复制测试环境密钥。
+
+## 完成门槛
+
+- 视觉创作只显示逻辑模型，不泄漏 Provider、Endpoint、密钥或模型池成员。
+- 至少一条 Offering 健康；关键模型建议有已验证的备用 Offering。
+- 选择的 PublicId 与日志中的 LogicalModelPublicId 一致。
+- 多 Offering 协议不同时，每次尝试都按自己的协议重新构建请求。
+- 确定性故障展示用户可理解文案，技术错误只进入日志。
+- 新协议有请求体、Endpoint、响应解析和故障切换测试。
+- 视觉创作桌面与移动端完成真实路径验收。
+
+## 不要做
+
+- 不在前端硬编码一个没有健康 Offering 的模型。
+- 不把多个 Provider 暴露成多个用户模型。
+- 不用模型池代替逻辑模型目录。
+- 不把 `chat/completions`、OpenAI Images、OpenRouter Images 或 Google `generateContent` 当成同一种 wire shape。
+- 不用删除 Provider 或清空池作为回滚；禁用逻辑模型或 Offering 即可。
+
+## 教程与验收
+
+- 系统教程：`llmgw/tutorial/practical/01-add-gpt-image-2-all.md` 至 `04-verify-image-model.md`。
+- 新增协议后同步更新教程，明确协议、Endpoint 和真实验收路径。
+- 视觉验收必须从 MAP 的“模型网关”入口进入，再回到视觉创作验证选择器和真实出图。

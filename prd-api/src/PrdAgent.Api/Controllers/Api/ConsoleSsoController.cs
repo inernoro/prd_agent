@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -21,7 +22,6 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class ConsoleSsoController : ControllerBase
 {
     private static readonly TimeSpan TicketLifetime = TimeSpan.FromSeconds(60);
-    private const string TicketCollectionName = "console_sso_tickets";
     private const string TicketPurpose = "external-console-login";
     private readonly MongoDbContext _db;
     private readonly IConfiguration _configuration;
@@ -59,6 +59,14 @@ public sealed class ConsoleSsoController : ControllerBase
         [FromBody] ConsoleSsoAuthorizeRequest request,
         CancellationToken ct)
     {
+        if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+        {
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_SESSION_FEDERATION_FORBIDDEN",
+                    "合成测试会话不能进入外部控制台，请使用真人管理员会话登录"));
+        }
         var config = await ReadConfigAsync(ct);
         if (!config.Enabled)
         {
@@ -84,7 +92,7 @@ public sealed class ConsoleSsoController : ControllerBase
 
         var now = DateTime.UtcNow;
         var code = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-        var tickets = _db.Database.GetCollection<BsonDocument>(TicketCollectionName);
+        var tickets = _db.ConsoleSsoTickets;
         await tickets.InsertOneAsync(new BsonDocument
         {
             { "_id", Guid.NewGuid().ToString("N") },
@@ -125,7 +133,7 @@ public sealed class ConsoleSsoController : ControllerBase
         }
 
         var now = DateTime.UtcNow;
-        var tickets = _db.Database.GetCollection<BsonDocument>(TicketCollectionName);
+        var tickets = _db.ConsoleSsoTickets;
         var ticket = await tickets.FindOneAndUpdateAsync(
             Builders<BsonDocument>.Filter.And(
                 Builders<BsonDocument>.Filter.Eq("CodeHash", Hash(request.Code)),
@@ -156,10 +164,7 @@ public sealed class ConsoleSsoController : ControllerBase
     private async Task<(string Subject, string Username, string DisplayName, string? Email)?> ResolveAdminIdentityAsync(
         CancellationToken ct)
     {
-        var clientType = User.FindFirst("clientType")?.Value;
-        var sessionKey = User.FindFirst("sessionKey")?.Value;
-        if (!string.Equals(clientType, "admin", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(sessionKey))
+        if (!FederatedConsoleSessionPolicy.IsEligibleBrowserSession(User))
         {
             return null;
         }

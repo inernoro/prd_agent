@@ -17,7 +17,7 @@ allowed-tools: Read Bash Glob Grep
 
 - 可选目标分支，例如 `origin/release`。未提供时自动发现远端默认分支。
 - 可选推送授权。未明确授权时只完成本地合并和报告。
-- 仓库规则。按 `AGENTS.md`、`CLAUDE.md`、`.cursor/rules/`、贡献指南、CI 配置和包清单的顺序发现。
+- 仓库规则。按 `AGENTS.md`、`CLAUDE.md`、贡献指南、CI 配置和包清单的顺序发现。
 
 ## 执行流程
 

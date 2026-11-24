@@ -46,6 +46,28 @@ public class AgentCapability
     /// <summary>输入框占位提示，引导用户该输入什么。</summary>
     public string InputHint { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 这个智能体暴露给通用对话智能体的工具名（snake_case）。非空 = 通用体可以自己决定转派给它，
+    /// 用户不必先挑智能体；为空 = 只能被显式选中/@ 调用。
+    ///
+    /// 留空的判据只有一条：**该能力已经有等价工具了**。重复登记会让模型面对两把干同样事的工具，
+    /// 路由随机化，且日后改一处忘一处（形状 3：判据分裂）。
+    /// </summary>
+    public string? ToolName { get; set; }
+
+    /// <summary>
+    /// 工具描述里的「什么时候该用我」。写给模型看，不是写给人看的——
+    /// 必须给出可判定的触发场景，否则模型要么从不调用，要么见谁都调。
+    /// </summary>
+    public string ToolWhenToUse { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 悬浮在头像上时给**用户**看的一句话：通用助手能不能自己找到它、什么时候会找它。
+    /// 与 <see cref="ToolWhenToUse"/> 是两个受众，刻意不复用——
+    /// 一个是模型的判据，一个是人的预期，混用会两边都别扭。
+    /// </summary>
+    public string GeneralAgentHint { get; set; } = string.Empty;
+
     /// <summary>提交按钮文案（如"生成图片" / "发送" / "提取缺陷"）。</summary>
     public string ActionLabel { get; set; } = "发送";
 

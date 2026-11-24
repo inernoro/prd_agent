@@ -17,6 +17,26 @@ function profile(id: string, dependsOn?: string[]): BuildProfile {
 }
 
 describe('normalizeProjectProfileDependencies', () => {
+  it('等待本分支私有数据库就绪后才进入 API 层，不修改项目底座', () => {
+    const baseline = [profile('api-project-a'), profile('fresh-mysql')];
+    const normalized = normalizeProjectProfileDependencies(baseline, '-project-a', {
+      'api-project-a': { dependsOn: ['fresh-mysql'] },
+    });
+    const result = topoSortLayers(normalized, p => p.id, p => p.dependsOn || []);
+    expect(result.warnings).toEqual([]);
+    expect(result.layers.map(layer => layer.items.map(p => p.id))).toEqual([
+      ['fresh-mysql'], ['api-project-a'],
+    ]);
+    expect(baseline[0].dependsOn).toBeUndefined();
+  });
+
+  it('默认项目同样使用分支依赖，允许显式清空并保留未覆盖服务', () => {
+    const baseline = [profile('api', ['shared-db']), profile('other', ['shared-db'])];
+    const normalized = normalizeProjectProfileDependencies(baseline, '', { api: { dependsOn: [] } });
+    expect(normalized[0].dependsOn).toEqual([]);
+    expect(normalized[1]).toBe(baseline[1]);
+    expect(baseline[0].dependsOn).toEqual(['shared-db']);
+  });
   it('rewrites only dependencies that resolve to a scoped application profile', () => {
     const profiles = [
       profile('api-project-a'),
@@ -26,6 +46,15 @@ describe('normalizeProjectProfileDependencies', () => {
     const normalized = normalizeProjectProfileDependencies(profiles, '-project-a');
 
     expect(normalized[1].dependsOn).toEqual(['api-project-a', 'mongodb']);
+  });
+
+  it('cds.calls 与 depends_on 同一规则：指向同批导入的服务时跟着加后缀，基础设施名保持原样', () => {
+    const out = normalizeProjectProfileDependencies([
+      { id: 'web-foo', calls: ['api', 'mongodb'] },
+      { id: 'api-foo', dependsOn: ['mongodb'] },
+    ], '-foo');
+    expect(out[0].calls).toEqual(['api-foo', 'mongodb']);
+    expect(out[1]).toEqual({ id: 'api-foo', dependsOn: ['mongodb'] });
   });
 
   it('preserves dependencies that are already scoped', () => {

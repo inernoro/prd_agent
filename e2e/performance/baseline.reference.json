@@ -1,0 +1,174 @@
+{
+  "schema": 1,
+  "policyVersion": 2,
+  "commit": "3035365def7b30a28309b89a21756717fda846dd",
+  "contract": {
+    "schema": 1,
+    "workload": {
+      "version": 1,
+      "stores": 6,
+      "documentsPerStore": 20,
+      "contentBytes": 8192,
+      "rateLimit": {
+        "maxRequestsPerMinute": 100000,
+        "maxConcurrentRequests": 1024
+      },
+      "normal": {
+        "users": 2,
+        "seconds": 20,
+        "intervalMs": 1000
+      },
+      "ramp": {
+        "users": [
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128
+        ],
+        "seconds": 15,
+        "intervalMs": 0
+      },
+      "soak": {
+        "users": 2,
+        "seconds": 120,
+        "intervalMs": 1000
+      }
+    },
+    "limits": {
+      "api": [
+        "1",
+        "1024m"
+      ],
+      "mongo": [
+        "1",
+        "768m"
+      ],
+      "redis": [
+        "0.5",
+        "256m"
+      ],
+      "web": [
+        "0.5",
+        "256m"
+      ]
+    },
+    "images": {
+      "mongo": "mongo:7@sha256:9896df581dfd0718b7abe112f4c37598d0986c54060e4ec1384997e6503c8c71",
+      "redis": "redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe",
+      "web": "nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+    },
+    "sdkVersion": "8.0.428",
+    "nodeMajor": "24",
+    "arch": "x64",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "probe": "43fd9c42cf07260e756ddd05d9934b44877683b2c912d76b54aed752f27be4a1",
+    "metricsCode": "141d0e159888197cc1606dfe3f7dcc994bd60b944997b5c5eb575b14d29bb0c4",
+    "resourcesCode": "d09b742e3507553867cd95be3c292878e33bda00e63f0cf781c63d0c338ab8a2",
+    "proxyRecipe": "10d5e9c006998dfa4a31e7df68be23caeb48914142c850d345354cd87b50331c",
+    "runtimeRecipe": "11532728d000073bf127740721b67165239f114fa52e9ebe59aec972b133c7cb",
+    "workloadCode": "c784786d5bdb9ab9412e4913576a4c34d4f33e829f340db1ea537ace30f1912a",
+    "runtimeImage": "sha256:2102ef7b75ceb93d1a9c5f207cf5c9052571214a8eeb0420b9f74f8fbcc18f71",
+    "effectiveCgroups": {
+      "mongo": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "redis": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "api": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      },
+      "web": {
+        "cpuMax": "400000 100000",
+        "memoryMax": "17179869184"
+      }
+    },
+    "browserVersion": "156.0.8078.79"
+  },
+  "limits": {
+    "document-open": {
+      "clientP95": 167.74605700003303,
+      "appP95": 159.47199999999998,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "home": {
+      "clientP95": 99.18826099999569,
+      "appP95": 65.773,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "journey": {
+      "clientP95": 372.1513399999967,
+      "appP95": null,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "knowledge-list": {
+      "clientP95": 101.59613099996204,
+      "appP95": 64.337,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "write": {
+      "clientP95": 326.0486559999845,
+      "appP95": null,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "write-create": {
+      "clientP95": 244.23759099999006,
+      "appP95": 91.499,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "write-delete": {
+      "clientP95": 165.96229399998992,
+      "appP95": 106.7,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "write-readback": {
+      "clientP95": 24.75666700000147,
+      "appP95": 21.923,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "write-save": {
+      "clientP95": 240.4445649999907,
+      "appP95": 165.51,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    },
+    "write-versions": {
+      "clientP95": 74.8494980000105,
+      "appP95": 42.16,
+      "errorRate": 0.025,
+      "minThroughput": 1.3963106563942966
+    }
+  },
+  "sourceRuns": [
+    {
+      "environmentId": "map-perf-156d3bcf2641",
+      "commit": "3035365def7b30a28309b89a21756717fda846dd",
+      "startedAt": "2026-11-12T10:00:05.705Z"
+    },
+    {
+      "environmentId": "map-perf-0b06566ef93b",
+      "commit": "3035365def7b30a28309b89a21756717fda846dd",
+      "startedAt": "2026-11-12T10:01:13.438Z"
+    },
+    {
+      "environmentId": "map-perf-20b9db8f6f8c",
+      "commit": "3035365def7b30a28309b89a21756717fda846dd",
+      "startedAt": "2026-11-12T10:02:22.601Z"
+    }
+  ],
+  "policy": "p95上限=max(三次p95最大值*1.3, p95最大值+3*极差, 基线p99最大值); 错误率上限=3/总样本数(零错误95%上界); 吞吐下限=最小值*0.7"
+}

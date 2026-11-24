@@ -116,7 +116,7 @@ public class OpenAIPlatformAdapter : IImageGenPlatformAdapter
             ["n"] = n
         };
 
-        if (!string.IsNullOrWhiteSpace(responseFormat))
+        if (ImageGenModelAdapterRegistry.SupportsResponseFormat(model) && !string.IsNullOrWhiteSpace(responseFormat))
         {
             request["response_format"] = responseFormat.Trim();
         }
@@ -150,7 +150,7 @@ public class OpenAIPlatformAdapter : IImageGenPlatformAdapter
             Prompt = prompt.Trim(),
             N = n,
             Size = size?.Trim(),
-            ResponseFormat = responseFormat?.Trim()
+            ResponseFormat = ImageGenModelAdapterRegistry.SupportsResponseFormat(model) ? responseFormat?.Trim() : null
         };
     }
 

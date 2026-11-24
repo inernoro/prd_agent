@@ -15,3 +15,10 @@ declare module '@/components/effects/reactbits/Hyperspeed' {
 declare module '@/components/effects/reactbits/HyperspeedPresets' {
   export const hyperspeedPresets: Record<string, Record<string, unknown>>;
 }
+
+declare module '@/components/effects/BranchlineScene' {
+  import type { ComponentType, RefObject } from 'react';
+
+  const BranchlineScene: ComponentType<{ rootRef: RefObject<HTMLDivElement | null> }>;
+  export default BranchlineScene;
+}

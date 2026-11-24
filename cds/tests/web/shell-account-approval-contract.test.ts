@@ -35,7 +35,7 @@ const agentMapSource = fs.readFileSync(
   'utf8',
 );
 const agentMissionRegistrySource = fs.readFileSync(
-  path.resolve(process.cwd(), 'web/src/lib/agent-mission-registry.ts'),
+  path.resolve(process.cwd(), 'src/shared/agent-mission-registry.ts'),
   'utf8',
 );
 const agentOnboardingSource = fs.readFileSync(
@@ -68,16 +68,45 @@ const serverSource = fs.readFileSync(
 );
 
 describe('CDS 壳层用户入口与授权提醒契约', () => {
-  it('把系统设置和用户头像固定在侧栏底部，并将退出收进用户菜单', () => {
+  it('保留原主导航顺序并在审查之后追加工程规划和设计', () => {
+    const rail = shellSource.slice(shellSource.indexOf('function RailNav('), shellSource.indexOf('function RailThemeToggle('));
+    const mainItems = rail.slice(0, rail.indexOf('<div className="flex-1" />'));
+    expect([...mainItems.matchAll(/<Link\s+to="([^"]+)"/g)].map(([, href]) => href)).toEqual([
+      '/project-list', '/overview', '/release-center', '/task-schedule', '/reports', '/status',
+      '/code-reviews', '/engineering-planning', '/design',
+    ]);
+    const ownerItems = mainItems.slice(mainItems.indexOf('{canManageSettings ? <>'), mainItems.indexOf('</> : null}'));
+    expect(ownerItems).toContain('to="/overview"');
+    const overviewItem = ownerItems.slice(0, ownerItems.indexOf('</Link>'));
+    expect(overviewItem).toContain('<Waypoints />');
+    expect(overviewItem).toContain('<span>Overview</span>');
+    const planningItem = mainItems.slice(mainItems.indexOf('<Link to="/engineering-planning"'), mainItems.indexOf('<Link to="/design"'));
+    expect(planningItem).toContain('<Target />');
+    const ownerRoutes = appSource.slice(appSource.indexOf('<Route element={<OwnerConsoleRoute />}>'));
+    expect(ownerRoutes.slice(0, ownerRoutes.indexOf('</Route>'))).toContain('path="/overview"');
+  });
+
+  /*
+   * 2026-09-08 契约再变（用户拍板方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、
+   * 紧贴账号——它们是动作不是页面，混在导航下面会被当成页面点；栏中间的空白是
+   * 「页面」与「动作」的边界，不是断裂（推翻 2026-09-02 的贴顶方案）。
+   * 钉住的是：spacer 存在、工具组在 spacer 之后、footer 在工具组之后、账号是最后一项。
+   * 设置属于工具组，它的位置由「常驻 Agent 接入入口」那条用例钉。
+   */
+  it('主题与账号固定在侧栏底部，工具组沉底贴着账号，退出收进用户菜单', () => {
     const spacerIndex = shellSource.indexOf('<div className="flex-1" />');
+    const toolsIndex = shellSource.indexOf('<div className="cds-rail-tools">');
     const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
-    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', footerIndex);
+    const themeIndex = shellSource.indexOf('<RailThemeToggle />', footerIndex);
     const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
 
     expect(spacerIndex).toBeGreaterThan(-1);
-    expect(footerIndex).toBeGreaterThan(spacerIndex);
-    expect(settingsIndex).toBeGreaterThan(footerIndex);
-    expect(accountIndex).toBeGreaterThan(settingsIndex);
+    // 工具组在 spacer 之后、footer 之前——这就是「沉底贴账号」的机读判据。
+    expect(toolsIndex, '工具组不见了').toBeGreaterThan(-1);
+    expect(toolsIndex, '工具组跑回导航下面了，动作会被当成页面点').toBeGreaterThan(spacerIndex);
+    expect(footerIndex, 'footer 必须在工具组之后，账号才是最后一项').toBeGreaterThan(toolsIndex);
+    expect(themeIndex).toBeGreaterThan(footerIndex);
+    expect(accountIndex).toBeGreaterThan(themeIndex);
     expect(shellSource).toContain('className="cds-rail-item cds-account-trigger"');
     expect(shellSource).toContain('用户与认证');
     expect(shellSource).toContain('退出登录');
@@ -86,13 +115,16 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   });
 
   it('在侧栏常驻 Agent 接入入口，并由全局壳层提供上下文弹窗', () => {
-    const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
-    const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', footerIndex);
-    const bugIndex = shellSource.indexOf('aria-label="提交缺陷"', footerIndex);
-    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', footerIndex);
-    const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
+    // 2026-09-08：工具组（Agent / 缺陷 / 设置）沉底贴账号。
+    // 顺序契约不变——Agent → 缺陷 → 设置 → 账号，账号仍在最后。
+    const toolsIndex = shellSource.indexOf('<div className="cds-rail-tools">');
+    const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', toolsIndex);
+    const bugIndex = shellSource.indexOf('aria-label="提交缺陷"', toolsIndex);
+    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', toolsIndex);
+    const accountIndex = shellSource.indexOf('<UserAccountMenu', toolsIndex);
 
-    expect(agentIndex).toBeGreaterThan(footerIndex);
+    expect(toolsIndex, '工具组没了？三个全局动作应当在同一段里').toBeGreaterThan(-1);
+    expect(agentIndex).toBeGreaterThan(toolsIndex);
     expect(bugIndex).toBeGreaterThan(agentIndex);
     expect(settingsIndex).toBeGreaterThan(bugIndex);
     expect(accountIndex).toBeGreaterThan(settingsIndex);
@@ -141,8 +173,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMissionRegistrySource).toContain("'startup-diagnostics'");
     expect(agentMissionRegistrySource).toContain("'api-diagnostics'");
     expect(agentMissionRegistrySource).toContain("'code-review'");
-    expect(agentOnboardingSource).toContain('二、静默检查认证');
-    expect(agentOnboardingSource).toContain('全局通行证属于认证提权');
+    expect(agentOnboardingSource).toContain('buildAgentSetupUrl(');
+    expect(agentOnboardingSource).toContain('复用现有授权');
+    expect(agentDialogSource).toContain("useState<TabKey>('connect')");
     expect(globalAgentAccessSource).toContain('if (!open) return undefined');
     expect(globalAgentAccessSource).toContain('setProjects(null)');
     expect(globalAgentAccessSource).toContain('if (!nextOpen) setRequestedContextId(undefined)');
@@ -166,7 +199,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('从认证状态接口向壳层返回安全的用户展示信息', () => {
     expect(serverSource).toContain("app.get('/api/auth/status', (req, res)");
-    expect(serverSource).toContain("authMode === 'github' && sessionUser");
+    expect(serverSource).toContain("sessionUser?.authProvider");
     expect(serverSource).toContain('avatarUrl: sessionUser.avatarUrl ?? null');
     expect(serverSource).toContain("postLogoutRedirect: ssoIdentity ? '/login' : null");
     expect(shellSource).toContain('user?: ShellUser | null');
@@ -186,7 +219,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(updateIndex).toBeGreaterThan(pendingIndex);
     expect(commitIndex).toBeGreaterThan(updateIndex);
     expect(shellSource).toContain('id="cds-information-center-host"');
-    expect(shellSource).toContain('<SiteNoticeInbox />');
+    expect(shellSource).toContain('<SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}');
+    expect(informationCenterSource).toContain('运维操作待授权');
     expect(informationCenterSource).toContain('信息中心');
     expect(informationCenterSource).toContain('informationCount');
     expect(styles).not.toContain('.cds-bottom-docks');
@@ -205,7 +239,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(accessSource).toContain('void approve(primary.id)');
     expect(accessSource).toContain('批准项目访问');
     expect(accessSource).toContain('data-testid="cds-access-request-floating"');
-    expect(accessSource).toContain('fixed bottom-[84px] right-5');
+    expect(accessSource).toContain('fixed bottom-[5.25rem] right-5');
     expect(accessSource).toContain('createPortal');
     expect(accessSource).toContain('className="max-w-3xl overflow-hidden"');
   });
@@ -213,6 +247,6 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
   it('运维授权弹窗使用更醒目的标题和宽版内容区', () => {
     expect(operatorSource).toContain('需要你的明确授权');
     expect(operatorSource).toContain('className="max-w-2xl overflow-hidden"');
-    expect(operatorSource).toContain("style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}");
+    expect(operatorSource).toContain("style={{ maxHeight: 'min(47.5rem, calc(100dvh - 2rem))' }}");
   });
 });

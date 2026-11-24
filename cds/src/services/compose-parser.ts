@@ -14,8 +14,31 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, CacheMount, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole, StorageBinding, StaticWebConfig } from '../types.js';
+import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
+import { parseWebEntryLabels } from './web-entry.js';
+import { isProbePrefix } from './topology-lint.js';
+import { normalizeBuildScope } from './prebuilt-reuse.js';
+import { isReservedPersistentTarget, UnsafeDeploymentStorageError } from './deployment-storage-boundary.js';
+
+/** Invalid static declarations fail closed instead of silently starting an application container. */
+export function parseStaticWeb(value: unknown): StaticWebConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('staticWeb 必须声明静态产物目录');
+  const input = value as Record<string, unknown>;
+  if (input.browserOnly !== undefined && typeof input.browserOnly !== 'boolean') throw new Error('staticWeb.browserOnly 必须为布尔值');
+  if (typeof input.imagePath !== 'string' || !input.imagePath.startsWith('/') || input.imagePath.includes('..')
+    || /[\x00\r\n]/.test(input.imagePath)) throw new Error('staticWeb.imagePath 必须是镜像内绝对目录');
+  if (input.basePath !== undefined && (typeof input.basePath !== 'string' || !/^\/(?:[a-z0-9_~.-]+\/)*[a-z0-9_~.-]*$/i.test(input.basePath)
+    || input.basePath.includes('..'))) throw new Error('staticWeb.basePath 无效');
+  if (input.runtimeConfig !== undefined && typeof input.runtimeConfig !== 'boolean') throw new Error('staticWeb.runtimeConfig 必须为布尔值');
+  if (input.proxyRules !== undefined && (!Array.isArray(input.proxyRules) || input.proxyRules.some(rule =>
+    !rule || typeof rule.pathPrefix !== 'string' || !/^\/(?:[a-z0-9_~.-]+\/)*[a-z0-9_~.-]*$/i.test(rule.pathPrefix) || rule.pathPrefix.includes('..')
+    || typeof rule.profileId !== 'string' || !/^[\w.-]+$/.test(rule.profileId)))) throw new Error('staticWeb.proxyRules 无效');
+  return { imagePath: input.imagePath, ...(input.browserOnly !== undefined ? { browserOnly: input.browserOnly as boolean } : {}), ...(input.basePath !== undefined ? { basePath: input.basePath as string } : {}),
+    ...(input.runtimeConfig !== undefined ? { runtimeConfig: input.runtimeConfig as boolean } : {}),
+    ...(input.proxyRules !== undefined ? { proxyRules: input.proxyRules as StaticWebConfig['proxyRules'] } : {}) };
+}
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -24,6 +47,7 @@ export interface ComposeServiceDef {
   dockerImage: string;
   containerPort: number;
   volumes: InfraVolume[];
+  volumesDeclared?: boolean;
   env: Record<string, string>;
   healthCheck?: InfraHealthCheck;
   /**
@@ -57,7 +81,13 @@ interface ComposeFile {
    * CDS uses this to know which envs the user must fill (required) vs which CDS can
    * auto-handle (auto / infra-derived).
    */
-  'x-cds-env-meta'?: Record<string, { kind?: string; hint?: string }>;
+  'x-cds-env-meta'?: Record<string, {
+    kind?: string;
+    hint?: string;
+    requiredGroup?: string;
+    requiredOption?: string;
+    generate?: string;
+  }>;
   /** CDS extension: routing rules */
   'x-cds-routing'?: Array<{
     id: string;
@@ -73,6 +103,7 @@ interface ComposeFile {
    * Keys are service IDs, values are mode maps: { modeId: { label, command?, image?, env? } }
    */
   'x-cds-deploy-modes'?: Record<string, Record<string, {
+    staticWeb?: StaticWebConfig;
     label?: string;
     command?: string;
     image?: string;
@@ -93,6 +124,7 @@ interface ComposeServiceEntry {
   build?: unknown;
   ports?: Array<string | { target: number; published?: number }>;
   volumes?: string[];
+  'x-cds-storage'?: Record<string, StorageBinding>;
   environment?: Record<string, string> | string[];
   healthcheck?: {
     test?: string | string[];
@@ -200,7 +232,7 @@ export interface CdsComposeConfig {
     command?: string;
     containerPort: number;
     env?: Record<string, string>;
-    cacheMounts?: Array<{ hostPath: string; containerPath: string }>;
+    cacheMounts?: CacheMount[];
     buildTimeout?: number;
     pathPrefixes?: string[];
     dependsOn?: string[];
@@ -215,6 +247,10 @@ export interface CdsComposeConfig {
     prebuiltImage?: boolean;
     /** 基础级镜像回退链(对齐 BuildProfile.fallbackImage);裸预构建站点用,无 express mode 也生效 */
     fallbackImage?: string | string[];
+    /** 独立命名子域路由；不等同于用户可见 Web 入口。 */
+    subdomain?: string;
+    /** 用户可见 Web 入口；与 readinessProbe 严格分离。 */
+    webEntry?: WebEntryConfig;
   }>;
   envVars: Record<string, string>;
   /**
@@ -222,7 +258,13 @@ export interface CdsComposeConfig {
    * cdscli scan 输出的 x-cds-env-meta 段被解析到这里;运行时由 Project.envMeta 持久化。
    * deploy 路由用此判断哪些 env 是 required 必填(不填则 412 block deploy)。
    */
-  envMeta: Record<string, { kind: 'auto' | 'required' | 'infra-derived'; hint?: string }>;
+  envMeta: Record<string, {
+    kind: 'auto' | 'required' | 'infra-derived';
+    hint?: string;
+    requiredGroup?: string;
+    requiredOption?: string;
+    generate?: 'secret';
+  }>;
   infraServices: ComposeServiceDef[];
   routingRules: Array<{
     id: string;
@@ -262,7 +304,7 @@ export function discoverComposeFiles(dir: string): string[] {
  * Only services with an `image` field and no relative volume mounts are extracted
  * (services with relative mounts are considered application services).
  */
-export function parseComposeFile(filePath: string): ComposeServiceDef[] {
+export function parseComposeFile(filePath: string, options?: {preserveVolumeDeclaration?:boolean}): ComposeServiceDef[] {
   const content = fs.readFileSync(filePath, 'utf-8');
   const doc = yaml.load(content) as ComposeFile | null;
 
@@ -273,10 +315,13 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
   for (const [serviceId, entry] of Object.entries(doc.services)) {
     // Skip services that use build (they are app services, not infrastructure)
     // Also skip services without an image
-    if (entry.build || !entry.image) continue;
+    if (!entry.image || entry.build) continue;
 
     // Skip services with relative volume mounts (app services)
     if (hasRelativeVolumeMount(entry.volumes)) continue;
+
+    if (options?.preserveVolumeDeclaration && Object.hasOwn(entry,'volumes') && !Array.isArray(entry.volumes))
+      throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
 
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue; // No port = not a network service CDS should manage
@@ -286,7 +331,8 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       name: generateDisplayName(serviceId, entry.image),
       dockerImage: entry.image,
       containerPort,
-      volumes: extractVolumes(entry.volumes),
+      volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
+      ...(options?.preserveVolumeDeclaration ? {volumesDeclared:Object.hasOwn(entry,'volumes')} : {}),
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
@@ -304,7 +350,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
 /**
  * Parse an inline compose YAML string (e.g., from import config).
  */
-export function parseComposeString(yamlString: string): ComposeServiceDef[] {
+export function parseComposeString(yamlString: string, options?: {preserveVolumeDeclaration?:boolean}): ComposeServiceDef[] {
   const doc = yaml.load(yamlString) as ComposeFile | null;
 
   if (!doc?.services) return [];
@@ -312,10 +358,13 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
   const results: ComposeServiceDef[] = [];
 
   for (const [serviceId, entry] of Object.entries(doc.services)) {
-    if (!entry.image) continue;
+    if (!entry.image || entry.build) continue;
 
     // Skip services with relative mounts (app services)
     if (hasRelativeVolumeMount(entry.volumes)) continue;
+
+    if (options?.preserveVolumeDeclaration && Object.hasOwn(entry,'volumes') && !Array.isArray(entry.volumes))
+      throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
 
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue;
@@ -325,7 +374,8 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       name: generateDisplayName(serviceId, entry.image),
       dockerImage: entry.image,
       containerPort,
-      volumes: extractVolumes(entry.volumes),
+      volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
+      ...(options?.preserveVolumeDeclaration ? {volumesDeclared:Object.hasOwn(entry,'volumes')} : {}),
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
@@ -368,6 +418,9 @@ export function toComposeYaml(services: InfraService[]): string {
     }
 
     // Container env
+    const bindings = Object.fromEntries(svc.volumes.filter(v => v.storage).map(v => [v.containerPath, structuredClone(v.storage!)]));
+    if (Object.keys(bindings).length) entry['x-cds-storage'] = bindings;
+
     if (Object.keys(svc.env).length > 0) {
       entry.environment = { ...svc.env };
     }
@@ -478,6 +531,15 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const containerPort = extractContainerPort(entry.ports) || 8080;
         const labels = extractLabels(entry.labels);
         const pathPrefix = labels['cds.path-prefix'];
+        // 探活路径不该进公网路由（plan.cds.service-relations 第一批）：这里只告警、原样保留，
+        // 让拓扑体检（topology-lint）能按 error 报出并阻断导入；解析器若静默剔除，体检就看不见了。
+        const probePrefixes = (pathPrefix || '').split(',').map((x) => x.trim()).filter((x) => x && x !== '/' && isProbePrefix(x));
+        if (probePrefixes.length > 0) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.path-prefix 含探活路径 ${probePrefixes.join('、')}，探活只走 cds.readiness-path，导入会被体检阻断`);
+        }
+        // cds.calls：显式声明「我调用哪些服务」（环境变量推不出调用关系时用）。逗号分隔的服务 id。
+        const callsRaw = (labels['cds.calls'] || '').trim();
+        const calls = callsRaw ? Array.from(new Set(callsRaw.split(',').map((x) => x.trim()).filter(Boolean))) : undefined;
         const dependsOn = extractDependsOn(entry.depends_on);
         const command = extractCommand(entry.command);
 
@@ -502,6 +564,32 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         // Phase 7 fix(B17):cds.prebuilt-image label → BuildProfile.prebuiltImage
         const prebuilt = labels['cds.prebuilt-image'];
         const prebuiltImage = prebuilt === 'true' || prebuilt === '1';
+        // 用户可见入口必须由 cds.web-entry-* 明确声明。readinessPath 只用于
+        // 机器探活，绝不能再被复用成用户点击后的落点。
+        const webEntry = parseWebEntryLabels(labels);
+        const hasWebEntryLabels = Object.keys(labels).some((key) => key.startsWith('cds.web-entry-'));
+        if (hasWebEntryLabels && !webEntry) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.web-entry-* 声明不完整或指向探活路径，已忽略用户入口`);
+        }
+        // cds.role label → BuildProfile.role：显式服务角色（web / api / worker）。非法值忽略并告警，
+        // 交给 service-graph 按路由事实 + 服务名推断（画布会标「推断」）。
+        const roleRaw = (labels['cds.role'] || '').trim().toLowerCase();
+        const role = (SERVICE_ROLES as readonly string[]).includes(roleRaw) ? (roleRaw as ServiceRole) : undefined;
+        if (roleRaw && !role) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.role "${roleRaw}" 不在 ${SERVICE_ROLES.join(' / ')} 之内，已忽略，改为自动推断`);
+        }
+        // cds.build-scope label → BuildProfile.buildScope（逗号分隔）。
+        //
+        // 此前只有 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 能声明构建输入范围，
+        // 于是没有部署模式的服务（比如自托管项目那个唯一的 cds 服务）根本没地方声明。
+        // 而项目级作用域取的正是名下全部服务 buildScope 的并集 —— 声明不了，作用域就
+        // 恒为空、恒等于全通配，一仓多项目分发之后每个 push 都会把它重编一遍。
+        // 语义与 mode 级完全一致，归一化同样交给 normalizeBuildScope（拒收仓库根等价物）。
+        const buildScopeRaw = labels['cds.build-scope'];
+        const buildScope = normalizeBuildScope(
+          buildScopeRaw ? buildScopeRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        );
+
         // cds.subdomain label → BuildProfile.subdomain:该服务获得 `<previewSlug>-<subdomain>.<root>`
         // 命名 URL(独立入口,不埋在主应用路径下)。须单 DNS label,非法值忽略(不阻断解析)。
         const subdomainRaw = labels['cds.subdomain'];
@@ -537,7 +625,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           env: extractEnv(entry.environment),
           pathPrefixes: pathPrefix ? pathPrefix.split(',').map(s => s.trim()) : undefined,
           dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
-          cacheMounts: extractCacheMounts(entry.volumes),
+          cacheMounts: extractCacheMounts(entry.volumes, entry['x-cds-storage'], relMount),
           readinessProbe,
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
@@ -549,6 +637,10 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           // 使无 express deployMode 的站点(如 llmgw-web)也能逐级回退 sha → branch-<slug> → branch-main。
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
           ...(subdomain ? { subdomain } : {}),
+          ...(webEntry ? { webEntry } : {}),
+          ...(role ? { role } : {}),
+          ...(calls && calls.length ? { calls } : {}),
+          ...(buildScope ? { buildScope } : {}),
         });
       } else {
         // Infra service — no source mount, possibly built-from-source custom
@@ -565,7 +657,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           name: generateDisplayName(serviceId, infraImage),
           dockerImage: infraImage,
           containerPort,
-          volumes: extractVolumes(entry.volumes),
+          volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
           env: extractEnv(entry.environment),
 
           healthCheck: extractHealthCheck(entry.healthcheck),
@@ -590,6 +682,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           command: mode.command,
           dockerImage: mode.image,
           env: mode.env,
+          ...(mode.staticWeb !== undefined ? { staticWeb: parseStaticWeb(mode.staticWeb) } : {}),
           ...(mode.prebuilt !== undefined ? { prebuilt: mode.prebuilt === true || (mode.prebuilt as unknown) === 'true' } : {}),
           ...(mode.containerPort !== undefined ? { containerPort: Number(mode.containerPort) } : {}),
           ...(mode.fallbackImage ? { fallbackImage: mode.fallbackImage } : {}),
@@ -605,13 +698,25 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
   // Extract optional CDS extensions (routing/env)
   const envVars: Record<string, string> = doc['x-cds-env'] ? { ...doc['x-cds-env'] } : {};
   // Phase 8 — env 三色 metadata
-  const envMeta: Record<string, { kind: 'auto' | 'required' | 'infra-derived'; hint?: string }> = {};
+  const envMeta: Record<string, {
+    kind: 'auto' | 'required' | 'infra-derived';
+    hint?: string;
+    requiredGroup?: string;
+    requiredOption?: string;
+    generate?: 'secret';
+  }> = {};
   if (doc['x-cds-env-meta']) {
     for (const [key, meta] of Object.entries(doc['x-cds-env-meta'])) {
       const rawKind = (meta?.kind || 'auto').toLowerCase();
       const kind: 'auto' | 'required' | 'infra-derived' =
         rawKind === 'required' || rawKind === 'infra-derived' ? rawKind : 'auto';
-      envMeta[key] = { kind, ...(meta?.hint ? { hint: meta.hint } : {}) };
+      envMeta[key] = {
+        kind,
+        ...(meta?.hint ? { hint: meta.hint } : {}),
+        ...(meta?.requiredGroup ? { requiredGroup: String(meta.requiredGroup) } : {}),
+        ...(meta?.requiredOption ? { requiredOption: String(meta.requiredOption) } : {}),
+        ...(String(meta?.generate || '').toLowerCase() === 'secret' ? { generate: 'secret' as const } : {}),
+      };
     }
   }
   const routingRules = parseRoutingRules(doc);
@@ -667,13 +772,15 @@ export function toCdsCompose(
     }
     if (p.cacheMounts) {
       for (const cm of p.cacheMounts) {
-        volumes.push(`${cm.hostPath}:${cm.containerPath}`);
+        volumes.push(`${cm.hostPath}:${cm.containerPath}${cm.readOnly ? ':ro' : ''}`);
         // Named volumes need top-level declaration
-        if (!cm.hostPath.startsWith('/') && !cm.hostPath.startsWith('.')) {
+        if (cm.kind === 'volume' || (!cm.kind && !cm.hostPath.startsWith('/') && !cm.hostPath.startsWith('.'))) {
           volumeNames.add(cm.hostPath);
         }
       }
     }
+    const bindings = Object.fromEntries((p.cacheMounts || []).filter(cm => cm.storage).map(cm => [cm.containerPath, structuredClone(cm.storage!)]));
+    if (Object.keys(bindings).length) entry['x-cds-storage'] = bindings;
     if (volumes.length > 0) {
       entry.volumes = volumes;
     }
@@ -730,6 +837,19 @@ export function toCdsCompose(
     if (p.subdomain) {
       entryLabels['cds.subdomain'] = p.subdomain;
     }
+    // 用户入口元数据单独 round-trip，禁止从 readinessProbe 反推。
+    if (p.webEntry) {
+      entryLabels['cds.web-entry-name'] = p.webEntry.name;
+      entryLabels['cds.web-entry-path'] = p.webEntry.path;
+      if (p.webEntry.primary) entryLabels['cds.web-entry-primary'] = 'true';
+    }
+    // 显式角色 round-trip（推断结果不回写：那是运行时算出来的，不是配置）。
+    if (p.role) {
+      entryLabels['cds.role'] = p.role;
+    }
+    if (p.calls && p.calls.length > 0) {
+      entryLabels['cds.calls'] = p.calls.join(',');
+    }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {
       entryLabels['cds.prebuilt-image'] = 'true';
@@ -757,6 +877,9 @@ export function toCdsCompose(
         if (v.type !== 'bind') volumeNames.add(v.name);
       }
     }
+
+    const bindings = Object.fromEntries(svc.volumes.filter(v => v.storage).map(v => [v.containerPath, structuredClone(v.storage!)]));
+    if (Object.keys(bindings).length) entry['x-cds-storage'] = bindings;
 
     if (Object.keys(svc.env).length > 0) {
       entry.environment = { ...svc.env };
@@ -797,7 +920,7 @@ export function toCdsCompose(
   }
 
   // Optional x-cds-deploy-modes
-  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string | string[] };
+  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string | string[]; staticWeb?: StaticWebConfig };
   const deployModesOut: Record<string, Record<string, DeployModeYaml>> = {};
   for (const p of profiles) {
     if (p.deployModes && Object.keys(p.deployModes).length > 0) {
@@ -805,6 +928,7 @@ export function toCdsCompose(
       for (const [modeId, mode] of Object.entries(p.deployModes)) {
         modes[modeId] = {
           label: mode.label,
+          ...(mode.staticWeb ? { staticWeb: mode.staticWeb } : {}),
           ...(mode.command ? { command: mode.command } : {}),
           ...(mode.dockerImage ? { image: mode.dockerImage } : {}),
           ...(mode.env ? { env: mode.env } : {}),
@@ -1000,7 +1124,10 @@ const CONFIG_FILE_EXT_RE = /\.(sql|conf|cnf|ini|json|ya?ml|env|sh|properties|xml
  */
 function hasRelativeVolumeMount(volumes?: string[]): boolean {
   if (!volumes) return false;
-  return volumes.some(isAppSourceMount);
+  // Check every mount: an earlier ordinary source mount must not hide a later data bind.
+  let found = false;
+  for (const mount of volumes) if (isAppSourceMount(mount)) found = true;
+  return found;
 }
 
 /** 单个挂载条目是不是"应用源码"挂载(排除 init / 配置文件)。 */
@@ -1013,6 +1140,9 @@ function isAppSourceMount(v: string): boolean {
   if (INIT_SCRIPT_TARGET_PREFIXES.some(t => target.startsWith(t))) return false;
   // 2. 源路径以单文件配置扩展名结尾 → 单文件挂载,不算 app source
   if (CONFIG_FILE_EXT_RE.test(source)) return false;
+  if (target && isReservedPersistentTarget(target)) {
+    throw new UnsafeDeploymentStorageError('compose-bind', 'ambiguous-compose-data-bind');
+  }
   return true;
 }
 
@@ -1122,17 +1252,19 @@ function extractBuildContext(build: unknown): string | undefined {
 }
 
 /** Extract non-relative named volume mounts as cache mounts */
-function extractCacheMounts(volumes?: string[]): Array<{ hostPath: string; containerPath: string }> | undefined {
+function extractCacheMounts(volumes?: string[], bindings?: Record<string,StorageBinding>, sourceMount?: {hostPath: string; containerPath: string} | null): CacheMount[] | undefined {
   if (!volumes) return undefined;
-  const mounts: Array<{ hostPath: string; containerPath: string }> = [];
+  const mounts: CacheMount[] = [];
+  let sourceConsumed = false;
   for (const v of volumes) {
+    if (typeof v !== 'string' || v.split(':').length < 2) throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
     const parts = v.split(':');
     if (parts.length >= 2) {
       const source = parts[0];
-      // Skip relative mounts (source code) and absolute paths
-      if (!source.startsWith('./') && source !== '.' && !source.startsWith('/')) {
-        mounts.push({ hostPath: source, containerPath: parts[1] });
-      }
+      const relativeSource = source === '.' ? '.' : source.replace(/^\.\//, '');
+      if (!sourceConsumed && sourceMount && relativeSource === sourceMount.hostPath && parts[1] === sourceMount.containerPath) { sourceConsumed = true; continue; }
+      const kind = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source) ? 'volume' : 'bind';
+      mounts.push({ kind, hostPath: source, containerPath: parts[1], ...(bindings?.[parts[1]] ? {storage:structuredClone(bindings[parts[1]])} : {}), ...(parts[2]?.split(',').includes('ro') ? {readOnly: true} : {}) });
     }
   }
   return mounts.length > 0 ? mounts : undefined;
@@ -1215,19 +1347,20 @@ function extractContainerPort(ports?: Array<string | { target: number; published
   return null;
 }
 
-function extractVolumes(volumes?: string[]): InfraVolume[] {
+function extractVolumes(volumes?: string[], bindings?: Record<string,StorageBinding>): InfraVolume[] {
   if (!volumes) return [];
 
   const result: InfraVolume[] = [];
   for (const v of volumes) {
     // Format: "name:/container/path[:ro]" or "/host/path:/container/path[:ro]" or "./rel:/container/path[:ro]"
+    if (typeof v !== 'string' || v.split(':').length < 2) throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
     const parts = v.split(':');
     if (parts.length >= 2) {
       const source = parts[0];
       const containerPath = parts[1];
-      const readOnly = parts[2] === 'ro' ? true : undefined;
+      const readOnly = parts[2]?.split(',').includes('ro') ? true : undefined;
       const type = (source.startsWith('/') || source.startsWith('.')) ? 'bind' : 'volume';
-      result.push({ name: source, containerPath, type, readOnly });
+      result.push({ name: source, containerPath, type, readOnly, ...(bindings?.[containerPath] ? {storage:structuredClone(bindings[containerPath])} : {}) });
     }
   }
   return result;

@@ -36,6 +36,15 @@ public class HomepageAsset
     /// <summary>上传者管理员 Id</summary>
     public string? CreatedByAdminId { get; set; }
 
+    /// <summary>
+    /// 生成这张图用的提示词（仅 AI 生成的槽位有值；手工上传的为 null）。
+    ///
+    /// 存在这里而不是另开一张表：提示词是「这张图怎么来的」，和图同生共死——
+    /// 换图就该换提示词，删图就该一起删。管理端再次打开生成弹窗时用它回填，
+    /// 让管理员在上次那版的基础上改，而不是每次从默认词重来。
+    /// </summary>
+    public string? Prompt { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

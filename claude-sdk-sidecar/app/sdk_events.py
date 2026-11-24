@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 from .schemas import SidecarEvent
 
@@ -83,6 +83,7 @@ def handle_sdk_message(message: Any, result_message_type: type, state: SdkEventA
                 type="tool_result",
                 tool_use_id=block_tool_id(block),
                 content=block_tool_result_content(block),
+                is_error=block_tool_result_is_error(block),
             ))
     return events
 
@@ -165,6 +166,21 @@ def block_tool_result_content(block: Any) -> Any:
             return value
     if isinstance(block, dict):
         return block.get("content") or block.get("result")
+    return None
+
+
+def block_tool_result_is_error(block: Any) -> Optional[bool]:
+    """读工具结果块的失败标记。取不到就返回 None（表示「不知道」），
+    由消费方决定怎么处理——绝不默认当成成功。"""
+    for name in ("is_error", "isError"):
+        value = getattr(block, name, None)
+        if isinstance(value, bool):
+            return value
+    if isinstance(block, dict):
+        for name in ("is_error", "isError"):
+            value = block.get(name)
+            if isinstance(value, bool):
+                return value
     return None
 
 

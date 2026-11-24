@@ -129,6 +129,7 @@ public class InfraConnectionService : IInfraConnectionService
             PartnerId = payload.CdsId!,
             PartnerBaseUrl = NormalizeBaseUrl(payload.CdsBaseUrl!),
             LongTokenEncrypted = protectedToken,
+            WorkspaceOnly = acceptResp.WorkspaceOnly,
             LongTokenExpiresAt = acceptResp.CdsLongTokenExpiresAt ?? LifetimeLongTokenExpiresAt,
             ProjectId = acceptResp.ProjectId ?? string.Empty,
             InstanceDiscoveryUrl = acceptResp.InstanceDiscoveryUrl ?? string.Empty,
@@ -258,27 +259,27 @@ public class InfraConnectionService : IInfraConnectionService
             .Find(c => c.Partner == "cds" && c.PartnerId == partnerId && c.Status == "active")
             .FirstOrDefaultAsync(ct);
         var now = DateTime.UtcNow;
-        var (mapAgentKey, mapAgentToken) = await _agentApiKeyService.CreateAsync(
-            userId,
-            $"CDS 缺陷转发 · {partnerName}",
-            "CDS 跳转授权自动创建；永久有效，删除基础设施连接时撤销",
-            new[] { DefectAgentScope },
-            ttlDays: 0,
-            ct);
-        try
+        string mapAgentKeyId = string.Empty;
+        if (!tokenResp.WorkspaceOnly)
         {
-            await CallCdsBugReportAuthorizationAsync(
-                payload.CdsBaseUrl,
-                tokenResp.CdsLongToken,
-                mapBaseUrl,
-                mapAgentToken,
+            var (mapAgentKey, mapAgentToken) = await _agentApiKeyService.CreateAsync(
                 userId,
+                $"CDS 缺陷转发 · {partnerName}",
+                "CDS 跳转授权自动创建；永久有效，删除基础设施连接时撤销",
+                new[] { DefectAgentScope },
+                ttlDays: 0,
                 ct);
-        }
-        catch
-        {
-            await _agentApiKeyService.RevokeAsync(mapAgentKey.Id, ct);
-            throw;
+            mapAgentKeyId = mapAgentKey.Id;
+            try
+            {
+                await CallCdsBugReportAuthorizationAsync(
+                    payload.CdsBaseUrl, tokenResp.CdsLongToken, mapBaseUrl, mapAgentToken, userId, ct);
+            }
+            catch
+            {
+                await _agentApiKeyService.RevokeAsync(mapAgentKeyId, ct);
+                throw;
+            }
         }
 
         var entity = new InfraConnection
@@ -289,7 +290,8 @@ public class InfraConnectionService : IInfraConnectionService
             PartnerId = partnerId,
             PartnerBaseUrl = NormalizeBaseUrl(payload.CdsBaseUrl),
             LongTokenEncrypted = _protector.Protect(tokenResp.CdsLongToken),
-            MapAgentApiKeyId = mapAgentKey.Id,
+            MapAgentApiKeyId = mapAgentKeyId,
+            WorkspaceOnly = tokenResp.WorkspaceOnly,
             LongTokenExpiresAt = tokenResp.CdsLongTokenExpiresAt ?? LifetimeLongTokenExpiresAt,
             ProjectId = tokenResp.ProjectId ?? string.Empty,
             InstanceDiscoveryUrl = tokenResp.InstanceDiscoveryUrl ?? string.Empty,
@@ -309,7 +311,7 @@ public class InfraConnectionService : IInfraConnectionService
         }
         catch
         {
-            await _agentApiKeyService.RevokeAsync(mapAgentKey.Id, ct);
+            if (!string.IsNullOrEmpty(mapAgentKeyId)) await _agentApiKeyService.RevokeAsync(mapAgentKeyId, ct);
             throw;
         }
         var replacedConnections = new[] { duplicateByUrl, dup }
@@ -423,7 +425,10 @@ public class InfraConnectionService : IInfraConnectionService
         try
         {
             var token = _protector.Unprotect(entity.LongTokenEncrypted);
-            var url = JoinUrl(entity.PartnerBaseUrl, entity.InstanceDiscoveryUrl);
+            var discovery = entity.WorkspaceOnly
+                ? $"/api/projects/{Uri.EscapeDataString(entity.ProjectId)}/agent-runtime-providers"
+                : entity.InstanceDiscoveryUrl;
+            var url = JoinUrl(entity.PartnerBaseUrl, discovery);
             var client = _httpClientFactory.CreateClient(HttpClientName);
             client.Timeout = TimeSpan.FromSeconds(10);
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -1061,7 +1066,8 @@ public class InfraConnectionService : IInfraConnectionService
             LastProbedAt: c.LastProbedAt,
             LastProbeOk: c.LastProbeOk,
             LastProbeError: c.LastProbeError,
-            LongTokenExpiresAt: c.LongTokenExpiresAt
+            LongTokenExpiresAt: c.LongTokenExpiresAt,
+            WorkspaceOnly: c.WorkspaceOnly
         );
     }
 
@@ -1132,6 +1138,7 @@ public class InfraConnectionService : IInfraConnectionService
         [JsonPropertyName("cdsId")] public string? CdsId { get; set; }
         [JsonPropertyName("cdsName")] public string? CdsName { get; set; }
         [JsonPropertyName("scopes")] public List<string>? Scopes { get; set; }
+        [JsonPropertyName("workspaceOnly")] public bool WorkspaceOnly { get; set; }
     }
 
     private sealed class AuthorizationStatePayload

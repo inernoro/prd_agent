@@ -387,7 +387,7 @@ def test_preview_url_uses_explicit_global_key_to_resolve_cds_self(tmp_path, monk
 
 
 def test_preview_urls_use_api_values_and_preserve_multiple_entries():
-    """preview-url 只消费 API 地址，主入口优先且去重。"""
+    """preview-url 只消费 API 页面地址，主入口优先并过滤探活 URL。"""
     branch = {
         "previewSlug": "must-not-be-used-to-build-a-host",
         "previewUrl": "https://primary.example/",
@@ -403,7 +403,22 @@ def test_preview_urls_use_api_values_and_preserve_multiple_entries():
     assert cdscli._preview_urls_from_branch(branch) == [
         "https://primary.example/",
         "https://secondary.example/",
-        "https://gateway.example/gw/healthz",
+    ]
+
+
+def test_preview_entries_are_named_web_pages_and_override_legacy_health_urls():
+    branch = {
+        "previewUrl": "https://legacy.example/healthz",
+        "previewUrls": ["https://legacy.example/healthz"],
+        "previewEntries": [
+            {"name": "管理端", "url": "https://main.example/", "primary": True},
+            {"name": "帮助中心", "url": "https://help.example/guide", "primary": False},
+        ],
+    }
+
+    assert cdscli._preview_urls_from_branch(branch) == [
+        "https://main.example/",
+        "https://help.example/guide",
     ]
 
 
@@ -506,6 +521,7 @@ class _FakeHttpResponse:
 
 def test_smoke_uses_api_primary_preview_url(monkeypatch):
     """smoke 只探测 CDS 返回的主入口，不用 slug 或 host 重建。"""
+    monkeypatch.setenv("MAP_AI_USER", "test-user-not-real")
     monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
     monkeypatch.setattr(
         cdscli,
@@ -606,12 +622,15 @@ def test_smoke_accepts_any_valid_l2_candidate(monkeypatch):
 
     code, out = call_main(["smoke", "proj-a-health-fallback"])
 
-    assert code == 0, out
-    payload = parse_ok(out)
+    assert code == 3, out  # L2 通过不能把未提供应用凭据的 L3 算成通过
+    payload = json.loads(out.strip().split("\n")[-1])
+    assert payload["ok"] is False
+    assert payload["data"]["coverageComplete"] is False
     assert payload["data"]["passed"] == "2/2"
     assert payload["data"]["layers"] == [
         {"layer": "L1", "pass": True},
         {"layer": "L2", "pass": True},
+        {"layer": "L3", "pass": False, "skipped": True, "reason": "未提供被测应用的 AI key（设 MAP_AI_ACCESS_KEY）"},
     ]
     l2_probes = [
         probe for probe in payload["data"]["probes"]
@@ -797,8 +816,10 @@ def test_branch_create_reads_env_project_id(monkeypatch):
     assert captured["body"]["projectId"] == "proj-from-env"
 
 
-def test_branch_create_missing_project_dies(monkeypatch):
+def test_branch_create_missing_project_dies(monkeypatch, tmp_path):
     """都没给(无 --project + 无 env)→ 立即 die,不打 HTTP。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CDS_PROJECT_ID", raising=False)
     called = {"n": 0}
     monkeypatch.setattr(cdscli, "_call",
                         lambda *a, **kw: called.update(n=called["n"] + 1) or {})

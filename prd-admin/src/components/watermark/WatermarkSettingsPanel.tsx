@@ -214,7 +214,7 @@ function useFontFace(font: WatermarkFontInfo | null | undefined, enabled: boolea
   }, [enabled, font]);
 }
 
-type WatermarkStatus = { hasActiveConfig: boolean; activeId?: string; activeName?: string };
+export type WatermarkStatus = { hasActiveConfig: boolean; activeId?: string; activeName?: string; activeUpdatedAt?: string };
 export type WatermarkSettingsPanelHandle = { addSpec: () => void; editCurrentSpec: () => void };
 type WatermarkSettingsPanelProps = {
   /** 当前应用的 appKey，用于绑定/解绑水印 */
@@ -303,6 +303,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
       hasActiveConfig: activeConfig !== null,
       activeId: activeConfig?.id,
       activeName: activeConfig?.name,
+      activeUpdatedAt: activeConfig?.updatedAt,
     });
   }, [onStatusChange, activeConfig]);
 
@@ -960,7 +961,7 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
           </div>
         ) : '水印配置'}
         maxWidth={920}
-        contentClassName="overflow-hidden !p-4"
+        contentClassName="overflow-hidden"
         contentStyle={{ maxHeight: '70vh', height: '70vh' }}
         content={draftConfig ? (
           <WatermarkEditor

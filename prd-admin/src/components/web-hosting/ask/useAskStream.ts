@@ -1,0 +1,316 @@
+import { buildAskHistory } from './askHistory';
+import { useDeadline } from './useDeadline';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { readSseStream, type SseEvent } from '@/lib/sse';
+import { api } from '@/services/api';
+import { apiRequest } from '@/services/real/apiClient';
+import { buildApiUrl } from '@/services/real/webPages';
+import { useAuthStore } from '@/stores/authStore';
+import type { AskMessage, AskSource, AskStatus } from './askTypes';
+
+/**
+ * 「向我提问」的流式 hook。
+ *
+ * 没有复用通用的 useSseStream，是因为这里有两件它办不到的事：
+ *  1. 门禁失败要拿到**真实 HTTP 状态码 + 错误码**（401 引导登录、429 显示等多久），
+ *     通用 hook 只把响应体当纯文本塞进错误消息。
+ *  2. 需要 model / session 两个自定义事件，且 typing 要落到"当前这条助手消息"上，
+ *     而不是一个全局 typing 字符串。
+ *
+ * 鉴权是可选的：有 token 就带，没有也发（匿名分享页）——服务端据站点的
+ * AllowAnonymous 决定放不放行。
+ */
+export function useAskStream(source: AskSource) {
+  const [messages, setMessages] = useState<AskMessage[]>([]);
+  const [status, setStatus] = useState<AskStatus>('idle');
+  const [phaseMessage, setPhaseMessage] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [model, setModel] = useState<{ model: string; platform?: string } | null>(null);
+  /** 门禁类失败：不是"答错了"，而是"没资格问"，UI 要给引导而不是重试按钮 */
+  const [gateError, setGateError] = useState<
+    { code: string; message: string; retryAfterMs?: number | null } | null
+  >(null);
+
+  const sessionIdRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const startedAtRef = useRef<number | null>(null);
+  const turnSequence = useRef(0);
+
+  useEffect(() => {
+    if (status !== 'connecting' && status !== 'answering') return undefined;
+    const updateElapsed = () => {
+      const startedAt = startedAtRef.current;
+      setElapsedSeconds(startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0);
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [status]);
+
+  const abort = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+
+  useEffect(() => abort, [abort]);
+
+  const reset = useCallback(() => {
+    abort();
+    setMessages([]);
+    setStatus('idle');
+    setPhaseMessage('');
+    setElapsedSeconds(0);
+    setGateError(null);
+    sessionIdRef.current = null;
+  }, [abort]);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    startedAtRef.current = null;
+    setMessages((prev) => prev.map((message) => (
+      message.streaming
+        ? { ...message, streaming: false, error: '已停止回答，可修改问题后再次发送。' }
+        : message
+    )));
+    setStatus('idle');
+    setPhaseMessage('');
+    setElapsedSeconds(0);
+  }, []);
+
+  /**
+   * 只清掉这道门，不动消息与状态。
+   *
+   * 额度那几档拒绝是**有有效期**的（每小时 / 每天），窗口一过就该能再问。而 gateError
+   * 只在 ask() 开头清一次、submit() 又不许在 blocked 时调 ask()，于是这道门一旦落下就
+   * 只能刷新页面才起得来——卡片上写着「过一会儿再来」，过一会儿回来却还是发不出去。
+   * reset() 能清但它连消息一起清了，用户刚才问过的几轮会凭空消失。
+   */
+  const clearGateError = useCallback(() => setGateError(null), []);
+
+  // 额度窗口到点就自己把门收起来。
+  //
+  // 放在这里而不是各个宿主里：gateError 归 useAskStream 持有，两个宿主（右下角的坞、
+  // 预览弹窗里的面板）都从它拿。上一轮只给坞接了「按额度快照收门」那条路，而面板走的是
+  // mode:'site'、拿不到额度快照（useAskQuota 无 token 直接返回 null），于是那条路对它
+  // 完全不生效——owner 在站内预览吃一次 429 就锁到弹窗销毁为止。
+  //
+  // Retry-After 是服务端自己说的「几点可以再来」，到点清掉即可；真要还没恢复，
+  // 下一次提问会拿到新的 429，不会放行到后端之外。
+  // 到点解开提交闸门。分段睡 + 自己重排，走与额度快照同一份判据（见 useDeadline）。
+  useDeadline(gateError?.retryAfterMs ?? null, () => setGateError(null));
+
+  const ask = useCallback(
+    async (question: string, retryId?: string) => {
+      const q = question.trim();
+      if (!q || abortRef.current) return;
+      const ac = new AbortController();
+      abortRef.current = ac;
+      startedAtRef.current = Date.now();
+      setElapsedSeconds(0);
+
+      const turn = retryId ? turnSequence.current : ++turnSequence.current;
+      const assistantId = retryId ?? `a-${turn}`;
+      const assistant: AskMessage = { id: assistantId, role: 'assistant', content: '', streaming: true };
+      setMessages((prev) => retryId
+        ? prev.map((message) => message.id === retryId ? assistant : message)
+        : [...prev, { id: `u-${turn}`, role: 'user', content: q }, assistant]);
+      setStatus('connecting');
+      setPhaseMessage('正在读取页面内容…');
+      setGateError(null);
+      setModel(null);
+
+      // 重试复用当前轮次；历史截止于原问题之前，避免把问题发两遍。
+      const history = buildAskHistory(retryId ? messages.slice(0, -2) : messages);
+
+      // 必须过 buildApiUrl：这是裸 fetch（SSE 绕开了 apiRequest），前后端分开部署时
+      // 相对路径会打到前端自己身上，拿回 404 或一坨 HTML 而不是事件流。
+      const url = buildApiUrl(
+        source.mode === 'share'
+          ? api.webPages.askStreamByShare(encodeURIComponent(source.token))
+          : api.webPages.askStream(encodeURIComponent(source.siteId)),
+      );
+
+      const body: Record<string, unknown> = {
+        question: q,
+        sessionId: sessionIdRef.current,
+        history,
+      };
+      if (source.mode === 'share') {
+        if (source.siteId) body.siteId = source.siteId;
+        if (source.password) body.password = source.password;
+      }
+
+      // 是否真的收到了 done。EOF 不等于答完——代理截断 / 空闲超时都会让流静默结束，
+      // 把半截答案当成功呈现出去，用户完全看不出来。
+      let settled = false;
+
+      const failAssistant = (message: string, retryable = true) => {
+        settled = true;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, streaming: false, error: message, retryable } : m)),
+        );
+      };
+
+      try {
+        const authToken = useAuthStore.getState().token;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+
+        if (ac.signal.aborted) return;
+        if (!res.ok) {
+          // 门禁失败走 JSON + 真实状态码（服务端刻意在写第一个 SSE 字节前判完）
+          const payload = await res.json().catch(() => null);
+          if (ac.signal.aborted) return;
+          const code = payload?.error?.code ?? `HTTP_${res.status}`;
+          const message = payload?.error?.message ?? '未能提交问题，请稍后重试。';
+          // 429 带着 Retry-After（秒）。接住它算出「几点能再问」——额度那几档拒绝是有
+          // 有效期的，窗口一过就该自动恢复；没有这个值的话，面板只能等用户折叠重开或
+          // 刷新页面才发现其实又能问了，他等的那段时间是白等的。
+          const raw = res.headers.get('Retry-After');
+          const sec = raw != null ? Number(raw) : NaN;
+          const retryAfterMs = Number.isFinite(sec) && sec >= 0 ? Date.now() + sec * 1000 : null;
+          setGateError({ code, message, retryAfterMs });
+          setStatus('error');
+          failAssistant(message, res.status >= 500 || code === 'ASK_NO_CONTENT');
+          return;
+        }
+
+        setStatus('answering');
+
+        await readSseStream(
+          res,
+          (evt: SseEvent) => {
+            if (!evt.data || settled || ac.signal.aborted) return;
+            let data: Record<string, unknown>;
+            try {
+              data = JSON.parse(evt.data) as Record<string, unknown>;
+            } catch {
+              return;
+            }
+
+            switch (evt.event) {
+              case 'session':
+                if (typeof data.sessionId === 'string') sessionIdRef.current = data.sessionId;
+                break;
+              case 'phase':
+                setPhaseMessage(data.phase === 'waiting' ? '模型正在思考…' : String(data.message ?? ''));
+                break;
+              case 'model':
+                setModel({
+                  model: String(data.model ?? ''),
+                  platform: data.platform ? String(data.platform) : undefined,
+                });
+                break;
+              case 'thinking': {
+                if (typeof data.text !== 'string' || !data.text) break;
+                const text = data.text;
+                setPhaseMessage('模型正在思考…');
+                setMessages((prev) => prev.map((m) => m.id === assistantId
+                  ? { ...m, thinking: (m.thinking ?? '') + text }
+                  : m));
+                break;
+              }
+              case 'typing': {
+                const text = String(data.text ?? '');
+                if (!text) break;
+                setPhaseMessage('正在回答…');
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + text } : m)),
+                );
+                break;
+              }
+              case 'done':
+                settled = true;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId
+                    ? { ...m, content: typeof data.text === 'string' ? data.text : m.content, streaming: false,
+                        messageId: typeof data.messageId === 'string' ? data.messageId : undefined,
+                        ratingToken: typeof data.ratingToken === 'string' ? data.ratingToken : undefined }
+                    : m)),
+                );
+                setStatus('done');
+                setPhaseMessage('');
+                break;
+              case 'error':
+                failAssistant(typeof data.message === 'string' ? data.message : '回答失败，请重试。');
+                setStatus('error');
+                break;
+              default:
+                break;
+            }
+          },
+          ac.signal,
+        );
+
+        // 流结束但没收到 done：这是被截断，不是答完。必须如实标成中断——
+        // 之前这里无条件把 answering 改成 done，半截答案会被当成功呈现，
+        // 用户既看不出少了什么，也不知道可以重试。
+        if (!settled && !ac.signal.aborted) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId && m.streaming
+                ? {
+                    ...m,
+                    streaming: false,
+                    retryable: true,
+                    error: m.content ? '回答被中断，内容可能不完整，可以再问一次。' : '连接中断，没有收到回答。',
+                  }
+                : m,
+            ),
+          );
+          setStatus((s) => (s === 'answering' || s === 'connecting' ? 'error' : s));
+        }
+      } catch {
+        if (settled || ac.signal.aborted) return;
+        failAssistant('网络连接失败，请稍后重试。');
+        setStatus('error');
+      } finally {
+        if (abortRef.current === ac) abortRef.current = null;
+      }
+    },
+    [messages, source],
+  );
+
+  const retry = useCallback(() => {
+    const assistant = messages.at(-1);
+    const question = messages.at(-2);
+    if (assistant?.role === 'assistant' && assistant.retryable && question?.role === 'user')
+      return ask(question.content, assistant.id);
+  }, [ask, messages]);
+
+  const rate = useCallback(async (answerId: string, rating: number) => {
+    const answer = messages.find((message) => message.id === answerId);
+    if (!answer?.messageId || !answer.ratingToken) throw new Error('此回答暂时无法评价。');
+    const result = await apiRequest<{ rating: number }>(api.webPages.askRating(encodeURIComponent(answer.messageId)), {
+      method: 'PUT', auth: false, body: { rating, token: answer.ratingToken },
+    });
+    if (!result.success) throw new Error(result.error?.message ?? '评分未保存，请重试。');
+    setMessages((previous) => previous.map((message) => message.id === answerId ? { ...message, rating: result.data.rating } : message));
+  }, [messages]);
+
+  return {
+    rate,
+    messages,
+    status,
+    phaseMessage,
+    elapsedSeconds,
+    model,
+    gateError,
+    clearGateError,
+    isBusy: status === 'connecting' || status === 'answering',
+    ask,
+    retry,
+    abort,
+    cancel,
+    reset,
+  };
+}

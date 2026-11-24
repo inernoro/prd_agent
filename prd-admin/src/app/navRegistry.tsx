@@ -14,11 +14,16 @@
 
 import { lazy, type ReactElement } from 'react';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
+import { ProductAgentAppearance } from '@/pages/product-agent/VersionAppearance';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
 const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
+const ChatPage = lazy(() => import('@/pages/chat').then(m => ({ default: m.ChatPage })));
+const ActiveTasksPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTasksPage })));
+const ActiveTasksTeamPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.TeamBoardPage })));
+const ActiveTaskHistoryPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTaskHistoryPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
@@ -26,7 +31,15 @@ const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m
 const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
+const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
+const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
+const HostedTemplatePage = lazy(() => import('@/pages/hosted-collections/HostedTemplatePage'));
+const HostedCollectionsPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionsPage'));
+const HostedCollectionPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionPage'));
+const HostedCollectionSharePage = lazy(() => import('@/pages/hosted-collections/HostedCollectionSharePage'));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
+const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
 const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
 const GalaxyStandalonePage = lazy(() => import('@/pages/document-store/GalaxyStandalonePage').then(m => ({ default: m.GalaxyStandalonePage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
@@ -38,13 +51,19 @@ const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ defa
 const PmMilestoneDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.MilestoneDetailPage })));
 const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
-const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
-const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
+const ProductVersionProductRoute = lazy(() => import('@/pages/product-agent/ProductVersionAccessPage').then(m => ({ default: m.ProductVersionProductRoute })));
+const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent/ProductObjectDetailPage').then(m => ({ default: m.ProductObjectDetailPage })));
 const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
+const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
+const ReviewAgentSubmitPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentSubmitPage').then(m => ({ default: m.ReviewAgentSubmitPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const ReviewAgentResultPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentResultPage').then(m => ({ default: m.ReviewAgentResultPage })));
+const ReviewAgentAllPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentAllPage').then(m => ({ default: m.ReviewAgentAllPage })));
+const ReviewAssessmentListPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentListPage').then(m => ({ default: m.ReviewAssessmentListPage })));
+const ReviewAssessmentDetailPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentDetailPage').then(m => ({ default: m.ReviewAssessmentDetailPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const EmailAgentPage = lazy(() => import('@/pages/email-agent').then(m => ({ default: m.EmailAgentPage })));
 const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
@@ -55,12 +74,13 @@ const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').t
 const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
-const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const AuthorizationHealthPage = lazy(() => import('@/pages/AuthorizationHealthPage'));
 const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
+const CdsDesignSharePage = lazy(() => import('@/pages/CdsDesignSharePage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
@@ -72,6 +92,9 @@ const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m =
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
+const ModelLeaderboardPage = lazy(() => import('@/pages/model-leaderboard/ModelLeaderboardPage'));
+const BookshelfPage = lazy(() => import('@/pages/bookshelf/BookshelfPage'));
+const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -136,6 +159,14 @@ function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElem
   );
 }
 
+function productGuarded(el: ReactElement): ReactElement {
+  return <RequireAuth><ProductAgentAppearance>{el}</ProductAgentAppearance></RequireAuth>;
+}
+
+function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
+  return productGuarded(<OverviewShell sectionOverride={section}>{el}</OverviewShell>);
+}
+
 // ── 注册表正文 ─────────────────────────────────────────────
 //
 // 加新功能：在合适的分组下追加一个 entry。下游全部自动同步。
@@ -163,6 +194,68 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       },
       statLabel: '画布',
       tags: ['视觉', '智能体', '图像', '生图', 'AI绘画'],
+    },
+  },
+  {
+    path: '/active-tasks',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTasksPage />),
+    nav: {
+      label: '任务台',
+      shortLabel: '任务台',
+      description: '此刻在做什么、还剩几件、走过哪些',
+      icon: 'ListChecks',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '任务',
+      tags: ['任务', '活动任务', '在做什么', '备用', '汇报', 'active tasks'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/team',
+    permission: 'active-tasks.manage',
+    element: shellGuarded('active-tasks.manage', <ActiveTasksTeamPage />),
+    nav: {
+      label: '团队此刻',
+      shortLabel: '团队此刻',
+      description: '谁在做什么、谁卡住了、谁没活了',
+      icon: 'Users',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '成员',
+      tags: ['团队', '此刻', '委派', '派活', '管理', 'team board'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/history',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTaskHistoryPage />),
+  },
+  {
+    path: '/chat',
+    permission: 'chat-agent.use',
+    element: shellGuarded('chat-agent.use', <ChatPage />),
+    nav: {
+      label: '对话',
+      shortLabel: '对话',
+      description: '打开就能聊的通用智能体，多轮对话，刷新不丢',
+      icon: 'MessageSquare',
+      section: 'agent',
+      appKey: 'chat-agent',
+      accentColor: '#D97757',
+      agentColor: {
+        bg: 'rgba(217, 119, 87, 0.08)',
+        border: 'rgba(217, 119, 87, 0.2)',
+        iconBg: 'rgba(217, 119, 87, 0.15)',
+        text: '#D97757',
+      },
+      statLabel: '会话',
+      tags: ['对话', '聊天', '智能体', '通用', 'chat'],
+      wip: true,
     },
   },
   {
@@ -350,6 +443,27 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/model-leaderboard',
+    // 全员可见（用户 2026-09-14 定）：榜单是 arena.ai 的公开数据，
+    // 不含本站调用量或成本这类经营信息，只要求登录。
+    permission: 'access',
+    element: shellGuarded('access', <ModelLeaderboardPage />),
+    nav: {
+      label: '模型排行榜',
+      shortLabel: '模型榜',
+      // 数目与分组跟着后端目录（ModelLeaderboardCatalog）走。这里写的是分组名而不是
+      // 逐个榜名：榜会增减，分组不常动，写具体榜名必然漂（原文停在「五个公开分榜」，
+      // 而页面早已是十一个，Codex 在 PR #1538 指出）。
+      description: '业界模型怎么排：编程与智能体、对话与理解、图像生成、视频生成四组共十一个公开分榜，每天同步',
+      icon: 'Trophy',
+      section: 'toolbox',
+      appKey: 'model-leaderboard',
+      tags: ['模型', '排行榜', 'arena', '评测', '选型'],
+      // 规则 #9：新功能先带 wip，等真人在预览域名验收过再转正式
+      wip: true,
+    },
+  },
+  {
     path: '/learning-center',
     permission: 'access',
     element: shellGuarded('access', <LearningCenterPage />),
@@ -362,6 +476,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       appKey: 'learning-center',
       tags: ['教程', '新手引导', '学习进度', '帮助'],
+    },
+  },
+  {
+    path: '/bookshelf',
+    permission: 'access',
+    element: shellGuarded('access', <BookshelfPage />),
+    nav: {
+      label: '公共藏书阁',
+      shortLabel: '藏书阁',
+      description: '从新手到高手的心路历程书目，七卷 + 结业考，开发与产品各一条线',
+      icon: 'Library',
+      section: 'infra',
+      appKey: 'bookshelf',
+      tags: ['书单', '成长', '读书', '考试', '新人', '规范'],
     },
   },
   {
@@ -505,31 +633,53 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/product-agent/review/submit',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review', <ReviewAgentSubmitPage />),
+  },
+  {
+    path: '/product-agent/review/submissions/:id',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review', <ReviewAgentResultPage />),
+  },
+  {
+    path: '/product-agent/review/all',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review',
+      <RequirePermission perm={['review-agent.view-all', 'product-agent.map-admin']}><ReviewAgentAllPage /></RequirePermission>),
+  },
+  {
+    path: '/product-agent/requirements/assessments',
+    placement: 'fullscreen',
+    element: productReviewGuarded('requirements', <ReviewAssessmentListPage />),
+  },
+  {
+    path: '/product-agent/requirements/assessments/:id',
+    placement: 'fullscreen',
+    element: productReviewGuarded('requirements', <ReviewAssessmentDetailPage />),
+  },
+  {
     // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
     path: '/product-agent/p/:productId/knowledge/:entryId',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
+    element: productGuarded(<KnowledgeDetailPage />),
   },
   {
     // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
     path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+    element: productGuarded(<ProductObjectDetailPage />),
   },
   {
     // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
     path: '/product-agent/p/:productId',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+    element: productGuarded(<ProductVersionProductRoute />),
   },
   {
     path: '/product-agent',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <OverviewShell />),
+    element: productGuarded(<OverviewShell />),
     nav: {
       label: '产品管理',
       shortLabel: '产品',
@@ -630,7 +780,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
 
-  // ╔══════════════ 实用工具（5）═══════════════════════════
+  // ╔══════════════ 实用工具（6）═══════════════════════════
+  {
+    path: '/mcp-console',
+    permission: 'access',
+    element: shellGuarded('access', <McpConsolePage />),
+    nav: {
+      label: '智能体接入台',
+      shortLabel: '接入台',
+      description: '把平台接进你的智能体：授权哪些能力、连着哪几台客户端、它们刚才做了什么',
+      icon: 'Plug',
+      section: 'utility',
+      tags: ['MCP', '接入', '智能体', 'agent', '密钥', '连接器', 'connector'],
+    },
+  },
   {
     path: '/skill-agent',
     permission: 'access',
@@ -684,6 +847,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/authorization-health',
+    permission: 'logs.read',
+    element: shellGuarded('logs.read', <AuthorizationHealthPage />),
+    nav: {
+      label: '授权健康中心',
+      shortLabel: '授权',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      section: 'utility',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      wip: true,
+    },
+  },
+  {
     path: '/team-activity',
     permission: 'team-activity.read',
     element: shellGuarded('team-activity.read', <TeamActivityPage />),
@@ -699,6 +876,25 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
 
   // ╔══════════════ 基础设施（9）═══════════════════════════
   {
+    // 跨 MAP 实例数据同步。后端只放行管理员（真人会话），这里用通用 access 守卫，
+    // 非管理员进来会看到端点返回的「只有管理员可以发起」而不是一个空白页。
+    path: '/data-sync',
+    permission: 'access',
+    element: shellGuarded('access', <DataSyncPage />),
+    nav: {
+      label: '数据同步',
+      shortLabel: '数据同步',
+      description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
+      icon: 'ArrowRightLeft',
+      // 归 infra 而不是 toolbox：百宝箱那一格是智能体卡片，契约要求每张卡有独占的
+      // 主题插画素材（AgentCardArtwork.test.ts 会红）；数据同步是平台运维入口，
+      // 和知识库、学习中心同类。
+      section: 'infra',
+      wip: true,
+      tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
+    },
+  },
+  {
     path: '/document-store',
     permission: ['document-store.read', 'document-store.write'],
     element: shellGuarded(['document-store.read', 'document-store.write'], <DocumentStorePage />),
@@ -710,6 +906,34 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       tags: ['文档', '知识', '知识库', 'docs'],
     },
+  },
+  ...['/document-store/:storeId/write', '/document-store/:storeId/write/:entryId', '/document-store/:storeId/write/:entryId/:view'].map(path => ({
+    path, placement: 'fullscreen' as const, permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingWorkspacePage />),
+  })),
+  { path: '/document-store/:storeId/collection', placement: 'fullscreen', permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingCollectionPage />) },
+  {
+    // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
+    // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。
+    // 它是从知识库某条录音点进来的深页，不进导航目录——nav 留空即不登记。
+    path: '/document-store/:storeId/recording/:entryId',
+    // `placement` 不写就默认 shell，条目会被挂进 AppShell——外面套着平台顶栏与底部
+    // TabBar，稿面自己那条顶栏被挤到屏幕中段，整屏和设计稿差得最远。
+    // 这一条漏了半天没人发现：`fullscreenGuarded` 只管鉴权，不决定挂在哪；
+    // 编译过、测试绿、路由也能进，只有真的打开那一屏才看得出来。
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingResultPage />),
+  },
+  {
+    // 录音处理页：稿面 R4 / cap-A4 / cap-A5 画的是**整屏接管**，屏底压着主操作。
+    // 与结果页分成两条路由而不是同一屏的两个状态——那颗按钮写的就是「进入结果页」，
+    // 同一个地址上说这句话说不通。
+    path: '/document-store/:storeId/recording/:entryId/processing',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingProcessingPage />),
   },
   {
     path: '/document-store/:storeId/universe',
@@ -779,19 +1003,6 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    path: '/mds',
-    permission: 'mds.read',
-    element: shellGuarded('mds.read', <ModelManageTabsPage />),
-    nav: {
-      label: '模型中心',
-      shortLabel: '模型',
-      description: '大模型与模型池配置、健康监控',
-      icon: 'Cpu',
-      section: 'infra',
-      tags: ['模型', 'LLM', '模型池', '调度', 'mds'],
-    },
-  },
-  {
     path: '/users',
     permission: 'users.read',
     element: shellGuarded('users.read', <UsersPage />),
@@ -817,6 +1028,16 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['工作流', '自动化', '编排'],
     },
   },
+  { path: '/web-pages/new-document', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedTemplatePage />) },
+  { path: '/web-pages/cds-share', placement: 'fullscreen', permission: 'web-pages.write',
+    element: fullscreenGuarded('web-pages.write', <CdsDesignSharePage />) },
+  { path: '/web-pages/collections', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionsPage />) },
+  { path: '/web-pages/collections/:collectionId', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionPage />) },
+  { path: '/web-pages/collections/:collectionId/share', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionSharePage />) },
   {
     path: '/web-pages',
     permission: 'web-pages.read',

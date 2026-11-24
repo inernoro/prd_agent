@@ -1,12 +1,13 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { importOverviewVersionWorkflow, importVersionWorkflow } from '@/services/real/productAgent';
-import type { Product } from './types';
+import type { VersionApplicationProduct } from '@/services/real/productAgent';
 import { resolveImportProductId } from './productImportRouting';
 import {
   parseVersionWorkflowImportFile,
+  TEMPORARY_OPTIMIZATION_LABEL,
   type VersionWorkflowImportKind,
   type VersionWorkflowImportRow,
 } from './versionWorkflowImportParse';
@@ -24,7 +25,7 @@ export function VersionWorkflowImportDialog({
   onImported,
 }: {
   kind: VersionWorkflowImportKind;
-  products: Product[];
+  products: VersionApplicationProduct[];
   defaultProductId?: string;
   fixedProductId?: string;
   onClose: () => void;
@@ -37,10 +38,18 @@ export function VersionWorkflowImportDialog({
   const [message, setMessage] = useState('');
   const productNameById = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
 
-  const importableRows = useMemo(
-    () => (kind === 'release' ? rows.filter((row) => row.code) : rows),
-    [kind, rows],
-  );
+  // 保留所有原始行给服务端归档；缺编号或无法匹配的行也应写进导入快照的错误清单。
+  const importableRows = rows;
+
+  const canImportRow = useCallback((row: VersionWorkflowImportRow) => {
+    if (kind === 'release' && (!row.planName || (!row.code && row.versionType !== TEMPORARY_OPTIMIZATION_LABEL))) return false;
+    const resolved = resolveImportProductId(products, {
+      appName: row.appName,
+      systemName: row.systemName,
+      legacyData: row.legacyData,
+    });
+    return resolved.matched && (!fixedProductId || resolved.productId === fixedProductId);
+  }, [kind, products, fixedProductId]);
 
   const previewRows = useMemo(
     () => importableRows.slice(0, 30).map((row) => {
@@ -52,22 +61,18 @@ export function VersionWorkflowImportDialog({
       return {
         row,
         appLabel: row.appName ?? row.legacyData?.['产品'] ?? row.systemName ?? '-',
-        productName: resolved.matched && resolved.productId
+        productName: canImportRow(row) && resolved.productId
           ? (productNameById.get(resolved.productId) ?? resolved.label ?? '-')
-          : '跳过（未匹配）',
-        matched: resolved.matched,
+          : '跳过（无编号或产品不匹配）',
+        matched: canImportRow(row),
       };
     }),
-    [importableRows, products, productNameById],
+    [importableRows, products, productNameById, canImportRow],
   );
 
   const matchedCount = useMemo(
-    () => importableRows.filter((row) => resolveImportProductId(products, {
-      appName: row.appName,
-      systemName: row.systemName,
-      legacyData: row.legacyData,
-    }).matched).length,
-    [importableRows, products],
+    () => importableRows.filter(canImportRow).length,
+    [importableRows, canImportRow],
   );
 
   const skippedCount = importableRows.length - matchedCount;
@@ -82,14 +87,14 @@ export function VersionWorkflowImportDialog({
         return;
       }
       const missingCode = kind === 'release'
-        ? parsedRows.filter((row) => !row.code).length
+        ? parsedRows.filter((row) => !row.code && row.versionType !== TEMPORARY_OPTIMIZATION_LABEL).length
         : 0;
       const importable = kind === 'release'
-        ? parsedRows.filter((row) => row.code).length
+        ? parsedRows.length - missingCode
         : parsedRows.length;
       setMessage(
         missingCode > 0
-          ? `已读取 ${parsedRows.length} 条，可尝试导入 ${importable} 条（${missingCode} 条无 V 号将跳过）。仅「应用」能匹配系统产品的行会写入。`
+          ? `已读取 ${parsedRows.length} 条，可尝试导入 ${importable} 条（${missingCode} 条未填写 V 号且未标记为临时优化需求）。`
           : `已读取 ${parsedRows.length} 条；仅「应用」能匹配系统产品的行会写入，其余跳过。`,
       );
     } catch (err) {
@@ -105,8 +110,8 @@ export function VersionWorkflowImportDialog({
     setBusy(true);
     const payloadRows = importableRows.map(({ sourceRow: _sourceRow, ...row }) => row);
     const result = fixedProductId
-      ? await importVersionWorkflow(fixedProductId, { kind, rows: payloadRows })
-      : await importOverviewVersionWorkflow({ kind, rows: payloadRows });
+      ? await importVersionWorkflow(fixedProductId, { kind, rows: payloadRows, sourceFileName: fileName })
+      : await importOverviewVersionWorkflow({ kind, rows: payloadRows, sourceFileName: fileName });
     setBusy(false);
     if (!result.success) {
       setMessage(result.error?.message ?? '导入失败');
@@ -114,17 +119,12 @@ export function VersionWorkflowImportDialog({
     }
     const created = result.data.created ?? 0;
     const errorCount = result.data.errors?.length ?? 0;
-    const unmatched = result.data.unmatched?.length ?? 0;
     if (created === 0) {
       setMessage(errorCount > 0 ? `导入未写入任何记录，${errorCount} 条被跳过或校验失败。` : '导入未写入任何记录，请检查「应用」列与系统产品名称是否一致。');
       return;
     }
     setMessage(
-      [
-        `导入完成：新增 ${created} 条`,
-        unmatched > 0 ? `${unmatched} 条「应用」未匹配已跳过` : '',
-        errorCount > 0 ? `${errorCount} 条校验失败` : '',
-      ].filter(Boolean).join('，') + '。',
+      `导入完成并留存快照：新增 ${created} 条${errorCount > 0 ? `，${errorCount} 条未写入（原因可在存档查看）` : ''}。`,
     );
     await onImported();
   };
@@ -132,14 +132,14 @@ export function VersionWorkflowImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
+        className="surface-tone-dark flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
             <div className="text-base font-semibold text-token-primary">导入历史{KIND_LABEL[kind]}</div>
             <div className="mt-1 text-xs text-token-muted">
-              Excel「应用」列映射到系统「产品」；匹配不到的行直接跳过，不会写入任何产品。
+              按表头识别列，列顺序不限，未识别的列会跳过。应用需能匹配到系统产品。
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭">
@@ -155,7 +155,7 @@ export function VersionWorkflowImportDialog({
             <div className="text-sm text-token-secondary">选择 Excel 或 CSV 文件</div>
             <div className="mt-1 text-xs text-token-muted">
               {kind === 'release'
-                ? '需含「应用」「正式版本号 / V 号」与「产品立项方案名称」列'
+                ? '按应用和 V 号增量导入；版本类别填「临时优化需求」时按方案名称判重，T / V 号可留空。'
                 : '需含「应用」「T 立项号 / 立项号」或「产品立项方案名称」列'}
             </div>
           </button>
@@ -173,7 +173,7 @@ export function VersionWorkflowImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-token-muted">
+                <thead className="surface-tone-dark bg-[#1a1c22] text-token-muted">
                   <tr>
                     <th className="px-3 py-2">行号</th>
                     <th className="px-3 py-2">应用</th>
@@ -214,7 +214,7 @@ export function VersionWorkflowImportDialog({
             <button
               onClick={() => void commit()}
               disabled={busy || matchedCount === 0}
-              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40"
             >
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />}
               确认导入 {matchedCount} 条

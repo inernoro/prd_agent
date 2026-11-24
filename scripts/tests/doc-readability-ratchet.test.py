@@ -4,7 +4,7 @@
 守两件事：
 1. 校验器本身没坏 —— 缺导读、写成黑话、长度超限都必须被抓出来；
    反过来，合规文档不许被误报。
-2. 这条闸真的接上了 —— 基线文件在、七类都在、CI 里有人跑它。
+2. 这条闸真的接上了 —— 基线文件在、已登记类型都在、CI 里有人跑它。
    （`.claude/rules/predicate-and-wiring-discipline.md` 形状 2：
     建了一半的链路删掉不会红。）
 """
@@ -62,6 +62,16 @@ print("[1] 校验器能抓出问题")
 
 check(problems_for("guide.demo.md", GOOD_HEADER) == [],
       "合规文档不被误报")
+
+for decision_type in ("adr", "pdr"):
+    decision_name = f"{decision_type}.platform.001.demo.md"
+    check(problems_for(decision_name, GOOD_HEADER) == [],
+          f"{decision_type} 决策类型接受合规导读")
+    check(any("缺「谁该读」" in p for p in problems_for(
+        decision_name, GOOD_HEADER.replace("**谁该读**：写测试的人，以及想看合规样例的人。\n", ""))),
+          f"{decision_type} 仍执行导读约束，不能借新类型绕过")
+    check(checker.find_bare_refs(f"参见 {decision_name}。", {decision_name}) == [(1, decision_name)],
+          f"{decision_type} 正文裸引用仍会被检测")
 
 check(any("缺「谁该读」" in p for p in problems_for(
     "guide.demo.md", GOOD_HEADER.replace("**谁该读**：写测试的人，以及想看合规样例的人。\n", ""))),
@@ -790,7 +800,7 @@ if os.path.exists(baseline_path):
         baseline = json.load(fh)
     missing = baseline.get("missing", {})
     bare_base = baseline.get("bare_refs", {})
-    check(set(missing) == set(checker.TYPES), "基线覆盖全部七类文档")
+    check(set(missing) == set(checker.TYPES), "基线覆盖全部登记类型")
     check(set(bare_base) == set(checker.TYPES), "基线记录了裸引用欠账")
 
     stats, _, _ = checker.scan()
@@ -821,11 +831,24 @@ check("doc-readability-check.py --ratchet" in ci, "CI 里跑了棘轮闸门")
 # 都会让这道闸在 PR 上静默不跑（predicate-and-wiring-discipline 形状 2）。
 check("docs: ${{ steps.filter.outputs.docs }}" in ci, "changes job 导出了 docs 变更信号")
 check("needs.changes.outputs.docs" in ci, "docs-readability job 消费了该信号")
-check("cds-build, docs-readability]" in ci, "docs-readability 已并入 CI Status 汇总闸")
+# 判的是「docs-readability 在不在 ci-status 的 needs 里」，不是「它是不是最后一项」。
+# 原来写死 "cds-build, docs-readability]"，任何人往 needs 末尾追加一个新 job
+# 都会让这条无关的断言变红（predicate-and-wiring-discipline 形状 4a：断言实现的字面存在）。
+ci_status_needs_match = re.search(
+    r"^\s*ci-status:\s*$.*?^\s*needs:\s*\[([^\]]*)\]", ci, re.S | re.M
+)
+ci_status_needs = {
+    item.strip()
+    for item in (ci_status_needs_match.group(1).split(",") if ci_status_needs_match else [])
+    if item.strip()
+}
+check(bool(ci_status_needs), f"能从 ci.yml 解析出 ci-status 的 needs（实测 {sorted(ci_status_needs)}）")
+check("docs-readability" in ci_status_needs, "docs-readability 已并入 CI Status 汇总闸")
+check("no-such-job" not in ci_status_needs, "needs 成员判据不是恒真")
 
 print("[6] 标准文档自己得合规")
 
-for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "debt.doc.readability.md"):
+for name in ("rule.doc.readability.md", "guide.doc.reading-map.md", "guide.doc.pri.debt.md"):
     path = os.path.join(REPO_ROOT, "doc", name)
     check(os.path.exists(path) and checker.check_file(path) == [], f"{name} 自身合规")
 
@@ -924,6 +947,11 @@ print("[6.4] 代码注释里的文档指路都点得到")
 # 台账合并后，代码注释里的 doc/xxx.md 面包屑会指向已删除的册子。人跟着注释走
 # 却落空，比没有注释更糟 —— 所以扫一遍源码里的文档引用，逐个验存在。
 DOC_REF = re.compile(r"doc/([a-z][\w.-]*\.md)")
+# 已冻结的同仓库 Git URL 解析到特定提交，其路径独立于当前工作树。
+PINNED_DOC_URL = re.compile(r"https://github\.com/inernoro/prd_agent/blob/[0-9a-f]{40}/doc/[a-z][\w.-]*\.md")
+archived_sample = f"https://github.com/inernoro/prd_agent/blob/{'a' * 40}/doc/debt.retired.md"
+check(DOC_REF.findall(PINNED_DOC_URL.sub("", archived_sample + " doc/debt.current.md")) == ["debt.current.md"],
+      "固定 Git 证据读取其提交，当前文档指路仍须存在")
 # 两类不算数：① 引用的文档在本仓库历史里从未存在过（更早的重命名遗留，定位不到
 # 目标，不许凭空指一个）；② 测试用例里现编的示例文件名。都写清楚，不做模糊放过。
 # 白名单按「文件 + 目标」配对，不按目标一刀切 —— 只认目标的话，同一个死名字
@@ -933,12 +961,16 @@ KNOWN_ROTTEN_PAIRS = {
     ("cds/src/routes/remote-hosts.ts", "plan.cds-shared-service-extension.md"),
     ("cds/src/services/sidecar/sidecar-deployer.ts", "plan.cds-shared-service-extension.md"),
     ("cds/src/services/state.ts", "plan.cds-shared-service-extension.md"),
-    ("cds/src/types.ts", "plan.cds-github-integration-followups.md"),
     ("cds/src/types.ts", "plan.cds-shared-service-extension.md"),
     ("cds/web/src/pages/cds-settings/tabs/RemoteHostsTab.tsx", "plan.cds-shared-service-extension.md"),
     ("prd-admin/src/pages/infra-services/InfraServicesPage.tsx", "plan.cds-shared-service-extension.md"),
     ("prd-api/src/PrdAgent.Core/Interfaces/IDynamicSidecarRegistry.cs", "plan.cds-shared-service-extension.md"),
     ("prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarOptions.cs", "plan.cds-shared-service-extension.md"),
+}
+# 该证明脚本对既有提交的 Git 差分和 blob 做校验。这些字段是历史路径。
+HISTORICAL_RELEASE_PATHS = {
+    ("cds/scripts/current-source-qualification.ts", target)
+    for target in ("debt.cds.md", "debt.cds.ci-prebuilt.md", "debt.cds.selfupdate-prebuilt.md")
 }
 FIXTURE_NAMES = {"x.md", "guide.md", "sample.md", "visible.md", "design.foo.md", "guide.current.md",
                  "a.md", "b.md", "xxx.md", "demo.md",
@@ -968,9 +1000,9 @@ for rel in tracked:
     except (OSError, UnicodeDecodeError, IsADirectoryError):
         continue
     scanned += 1
-    for hit in DOC_REF.finditer(body):
+    for hit in DOC_REF.finditer(PINNED_DOC_URL.sub("", body)):
         target = hit.group(1)
-        if (rel, target) in KNOWN_ROTTEN_PAIRS or target in FIXTURE_NAMES:
+        if (rel, target) in KNOWN_ROTTEN_PAIRS or (rel, target) in HISTORICAL_RELEASE_PATHS or target in FIXTURE_NAMES:
             continue
         if not os.path.exists(os.path.join(REPO_ROOT, "doc", target)):
             dangling.setdefault(target, set()).add(rel)
@@ -1205,11 +1237,11 @@ with tempfile.TemporaryDirectory() as tmp:
                      "**谁该读**：验证判据的人。\n**读完能做什么**：知道前缀非法照样判红。\n")
         _, _, stray_bad = checker.scan()
         check(any("notes.guard-probe" in x for x in stray_bad),
-              "前缀不在七类里的文档会被点名（不再整篇跳过）")
+              "前缀未登记的文档会被点名（不再整篇跳过）")
         probe = subprocess.run(
             [sys.executable, os.path.join(REPO_ROOT, "scripts", "doc-readability-check.py"), "--ratchet"],
             cwd=REPO_ROOT, capture_output=True, text=True)
-        check(probe.returncode != 0 and "七类之外的前缀" in probe.stderr,
+        check(probe.returncode != 0 and "未登记的前缀" in probe.stderr,
               "前缀非法时闸门判失败")
     finally:
         if os.path.exists(stray):

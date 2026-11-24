@@ -1,0 +1,27 @@
+name: CDS Notification Release Contract
+on:
+  push:
+    paths:
+      - '.github/workflows/cds-notification-release.yml'
+      - 'cds/scripts/**'
+      - 'cds/src/shared/notification-templates.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  notification-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate versioned release script
+        run: bash -n cds/scripts/cds-notification-release.sh
+      - name: Test real cutover, rollback and private queue preservation
+        run: python3 cds/scripts/test-release-notification-runtime.py
+      - name: Test notification templates and existing delivery paths
+        run: |
+          python3 cds/scripts/test-independent-monitor.py
+          python3 cds/scripts/test-independent-alarm-relay.py
+          python3 cds/scripts/test-phone-dispatch.py

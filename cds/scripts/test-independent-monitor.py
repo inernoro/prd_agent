@@ -1,0 +1,120 @@
+import importlib.util
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+s=importlib.util.spec_from_file_location('monitor', Path(__file__).with_name('independent-monitor.py'))
+m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+
+class IndependentMonitorTest(unittest.TestCase):
+    def inspect_targets(self, targets, now=30000):
+        def read(url, *args, **kwargs):
+            return b'<html><script></script></html>' if url.endswith('/status') else m.json.dumps({'generatedAt': now * 1000, 'targets': targets}).encode()
+        with patch.object(m, 'read_url', side_effect=read):
+            return m.inspect({'cdsBase': 'https://example.test', 'headers': {}}, now)
+
+    def test_disabled_and_paused_targets_do_not_create_collection_failures(self):
+        targets = [
+            {'id': 'live', 'name': 'Live', 'projectId': 'cds-self-monitor', 'status': 'up', 'lastSample': {'t': 30000000}},
+            {'id': 'disabled', 'name': 'Disabled', 'projectId': 'cds-self-monitor', 'status': 'up', 'enabled': False, 'lastSample': {'t': 0}},
+            {'id': 'paused', 'name': 'Paused', 'projectId': 'cds-self-monitor', 'status': 'paused', 'lastSample': {'t': 0}},
+        ]
+        result = self.inspect_targets(targets)
+        self.assertTrue(result['dataOk']); self.assertFalse(result['notifyEligible'])
+        self.assertEqual([metric['id'] for metric in result['metrics']], ['live'])
+
+    def test_six_hour_sampling_is_not_stale_after_eleven_minutes(self):
+        target = {'id': 'slow', 'name': 'Slow', 'projectId': 'cds-self-monitor', 'status': 'up', 'intervalSeconds': 21600, 'timeoutMs': 15000, 'lastSample': {'t': (30000 - 1800) * 1000}}
+        result = self.inspect_targets([target])
+        self.assertTrue(result['dataOk']); self.assertFalse(result['notifyEligible'])
+        self.assertFalse(m.sample_expired(target, 30000 - 1800 + 21675))
+        self.assertTrue(m.sample_expired(target, 30000 - 1800 + 21676))
+
+    def test_actual_overdue_sampling_still_creates_collection_failure(self):
+        target = {'id': 'slow', 'name': 'Slow', 'projectId': 'cds-self-monitor', 'status': 'up', 'intervalSeconds': 21600, 'timeoutMs': 15000, 'lastSample': {'t': (30000 - 21676) * 1000}}
+        result = self.inspect_targets([target])
+        self.assertFalse(result['dataOk']); self.assertTrue(result['notifyEligible'])
+        self.assertEqual(result['reason'], 'collection')
+
+    def test_missing_or_invalid_intervals_keep_the_existing_stale_threshold(self):
+        for value in [None, '21600', -1, float('nan'), True]:
+            self.assertFalse(m.sample_expired({'intervalSeconds': value, 'lastSample': {'t': (30000 - 660) * 1000}}, 30000))
+            self.assertTrue(m.sample_expired({'intervalSeconds': value, 'lastSample': {'t': (30000 - 661) * 1000}}, 30000))
+
+    def test_one_incident_during_outage_and_stable_recovery(self):
+        state={}; bad={'reason':'collection','reachable':True,'dataOk':False}
+        self.assertIsNone(m.advance(state,bad,1000));self.assertIsNone(m.advance(state,bad,1060))
+        self.assertEqual(m.advance(state,bad,1120),'down'); first=state['incident']['id']
+        for now in range(1180,1720,60): self.assertIsNone(m.advance(state,bad,now))
+        self.assertEqual(state['incident']['id'],first)
+        self.assertEqual(m.advance(state,{**bad,'reason':'unreachable','reachable':False},1720),'escalated')
+        good={'reason':None,'reachable':True,'dataOk':True}
+        for now in range(1780,2380,60): self.assertIsNone(m.advance(state,good,now))
+        self.assertEqual(m.advance(state,good,2380),'recovered')
+        self.assertEqual(state['history'][0]['id'],first)
+    def test_monitor_downtime_does_not_count_as_recovery(self):
+        state={'incident':{'id':'a','reason':'collection'},'checkedAt':1000,'healthySince':1000}
+        self.assertIsNone(m.advance(state,{'reason':None},2000));self.assertIsNotNone(state['incident'])
+    def test_reachable_again_keeps_incident_but_updates_reason_without_repeated_escalation(self):
+        state={'incident':{'id':'a','reason':'collection'},'checkedAt':1000}
+        self.assertEqual(m.advance(state,{'reason':'unreachable'},1060),'escalated')
+        self.assertIsNone(m.advance(state,{'reason':'collection'},1120))
+        self.assertEqual(state['incident']['reason'],'collection')
+        self.assertIsNone(m.advance(state,{'reason':'unreachable'},1180))
+    def test_no_recovery_notification_without_accepted_fault(self):
+        state={'history':[{'id':'a'}]}
+        with patch.object(m.urllib.request,'urlopen') as request:
+            self.assertTrue(m.notify({'bark':{'key':'private'}},state,'recovered',1000))
+            request.assert_not_called()
+    def test_public_snapshot_excludes_credentials_and_raw_errors(self):
+        config={'cdsBase':'https://example.com','headers':{'key':'secret'},'bark':{'key':'secret'}}
+        state={'headers':config['headers'],'deliveries':[{'private':'secret'}],'observation':{'rawError':'secret'}}
+        self.assertNotIn('secret',str(m.public_snapshot(state,config,2000)))
+    def test_outage_preserves_last_known_unresolved_target(self):
+        state={'observation':{'metrics':[{'id':'m1','name':'Webhook','state':'down','lastKnownState':'down'}]}}
+        m.advance(state,{'reason':'unreachable','metrics':[]},1000)
+        self.assertEqual(state['observation']['metrics'][0]['state'],'unknown')
+        self.assertEqual(state['observation']['metrics'][0]['lastKnownState'],'down')
+    def test_snapshot_failure_keeps_notification_pending(self):
+        state={'failures':2,'checkedAt':1000}
+        with patch.object(m,'inspect',return_value={'reason':'unreachable'}),patch.object(m,'publish',side_effect=RuntimeError()):
+            with self.assertRaises(RuntimeError):m.tick({'cdsBase':'https://example.com'},state,1060)
+        self.assertEqual(state['pending']['transition'],'down')
+    def test_fresh_cds_report_does_not_duplicate_internal_notification(self):
+        state={'failures':2,'checkedAt':1000}
+        with patch.object(m,'inspect',return_value={'reason':'collection','notifyEligible':False}),patch.object(m,'publish'):
+            m.tick({'cdsBase':'https://example.com'},state,1060)
+        self.assertIsNotNone(state['incident']);self.assertNotIn('pending',state)
+        with patch.object(m,'inspect',return_value={'reason':'collection','notifyEligible':True}),patch.object(m,'publish'):
+            m.tick({'cdsBase':'https://example.com'},state,1120)
+        self.assertEqual(state['pending']['transition'],'down')
+
+    def test_public_projection_never_exports_private_identity_or_metrics(self):
+        state={'observation':{'metrics':[{'name':'private-metric'}]},'incident':{'id':'example','reason':'collection','secret':'private-event'}}
+        config={'identity':{'observer':{'name':'private-host','location':'private-address'}},'cdsBase':'https://private.invalid',
+                'publicIdentity':{'observer':{'name':'示例 B','environment':'测试','location':'private-location','key':'private-key'}}}
+        snapshot=m.public_snapshot(state,config,1000)
+        self.assertNotIn('private',str(snapshot))
+        self.assertEqual(snapshot['identity']['observer']['name'],'示例 B')
+    def test_notification_link_keeps_runtime_feed_out_of_repository(self):
+        url=m.incident_url({'publicUrl':'https://example.com/#feed=https%3A%2F%2Fstorage.example%2Fstatus.json'},'sample')
+        self.assertIn('incident=sample',url);self.assertIn('#feed=',url)
+
+    def test_avatar_uses_observer_private_configuration(self):
+        state={'incident':{'id':'test','reason':'unreachable'}}
+        config={'bark':{'key':'fixture','iconUrl':'https://static.example/observer-b.png'},'publicUrl':'https://status.example/', 'identity':{'observer':{'name':'B'},'subject':{'name':'A'}}}
+        class Response:
+            status=200
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,*args):return b'{"code":200}'
+        with patch.object(m.urllib.request,'urlopen',return_value=Response()) as request:
+            self.assertTrue(m.notify(config,state,'down',1000))
+            payload=m.json.loads(request.call_args[0][0].data)
+            self.assertEqual(payload['icon'],'https://static.example/observer-b.png')
+            self.assertEqual(payload['title'],'环境待确认 CDS')
+            self.assertEqual(payload['body'],'入口已不可用')
+            self.assertLessEqual(len(payload['title'] + ' ' + payload['body']),40)
+            self.assertNotIn('CDS B',payload['body'])
+            self.assertNotIn('fixture',str(m.public_snapshot(state,config,1000)))
+
+if __name__=='__main__':unittest.main()

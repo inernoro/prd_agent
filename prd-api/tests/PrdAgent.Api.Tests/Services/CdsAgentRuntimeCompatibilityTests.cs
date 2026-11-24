@@ -10,6 +10,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using PrdAgent.Core.Interfaces;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Services;
 

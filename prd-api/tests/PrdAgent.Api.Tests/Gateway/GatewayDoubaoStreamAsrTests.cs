@@ -5,11 +5,28 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using Shouldly;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
 public class GatewayDoubaoStreamAsrTests
 {
+    [Fact]
+    public void RecognitionRequest_ShouldEnableNativeSpeakerInformation_ByDefault()
+    {
+        var request = DoubaoStreamAsrService.BuildRecognitionRequest(1, 16, 16000, null);
+
+        request["request"]!["show_utterances"]!.GetValue<bool>().ShouldBeTrue();
+        request["request"]!["enable_speaker_info"]!.GetValue<bool>().ShouldBeTrue();
+
+        var explicitlyDisabled = DoubaoStreamAsrService.BuildRecognitionRequest(
+            1,
+            16,
+            16000,
+            new Dictionary<string, object> { ["enableSpeakerInfo"] = false });
+        explicitlyDisabled["request"]!["enable_speaker_info"]!.GetValue<bool>().ShouldBeFalse();
+    }
+
     [Fact]
     public async Task RawDoubaoStreamAsr_ShouldExecuteInsideGateway_AndReturnVerboseJson()
     {
@@ -41,6 +58,7 @@ public class GatewayDoubaoStreamAsrTests
             new GatewayModelResolution
             {
                 Success = true,
+                UpstreamProxy = new global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy("custom", "http://proxy.example:8080", null, null),
                 ResolutionType = "DedicatedPool",
                 ActualModel = "doubao-asr-stream",
                 ActualPlatformId = "exchange-doubao-stream",
@@ -68,6 +86,7 @@ public class GatewayDoubaoStreamAsrTests
         fakeAsr.AccessKey.ShouldBe("access-456");
         fakeAsr.AudioBytes.ShouldBe([1, 2, 3, 4]);
         fakeAsr.RequirePublicPinnedWebSocket.ShouldBeTrue();
+        fakeAsr.UpstreamProxy!.Address.ShouldBe("http://proxy.example:8080");
 
         using var doc = JsonDocument.Parse(response.Content!);
         var root = doc.RootElement;
@@ -76,6 +95,7 @@ public class GatewayDoubaoStreamAsrTests
         segment.GetProperty("start").GetDouble().ShouldBe(1);
         segment.GetProperty("end").GetDouble().ShouldBe(2.5);
         segment.GetProperty("text").GetString().ShouldBe("第一句字幕");
+        segment.GetProperty("speaker").GetString().ShouldBe("2");
         root.GetProperty("gateway").GetProperty("protocol").GetString().ShouldBe("websocket");
         logWriter.Done.ShouldNotBeNull();
         logWriter.Done!.ProviderAttempts.ShouldNotBeNull();
@@ -192,6 +212,7 @@ public class GatewayDoubaoStreamAsrTests
         public string? AccessKey { get; private set; }
         public byte[] AudioBytes { get; private set; } = [];
         public bool RequirePublicPinnedWebSocket { get; private set; }
+        public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; private set; }
 
         public Task<StreamAsrResult> TranscribeAsync(
             string wsUrl,
@@ -200,20 +221,22 @@ public class GatewayDoubaoStreamAsrTests
             byte[] audioData,
             Dictionary<string, object>? config = null,
             CancellationToken ct = default,
-            bool requirePublicPinnedWebSocket = false)
+            bool requirePublicPinnedWebSocket = false,
+            global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? upstreamProxy = null)
         {
             WsUrl = wsUrl;
             AppKey = appKey;
             AccessKey = accessKey;
             AudioBytes = audioData;
             RequirePublicPinnedWebSocket = requirePublicPinnedWebSocket;
+            UpstreamProxy = upstreamProxy;
 
             using var payload = JsonDocument.Parse("""
                 {
                   "result": {
                     "text": "第一句字幕",
                     "utterances": [
-                      { "start_time": 1000, "end_time": 2500, "text": "第一句字幕" }
+                      { "start_time": 1000, "end_time": 2500, "text": "第一句字幕", "speaker_info": { "speaker_id": 2 } }
                     ]
                   }
                 }
@@ -262,6 +285,9 @@ public class GatewayDoubaoStreamAsrTests
             => Task.CompletedTask;
 
         public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
             => Task.CompletedTask;
     }
 }

@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14); --warn: #eab308; --ok: #22c55e;
+      --radius: 8px; --radius-sm: 6px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 12px; font-weight: 500; color: var(--text-muted); letter-spacing: 0.04em; padding: 0 12px 10px 0; border-bottom: 1px solid var(--border-subtle); }
+    td { font-size: 13px; color: var(--text-secondary); padding: 12px 12px 12px 0; border-bottom: 1px solid var(--border-subtle); vertical-align: top; line-height: 1.7; }
+    td.k { color: var(--text-primary); font-weight: 500; white-space: nowrap; }
+    .swatch { display: inline-block; height: 12px; background: var(--accent); border-radius: 2px; vertical-align: -1px; margin-right: 8px; }
+  </style>
+</helmet>
+
+<div style="padding: 28px 32px; display: flex; flex-direction: column; gap: 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;">间距与字号规范</div>
+    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">改 CSS 时照这张表取值。左列是 <span class="mono">llmgw/web/src/lib/surface.ts</span> 与 <span class="mono">theme.css</span> 里的现值，右列是本次设计用的值。</div>
+  </div>
+
+  <!-- 1. 尺度 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; align-items: baseline; gap: 8px;">
+      <div style="font-size: 15px; font-weight: 650;">一、间距尺度</div>
+      <span style="font-size: 13px; color: var(--text-muted);">「紧凑」的根在这里：整套尺度上限只到 16px</span>
+    </div>
+    <table>
+      <tr><th style="width: 200px;">用途</th><th style="width: 120px;">现值</th><th style="width: 150px;">改为</th><th>为什么</th></tr>
+      <tr>
+        <td class="k">卡片内边距<div class="mono" style="color: var(--text-muted); font-weight: 400;">CARD_PADDING</div></td>
+        <td class="mono">14px</td>
+        <td class="mono" style="color: var(--accent);"><span class="swatch" style="width: 24px;"></span>24px</td>
+        <td>桌面 24 / 窄屏（≤480）16。14 是列表行的尺度，不是承载「引用 + 结果 + 决定」三层的步骤卡的尺度。仍然只有一种值，漂移守卫照过。</td>
+      </tr>
+      <tr>
+        <td class="k">卡内间距<div class="mono" style="color: var(--text-muted); font-weight: 400;">GAP</div></td>
+        <td class="mono">6 / 8 / 12 / 16</td>
+        <td class="mono" style="color: var(--accent);">8 / 20 / 28</td>
+        <td>三档就够，而且是有语义的三档：<b>8</b> 标签贴值、<b>20</b> 组内、<b>28</b> 层间。守卫数的是种类数（≤基准页），3 种比现在的 4 种还少。</td>
+      </tr>
+      <tr>
+        <td class="k">卡片之间</td>
+        <td class="mono">12px</td>
+        <td class="mono" style="color: var(--accent);">20px</td>
+        <td>与卡内的「组内」同值，页面节奏才连续。</td>
+      </tr>
+      <tr>
+        <td class="k">圆角</td>
+        <td class="mono">8 / 6</td>
+        <td class="mono">8 / 6</td>
+        <td>不动。8 给卡片与结果块，6 给内嵌块与按钮。</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- 2. 第 2 步的三层 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; align-items: baseline; gap: 8px;">
+      <div style="font-size: 15px; font-weight: 650;">二、第 2 步分三层</div>
+      <span style="font-size: 13px; color: var(--text-muted);">层与层之间 28px + 必要处一条 1px 分隔线</span>
+    </div>
+    <table>
+      <tr><th style="width: 200px;">层</th><th style="width: 150px;">装什么</th><th>版式要点</th></tr>
+      <tr>
+        <td class="k">层 0 · 步骤头</td>
+        <td>序号 / 标题 / 副标题 / 改那句话</td>
+        <td>标题独占首行，「改那句话」<span class="mono">margin-left:auto</span> 推到行尾并撑成 32px 高的点击区；副标题落第二行、左缩进 40px（28 序号 + 12 间距）与标题文字对齐。旧版四样同基线是撞车的根因。</td>
+      </tr>
+      <tr>
+        <td class="k">层 1 · 你说的那句话</td>
+        <td>小标签 + 引用块</td>
+        <td>2px 强调竖线 + <span class="mono">--bg-elevated</span> 底（浅色档换 <span class="mono">--bg-base</span>），内边距 14/18，行高 1.7。</td>
+      </tr>
+      <tr>
+        <td class="k">层 2 · 系统推出来的结果</td>
+        <td>将颁发 / 码 / 来源 chip + 理由 / 调用类型</td>
+        <td>码 <b>17px mono 650</b>——本屏最大的字。眉标、码、来源三行纵向叠，不再左右两端拉开。<b>调用类型拆出去</b>成为一个带标签的独立字段，这是「中间空着」的解法。</td>
+      </tr>
+      <tr>
+        <td class="k">层 3 · 你要做的决定</td>
+        <td>高级折叠 + 提示 + 两个按钮</td>
+        <td>上方一条 <span class="mono">border-top</span> + 28px 内边距把它和「系统给的」隔开。提示 <span class="mono">flex:1 1 320px</span>、按钮组 <span class="mono">flex:none</span>：窄屏自然折两行，按钮不会被挤扁。</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- 3. 字号 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="font-size: 15px; font-weight: 650;">三、字号落点（七档一个不多）</div>
+    <table>
+      <tr><th style="width: 140px;">档位</th><th style="width: 120px;">token</th><th>本设计里用在哪</th></tr>
+      <tr><td class="k" style="font-size: 20px;">20px</td><td class="mono">--fs-title</td><td>页面标题（Quickstart / 服务网关设置）</td></tr>
+      <tr><td class="k" style="font-size: 17px;">17px</td><td class="mono">--fs-metric</td><td><b>只给颁发的那条码</b>。整屏唯一的 17px，它就是这一步的产物</td></tr>
+      <tr><td class="k" style="font-size: 15px;">15px</td><td class="mono">--fs-heading</td><td>步骤标题、卡片分区标题、三选一卡片的名字、降级态两段判定的值</td></tr>
+      <tr><td class="k">14px</td><td class="mono">--fs-body</td><td>引用块正文、只读事实的值、窄屏按钮文字</td></tr>
+      <tr><td class="k">13px</td><td class="mono">--fs-secondary</td><td>副标题、理由句、底部提示、按钮文字、文字链</td></tr>
+      <tr><td class="k">12px</td><td class="mono">--fs-caption</td><td>字段标签（你写的 / 调用类型 / 归属团队…）、chip、来源标注</td></tr>
+      <tr><td class="k">11px</td><td class="mono">--fs-micro</td><td>本设计没用到。下限留着，别为了塞字往这一档挤</td></tr>
+    </table>
+  </div>
+
+  <!-- 4. 两个必须一起改的坑 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="font-size: 15px; font-weight: 650;">四、顺手要修的两个既有问题</div>
+    <div style="display: flex; align-items: flex-start; gap: 8px; background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.32); border-radius: var(--radius-sm); padding: 14px 16px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 3px;"><path d="M8 5v4"/><path d="M8 11.5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;"><b>浅色档的嵌套块是隐形的</b>：<span class="mono">INSET_BLOCK</span> 用 <span class="mono">--bg-elevated</span>，而浅色档里它与 <span class="mono">--bg-surface</span> 同为 <span class="mono">#ffffff</span>——引用块、未选中卡片、内嵌行在白天全部和卡片糊成一片。嵌套底色应取 <span class="mono">--bg-base</span>（浅色 #f1f5f9），或至少补一条描边。</span>
+    </div>
+    <div style="display: flex; align-items: flex-start; gap: 8px; background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.32); border-radius: var(--radius-sm); padding: 14px 16px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 3px;"><path d="M8 5v4"/><path d="M8 11.5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;"><b>窄屏命中区不足</b>：桌面按钮高 32px，直接搬到 390 宽偏小。窄屏一律 44px 高、纵向铺满，主操作在下（拇指区）。</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

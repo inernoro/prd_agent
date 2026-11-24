@@ -81,7 +81,7 @@ export function ReviewAgentSubmitPage() {
       {/* 页头 */}
       <div className="flex items-center gap-3 mb-8">
         <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
-          <ClipboardCheck className="w-5 h-5 text-indigo-400" />
+          <ClipboardCheck className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
         </div>
         <div>
           <h1 className="text-xl font-semibold text-token-primary">提交方案评审</h1>
@@ -112,7 +112,7 @@ export function ReviewAgentSubmitPage() {
           </label>
           {file ? (
             <div className="flex items-center gap-3 bg-token-nested border border-indigo-500/30 rounded-lg px-4 py-3">
-              <FileText className="w-5 h-5 text-indigo-400 flex-shrink-0" />
+              <FileText className="w-5 h-5 text-[color:var(--accent-fg-blue)] flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-token-primary truncate">{file.name}</p>
                 <p className="text-xs text-token-muted mt-0.5">{(file.size / 1024).toFixed(1)} KB</p>

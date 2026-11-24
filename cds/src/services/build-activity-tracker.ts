@@ -18,6 +18,11 @@ export interface BuildActivityEvent {
   branchId: string;
   at: number;
   trigger: string;
+  /**
+   * 本次部署的 commit SHA（可缺省）。自 2026-08-29 起用于「同一提交反复部署」的
+   * 空转判定 —— 见 assessDeployLoop。缺省时判定一律放行（见该函数注释）。
+   */
+  commitSha?: string;
 }
 
 export interface BuildActivitySummary {
@@ -46,10 +51,111 @@ function prune(nowMs: number): void {
 }
 
 /** 记录一次构建/部署发生（deploy 端点在通过全部前置校验后调用）。 */
-export function recordBuild(projectId: string, branchId: string, trigger = 'unknown'): void {
+export function recordBuild(
+  projectId: string,
+  branchId: string,
+  trigger = 'unknown',
+  commitSha?: string,
+): void {
   const at = Date.now();
-  ring.push({ projectId: projectId || 'default', branchId, at, trigger });
+  ring.push({ projectId: projectId || 'default', branchId, at, trigger, commitSha: normalizeSha(commitSha) });
   prune(at);
+}
+
+/* ------------------------------------------------------------------------ *
+ * 空转部署熔断（2026-08-29）
+ *
+ * 事故：mdimp 的分支 bootstrap 步骤在写完 profile override 之后自己再发一次
+ * POST /api/branches/:id/deploy。该步骤每轮都判定「override 变了」，于是构成一个
+ * 按构造无法收敛的环：部署 → bootstrap → 触发部署 → …。实测 main 分支上连续
+ * 十余轮背靠背部署（每轮结束后 3~4 秒下一轮就起，全是同一个 commit），分支永远
+ * 停在 building、预览域名长期 503，宿主构建槽被独占，同项目其它分支一并饿死。
+ *
+ * CDS 侧当时**完全没有察觉**：branch-operation-coordinator 只防「并发」撞车，
+ * 而这个环是严格串行的（每轮等上一轮结束才起），协调器从头到尾没被触发；
+ * build-activity-tracker 虽然记了次数，却只喂资源面板展示，没有任何判定或告警。
+ *
+ * 判据选择（对齐 predicate-and-wiring-discipline 形状 1「判据别比该管的范围窄」）：
+ *
+ *   - 按 (branchId, commitSha) 计数，**不按次数总量**。开发者连续推 10 次是 10 个
+ *     不同的 SHA，永远不会命中；空转环的特征恰恰是「同一个 commit 反复部署」。
+ *   - 推新提交自然清零，这是天然且零成本的逃生门，所以误伤代价很小。
+ *   - 不按 trigger 过滤。triggerFromRequest 在缺 x-cds-trigger 头时一律回落
+ *     'manual'，CDS 自己的 Web 面板和一个失控脚本在这个字段上**完全不可区分**——
+ *     真实事故里那个自触发脚本记录下来就是 'manual'。按 trigger 过滤会漏掉它。
+ *   - SHA 比较做前缀归一：同一个提交可能以 7 位短号或 40 位全长送进来，
+ *     直接字符串相等会把同一个提交判成两个，判据当场失效。
+ *   - 无 SHA 一律放行。不知道提交是什么就无法区分「空转」与「正常连推」，
+ *     此时宁可不拦——护栏误伤真实工作比漏掉一次空转更糟。
+ * ------------------------------------------------------------------------ */
+
+/** 空转判定的观察窗口。 */
+const LOOP_WINDOW_MS = 30 * 60 * 1000;
+/** 达到此数即告警（仍放行）。 */
+const LOOP_WARN_COUNT = 3;
+/** 达到此数即拒绝后续同 (分支, 提交) 的部署。 */
+const LOOP_TRIP_COUNT = 6;
+
+export type DeployLoopLevel = 'ok' | 'warn' | 'trip';
+
+export interface DeployLoopAssessment {
+  level: DeployLoopLevel;
+  /** 窗口内同 (分支, 提交) 的既有部署次数，不含本次。 */
+  sameCommitCount: number;
+  windowMinutes: number;
+  warnAt: number;
+  tripAt: number;
+  /** 供告警/拒绝文案直接引用，避免调用方再拼一遍。 */
+  commitSha: string | null;
+}
+
+function normalizeSha(sha?: string | null): string | undefined {
+  const trimmed = String(sha ?? '').trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(trimmed) ? trimmed : undefined;
+}
+
+/** 两个 SHA 是否指同一个提交（容忍 7 位短号与 40 位全长混用）。 */
+function sameCommit(a: string, b: string): boolean {
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  return longer.startsWith(shorter);
+}
+
+/**
+ * 判定某分支是否在对同一个提交空转部署。deploy 端点在受理请求前调用。
+ *
+ * 返回的 sameCommitCount **不含本次**，所以 `level === 'trip'` 的含义是
+ * 「此前已经部署过 tripAt 次同一个提交，这一次不该再放行」。
+ */
+export function assessDeployLoop(
+  branchId: string,
+  commitSha?: string | null,
+  nowMs = Date.now(),
+): DeployLoopAssessment {
+  const sha = normalizeSha(commitSha);
+  const base: Omit<DeployLoopAssessment, 'level' | 'sameCommitCount'> = {
+    windowMinutes: Math.round(LOOP_WINDOW_MS / 60_000),
+    warnAt: LOOP_WARN_COUNT,
+    tripAt: LOOP_TRIP_COUNT,
+    commitSha: sha ?? null,
+  };
+  // 不知道提交是什么就无法区分空转与正常连推，放行。
+  if (!sha || !branchId) return { ...base, level: 'ok', sameCommitCount: 0 };
+
+  const since = nowMs - LOOP_WINDOW_MS;
+  let sameCommitCount = 0;
+  for (const ev of ring) {
+    if (ev.at < since) continue;
+    if (ev.branchId !== branchId) continue;
+    if (!ev.commitSha || !sameCommit(ev.commitSha, sha)) continue;
+    sameCommitCount++;
+  }
+
+  const level: DeployLoopLevel = sameCommitCount >= LOOP_TRIP_COUNT
+    ? 'trip'
+    : sameCommitCount >= LOOP_WARN_COUNT
+      ? 'warn'
+      : 'ok';
+  return { ...base, level, sameCommitCount };
 }
 
 /** 单项目在 sinceMs 之后的构建次数。 */

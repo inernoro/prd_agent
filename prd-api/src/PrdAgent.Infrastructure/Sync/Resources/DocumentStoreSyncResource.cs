@@ -29,7 +29,7 @@ public class DocumentStoreSyncResource : ISyncableResource
     private const string SyncLineageKey = "syncLineageId";
     private const string PeerSourceContentHashKey = "peerSourceContentHash";
     // 二进制附件条目（无正文、走 AttachmentId）的来源 URL 幂等键：接收方据此判断「这个对端附件是否已下载重建过」，
-    // 命中即廉价跳过，不重复下载。见 doc/debt.platform.md「工程债务台账：系统级跨节点互传（Peer Sync）」 A 系列。
+    // 命中即廉价跳过，不重复下载。见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md「工程债务台账：系统级跨节点互传（Peer Sync）」 A 系列。
     private const string PeerSourceAttachmentUrlKey = "peerSourceAttachmentUrl";
     // 源头附件字节数（与 url 同写）：用于幂等的「同源同字节」判定与漂移签名。必须与 url 一样比的是「源头侧的
     // att.Size」（导出端发的 pa.Size），不能拿来跟本地 DocumentEntry.FileSize 比 —— 二者是不同字段、不保证相等，
@@ -115,7 +115,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
         // 二进制/文件条目（无 DocumentId、有 AttachmentId）的附件元信息：批量取出，导出时带上其访问 URL，
-        // 接收方据此下载 + 重传到自己存储 + 重建条目（doc/debt.platform.md「工程债务台账：系统级跨节点互传（Peer Sync）」 A 系列：二进制附件跨节点）。
+        // 接收方据此下载 + 重传到自己存储 + 重建条目（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md「工程债务台账：系统级跨节点互传（Peer Sync）」 A 系列：二进制附件跨节点）。
         var attachmentIds = entries
             .Where(e => !e.IsFolder && string.IsNullOrEmpty(e.DocumentId) && !string.IsNullOrEmpty(e.AttachmentId))
             .Select(e => e.AttachmentId!).Distinct().ToList();
@@ -1203,6 +1203,15 @@ public class DocumentStoreSyncResource : ISyncableResource
             MimeType = string.IsNullOrWhiteSpace(pa.MimeType) ? stored.Mime : pa.MimeType!,
             Size = pa.Size > 0 ? pa.Size : stored.SizeBytes,
             Url = stored.Url,
+            // key 必须跟着落库。只存 Url 的话，换桶 / 换公网域名 / 把库搬到另一台机器，
+            // 存量地址全部指回原处，而且没有任何东西能把它算回来（DS1）。
+            //
+            // 这一处**在 peer-sync 这条路上**，和另外几处建附件的地方不在同一个程序集里，
+            // 于是守卫扫不到它：那条守卫只扫 PrdAgent.Api，而且只认 `new Attachment {`
+            // 这个写法，这里是 `=> new() { }`——两道口子叠在一起，漏了它一声不吭。
+            // 本地磁盘存储时最难受：Url 是 `/local-assets/...` 这种相对地址，
+            // 跨实例同步会把它当成可搬运的，既给不出可用路径，也不报「认不出对象位置」。
+            StorageKey = stored.Key,
             Type = pa.Type,
             ExtractedText = pa.ExtractedText,
         };
@@ -1462,7 +1471,7 @@ public class DocumentStoreSyncResource : ISyncableResource
         if (string.IsNullOrEmpty(oldDocId) || oldDocId == newDocId) return;
         try
         {
-            var stillReferenced = await _db.DocumentEntries
+            var stillReferenced = await _db.DocumentEntriesIncludingTrash
                 .Find(e => e.DocumentId == oldDocId && e.Id != keepEntryId)
                 .AnyAsync(CancellationToken.None);
             if (!stillReferenced)

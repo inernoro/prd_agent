@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readiness-current.json}"
-EXPECTED_CDS_HOST="${CDS_AGENT_EXPECTED_CDS_HOST:-https://cds.miduo.org}"
+EXPECTED_CDS_HOST="${CDS_AGENT_EXPECTED_CDS_HOST:-}"
 SIDECAR_DOCKERFILE="${CDS_AGENT_SIDECAR_DOCKERFILE:-claude-sdk-sidecar/Dockerfile}"
 SIDECAR_BUILD_CONTEXT="${CDS_AGENT_SIDECAR_BUILD_CONTEXT:-claude-sdk-sidecar}"
 SIDECAR_CANDIDATE_IMAGE="${CDS_AGENT_SIDECAR_CANDIDATE_IMAGE:-prd-agent/claude-sidecar:latest}"
@@ -23,6 +23,7 @@ fail() {
 }
 
 command -v jq >/dev/null 2>&1 || fail "missing dependency: jq"
+[[ -n "$EXPECTED_CDS_HOST" ]] || fail "CDS_AGENT_EXPECTED_CDS_HOST is required"
 [[ -f "$SUMMARY" ]] || fail "remote host summary not found: $SUMMARY"
 
 has_env() {

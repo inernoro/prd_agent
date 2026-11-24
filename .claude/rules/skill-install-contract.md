@@ -1,3 +1,10 @@
+---
+paths:
+  - ".claude/skills/findmapskills/**/*.md"
+  - "cds/src/routes/bootstrap.ts"
+  - "prd-api/src/**/SkillInstallContract.cs"
+---
+
 # 技能分发与安装约定（Skill Install Contract）
 
 **一句话**：技能装项目级、按存在的宿主目录全装一遍，不写用户主目录；读技能免凭据，上传与订阅才要 key；三处实现由守卫测试钉在一起。
@@ -12,7 +19,7 @@
 ```sh
 # 存在几个宿主就装几个；一个都没有时兜底 .agents/skills
 SKILLS_DIRS=""
-for h in .claude .cursor .agents; do
+for h in .claude .agents; do
   [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
 done
 [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
@@ -27,7 +34,9 @@ for d in $SKILLS_DIRS; do mkdir -p "$d"; done
 
 **为什么不是 `~/.claude/skills`**：帮别人建系统时，技能装在你这台机器上，人一走团队什么都不剩。装项目级则技能跟着对方的版本库走，全队 clone 下来都有。
 
-**为什么不能写死 `.claude`**：Cursor 和 Codex 宿主直接就是错的目录。
+**为什么不能写死 `.claude`**：Codex 宿主直接就是错的目录。
+
+**宿主边界**：当前只支持 `.claude/skills` 和 `.agents/skills`。禁止新增第三套宿主目录、根级专用规则文件或同步脚本；产品文案、安装命令、生成包和守卫测试必须共用这一边界。
 
 ## 二、三处实现必须同步
 

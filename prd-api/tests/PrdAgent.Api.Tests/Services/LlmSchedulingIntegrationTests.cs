@@ -16,6 +16,18 @@ using Xunit.Abstractions;
 
 namespace PrdAgent.Api.Tests.Services;
 
+/// <summary>
+/// 2026-08-25 起这个类**已经不可能通过**：它对真实服务打 `POST/DELETE api/mds/model-groups`
+/// 建临时模型池，而模型管理退场后 MAP 的 `api/mds` 写接口一律 410
+///（见 <c>MdsWriteRetiredFilter</c>）。
+///
+/// 它是 Integration 类别、CI 默认排除，且服务不可达时会自跳过，所以既不红也不挡路——
+/// 正因如此它才更该被点名：一条永远跑不通、又永远不会报警的用例，比没有用例更糟，
+/// 下一个人会以为这条链路还有覆盖（predicate-and-wiring-discipline 形状 4b）。
+///
+/// 要么改成经由 LLM Gateway 控制台的池端点建临时池，要么删掉。
+/// 在那之前不要把它当成「模型池调度已被集成测试覆盖」的证据。
+/// </summary>
 [Trait("Category", TestCategories.Integration)]
 public class LlmSchedulingIntegrationTests
 {

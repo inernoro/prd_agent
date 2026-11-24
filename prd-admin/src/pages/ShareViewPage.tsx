@@ -1,59 +1,240 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { ReviewHistoryHint, ReviewReaderTabs, ReviewUnavailableNotice, reviewReaderTint, useReviewReaderWidth, type ReviewHistoryHintValue } from '@/components/web-hosting/ReviewReaderChrome';
+import { ReviewSidebarResizeHandle, useReviewSidebarWidth } from '@/components/web-hosting/ReviewSidebarResizeHandle';
+import { HostedCollectionEditor } from '@/components/web-hosting/HostedCollectionManager';
+import HostedShareCollection from '@/components/web-hosting/HostedShareCollection';
+import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
+import type { RelatedDocument } from '@/services/real/relatedDocuments';
+import { Dialog } from '@/components/ui/Dialog';
+import { recordSiteView } from '@/services/real/webAnalytics';
+import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
+import { useEffect, useState, useRef, useCallback, useMemo, useId } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments } from '@/services/real/webPages';
+import { getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
+import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ArrowLeft, BookOpen, Download, FileDown, Check, LogIn, Pencil, Settings2, X, Maximize, Minimize } from 'lucide-react';
+import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { resolveAvatarUrl } from '@/lib/avatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
+import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
+import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
+import { withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotations';
+import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
+import { useHostedReview } from '@/components/web-hosting/useHostedReview';
+import { ReviewBubbleToggle, ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
+import { ReviewVersionBar } from '@/components/web-hosting/ReviewVersionBar';
+import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
+import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
+import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
+import { SharePageTitle, SharePageActions } from '@/components/web-hosting/SharePageControls';
+import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
+import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
+import { useIsMobile } from '@/hooks/useBreakpoint';
+import {
+  getNativeFullscreenElement,
+  subscribeNativeFullscreen,
+  tryEnterNativeFullscreen,
+  tryExitNativeFullscreen,
+} from '@/components/web-hosting/shareFullscreen';
+import {
+  directPreviewSandbox,
+  SRCDOC_PREVIEW_SANDBOX,
+  canUseSrcDocPreview,
+  shouldFetchPreviewHtml,
+  resolvePreviewSource,
+  withPreviewBase,
+} from '@/components/web-hosting/previewHtml';
+import type { PreviewSource } from '@/components/web-hosting/previewHtml';
+import { planSourceDownload } from '@/components/web-hosting/sourceDownload';
+import { describeOfflineExportResult } from '@/components/web-hosting/offlineExport';
+import { useOfflineExport } from '@/components/web-hosting/useOfflineExport';
 
-function fmtSize(b: number) {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+/**
+ * 幻灯片邀请条：告诉访客这一页能用键盘翻。
+ *
+ * 为什么要有：deck 的翻页控件通常是右下角两个很淡的箭头，很多人从头到尾用鼠标点，
+ * 甚至以为这就是一张长图。一句「方向键翻页」省掉这整段试错。
+ *
+ * 为什么会自己消失：它是邀请不是控件，说完就该让开——内容才是主角
+ * （content-fills-canvas：产物占主导，chrome 压到最少）。
+ */
+function SlideKeyboardInvite({ yield: stepAside }: { yield?: boolean }) {
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setGone(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const key: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    minWidth: 20, height: 20, padding: '0 5px', borderRadius: 5,
+    background: 'var(--bg-tertiary)', border: '1px solid var(--border-default)',
+    fontSize: 11, fontFamily: 'ui-monospace, monospace', lineHeight: 1,
+  };
+
+  return (
+    // surface-tone-dark：这一条永远浮在托管内容之上，两个主题下都必须是深色药丸，
+    // 走 token 而不是写死颜色（admin-dual-theme 的暗岛机制）
+    <div
+      className="surface-tone-dark"
+      style={{
+        position: 'absolute', left: '50%', bottom: 18, transform: 'translateX(-50%)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 14px', borderRadius: 999,
+        background: 'var(--panel-solid)', color: 'var(--text-primary)',
+        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+        fontSize: 12.5, whiteSpace: 'nowrap',
+        // 邀请条永远不该拦住底下 deck 的点击
+        pointerEvents: 'none',
+        // 邀请条和提问坞的额度小条都站在底部正中。这一条是邀请不是控件，
+        // 用户一展开提问长条它就该让开——不然两枚药丸直接叠在一起，看着像渲染坏了。
+        opacity: gone || stepAside ? 0 : 1,
+        transition: 'opacity 600ms ease',
+      }}
+    >
+      {/* 只写方向键：四种 deck 框架都绑了它。F 全屏之类各家不一，
+          与其猜一个按下去没反应的快捷键，不如让顶栏那个全屏按钮去负责。 */}
+      <span style={key}>←</span>
+      <span style={key}>→</span>
+      <span>方向键翻页，点一下页面再按</span>
+    </div>
+  );
 }
 
-function escapeHtmlAttr(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+/**
+ * 等正文最多等多久，到点就转直链。
+ *
+ * 这个常量替代了原来那个 1500ms 的「遮罩让位」窗口，两者要解决的问题不是同一个：
+ *
+ * 旧写法里 iframe 首帧就挂着直链地址，遮罩只是盖在它上面，所以 1.5s 让位是对的——
+ * 底下那一页已经加载了 1.5 秒，多半画好了。但**那次直链请求本身**正是 2026-09-18
+ * 事故的来源（某 App 的内置浏览器把它当成下载，弹「Download：(null) 599KB」）。
+ * 现在 pending 期间 iframe 是空的，没有「底下那一页」可以露出来，让位也就无从谈起。
+ *
+ * 于是窗口的语义变成「等正文的耐心上限」：到点说明代理慢或不可达，此时才挂直链。
+ * 取值 6 秒——服务端代理自己的超时是 20 秒，而正常一趟 1~3 秒；定太短会把大量本来
+ * 一两秒就能内联的页面推去发那次跨域请求，定太长会让真出问题时干等。
+ */
+export const DIRECT_FALLBACK_TIMEOUT_MS = 6000;
+/**
+ * 直链露出之后，还有多久可以把原文换上去。
+ *
+ * **起算点是「直链露出的那一刻」，不是「开始取正文的那一刻」**——这两者差一个
+ * DIRECT_FALLBACK_TIMEOUT_MS，写错就等于把宽限期变成 0。
+ *
+ * 上一版正是这么错的（Codex 第三轮 P2）：那时判据写成 `Date.now() - fetchStartedAt >
+ * LATE_SWAP_GUARD_MS`，而两个常量都是 6000、都从取正文开始算。于是 fallback 一触发，
+ * elapsed 就已经 ≥ 6000，此后**任何**回来的正文都判成「迟到」不自动换——哪怕直链才刚
+ * 开始加载、访客一秒钟状态都没攒下。本该救场的那条路（用原文顶掉可能白屏的直链）
+ * 被自己关死了。我还在 commit message 里把它当成「设计得当」，判断反了。
+ *
+ * 语义本身没变：访客眼前已经是直链页面时，换成 srcDoc 就是换一个文档，滚动位置、输入、
+ * PPT 翻到第几页全部清零。窗口之内他还没来得及攒下什么，宁可换文档也要把内容显示出来；
+ * 超过了才保他的现场，把原文留在手里并给一个看得见的出口。
+ */
+export const LATE_SWAP_GUARD_MS = 6000;
 
-function isHtmlEntry(siteUrl: string, entryFile?: string) {
-  const target = entryFile || siteUrl.split('?')[0].split('#')[0];
-  return /\.html?$/i.test(target);
-}
+/**
+ * 盖在预览之上的浮层小片（角落里的一行字 / 一个按钮）共用同一套观感。
+ * 抽出来是为了让这两处永远长得一样——两份各写一遍时，改了一处忘一处就会一深一浅。
+ */
+const OVERLAY_CHIP: React.CSSProperties = {
+  position: 'absolute',
+  padding: '7px 11px',
+  borderRadius: 8,
+  background: 'rgba(17,17,17,0.82)',
+  color: 'rgba(255,255,255,0.86)',
+  fontSize: 12,
+  lineHeight: 1.5,
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+};
 
-function withPreviewBase(html: string, siteUrl: string) {
-  if (/<base\b/i.test(html)) return html;
-  const baseHref = new URL('.', siteUrl).toString();
-  const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
-  }
-  return `${baseTag}${html}`;
+/**
+ * 该不该显示「正在准备预览」。
+ *
+ * 判据整个收敛到 resolvePreviewSource 之后，这里只剩一句话：**pending 才遮**。
+ * 原先它是三个条件的与（在取 / 没 srcDoc / 窗口没到点），因为那时遮罩盖的是一个
+ * 已经在加载的直链 iframe，要小心别把能看的页面盖住；现在 pending 期间 iframe 本来
+ * 就是空的，遮罩不是「盖住什么」，而是这一刻唯一的内容。
+ *
+ * 原来那条不变量（loading 永不结束时不能永远遮着）没有丢，只是挪了位置：
+ * resolvePreviewSource 的 waitedOut 到点就转 direct，pending 自然结束。
+ */
+export function shouldMaskDirectPreview(opts: { source: PreviewSource }): boolean {
+  return opts.source === 'pending';
 }
 
 interface ShareViewPageProps {
   /** 显式注入 token；若未传，则从 useParams().token 读取（兼容旧路由 /s/wp/:token） */
   tokenOverride?: string;
+  siteIdOverride?: string;
+  passwordOverride?: string;
+  embedded?: boolean;
+  onNavigateRelated?: (item: RelatedDocument) => void;
 }
 
-export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}) {
+export default function ShareViewPage(props: ShareViewPageProps = {}) {
+  const { token } = useParams<{ token: string }>();
+  return <ShareViewContent key={props.tokenOverride ?? token} {...props} />;
+}
+
+function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps) {
   const params = useParams<{ token: string }>();
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const fixedRevisionId = searchParams.get('revision') ?? undefined;
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
-  const currentUserId = useAuthStore(s => s.user?.userId);
-  const [data, setData] = useState<ShareViewData | null>(null);
-  const [error, setError] = useState<{ code: string; message: string } | null>(null);
+  const currentUser = useAuthStore(s => s.user);
+  const currentUserId = currentUser?.userId;
+  const viewportMobile = useIsMobile();
+  const theme = useResolvedThemeMode();
+  const singleViewRef = useRef<HTMLDivElement>(null);
+  const documentPanelId = useId(), discussionPanelId = useId();
+  const [fullData, setData] = useState<ShareViewData | null>(null);
+  const [collectionManagerOpen, setCollectionManagerOpen] = useState(false);
+  const [collectionShareFirst, setCollectionShareFirst] = useState(false);
+  const requestedRelatedSiteId = siteIdOverride ?? searchParams.get('siteId');
+  const selectedSite = fullData?.sites.find(item => item.id === requestedRelatedSiteId);
+  const data = useMemo(() => fullData && requestedRelatedSiteId ? selectedSite ? { ...fullData, sites: [selectedSite] } : null : fullData, [fullData, requestedRelatedSiteId, selectedSite]);
+  const readsSingleSite = data?.sites.length === 1 && (embedded || !!requestedRelatedSiteId || data.shareType !== 'collection');
+  const readerWidth = useReviewReaderWidth(singleViewRef, !!readsSingleSite);
+  const isMobile = readsSingleSite ? readerWidth < 768 : viewportMobile;
+  const sideBySide = !isMobile && readerWidth >= 1024;
+  const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
+  const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
+  const [relatedOpenError, setRelatedOpenError] = useState('');
+  const showAccountSite = useCallback((site: HostedSite) => { setRelatedSharedSite(null); setRelatedAccountSite(site); }, []);
+  const relatedPreview = useRelatedSiteOpener(showAccountSite, setRelatedOpenError);
+  const openRelatedDocument = onNavigateRelated ?? ((item: RelatedDocument) => {
+    if (item.preview?.useShareAccess && token) {
+      relatedPreview.cancel(); setRelatedAccountSite(null); setRelatedSharedSite(item);
+    } else void relatedPreview.open(item.id);
+  });
+  const openedSiteId = readsSingleSite ? data!.sites[0].id : undefined;
+  useEffect(() => {
+    if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
+  }, [isAuthenticated, currentUserId, openedSiteId]);
+  const [loadError, setError] = useState<{ code: string; message: string } | null>(null);
+  const error = loadError ?? (fullData && requestedRelatedSiteId && !selectedSite ? { code: 'NOT_FOUND', message: '文档不存在或无权访问' } : null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(passwordOverride ?? '');
+  /**
+   * 密码试太频繁被 429 挡下时的提示（后端文案自带「请 N 秒后再试」）。
+   * 之前这一档会掉进整屏的「出错了」，把人踢出密码表单——他刚才输的密码没了，
+   * 也看不出来是被限流还是链接坏了。现在留在原地，只在表单上方多一条提示。
+   */
+  const [rateLimitedHint, setRateLimitedHint] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [wrongPassword, setWrongPassword] = useState(false);
@@ -61,12 +242,126 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
-  // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
-  const [showComments, setShowComments] = useState(false);
-  // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
-  const [commentCount, setCommentCount] = useState<number | null>(null);
+  /** 离线版网页打包下载：打包中的状态、已等待秒数、落盘都在这个 hook 里 */
+  const { busy: downloading, label: offlineExportLabel, run: runOfflineExport } = useOfflineExport();
+  /**
+   * 下载之后要不要多说一句：有资源没装进离线文件要说清缺了哪几处，失败了要说清为什么。
+   * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
+   */
+  const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
+  const reviewFrameRef = useRef<HTMLIFrameElement>(null);
+  const [showComments, setShowComments] = useState(() => !embedded && searchParams.has('review'));
+  /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
+  const [askState, setAskState] = useState<AskDockState>('collapsed');
+  const reviewSidebar = useReviewSidebarWidth(readerWidth);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
-  const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
+  /**
+   * 取正文这一趟走到哪了 —— **必须带上它说的是哪个 siteUrl**。
+   *
+   * 两个坑叠在一起：
+   * ① 不能用 loading 布尔。effect 要等一次渲染之后才跑，而 `loading=false` 在「还没开始」
+   *    与「已经结束」上读起来一模一样；首帧把前者读成后者，resolvePreviewSource 就判 direct，
+   *    那正好是这次要消灭的那一次跨域请求。
+   * ② 光有三态还不够。换密码重进、data 刷新时 effect 同样晚一帧，那一帧读到的是**上一趟**
+   *    的 settled，于是又判一次 direct、又发一次请求——判据漏掉了「重新开始」这个状态
+   *    （predicate-and-wiring-discipline 形状 1）。带上 siteUrl 之后，对不上就一律当没开始。
+   */
+  const [previewFetch, setPreviewFetch] = useState<{ siteUrl: string; settled: boolean } | null>(null);
+  /** 等正文超时的那个 siteUrl。带 URL 同理：上一趟的超时不许污染下一趟 */
+  const [directFallbackFor, setDirectFallbackFor] = useState<string | null>(null);
+  /** 直链 iframe 是否**真的加载出了内容**（有真实 src 且 load 事件到过）。
+   *  丢弃迟到 srcDoc 的前提是「用户已经在用底下那一页」——如果底下那页压根没加载
+   *  （站点没有入口地址、或直链本身就白屏），丢掉迟到的 srcDoc 等于让用户一直盯着空白。 */
+  /**
+   * 直链是什么时候露给访客的（0 = 还没露出）。迟到多久由**它**算，不是由「开始取正文」算。
+   *
+   * 合并了原来的 `fetchStartedAtRef` + `exposedDirectRef` 两个 ref：时间戳本身就带
+   * 「有没有露出」的信息，两个状态各存一份正是上一版把起算点搞错的温床。
+   * 异步回调读 ref 不读 state——回调闭包里的 state 是发起那一刻的旧值。
+   */
+  const directExposedAtRef = useRef(0);
+  /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
+  const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
+  /**
+   * 迟到的原文——**不自动换上去，但也绝不丢掉**。
+   *
+   * 「该不该换」需要两个我们都拿不到的答案：直链那一帧到底画出东西没有（跨源，读不了），
+   * 以及访客攒了多少状态（滚动发生在那一帧里，同样看不到）。上一版拿 iframe 的 load
+   * 当「画出来了」，那是形状 8；改成按已过时间判，同样证明不了白屏没白屏——它只是把
+   * 一个不成立的证据换成了另一个。
+   *
+   * 两个判据都不可知时，正确的做法不是替用户猜，而是把这份能救场的原文留在手里，
+   * 给他一个看得见的出口。丢掉它就意味着：直链白屏 + 原文回得慢 = 这个人永远停在一片白，
+   * 而那正是这条兜底本来要修的页面。
+   */
+  const [lateHtml, setLateHtml] = useState<{ siteUrl: string; html: string } | null>(null);
+  /**
+   * 这份托管内容是不是一套幻灯片（决定要不要出键盘邀请条）。
+   * 取回原文时立刻判、单独存：它不能跟着 embeddedHtml 走，那个值在遮罩让位后会被丢弃。
+   */
+  const [isDeck, setIsDeck] = useState(false);
+
+  const handleOwnerSitePublished = useCallback((updated: HostedSite) => {
+    setData((current) => current ? {
+      ...current,
+      sites: current.sites.map((item) => item.id === updated.id ? {
+        ...item,
+        title: updated.title,
+        description: updated.description,
+        siteUrl: updated.siteUrl,
+        entryFile: updated.entryFile,
+        contentShape: updated.contentShape,
+        requiresPreviewBridge: updated.requiresPreviewBridge,
+        totalSize: updated.totalSize,
+        fileCount: updated.files.length,
+        coverImageUrl: updated.coverImageUrl,
+        pdfAssetUrl: updated.pdfAssetUrl,
+        pdfFilePaths: updated.pdfFilePaths,
+        zipHomepageAssetPath: updated.zipHomepageAssetPath,
+        wrappedAssetType: updated.wrappedAssetType,
+      } : item),
+    } : current);
+  }, []);
+
+  const review = useHostedReview(reviewFrameRef, readsSingleSite ? data!.sites[0] : null,
+    token && readsSingleSite && !data!.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
+    () => setShowComments(true), handleOwnerSitePublished, { dualColumn: true, pinOpensDiscussion: isMobile });
+  const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
+    token ? { token, password: password || undefined } : undefined, reviewFrameRef);
+  const annotations = review.annotations;
+  const commentCount = annotations.threads.filter(thread => !thread.parentId).length;
+  const [historyHint, setHistoryHint] = useState<ReviewHistoryHintValue | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const requestedReview = searchParams.get('review');
+  const restoredReview = useRef<string | null>(null);
+  const versionsForLogin = review.versions;
+  const restoreSelectedVersion = review.selectVersion;
+  useEffect(() => {
+    if (!requestedReview || requestedReview === 'current' || !versionsForLogin.some(version => version.id === requestedReview)) return;
+    const identity = `${token}:${requestedReview}`;
+    if (restoredReview.current === identity) return;
+    restoredReview.current = identity;
+    void restoreSelectedVersion(requestedReview);
+  }, [requestedReview, token, versionsForLogin, restoreSelectedVersion]);
+  const loginToReview = () => {
+    const destination = new URL(window.location.href);
+    destination.searchParams.set('review', !isAuthenticated && requestedReview && requestedReview !== 'current'
+      ? requestedReview : review.selected?.id ?? 'current');
+    const returnUrl = destination.pathname + destination.search;
+    if (isAuthenticated) useAuthStore.getState().logout();
+    navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+  };
+  const reviewLiveUrl = review.liveSite?.siteUrl;
+  const reviewEntryFile = review.liveSite?.entryFile;
+  const reviewShape = review.liveSite?.contentShape;
+  const reviewMetadataSiteId = review.selected?.siteId;
+  useEffect(() => {
+    if (!openedSiteId || reviewMetadataSiteId !== openedSiteId || !reviewLiveUrl || !reviewEntryFile) return;
+    setData(current => {
+      if (!current || !openedSiteId || current.sites.find(item => item.id === openedSiteId)?.siteUrl === reviewLiveUrl) return current;
+      return { ...current, sites: current.sites.map(item => item.id === openedSiteId ? { ...item, siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape } : item) };
+    });
+  }, [reviewLiveUrl, reviewEntryFile, reviewShape, openedSiteId, reviewMetadataSiteId]);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -90,18 +385,62 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     }
   }, [token, password, isAuthenticated, navigate]);
 
+  /**
+   * 下载源文件：普通网页下载的是**离线版**——服务端从对象存储按文件清单读原字节，
+   * 把站内样式、脚本、图片、字体都内嵌进入口 HTML，打成一个文件。
+   *
+   * 为什么不再走取正文代理（getShareSiteContent）：那条代理读的是托管域名经 CDN 服务出来的那一份，
+   * 带着 CDN 注入的遥测、只有入口一个文件、上限 2MB；多文件站下回来图片样式全丢。
+   * 离线打包不经 CDN，也就不再需要剥遥测；分享门禁（撤销 / 过期 / 可见性 / 密码）与取正文同源。
+   * 落盘仍走同源 Blob（saveBlobAsFile），不给托管直链挂 a[download]。
+   */
+  const handleDownloadSource = useCallback(async () => {
+    if (!token || !data || !readsSingleSite) return;
+    const site = data.sites[0];
+    const plan = planSourceDownload(site);
+
+    if (plan.kind === 'unavailable') {
+      setDownloadNote({ text: plan.reason, tone: 'error' });
+      return;
+    }
+    if (plan.kind === 'open') {
+      // 独立资产（PDF 等）只能在新窗口打开，由浏览器内联显示、用户自己另存——
+      // 跨域的 a[download] 会被忽略，而 fetch 到 Blob 又受制于按域名配的 CORS 白名单
+      // （预览域名不在里面）。按钮文案对这一档也是「打开源文件」，不宣称下载。
+      window.open(plan.url, '_blank', 'noopener');
+      setDownloadNote(null);
+      return;
+    }
+
+    setDownloadNote(null);
+    const outcome = await runOfflineExport(
+      () => downloadShareOfflineHtml(token, site.id, password || undefined, plan.fileName),
+    );
+    if (outcome.ok === null) return;
+    if (!outcome.ok) {
+      setDownloadNote({ text: outcome.failure.text, detail: outcome.failure.detail, tone: 'error' });
+      return;
+    }
+    setDownloadNote({ text: describeOfflineExportResult(outcome.summary).text, tone: 'info' });
+  }, [token, data, password, runOfflineExport, readsSingleSite]);
+
+  const shareRequest = useRef(0);
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
-    setLoading(true);
+    const request = ++shareRequest.current;
+    if (!fullData) setLoading(true);
     setError(null);
     setWrongPassword(false);
-    const res = await viewSiteShare(token, pwd?.trim());
+    setRateLimitedHint(null);
+    const res = await viewSiteShare(token, pwd?.trim(), fixedRevisionId);
+    if (request !== shareRequest.current) return;
     setLoading(false);
     if (res.success) {
       setData(res.data);
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
+      setRateLimitedHint(null);
       // 如果是带密码重试的，说明密码错误
       if (pwd !== undefined) {
         setWrongPassword(true);
@@ -109,69 +448,133 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         // 选中输入框内容方便重新输入
         setTimeout(() => inputRef.current?.select(), 100);
       }
+    } else if (res.error?.code === 'RATE_LIMITED') {
+      // 留在密码屏：这不是链接坏了，是他自己试太快，等一会儿还能进
+      setNeedPassword(true);
+      setWrongPassword(false);
+      setShakeKey(k => k + 1);
+      setRateLimitedHint(res.error.message || SHARE_FAILURE_REGISTRY['rate-limited'].body);
     } else {
       setError(res.error || { code: 'UNKNOWN', message: '加载失败' });
     }
   };
 
   useEffect(() => {
-    fetchShare();
+    void fetchShare(password || undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, requestedRelatedSiteId, fixedRevisionId]);
 
-  // 全屏演示：对单站点视图容器 requestFullscreen，全屏时隐藏 MAP 顶栏（Esc / 系统手势退出由
-  // fullscreenchange 同步回 state）。iframe 另加 allowFullScreen，让 deck 自带的全屏按钮也能用。
-  const singleViewRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  // 全屏演示：优先请求浏览器原生全屏。iPhone WebKit 不支持普通元素 requestFullscreen，
+  // 此时降级为页面级沉浸模式：固定铺满可视视口并隐藏 MAP 顶栏，同时提供退出按钮。
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
+  const [pageFullscreen, setPageFullscreen] = useState(false);
+  const isFullscreen = nativeFullscreen || pageFullscreen;
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
+    const onFsChange = () => setNativeFullscreen(!!getNativeFullscreenElement());
+    return subscribeNativeFullscreen(onFsChange);
   }, []);
-  const togglePresentFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.();
-    } else {
-      singleViewRef.current?.requestFullscreen?.().catch(() => {});
+  useEffect(() => {
+    if (!pageFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [pageFullscreen]);
+  const togglePresentFullscreen = useCallback(async () => {
+    if (pageFullscreen) {
+      setPageFullscreen(false);
+      return;
     }
-  }, []);
+    if (getNativeFullscreenElement()) {
+      await tryExitNativeFullscreen();
+      return;
+    }
+    setShowComments(false);
+    const target = singleViewRef.current;
+    if (!target || !await tryEnterNativeFullscreen(target)) setPageFullscreen(true);
+  }, [pageFullscreen, setShowComments]);
 
-  // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
+  // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
+  // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
+  // 于是 srcDoc 分支永远拿不到内容、静默退化成「Chrome 里只绘制空白」的直链 iframe——
+  // 这就是「三个网页无法预览」的根因之一。改回浏览器 fetch 会让这条兜底再次变成死代码，
+  // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
-    if (!token || !data || data.sites.length !== 1) return;
-    let alive = true;
-    listShareComments(token, password || undefined)
-      .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.length); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [token, password, data]);
-
-  useEffect(() => {
-    const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || site.pdfAssetUrl || !isHtmlEntry(site.siteUrl, site.entryFile)) {
+    const site = readsSingleSite ? data!.sites[0] : null;
+    if (!site || !token || !shouldFetchPreviewHtml(site)) {
+      // 多文件网站和包装资产站（PDF/视频）走真实地址——直接落到 settled，
+      // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
       setEmbeddedHtml(null);
-      setEmbeddedHtmlLoading(false);
+      setEmbeddedHtmlError(null);
+      setLateHtml(null);
+      setIsDeck(false);
+      setPreviewFetch(site ? { siteUrl: site.siteUrl, settled: true } : null);
+      setDirectFallbackFor(null);
       return;
     }
 
     let alive = true;
     setEmbeddedHtml(null);
-    setEmbeddedHtmlLoading(true);
-    fetch(site.siteUrl, { credentials: 'omit' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const html = await res.text();
-        if (alive) setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(html, site.siteUrl) });
+    setIsDeck(false);
+    setEmbeddedHtmlError(null);
+    setLateHtml(null);
+    setPreviewFetch({ siteUrl: site.siteUrl, settled: false });
+    setDirectFallbackFor(null);
+    // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
+    // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
+    directExposedAtRef.current = 0;
+    // 到点转直链：此时才第一次向托管域名发文档请求（pending 期间一次都没发过）。
+    const fallbackTimer = window.setTimeout(() => {
+      if (!alive) return;
+      directExposedAtRef.current = Date.now();
+      setDirectFallbackFor(site.siteUrl);
+    }, DIRECT_FALLBACK_TIMEOUT_MS);
+    getShareSiteContent(token, site.id, password || undefined)
+      .then((res) => {
+        if (!alive) return;
+        if (res.success && res.data?.html) {
+          // 「是不是幻灯片」必须在这里就判掉，不能等 embeddedHtml。
+          // 下面那条早退（已经转直链就不自动换）会让 embeddedHtml 停在 null，
+          // 于是 deck 邀请条在「原文回得比那个窗口慢」的每一次都静默消失——
+          // 判据挂在一个可能被搁置的中间产物上，正是形状 2（链路只建到一半）。
+          setIsDeck(detectSlideDeck(res.data.html));
+          // 丢弃迟到原文的理由，从头到尾只有一个：**用户已经在这一页上攒下了状态**
+          // （滚到哪、输了什么、PPT 翻到第几页），换 srcDoc 等于换一个文档，全部清零。
+          //
+          // 所以判据必须冲着「攒了多少状态」去，而 iframe 的 load 事件不是它的证据：
+          // 直链白屏时 load 照样会触发，两个条件双双成立，于是把唯一能救场的原文丢掉，
+          // 访客就永远停在那一片白——正是这条兜底本来要修的那种页面。
+          // 「文档加载完了」证明不了「画出了东西」，拿它当证据是形状 8。
+          //
+          // 换成按已过时间判：这几秒里用户还没来得及攒下什么，宁可换文档也要把内容显示出来；
+          // 拖到很久之后才回来，人多半已经在用了，才保他的现场。两种误判的代价不对等——
+          // 丢错了是「什么都看不到」，换错了只是「滚动位置没了」。
+          // 还没露出直链（exposedAt === 0）就一律直接换上——那时访客看的是「准备中」，
+          // 没有任何现场可保。露出之后才按「露出至今多久」判。
+          const exposedAt = directExposedAtRef.current;
+          const shownFor = exposedAt > 0 ? Date.now() - exposedAt : 0;
+          const ready = { siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) };
+          if (exposedAt > 0 && shownFor > LATE_SWAP_GUARD_MS) {
+            // 迟到了：不自动换（他可能已经滚到一半），但留着并给出口。
+            // 直接 return 会让「直链白屏 + 原文迟到」变成一片永远的白。
+            setLateHtml(ready);
+            return;
+          }
+          setEmbeddedHtml(ready);
+          return;
+        }
+        // 取不回原文时仍回退直链 iframe（多数情况仍能显示），但把原因显式说出来，
+        // 不再静默吞掉——用户至少知道「为什么这页可能是空白的」。
+        setEmbeddedHtmlError(res.error?.message || '未能取回网页原文，已回退直接加载');
       })
       .catch(() => {
-        if (alive) setEmbeddedHtml(null);
+        if (alive) setEmbeddedHtmlError('未能取回网页原文，已回退直接加载');
       })
       .finally(() => {
-        if (alive) setEmbeddedHtmlLoading(false);
+        if (alive) setPreviewFetch({ siteUrl: site.siteUrl, settled: true });
       });
 
-    return () => { alive = false; };
-  }, [data]);
+    return () => { alive = false; window.clearTimeout(fallbackTimer); };
+  }, [data, token, password, readsSingleSite]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,29 +587,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // ── Loading ── (纯黑背景，无动画，避免闪烁)
   if (loading) {
     return (
-      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }} />
+      <div style={{ ...styles.fullScreen, background: '#0a0a0a' }}><MapSectionLoader text="正在读取分享文档…" /></div>
     );
   }
 
   // ── Error: Not Found / Expired / Visibility Denied ──
   if (error) {
-    const isNotFound = error.code === 'NOT_FOUND';
-    const isExpired = error.code === 'EXPIRED';
-    const isVisibilityDenied = error.code === 'visibility_denied' || error.code === 'VISIBILITY_DENIED';
-    const titleText = isNotFound
-      ? '链接不存在'
-      : isExpired
-        ? '链接已过期'
-        : isVisibilityDenied
-          ? '需要权限访问'
-          : '出错了';
-    const detailText = isNotFound
-      ? '该分享链接不存在或已被撤销'
-      : isExpired
-        ? '该分享链接已超过有效期，请联系分享者重新创建或续期'
-        : isVisibilityDenied
-          ? (error.message || '此链接仅限创建者或团队成员访问')
-          : error.message;
+    // 失败态判定收在 resolveShareFailure（有守卫）：后端两层给的可见性拒绝码大小写不同，
+    // 写在这儿的三元一定会漏掉其中一种
+    const failure = resolveShareFailure(error.code);
+    const cfg = SHARE_FAILURE_REGISTRY[failure];
+    const isVisibilityDenied = failure === 'visibility-denied';
+    const titleText = cfg.title;
+    const detailText = cfg.body;
+    // 认不出的码才把后端原文露出来——认得出的那几档，我们自己的话说得更清楚。
+    //
+    // 例外是可见性拒绝：后端把两种完全不同的策略压成同一个码回来——「登录可见」只是
+    // 没登录（登录一下就能看），「仅我和协作者」是团队外真进不去。注册表里只能放一段话，
+    // 于是一个只差登录的访客被告知「可能还需要团队成员身份」，照着这句话他会放弃。
+    // 这一档后端那句原文恰恰把两者分得清清楚楚，所以在这里显式保留它。
+    const serverDetail = failure === 'unknown' || isVisibilityDenied ? error.message : null;
     const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/';
     return (
       <div style={styles.fullScreen}>
@@ -215,7 +615,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
             width: 64, height: 64, borderRadius: '50%',
-            background: isVisibilityDenied ? 'rgba(96, 165, 250, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            background: cfg.tone === 'auth'
+              ? 'rgba(96, 165, 250, 0.15)'
+              : cfg.tone === 'wait'
+                ? 'var(--semantic-warning-soft)'
+                : 'rgba(239, 68, 68, 0.15)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 20px',
           }}>
@@ -226,9 +630,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
             {titleText}
           </h2>
-          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.7 }}>
             {detailText}
           </p>
+          {serverDetail && (
+            <p className="surface-tone-dark" style={{ color: 'var(--text-muted)', margin: '8px 0 0', fontSize: 12.5, lineHeight: 1.6 }}>
+              {serverDetail}
+            </p>
+          )}
           {isVisibilityDenied && !isAuthenticated && (
             <button
               type="button"
@@ -320,6 +729,23 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               stepDuration={0.3}
             />
           </div>
+
+          {/* 限流不是「链接坏了」，所以留在这一屏，只多一条提示 + 说清口径 */}
+          {rateLimitedHint && (
+            <div
+              className="surface-tone-dark"
+              style={{
+                margin: '0 0 20px', padding: '10px 14px', borderRadius: 10, textAlign: 'left',
+                background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)',
+                color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.65,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--accent-fg-warning)' }}>{rateLimitedHint}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {SHARE_FAILURE_REGISTRY['rate-limited'].body}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
             <div style={{ position: 'relative' }}>
@@ -420,271 +846,454 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // ── Success: show site(s) ──
   if (!data) return null;
 
+  if (data.revisionId && data.previewUrl) return (
+    <main className="flex min-h-dvh flex-col">
+      <header className="flex items-center justify-between gap-4 border-b px-4 py-3">
+        <h1 className="min-w-0 break-words text-lg font-semibold">{data.title}</h1>
+        <span className="shrink-0 text-sm">固定版本</span>
+      </header>
+      <iframe className="min-h-[calc(100dvh-64px)] w-full flex-1 border-0" src={data.previewUrl} title={data.title}
+        sandbox="allow-scripts allow-forms allow-modals allow-downloads" referrerPolicy="no-referrer" />
+    </main>
+  );
+
   const isOwner = isAuthenticated && currentUserId && data.createdBy === currentUserId;
+  const openCollectionManager = (sharing = false) => {
+    if (data.documentCollectionId) {
+      navigate(`/web-pages/collections/${encodeURIComponent(data.documentCollectionId)}${sharing ? '/share' : ''}`);
+      return;
+    }
+    setCollectionShareFirst(sharing); setCollectionManagerOpen(true);
+  };
+
+  if (!embedded && data.shareType === 'collection' && !requestedRelatedSiteId) {
+  // Keep the original share token: member pages use the same authorization scope.
+  return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
+    selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
+    action={isOwner ? <><button className="hosted-share-save" onClick={() => openCollectionManager(true)}>分享</button><button className="hosted-share-save" onClick={() => openCollectionManager()}>管理合集</button>
+      {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
+      {saving ? <><MapSpinner size={13} />保存中...</>
+        : saveStatus === 'saved' ? <><Check size={13} />已保存</>
+        : saveStatus === 'already' ? <><Check size={13} />你已经保存过了</>
+        : !isAuthenticated ? <><LogIn size={13} />登录并保存</>
+        : <><Download size={13} />保存到我的托管</>}
+    </button>} />;
+  }
 
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
-    const site = data.sites[0];
-    const iframeHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    const liveSite = data.sites[0];
+    const site = { ...liveSite, ...review.site };
+    const externalViewUrl = !review.historical && token
+      ? `/s/wp/${encodeURIComponent(token)}?${new URLSearchParams({ siteId: site.id })}`
+      : site.pdfAssetUrl || site.siteUrl || undefined;
+    // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
+    // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
+    const fetchedHtml = review.historical ? (review.preview && site.contentShape === 'self-contained-html' && shouldFetchPreviewHtml(site) ? withPreviewBase(review.preview.html, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
+      : embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
+    /**
+     * 这一刻 iframe 该拿什么当内容源。pending 时**什么都不给**——不知道走哪条路之前
+     * 不向托管域名发文档请求，那一次请求正是 2026-09-18 弹窗事故的来源。
+     * 判据本体在 previewHtml.ts 的 resolvePreviewSource（那里有完整缘由）。
+     */
+    const previewSource = review.historical ? (review.loading ? 'pending' : iframeHtml ? 'srcdoc' : 'direct') : resolvePreviewSource({
+      fetchable: shouldFetchPreviewHtml(site),
+      inlineHtml: iframeHtml,
+      // 对不上 siteUrl 就当这一趟还没开始，绝不拿上一趟的结论去判 direct
+      settled: previewFetch?.siteUrl === site.siteUrl && previewFetch.settled,
+      waitedOut: directFallbackFor === site.siteUrl,
+    });
+    // 按钮的提示语在**按下之前**就说清会拿到什么：多文件站下到的只是入口那一份，
+    // 包装站根本不是网页。点一次换一个报错是最差的那种交代方式。
+    const downloadPlan = planSourceDownload(site);
+    const downloadHint =
+      downloadPlan.kind === 'unavailable' ? downloadPlan.reason
+        : downloadPlan.kind === 'open' ? '在新窗口打开源文件，可在浏览器里另存'
+        : downloadPlan.fileCount > 1
+          ? `下载离线版网页：本站 ${downloadPlan.fileCount} 个文件里的样式、脚本、图片都装进一个 HTML`
+          : '下载离线版网页（一个 HTML 文件）';
+    /**
+     * 顶栏说明条有两种来源，这里合成一条。
+     *
+     * 常驻的那一种（unavailable）：这一档根本取不到源文件（视频包装站、入口超过代理上限），
+     * 原因在**交互之前**就摆在这里，不必点任何东西。按钮那一档干脆不渲染。
+     *
+     * 为什么不是一个灰着的按钮：宣称 disabled、却必须点它才能知道为什么——屏读用户被告知
+     * 不可用会跳过，视觉用户看到禁用光标也会跳过，两边都拿不到那句原因，键盘激活还与宣称
+     * 的状态自相矛盾（Codex 第六轮 P2）。此前在「不渲染」与「可点的 aria-disabled」之间
+     * 来回过两轮，两版各丢一头：前者丢了原因，后者把原因锁在一次点击后面。真正该做的是
+     * 把原因从按钮里搬出来——交互前可见，于是那个假的可点控件不再需要存在。
+     *
+     * 一次性的那一种（downloadNote）：下载的结论或失败原因，用户可以关掉。常驻那条不给
+     * 关闭按钮——它是这一屏的状态，不是一次操作的回执。
+     */
+    const visibleNote: { text: string; tone: 'info' | 'error'; detail?: string; dismissible: boolean } | null =
+      // 打包中：按钮在手机上只剩图标，进度必须以文字常驻在说明条里（静止转圈超过 2 秒即缺陷）
+      downloading
+        ? { text: `${offlineExportLabel}：正在把样式、脚本和图片装进一个文件`, tone: 'info', dismissible: false }
+        : downloadNote
+        ? { ...downloadNote, dismissible: true }
+        : isAuthenticated && downloadPlan.kind === 'unavailable'
+          ? { text: downloadPlan.reason, tone: 'info', dismissible: false }
+          : null;
     return (
       <div
         ref={singleViewRef}
+        className="review-workbench"
+        data-theme={theme}
+        data-review-layout={isMobile ? 'mobile' : 'desktop'}
         style={{
-          width: '100vw',
-          height: '100vh',
+          width: embedded ? '100%' : '100vw',
+          height: embedded && !pageFullscreen ? '100%' : '100dvh',
           minHeight: 0,
+          position: pageFullscreen ? 'fixed' : 'relative',
+          inset: pageFullscreen ? 0 : undefined,
+          zIndex: pageFullscreen ? 2147483000 : undefined,
           display: 'grid',
           gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
-          background: '#0a0a0a',
+          gridTemplateColumns: !isFullscreen && showComments && sideBySide ? `minmax(0, 1fr) ${reviewSidebar.width}px` : 'minmax(0, 1fr)',
           overflow: 'hidden',
         }}
       >
-        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
-        <div className="border-b border-b-token-subtle" style={{ padding: '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
-            {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
-              {data.title || site.title}
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {!site.pdfAssetUrl && (
-              <button
-                onClick={togglePresentFullscreen}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
-                title="全屏演示（Esc 退出）"
-              >
-                {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
-                全屏演示
-              </button>
-            )}
-            {!isOwner && (
-              <button
-                onClick={handleSave}
-                disabled={saving || saveStatus !== 'idle'}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '4px 10px', borderRadius: 6, border: 'none',
-                  fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                  background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
-                    : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
-                    : 'rgba(59, 130, 246, 0.15)',
-                  color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
-                    : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
-                    : 'rgba(59, 130, 246, 0.9)',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {saving ? (
-                  <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
-                ) : saveStatus === 'saved' ? (
-                  <><Check size={12} /> 已保存</>
-                ) : saveStatus === 'already' ? (
-                  <><Check size={12} /> 你已经保存过了</>
-                ) : !isAuthenticated ? (
-                  <><LogIn size={12} /> 登录并保存</>
-                ) : (
-                  <><Download size={12} /> 保存到我的托管</>
+        {/* 全屏演示隐藏审阅顶栏，给托管内容留出完整空间。 */}
+        <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
+          <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle" style={reviewReaderTint(annotations.headerTints)}>
+            <div className="review-reader-title">
+              <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>
+              <div className="review-reader-identity">
+                <div className="review-reader-identity-line">
+                  <SharePageTitle key={site.id} site={site} rename={{ open: renameOpen, onOpenChange: setRenameOpen, menuOnly: isMobile }} onRenamed={(title) => setData((current) => current ? {
+                    ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
+                  } : current)} />
+                </div>
+                {data.documentCollectionId && data.title !== site.title ? <span className="review-reader-source">{data.title}</span>
+                  : site.description && <span className="review-reader-source" title={site.description}>{site.description}</span>}
+              </div>
+            </div>
+            {token && !liveSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} readerToolbar readerStage={reviewFrameRef} />}
+            {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
+            <div className="share-topbar-actions">
+              {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
+              {!isMobile && !embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
+              {!isMobile && !embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
+              {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
+              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader source={{ token, password: password || undefined }}
+                onNavigate={openRelatedDocument} />
+              {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
+                canToggleComments={relatedAccountSite.ownerUserId === currentUserId}
+                onNavigateRelated={relatedPreview.open}
+                onClose={() => { relatedPreview.cancel(); setRelatedAccountSite(null); }} />}
+              <Dialog open={!!relatedSharedSite} onOpenChange={open => { if (!open) setRelatedSharedSite(null); }}
+                title="关联文档预览" maxWidth={1400} contentStyle={{ width: '90vw', height: '90dvh', maxHeight: '90dvh' }}
+                content={relatedSharedSite && <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+                  <ShareViewPage key={relatedSharedSite.id} tokenOverride={token} siteIdOverride={relatedSharedSite.id}
+                    passwordOverride={password} embedded onNavigateRelated={openRelatedDocument} />
+                </div>} />
+              <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }}
+                title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
+              {token && !isMobile && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!liveSite.wrappedAssetType} readerLayout
+                />}
+              <SharePageActions site={site} compact menu onSettingsSaved={async () => {
+                if (!token) return;
+                const result = await viewSiteShare(token, password || undefined);
+                if (!result.success) throw new Error('refresh failed');
+                setData(result.data);
+              }}>
+              {isMobile && site.viewerIsOwner && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => setRenameOpen(true)}>
+                <Pencil size={15} />修改标题
+              </button>}
+              {isMobile && !embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a role="menuitem" className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>
+                <ArrowLeft size={15} />返回合集
+              </a>}
+              {isMobile && !embedded && isOwner && data.shareType === 'collection' && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => openCollectionManager()}>
+                <Settings2 size={15} />管理合集
+              </button>}
+              {isMobile && historyHint && !review.historical && <ReviewHistoryHint menu value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
+              {!site.pdfAssetUrl && (
+                <button
+                  role="menuitem"
+                  className="share-topbar-btn"
+                  onClick={togglePresentFullscreen}
+                  title="全屏演示（Esc 退出）"
+                  aria-label="全屏演示"
+                >
+                  {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
+                  全屏演示
+                </button>
+              )}
+              {/* 下载源文件：登录用户可见。
+                  为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
+                  存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
+                  存下来的常常不是那一份。
+                  为什么限登录：源文件就是这份内容的全部，门槛与「保存到我的托管」保持一致。 */}
+              {/* 取不到源文件的那一档（视频包装站、超过代理上限的大站）不渲染按钮——
+                  原因由上面那条常驻说明在交互前就给出，不需要一个点了才肯说话的假控件。 */}
+              {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
+                <button
+                  role="menuitem"
+                  data-menu-keep-open
+                  className="share-topbar-btn"
+                  onClick={handleDownloadSource}
+                  disabled={downloading || review.historical}
+                  title={review.historical ? '正在查看历史版本，请在新窗口中打开该版源文件' : downloadHint}
+                  aria-label={downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
+                >
+                  {downloading
+                    ? <MapSpinner size={isMobile ? 15 : 13} />
+                    : downloadPlan.kind === 'open'
+                      ? <ExternalLink size={isMobile ? 15 : 13} />
+                      : <FileDown size={isMobile ? 15 : 13} />}
+                  {downloading ? '正在下载…' : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
+                </button>
+              )}
+                {!isOwner && (
+                  <button
+                    role="menuitem"
+                    data-menu-keep-open
+                    onClick={handleSave}
+                    disabled={saving || saveStatus !== 'idle'}
+                    title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                    aria-label="保存到我的托管"
+                    className={
+                      saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
+                        : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
+                        : 'share-topbar-btn'
+                    }
+                  >
+                    {saving ? (
+                      <><MapSpinner size={isMobile ? 15 : 13} /></>
+                    ) : saveStatus === 'saved' ? (
+                      <><Check size={isMobile ? 15 : 13} /></>
+                    ) : saveStatus === 'already' ? (
+                      <><Check size={isMobile ? 15 : 13} /></>
+                    ) : !isAuthenticated ? (
+                      <><LogIn size={isMobile ? 15 : 13} /></>
+                    ) : (
+                      <><Download size={isMobile ? 15 : 13} /></>
+                    )}
+                    {saving ? '保存中…' : saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                  </button>
                 )}
-              </button>
-            )}
-            <a
-              href={site.pdfAssetUrl || site.siteUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
-            >
-              <ExternalLink size={12} />
-              新窗口打开
-            </a>
-            {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
-                浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
-            {token && (
-              <button
-                onClick={() => setShowComments(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
-              >
-                <MessageSquare size={12} />
-                评论{commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}
-              </button>
-            )}
+                {externalViewUrl && <a
+                  role="menuitem"
+                  className="share-topbar-btn"
+                  href={externalViewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink size={isMobile ? 15 : 13} />
+                  新窗口打开
+                </a>}
+              </SharePageActions>
+              {currentUser && <UserAvatar className="review-reader-portrait" title={currentUser.displayName} src={resolveAvatarUrl(currentUser)} />}
+            </div>
+            {isMobile && token && <ReviewReaderTabs discussion={showComments} count={commentCount}
+              documentId={documentPanelId} discussionId={discussionPanelId} onChange={setShowComments}
+              trailing={!liveSite.wrappedAssetType && <ReviewBubbleToggle annotations={annotations} readerLayout />} />}
           </div>
+
+          {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
+          {visibleNote && (
+            <div
+              className={`share-topbar-note surface-tone-dark${visibleNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
+              role="status"
+            >
+              <span>
+                {visibleNote.text}
+                {visibleNote.detail && (
+                  <span className="share-topbar-note-detail">{visibleNote.detail}</span>
+                )}
+              </span>
+              {visibleNote.dismissible && (
+                <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
-        <div style={{ position: 'relative', minHeight: 0, background: '#fff' }}>
-          {/* Iframe
-              普通 HTML 托管页优先走 srcDoc：COS 直链在 Chrome iframe 中可能只绘制空白，
-              但同一 HTML 下载后可正常打开。srcDoc 注入 base 后保留相对资源路径，同时不加
-              allow-same-origin，避免用户上传 HTML 获得 MAP 同源能力。
-              PDF 壳子仍保留 siteUrl 路径：它需要以 COS 文档源加载同目录 PDF。 */}
+        <div id={documentPanelId} role={isMobile && token ? 'tabpanel' : undefined} aria-labelledby={isMobile && token ? `${documentPanelId}-tab` : undefined}
+          aria-hidden={isMobile && showComments && !isFullscreen ? true : undefined}
+          className="review-document-stage" style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: 'var(--review-b-paper)' }}>
+          {!isFullscreen && !review.loading && (site.wrappedAssetType === 'pdf' || (annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
+          <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
+          {pageFullscreen && (
+            <button
+              type="button"
+              onClick={() => setPageFullscreen(false)}
+              title="退出全屏"
+              aria-label="退出全屏"
+              className="border border-token-subtle"
+              style={{
+                position: 'absolute',
+                zIndex: 20,
+                top: 'max(10px, env(safe-area-inset-top))',
+                right: 'max(10px, env(safe-area-inset-right))',
+                width: 38,
+                height: 38,
+                display: 'grid',
+                placeItems: 'center',
+                borderRadius: 10,
+                background: 'var(--panel-solid)',
+                color: 'var(--text-primary)',
+                boxShadow: '0 6px 18px rgba(0,0,0,0.24)',
+              }}
+            >
+              <Minimize size={17} />
+            </button>
+          )}
+          {/* Iframe —— 三态，由 resolvePreviewSource 决定，**不再有「先挂直链再说」这一档**。
+              普通 HTML 托管页优先走 srcDoc：直链 iframe 在 Chrome 里可能只绘制空白，
+              而在某些 App 的内置浏览器里那次跨域文档请求会被当成下载（2026-09-18 事故）。
+              srcDoc 注入 base 后保留相对资源路径，同时不加 allow-same-origin，
+              避免用户上传 HTML 获得 MAP 同源能力。
+              PDF 壳子仍走 siteUrl：它需要以托管域名为文档源才加载得到同目录那份 PDF。 */}
+          <HostedPdfDownloadStatus status={pdfDownload.status} />
           <iframe
-            src={iframeHtml ? undefined : site.siteUrl}
-            srcDoc={iframeHtml || undefined}
+            ref={pdfDownload.iframeRef}
+            key={`${review.historical ? review.selected?.id : 'live'}:${previewSource === 'srcdoc' ? 'srcdoc' : 'direct'}`}
+            onLoad={() => { pdfDownload.notifyFrame(); annotations.notifyFrame(); }}
+            // siteUrl 为空时必须给 undefined 而不是 ''：空串在 HTML 里是「相对当前文档」，
+            // iframe 会把分享页自己再加载一遍。下面那块空态提示正是为这种站点准备的。
+            src={previewSource === 'direct' && site.siteUrl ? site.siteUrl : undefined}
+            srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(withAnnotationRuntime(iframeHtml)) : undefined}
             title={site.title}
-            style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
-            sandbox={iframeHtml
-              ? 'allow-scripts allow-popups allow-forms allow-fullscreen'
-              : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
+            style={{ border: 'none', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
+            className="w-full"
+            sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(site.siteUrl)}
+            // 全屏权限归 `allow`（Permissions Policy）管，**不是** sandbox 的取值。
+            // 这里原先写的 `allow-fullscreen` 不是合法 sandbox flag，Chrome 会报
+            // "Error while parsing the 'sandbox' attribute: 'allow-fullscreen' is an
+            // invalid sandbox flag." 并忽略它——写了两个月，deck 自带的全屏按钮一天没生效过。
+            allow="fullscreen"
             allowFullScreen
           />
-          {embeddedHtmlLoading && !iframeHtml && (
+          <AnnotationBubble annotations={annotations} hidden={isFullscreen || showComments || isMobile} />
+          {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
+              用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。
+              这种时候必须把「为什么是空的」说出来（no-rootless-tree / expectation-management）。 */}
+          {!iframeHtml && !site.siteUrl && (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 8,
+              background: '#fff', color: '#475569', fontSize: 14, padding: 24, textAlign: 'center',
+            }}>
+              <div style={{ fontWeight: 600 }}>这个站点没有可加载的入口地址</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.7, maxWidth: 460 }}>
+                它的托管地址是空的，浏览器没有东西可以打开。多半是上传中断或内容已被清理，
+                请让分享者重新上传一次。
+              </div>
+              <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, opacity: 0.65 }}>
+                站点 ID {site.id}
+              </div>
+            </div>
+          )}
+          {/* 准备中：这一刻 iframe 是空的（还没决定走 srcDoc 还是直链，就不向托管域名
+              发任何请求），所以这块不是「盖住什么」，而是这一刻屏幕上唯一的内容。
+              等待有上限——DIRECT_FALLBACK_TIMEOUT_MS 到点即转直链，不会永远停在这里。
+              判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
+          {shouldMaskDirectPreview({ source: previewSource }) && (
             <div style={{
               position: 'absolute',
               inset: 0,
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: 12,
               background: '#fff',
               color: '#475569',
               fontSize: 14,
             }}>
-              正在准备预览...
+              {/* 静止的「加载中」超过 2 秒就是体验缺陷（CLAUDE.md §6），这一段最长可到 6 秒 */}
+              <MapSpinner size={22} />
+              <div>正在取回网页原文…</div>
+            </div>
+          )}
+          {/* 幻灯片邀请条：这是一套 deck，告诉访客键盘能翻页，几秒后自己淡出不挡内容 */}
+          {isDeck && <SlideKeyboardInvite yield={askState === 'bar'} />}
+
+          {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
+              静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
+          {/* 迟到的原文没自动换上去时，给一个看得见的出口。
+              直链那一帧到底画出东西没有，我们跨源读不到；访客攒了多少状态，同样看不到。
+              两个判据都不可知，就不该替他猜——把手里这份能救场的原文摆出来，他自己点。
+              没有这个出口时，「直链白屏 + 原文迟到」就是一片永远的白。 */}
+          {lateHtml && !iframeHtml && !review.historical && (
+            <button
+              className="border border-token-subtle"
+              onClick={() => { setEmbeddedHtml(lateHtml); setLateHtml(null); }}
+              style={{ ...OVERLAY_CHIP, right: 12, bottom: 12, cursor: 'pointer' }}
+            >
+              这一页没显示出来？用原文重新加载
+            </button>
+          )}
+
+          {embeddedHtmlError && !iframeHtml && !review.historical && previewSource !== 'pending' && (
+            <div style={{ ...OVERLAY_CHIP, left: 12, bottom: 12, maxWidth: 'min(420px, calc(100% - 24px))' }}>
+              {embeddedHtmlError}
             </div>
           )}
         </div>
 
-        {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
-        {token && showComments && (
+        {/* Keep the same discussion mounted when switching views so drafts and scroll positions survive. */}
+        {token && (
           <>
-            {/* 遮罩：点击关闭 */}
-            <div
-              onClick={() => setShowComments(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.4)' }}
-            />
             {/* 右侧抽屉 */}
             <aside
-              className="border-l border-l-token-subtle" style={{ position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61, width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column', background: '#0f1014', boxShadow: '-12px 0 40px rgba(0,0,0,0.5)' }}
+              id={discussionPanelId} role={isMobile ? 'tabpanel' : undefined} aria-labelledby={isMobile ? `${discussionPanelId}-tab` : undefined}
+              className="review-sidebar review-b-surface" style={{ position: 'relative', zIndex: 3, gridColumn: sideBySide ? 2 : 1, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : reviewSidebar.width, justifySelf: 'end', height: '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column' }}
             >
-              <div className="border-b border-b-token-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', flexShrink: 0 }}>
-                <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>评论</span>
-                <button
-                  onClick={() => setShowComments(false)}
-                  title="关闭"
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
-                    background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.7)',
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
-                <CommentsSection mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} />
+              {!isMobile && <ReviewSidebarResizeHandle {...reviewSidebar} />}
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <CommentsSection splitLayout readerLayout visible={showComments && !isFullscreen} key={`${token}:${password}:${liveSite.id}`}
+                  mode="share" siteId={liveSite.id} token={token} password={password || undefined} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review}
+                  onClose={!isMobile ? () => setShowComments(false) : undefined} onPickElement={() => setShowComments(false)} onHistoryHint={setHistoryHint}
+                  onLocateAnchor={isMobile ? focus => { setShowComments(false); requestAnimationFrame(focus); } : undefined} onLogin={loginToReview} />
               </div>
             </aside>
           </>
         )}
+
+        <ShareAssistantLauncher hidden={isFullscreen || showComments || review.historical || review.loading || !!annotations.selectionCandidate} isMobile={isMobile}>
+        {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
+            开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
+        {token && data.ask?.enabled && (
+          <AskWidget
+            source={{ mode: 'share', token, siteId: data.ask.siteId, password: password || undefined }}
+            title={site.title || data.title || '这个页面'}
+            welcome={data.ask.welcome}
+            openingQuestions={data.ask.openingQuestions ?? []}
+            allowAnonymous={data.ask.allowAnonymous}
+            hidden={isFullscreen || showComments || review.historical}
+            onStateChange={setAskState}
+          />
+        )}
+        {/*
+          编辑坞的门走后端给的结论，不用 isOwner（那是「谁建了这条分享链接」）。
+          下面「存一份副本」那类提示仍然用 isOwner——在那里它问的正是「这条链接是不是我建的」，
+          两个判据服务的是两个问题，不能互相顶替。
+        */}
+        {site.viewerCanEdit && !site.wrappedAssetType && (
+          <>
+            <ShareSiteEditDock
+              siteId={site.id}
+              isMobile={isMobile}
+              hidden={isFullscreen || showComments || review.historical || review.loading || askState !== 'collapsed'}
+              onPublished={handleOwnerSitePublished}
+            />
+            {/* 分享阅读页不在 AppShell 里，编辑坞发布草稿时的私有资料确认层要自己挂一个宿主 */}
+            <PrivateSourceConfirmHost />
+          </>
+        )}
+        </ShareAssistantLauncher>
       </div>
     );
   }
 
-  // Collection -> list cards
-  return (
-    <div style={{ ...styles.fullScreen, alignItems: 'flex-start', paddingTop: 60 }}>
-      <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
-      <div style={styles.overlay} />
-      <div style={{ maxWidth: 720, width: '100%', padding: '20px 16px', position: 'relative', zIndex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Unlock size={18} color="rgba(34, 197, 94, 0.8)" />
-            {/* 不再展示「{用户} 分享的」前缀，直接显示合集标题 */}
-            <h1 style={{ color: '#fff', fontSize: 22, margin: 0, fontWeight: 600 }}>
-              {data.title || `${data.sites.length} 个站点合集`}
-            </h1>
-          </div>
-          {!isOwner && (
-            <button
-              onClick={handleSave}
-              disabled={saving || saveStatus !== 'idle'}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
-                padding: '6px 14px', borderRadius: 8, border: 'none',
-                fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                background: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
-                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
-                  : 'rgba(59, 130, 246, 0.15)',
-                color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
-                  : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
-                  : 'rgba(59, 130, 246, 0.9)',
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
-                transition: 'all 0.2s',
-              }}
-            >
-              {saving ? (
-                <><div style={{ ...styles.miniSpinner }} /> 保存中...</>
-              ) : saveStatus === 'saved' ? (
-                <><Check size={13} /> 已保存</>
-              ) : saveStatus === 'already' ? (
-                <><Check size={13} /> 你已经保存过了</>
-              ) : !isAuthenticated ? (
-                <><LogIn size={13} /> 登录并保存</>
-              ) : (
-                <><Download size={13} /> 保存到我的托管</>
-              )}
-            </button>
-          )}
-        </div>
-        {data.description && <p style={{ color: 'rgba(255,255,255,0.5)', margin: '0 0 16px', fontSize: 14 }}>{data.description}</p>}
-        <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, margin: '0 0 20px' }}>{data.sites.length} 个站点</p>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {data.sites.map(site => (
-            <a
-              key={site.id}
-              href={site.siteUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 14,
-                padding: 16,
-                borderRadius: 14,
-                background: 'var(--nested-block-bg)',
-                border: '1px solid var(--border-subtle)',
-                textDecoration: 'none',
-                backdropFilter: 'blur(24px)',
-                WebkitBackdropFilter: 'blur(24px)',
-                transition: 'border-color 0.2s, background 0.2s',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)';
-                e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-                e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-              }}
-            >
-              {site.coverImageUrl ? (
-                <img src={site.coverImageUrl} alt="" style={{ width: 56, height: 42, objectFit: 'cover', borderRadius: 8 }} />
-              ) : (
-                <div style={{ width: 56, height: 42, borderRadius: 8, background: 'var(--nested-block-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <FileCode2 size={20} color="rgba(255,255,255,0.3)" />
-                </div>
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: '#fff', fontSize: 15, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {site.title}
-                </div>
-                {site.description && (
-                  <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {site.description}
-                  </div>
-                )}
-                <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, marginTop: 4 }}>
-                  {site.fileCount} 个文件 · {fmtSize(site.totalSize)}
-                </div>
-              </div>
-              <ExternalLink size={14} color="rgba(255,255,255,0.3)" />
-            </a>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 const styles: Record<string, React.CSSProperties> = {

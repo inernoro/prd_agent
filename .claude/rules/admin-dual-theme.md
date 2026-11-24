@@ -1,3 +1,9 @@
+---
+paths:
+  - "prd-admin/src/**/*.tsx"
+  - "prd-admin/src/**/*.css"
+---
+
 # prd-admin 系统级双皮肤（Dual Theme）
 
 **一句话**：prd-admin 的颜色只能来自主题 token 或双皮肤分支，裸写的白透明与深色 hex 会被棘轮测试拦下。
@@ -35,7 +41,7 @@
 4. **基线更新**：确属合法例外需要提高某文件计数时，跑
    `UPDATE_THEME_BASELINE=1 pnpm vitest run src/lib/__tests__/themeHardcodeRatchet.test.ts`
    基线 diff 必须出现在 PR 里并说明原因；无说明的基线上调一律 reject。
-5. **清扫顺序**（存量债务，台账见 `doc/debt.frontend.md「移动端全局浅色主题」`）：用户走到哪修到哪；优先级 = 移动端 Tab 直达页 > 高频 Agent 页 > 管理后台深页。
+5. **清扫顺序**按移动端 Tab 直达页、高频 Agent 页、管理后台深页推进。历史债务的原主题为「移动端全局浅色主题」。 [原始记录](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.frontend.md)
 
 ## 三、验收要求
 

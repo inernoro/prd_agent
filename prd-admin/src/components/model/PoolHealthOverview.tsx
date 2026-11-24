@@ -26,13 +26,13 @@ const ALARM_LEVEL_STYLE: Record<
   critical: {
     bg: 'rgba(239,68,68,0.10)',
     border: 'rgba(239,68,68,0.30)',
-    color: 'rgba(239,68,68,0.95)',
+    color: 'var(--accent-fg-danger)',
     Icon: ShieldAlert,
   },
   warning: {
     bg: 'rgba(251,146,60,0.10)',
     border: 'rgba(251,146,60,0.30)',
-    color: 'rgba(251,146,60,0.95)',
+    color: 'var(--accent-fg-warning)',
     Icon: AlertTriangle,
   },
 };
@@ -214,7 +214,7 @@ export function PoolHealthOverview({
               border: '1px solid rgba(34,197,94,0.22)',
             }}
           >
-            <ShieldCheck size={14} style={{ color: 'rgba(34,197,94,0.95)' }} />
+            <ShieldCheck size={14} style={{ color: 'var(--accent-fg-success)' }} />
             <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
               全部健康：无死池、无高 fallback 告警
             </span>

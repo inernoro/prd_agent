@@ -1,3 +1,16 @@
+import type { IncomingMessage } from 'node:http';
+
+/** API HTML 是应用产物，fetch 正文也可能进入 srcDoc 或离线文件，均保持原字节。 */
+export function isPreviewWidgetNavigation(req: Pick<IncomingMessage, 'method' | 'headers' | 'url'>): boolean {
+  const method = (req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  // 工作台把 API 预览文件直接放进 iframe；仅判断 Fetch Metadata 不足以区分它和应用入口。
+  if (/^\/api(?:\/|[?#]|$)/i.test(req.url || '')) return false;
+  const destination = String(req.headers['sec-fetch-dest'] || '').trim().toLowerCase();
+  // 不带 Fetch Metadata 的旧浏览器和命令行保持既有行为。
+  return !destination || destination === 'document' || destination === 'iframe';
+}
+
 /**
  * CDS Auto-Update Widget — injected into proxied HTML responses.
  *
@@ -15,6 +28,15 @@ export function buildWidgetScript(
   // （极速/源码），保证首屏即可见；下面的 /api/branches 拉取会再刷新一次。
   initialSha = '',
   initialModeLabel = '',
+  /**
+   * 托管态（2026-09-16）：这条分支起的是一个 CDS 预览实例（CDS 托管 CDS）。
+   * 徽章改深绿严肃配色，首段固定写「CDS 托管 CDS」，末尾提示部署 / docker 已禁用；
+   * 展开面板不再给「更新 / 全量更新」按钮——那是对父实例发的部署命令，子实例由父实例
+   * 按分支部署，推新 commit 即重建。原先这句话由子实例自己在页面底部画一条橙 pill，
+   * 与本徽章并排两条（用户 2026-09-16：「这两个可以结合一下」）；合并后子实例侦测到
+   * 本徽章存在就不再画自己的那条。
+   */
+  hostedCds = false,
 ): string {
   // Escape for safe embedding in <script> tag
   const safeId = branchId.replace(/['"<>&]/g, '');
@@ -22,6 +44,7 @@ export function buildWidgetScript(
   const safeSha = String(initialSha || '').replace(/[^a-fA-F0-9]/g, '').slice(0, 40);
   const safeMode = String(initialModeLabel || '').replace(/[^一-龥A-Za-z]/g, '').slice(0, 8);
   const bridgeEnabled = process.env.CDS_BRIDGE_ENABLED === '1';
+  const mobileIdleBadge = '#cds-widget .cds-badge:not(:is(.is-expanded,.is-syncing,.is-sync-success,.is-sync-error))';
 
   return `
 <script data-cds-widget>
@@ -33,6 +56,7 @@ export function buildWidgetScript(
   var API='/_cds/api';
   var BRIDGE_ENABLED=${bridgeEnabled ? 'true' : 'false'};
   var DEPLOY_MODE_LABEL='${safeMode}';
+  var HOSTED_CDS=${hostedCds ? 'true' : 'false'};
 
   // ── Styles ──
   var css=document.createElement('style');
@@ -49,8 +73,9 @@ export function buildWidgetScript(
     .cds-ai-badge-stop:hover{background:rgba(248,81,73,0.3);border-color:#f85149;color:#fff}
     .cds-ai-badge-stop:disabled{opacity:0.5;cursor:wait}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
-    #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
+    #cds-widget{--cds-safe-top:env(safe-area-inset-top,0px);--cds-safe-right:env(safe-area-inset-right,0px);--cds-safe-bottom:env(safe-area-inset-bottom,0px);--cds-safe-left:env(safe-area-inset-left,0px);position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
+    #cds-widget:not([data-cds-connection="connected"]) .cds-badge{background:rgba(130,95,25,.9);border-color:rgba(240,136,62,.5)}
     #cds-widget .cds-badge{position:relative;display:inline-flex;flex-direction:column;align-items:stretch;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1;overflow:hidden;transition:background .22s ease,border-color .22s ease,box-shadow .22s ease}
     #cds-widget .cds-badge:active{cursor:grabbing}
     #cds-widget .cds-badge::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:0}
@@ -58,7 +83,15 @@ export function buildWidgetScript(
     #cds-widget .cds-badge.is-syncing::before{opacity:1;background:linear-gradient(120deg,transparent 0%,rgba(255,255,255,0.1) 42%,transparent 72%);animation:cds-sync-sweep 1.7s ease-in-out infinite}
     #cds-widget .cds-badge.is-sync-success{background:rgba(19,41,28,0.95);border-color:rgba(63,185,80,0.45)}
     #cds-widget .cds-badge.is-sync-error{background:rgba(52,23,27,0.95);border-color:rgba(248,81,73,0.45)}
+    #cds-widget .cds-badge.is-hosted-cds{background:rgba(12,46,30,0.96);border-color:rgba(74,222,128,0.34);box-shadow:0 2px 10px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.05)}
+    #cds-widget .cds-badge.is-hosted-cds .cds-sha{background:rgba(74,222,128,0.14);border-color:rgba(74,222,128,0.32);color:#dcfce7}
+    #cds-widget .cds-hosted-label{font-size:10px;font-weight:700;letter-spacing:0.06em;padding:2px 6px;border-radius:4px;background:rgba(74,222,128,0.16);border:1px solid rgba(74,222,128,0.34);color:#bbf7d0;white-space:nowrap}
+    #cds-widget .cds-hosted-note{font-size:10px;color:#86efac;opacity:0.85;white-space:nowrap}
+    #cds-widget .cds-hosted-panel-note{margin-top:2px;padding:6px 8px;border-radius:6px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.22);font-size:10px;line-height:1.5;color:#bbf7d0}
     #cds-widget .cds-badge-main{position:relative;z-index:1;display:flex;align-items:center;gap:6px}
+    #cds-widget .cds-badge--compact{padding:0;width:36px;height:36px;border-radius:18px;align-items:center;justify-content:center;cursor:pointer}
+    #cds-widget .cds-badge--compact button{display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin:0;padding:0;border:none;background:transparent;color:#e2e8f0;cursor:pointer}
+    #cds-widget .cds-badge--compact .cds-compact-sha{position:absolute;right:-2px;bottom:-2px;font-size:8px;line-height:1;padding:1px 3px;border-radius:4px;background:rgba(56,139,253,0.9);color:#fff;font-family:ui-monospace,SFMono-Regular,monospace;pointer-events:none}
     #cds-widget .cds-badge-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
     #cds-widget .cds-badge.is-syncing .cds-badge-icon svg{animation:cds-spin .95s linear infinite}
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -82,7 +115,11 @@ export function buildWidgetScript(
     #cds-widget .cds-commit-msg{font-size:10px;color:#8b949e;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
+    #cds-widget button:focus-visible{outline:2px solid #93c5fd;outline-offset:2px;opacity:1}
     #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:260px;width:max-content;max-width:min(480px,calc(100vw - 40px));overflow:hidden}
+    #cds-widget .cds-panel-header{display:flex;min-height:36px;align-items:center;justify-content:space-between;gap:12px;margin:-6px -6px 8px;padding:2px 2px 8px 6px;border-bottom:1px solid rgba(148,163,184,0.16)}
+    #cds-widget .cds-panel-title{font-size:11px;font-weight:600;color:#f8fafc}
+    #cds-widget .cds-panel-close{width:36px;height:36px;flex-shrink:0;border:1px solid rgba(148,163,184,0.22);background:rgba(255,255,255,0.04)}
     #cds-widget .cds-sync-panel{margin-bottom:8px;padding:7px 8px 8px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(148,163,184,0.16)}
     #cds-widget .cds-sync-panel.done{background:rgba(63,185,80,0.06);border-color:rgba(63,185,80,0.26)}
     #cds-widget .cds-sync-panel.error{background:rgba(248,81,73,0.06);border-color:rgba(248,81,73,0.26)}
@@ -114,6 +151,22 @@ export function buildWidgetScript(
     #cds-widget .cds-mode-select{font-size:10px;padding:2px 4px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;cursor:pointer;flex:1;min-width:0}
     #cds-widget .cds-mode-select:hover{border-color:#58a6ff}
     #cds-widget .cds-mode-select:focus{outline:none;border-color:#58a6ff}
+    @media (max-width:640px){
+      #cds-widget{width:max-content;max-width:calc(100vw - 24px)}
+      #cds-widget .cds-badge{max-width:calc(100vw - 24px);padding:4px 6px}
+      ${mobileIdleBadge}{width:44px;height:44px;min-width:44px;max-width:44px;padding:0;border-radius:12px}
+      ${mobileIdleBadge} .cds-badge-main{width:100%;height:100%;justify-content:center;gap:0}
+      ${mobileIdleBadge} .cds-badge-main>:not(button[data-action="toggle"]){display:none}
+      ${mobileIdleBadge} button[data-action="toggle"]{width:44px;height:44px;padding:0;opacity:1}
+      #cds-widget .cds-branch,#cds-widget .cds-mode,#cds-widget .cds-tag{display:none}
+      #cds-widget .cds-hosted-label,#cds-widget .cds-hosted-note{display:none}
+      #cds-widget .cds-panel{width:calc(100vw - 24px);min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+      #cds-widget .cds-panel-header{position:sticky;top:-10px;z-index:2;background:rgba(22,27,34,0.98)}
+      #cds-widget .cds-panel-close{width:44px;height:44px}
+      #cds-widget button{min-width:44px;min-height:44px}
+      #cds-widget .cds-deploy-btn{min-width:0}
+      #cds-widget .cds-mode-select{min-height:44px}
+    }
     #cds-widget .cds-spinner{display:inline-block;width:11px;height:11px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:cds-spin .8s linear infinite;flex-shrink:0}
     #cds-widget .cds-step{display:flex;align-items:center;gap:4px;font-size:10px;color:#8b949e}
     #cds-widget .cds-step.done{color:#3fb950}
@@ -160,10 +213,16 @@ export function buildWidgetScript(
 
   // ── State ──
   var expanded=false;
+  var siteSignInEnabled=false;
+  // 手机上整条徽章压在业务内容上（2026-09-14 稳定冒烟：移动首页底部被分支状态条遮挡）。
+  // 窄屏进入 4 秒后收成 36px 的圆形小钮，只在用户点它时展开；桌面端不受影响。
+  var compact=false;
+  var compactTimer=null;
   var deploying=false;
   var deployProfileId=null;
   var profiles=[];
   var branchStatus='';
+  var branchConnectionState='connecting';
   var commitSha='${safeSha}';
   var commitMsg='';
   var branchTags=[];
@@ -179,7 +238,9 @@ export function buildWidgetScript(
   var titlePrefix='';
   var titleObserver=null;
   var branchEventSource=null;
+  var branchStreamRetryTimer=null;
   var branchInfoFetchTimer=null;
+  var branchInfoFetchSequence=0;
   var syncClearTimer=null;
   var syncState={
     visible:false,
@@ -211,7 +272,7 @@ export function buildWidgetScript(
       aiLastSeen=0;aiOccupant=null;
       updateAiOverlay();
     }).catch(function(err){
-      if(btn){btn.disabled=false;btn.textContent='✕ 结束';}
+      if(btn){btn.disabled=false;btn.innerHTML=ICON_X+' 结束';}
       console.error('[cds-widget] end-session failed:',err);
     });
   }
@@ -240,7 +301,7 @@ export function buildWidgetScript(
         });
       }
       var label='AI 操控中'+(aiOccupant!=='AI'?' · '+aiOccupant:'');
-      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span><span>'+label+'</span><button class="cds-ai-badge-stop" title="结束 AI 对本页的操控">✕ 结束</button>';
+      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span><span>'+label+'</span><button class="cds-ai-badge-stop" title="结束 AI 对本页的操控">'+ICON_X+' 结束</button>';
     }else{
       if(aiOverlay){aiOverlay.remove();aiOverlay=null;}
       if(aiBadgeEl){aiBadgeEl.remove();aiBadgeEl=null;}
@@ -250,6 +311,7 @@ export function buildWidgetScript(
 
   // Connect to activity stream for AI occupation detection
   function initAiStream(){
+    if(!BRIDGE_ENABLED)return;
     var es;
     try{es=new EventSource(API+'/activity-stream');}catch(e){return;}
     es.onmessage=function(msg){
@@ -317,6 +379,11 @@ export function buildWidgetScript(
       syncState.stepsSeen={};
       render();
     },delay);
+  }
+
+  function invalidateBranchInfoRefresh(){
+    branchInfoFetchSequence++;
+    if(branchInfoFetchTimer){clearTimeout(branchInfoFetchTimer);branchInfoFetchTimer=null;}
   }
 
   function queueBranchInfoRefresh(delay){
@@ -413,9 +480,33 @@ export function buildWidgetScript(
   }
 
   function initBranchStream(){
-    try{branchEventSource=new EventSource(API+'/branches/stream');}catch(e){return;}
+    invalidateBranchInfoRefresh();
+    if(branchStreamRetryTimer){clearTimeout(branchStreamRetryTimer);branchStreamRetryTimer=null;}
+    if(branchEventSource)branchEventSource.close();
+    var source;
+    try{source=new EventSource(API+'/branches/stream');}catch(e){branchEventSource=null;return;}
+    branchEventSource=source;
+    source.addEventListener('cds.transport',function(msg){
+      if(branchEventSource!==source)return;
+      try{
+        var transport=JSON.parse(msg.data);
+        if(transport.state!=='connected')invalidateBranchInfoRefresh();
+        if(transport.state==='connected'){
+          if(branchConnectionState!=='connecting'&&branchConnectionState!=='connected')branchConnectionState='refreshing';
+        }
+        else if(transport.state==='forbidden'||transport.state==='unavailable')branchConnectionState=transport.state;
+        else if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
+        render();
+      }catch(e){}
+    });
+    // 快照只作为重连提示；业务终态仍由受权限约束的GET补读，不把全分支快照当列表权威。
+    source.addEventListener('snapshot',function(){
+      if(branchEventSource!==source)return;
+      queueBranchInfoRefresh(0);
+    });
 
-    branchEventSource.addEventListener('branch.created',function(msg){
+    source.addEventListener('branch.created',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         var branch=evt&&evt.branch;
@@ -431,7 +522,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.updated',function(msg){
+    source.addEventListener('branch.updated',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -446,7 +538,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.status',function(msg){
+    source.addEventListener('branch.status',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -457,7 +550,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.deploy-step',function(msg){
+    source.addEventListener('branch.deploy-step',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -465,7 +559,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.removed',function(msg){
+    source.addEventListener('branch.removed',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -473,9 +568,17 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.onerror=function(){
-      if(branchEventSource)branchEventSource.close();
-      setTimeout(initBranchStream,3000);
+    source.onerror=function(){
+      if(branchEventSource!==source)return;
+      if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
+      render();
+      invalidateBranchInfoRefresh();
+      source.close();
+      if(branchStreamRetryTimer)return;
+      branchStreamRetryTimer=setTimeout(function(){
+        branchStreamRetryTimer=null;
+        if(branchEventSource===source)initBranchStream();
+      },3000);
     };
   }
 
@@ -489,30 +592,215 @@ export function buildWidgetScript(
     return window.innerWidth<=640?88:12;
   }
 
-  var pos={x:12,y:defaultWidgetBottom()};
+  function defaultWidgetLeft(){
+    // Desktop sidebars vary between collapsed and expanded widths. Anchor the
+    // preview controls in the right-side safe area instead of guessing a left rail.
+    return window.innerWidth<=640?12:Math.max(12,window.innerWidth-492);
+  }
+
+  function isMobileViewport(){
+    return window.innerWidth<=640;
+  }
+  function scheduleMobileCompact(delayMs){
+    if(compactTimer){clearTimeout(compactTimer);compactTimer=null;}
+    if(!isMobileViewport()||expanded)return;
+    compactTimer=setTimeout(function(){
+      compactTimer=null;
+      if(!isMobileViewport()||expanded)return;
+      compact=true;
+      render();
+    },delayMs);
+  }
+
+  var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
+  var panelOrigin=null;
+  function setPanelExpanded(value){
+    if(value&&!expanded){
+      panelOrigin={x:pos.x,y:pos.y};
+      fetch('/_cds/api/hosted-sso/panel/status',{credentials:'omit',cache:'no-store'}).then(function(response){
+        return response.ok?response.json():null;
+      }).then(function(status){
+        if(!status||typeof status.enabled!=='boolean'||status.enabled===siteSignInEnabled)return;
+        siteSignInEnabled=status.enabled;
+        if(expanded)render();
+      }).catch(function(){});
+    }
+    expanded=value;
+    if(!value&&panelOrigin){pos.x=panelOrigin.x;pos.y=panelOrigin.y;panelOrigin=null;}
+  }
   var dragState=null;
+  var widgetWasDragged=false;
+  var avoidanceFrame=null;
+
+  function visibleObstacle(el){
+    if(root.contains(el)||el.closest('#cds-handshake-request,#cds-nav-request'))return null;
+    var r=el.getBoundingClientRect();
+    var rect={left:Math.max(0,r.left),top:Math.max(0,r.top),right:Math.min(window.innerWidth,r.right),bottom:Math.min(window.innerHeight,r.bottom)};
+    for(var node=el;node;node=node.parentElement){
+      var style=window.getComputedStyle(node);
+      if(style.display==='none'||style.visibility==='hidden'||style.contentVisibility==='hidden'||Number(style.opacity)===0)return null;
+      if(node!==el){
+        var clip=node.getBoundingClientRect();
+        if(/auto|scroll|hidden|clip/.test(style.overflowX)){rect.left=Math.max(rect.left,clip.left);rect.right=Math.min(rect.right,clip.right);}
+        if(/auto|scroll|hidden|clip/.test(style.overflowY)){rect.top=Math.max(rect.top,clip.top);rect.bottom=Math.min(rect.bottom,clip.bottom);}
+      }
+    }
+    return rect.right>rect.left&&rect.bottom>rect.top?rect:null;
+  }
+
+  function avoidSemanticOverlays(){
+    if(!root.isConnected)return;
+    if(!isMobileViewport()||expanded){root.removeAttribute('data-cds-placement');return;}
+    if(dragState)return;
+    var obstacles=[],seen=[];
+    function add(el){
+      if(seen.indexOf(el)!==-1)return;
+      seen.push(el);
+      var rect=visibleObstacle(el);
+      if(rect)obstacles.push(rect);
+    }
+    document.querySelectorAll('[role="status"],[role="alert"],[aria-live="polite"],[aria-live="assertive"]').forEach(function(el){
+      if(!visibleObstacle(el))return;
+      for(var node=el;node;node=node.parentElement){
+        var position=window.getComputedStyle(node).position;
+        if(position==='fixed'||position==='sticky'){
+          var appFrame=node===document.body||node===document.documentElement||node.matches('main,[role="main"],[role="application"]');
+          // 应用布局外壳提供定位上下文，语义节点自身才是本次浮层；普通浮层包装仍整体保留。
+          add(node!==el&&appFrame?el:node);break;
+        }
+      }
+    });
+    document.querySelectorAll('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]').forEach(add);
+    var view=window.visualViewport,style=window.getComputedStyle(root),r=root.getBoundingClientRect();
+    function inset(side){return Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-'+side))||0)+12;}
+    var left=(view?view.offsetLeft:0)+inset('left'),top=(view?view.offsetTop:0)+inset('top');
+    var right=(view?view.offsetLeft+view.width:window.innerWidth)-inset('right');
+    var bottom=(view?view.offsetTop+view.height:window.innerHeight)-inset('bottom');
+    var maxX=right-r.width,maxY=bottom-r.height,midX=(left+maxX)/2,midY=(top+maxY)/2;
+    // 有限候选：保留安全原位，其次同高两边、四角和四边中点，不猜某个应用的导航高度。
+    var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY],[midX,top],[midX,maxY]];
+    var previous={x:pos.x,y:pos.y,left:root.style.left,bottom:root.style.bottom};
+    root.setAttribute('data-cds-placement','blocked');
+    for(var i=0;i<candidates.length;i++){
+      var x=candidates[i][0],y=candidates[i][1];
+      if(x<left||y<top||x>maxX||y>maxY)continue;
+      var hit=obstacles.some(function(o){return x<o.right+8&&x+r.width>o.left-8&&y<o.bottom+8&&y+r.height>o.top-8;});
+      if(hit)continue;
+      pos.x=x;pos.y=window.innerHeight-y-r.height;
+      root.style.left=pos.x+'px';root.style.bottom=pos.y+'px';
+      // fixed 元素落位后仍可能受页面 CSS 影响；只按真实边界承认安全，不以预估尺寸宣称成功。
+      var placed=root.getBoundingClientRect();
+      if(placed.left<left||placed.top<top||placed.right>right||placed.bottom>bottom)continue;
+      if(obstacles.some(function(o){return placed.left<o.right+8&&placed.right>o.left-8&&placed.top<o.bottom+8&&placed.bottom>o.top-8;}))continue;
+      root.setAttribute('data-cds-placement','clear');
+      return;
+    }
+    pos.x=previous.x;pos.y=previous.y;
+    root.style.left=previous.left;root.style.bottom=previous.bottom;
+  }
+
+  function scheduleWidgetAvoidance(){
+    if(avoidanceFrame||!root.isConnected)return;
+    avoidanceFrame=requestAnimationFrame(function(){avoidanceFrame=null;avoidSemanticOverlays();});
+  }
+  var avoidanceObserver=new MutationObserver(function(records){
+    if(records.some(function(record){return !root.contains(record.target);}))scheduleWidgetAvoidance();
+  });
+  avoidanceObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['style','class','hidden','role','aria-live']});
+  document.addEventListener('scroll',scheduleWidgetAvoidance,true);
+  if(window.visualViewport){
+    var refreshVisualViewport=function(){if(expanded)setWidgetPosition(pos.x,pos.y);else scheduleWidgetAvoidance();};
+    window.visualViewport.addEventListener('resize',refreshVisualViewport);
+    window.visualViewport.addEventListener('scroll',refreshVisualViewport);
+  }
+
+  function setWidgetPosition(x,y){
+    var compactMobile=window.innerWidth<=640&&!expanded;
+    var panel=root.querySelector('.cds-panel');
+    if(isMobileViewport()&&expanded&&panel){
+      var viewport=window.visualViewport,rootStyle=window.getComputedStyle(root);
+      var safeHeight=(viewport?viewport.height:window.innerHeight)-24
+        -Math.max(0,parseFloat(rootStyle.getPropertyValue('--cds-safe-top'))||0)
+        -Math.max(0,parseFloat(rootStyle.getPropertyValue('--cds-safe-bottom'))||0);
+      var otherHeight=Math.max(0,root.offsetHeight-panel.offsetHeight);
+      panel.style.maxHeight=Math.max(0,safeHeight-otherHeight)+'px';
+    }
+    var widgetWidth=Math.max(compactMobile?44:180,root.offsetWidth||0);
+    var widgetHeight=Math.max(compactMobile?44:50,root.offsetHeight||0);
+    var maxX=Math.max(0,window.innerWidth-widgetWidth);
+    var maxY=Math.max(0,window.innerHeight-widgetHeight);
+    var minY=0;
+    if(isMobileViewport()&&expanded){
+      var view=window.visualViewport,style=window.getComputedStyle(root);
+      var top=(view?view.offsetTop:0)+Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-top'))||0)+12;
+      var bottom=(view?view.offsetTop+view.height:window.innerHeight)-Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-bottom'))||0)-12;
+      minY=Math.max(0,window.innerHeight-bottom);
+      maxY=Math.max(minY,window.innerHeight-top-widgetHeight);
+    }
+    pos.x=Math.max(0,Math.min(maxX,x));
+    pos.y=Math.max(minY,Math.min(maxY,y));
+    root.style.left=pos.x+'px';
+    root.style.bottom=pos.y+'px';
+    scheduleWidgetAvoidance();
+  }
 
   function onMouseDown(e){
     if(e.target.closest('button'))return;
+    widgetWasDragged=true;
     dragState={mx:e.clientX,my:e.clientY,px:pos.x,py:pos.y};
     e.preventDefault();
   }
   document.addEventListener('mousemove',function(e){
     if(!dragState)return;
-    pos.x=Math.max(0,Math.min(window.innerWidth-180,dragState.px+(e.clientX-dragState.mx)));
-    pos.y=Math.max(0,Math.min(window.innerHeight-50,dragState.py-(e.clientY-dragState.my)));
-    root.style.left=pos.x+'px';
-    root.style.bottom=pos.y+'px';
+    if(expanded)panelOrigin=null;
+    setWidgetPosition(
+      dragState.px+(e.clientX-dragState.mx),
+      dragState.py-(e.clientY-dragState.my));
   });
-  document.addEventListener('mouseup',function(){dragState=null;});
+  document.addEventListener('mouseup',function(){dragState=null;scheduleWidgetAvoidance();});
+  window.addEventListener('resize',function(){
+    if(panelOrigin&&!widgetWasDragged)panelOrigin={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
+    if(!isMobileViewport()&&compact){compact=false;render();}
+    else if(isMobileViewport()&&!compact&&!compactTimer)scheduleMobileCompact(4000);
+    if(widgetWasDragged){
+      setWidgetPosition(pos.x,pos.y);
+      return;
+    }
+    setWidgetPosition(defaultWidgetLeft(),defaultWidgetBottom());
+  });
 
   // ── Render ──
   function render(){
     var h='';
+    // 同步（自动更新）进行中或失败时不许缩成圆钮：缩了就看不见转圈、进度轨和失败态，
+    // 用户会以为什么都没发生；同步结束（visible 归位）后下一次渲染自然回到紧凑态。
+    var compactNow=compact&&!expanded&&!syncState.visible;
+    root.setAttribute('data-cds-layout',compactNow?'compact':'full');
+    root.setAttribute('data-cds-connection',branchConnectionState);
+    var connectionLabel=branchConnectionState==='connected'||branchConnectionState==='connecting'?'':branchConnectionState==='forbidden'?'状态读取无权限':branchConnectionState==='unavailable'?'状态暂不可用':branchConnectionState==='refreshing'?'正在核对状态':'状态重连中';
+    if(connectionLabel&&!compactNow)h+='<div role="status" style="color:#f0883e;font-size:11px;padding:3px 0">'+connectionLabel+'，当前信息可能过期</div>';
+
+    if(compactNow){
+      // 紧凑态：一颗 36px 圆钮 + 角标短 sha，不再有整行分支名、模式 chip 和两颗按钮。
+      h+='<div class="cds-badge cds-badge--compact" onmousedown="return false">';
+      h+='<button data-action="expand-compact" aria-label="显示分支信息 '+BRANCH_NAME+'" title="'+BRANCH_NAME+(commitSha?' @ '+shortSha(commitSha):'')+'">'+ICON_BRANCH+'</button>';
+      if(commitSha)h+='<span class="cds-compact-sha">'+shortSha(commitSha).slice(0,4)+'</span>';
+      h+='</div>';
+      root.innerHTML=h;
+      root.style.left=pos.x+'px';
+      root.style.bottom=pos.y+'px';
+      scheduleWidgetAvoidance();
+      renderLogModal();
+      return;
+    }
 
     // Panel
     if(expanded){
-      h+='<div class="cds-panel">';
+      h+='<div class="cds-panel" id="cds-widget-panel" role="region" aria-label="CDS 分支诊断">';
+      h+='<div class="cds-panel-header"><span class="cds-panel-title">CDS 分支诊断</span><button class="cds-panel-close" data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板">'+ICON_X+'</button></div>';
+      if(siteSignInEnabled){
+        h+='<div class="cds-status-row"><button type="button" data-action="site-sign-in">使用 CDS 登录</button><button type="button" data-action="site-switch">切换 CDS 账号</button></div>';
+      }
       if(!profiles.length && !branchStatus){
         h+='<div style="color:#8b949e;font-size:11px;padding:4px 0"><span class="cds-spinner"></span> 加载中...</div>';
       }else if(!branchStatus){
@@ -531,17 +819,25 @@ export function buildWidgetScript(
           h+='<span class="cds-sync-rail"><span style="width:'+Math.max(0,Math.min(100,Math.round(syncState.progress)))+'%"></span></span>';
           h+='</div>';
         }
-        var statusColor=branchStatus==='running'?'#3fb950':branchStatus==='error'||branchStatus==='stopped'?'#f85149':'#f0883e';
-        var statusBlink=branchStatus==='running'?' cds-status-blink':'';
+        var statusColor=connectionLabel?'#8b949e':branchStatus==='running'?'#3fb950':branchStatus==='error'||branchStatus==='stopped'?'#f85149':'#f0883e';
+        var statusBlink=!connectionLabel&&branchStatus==='running'?' cds-status-blink':'';
         h+='<div class="cds-status-row">';
-        h+='<span style="font-size:11px;color:#8b949e">状态: </span>';
+        h+='<span style="font-size:11px;color:#8b949e">'+(connectionLabel?'上次状态: ':'状态: ')+'</span>';
         h+='<span class="cds-status-dot'+statusBlink+'" style="background:'+statusColor+'"></span>';
         h+='<span style="font-size:11px;color:'+statusColor+';font-style:italic;font-weight:600">'+branchStatus+'</span>';
         if(commitSha)h+='<span class="cds-commit-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
         h+='</div>';
         if(commitMsg)h+='<div class="cds-commit-msg" title="'+commitMsg.replace(/"/g,'&quot;')+'">'+commitMsg+'</div>';
+        if(HOSTED_CDS){
+          h+='<div class="cds-hosted-panel-note">这是 CDS 托管的 CDS 预览实例：由父实例按分支部署，推送新 commit 即自动重建；实例内的部署 / docker 操作已禁用。</div>';
+          h+='<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px">';
+          for(var hi=0;hi<profiles.length;hi++){
+            h+='<div class="cds-deploy-row"><button class="cds-log-btn" data-log-profile="'+profiles[hi].id+'" title="查看 '+profiles[hi].name+' 日志" style="width:auto;padding:0 8px;gap:6px">'+ICON_LOG+' '+profiles[hi].name+' 日志</button></div>';
+          }
+          h+='</div>';
+        }
         // Deploy mode selectors
-        for(var mi=0;mi<profiles.length;mi++){
+        for(var mi=0;mi<profiles.length&&!HOSTED_CDS;mi++){
           var mp=profiles[mi];
           if(mp.deployModes&&Object.keys(mp.deployModes).length>0){
             var modes=mp.deployModes;
@@ -560,7 +856,7 @@ export function buildWidgetScript(
           }
         }
         h+='<div style="display:flex;flex-direction:column;gap:4px">';
-        for(var i=0;i<profiles.length;i++){
+        for(var i=0;i<profiles.length&&!HOSTED_CDS;i++){
           var p=profiles[i];
           var modeTag='';
           if(p.activeDeployMode&&p.deployModes&&p.deployModes[p.activeDeployMode]){
@@ -574,7 +870,7 @@ export function buildWidgetScript(
           h+='<button class="cds-log-btn" data-log-profile="'+p.id+'" title="查看 '+p.name+' 日志">'+ICON_LOG+'</button>';
           h+='</div>';
         }
-        if(profiles.length>1){
+        if(profiles.length>1&&!HOSTED_CDS){
           var isAll=deploying&&deployProfileId===null;
           h+='<button class="cds-deploy-btn full" data-profile="__all__"'+(deploying?' disabled':'')+' style="opacity:'+(deploying&&deployProfileId!==null?'0.5':'1')+'">';
           h+=(isAll?'<span class="cds-spinner"></span>':ICON_REFRESH);
@@ -590,8 +886,8 @@ export function buildWidgetScript(
             var sc=s.status==='done'?'done':s.status==='error'?'error':'';
             h+='<div class="cds-step '+sc+'">';
             if(s.status==='running')h+='<span class="cds-spinner" style="width:9px;height:9px;border-width:1.5px"></span>';
-            else if(s.status==='done')h+='<span>✓</span>';
-            else if(s.status==='error')h+='<span>✗</span>';
+            else if(s.status==='done')h+='<span>完成</span>';
+            else if(s.status==='error')h+='<span>错误</span>';
             h+='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.title+'</span></div>';
           }
           h+='</div>';
@@ -615,6 +911,8 @@ export function buildWidgetScript(
 
     // Badge
     var badgeClass='cds-badge';
+    if(expanded)badgeClass+=' is-expanded';
+    if(HOSTED_CDS)badgeClass+=' is-hosted-cds';
     if(syncState.visible){
       if(syncState.phase==='syncing')badgeClass+=' is-syncing';
       else if(syncState.phase==='done')badgeClass+=' is-sync-success';
@@ -623,10 +921,12 @@ export function buildWidgetScript(
     h+='<div class="'+badgeClass+'" onmousedown="return false">';
     h+='<div class="cds-badge-main">';
     h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
+    if(HOSTED_CDS)h+='<span class="cds-hosted-label">CDS 托管 CDS</span>';
     // 版本信息放最前（紧跟图标），避免被很长的分支名挤到看不见；sha / 模式各自配色。
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
     if(DEPLOY_MODE_LABEL)h+='<span class="cds-mode'+(DEPLOY_MODE_LABEL==='极速'?' fast':' source')+'">'+DEPLOY_MODE_LABEL+'</span>';
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
+    if(HOSTED_CDS)h+='<span class="cds-hosted-note">部署 / docker 已禁用</span>';
     if(syncState.visible){
       var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
       h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
@@ -639,15 +939,14 @@ export function buildWidgetScript(
     // 分支自定义标签照常显示；不再显示默认的「CDS」泛标签——部署类型已由前面的
     // 极速/发布 chip 表达（用户 2026-06-24：分支标改为极速或发布标）。
     if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
-    h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
-    h+='<button data-action="dismiss">'+ICON_X+'</button>';
+    h+='<button data-action="toggle" aria-expanded="'+expanded+'" aria-controls="cds-widget-panel" aria-label="'+(expanded?'收起 CDS 诊断面板':'展开 CDS 诊断面板')+'" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
+    h+='<button data-action="dismiss" aria-label="关闭 CDS 调试工具" title="关闭 CDS 调试工具">'+ICON_X+'</button>';
     h+='</div>';
     if(syncState.visible)h+='<span class="cds-sync-rail"><span style="width:'+Math.max(0,Math.min(100,Math.round(syncState.progress)))+'%"></span></span>';
     h+='</div>';
 
     root.innerHTML=h;
-    root.style.left=pos.x+'px';
-    root.style.bottom=pos.y+'px';
+    setWidgetPosition(pos.x,pos.y);
 
     // Attach drag to badge bar
     var badge=root.querySelector('.cds-badge');
@@ -714,7 +1013,34 @@ export function buildWidgetScript(
     var btn=e.target.closest('button');
     if(!btn)return;
     var action=btn.getAttribute('data-action');
-    if(action==='dismiss'){root.remove();return;}
+    if(action==='site-sign-in'||action==='site-switch'){
+      var returnPath=location.pathname+location.search;
+      location.assign('/_cds/api/hosted-sso/panel/start?returnUrl='+encodeURIComponent(returnPath)+(action==='site-switch'?'&switchAccount=true':''));
+      return;
+    }
+    if(action==='dismiss'){
+      avoidanceObserver.disconnect();
+      if(avoidanceFrame)cancelAnimationFrame(avoidanceFrame);
+      document.removeEventListener('scroll',scheduleWidgetAvoidance,true);
+      if(window.visualViewport){window.visualViewport.removeEventListener('resize',refreshVisualViewport);window.visualViewport.removeEventListener('scroll',refreshVisualViewport);}
+      root.remove();return;
+    }
+    // 两侧各加了一个独立动作，语义不冲突，都保留。
+    // close-panel 是本分支的面板关闭钮；收起之后照 main 的新约定安排手机端重新收成徽章，
+    // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收，两条路各行其是。
+    if(action==='close-panel'){
+      setPanelExpanded(false);
+      render();
+      scheduleMobileCompact(8000);
+      return;
+    }
+    if(action==='expand-compact'){
+      compact=false;
+      render();
+      // 看完 8 秒自动收回去，手机上不留整条徽章。
+      scheduleMobileCompact(8000);
+      return;
+    }
     if(action==='close-log'){logProfileId=null;logContent='';render();return;}
     if(action==='open-log-modal'){
       var _pName=logProfileId||'';
@@ -726,9 +1052,10 @@ export function buildWidgetScript(
       return;
     }
     if(action==='toggle'){
-      expanded=!expanded;
+      setPanelExpanded(!expanded);
       if(expanded)fetchBranchInfo();
       render();
+      if(!expanded)scheduleMobileCompact(8000);
       return;
     }
     var logPid=btn.getAttribute('data-log-profile');
@@ -766,7 +1093,8 @@ export function buildWidgetScript(
 
   // ── CDS API calls ──
   function fetchBranchInfo(){
-    fetch(API+'/branches').then(function(r){return r.ok?r.json():{};}).then(function(branchRes){
+    var refreshSequence=++branchInfoFetchSequence;
+    fetch(API+'/branches').then(function(r){if(!r.ok)throw new Error('branch read unavailable');return r.json();}).then(function(branchRes){
       var branchList=(branchRes&&branchRes.branches)||[];
       var found=null;
       for(var i=0;i<branchList.length;i++){
@@ -774,20 +1102,19 @@ export function buildWidgetScript(
       }
       var profileUrl=API+'/build-profiles';
       if(found&&found.projectId)profileUrl+='?project='+encodeURIComponent(found.projectId);
-      return fetch(profileUrl).then(function(r){return r.ok?r.json():{};}).then(function(profileRes){
+      return fetch(profileUrl).then(function(r){if(!r.ok)throw new Error('profile read unavailable');return r.json();}).then(function(profileRes){
         return {branchRes:branchRes,profileRes:profileRes,found:found};
       });
     }).then(function(res){
+      if(refreshSequence!==branchInfoFetchSequence)return;
+      branchConnectionState='connected';
       var branchRes=res.branchRes||{};
       var profileRes=res.profileRes||{};
       var found=res.found||null;
       branchStatus=found?found.status:'';
-      // Codex P2「Keep ciTargetSha when refreshing the widget badge」：服务端已按
-      // ciTargetSha 注入了正确的初始 sha（反映容器实际跑的镜像 commit）。客户端刷新**不要**
-      // 用 /api/branches 的 commitSha（docs-only push 会更新它但镜像没换）把它降级覆盖；
-      // 优先保留服务端注入值，仅服务端没给时才用 API 值兜底。
-      commitSha=commitSha||(found&&(found.commitSha||found.githubCommitSha))||'';
-      commitMsg=found&&found.subject?found.subject:'';
+      // 每次刷新采用最新运行事实；缺证据时清空，不能保留注入的旧版本。
+      commitSha=(found&&found.runningCommitSha)||'';
+      commitMsg=found&&found.githubCommitSha===commitSha&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
       var sourceProfiles=(profileRes&&profileRes.profiles)||[];
       profiles=found&&found.projectId
@@ -819,8 +1146,8 @@ export function buildWidgetScript(
         render();
       }
     }).catch(function(){
-      branchStatus='';
-      profiles=[];
+      if(refreshSequence!==branchInfoFetchSequence)return;
+      branchConnectionState='unavailable';
       render();
     });
   }
@@ -1039,10 +1366,10 @@ export function buildWidgetScript(
       var iconCls='ops-step-icon '+s.status;
       var textCls='ops-step-text '+s.status;
       var icon='';
-      if(s.status==='pending')icon='○';
-      else if(s.status==='running')icon='◎';
-      else if(s.status==='done')icon='✓';
-      else if(s.status==='error')icon='✗';
+      if(s.status==='pending')icon='待';
+      else if(s.status==='running')icon='中';
+      else if(s.status==='done')icon='成';
+      else if(s.status==='error')icon='错';
       h+='<div class="ops-step">';
       h+='<span class="'+iconCls+'">'+icon+'</span>';
       h+='<div><div class="'+textCls+'">'+s.description+'</div>';
@@ -1501,7 +1828,7 @@ export function buildWidgetScript(
         // Check for end-session signal
         if(cmd.params&&cmd.params.__end_session){
           updateOpsStep(cmd.id,'done',cmd.params.summary||'');
-          addOpsStep('end','snapshot','✅ AI 操作完成');
+          addOpsStep('end','snapshot','AI 操作完成');
           updateOpsStep('end','done','');
           // Fully clean up cursor and highlight
           if(aiCursorEl){aiCursorEl.remove();aiCursorEl=null;}
@@ -1689,7 +2016,7 @@ export function buildWidgetScript(
           bridgeHandshakeRequest=null;
           panel.remove();
           if(d&&d.success){
-            showHandshakeToast('✓ 已授权 AI 操作此页面','#60a5fa');
+            showHandshakeToast('已授权 AI 操作此页面','#60a5fa');
             setTimeout(bridgeCheckActivation,300);
           }
         })
@@ -1805,8 +2132,9 @@ export function buildWidgetScript(
 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
-  fetchBranchInfo();
+  scheduleMobileCompact(4000);
   initBranchStream();
+  fetchBranchInfo();
   initAiStream();
 })();
 </script>`;

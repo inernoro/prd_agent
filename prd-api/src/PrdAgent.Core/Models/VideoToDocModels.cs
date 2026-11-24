@@ -31,8 +31,12 @@ public static class VideoToDocRunStatus
 /// 视频转文档任务（MongoDB 文档模型）
 /// 流程：上传视频 → 提取(FFmpeg) → 转写(STT) → 分析(LLM) → 输出 Markdown
 /// </summary>
-public class VideoToDocRun
+public class VideoToDocRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
     public string Status { get; set; } = VideoToDocRunStatus.Queued;
@@ -85,12 +89,6 @@ public class VideoToDocRun
     public bool CancelRequested { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
-
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
 }
 
 /// <summary>

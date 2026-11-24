@@ -1,6 +1,6 @@
 # LLM 网关验收面包屑清单 · 指南
 
-> **版本**：v1.0 | **日期**：2026-06-30 | **状态**：已落地
+> **版本**：v1.1 | **日期**：2026-10-04 | **状态**：已落地
 
 **一句话**：网关验收的逐屏面包屑：每个界面看什么、点什么、留什么证据，外加压测计划与边界清单。
 **谁该读**：做网关验收的人；补自动化验收脚本的工程师。
@@ -9,14 +9,14 @@
 ---
 
 > 关联: [doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（测什么 SSOT）、[doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（全量可见报告）、
-> [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)、
+> [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)、[doc/debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)、
 > `.claude/rules/closed-loop-acceptance.md`（验收必须闭环）、`.claude/skills/create-visual-test-to-kb/`（取证流水线）
 
 ## 1. 管理摘要 + 怎么用
 
 「LLM 网关从 MAP 剥离」改动面横跨多屏：管理后台的 LLM 日志观测（生命周期 chip / 黑洞记录 / 应用聚合 /
-COS 占位还原 / 生图显示）、模型池健康告警、独立观测前端 llmgw/web、CDS 拓扑命名子域 host 边、以及
-serving 影子比对读端点。本文档把每一屏拆成**自动化工具（Playwright 无头浏览器）可直接消费的「面包屑清单」**：
+COS 占位还原 / 生图显示）、模型池健康告警、独立观测前端 llmgw/web 与 CDS 拓扑命名子域 host 边。
+（迁移期的 serving 影子比对读端点已随模式开关于 2026-10 删除。）本文档把每一屏拆成**自动化工具（Playwright 无头浏览器）可直接消费的「面包屑清单」**：
 逐屏给出「导航点击路径 → 截图点 → 预期」三元组，外加测试覆盖矩阵摘要、例外/边界清单、压测计划。
 
 ### 给自动化工具的约定（每条面包屑的契约）
@@ -37,10 +37,9 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 | 面 | 应用 | 路由 | 权限 | 菜单文案 | 来源文件 |
 |----|------|------|------|----------|----------|
 | A | prd-admin | `/logs` | `logs.read` | 请求日志（短标签「日志」） | navRegistry.tsx L657-667 |
-| B | prd-admin | `/mds`（`?tab=pools`） | `mds.read` | 模型中心（短标签「模型」） | navRegistry.tsx L765-777 |
+| B | （已下线） | 无 | 无 | MAP 侧「模型」菜单与页面 2026-09-05 整体下线，模型池 / 健康面板归 LLM Gateway 控制台（面 C） | AdminMenuCatalog.cs |
 | C | llmgw/web | `/login` → `/` | 独立账号体系（非 prd-admin 权限） | LLM 网关观测台 | llmgw/web/src/App.tsx |
 | D | cds/web | `/`（BranchTopologyPage） | CDS 鉴权 | 分支拓扑 | cds/web/src/pages/BranchTopologyPage.tsx |
-| E | serving API | `GET /gw/v1/shadow-comparisons` | `X-Gateway-Key`（M2M） | 影子比对读端点 | llmgw/serving/GatewayHttpEndpoints.cs L170-192 |
 
 > 入口待确认提示：llmgw/web（面 C）是**完全独立部署**的 mini-app（自带路由 + 账号，端口 8100，独立
 > Dockerfile/nginx），**未注册进 prd-admin 导航**，因此其访问入口取决于部署后的独立域名，见面 C 备注。
@@ -49,10 +48,9 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 
 ---
 
-## 2. 测试覆盖矩阵摘要（A/B/C/D 四层 + shadow）
+## 2. 测试覆盖矩阵摘要（A/B/C/D 四层）
 
-事实来源：[doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（设计 SSOT）+ [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（约 284 行全量报告，
-`scripts/gen-gw-matrix-report.py` 自动生成）。本节只给摘要，不复制全文。
+事实来源：[doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（设计 SSOT）+ [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（由矩阵报告生成器自动生成的全量报告）。本节只给摘要，不复制全文。
 
 | 层 | 测什么 | 跑在哪 | CI 测试类 | 规模 |
 |----|--------|--------|-----------|------|
@@ -60,7 +58,6 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 | B 协议保真 | think 位置 / 工具调用归一 / token-cache / 图片三格式还原 / 流式 | CI 单元（纯函数喂 canned payload） | `GatewayProtocolFidelityTests`（读 `protocol-cells.json`） | 93 cell |
 | C 跨进程传输 | SSE 逐块 / 上游 500/超时/重置/畸形SSE/空响应 → 归一失败 / 并发 | CI 单元（真 Kestrel loopback + stub gateway） | `CrossProcessServingSelfTest` + `CrossProcessServingErrorLoadTests`（读 `transport-cells.json`） | 18 cell |
 | D 真机 | 全 153 resolve + 抽样真打 + 真生图 + 多轮 | CDS 起来后脚本 | `scripts/gw-smoke.py` | 待 CDS 跑 |
-| shadow 影子比对 | inproc（权威）vs http 网关逐字段一致性（翻 http 前的去黑盒证据） | serving 进程 + 共享 Mongo | `LlmShadowComparison` 落 `llmshadow_comparisons`，读端点 `/gw/v1/shadow-comparisons` | resolve 全量 + send 采样 |
 
 - 解析档位分布（report §1.2）：DedicatedPool 105 / DefaultPool 41 / NotFound 7（黑洞，预期内）。
 - canary 原则：每层至少一个「必败」用例 + 元断言「执行器确实标 FAIL」，证明用例不是空跑（见 spec §canary）。
@@ -72,7 +69,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 ## 3. 例外 / 边界清单
 
 每条写「怎么触发 + 预期表现」。触发以桩上游 / 坏 URL 模型 / canned payload 为主（真实失败路径），
-**不依赖** `ModelTestStub.FailureMode`（当前未接入 serving 路径，见 spec §边界 + [debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)）。
+**不依赖** `ModelTestStub.FailureMode`（当前未接入 serving 路径，见 spec §边界 + [debt.platform.llm-gateway.isolation.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)）。
 
 | # | 边界 | 怎么触发 | 预期表现 |
 |---|------|---------|---------|
@@ -85,7 +82,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 | 7 | 超时 | 指向慢/坏 URL 模型，超过超时阈值 | 归一失败（failed/blackhole），不崩；server-authority：客户端断开不取消上游 |
 | 8 | 连接重置 | 桩在传输中途 reset 连接 | 解析/传输健壮，标记失败，C 层 cell 覆盖 |
 | 9 | 并发串号 | 并发 N 个不同 appCallerCode 同时 resolve | 各请求解析互不串租户/串模型；D12 canary：串号即报 |
-| 10 | ApiKey 不过线 | serving 端点不带 / 带错 `X-Gateway-Key` | 除 healthz 外一律拒绝（密钥门，GatewayHttpEndpoints L33-40）；面 E 取证用 |
+| 10 | ApiKey 不过线 | serving 端点不带 / 带错 `X-Gateway-Key` | 除 healthz 外一律拒绝（密钥门，GatewayHttpEndpoints L33-40） |
 | 11 | NotFound → 黑洞 | 无匹配池的 appCallerCode（7 个 NotFound 入口之一） | 解析档位 NotFound，落黑洞；若已落库 status=blackhole，生命周期 chip 显示「记录降级」（红） |
 | 12 | 中转字段异构 | 同 platform 走 per-pool-item / per-model 不同 protocol 覆盖（D14） | 同 platform 出不同 protocol（openai/claude/exchange），ResolutionReason 记层级；覆盖被忽略即报 |
 
@@ -99,11 +96,10 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 | # | 压测项 | 方法 | 通过判据 |
 |---|--------|------|---------|
 | 1 | 并发 N（不串号） | 并发发起 N 个不同 appCallerCode 的 resolve/调用（N 取 50/100/200 梯度） | 每个请求解析结果与单发一致，无租户/模型串号；错误率不随并发上升而异常飙升 |
-| 2 | inproc vs http 时延对比 | 同一批请求分别走 inproc（权威）与跨进程 http serving，记录 P50/P95/P99 | http 路径额外开销可量化且稳定；shadow 比对 AllMatch（见面 E）；http 不显著拖慢主链路 |
+| 2 | 跨进程开销 | 同一批请求记录 MAP 侧耗时与 serving 侧耗时，算 P50/P95/P99 差值 | 跨进程额外开销可量化且稳定，不显著拖慢主链路 |
 | 3 | keepalive 心跳间隔 | 跑长流式请求，抓 SSE 帧时间戳 | 每 ≤10s 有 keepalive 心跳（server-authority 规则 4），断线可 `afterSeq` 续传 |
 | 4 | 断开不取消（server-authority） | 流式进行中主动断开客户端连接，观察服务端 | 上游任务不被取消（CancellationToken.None），run 继续到完成/失败；仅用户主动调取消 API 才中断 |
-| 5 | shadow 后台不阻塞主链路 | 开启影子双发，对比开/关 shadow 时主链路 P95 | 影子比对在后台异步落 `llmshadow_comparisons`，主链路返回不被其拖慢 |
-| 6 | 流式 firstByte P95 | 大批流式请求记 startedAt→firstByteAt 分布 | 区分「真首字」与「OpenRouter latency」歧义（`llm-gateway.md` §1/§5 三源校验）；假流式模型 P95 偏大但可观测、有心跳兜底 |
+| 5 | 流式 firstByte P95 | 大批流式请求记 startedAt→firstByteAt 分布 | 区分「真首字」与「OpenRouter latency」歧义（`llm-gateway.md` §1/§5 三源校验）；假流式模型 P95 偏大但可观测、有心跳兜底 |
 
 ---
 
@@ -149,25 +145,11 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
   - 预期（双主题）：图片像素真实渲染（object-cover），非 spinner、非裂图；治「返回数据图片无法显示」。
 - **双主题**：A1-A6 每个截图点暗/亮各一张。
 
-### 面 B：模型池管理 + 健康 / 告警面板
+### 面 B：（已下线）模型池管理 + 健康 / 告警面板
 
-- **路由**：`/mds?tab=pools`（权限 `mds.read`）。来源：navRegistry.tsx L765-777；
-  页面 `prd-admin/src/pages/ModelManageTabsPage.tsx` → `ModelPoolManagePage.tsx`（健康总览 `PoolHealthOverview.tsx`）。
-- **进入面包屑**（从登录后首页）：
-  1. 左侧导航 / 命令面板找到「模型中心」（短标签「模型」，icon Cpu）并 `click`。
-  2. 落到 `/mds`，`waitForSelector` 命中顶层 TabBar（ModelManageTabsPage.tsx L34-39，文案：
-     `应用模型池管理` / `模型池管理` / `平台管理` / `模型中继`）。
-  3. `click`「模型池管理」tab（key=`pools`）→ `waitForSelector` 命中健康总览标题「健康总览」（PoolHealthOverview.tsx L144）。
-- **截图点 B1（健康总览 + 告警）**：`waitForSelector` 命中 `PoolHealthOverview` 主体（非「正在加载模型池健康总览...」spinner）。
-  - 两种主态择一截：(a) 有告警 → 告警区出现「死池」/「高 fallback」条目 + 「点击定位」（PoolHealthOverview.tsx L201）；
-    (b) 全健康 → 绿条「全部健康：无死池、无高 fallback 告警」（L219）。
-  - 预期（双主题）：把静默降级一眼暴露成红色一级告警；fallback 率 ≥20% 橙、≥5% 黄。
-- **截图点 B2（池内模型健康状态）**：在池列表 `click` 一个池 → 右侧详情出现「健康 / 不可用」计数（ModelPoolManagePage.tsx L723-732）
-  + 每个模型的健康徽章（HEALTH_STATUS_MAP：健康绿 / 不可用红，L58-61）。
-  - 预期（双主题）：非健康模型旁出现「点击重置为健康状态」入口（L775）；计数与徽章一致。
-- **截图点 B3（告警定位联动）**：若 B1 有告警，`click`「点击定位」→ 列表滚动/高亮到对应池（死池）或按 modelType 过滤（高 fallback）。
-  - 预期（双主题）：点击后目标池可见并选中；闭环到「告警能跳到现场」。
-- **双主题**：B1-B3 暗/亮各一张。
+- 2026-09-05 起 MAP 左侧「模型」菜单与 `/mds` 页面整体删除，不再有这一面的入口；模型池、平台凭据、
+  健康总览统一在 LLM Gateway 控制台（MAP 左下角「模型网关」SSO 进入，或面 C 的独立站点）验收。
+- 原 B1-B3 截图点不再执行；历史报告里引用本面的，按「已下线」处理，不算断头。
 
 ### 面 C：独立观测前端 llmgw/web（登录 → 日志页）
 
@@ -201,52 +183,16 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
   - 预期（双主题）：边/节点指向 serving 容器，host 文案含 `-llmgw` 子域；CDS 右上角主题切换按钮（月亮图标）暗/亮各一张。
   - 失败判据：拓扑里无 `-llmgw` 子域边 → 记「serving 命名子域未在拓扑出现」，附该分支部署状态截图，不判 pass。
 
-### 面 E：shadow 读端点取证（curl 步骤 + 预期 JSON 形状）
-
-- **端点**：`GET /gw/v1/shadow-comparisons`，鉴权头 `X-Gateway-Key`（M2M 共享密钥，非 JWT）。
-  来源：`llmgw/serving/GatewayHttpEndpoints.cs` L170-192；记录模型 `LlmShadowComparison.cs`。
-- **取证步骤**（非 UI，Playwright 可用 `request`/`fetch` 或 shell curl）：
-  ```bash
-  curl -sS "$SERVING_BASE/gw/v1/shadow-comparisons?n=20" \
-    -H "X-Gateway-Key: $GATEWAY_KEY"
-  ```
-  - canary：故意不带 / 带错 `X-Gateway-Key` → 预期被密钥门拒绝（边界清单 #10）。
-- **截图点 / 断言 E1（summary 全字段）**：响应 JSON `summary` 必含四字段：
-  `total` / `allMatch` / `critical` / `httpFail`（GatewayHttpEndpoints.cs L189）。
-  - 预期：`allMatch` 接近 `total`、`critical=0`（无 model/protocol 漂移）= 可放心翻 http 的总判据。
-- **截图点 / 断言 E2（recent[] 逐字段）**：`recent[]` 每条为 `LlmShadowComparison`，必含：
-  - `Inproc` / `Http`：各为 `ResolveSnapshot`（`Success` / `ActualModel` / `Protocol` / `PlatformType` /
-    `ResolutionType` / `ModelGroupId` / `IsFallback`，LlmShadowComparison.cs L66-76）。
-  - `Mismatches`：逐字段不一致清单 `[{ Field, Inproc, Http, Severity }]`（为空 = 全一致；
-    Severity=critical 即 model/protocol 漂移，L78-86）。
-  - 其他可见字段：`Kind`（resolve/send/stream/pools）、`AllMatch`、`HasCritical`、`HttpOk`、`ComparedAt`、`ShadowDurationMs`。
-  - 预期：`Inproc.ActualModel === Http.ActualModel` 且 `Inproc.Protocol === Http.Protocol`（无 critical mismatch）。
-  - 失败判据：出现 `HasCritical=true` 或 `Mismatches` 含 Severity=critical → 阻断翻 http，记 P0。
-- **JSON 形状断言示意**：
-  ```json
-  {
-    "summary": { "total": 0, "allMatch": 0, "critical": 0, "httpFail": 0 },
-    "recent": [
-      {
-        "Kind": "resolve", "AppCallerCode": "...", "ModelType": "chat",
-        "Inproc": { "Success": true, "ActualModel": "...", "Protocol": "openai", "ResolutionType": "...", "IsFallback": false },
-        "Http":   { "Success": true, "ActualModel": "...", "Protocol": "openai", "ResolutionType": "...", "IsFallback": false },
-        "Mismatches": [], "AllMatch": true, "HasCritical": false, "HttpOk": true, "ComparedAt": "..."
-      }
-    ]
-  }
-  ```
-
 ---
 
 ## 6. 自动化执行建议（Playwright）
 
 1. **登录**：面 A/B/D 共用 prd-admin 登录（USERNAME `input[placeholder="admin"]` + PASSWORD + 点「登录」）；
-   面 C 走 llmgw/web 独立登录（用户名/密码占位框 + 「登 录」）；面 E 用 `X-Gateway-Key` 直发 HTTP，不走 UI。
+   面 C 走 llmgw/web 独立登录（用户名/密码占位框 + 「登 录」）。
 2. **按面包屑点击进入**：严格用 `click` 沿菜单/tab/行进入目标屏，**禁止 `page.goto` 地址栏直达**（模拟真实用户路径）。
    命令面板（Cmd+K）输入文案选中是允许的「点击」方式。
 3. **waitForSelector 真实产物**：每个截图点先等到**产物本身**出现再截——真实日志行 / 生命周期 chip 文案 /
-   还原后正文 / 真实 `<img>` / 聚合表行 / 健康总览主体 / 拓扑 `-llmgw` 边 / JSON summary 字段。
+   还原后正文 / 真实 `<img>` / 聚合表行 / 健康总览主体 / 拓扑 `-llmgw` 边。
    绝不在 spinner、「加载中…」、「正在聚合…」、「还原中…」状态下截图当产物。
 4. **双主题各截一张**：每个截图点切换暗/亮主题各取一张（prd-admin 全局主题控件 / CDS 右上角主题切换按钮 / llmgw/web theme.css）。
 5. **断言预期文案 / 元素存在**：截图同时 `expect(locator).toBeVisible()` 断言关键文案（如「记录降级」「已还原」「健康总览」

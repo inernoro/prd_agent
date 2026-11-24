@@ -63,6 +63,8 @@ export class RealMongoHandle implements IMongoHandle {
     const client = new MongoClient(this.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
+      // Bound in-flight commands too, not just initial connection/selection.
+      timeoutMS: 30_000,
     });
     try {
       await client.connect();

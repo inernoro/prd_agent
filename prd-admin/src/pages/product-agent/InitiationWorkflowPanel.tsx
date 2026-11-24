@@ -161,7 +161,7 @@ export function InitiationMeetingRoundsEditor({
           type="button"
           onClick={() => void save()}
           disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 disabled:opacity-50"
         >
           {busy ? <MapSpinner size={14} /> : null}
           保存会议结果
@@ -236,7 +236,7 @@ export function InitiationWorkflowPanel({
         ) : (
           <p className="text-sm text-token-muted">
             立项决策时选择「不需要开评审会」，无线下会议稿次需回填。
-            {initiation.primaryOwnerId ? ' 已走负责人审批流程。' : ''}
+            评审通过后自动发号，无需人工审批。
           </p>
         )}
       </WorkflowDetailCard>

@@ -118,7 +118,7 @@ export function ActivityTimeline({
           <button
             onClick={submit}
             disabled={empty || posting}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
           >
             {posting ? <MapSpinner size={14} /> : <Send size={14} />} 评论
           </button>

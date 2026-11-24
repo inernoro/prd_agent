@@ -15,6 +15,8 @@ export interface ReportTeam {
   workflowTemplateKey?: string;
   /** 周报可见性: all_members / leaders_only */
   reportVisibility?: string;
+  /** 月报可见性: all_members / leaders_only（与周报独立设置） */
+  monthlyReportVisibility?: string;
   /** 每周自动提交时间 (如 "friday-18:00")，null 不自动提交 */
   autoSubmitSchedule?: string;
   /** 周报提交截止时间 (如 "sunday-23:59")，未设置则按默认 sunday-23:59 处理 */
@@ -188,6 +190,10 @@ export interface TeamDashboardMember {
   submittedAt?: string;
   /** 免提交(后端 v2.0 起返回);Leader 在前端推断,普通成员由管理员开关 */
   isExcused?: boolean;
+  /** 本周是否超时(后端判定):截止前没完成首次提交即为 true,补交后仍保持;免提交成员恒 false */
+  isOverdue?: boolean;
+  /** 首次提交时间(退回后再提交不覆盖);用于区分「仍未提交」与「迟交」 */
+  firstSubmittedAt?: string;
 }
 
 export interface TeamDashboardStats {
@@ -398,6 +404,7 @@ export type CreateReportTeamContract = (input: {
   parentTeamId?: string;
   description?: string;
   reportVisibility?: string;
+  monthlyReportVisibility?: string;
   autoSubmitSchedule?: string;
   weeklyDeadline?: string;
   customDailyLogTags?: string[];
@@ -409,6 +416,7 @@ export type UpdateReportTeamContract = (input: {
   leaderUserId?: string;
   description?: string;
   reportVisibility?: string;
+  monthlyReportVisibility?: string;
   autoSubmitSchedule?: string;
   weeklyDeadline?: string;
   customDailyLogTags?: string[];
@@ -512,6 +520,12 @@ export type GetWeeklyReportContract = (input: { id: string }) => Promise<
     report: WeeklyReport;
     /** 当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
     canReview?: boolean;
+    /** 超时提交:首次提交晚于该周截止时间(准时为 false,不展示);免提交成员恒 false */
+    isLateSubmission?: boolean;
+    /** 该周截止时间(UTC ISO) */
+    submissionDeadline?: string;
+    /** 首次提交时间(退回后再提交不覆盖) */
+    firstSubmittedAt?: string;
   }>
 >;
 
@@ -884,9 +898,15 @@ export interface TeamSummaryViewData {
 }
 
 export interface TeamReportsViewStats {
+  /** 团队全部成员(含负责人与免提交成员) */
   totalMembers: number;
+  /** 应交人数 = 全部成员剔除免提交(负责人默认免提交);请假不影响 */
+  expectedCount?: number;
   submittedCount: number;
+  /** 待提交 = 应交 - 已提交,可归 0 */
   pendingCount: number;
+  /** 超时 = 截止前没完成首次提交的应交成员数,不随补交归 0 */
+  overdueCount?: number;
 }
 
 export interface TeamReportListItem {

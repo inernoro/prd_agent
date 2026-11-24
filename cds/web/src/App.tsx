@@ -1,40 +1,57 @@
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 // ConsoleLayout 故意走静态 import:外壳(侧栏/命令面板/全局徽章)进入口 chunk,
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
-import { ConsoleLayout } from '@/components/layout/AppShell';
+import { ConsoleLayout, OwnerConsoleRoute } from '@/components/layout/AppShell';
 import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
+// 首页首屏与开场帷幕随入口一起就绪，避免先显示通用骨架再播放开场动画。
+// HomePage 内的 3D 叙事场景仍在首次滚动时按需加载。
+import { HomePage } from '@/pages/HomePage';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
-import { BugReportDialog } from '@/components/BugReportDialog';
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
 const BranchListPage = lazy(() => import('@/pages/BranchListPage').then((m) => ({ default: m.BranchListPage })));
 const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then((m) => ({ default: m.BranchTopologyPage })));
+const BranchRelationsPage = lazy(() => import('@/pages/BranchRelationsPage').then((m) => ({ default: m.BranchRelationsPage })));
+const OverviewPage = lazy(() => import('@/pages/OverviewPage').then((m) => ({ default: m.OverviewPage })));
 const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) => ({ default: m.CdsSettingsPage })));
+const PersonalSettingsPage = lazy(() => import('@/pages/PersonalSettingsPage').then((m) => ({ default: m.PersonalSettingsPage })));
 const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
-const HomePage = lazy(() => import('@/pages/HomePage').then((m) => ({ default: m.HomePage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const TicketSsoPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.TicketSsoPage })));
+const PreviewAccessPage = lazy(() => import('@/pages/PreviewAccessPage').then(m => ({ default: m.PreviewAccessPage })));
 const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
+const PublicStatusPage = lazy(() => import('@/pages/PublicStatusPage').then((m) => ({ default: m.PublicStatusPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
+const ReleaseApprovalPage = lazy(() => import('@/pages/release-center/ReleaseApprovalPage').then(m => ({ default: m.ReleaseApprovalPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
+const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const DtsPage = lazy(() => import('@/pages/DtsPage').then(m => ({ default: m.DtsPage })));
+const CodeReviewsPage = lazy(() => import('@/pages/CodeReviewsPage').then((m) => ({ default: m.CodeReviewsPage })));
+const DesignWorkspacePage = lazy(() => import('@/pages/DesignWorkspacePage').then(m => ({ default: m.DesignWorkspacePage })));
+const EngineeringPlanningPage = lazy(() => import('@/pages/EngineeringPlanningPage').then(m => ({ default: m.EngineeringPlanningPage })));
+const ProjectStatusPage = lazy(() => import('@/pages/ProjectStatusPage').then((m) => ({ default: m.ProjectStatusPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
 const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) => ({ default: m.TaskSchedulePage })));
 
 /**
- * 路由切换时 Suspense fallback。用品牌 logo + 加载文案,跟 CDS 视觉调性一致。
+ * 独立页面代码尚未到达时，使用共享内容骨架。
  * 2026-05-28 用户反馈:之前是裸 <div>加载中...</div> 一行小字,丑爆。
  */
 function RouteFallback(): JSX.Element {
+  const { pathname } = useLocation();
+  if (loadingSceneForPath(pathname)?.scope === 'standalone') return pageSkeletonForPath(pathname);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <CdsLogoLoader size="xl" inline={false} label={<span className="text-sm text-muted-foreground">加载中…</span>} />
+      <ContentLoading label="加载页面" variant="panel" className="max-w-5xl p-6" />
     </div>
   );
 }
@@ -112,25 +129,25 @@ function ErrorToastPortal({
     <div
       style={{
         position: 'fixed',
-        right: 16,
-        bottom: 16,
+        right: '1rem',
+        bottom: '1rem',
         zIndex: 99999,
-        maxWidth: 360,
+        maxWidth: '22.5rem',
         // --card 是 HSL 三元组（如 '240 4% 12%'），必须 hsl() 包裹才是合法颜色；
         // 旧写法 var(--card, #1E1F20) 解析出非法值导致属性整体失效（fallback 不触发），
         // Toast 双主题下都没有背景。不写 fallback——缺定义时 bug 立刻可见。
         background: 'hsl(var(--card))',
         color: 'hsl(var(--card-foreground))',
         border: '1px solid hsl(var(--destructive) / 0.45)',
-        borderRadius: 8,
-        padding: '12px 14px',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-        fontSize: 13,
+        borderRadius: '0.5rem',
+        padding: '0.75rem 0.875rem',
+        boxShadow: '0 0.5rem 1.5rem rgba(0,0,0,0.18)',
+        fontSize: '0.8125rem',
         lineHeight: 1.5,
       }}
       role="alert"
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.375rem' }}>
         <strong style={{ color: 'hsl(var(--destructive))' }}>
           {isChunkLoad ? '前端代码已更新,正在刷新…' : '页面渲染异常'}
         </strong>
@@ -144,7 +161,7 @@ function ErrorToastPortal({
             color: 'inherit',
             cursor: 'pointer',
             opacity: 0.6,
-            fontSize: 16,
+            fontSize: '1rem',
             lineHeight: 1,
             padding: 0,
           }}
@@ -152,12 +169,12 @@ function ErrorToastPortal({
           ×
         </button>
       </div>
-      <div style={{ opacity: 0.85, marginBottom: 8 }}>
+      <div style={{ opacity: 0.85, marginBottom: '0.5rem' }}>
         {isChunkLoad
           ? 'CDS 已部署新版本,旧的页面代码片段已失效。如果几秒后仍未自动刷新,请手动刷新。'
           : '当前操作触发了一个未捕获的错误,主面板已保留。点下方刷新或继续浏览其它页面。'}
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button
           type="button"
           onClick={() => window.location.reload()}
@@ -166,9 +183,9 @@ function ErrorToastPortal({
             background: 'hsl(var(--destructive))',
             color: 'hsl(var(--destructive-foreground))',
             border: 'none',
-            borderRadius: 6,
-            padding: '6px 12px',
-            fontSize: 12,
+            borderRadius: '0.375rem',
+            padding: '0.375rem 0.75rem',
+            fontSize: '0.75rem',
             cursor: 'pointer',
           }}
         >
@@ -182,9 +199,9 @@ function ErrorToastPortal({
               background: 'transparent',
               color: 'inherit',
               border: '1px solid rgba(127,127,127,0.35)',
-              borderRadius: 6,
-              padding: '6px 12px',
-              fontSize: 12,
+              borderRadius: '0.375rem',
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
               cursor: 'pointer',
             }}
           >
@@ -192,9 +209,9 @@ function ErrorToastPortal({
           </button>
         ) : null}
       </div>
-      <details style={{ marginTop: 8, opacity: 0.55, fontSize: 11 }}>
+      <details style={{ marginTop: '0.5rem', opacity: 0.55, fontSize: '0.6875rem' }}>
         <summary style={{ cursor: 'pointer' }}>错误详情</summary>
-        <pre style={{ marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
+        <pre style={{ marginTop: '0.375rem', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: '7.5rem', overflow: 'auto' }}>
           {message}
         </pre>
       </details>
@@ -242,8 +259,9 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /branch-panel/:branchId Branch detail + logs + single-service actions
  *   /branch-topology        Project service topology
  *   /release-center         Release targets, runs, logs and rollback
+ *   /release-console        发布控制台三栏版：左项目环境 / 中发布实况 / 右历史与 Agent
  *   /reports                CDS self-hosted acceptance reports (HTML / Markdown)
- *   /status                 自建存活监控状态页（探测 / 可用率柱条 / 故障时间线）
+ *   /status                 监控中心（存活探测 / 可用率与响应曲线 / 故障时间线 / 自定义监控）
  *   /task-schedule          Project scheduled jobs
  *   /settings/:projectId    Project settings
  */
@@ -254,31 +272,46 @@ export function App(): JSX.Element {
           就绪前保留上一页(不闪骨架),就绪后一次性切换,消除切页卡顿感。 */}
       <BrowserRouter future={{ v7_startTransition: true }}>
         <GlobalAgentAccess />
-        <BugReportDialog />
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/preview-access" element={<PreviewAccessPage />} />
             <Route path="/auth/sso" element={<TicketSsoPage />} />
             <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
             <Route path="/hello" element={<HelloPage />} />
+            {/* 公开状态页：token 自鉴权，匿名可达，不带控制台外壳（也不该带——
+                外壳里的项目切换、命令面板、Agent 浮层都不该出现在对外页上）。 */}
+            <Route path="/s/:token" element={<PublicStatusPage />} />
             {/* 控制台页面:共享持久化外壳(ConsoleLayout),切页只换 Outlet 内容,
                 侧栏/命令面板/全局浮层永不卸载 —— 布局归一 + 切页流畅的架构保证。 */}
             <Route element={<ConsoleLayout />}>
               <Route path="/cds-settings" element={<CdsSettingsPage />} />
+              <Route path="/personal-settings" element={<PersonalSettingsPage />} />
               <Route path="/project-list" element={<ProjectListPage />} />
               <Route path="/branches/:projectId" element={<BranchListPage />} />
               <Route path="/branch-list" element={<BranchListPage />} />
               <Route path="/branch-panel" element={<BranchDetailPage />} />
               <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
+              <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
+              <Route path="/dts" element={<DtsPage />} />
+              <Route path="/code-reviews" element={<CodeReviewsPage />} />
+              <Route path="/engineering-planning" element={<EngineeringPlanningPage />} />
+              <Route path="/design" element={<DesignWorkspacePage />} />
+              <Route path="/release-center/approval/:authorizationId?" element={<ReleaseApprovalPage />} />
+              <Route element={<OwnerConsoleRoute />}>
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
+              <Route path="/overview" element={<OverviewPage />} />
               <Route path="/release-center" element={<ReleaseCenterPage />} />
+              <Route path="/release-console" element={<ReleaseConsolePage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/status" element={<StatusPage />} />
+              <Route path="/status/:projectId" element={<ProjectStatusPage />} />
               <Route path="/task-schedule" element={<TaskSchedulePage />} />
               <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
               <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
+              </Route>
             </Route>
             <Route path="*" element={<Navigate to="/project-list" replace />} />
           </Routes>

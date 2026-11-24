@@ -134,7 +134,7 @@ export function PaProfilePanel({ open, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="rounded-2xl shadow-2xl flex flex-col w-full max-w-2xl overflow-hidden border border-token-subtle"
+        className="surface-tone-dark rounded-2xl shadow-2xl flex flex-col w-full max-w-2xl overflow-hidden border border-token-subtle"
         style={{ background: '#0f1014', height: '85vh', maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >

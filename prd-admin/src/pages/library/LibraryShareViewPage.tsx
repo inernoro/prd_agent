@@ -1,3 +1,4 @@
+import { searchDocStoreShareEntries } from '@/services/real/documentStore';
 /**
  * LibraryShareViewPage — 知识库 / 单篇文档「分享链接」公开展示页
  *
@@ -34,8 +35,11 @@ import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/docu
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
-import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { transitionThemeMode } from '@/lib/themeTransition';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
+import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   parseLibraryShareViewMode,
   resolveShareKnowledgeBaseReturnPath,
@@ -52,11 +56,16 @@ import {
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export function LibraryShareViewPage() {
+  // 移动端沉浸阅读：分享页无 AppShell，自己消费 DocBrowser 的顶栏接管
+  //（文档标题 + 返回一条顶栏，标题条/简介条/查看方式条全部让位）
+  const isMobileViewport = useIsMobile();
+  const readerOverride = useReaderChromeStore((s) => s.override);
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const themeMode = useMobileThemeStore((s) => s.mode);
+  // 「随系统」下必须按当前真正显示的明暗来翻面，否则点了没反应
+  const resolvedThemeMode = useResolvedThemeMode();
   const setThemeMode = useMobileThemeStore((s) => s.setMode);
   const [searchParams, setSearchParams] = useSearchParams();
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
@@ -72,9 +81,9 @@ export function LibraryShareViewPage() {
   const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
   const [canOpenStore, setCanOpenStore] = useState(false);
 
-  useEffect(() => {
-    applyDocumentThemeMode(themeMode, location.pathname);
-  }, [location.pathname, themeMode]);
+  // 这一页在 AppShell 之外，壳层的主题接线够不着它 —— 用共享 hook，
+  // 它把解析后的明暗也放进 deps，'system' 偏好下系统一变这里会重新落 DOM。
+  useApplyDocumentTheme(location.pathname);
 
   useEffect(
     () => () => document.documentElement.removeAttribute('data-theme'),
@@ -83,12 +92,12 @@ export function LibraryShareViewPage() {
 
   const toggleTheme = useCallback<MouseEventHandler<HTMLButtonElement>>((event) => {
     transitionThemeMode({
-      mode: themeMode === 'light' ? 'dark' : 'light',
+      mode: resolvedThemeMode === 'light' ? 'dark' : 'light',
       pathname: location.pathname,
       origin: event,
       commit: setThemeMode,
     });
-  }, [location.pathname, setThemeMode, themeMode]);
+  }, [location.pathname, setThemeMode, resolvedThemeMode]);
 
   const shareSortMode = useMemo(
     () => resolveLibraryShareSortMode(
@@ -263,7 +272,8 @@ export function LibraryShareViewPage() {
   const activeView = parseLibraryShareViewMode(viewFromUrl, isSingleDoc);
   const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
   const desc = view.description || store.description;
-  const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
+  const documentCount = entries.filter(entry => !entry.isFolder && entry.sourceType !== 'github_directory').length;
+  const hasMeta = Boolean(desc) || (!isSingleDoc && documentCount > 0) || store.viewCount > 0;
   const knowledgeBaseReturnPath = resolveShareKnowledgeBaseReturnPath(store.id, canOpenStore);
   const knowledgeBaseReturnLabel = canOpenStore
     ? '返回知识库'
@@ -276,9 +286,20 @@ export function LibraryShareViewPage() {
       ? '当前账号不能直接打开该知识库，返回我的知识库列表'
       : '登录后进入我的知识库列表';
 
+  const immersiveReading = isMobileViewport && activeView === 'read' && !!readerOverride;
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: SANS }}>
+      {/* 移动端沉浸阅读：DocBrowser 自绘 fixed 沉浸顶栏（返回 + 标题 + 字号/全屏/更多），
+          分享页只需给它留出等高占位，并隐藏下方三条头部行 */}
+      {immersiveReading && (
+        <div
+          aria-hidden
+          style={{ height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))', flexShrink: 0 }}
+        />
+      )}
       {/* 顶栏：跟随全局主题偏好 */}
+      {!immersiveReading && (
       <div style={{
         padding: '10px 16px',
         display: 'flex',
@@ -316,7 +337,7 @@ export function LibraryShareViewPage() {
           </span>
         </div>
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} variant="inline" />
+          <ThemeModeToggle mode={resolvedThemeMode} onToggle={toggleTheme} variant="inline" />
           {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
           <button
             onClick={() => navigate(knowledgeBaseReturnPath)}
@@ -335,9 +356,10 @@ export function LibraryShareViewPage() {
           </button>
         </div>
       </div>
+      )}
 
       {/* 简介条：低饱和度 */}
-      {hasMeta && (
+      {hasMeta && !immersiveReading && (
         <div style={{
           padding: '8px 16px',
           display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
@@ -353,14 +375,14 @@ export function LibraryShareViewPage() {
               {desc}
             </span>
           )}
-          {!isSingleDoc && <span>{store.documentCount} 篇文档</span>}
+          {!isSingleDoc && <span>{documentCount} 篇文档</span>}
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <Eye size={12} /> {store.viewCount} 次浏览
           </span>
         </div>
       )}
 
-      {!isSingleDoc && (
+      {!isSingleDoc && !immersiveReading && (
         <nav
           aria-label="知识库查看方式"
           style={{
@@ -391,6 +413,12 @@ export function LibraryShareViewPage() {
         {activeView === 'read' && (
           <DocBrowser
             entries={browserEntries}
+            onSearch={async (keyword, _content, cursor) => {
+              const result = await searchDocStoreShareEntries(token ?? '', keyword, cursor);
+              if (!result.success) throw new Error(result.error.message);
+              return result.data;
+            }}
+            immersiveOnMobile
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             selectedEntryId={controlledSelectedEntryId}

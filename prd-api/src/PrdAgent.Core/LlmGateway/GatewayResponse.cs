@@ -1,0 +1,664 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+
+namespace PrdAgent.Core.LlmGateway;
+
+/// <summary>原生 HTTP 响应的一段字节；Data 仅在回调期间有效，不包含上游认证头。</summary>
+public sealed record GatewayNativeResponseChunk(int StatusCode, string ContentType, ReadOnlyMemory<byte> Data);
+
+/// <summary>原生请求全部协议与模型上限生效后、真正发送前的可核验预算输入。</summary>
+public record GatewayPhysicalAdmissionContext(
+    string RequestId,
+    int RequestBodyUtf8Bytes,
+    int EffectiveMaxOutputTokens,
+    string LogicalModelPublicId,
+    string Provider,
+    string Model,
+    string? OfferingId,
+    string? Protocol = null);
+
+public sealed record GatewayNativeAdmissionContext(
+    string RequestId,
+    int RequestBodyUtf8Bytes,
+    int EffectiveMaxOutputTokens,
+    string LogicalModelPublicId,
+    string Provider,
+    string Model,
+    string? OfferingId,
+    string? Protocol = null)
+    : GatewayPhysicalAdmissionContext(
+        RequestId,
+        RequestBodyUtf8Bytes,
+        EffectiveMaxOutputTokens,
+        LogicalModelPublicId,
+        Provider,
+        Model,
+        OfferingId,
+        Protocol);
+
+/// <summary>
+/// LLM Gateway 统一响应模型
+/// </summary>
+public class GatewayResponse
+{
+    /// <summary>
+    /// 是否成功
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// 错误码（失败时）
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
+    /// 错误消息（失败时）
+    /// </summary>
+    public string? ErrorMessage { get; init; }
+
+    /// <summary>
+    /// HTTP 状态码
+    /// </summary>
+    public int StatusCode { get; init; }
+
+    /// <summary>
+    /// 提取后的消息文本内容（非流式）
+    /// 从 choices[0].message.content (OpenAI) 或 content[0].text (Claude) 中提取
+    /// </summary>
+    public string? Content { get; init; }
+
+    /// <summary>
+    /// 原始 HTTP 响应体（完整 JSON，仅调试/日志用）
+    /// </summary>
+    public string? RawResponseBody { get; init; }
+
+    /// <summary>
+    /// 响应内容（JSON 解析后）
+    /// </summary>
+    public JsonDocument? ContentJson { get; init; }
+
+    /// <summary>
+    /// 工具调用（函数调用）——OpenAI 形状的 tool_calls 数组（协议保真：
+    /// 上游若返回 tool_calls / Claude tool_use，由适配器归一为 OpenAI 形状回吐，
+    /// 不再被网关吃掉。无工具调用时为 null）。
+    /// </summary>
+    public JsonArray? ToolCalls { get; init; }
+
+    /// <summary>
+    /// 协议特有字段透传容器（logprobs / provider 特有字段等）。
+    /// 通用信封只认得的字段走强类型属性，认不得但又不该丢的走这里。
+    /// </summary>
+    public Dictionary<string, JsonNode?>? Extensions { get; init; }
+
+    /// <summary>
+    /// 模型调度信息
+    /// </summary>
+    public GatewayModelResolution? Resolution { get; init; }
+
+    /// <summary>
+    /// Token 使用量
+    /// </summary>
+    public GatewayTokenUsage? TokenUsage { get; init; }
+
+    /// <summary>
+    /// 请求耗时（毫秒）
+    /// </summary>
+    public long DurationMs { get; init; }
+
+    /// <summary>
+    /// 首字节时间（毫秒）
+    /// </summary>
+    public long? TimeToFirstByteMs { get; init; }
+
+    /// <summary>
+    /// 日志 ID
+    /// </summary>
+    public string? LogId { get; init; }
+
+    public static GatewayResponse Fail(
+        string errorCode,
+        string errorMessage,
+        int statusCode = 500,
+        GatewayModelResolution? resolution = null)
+    {
+        return new GatewayResponse
+        {
+            Success = false,
+            ErrorCode = errorCode,
+            ErrorMessage = errorMessage,
+            StatusCode = statusCode,
+            Resolution = resolution,
+        };
+    }
+
+    public static GatewayResponse Ok(string content, GatewayModelResolution resolution, int statusCode = 200)
+    {
+        return new GatewayResponse
+        {
+            Success = true,
+            Content = content,
+            Resolution = resolution,
+            StatusCode = statusCode
+        };
+    }
+}
+
+/// <summary>
+/// 模型调度结果
+/// </summary>
+public class GatewayModelResolution
+{
+    [JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; init; }
+
+    /// <summary>本次调用已确认的线路计费拒绝；即使备用线路成功也必须传回 MAP。</summary>
+    public IReadOnlyList<GatewayBillingAlert> BillingAlerts { get; init; } = [];
+
+    /// <summary>调用方选择的逻辑模型 ID。</summary>
+    public string? LogicalModelId { get; init; }
+
+    /// <summary>调用方稳定使用的逻辑模型公开标识。</summary>
+    public string? LogicalModelPublicId { get; init; }
+
+    /// <summary>已解析逻辑模型的显式兼容标识。</summary>
+    public List<string> AcceptedModelAliases { get; init; } = new();
+
+    /// <summary>本次实际命中的上游 Offering ID。</summary>
+    public string? OfferingId { get; init; }
+
+    /// <summary>Offering 指向的目标类型：model / exchange。</summary>
+    public string? OfferingTargetKind { get; init; }
+
+    /// <summary>Offering 级每分钟请求上限；null/0 表示不启用。</summary>
+    public int? OfferingRateLimitPerMinute { get; init; }
+
+    /// <summary>Offering 级最大并发。</summary>
+    public int? OfferingMaxConcurrency { get; init; }
+
+    /// <summary>Offering 级 endpoint path 覆盖；为空时由协议适配器生成。</summary>
+    public string? OfferingEndpointPath { get; init; }
+
+    /// <summary>
+    /// 调度是否成功
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// 错误消息（调度失败时）
+    /// </summary>
+    public string? ErrorMessage { get; init; }
+
+    /// <summary>
+    /// 结构化失败原因（<see cref="GatewayRouteFailure"/> 常量之一）。
+    /// 必须跨 serving → MAP 的 HTTP 边界透传，否则 MAP 侧只剩自由文本，
+    /// 又会退回「所有失败都包装成同一个不可用」。
+    /// </summary>
+    public string? FailureCode { get; init; }
+
+    /// <summary>失败阶段（appcaller-registry / logical-model / offering / pool / pinned ...）。</summary>
+    public string? FailureStage { get; init; }
+
+    /// <summary>失败上下文：appCaller。</summary>
+    public string? FailureAppCallerCode { get; init; }
+
+    /// <summary>失败上下文：逻辑模型 PublicId。</summary>
+    public string? FailureLogicalModelPublicId { get; init; }
+
+    /// <summary>失败上下文：Offering ID。</summary>
+    public string? FailureOfferingId { get; init; }
+
+    /// <summary>失败上下文：模型池 ID。</summary>
+    public string? FailureModelPoolId { get; init; }
+
+    /// <summary>
+    /// 调度类型
+    /// DedicatedPool: 专属模型池
+    /// DefaultPool: 默认模型池
+    /// DirectModel: 直接指定模型
+    /// Legacy: 传统配置 (IsImageGen 等)
+    /// </summary>
+    public string ResolutionType { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 期望的模型名称（调用方传入）
+    /// </summary>
+    public string? ExpectedModel { get; init; }
+
+    /// <summary>
+    /// 实际使用的模型名称
+    /// </summary>
+    public string ActualModel { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 实际使用的平台 ID
+    /// </summary>
+    public string ActualPlatformId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 实际使用的平台名称
+    /// </summary>
+    public string? ActualPlatformName { get; init; }
+
+    /// <summary>
+    /// 平台类型（openai, claude 等）
+    /// </summary>
+    public string? PlatformType { get; init; }
+
+    /// <summary>
+    /// 本次调用使用的协议（P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType）。
+    /// </summary>
+    public string? Protocol { get; init; }
+
+    /// <summary>
+    /// 协议/模型解析来源说明（调试用）。
+    /// </summary>
+    public string? ResolutionReason { get; init; }
+
+    /// <summary>
+    /// API URL
+    /// </summary>
+    public string? ApiUrl { get; init; }
+
+    /// <summary>
+    /// 模型池 ID（如果通过模型池调度）
+    /// </summary>
+    public string? ModelGroupId { get; init; }
+
+    /// <summary>
+    /// 模型池名称
+    /// </summary>
+    public string? ModelGroupName { get; init; }
+
+    /// <summary>
+    /// 模型池代码
+    /// </summary>
+    public string? ModelGroupCode { get; init; }
+
+    /// <summary>
+    /// 模型在池中的优先级
+    /// </summary>
+    public int? ModelPriority { get; init; }
+
+    /// <summary>
+    /// 模型健康状态
+    /// </summary>
+    public string? HealthStatus { get; init; }
+
+    /// <summary>
+    /// 当前模型允许的最大输出 Token 数。
+    /// null 表示未配置，调用方请求值保持不变。
+    /// </summary>
+    public int? MaxTokens { get; init; }
+
+    /// <summary>平台级跨实例最大并发。</summary>
+    public int? PlatformMaxConcurrency { get; init; }
+
+    /// <summary>模型级跨实例最大并发。</summary>
+    public int? ModelMaxConcurrency { get; init; }
+
+    /// <summary>是否支持函数调用。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsFunctionCalling { get; init; }
+
+    /// <summary>是否支持视觉输入。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsVision { get; init; }
+
+    /// <summary>是否支持图片生成。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsImageGeneration { get; init; }
+
+    /// <summary>是否支持 thinking/reasoning 输出。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsThinking { get; init; }
+
+    /// <summary>是否支持结构化输出（json_schema/json_object/response_format）。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsStructuredOutput { get; init; }
+
+    /// <summary>是否支持 token logprobs/top_logprobs。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsLogprobs { get; init; }
+
+    /// <summary>是否支持并行工具调用（parallel_tool_calls）。false 表示明确不支持，null 表示未知。</summary>
+    public bool? SupportsParallelToolCalls { get; init; }
+
+    /// <summary>
+    /// 字段级参数能力矩阵。key 为请求参数名（如 seed/stop），value=false 表示明确不支持，缺失表示未知。
+    /// </summary>
+    public Dictionary<string, bool>? ParameterCapabilities { get; init; }
+
+    /// <summary>输入 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
+    public decimal? InputPricePerMillion { get; init; }
+
+    /// <summary>输出 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
+    public decimal? OutputPricePerMillion { get; init; }
+
+    /// <summary>
+    /// 缓存命中输入 Token 单价快照（每百万 Token）。null 表示没配，计价时按输入全价算。
+    ///
+    /// 这个字段必须跟着解析结果一路传到计价那一步：部分入口（调用方先 resolve、再把结果递进来）
+    /// 只拿得到这份摘要，摘要里少一档价，那条路径上的缓存计价就等于没接上。
+    /// </summary>
+    public decimal? CachedInputPricePerMillion { get; init; }
+
+    /// <summary>写入缓存输入 Token 单价快照（每百万 Token）。理由同上。</summary>
+    public decimal? CacheWritePricePerMillion { get; init; }
+
+    /// <summary>每次调用固定费用快照（币种由 PriceCurrency 指定）。</summary>
+    public decimal? PricePerCall { get; init; }
+
+    /// <summary>价格币种。计价口径是 USD；非 USD 的存量价格不记账，判为 stale_currency。</summary>
+    public string? PriceCurrency { get; init; }
+
+    /// <summary>价格来源：upstream / admin / migrated。空表示这份价格没有来源可考。</summary>
+    public string? PriceSource { get; init; }
+
+    /// <summary>价格观测时间，写进请求日志，用于事后判断这笔账是按多久以前的价算的。</summary>
+    public DateTime? PriceObservedAt { get; init; }
+
+    /// <summary>
+    /// 是否匹配期望（ExpectedModel == ActualModel）
+    /// </summary>
+    public bool MatchedExpectation =>
+        string.IsNullOrWhiteSpace(ExpectedModel) ||
+        string.Equals(ExpectedModel, ActualModel, StringComparison.OrdinalIgnoreCase);
+
+    // ========== 降级/回退信息 ==========
+
+    /// <summary>
+    /// 是否发生了降级/回退
+    /// </summary>
+    public bool IsFallback { get; init; }
+
+    /// <summary>
+    /// 降级原因描述
+    /// </summary>
+    public string? FallbackReason { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型池 ID（降级前）
+    /// </summary>
+    public string? OriginalPoolId { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型池名称（降级前）
+    /// </summary>
+    public string? OriginalPoolName { get; init; }
+
+    /// <summary>
+    /// 原始配置的模型列表（包含健康状态）
+    /// </summary>
+    public List<OriginalModelDto>? OriginalModels { get; init; }
+
+    // ========== Exchange 中继信息 ==========
+
+    /// <summary>是否为 Exchange 中继模型</summary>
+    public bool IsExchange { get; init; }
+
+    /// <summary>Exchange 配置 ID</summary>
+    public string? ExchangeId { get; init; }
+
+    /// <summary>Exchange 显示名称</summary>
+    public string? ExchangeName { get; init; }
+
+    /// <summary>Exchange 转换器类型</summary>
+    public string? ExchangeTransformerType { get; init; }
+
+    // ========== 发送阶段所需字段（compute-then-send 原则）==========
+    // 调用 SendRawWithResolutionAsync 时需要这些字段，避免在发送阶段二次 Resolve
+    // 注意：以下三个字段含敏感凭据，禁止序列化到外部 API 响应
+
+    /// <summary>
+    /// API Key（已解密）。SendRawWithResolutionAsync 需要此字段以直接发送 HTTP 请求。
+    /// </summary>
+    [JsonIgnore]
+    public string? ApiKey { get; init; }
+
+    /// <summary>Exchange 认证方案（如 "Bearer", "Key", "XApiKey"）</summary>
+    [JsonIgnore]
+    public string? ExchangeAuthScheme { get; init; }
+
+    /// <summary>Exchange 转换器配置</summary>
+    [JsonIgnore]
+    public Dictionary<string, object>? ExchangeTransformerConfig { get; init; }
+
+    /// <summary>
+    /// 同一次解析阶段预计算出的后续可重试候选。仅进程内发送使用，包含敏感发送字段，禁止序列化。
+    /// </summary>
+    [JsonIgnore]
+    public List<ModelResolutionResult>? RetryCandidates { get; init; }
+}
+
+/// <summary>
+/// 原始配置的模型 DTO
+/// </summary>
+public class OriginalModelDto
+{
+    /// <summary>模型 ID</summary>
+    public string ModelId { get; init; } = string.Empty;
+
+    /// <summary>平台 ID</summary>
+    public string PlatformId { get; init; } = string.Empty;
+
+    /// <summary>健康状态</summary>
+    public string HealthStatus { get; init; } = string.Empty;
+
+    /// <summary>是否可用</summary>
+    public bool IsAvailable { get; init; }
+
+    /// <summary>连续失败次数</summary>
+    public int ConsecutiveFailures { get; init; }
+}
+
+/// <summary>
+/// Token 使用量
+/// </summary>
+public class GatewayTokenUsage
+{
+    /// <summary>
+    /// 输入 Token 数
+    /// </summary>
+    public int? InputTokens { get; init; }
+
+    /// <summary>
+    /// 输出 Token 数
+    /// </summary>
+    public int? OutputTokens { get; init; }
+
+    /// <summary>
+    /// 输出 token 中属于推理过程的数量。它已经包含在 <see cref="OutputTokens"/> 中，
+    /// 只用于解释用量，绝不能再次计费。
+    /// </summary>
+    public int? ReasoningTokens { get; init; }
+
+    /// <summary>
+    /// 总 Token 数
+    /// </summary>
+    public int? TotalTokens => (InputTokens ?? 0) + (OutputTokens ?? 0);
+
+    /// <summary>
+    /// 缓存创建 Token 数
+    /// </summary>
+    public int? CacheCreationInputTokens { get; init; }
+
+    /// <summary>
+    /// 缓存读取 Token 数
+    /// </summary>
+    public int? CacheReadInputTokens { get; init; }
+
+    /// <summary>
+    /// 缓存创建 token 是否已经包含在 <see cref="InputTokens"/> 中。
+    /// OpenAI Responses 的 input_tokens_details.cache_write_tokens 属于这一形态；
+    /// Claude 根级 cache_creation_input_tokens 则是独立计数。
+    /// </summary>
+    public bool CacheCreationCountedInsideInput { get; init; }
+
+    /// <summary>
+    /// Token 统计来源
+    /// stream_event: 从流事件中提取
+    /// response_body: 从响应体中提取
+    /// estimated: 估算值
+    /// missing: 无法获取
+    /// </summary>
+    public string Source { get; init; } = "missing";
+}
+
+/// <summary>
+/// 流式响应块
+/// </summary>
+public class GatewayStreamChunk
+{
+    /// <summary>
+    /// 块类型
+    /// </summary>
+    public GatewayChunkType Type { get; init; }
+
+    /// <summary>
+    /// 内容（增量文本）
+    /// </summary>
+    public string? Content { get; init; }
+
+    /// <summary>
+    /// 完成原因（仅 Done 类型）
+    /// </summary>
+    public string? FinishReason { get; init; }
+
+    /// <summary>
+    /// Token 使用量（仅 Done 类型）
+    /// </summary>
+    public GatewayTokenUsage? TokenUsage { get; init; }
+
+    /// <summary>
+    /// 模型调度信息（首个块中）
+    /// </summary>
+    public GatewayModelResolution? Resolution { get; init; }
+
+    /// <summary>
+    /// 错误信息（仅 Error 类型）
+    /// </summary>
+    public string? Error { get; init; }
+
+    /// <summary>
+    /// 结构化失败原因（<see cref="GatewayRouteFailure"/> 的常量；仅 Error 类型，未分类时为 null）。
+    ///
+    /// 为什么必须带着走：`GatewayRouteFailure` 的约定是「判据只此一份，应用层只做展示映射，
+    /// 禁止再对错误文案做字符串匹配来猜原因」。而此前 Fail() 只带一句话，
+    /// 调用方要区分「配置没配好」与「上游暂时抖动」就只能去猜文案——
+    /// 于是 MODEL_POOL_EMPTY 这类重试一万次也好不了的配置问题，
+    /// 被当成暂时故障排进了自动重试（2026-08-29 正式环境实测到的正是这一条）。
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
+    /// 原始 SSE 数据
+    /// </summary>
+    public string? RawData { get; init; }
+
+    /// <summary>
+    /// 工具调用增量（仅 ToolCall 类型）——OpenAI 形状的 tool_calls 增量片段数组。
+    /// 协议保真：上游函数调用增量不再被网关吃掉，由适配器归一为 OpenAI 形状透出。
+    /// </summary>
+    public JsonArray? ToolCallDelta { get; init; }
+
+    /// <summary>
+    /// 协议特有字段透传容器（logprobs 等），认不得但不该丢的字段走这里。
+    /// </summary>
+    public Dictionary<string, JsonNode?>? Extensions { get; init; }
+
+    /// <summary>
+    /// 流内单调递增序号（断线续传 afterSeq 用）。进程内调用恒为 0；
+    /// 网关物理独立后由 /gw/stream 端点在发出 SSE 时逐块赋值，前端 ?afterSeq= 续传依赖它。
+    /// 详见 doc/design.platform.llm-gateway.physical-isolation.md §3.6 / server-authority.md。
+    /// </summary>
+    public long Seq { get; init; }
+
+    public static GatewayStreamChunk Text(string content) => new() { Type = GatewayChunkType.Text, Content = content };
+    public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
+    public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
+    public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
+    public static GatewayStreamChunk Fail(
+        string error,
+        string? errorCode = null,
+        GatewayModelResolution? resolution = null)
+        => new()
+        {
+            Type = GatewayChunkType.Error,
+            Error = error,
+            ErrorCode = errorCode,
+            Resolution = resolution,
+        };
+    public static GatewayStreamChunk ToolCallChunk(JsonArray delta) => new() { Type = GatewayChunkType.ToolCall, ToolCallDelta = delta };
+}
+
+/// <summary>
+/// 流式块类型
+/// </summary>
+public enum GatewayChunkType
+{
+    /// <summary>
+    /// 开始（包含调度信息）
+    /// </summary>
+    Start,
+
+    /// <summary>
+    /// 文本内容
+    /// </summary>
+    Text,
+
+    /// <summary>
+    /// 思考过程（reasoning_content / &lt;think&gt; 标签内容）
+    /// 由适配器产生，Gateway 根据 IncludeThinking 决定是否透传给调用方。
+    /// 默认不透传（IncludeThinking=false），Intent 模型类型强制不透传。
+    /// 日志始终记录思考内容，无论是否透传。
+    /// </summary>
+    Thinking,
+
+    /// <summary>
+    /// 工具调用
+    /// </summary>
+    ToolCall,
+
+    /// <summary>
+    /// 完成
+    /// </summary>
+    Done,
+
+    /// <summary>
+    /// 错误
+    /// </summary>
+    Error
+}
+
+/// <summary>
+/// 图片生成响应
+/// </summary>
+public class ImageGenGatewayResponse : GatewayResponse
+{
+    /// <summary>
+    /// 生成的图片列表
+    /// </summary>
+    public List<GeneratedImage> Images { get; init; } = new();
+
+    /// <summary>
+    /// 请求的尺寸
+    /// </summary>
+    public string? RequestedSize { get; init; }
+
+    /// <summary>
+    /// 实际使用的尺寸
+    /// </summary>
+    public string? EffectiveSize { get; init; }
+
+    /// <summary>
+    /// 尺寸是否被调整
+    /// </summary>
+    public bool SizeAdjusted { get; init; }
+}
+
+/// <summary>
+/// 生成的图片
+/// </summary>
+public class GeneratedImage
+{
+    public int Index { get; init; }
+    public string? Url { get; init; }
+    public string? OriginalUrl { get; init; }
+    public string? Sha256 { get; init; }
+    public string? RevisedPrompt { get; init; }
+}

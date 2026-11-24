@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>向我提问 · 形变动效 demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/*__STYLE__*/
+/* ── 以下只属于这个独立 demo 的外壳，不属于设计本身 ── */
+.wrap { max-width: 1152px; margin: 0 auto; padding: 22px 16px 40px; }
+.hd { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.hd h1 { font-size: 19px; margin: 0; letter-spacing: -0.005em; }
+.hd span { font-size: 12px; color: rgba(247,247,251,0.55); }
+.sub2 { font-size: 12.5px; line-height: 1.75; color: rgba(247,247,251,0.68); margin: 0 0 16px; max-width: 820px; }
+.stage { height: 560px; }
+.panelctl { margin-top: 14px; padding: 13px 14px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10); display: flex; flex-direction: column; gap: 12px; }
+.ctlrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+button { font: inherit; font-size: 12.5px; color: rgba(247,247,251,0.86); background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+button:hover { background: rgba(255,255,255,0.11); }
+button.on { background: rgba(217,119,87,0.20); border-color: rgba(217,119,87,0.45); color: #fff; }
+button.play { background: #B0523A; border-color: transparent; color: #fff; min-width: 82px; }
+.scrub { flex-grow: 1; min-width: 260px; accent-color: #D97757; }
+.tnum { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: rgba(247,247,251,0.62); min-width: 108px; }
+.lbl { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: rgba(247,247,251,0.45); }
+.marks { display: flex; gap: 8px; flex-wrap: wrap; }
+.tip { font-size: 11.5px; line-height: 1.7; color: rgba(247,247,251,0.55); }
+.tip b { color: #D97757; font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .panelctl { display: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <h1>向我提问 · 形变动效</h1>
+    <span>胶囊 → 长条 → 侧栏 → 收回，8 秒一轮 · 纯 CSS，无动画库</span>
+  </div>
+  <p class="sub2">
+    形变的始终是<b style="color:#f7f7fb">同一个元素</b>，内容只做透明度交叉。
+    把速度调到 0.25 倍、或者直接拖时间轴到 <b style="color:#D97757">1.0s</b> 附近，
+    能看清那一帧：胶囊先横向窜过头、高度压扁，再弹回落位 —— 这就是「水珠被拉长」的全部来源。
+  </p>
+
+<!--__STAGE__-->
+
+  <div class="panelctl">
+    <div class="ctlrow">
+      <button class="play" id="pp">暂停</button>
+      <input class="scrub" id="scrub" type="range" min="0" max="8000" step="10" value="0">
+      <span class="tnum" id="tnum">0.00s / 8.00s</span>
+    </div>
+    <div class="ctlrow">
+      <span class="lbl">速度</span>
+      <button data-rate="0.25">0.25x</button>
+      <button data-rate="0.5">0.5x</button>
+      <button data-rate="1" class="on">1x</button>
+      <span style="width:10px"></span>
+      <span class="lbl">跳到</span>
+      <div class="marks">
+        <button data-go="300">胶囊</button>
+        <button data-go="1020">拉长的那一帧</button>
+        <button data-go="1500">长条落位</button>
+        <button data-go="2200">提示弹出</button>
+        <button data-go="4400">立成侧栏</button>
+        <button data-go="5600">侧栏</button>
+        <button data-go="7300">收回</button>
+      </div>
+    </div>
+    <div class="tip">
+      时间轴用的是 Web Animations API 直接钉 <code style="font-family:'JetBrains Mono',monospace">currentTime</code>。
+      顺带一提：用「负 animation-delay + paused」取帧是错的，那样拿到的是「已跑时间 + delay」而不是绝对时刻。
+    </div>
+  </div>
+</div>
+
+<script>
+const DUR = 8000;
+const anims = () => document.getAnimations();
+const pp = document.getElementById('pp');
+const scrub = document.getElementById('scrub');
+const tnum = document.getElementById('tnum');
+let playing = true, rate = 1;
+
+function fmt(ms) { return (ms / 1000).toFixed(2) + 's / 8.00s'; }
+function setTime(ms) {
+  anims().forEach(a => { try { a.currentTime = ms; } catch (e) {} });
+  scrub.value = ms; tnum.textContent = fmt(ms);
+}
+function setPlaying(v) {
+  playing = v; pp.textContent = v ? '暂停' : '播放';
+  anims().forEach(a => { try { v ? a.play() : a.pause(); } catch (e) {} });
+}
+pp.onclick = () => setPlaying(!playing);
+scrub.oninput = () => { if (playing) setPlaying(false); setTime(Number(scrub.value)); };
+
+document.querySelectorAll('[data-rate]').forEach(b => b.onclick = () => {
+  rate = Number(b.dataset.rate);
+  document.querySelectorAll('[data-rate]').forEach(x => x.classList.toggle('on', x === b));
+  anims().forEach(a => { try { a.playbackRate = rate; } catch (e) {} });
+});
+document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+  setPlaying(false); setTime(Number(b.dataset.go));
+});
+
+// 播放中让滑块跟着走。读第一条动画的 currentTime 即可——所有动画同一时长、同一时间线。
+function tick() {
+  if (playing) {
+    const a = anims()[0];
+    if (a && a.currentTime != null) {
+      const t = Number(a.currentTime) % DUR;
+      scrub.value = t; tnum.textContent = fmt(t);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

@@ -20,47 +20,33 @@ public static class ImageGenModelConfigs
     /// </summary>
     public static readonly List<ImageGenModelAdapterConfig> Configs = new()
     {
-        // ===== gpt-image-2-all（自适应模型：尺寸由 prompt 描述决定）=====
-        // 接口：apiyi 等 OpenAI 兼容网关
-        // 关键点：
-        //   1. 不接受 size / n / quality / aspect_ratio 字段（传了会 400）
-        //   2. 尺寸/比例需写进 prompt 最前面（如 "横版 16:9 电影画幅，..."）
-        //   3. b64_json 字段已含 data:image/png;base64, 前缀（OpenAIImageClient 已有兼容处理）
-        new ImageGenModelAdapterConfig
-        {
-            ModelIdPattern = "gpt-image-2-all*",
-            DisplayName = "gpt-image-2-all（自适应）",
-            Provider = "OpenAI 兼容（apiyi）",
-            PlatformType = "openai",
-            LastUpdated = "2026-04-22",
-            SizeConstraintType = SizeConstraintTypes.Adaptive,
-            SizeConstraintDescription = "自适应模型：不接受尺寸字段，输出尺寸由 prompt 描述决定（推荐把尺寸词写在最前面）",
-            SizesByResolution = new Dictionary<string, List<SizeOption>>
-            {
-                // 仅作展示参考，调用时 *不* 会作为 size 参数发送
-                ["1k"] = new()
-                {
-                    new("1024x1024", "1:1"),
-                    new("1344x768", "16:9"),
-                    new("768x1344", "9:16"),
-                    new("1248x832", "3:2"),
-                    new("832x1248", "2:3"),
-                },
-                ["2k"] = new(),
-                ["4k"] = new(),
-            },
-            SizeParamFormat = SizeParamFormats.None,
-            Notes = new List<string>
-            {
-                "尺寸/比例请写进 prompt 最前面（推荐：'横版 16:9 电影画幅，...' / '竖版 9:16 海报，...'）",
-                "不传 size / n / quality / aspect_ratio / response_format，否则会触发参数校验错误",
-                "b64_json 已含 data:image/png;base64, 前缀，无需手动拼接",
-                "兼容 /v1/images/generations、/v1/images/edits、/v1/chat/completions 三端点",
-            },
-            SupportsImageToImage = true,
-            SupportsInpainting = false,
-            SupportsResponseFormat = false,
-        },
+        // ===== GPT Image 2.5 Sunburst =====
+        // 必须排在 gpt-image-2* 之前。Sunburst 是独立的官方模型标识，不应只靠
+        // “长得像 GPT Image 2”落入宽泛规则；这样目录、能力说明和请求契约才能逐项核对。
+        BuildOpenAiGptImageConfig(
+            "gpt-image-2.5-sunburst",
+            "GPT Image 2.5 Sunburst",
+            "2026-09-23",
+            "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst"),
+
+        // ===== GPT Image 2（自适应模型：尺寸由 prompt 描述决定）=====
+        // 同一能力可由 OpenAI 兼容图片端点或 OpenRouter chat/completions 承载。
+        // 两种协议都不发送 size，尺寸/比例统一写进 prompt 最前面。
+        BuildPromptControlledGptImage2Config(
+            "gpt-image-2-all*",
+            "gpt-image-2-all（自适应）",
+            "OpenAI 兼容（apiyi）"),
+        BuildOpenRouterGptImage2Config(),
+        BuildOpenAiGptImageConfig("gpt-image-2*", "GPT Image 2", "2026-08-14",
+            "https://platform.openai.com/docs/api-reference/images/create"),
+        // OpenAI 的滚动别名与 gpt-image-1 使用同一套图片尺寸协议。
+        // 该别名会出现在网关 default-generation 的实际 Offering 中；漏掉它会让目录模型可用，
+        // 但 Agent 参数页误判为“没有尺寸能力”。
+        BuildOpenAiGptImageConfig("chatgpt-image-latest", "ChatGPT Image", "2026-09-22",
+            "https://platform.openai.com/docs/guides/image-generation"),
+        // 精确匹配当前默认模型，不覆盖 1.5 或其他兼容平台的独立策略。
+        BuildOpenAiGptImageConfig("gpt-image-1", "GPT Image 1", "2026-08-31",
+            "https://developers.openai.com/api/docs/models/gpt-image-1"),
 
         // ===== gpt-image-1.5（标准 size 参数）=====
         // 与传统 OpenAI 兼容：通过 size 字段控制尺寸
@@ -199,13 +185,71 @@ public static class ImageGenModelConfigs
             SupportsInpainting = true,
         },
 
+        // ===== Gemini 3.1 Flash Image =====
+        // 官方稳定型号为 gemini-3.1-flash-image；生产存量上游仍可能带 -preview 后缀。
+        // 使用前缀匹配让两者共享能力契约，但目录仍展示实际上游型号，避免伪装成已迁稳定版。
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "gemini-3.1-flash-image*",
+            DisplayName = "Gemini 3.1 Flash Image",
+            Provider = "Google",
+            OfficialDocUrl = "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-image",
+            LastUpdated = "2026-09-23",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "支持 512/1K/2K/4K 分辨率档位及官方宽高比",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("512x512", "1:1"), new("256x1024", "1:4"), new("192x1536", "1:8"),
+                    new("424x632", "2:3"), new("632x424", "3:2"), new("448x600", "3:4"),
+                    new("1024x256", "4:1"), new("600x448", "4:3"), new("464x576", "4:5"),
+                    new("576x464", "5:4"), new("1536x192", "8:1"), new("384x688", "9:16"),
+                    new("688x384", "16:9"), new("792x168", "21:9"),
+                    new("1024x1024", "1:1"), new("512x2048", "1:4"), new("384x3072", "1:8"),
+                    new("848x1264", "2:3"), new("1264x848", "3:2"), new("896x1200", "3:4"),
+                    new("2048x512", "4:1"), new("1200x896", "4:3"), new("928x1152", "4:5"),
+                    new("1152x928", "5:4"), new("3072x384", "8:1"), new("768x1376", "9:16"),
+                    new("1376x768", "16:9"), new("1584x672", "21:9"),
+                },
+                ["2k"] = new()
+                {
+                    new("2048x2048", "1:1"), new("1024x4096", "1:4"), new("768x6144", "1:8"),
+                    new("1696x2528", "2:3"), new("2528x1696", "3:2"), new("1792x2400", "3:4"),
+                    new("4096x1024", "4:1"), new("2400x1792", "4:3"), new("1856x2304", "4:5"),
+                    new("2304x1856", "5:4"), new("6144x768", "8:1"), new("1536x2752", "9:16"),
+                    new("2752x1536", "16:9"), new("3168x1344", "21:9"),
+                },
+                ["4k"] = new()
+                {
+                    new("4096x4096", "1:1"), new("2048x8192", "1:4"), new("1536x12288", "1:8"),
+                    new("3392x5056", "2:3"), new("5056x3392", "3:2"), new("3584x4800", "3:4"),
+                    new("8192x2048", "4:1"), new("4800x3584", "4:3"), new("3712x4608", "4:5"),
+                    new("4608x3712", "5:4"), new("12288x1536", "8:1"), new("3072x5504", "9:16"),
+                    new("5504x3072", "16:9"), new("6336x2688", "21:9"),
+                },
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 12288,
+            MaxHeight = 12288,
+            MinWidth = 192,
+            MinHeight = 168,
+            Notes = new List<string>
+            {
+                "官方稳定型号为 gemini-3.1-flash-image",
+                "当前兼容 -preview 存量上游；迁移稳定型号前必须完成真实生成验证",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+        },
+
         // ===== Gemini 3 Pro Image Preview =====
         new ImageGenModelAdapterConfig
         {
             ModelIdPattern = "gemini-3-pro-image-preview*",
             DisplayName = "Gemini 3 Pro Image Preview",
             Provider = "Google",
-            LastUpdated = "2026-02-11",
+            LastUpdated = "2026-10-10",
             SizeConstraintType = SizeConstraintTypes.Whitelist,
             SizeConstraintDescription = "支持 1K/2K/4K 分辨率档位的固定尺寸",
             SizesByResolution = new Dictionary<string, List<SizeOption>>
@@ -214,7 +258,8 @@ public static class ImageGenModelConfigs
                 {
                     new("1024x1024", "1:1"),
                     new("832x1248", "2:3"),
-                    new("1248x832", "3:2"),
+                    // 现有 preview 线路真实 1K/3:2 输出；不据单个比例推改其他档位。
+                    new("1264x848", "3:2"),
                     new("864x1184", "3:4"),
                     new("1184x864", "4:3"),
                     new("896x1152", "4:5"),
@@ -395,6 +440,33 @@ public static class ImageGenModelConfigs
             SupportsInpainting = true,
         },
 
+        // ===== fal.ai Qwen Image Layered（必须排在 qwen-image* 之前）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "fal-qwen-image-layered*",
+            DisplayName = "Qwen Image Layered",
+            Provider = "fal.ai",
+            LastUpdated = "2026-08-04",
+            SizeConstraintType = SizeConstraintTypes.Adaptive,
+            SizeConstraintDescription = "输出图层继承输入图片画布尺寸，不接受普通生图尺寸选择",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new(),
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.None,
+            SizesNotApplicable = true,
+            Notes = new List<string>
+            {
+                "专用于图片语义分层，不进入普通文生图模型选择",
+                "返回 1–10 个保持原始坐标系的 RGBA 图层",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        },
+
         // ===== 通义万相 qwen-image =====
         new ImageGenModelAdapterConfig
         {
@@ -521,6 +593,40 @@ public static class ImageGenModelConfigs
             SizeParamFormat = SizeParamFormats.AspectRatio,
             ParamRenames = new Dictionary<string, string> { { "model", "model_name" } },
             Notes = new List<string> { "通过 aspect_ratio 参数控制比例，具体像素由模型决定" },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+        },
+
+        // ===== 豆包 Seedream 5.0 Pro（官方标准尺寸，不沿用 4.5 的 4K 能力）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "doubao-seedream-5-0-pro*",
+            DisplayName = "豆包 Seedream 5.0 Pro",
+            Provider = "字节跳动 (火山引擎)",
+            PlatformType = "volces",
+            OfficialDocUrl = "https://ark.volcengine.com/region:cn-beijing/docs/image-generation-api",
+            LastUpdated = "2026-11-05",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "支持 1K/2K 标准尺寸，最高 2K；单次输出一张图片",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"), new("1152x864", "4:3"), new("864x1152", "3:4"),
+                    new("1424x800", "16:9"), new("800x1424", "9:16"), new("1248x832", "3:2"),
+                    new("832x1248", "2:3"), new("1568x672", "21:9"),
+                },
+                ["2k"] = new()
+                {
+                    new("2048x2048", "1:1"), new("2368x1776", "4:3"), new("1776x2368", "3:4"),
+                    new("2816x1584", "16:9"), new("1584x2816", "9:16"), new("2496x1664", "3:2"),
+                    new("1664x2496", "2:3"), new("3136x1344", "21:9"),
+                },
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxPixels = 4624220,
+            Notes = new() { "最多 10 张参考图；不支持组图生成或流式输出", "官方像素范围 921600 至 4624220，此处开放标准尺寸白名单" },
             SupportsImageToImage = true,
             SupportsInpainting = false,
         },
@@ -659,4 +765,120 @@ public static class ImageGenModelConfigs
             SupportsInpainting = false,
         },
     };
+
+    private static ImageGenModelAdapterConfig BuildPromptControlledGptImage2Config(
+        string modelIdPattern,
+        string displayName,
+        string provider)
+        => new()
+        {
+            ModelIdPattern = modelIdPattern,
+            DisplayName = displayName,
+            Provider = provider,
+            PlatformType = "openai",
+            LastUpdated = "2026-08-10",
+            SizeConstraintType = SizeConstraintTypes.Adaptive,
+            SizeConstraintDescription = "自适应模型：不接受尺寸字段，输出尺寸由 prompt 描述决定（推荐把尺寸词写在最前面）",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                // 仅供用户选择；调用时不会作为 size 参数发送。
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1344x768", "16:9"),
+                    new("768x1344", "9:16"),
+                    new("1024x768", "4:3"),
+                    new("768x1024", "3:4"),
+                    new("1248x832", "3:2"),
+                    new("832x1248", "2:3"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.None,
+            Notes = new List<string>
+            {
+                "系统会把用户选择的尺寸和比例写到 prompt 最前面",
+                "不传 size / n / quality / aspect_ratio / response_format",
+                "兼容图片端点与 OpenRouter chat/completions 端点",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        };
+
+    private static ImageGenModelAdapterConfig BuildOpenRouterGptImage2Config()
+        => new()
+        {
+            ModelIdPattern = "openai/gpt-image-2*",
+            DisplayName = "GPT Image 2（OpenRouter）",
+            Provider = "OpenRouter",
+            PlatformType = "openai",
+            LastUpdated = "2026-08-10",
+            SizeConstraintType = SizeConstraintTypes.AspectRatio,
+            SizeConstraintDescription = "通过 OpenRouter Images API 的 aspect_ratio 控制比例，具体像素由模型决定",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1344x768", "16:9"),
+                    new("768x1344", "9:16"),
+                    new("1024x768", "4:3"),
+                    new("768x1024", "3:4"),
+                    new("1248x832", "3:2"),
+                    new("832x1248", "2:3"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.AspectRatio,
+            InjectSizePrompt = true,
+            Notes = new List<string>
+            {
+                "网关按 openrouter-image 协议调用专用 Images API，并把用户选择的尺寸转换为 aspect_ratio",
+                "同时把尺寸要求写到 prompt 最前面，防止上游忽略结构化比例参数",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        };
+
+    private static ImageGenModelAdapterConfig BuildOpenAiGptImageConfig(
+        string modelIdPattern, string displayName, string lastUpdated, string officialDocUrl)
+        => new()
+        {
+            ModelIdPattern = modelIdPattern,
+            DisplayName = displayName,
+            Provider = "OpenAI",
+            PlatformType = "openai",
+            OfficialDocUrl = officialDocUrl,
+            LastUpdated = lastUpdated,
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "通过 size 参数控制尺寸（OpenAI GPT Image 白名单）",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1024x1536", "2:3"),
+                    new("1536x1024", "3:2"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 1536,
+            MaxHeight = 1536,
+            MinWidth = 1024,
+            MinHeight = 1024,
+            Notes = new List<string>
+            {
+                "通过标准 size 参数控制尺寸",
+                "响应为 base64 图片数据，不发送旧版 response_format 参数",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+            SupportsResponseFormat = false,
+        };
 }

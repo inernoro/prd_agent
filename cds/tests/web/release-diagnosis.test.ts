@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collapseRepeats,
+  condenseHeadline,
   diagnoseReleaseFailure,
   explainGateCheck,
   extractGateReports,
@@ -174,8 +176,10 @@ describe('releaseDiagnosis · 端到端诊断', () => {
 
   it('结论有了也照样保留原始证据：error 行与噪音行都在', () => {
     const diagnosis = diagnoseReleaseFailure(logs);
-    expect(diagnosis.errorLines).toContain('LLM Gateway production stage failed; appending failed evidence');
-    expect(diagnosis.noiseLines).toEqual([
+    expect(diagnosis.errorGroups.map((group) => group.text)).toContain(
+      'LLM Gateway production stage failed; appending failed evidence',
+    );
+    expect(diagnosis.noiseGroups.map((group) => group.text)).toEqual([
       'context canceled',
       'WARN: api image warmup skipped or timed out after 30s',
     ]);
@@ -209,6 +213,113 @@ describe('releaseDiagnosis · 端到端诊断', () => {
       { level: 'error', message: 'boom' },
       { level: 'error', message: 'later' },
     ]);
-    expect(diagnosis.errorLines).toEqual(['boom', 'later']);
+    expect(diagnosis.errorGroups).toEqual([
+      { text: 'boom', count: 2, variants: ['boom'] },
+      { text: 'later', count: 1, variants: ['later'] },
+    ]);
+  });
+});
+
+/**
+ * 止血三条的守卫（2026-08-12）。
+ *
+ * 样本形状照抄 rel_9759ead9be9405e3：远端执行器把一句人话和几十行 stderr
+ * 拼成**一条** error 丢回来，于是「一句话结论」的位置被灌进 1418 个字符。
+ * 三条断言分别钉住：结论单行化、噪音归并、以及归并不许吃掉差异。
+ */
+describe('releaseDiagnosis · 结论位不许装整段日志', () => {
+  const sshFailure = [
+    '执行项目发布命令失败: ssh exec exit=22',
+    '--- stderr(tail) --- ... [truncated, kept last 19 lines / 1418 chars]',
+    'Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries left.',
+    'curl: (22) The requested URL returned error: 404',
+    '--- stdout(tail) --- Downloading immutable admin artifact with resume: https://example.invalid/a.zip',
+  ].join('\n');
+
+  it('切掉 stderr 尾巴，只留标记之前的第一句', () => {
+    expect(condenseHeadline(sshFailure)).toBe('执行项目发布命令失败: ssh exec exit=22');
+  });
+
+  it('没有尾巴标记的超长单行也被截断，且恒为单行', () => {
+    const long = `无法连接目标机：${'诊断信息'.repeat(60)}`;
+    const headline = condenseHeadline(long);
+    expect(headline.length).toBeLessThanOrEqual(96);
+    expect(headline.endsWith('…')).toBe(true);
+    expect(headline).not.toContain('\n');
+  });
+
+  it('复合 error 进 diagnose 之后，headline 是一句话而不是一堵墙', () => {
+    const diagnosis = diagnoseReleaseFailure([{ level: 'error', message: sshFailure }]);
+    expect(diagnosis.headline).toBe('执行项目发布命令失败: ssh exec exit=22');
+    expect(diagnosis.headline).not.toContain('curl');
+    // 原文一个字没丢：完整 error 仍在 error 行区块里
+    expect(diagnosis.errorGroups[0].text).toContain('curl: (22)');
+  });
+
+  it('结论短于上限时原样保留，不画蛇添足加省略号', () => {
+    expect(condenseHeadline('ssh: connect: connection refused')).toBe('ssh: connect: connection refused');
+  });
+});
+
+describe('releaseDiagnosis · 重复行归并', () => {
+  it('只有倒计时不同的重试播报归成一组并计数', () => {
+    const retries = [4, 3, 2, 1].map(
+      (left) => `Warning: Problem (retrying all errors). Will retry in 2 seconds. ${left} retries left.`,
+    );
+    const groups = collapseRepeats(retries, 6);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].count).toBe(4);
+    expect(groups[0].text).toContain('4 retries left');
+  });
+
+  it('归并只压重复不压差异：同组里不同的原文照样留着', () => {
+    const groups = collapseRepeats(
+      [
+        'curl: (22) The requested URL returned error: 404',
+        'curl: (22) The requested URL returned error: 404',
+        'curl: (22) The requested URL returned error: 500',
+      ],
+      6,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].count).toBe(3);
+    expect(groups[0].variants).toEqual([
+      'curl: (22) The requested URL returned error: 404',
+      'curl: (22) The requested URL returned error: 500',
+    ]);
+  });
+
+  it('curl 的重试播报算噪音，但真正报错的那一行不算', () => {
+    expect(isNoiseLine('Warning: Problem (retrying all errors). Will retry in 2 seconds. 3 retries left.')).toBe(true);
+    expect(isNoiseLine('curl: (22) The requested URL returned error: 404')).toBe(false);
+  });
+
+  /**
+   * 2026-08-12 自测截图抓到的真实缺陷：复合 error 里顺带含着 curl 的重试播报，
+   * 按子串判定就把**真正的失败原因**整条标成「不是失败原因」摆进噪音栏。
+   */
+  it('多行复合消息不算噪音行，哪怕里面含着噪音措辞', () => {
+    const composite = [
+      '执行项目发布命令失败: ssh exec exit=22',
+      'Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries left.',
+    ].join('\n');
+    expect(isNoiseLine(composite)).toBe(false);
+    const diagnosis = diagnoseReleaseFailure([{ level: 'error', message: composite }]);
+    expect(diagnosis.noiseGroups).toEqual([]);
+    expect(diagnosis.errorGroups[0].text).toContain('ssh exec exit=22');
+  });
+
+  it('error 级永远不进噪音栏——那一栏写着「它不是失败原因」', () => {
+    const diagnosis = diagnoseReleaseFailure([
+      { level: 'error', message: 'context canceled' },
+    ]);
+    expect(diagnosis.noiseGroups).toEqual([]);
+    expect(diagnosis.errorGroups.map((group) => group.text)).toEqual(['context canceled']);
+  });
+
+  it('限的是组数不是行数：超限的新形状被丢弃，已有组照常继续计数', () => {
+    const groups = collapseRepeats(['a 1', 'b 1', 'a 2', 'c 1'], 2);
+    expect(groups.map((group) => group.text)).toEqual(['a 1', 'b 1']);
+    expect(groups[0].count).toBe(2);
   });
 });

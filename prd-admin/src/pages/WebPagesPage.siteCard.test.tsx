@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { SiteCard } from './WebPagesPage';
+import { SiteCard, SiteListItem } from './WebPagesPage';
 import type { HostedSite } from '@/services/real/webPages';
-import type { SiteCaps } from './WebPagesPage';
+import { buildCardActionLayers, canDragSiteCard } from '@/components/web-hosting/SiteCard';
+import type { SiteCaps, SiteCardSize, SiteShareStats } from '@/components/web-hosting/SiteCard';
 
 const baseSite: HostedSite = {
   id: 'site-1',
@@ -12,10 +13,12 @@ const baseSite: HostedSite = {
   cosPrefix: 'sites/site-1',
   entryFile: 'index.html',
   siteUrl: 'https://example.test/site-1',
+  pdfAssetUrl: undefined,
   coverImageUrl: 'https://example.test/cover.png',
   files: [{ path: 'index.html', cosKey: 'sites/site-1/index.html', size: 1024, mimeType: 'text/html' }],
   totalSize: 1024,
   tags: [],
+  folderCanonicalName: '',
   ownerUserId: 'user-1',
   viewCount: 3,
   visibility: 'private',
@@ -25,14 +28,26 @@ const baseSite: HostedSite = {
 
 const ownerCaps: SiteCaps = { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
 
-function renderSiteCard(site: HostedSite = baseSite, caps: SiteCaps = ownerCaps, shared = false) {
+function renderSiteCard(
+  site: HostedSite = baseSite,
+  caps: SiteCaps = ownerCaps,
+  shared = false,
+  size: SiteCardSize = 'medium',
+  shareStats?: SiteShareStats,
+  selected = false,
+  activity?: { editCount: number; isNew: boolean },
+) {
   return renderToStaticMarkup(
     <SiteCard
       site={site}
-      selected={false}
+      size={size}
+      activity={activity}
+      selected={selected}
       shared={shared}
+      shareStats={shareStats}
       caps={caps}
       onSelect={vi.fn()}
+      onVisit={vi.fn()}
       onTogglePublic={vi.fn()}
       onEdit={vi.fn()}
       onDelete={vi.fn()}
@@ -40,45 +55,285 @@ function renderSiteCard(site: HostedSite = baseSite, caps: SiteCaps = ownerCaps,
       onQrCode={vi.fn()}
       onTransferToLibrary={vi.fn()}
       onReplaceFile={vi.fn()}
+      onAiEdit={vi.fn()}
     />,
   );
 }
 
 describe('WebPagesPage SiteCard', () => {
-  it('keeps common card actions visible and folds secondary actions into more settings', () => {
+  it('仅标记已分享，新建未打开和编辑次数独立表达', () => {
+    const unread = renderSiteCard(baseSite, ownerCaps, false, 'small', undefined, false, { editCount: 0, isNew: true });
+    expect(unread).not.toContain('未分享');
+    expect(unread).not.toContain('data-site-shared-badge');
+    expect(unread).toContain('新创建，尚未打开');
+    expect(unread).toContain('已编辑 0 次');
+    expect(unread).toContain('data-site-edit-badge');
+    const readShared = renderSiteCard(baseSite, ownerCaps, true, 'small', undefined, false, { editCount: 3, isNew: false });
+    expect(readShared).toContain('data-site-shared-badge');
+    expect(readShared).not.toContain('新创建，尚未打开');
+    expect(readShared).toContain('已编辑 3 次');
+    expect(renderSiteCard()).not.toContain('已编辑 0 次');
+    expect(renderSiteCard()).toContain('编辑次数暂不可用');
+    expect(renderSiteCard()).toContain('aria-label="全部访问（含作者）"');
+    expect(renderSiteCard()).toContain('访问统计暂不可用');
+    expect(renderSiteCard()).not.toContain('3 浏览');
+  });
+
+  it('卡片来源移入详情，列表仍沿用旧 api 来源契约', () => {
+    const site = { ...baseSite, sourceType: 'api' as const };
+    const card = renderSiteCard(site);
+    const row = renderToStaticMarkup(<SiteListItem
+      site={site} selected={false} shared={false} caps={ownerCaps}
+      onSelect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onShare={vi.fn()}
+      onQrCode={vi.fn()} onTogglePublic={vi.fn()}
+    />);
+    expect(card).not.toContain('MCP 生成');
+    expect(card).toContain('查看网页详情');
+    for (const html of [row]) {
+      expect(html).toContain('MCP 生成');
+      expect(html).not.toContain('API');
+      expect(html).toContain('aria-label="更多设置"');
+    }
+  });
+
+  it('把高频操作放在常驻层，低频操作留在更多菜单', () => {
     const html = renderSiteCard();
 
-    expect(html).not.toContain('设为公开');
-    expect(html).not.toContain('>公开<');
+    // 常驻：预览 + 分享 + 更多
+    expect(html).toContain('aria-label="预览"');
     expect(html).toContain('aria-label="分享"');
-    expect(html).toContain('aria-label="编辑"');
     expect(html).toContain('aria-label="更多设置"');
+    // 低频配置不常驻（它们在菜单里，菜单未展开时不渲染）
+    expect(html).not.toContain('aria-label="发布到公开页"');
+    expect(html).not.toContain('aria-label="转存到知识库"');
+  });
+
+  it('卡片恢复原信息层高度，不追加微调与版本常驻按钮', () => {
+    const html = renderSiteCard();
+
+    expect(html).not.toContain('data-site-version-actions');
+    expect(html).not.toContain('帮我修改');
+    expect(html).not.toContain('版本记录');
+    expect(html).toContain('height:140px');
+    expect(html).toContain('padding:10px 11px 11px');
+  });
+
+  it('修改只出现在原更多菜单，点击调用原面板回调且遵守编辑权限', () => {
+    const onAiEdit = vi.fn();
+    const args = { site: baseSite, caps: ownerCaps, onShare: vi.fn(), onEdit: vi.fn(), onQrCode: vi.fn(), onTogglePublic: vi.fn(), onTransferToLibrary: vi.fn(), onDelete: vi.fn(), onAiEdit };
+    const actions = buildCardActionLayers(args);
+    expect(actions.hover.map((action) => action.label)).not.toContain('帮我修改');
+    expect(actions.menu.filter((action) => action.label === '帮我修改')).toHaveLength(1);
+    actions.menu.find((action) => action.label === '帮我修改')!.onClick({} as HTMLElement);
+    expect(onAiEdit).toHaveBeenCalledTimes(1);
+    expect(actions.menu.map((action) => action.label)).not.toContain('版本记录');
+    expect(buildCardActionLayers({ ...args, caps: { ...ownerCaps, canEdit: false } }).menu.map((action) => action.label)).not.toContain('帮我修改');
+  });
+
+  it('hover 层不显形时不可点', () => {
+    const html = renderSiteCard();
+
+    // 编辑/替换/二维码属于 hover 层：渲染了但不可点，hover 或键盘 focus 才展开
+    expect(html).toContain('aria-label="编辑信息"');
     expect(html).toContain('pointer-events-none');
-    expect(html).toContain('group-hover:pointer-events-auto');
-    expect(html).not.toContain('aria-label="发布到公开页"');
-    expect(html).not.toContain('aria-label="二维码"');
+    // 容器**不能**在 hover 时整条变可点：它以整条宽度盖住左下角的批量勾选框，
+    // 一旦接管指针，勾选框就看得见点不动（2026-08-25 实测，只有真实指针序列会红）。
+    // 可点的只能是里面的按钮，它们自带 pointer-events-auto。
+    const hoverBar = html.match(/data-hoverbar[^>]*>/)?.[0] || '';
+    expect(hoverBar).not.toContain('group-hover:pointer-events-auto');
+    expect(html).toContain('pointer-events-auto inline-flex');
+    // 键盘 focus 走同一条路：容器只负责显形（opacity/位移），可点性始终在按钮身上
+    expect(hoverBar).not.toContain('group-focus-within:pointer-events-auto');
+    expect(html).toContain('group-focus-within:opacity-100');
   });
 
-  it('uses the same share entry for public sites and already shared sites', () => {
-    const html = renderSiteCard({ ...baseSite, visibility: 'public' }, ownerCaps, true);
-
-    expect(html).toContain('aria-label="已分享"');
-    expect(html).toContain('公开</span>');
-    expect(html).not.toContain('aria-label="分享管理"');
-    expect(html).not.toContain('点击取消公开');
-    expect(html).not.toContain('aria-label="发布到公开页"');
+  it('hover 层的每一项都必须在更多菜单里有等价入口（触屏与键盘可达）', () => {
+    // 桌面 hover 条在 sm 断点以下不渲染，触屏用户只剩 kebab 这一条路。
+    // 任何一项只挂在 hover 层、没进菜单，就是把触屏用户挡在门外。
+    for (const caps of [
+      ownerCaps,
+      { canEdit: true, canDelete: false, canShare: true, canSetVisibility: false },
+      { canEdit: false, canDelete: false, canShare: true, canSetVisibility: false },
+    ] satisfies SiteCaps[]) {
+      const { hover, menu } = buildCardActionLayers({
+        site: baseSite,
+        caps,
+        onShare: vi.fn(),
+        onEdit: vi.fn(),
+        onQrCode: vi.fn(),
+        onTogglePublic: vi.fn(),
+        onTransferToLibrary: vi.fn(),
+        onDelete: vi.fn(),
+      });
+      const menuLabels = menu.map((a) => a.label);
+      for (const a of hover) expect(menuLabels).toContain(a.label);
+      // 分享先置顶，再接 hover 等价项；分隔线位于这组操作之后。
+      expect(menuLabels.slice(1, 1 + hover.length)).toEqual(hover.map((a) => a.label));
+    }
   });
 
-  it('shows the private share action for team editors without visibility permission', () => {
-    const html = renderSiteCard(baseSite, {
-      canEdit: true,
-      canDelete: true,
-      canShare: true,
-      canSetVisibility: false,
+  it.each([
+    { shared: false, linkCount: 0, label: '分享' },
+    { shared: true, linkCount: 0, label: '管理分享' },
+    { shared: true, linkCount: 2, label: '管理分享 · 2' },
+  ])('更多菜单保留 $label 并调用分享回调', ({ shared, linkCount, label }) => {
+    const onShare = vi.fn();
+    const args = {
+      site: baseSite, caps: ownerCaps, shared, linkCount, onShare,
+      onEdit: vi.fn(), onQrCode: vi.fn(), onTogglePublic: vi.fn(),
+      onTransferToLibrary: vi.fn(), onDelete: vi.fn(),
+    };
+    const { hover, menu, touchActions } = buildCardActionLayers(args);
+    expect(menu[0].label).toBe(label);
+    expect(touchActions).toBe(hover.length + 1);
+    const anchor = {} as HTMLElement;
+    menu[0].onClick(anchor);
+    expect(onShare).toHaveBeenCalledTimes(1);
+    expect(onShare).toHaveBeenCalledWith(anchor);
+    const denied = buildCardActionLayers({ ...args, caps: { ...ownerCaps, canShare: false } });
+    expect(denied.menu.some(action => /分享/.test(action.label))).toBe(false);
+    expect(denied.touchActions).toBe(denied.hover.length);
+  });
+
+  it('破坏性操作只在菜单里，不进 hover 层', () => {
+    const { hover, menu } = buildCardActionLayers({
+      site: baseSite,
+      caps: ownerCaps,
+      onShare: vi.fn(),
+      onEdit: vi.fn(),
+      onQrCode: vi.fn(),
+      onTogglePublic: vi.fn(),
+      onTransferToLibrary: vi.fn(),
+      onDelete: vi.fn(),
+    });
+    expect(hover.some((a) => a.danger)).toBe(false);
+    expect(menu.some((a) => a.danger && a.label === '删除')).toBe(true);
+  });
+
+  it('已分享时常驻按钮转为管理分享并带上有效链接条数', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, true, 'medium', { activeLinks: 2 });
+
+    expect(html).toContain('aria-label="管理分享 · 2"');
+    expect(html).toContain('已分享');
+    expect(html).not.toContain('aria-label="分享"');
+  });
+
+  it('缩略图显示状态图标，HTML 与来源不占卡片空间', () => {
+    const html = renderSiteCard({ ...baseSite, visibility: 'public', sharedTeamIds: ['team-1'] }, ownerCaps, true, 'medium', {
+      activeLinks: 3,
     });
 
+    // 形态与来源（缩略图层两角）
+    expect(html).not.toContain('data-site-card-type');
+    expect(html).not.toContain('手动上传');
+    // 状态（信息层一行，四种同时成立也不挤进缩略图角落）
+    expect(html).toContain('已公开');
+    expect(html).toContain('团队共享');
+  });
+
+  it('形态角标只在有真实数据时出现', () => {
+    // 单个 HTML 不再重复标记「单页」
+    expect(renderSiteCard()).not.toContain('单页');
+
+    // 视频包装站：前端拿不到时长，不编一个空角标
+    const video = renderSiteCard({ ...baseSite, wrappedAssetType: 'video', coverImageUrl: undefined });
+    expect(video).toContain('视频');
+    expect(video).not.toContain('单页');
+
+    // ZIP 站：角标是真实文件数
+    const zip = renderSiteCard({
+      ...baseSite,
+      coverImageUrl: undefined,
+      files: [
+        { path: 'index.html', cosKey: 'k1', size: 1, mimeType: 'text/html' },
+        { path: 'a.js', cosKey: 'k2', size: 1, mimeType: 'text/javascript' },
+      ],
+    });
+    expect(zip).toContain('ZIP 站');
+    expect(zip).toContain('2 文件');
+  });
+
+  it('小卡保留分享状态与操作入口', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, true, 'small', { activeLinks: 1 });
+
+    // 小卡放不下常驻按钮条，但 kebab 必须在，否则小卡视图下无法操作
+    expect(html).toContain('aria-label="更多设置"');
+    // 分享状态移入元信息行，小卡保留绿色链接图标与完整说明，不能因尺寸小而丢失状态
+    expect(html).toContain('已分享');
+    expect(html).toContain('查看状态：已分享');
+    expect(html).not.toContain('帮我修改');
+    expect(html).not.toContain('版本记录');
+    expect(html).toContain('height:92px');
+    expect(html).toContain('padding:8px 9px 9px');
+  });
+
+  it('中卡和大卡在触屏上提供常驻更多设置入口', () => {
+    for (const size of ['medium', 'large'] satisfies SiteCardSize[]) {
+      const html = renderSiteCard(baseSite, ownerCaps, false, size);
+      expect(html).toContain('hidden [@media(hover:none)]:block');
+      expect(html).toContain('aria-label="更多设置"');
+      expect(html).toContain('[@media(hover:hover)]:flex');
+    }
+  });
+
+  it('小卡的 kebab 压在缩略图上，不在正文里占一行（下巴）', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, true, 'small', { activeLinks: 1 });
+
+    const infoLayerAt = html.indexOf('flex flex-1 flex-col');
+    const kebabAt = html.indexOf('aria-label="更多设置"');
+    expect(infoLayerAt).toBeGreaterThanOrEqual(0);
+    expect(kebabAt).toBeGreaterThanOrEqual(0);
+
+    // 信息层是卡片的最后一段，所以「kebab 在信息层之前」等价于「kebab 不是正文的流内子节点」。
+    // 一旦有人把它挪回正文（哪怕仍然是 opacity-0），它就会永久占掉 28px 一行、
+    // 在每张小卡正文底下留一截空白——这条断言当场变红。
+    expect(kebabAt).toBeLessThan(infoLayerAt);
+
+    // 平时透明、hover / focus 才显形；触屏没有 hover，必须常显，
+    // 否则小卡（不渲染 hover 条）在触屏上一个操作入口都没有。
+    expect(html).toContain('[@media(hover:none)]:opacity-100');
+  });
+
+  it('选中态只有一个圆角矩形，不套第二个轮廓', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, false, 'small', undefined, true);
+
+    // 曾经：根节点 outline(2px, 半径 20, offset 3) + 内框 accent 边框(半径 10)，
+    // 两个不同半径的硬轮廓套在一起 = 用户看到的「两条线」。
+    expect(html).not.toContain('outline:');
+
+    // 半径必须处处一致：`.site-card-fresh::before` 的光环走 border-radius:inherit，
+    // 根节点与内框不同半径时，那圈光环也会错开。
+    const radii = [...html.split('data-site-card-thumbnail')[0].matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
+    expect(radii.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(radii).size).toBe(1);
+  });
+
+  it('大卡的成果数据不把体积当 KPI', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, true, 'large', { activeLinks: 2, lastViewedAt: baseSite.updatedAt });
+
+    expect(html).toContain('data-site-card-meta');
+    expect(html).toContain('aria-label="网页统计"');
+    expect(html).not.toContain('有效链接');
+    // 体积只出现在元信息行（1.0 KB），不作为 KPI 标签
+    expect(html).not.toContain('>体积<');
+  });
+
+  it('团队 viewer 无编辑权时不出现编辑与替换入口', () => {
+    const html = renderSiteCard(baseSite, { canEdit: false, canDelete: false, canShare: true, canSetVisibility: false });
+
     expect(html).toContain('aria-label="分享"');
-    expect(html).not.toContain('设为公开');
-    expect(html).not.toContain('aria-label="发布到公开页"');
+    expect(html).not.toContain('aria-label="编辑信息"');
+    expect(html).not.toContain('aria-label="替换内容"');
+    expect(html).not.toContain('data-site-version-actions="true"');
+  });
+
+  it('团队 viewer 不能拖动别人的站点触发错误投放高亮', () => {
+    const viewerCaps = { canEdit: false, canDelete: false, canShare: false, canSetVisibility: false };
+    const html = renderSiteCard(baseSite, viewerCaps);
+
+    expect(canDragSiteCard(viewerCaps)).toBe(false);
+    expect(html).toContain('data-dock-draggable="false"');
+    expect(html).toContain('cursor-default');
+    expect(html).not.toContain('cursor-grab');
   });
 });

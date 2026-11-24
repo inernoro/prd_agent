@@ -1,0 +1,1 @@
+# editorial (synthetic test fixture)

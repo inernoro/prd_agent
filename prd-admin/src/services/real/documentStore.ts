@@ -1,5 +1,7 @@
+import { collectDocumentEntryPages, type DocumentEntryPage } from './documentEntryPages';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 import type {
   CreateDocumentStoreContract,
   ListDocumentStoresContract,
@@ -11,6 +13,23 @@ import type {
   UpdateDocumentEntryContract,
   DeleteDocumentEntryContract,
 } from '@/services/contracts/documentStore';
+
+function documentUploadFailureMessage(value: unknown): string {
+  return toUserReadableErrorMessage(value, {
+    fallbackMessage: '文件上传未完成',
+    recoveryMessage: '请检查文件是否完整后重新上传。',
+  });
+}
+
+export function classifyDocumentUploadFailure(status: number, responseText: string) {
+  if (status === 413) {
+    return {
+      code: 'DOCUMENT_TOO_LARGE',
+      message: documentUploadFailureMessage({ code: 'DOCUMENT_TOO_LARGE', message: responseText }),
+    };
+  }
+  return { code: 'UPLOAD_FAILED', message: documentUploadFailureMessage(responseText) };
+}
 
 export const createDocumentStoreReal: CreateDocumentStoreContract = async (input) => {
   return await apiRequest(api.documentStore.stores.create(), {
@@ -128,11 +147,28 @@ export async function listKnowledgeEntriesPaged(storeId: string, q: KnowledgeEnt
   }>(`${api.documentStore.entries.list(storeId)}?${params.toString()}`, { method: 'GET' });
 }
 
-/** 搜索文档条目（支持内容搜索） */
-export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
-  let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;
-  if (searchContent) url += '&searchContent=true';
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(url, { method: 'GET' });
+/** 文档树与搜索共用游标遍历；首批可先展示，其余后台补齐。 */
+export async function loadDocumentEntries(
+  storeId: string,
+  keyword?: string,
+  searchContent = false,
+  onFirstPage?: (page: DocumentEntryPage) => void,
+) {
+  return collectDocumentEntryPages(async cursor => {
+    const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '2000' });
+    if (keyword) params.set('keyword', keyword);
+    if (searchContent) params.set('searchContent', 'true');
+    if (cursor) params.set('cursor', cursor);
+    return apiRequest<DocumentEntryPage>(`${api.documentStore.entries.list(storeId)}?${params}`, { method: 'GET' });
+  }, onFirstPage);
+}
+
+/** 全部命中可达；读路径不触发索引回填或写权限。 */
+export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean, cursor?: string) {
+  const params = new URLSearchParams({ all: 'true', navigation: 'true', pageSize: '50', keyword });
+  if (searchContent) params.set('searchContent', 'true');
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.entries.list(storeId)}?${params}`, { method: 'GET' });
 }
 
 export const updateDocumentEntryReal: UpdateDocumentEntryContract = async (entryId, input) => {
@@ -219,19 +255,18 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'UPLOAD_FAILED', message: text || `HTTP ${res.status}` } };
+    return { success: false, data: null as never, error: classifyDocumentUploadFailure(res.status, text) };
   }
   return await res.json();
 }
 
-/**
- * 带进度回调的上传（XHR：fetch 拿不到 upload progress 事件）。
- * onProgress 收 0-100 整数百分比；大文件上传不再"卡住没反馈"（2026-07-13 用户反馈）。
- */
+export type DocumentFileUploadPhase = 'uploading' | 'parsing';
+
+/** 请求体发送结束才进入解析；字节百分比不能证明正文已解析。 */
 export async function uploadDocumentFileWithProgress(
   storeId: string,
   file: File,
-  onProgress: (percent: number) => void,
+  onProgress: (percent: number, phase: DocumentFileUploadPhase) => void,
 ): Promise<import('@/types/api').ApiResponse<{
   entry: import('@/services/contracts/documentStore').DocumentEntry;
   attachmentId: string;
@@ -248,20 +283,22 @@ export async function uploadDocumentFileWithProgress(
     xhr.open('POST', api.documentStore.entries.upload(storeId));
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)), 'uploading');
     };
+    xhr.upload.onload = () => onProgress(99, 'parsing');
     xhr.onload = () => {
-      onProgress(100);
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(JSON.parse(xhr.responseText));
+          const response = JSON.parse(xhr.responseText);
+          if (response.success) onProgress(100, 'parsing');
+          resolve(response);
           return;
         } catch { /* fallthrough */ }
       }
       resolve({
         success: false,
         data: null as never,
-        error: { code: 'UPLOAD_FAILED', message: xhr.responseText || `HTTP ${xhr.status}` },
+        error: classifyDocumentUploadFailure(xhr.status, xhr.responseText),
       });
     };
     xhr.onerror = () => resolve({
@@ -302,7 +339,7 @@ export async function appendRecordingUploadChunk(sessionId: string, index: numbe
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'CHUNK_UPLOAD_FAILED', message: text || `HTTP ${res.status}` } } as import('@/types/api').ApiResponse<{
+    return { success: false, data: null as never, error: { code: 'CHUNK_UPLOAD_FAILED', message: documentUploadFailureMessage(text) } } as import('@/types/api').ApiResponse<{
       accepted: boolean;
       duplicate: boolean;
       nextChunkIndex: number;
@@ -355,6 +392,14 @@ export async function getRecordingUpload(sessionId: string, timeoutMs = 15_000) 
   });
 }
 
+/** 立即唤醒后台录音归档；服务恢复后无需等待下一轮退避。 */
+export async function retryRecordingArchive(entryId: string) {
+  return await apiRequest<{ queued: boolean; completed: boolean }>(
+    api.documentStore.entries.recordingArchiveRetry(entryId),
+    { method: 'POST' },
+  );
+}
+
 /** 用户主动放弃时清理服务端临时录音分片。 */
 export async function cancelRecordingUpload(sessionId: string) {
   return await apiRequest<{ deleted: boolean }>(
@@ -388,7 +433,7 @@ export async function replaceDocumentFile(entryId: string, file: File): Promise<
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    return { success: false, data: null as never, error: { code: 'REPLACE_FAILED', message: text || `HTTP ${res.status}` } };
+    return { success: false, data: null as never, error: { code: 'REPLACE_FAILED', message: documentUploadFailureMessage(text) } };
   }
   return await res.json();
 }
@@ -471,9 +516,19 @@ export async function moveDocumentEntry(entryId: string, parentId: string | null
 
 /** 更新文档内容（在线编辑） */
 export async function updateDocumentContent(entryId: string, content: string, contentType?: string) {
-  return await apiRequest<{ updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string }>(
+  return await apiRequest<{
+    updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string;
+    knowledgeIndex?: import('@/services/contracts/documentStore').KnowledgeIndexStatus | null;
+  }>(
     api.documentStore.entries.content(entryId),
     { method: 'PUT', body: contentType ? { content, contentType } : { content } },
+  );
+}
+
+/** 仅观察当前原文对应的索引状态，不重发索引或模型任务。 */
+export async function getKnowledgeIndexStatus(entryId: string, signal?: AbortSignal) {
+  return await apiRequest<import('@/services/contracts/documentStore').KnowledgeIndexStatus>(
+    api.documentStore.entries.knowledgeIndex(entryId), { method: 'GET', signal },
   );
 }
 
@@ -564,7 +619,7 @@ export async function rebuildContentIndex(storeId: string) {
 export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'hot' | 'new' | 'popular' | 'viewed' = 'hot') {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').PublicDocumentStore[]; total: number; page: number; pageSize: number }>(
     `${api.documentStore.stores.publicList()}?page=${page}&pageSize=${pageSize}&sort=${sort}`,
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -572,16 +627,28 @@ export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'h
 export async function getPublicDocumentStore(storeId: string) {
   return await apiRequest<import('@/services/contracts/documentStore').PublicStoreDetail>(
     api.documentStore.stores.publicDetail(storeId),
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
 /** 获取公开知识库内文档列表 */
+async function loadAnonymousDocumentEntries(url: string) {
+  return collectDocumentEntryPages(cursor => {
+    const params = new URLSearchParams({ pageSize: '2000' });
+    if (cursor) params.set('cursor', cursor);
+    return apiRequest<DocumentEntryPage>(`${url}?${params}`, { method: 'GET', auth: false });
+  });
+}
+
 export async function listPublicStoreEntries(storeId: string) {
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
-    api.documentStore.stores.publicEntries(storeId),
-    { method: 'GET' },
-  );
+  return loadAnonymousDocumentEntries(api.documentStore.stores.publicEntries(storeId));
+}
+
+/** 公开空间的全文检索仍逐页复查 IsPublic。 */
+export async function searchPublicStoreEntries(storeId: string, keyword: string, cursor?: string) {
+  const params = new URLSearchParams({ pageSize: '50', keyword, searchContent: 'true' });
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.stores.publicEntries(storeId)}?${params}`, { method: 'GET', auth: false });
 }
 
 /** 获取公开文档内容 */
@@ -593,7 +660,7 @@ export async function getPublicEntryContent(entryId: string) {
     contentType: string;
     fileUrl: string | null;
     hasContent: boolean;
-  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET' });
+  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET', auth: false });
 }
 
 /** 点赞知识库 */
@@ -636,6 +703,17 @@ export async function listMyFavoriteDocumentStores() {
   );
 }
 
+/**
+ * 跨知识库的「最近」文档时间线。
+ * 作用域（我的 ∪ 团队）与 isNew 判据都在后端算好，前端只渲染。
+ */
+export async function listRecentDocumentEntries(limit = 50) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').RecentDocumentEntry[] }>(
+    api.documentStore.entries.recent(limit),
+    { method: 'GET' },
+  );
+}
+
 /** 列出我点赞的知识库（含最近文档预览 + 店主信息） */
 export async function listMyLikedDocumentStores() {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').InteractionStoreCard[] }>(
@@ -647,7 +725,7 @@ export async function listMyLikedDocumentStores() {
 /**
  * 创建分享链接（entryId 非空 = 单篇文档分享）。
  * allocateShortLink 默认不传 = 不分配数字短链 /s/{seq}：数字短链全局自增可枚举，
- * 只在用户主动要时才生成（见 doc/debt.platform.md「分享链接安全」）。
+ * 只在用户主动要时才生成（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md「分享链接安全」）。
  */
 export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number; entryId?: string; allocateShortLink?: boolean }) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreShareLink>(
@@ -674,10 +752,13 @@ export async function getDocStoreShareView(token: string) {
 
 /** 列出分享范围内的文档（匿名；单篇分享只返回该篇） */
 export async function listDocStoreShareEntries(token: string) {
-  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
-    api.documentStore.stores.publicShareEntries(token),
-    { method: 'GET', auth: false },
-  );
+  return loadAnonymousDocumentEntries(api.documentStore.stores.publicShareEntries(token));
+}
+
+export async function searchDocStoreShareEntries(token: string, keyword: string, cursor?: string) {
+  const params = new URLSearchParams({ pageSize: '50', keyword, searchContent: 'true' });
+  if (cursor) params.set('cursor', cursor);
+  return apiRequest<DocumentEntryPage>(`${api.documentStore.stores.publicShareEntries(token)}?${params}`, { method: 'GET', auth: false });
 }
 
 /** 读取分享范围内某篇文档正文（匿名） */
@@ -730,6 +811,30 @@ export async function addGitHubSubscription(storeId: string, input: {
   );
 }
 
+/** 批量添加 GitHub 目录订阅（登录 GitHub → 勾目录 → 一次开启同步） */
+export async function addGitHubSubscriptionBatch(storeId: string, input: {
+  owner: string;
+  repo: string;
+  branch?: string;
+  directories: Array<{ path: string; title?: string }>;
+  includeGlob?: string;
+  tags?: string[];
+  syncIntervalMinutes?: number;
+}) {
+  return await apiRequest<{
+    created: Array<{ id: string; title: string; path: string; syncStatus: string }>;
+    createdCount: number;
+    skipped: Array<{ path: string; reason: string; entryId?: string }>;
+    connectedLogin: string;
+    owner: string;
+    repo: string;
+    branch: string;
+  }>(
+    api.documentStore.entries.subscribeGithubBatch(storeId),
+    { method: 'POST', body: input },
+  );
+}
+
 /** 手动触发同步 */
 export async function triggerSync(entryId: string) {
   return await apiRequest<{ triggered: boolean }>(
@@ -775,6 +880,13 @@ export type TranscribeStyleParams = {
   /** styleKey === 'custom' 时的自定义整理要求 */
   customPrompt?: string;
 };
+
+/**
+ * 默认整理方式的 key。SSOT 是后端 `TranscribeStyleRegistry.DefaultKey`，
+ * 这里是它的镜像——`transcriptDefaultStyleKey.test.ts` 直接读那份 C# 源码比对，
+ * 后端改了这边不跟着改，测试会红（形状 3：判据抄成两份然后各自漂移）。
+ */
+export const DEFAULT_ORGANIZE_STYLE_KEY = 'general';
 
 /** 发起录音转录。默认只保存 ASR 原文；显式传 styleKey 时才继续生成对应整理结果。 */
 export async function transcribeEntry(entryId: string, style?: TranscribeStyleParams) {
@@ -949,11 +1061,16 @@ export async function startAutoLink(storeId: string) {
 export async function getLatestAgentRun(
   entryId: string,
   kind: 'subtitle' | 'reprocess' | 'transcribe',
-  opts?: { status?: 'done' | 'failed' | 'running' | 'queued'; requireOutput?: boolean },
+  opts?: {
+    status?: 'done' | 'failed' | 'running' | 'queued' | 'publishing';
+    requireOutput?: boolean;
+    ownUserOnly?: boolean;
+  },
 ) {
   const params = new URLSearchParams({ kind });
   if (opts?.status) params.set('status', opts.status);
   if (opts?.requireOutput) params.set('requireOutput', 'true');
+  if (opts?.ownUserOnly) params.set('ownUserOnly', 'true');
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
     `${api.documentStore.entries.latestAgentRun(entryId)}?${params.toString()}`,
     { method: 'GET' },
@@ -1201,4 +1318,31 @@ export function streamSelectionRewrite(
   })();
 
   return () => abortController.abort();
+}
+
+export interface DocumentTrashItem {
+  kind: 'entry' | 'store';
+  id: string;
+  title: string;
+  storeId: string;
+  storeName: string;
+  deletedAt: string;
+  deletedBy: string;
+  expiresAt: string;
+  canRestore: boolean;
+  pending: boolean;
+}
+
+export function listDocumentTrash(storeId?: string) {
+  const query = storeId ? `?storeId=${encodeURIComponent(storeId)}` : '';
+  return apiRequest<{ items: DocumentTrashItem[]; retentionDays: number }>(`${api.documentStore.trash.list()}${query}`, { method: 'GET' });
+}
+
+export function restoreDocumentTrash(item: Pick<DocumentTrashItem, 'kind' | 'id'>) {
+  return apiRequest(api.documentStore.trash.restore(item.kind, item.id), { method: 'POST' });
+}
+
+export function resumeDocumentTrash(item: Pick<DocumentTrashItem, 'kind' | 'id'>) {
+  const url = item.kind === 'store' ? api.documentStore.stores.detail(item.id) : api.documentStore.entries.detail(item.id);
+  return apiRequest(url, { method: 'DELETE' });
 }

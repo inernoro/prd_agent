@@ -16,6 +16,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 

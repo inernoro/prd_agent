@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -114,6 +115,10 @@ public class GatewayLLMClient : ILLMClient
             {
                 TenantId = scopeCtx?.TenantId,
                 TeamId = scopeCtx?.TeamId,
+                ServiceKeyId = scopeCtx?.ServiceKeyId,
+                ClientCode = scopeCtx?.ClientCode,
+                Environment = scopeCtx?.Environment,
+                ServiceKeyPrefix = scopeCtx?.ServiceKeyPrefix,
                 RequestId = scopeCtx?.RequestId,
                 SessionId = scopeCtx?.SessionId,
                 GroupId = scopeCtx?.GroupId,
@@ -121,14 +126,24 @@ public class GatewayLLMClient : ILLMClient
                 LogicalRequestId = scopeCtx?.LogicalRequestId,
                 ProviderTaskId = scopeCtx?.ProviderTaskId,
                 UserId = scopeCtx?.UserId,
+                TaskPermitId = scopeCtx?.TaskPermitId,
+                TaskLeaseRunId = scopeCtx?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = scopeCtx?.TaskLeaseOwnerHash,
+                TaskLeaseFence = scopeCtx?.TaskLeaseFence,
+                ExecutionOrigin = scopeCtx?.ExecutionOrigin,
+                TriggerCredentialId = scopeCtx?.TriggerCredentialId,
+                TriggerActorUserId = scopeCtx?.TriggerActorUserId,
+                SourceDeployment = scopeCtx?.SourceDeployment,
+                SourceTask = scopeCtx?.SourceTask,
+                SourceSystem = scopeCtx?.SourceSystem,
                 ViewRole = scopeCtx?.ViewRole,
                 DocumentChars = scopeCtx?.DocumentChars,
                 DocumentHash = scopeCtx?.DocumentHash,
                 QuestionText = messages.LastOrDefault(m => m.Role == "user")?.Content,
                 SystemPromptChars = systemPrompt?.Length,
                 SystemPromptText = systemPrompt,
-                // S2 观测标记：透传当前作用域的传输标记。MAP inproc 模式下为 null（LlmGateway 兜底 inproc）；
-                // serving 端 client-stream 场景下作用域已由 OpenContextScope 注入 "http"，据此如实标注。
+                // S2 观测标记：透传当前作用域的传输标记；serving 端 client-stream 场景下作用域已由
+                // OpenContextScope 注入 "http"，据此如实标注。
                 GatewayTransport = scopeCtx?.GatewayTransport,
                 IsHealthProbe = scopeCtx?.IsHealthProbe,
             }
@@ -141,7 +156,12 @@ public class GatewayLLMClient : ILLMClient
                 yield return new LLMStreamChunk
                 {
                     Type = "error",
-                    ErrorMessage = chunk.Error ?? "Gateway 返回错误"
+                    ErrorMessage = chunk.Error ?? "Gateway 返回错误",
+                    // 结构化原因跟着走：业务层据它判「配置问题」还是「暂时故障」，不猜文案
+                    ErrorCode = chunk.ErrorCode,
+                    Model = chunk.Resolution?.ActualModel,
+                    Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                    BillingAlerts = chunk.Resolution?.BillingAlerts ?? [],
                 };
                 yield break;
             }
@@ -162,7 +182,13 @@ public class GatewayLLMClient : ILLMClient
 
             if (chunk.Type == GatewayChunkType.Start)
             {
-                yield return new LLMStreamChunk { Type = "start" };
+                yield return new LLMStreamChunk
+                {
+                    Type = "start",
+                    Model = chunk.Resolution?.ActualModel,
+                    Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                    BillingAlerts = chunk.Resolution?.BillingAlerts ?? [],
+                };
             }
             else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {

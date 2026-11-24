@@ -17,7 +17,7 @@ x-cds-project:
 #
 # 为什么剥离：仓库携带 `TODO: 请填写实际值` 占位符会让全量 `cdscli import`
 # 被审核拒绝（占位值覆盖线上真实密钥），结构变更无法落地（见
-# doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
+# https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS compose 模板 TODO secrets」 D1）。剥离占位后 import 不再覆盖密钥即可通过。
 #
 # 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
 #   ASSETS_PROVIDER=cloudflareR2 时：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
@@ -29,6 +29,51 @@ x-cds-env:
   ASSETS_EXPECTED_PROVIDER: cloudflareR2
   # 对象存储路径前缀——结构约定，非密钥
   R2_PREFIX: data
+
+# 只声明“需要哪些密钥”，不保存密钥值。实际值继续由 CDS 项目 env scope
+# 托管；Agent 修改 compose 时可在同一文件看懂配置合同，无需去隐藏位置猜。
+x-cds-env-meta:
+  MAP_INITIAL_ADMIN_USERNAME:
+    kind: required
+    hint: "首次管理员用户名，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: map-initial-admin
+  MAP_INITIAL_ADMIN_PASSWORD:
+    kind: required
+    hint: "首次管理员强密码，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: map-initial-admin
+  ROOT_ACCESS_USERNAME:
+    kind: required
+    hint: "紧急访问用户名，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: root-access
+  ROOT_ACCESS_PASSWORD:
+    kind: required
+    hint: "紧急访问强密码，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: root-access
+  LLMGW_JWT_SECRET:
+    kind: required
+    hint: "LLM 网关控制台 JWT 签名密钥，由 CDS 项目 env scope 托管"
+  LLMGW_SERVE_API_KEY:
+    kind: required
+    hint: "LLM 网关 serving 内部调用密钥，由 CDS 项目 env scope 托管"
+  DESIGN_RUNTIME_API_KEY:
+    # 两个服务之间对暗号用的内部密钥，没人需要知道它的值：CDS 部署前发现项目里没有就自己生成一把，
+    # 写进项目 env（api 与 design-opendesign、项目内所有分支共用），之后不再改动。显式填过的值优先。
+    kind: auto
+    generate: secret
+    hint: "设计执行服务（design-opendesign）任务接口的内部调用密钥，由 CDS 自动生成，无需填写"
+  STABLE_SMOKE_KEY_ID:
+    kind: required
+    hint: "稳定冒烟 RSA 公钥标识，由 CDS 项目 env scope 托管"
+  STABLE_SMOKE_USERNAME:
+    kind: required
+    hint: "稳定冒烟专用用户名，由 CDS 项目 env scope 托管"
+  STABLE_SMOKE_PUBLIC_KEY:
+    kind: required
+    hint: "稳定冒烟 RSA 公钥正文，由 CDS 项目 env scope 托管；私钥禁止进入部署环境"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
@@ -42,6 +87,8 @@ x-cds-deploy-modes:
     dev:
       label: "开发模式 (热重载)"
       command: >-
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
         cd prd-api &&
         dotnet restore &&
         dotnet build --no-restore &&
@@ -51,6 +98,8 @@ x-cds-deploy-modes:
       # 每次部署前清掉 bin/obj，强制干净编译：dotnet 增量构建在 CDS 共享 worktree 下偶发
       # "撒谎"（源码改了却复用旧 DLL），清空后从零编译可彻底避免发布出不含最新改动的二进制。
       command: >-
+        if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
         cd prd-api &&
         rm -rf src/PrdAgent.Api/bin src/PrdAgent.Api/obj
         src/PrdAgent.Core/bin src/PrdAgent.Core/obj
@@ -86,7 +135,7 @@ x-cds-deploy-modes:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8080"
         # ClaudeSdkExecutor 自调回调端口跟随容器端口（源码模式 5000 → 极速版 8080）。
-        ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:8080"
+        ClaudeSdkExecutor__CallbackBaseUrl: "http://api:8080"
   admin:
     dev:
       label: "开发模式 (Vite HMR)"
@@ -155,6 +204,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/console-api/**"
+        - "prd-api/src/LlmGateway.Transport/**"
         - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
@@ -197,6 +247,27 @@ x-cds-deploy-modes:
         # CDS 预览没有稳定对象存储探针对象；深度 readiness 仍检查 Mongo、key 和 router，
         # 正式 docker-compose 则默认强制对象存储探针。
         LlmGateway__Readiness__RequireAssetProbe: "false"
+  # 设计执行服务 design-opendesign（OpenDesign 引擎，实现 map-design-executor-v1 协议）。
+  # **只支持 express**，没有 dev 源码模式：服务要与 OpenDesign daemon、Codex CLI 0.143.0 同处一个
+  # 容器运行，而这两样只存在于以 ghcr.io/nexu-io/od:0.21.1 为底的镜像里；在普通 node 镜像里挂源码
+  # 起不来引擎，起来了也只能如实报不健康。改服务代码的验证路径是 push → CI 构建本分支镜像 → CDS 拉取。
+  # 没有源码模式也就没有「拉不到镜像时回退源码编译」：拉不到就按回退链用 branch-main。
+  design-opendesign:
+    express:
+      label: "极速版（CI 预构建）"
+      image: "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:sha-${CDS_COMMIT_SHA}"
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**
+      # （design_opendesign 那一组，加上 api 那一组：api 改动时也构建本镜像，供正式发布同 sha 钉版）。
+      # 声明得比 CI 窄会让 CDS 把旧镜像当新代码发出去。
+      buildScope:
+        - "design-runtime/opendesign/**"
+        - "prd-api/**"
+        - ".github/workflows/branch-image.yml"
+      prebuilt: true
+      containerPort: 8093
   # 独立 LLM Gateway Web：CDS 源码模式不依赖 GitHub/GHCR，express 仍使用不可变 SHA 镜像。
   llmgw-web:
     dev:
@@ -211,8 +282,8 @@ x-cds-deploy-modes:
         pnpm install --frozen-lockfile &&
         pnpm exec vite --host 0.0.0.0 --port 8100
       env:
-        LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
-        LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
+        LLMGW_PROXY_TARGET: "http://llmgw:8090"
+        LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve:8091"
     express:
       label: "极速版（CI 预构建）"
       image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
@@ -243,6 +314,8 @@ services:
     ports:
       - "5000"
     command: >-
+      if ! command -v ffmpeg >/dev/null 2>&1; then
+      apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; fi &&
       cd prd-api &&
       rm -rf src/PrdAgent.Api/obj src/PrdAgent.Api/bin
       src/PrdAgent.Core/obj src/PrdAgent.Core/bin
@@ -256,32 +329,60 @@ services:
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
+      # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId。固定为 CDS，
+      # 不使用容器或 commit，既隔离正式环境，也保证滚动部署连续消费。
+      Deployment__Identity: "prd-agent:cds"
+      Deployment__AdoptLegacyBranchOwners: "false"
+      Deployment__RetiredLegacyBranchOwnerIds: ""
+      Deployment__LegacyOwnerCreatedBeforeUtc: ""
+      # CDS 自动验收永久入口：仍需通过仓库登记的 RSA 公钥签名，显式开关可独立熔断。
+      SYNTHETIC_LOGIN_ENABLED: "true"
+      StableSmokeAuthentication__Keys__0__KeyId: "${STABLE_SMOKE_KEY_ID}"
+      StableSmokeAuthentication__Keys__0__Username: "${STABLE_SMOKE_USERNAME}"
+      StableSmokeAuthentication__Keys__0__DisplayName: "CDS 稳定冒烟"
+      # @deployment 只接受 CDS 实际注入的 CDS_PREVIEW_URL 主机，分支变化时无需人工改白名单。
+      StableSmokeAuthentication__Keys__0__AllowedHost: "@deployment"
+      StableSmokeAuthentication__Keys__0__PublicKey: "${STABLE_SMOKE_PUBLIC_KEY}"
+      StableSmokeAuthentication__Keys__0__AutoProvision: "true"
+      # CDS 验证环境要跑完整矩阵：按 StableSmokeIdentityPolicy 托管巡检账号权限（正式环境 compose 默认关闭）
+      StableSmokeAuthentication__Keys__0__ManagePermissions: "true"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
+      # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
+      # 口令里一个 @ 就能把主机名解析歪。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
-      # 避免依赖代码缺省值。需要验证 HTTP 时由对应 CDS profile 明确改成 http/shadow。
-      LlmGateway__Mode: "inproc"
-      # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
-      LlmGateway__LogicalModelsRequireHttp: "true"
-      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
-      # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
-      # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
-      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
+      # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
+      # 必须是 host:port,user=,password= 这个格式，所以这里用原始 USER/PASSWORD 自己拼，
+      # 不用 CDS_REDIS_URL。已知边界：口令若含 , 或 = 会把这个串解析歪（CDS 生成的是十六进制，不会）。
+      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT},user=${CDS_REDIS_USER},password=${CDS_REDIS_PASSWORD}"
+      # MAP 的模型调用全部经 HttpLlmGatewayClient 打到 llmgw-serve，需要与它同一把 M2M key
+      # 和 serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
+      # 服务间地址使用 CDS 实际注入的 Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
-      LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
-      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
-      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
+      # 设计执行服务（design-opendesign，map-design-executor-v1）。两项都在时 api 的 OpenDesign 默认直连它；
+      # 缺任一项照旧走 CDS 会话。要退回旧路径就加 DesignRuntime__OpenDesign__Transport: "cds-session"。
+      # 判定只有一处：prd-api OpenDesignTransportResolver。
+      # 密钥不带仓库可见的 fallback：值只来自 CDS 项目 env scope。
+      DesignRuntime__OpenDesign__BaseUrl: "http://design-opendesign:8093"
+      DesignRuntime__OpenDesign__ApiKey: "${DESIGN_RUNTIME_API_KEY}"
+      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
+      # 历史无归属队列只允许正式权威部署接管；所有 CDS 预览固定关闭。
+      # 只有 CDS main 会执行代码内固定截止线的一次性迁移，功能分支永不接管共享旧队列。
+      Transcript__AdoptLegacyUnownedRuns: ""
       LlmGateway__Retention__ApplyChanges: "false"
       LlmGateway__Retention__EnableTtlIndexes: "false"
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
-      ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
+      ClaudeSdkExecutor__CallbackBaseUrl: "http://api:5000"
       # CDS Agent runtime 必须来自 shared-service discovery 或显式外部 sidecar。
       # 禁止把 claude-agent-sdk runtime 写成本应用分支 service，否则 main/业务分支会被 runtime 污染。
       ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
@@ -317,6 +418,10 @@ services:
       pnpm exec vite --host 0.0.0.0 --port 8000
     labels:
       cds.path-prefix: "/"
+      # 用户入口由 CDS 直接从本文件维护。path-prefix=/ 会自动将本服务识别为
+      # 主入口；无需再为同一 Web 服务创建一条重复的命名子域入口。
+      cds.web-entry-name: "PRD Agent"
+      cds.web-entry-path: "/"
       cds.readiness-path: "/"
       # dev 模式 Vite 秒起；static 冷构建（pnpm install + vite build）实测约 320s，
       # 超过原 300s 就绪超时会被误判 error（容器其实已 Accepting connections）。
@@ -343,11 +448,14 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      LlmGateway__ModelReferences__MapDeploymentIdentity: "prd-agent:cds::${VITE_GIT_BRANCH}"
+      # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
+      # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
+      # 口令里一个 @ 就能把主机名解析歪。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      LlmGateway__RolloutLedgerPath: /repo/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台写 GW-owned 平台/模型/Exchange key 时使用；必须与 api/llmgw-serve 同一把。
       ApiKeyCrypto__Secret: "${ApiKeyCrypto__Secret}"
       ApiKeyCrypto__LegacySecrets: "${ApiKeyCrypto__LegacySecrets}"
@@ -356,14 +464,21 @@ services:
       # 预览/fork 都能自签 token 读日志。未注入时由 llmgw/console-api 生产守卫 fail-closed。
       LlmGwJwt__Secret: "${LLMGW_JWT_SECRET}"
       LlmGwJwt__Issuer: prdagent-llmgw
-      # 控制台账号长期权威是 llm_gateway.llmgw_console_users。未设置 bootstrap 口令时内置 admin/admin
-      # 并强制首登改密；LLMGW_ADMIN_PASSWORD 仅用于空库首次创建或 LLMGW_ADMIN_FORCE_RESET 破玻璃，
-      # 不能作为每次启动覆盖数据库口令的长期权威。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS
-      # 把 `${KEY:-default}` 解析成字面量覆盖项目变量。
+      # 巡检身份由 MAP RSA 签名换 60 秒单次票据。CDS 需要执行模型路由故障注入，角色显式为 admin；
+      # 正式环境应单独配置 viewer。人工停用和角色漂移不会被自动覆盖。
+      StableSmokeFederation__Enabled: "true"
+      StableSmokeFederation__AllowedUsernames: "${STABLE_SMOKE_USERNAME}"
+      StableSmokeFederation__Role: "admin"
+      StableSmokeFederation__SessionMinutes: "30"
+      # 默认由 llm_gateway.llmgw_console_users 托管账号；启用 LLMGW_ADMIN_ENV_AUTHORITY 后，env 长期托管
+      # admin，并且只在发现漂移时修复。bare `${KEY}` 保留为可选透传，不带默认，避免 CDS 把
+      # `${KEY:-default}` 解析成字面量覆盖项目变量。
       LLMGW_ADMIN_PASSWORD: "${LLMGW_ADMIN_PASSWORD}"
+      LLMGW_ADMIN_FORCE_RESET: "${LLMGW_ADMIN_FORCE_RESET}"
+      LLMGW_ADMIN_ENV_AUTHORITY: "${LLMGW_ADMIN_ENV_AUTHORITY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/healthz"
+      cds.readiness-path: "/gw/readyz"
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
@@ -385,12 +500,15 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
+      # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
+      # 口令里一个 @ 就能把主机名解析歪。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
-      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}"
-      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}"
+      LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
+      LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       # CDS 源码 profile 同样没有稳定对象存储探针；不能只在 express profile 关闭。
       LlmGateway__Readiness__RequireAssetProbe: "false"
       # CDS 只验证 lifecycle dry-run；破坏性清理由正式 compose 显式启用。
@@ -402,7 +520,49 @@ services:
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/v1/healthz"
+      #
+      # 这条声明必须指向**匿名且脱敏**的那条就绪路由，不能指向 readyz：
+      # CDS 的 HTTP 就绪探针是匿名 GET 且把一切 < 500 当就绪（container.ts 的 probeHttp），
+      # 而 readyz 带密钥门 —— 声明成 readyz 的话 401 会被当成「就绪」，依赖状态一次都不会
+      # 被评估，等价于只探了「HTTP 端口起来了」。
+      # healthz/ready 与 readyz 判据同源（同一个就绪探针），区别只在端出多少：
+      # 它只用状态码表态（200 / 503），正文没有组件名、耗时与摘要；要明细仍然走带密钥的 readyz。
+      cds.readiness-path: "/gw/v1/healthz/ready"
+
+  # 设计执行服务 design-opendesign：OpenDesign daemon + 本服务同处一个容器，实现 map-design-executor-v1。
+  # 只有预构建镜像这一种运行方式（原因见 x-cds-deploy-modes.design-opendesign 的注释），所以基础
+  # profile 直接就是 CI 镜像，cds.prebuilt-image=true 让 CDS 不挂源码、直接 docker pull + run。
+  # `.:/repo` 这条挂载不会真的生效（预构建镜像跳过源码挂载），留着只为让 CDS 把它识别成分支应用服务，
+  # 而不是跨分支共享的基础设施——每条分支都该有自己那一份，改提示词、改引擎才能按分支独立验证。
+  # 不声明 cds.subdomain / path-prefix：它只供 api 经容器网络调用，不发布 Web 预览。
+  design-opendesign:
+    image: "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:sha-${CDS_COMMIT_SHA}"
+    fallbackImage:
+      - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-${CDS_BRANCH_SLUG}"
+      - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-main"
+    working_dir: /repo
+    volumes:
+      - .:/repo
+    ports:
+      - "8093"
+    environment:
+      # 任务接口的 Bearer 密钥。未注入时服务照常起来，但拒绝一切任务接口并在 /v1/capabilities 说明原因。
+      DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
+      # CDS 的 serving 服务别名与正式 Compose 不同；模型数据面仍由任务级短期授权直达 LLMGW。
+      DESIGN_RUNTIME_LLMGW_BASE_URL: "http://llmgw-serve:8091/gw/v1"
+    labels:
+      cds.prebuilt-image: "true"
+      # CI 构建该镜像的输入范围，与 x-cds-deploy-modes.design-opendesign.express.buildScope 同一份、
+      # 逐条对齐 .github/workflows/branch-image.yml 的 design_opendesign filters。必须声明在这里：
+      # 本服务只有 express 一种模式，项目里不存在 activeDeployMode，CDS 读取的是基础 profile，
+      # 模式里的 buildScope 读不到。缺了它，没改 design-runtime/ 的分支拉不到 sha 镜像时，
+      # 回退到 branch-main 会因「无法证明与目标提交等价」被拒，整条分支部署失败。
+      cds.build-scope: "design-runtime/opendesign/**,prd-api/**,.github/workflows/branch-image.yml"
+      # 匿名就绪探针：引擎健康检查通过才 200，否则 503（CDS 把 < 500 当就绪）。它不看 API key——
+      # 缺 key 时容器照样就绪，原因由能力接口说清，而不是让整条分支卡在「未就绪」。
+      cds.readiness-path: "/healthz/ready"
+      # 首次启动要清空目录并拉起 OpenDesign；给足窗口。
+      cds.readiness-timeout: "300"
 
   # 独立 LLM 网关前端控制台 llmgw-web。默认 CDS 源码模式由 Vite 承载当前分支，
   # /gw 与四协议入口分别反代到 console API 和 serving；express 模式仍使用 CI 的不可变 nginx 镜像。
@@ -426,8 +586,11 @@ services:
       llmgw: { condition: service_started }
       llmgw-serve: { condition: service_started }
     environment:
-      LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
-      LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
+      LLMGW_PROXY_TARGET: "http://llmgw:8090"
+      LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve:8091"
+      # 预览控制台挂在独立子域根路径，Vite base 必须是 "/"，否则单点登录落地的
+      # /auth/map 会被开发服务器拒绝（它只认 base 之下的路径）。见 llmgw/web/vite.config.ts。
+      LLMGW_WEB_BASE: "/"
     labels:
       # 显式清理存量 CDS profile 可能遗留的 prebuiltImage=true；源码模式必须挂载当前 worktree。
       cds.prebuilt-image: "false"
@@ -438,6 +601,11 @@ services:
       # （cds/src/services/preview-entrypoints.ts 的 LEGACY_SUBDOMAIN_ALIASES），
       # 存量链接不断。Vite dev 与 nginx express 都保持同源入口，SPA 无需额外 VITE_LLMGW_API_BASE。
       cds.subdomain: "llmgw"
+      # 用户可见入口与路由拓扑分离：subdomain 负责发布路由，web-entry 明确告诉 CDS
+      # 这是可交付给用户直接打开的控制台，而不是仅供程序调用的 API / 健康检查。
+      # 与 cds.readiness-path 分开声明，禁止把 /healthz 一类机器探活地址展示成可点击入口。
+      cds.web-entry-name: "LLM Gateway"
+      cds.web-entry-path: "/"
       # SPA 根路径返回 index.html 即视为就绪。
       cds.readiness-path: "/"
       # 首次 pnpm 冷安装留足窗口。
@@ -455,6 +623,14 @@ services:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
+
+  # 索引目录不进部署链路（Codex P1，2026-09-15）。曾在这里放过一个 mongodb-indexes 一次性容器，
+  # 两处都错：一是 CDS 的 compose 解析把「挂了相对路径源码」当成应用服务，于是给它 /app 工作目录、
+  # 合成 8080 端口，再等一个 mongosh 永远不会开的 TCP 监听——脚本挂载路径也随之失效，任何一次
+  # 重新导入都会让这个服务失败并连坐拖住 API；二是它本身违反 no-auto-index：索引由 DBA 跑
+  # scripts/mongodb-indexes.js 手动建，正是为了避开「索引冲突导致应用启动失败」这一类事故，
+  # 而那一版恰恰把 API 启动挂到了它的成功退出上。清单与验证步骤见
+  # doc/guide.platform.mongodb-indexes.md。
 
   redis:
     image: redis:7-alpine

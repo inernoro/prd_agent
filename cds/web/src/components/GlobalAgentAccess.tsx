@@ -8,7 +8,7 @@ import {
   resolveAgentPageContext,
   type AgentPageContextId,
 } from '@/lib/agent-onboarding';
-import { apiRequest, isChildPreviewCdsInstance } from '@/lib/api';
+import { ApiError, apiRequest, isChildPreviewCdsInstance } from '@/lib/api';
 
 type AgentProjectsResponse = {
   projects?: Array<{
@@ -19,6 +19,13 @@ type AgentProjectsResponse = {
     branchCount?: number;
     runningBranchCount?: number;
     runningServiceCount?: number;
+    agentProfile?: {
+      role: string;
+      experience: string;
+      skills?: string[];
+      cardTitle?: string;
+      declaredAt?: string;
+    };
   }>;
 };
 
@@ -35,6 +42,8 @@ export function GlobalAgentAccess(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [requestedContextId, setRequestedContextId] = useState<AgentPageContextId | undefined>(undefined);
   const [projects, setProjects] = useState<AgentProjectOption[] | null>(null);
+  const [projectsError, setProjectsError] = useState('');
+  const [projectsRequest, setProjectsRequest] = useState(0);
   const currentLocation = typeof window === 'undefined'
     ? routerLocation
     : {
@@ -59,23 +68,32 @@ export function GlobalAgentAccess(): JSX.Element {
     if (!open) return undefined;
     const ctrl = new AbortController();
     setProjects(null);
+    setProjectsError('');
     apiRequest<AgentProjectsResponse>('/api/projects', { signal: ctrl.signal })
       .then((data) => {
-        setProjects((data.projects || []).map((project) => ({
+        if (ctrl.signal.aborted) return;
+        if (!Array.isArray(data.projects)) throw new Error('Invalid projects response');
+        setProjects(data.projects.map((project) => ({
           id: project.id,
           name: project.aliasName || project.name || project.slug || project.id,
           slug: project.slug || project.id,
           branchCount: project.branchCount,
           runningBranchCount: project.runningBranchCount,
           runningServiceCount: project.runningServiceCount,
+          agentProfile: project.agentProfile,
         })));
       })
       .catch((err: unknown) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
+        if (ctrl.signal.aborted || (err as DOMException)?.name === 'AbortError') return;
         setProjects([]);
+        // Anonymous onboarding can request a first project without reading existing projects.
+        // An explicit page project still remains unavailable in the dialog until resolved.
+        setProjectsError(err instanceof ApiError && err.status === 401
+          ? ''
+          : '项目范围暂时无法确认，请重新读取；尚未生成接入口令。');
       });
     return () => ctrl.abort();
-  }, [open]);
+  }, [open, projectsRequest]);
 
   useEffect(() => {
     setRequestedContextId(undefined);
@@ -111,6 +129,9 @@ export function GlobalAgentAccess(): JSX.Element {
         open={open}
         onOpenChange={handleOpenChange}
         projects={projects || []}
+        projectsLoading={projects === null}
+        projectsError={projectsError}
+        onReloadProjects={() => setProjectsRequest((value) => value + 1)}
         context={context}
       />
     </>

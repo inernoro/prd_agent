@@ -149,7 +149,7 @@ export function InteractiveTranscriptDialog({
           <div className="flex min-w-0 items-center gap-3">
             <span
               className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[12px]"
-              style={{ background: 'rgba(168,85,247,0.12)', color: 'rgba(216,180,254,0.95)' }}
+              style={{ background: 'rgba(168,85,247,0.12)', color: 'var(--accent-fg-violet)' }}
             >
               <AudioLines size={19} />
             </span>
@@ -160,7 +160,7 @@ export function InteractiveTranscriptDialog({
                 </h2>
                 <span
                   className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                  style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(147,197,253,0.95)' }}
+                  style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)' }}
                 >
                   测试版
                 </span>

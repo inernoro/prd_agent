@@ -1,5 +1,47 @@
 * { box-sizing: border-box; }
 
+/* 整页只许纵向滚动（2026-08-09 用户反馈「总是可以左右滑动，向下滑很别扭」）：
+   - overflow-x clip：窄机型上偶发的超宽元素（如部署徽章、zoom 重排的亚像素舍入）
+     会把 body 撑出 1-2px 横滑，一律裁掉；
+   - overscroll-behavior-x none：iOS 对横向 overscroll 会整页橡皮筋拖动，禁断。
+   应用内需要横滑的控制条/卡片轨都有自己的 overflow-x-auto 容器，不受影响。 */
+html, body {
+  overflow-x: clip;
+  overscroll-behavior-x: none;
+}
+
+/* 手机上点输入框，页面被局部放大、输完也不缩回去（2026-09-29 用户反馈「很多地方都有这种毛病，
+   真的非常讨厌」）。
+   外因：iOS Safari 的固定行为——聚焦一个字号小于 16px 的输入控件时自动放大页面，且失焦后不复原。
+   全站大量输入框是 13-15px，于是登录框、搜索框、评论框处处中招。
+   修法：只在 iOS 上（`-webkit-touch-callout` 只有 iOS 的 WebKit 认，安卓与电脑端不受影响）
+   把可输入控件的字号兜到至少 16px。!important 是必须的：很多输入框的字号写在 inline style 里。
+   不用 viewport 的 maximum-scale=1：那会连用户主动双指放大也禁掉，看不清字的人就没法放大了。
+   守卫：src/styles/__tests__/iosInputZoom.test.ts */
+@supports (-webkit-touch-callout: none) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']):not([type='image']),
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable='false']) {
+    font-size: max(16px, 1em) !important;
+  }
+}
+
+/* 横屏时 iOS 会自作主张把正文放大（text inflation），和上面同一类「页面自己变大」的毛病 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* 正文字族。index.html 早就加载了 Inter、tokens.css 也早就有 --font-body，
+   但从来没有人把它落到 body 上 —— 于是全站正文一直吃 Tailwind preflight 的
+   ui-sans-serif 兜底，Inter 加载了却一个字都没用上（2026-08-23 用 design-replication
+   的档位表量出来：设计稿 Inter，实现 ui-sans-serif）。
+   放在 body 而不是 :root：让页面局部仍能用 --font-display / --font-code 覆盖。 */
+body {
+  font-family: var(--font-body);
+}
+
 /* CDS 同款主题水波：快照期间冻结普通 CSS transition，避免新旧主题在截图时串色。 */
 .theme-transition-snapshotting,
 .theme-transition-snapshotting *,
@@ -70,7 +112,13 @@
   outline-offset: 2px;
 }
 
-/* 浅色文字选区:Claude 橙轻染替代浏览器默认蓝 */
+/* 文字选区:Claude 橙轻染替代浏览器默认蓝。
+   暗色档过去漏了这条——于是划词时屏幕上最大的一块色是系统蓝，
+   与整个产品的暖赤陶撞色（2026-08-21 划词浮层改配色时补齐）。
+   暗色只染底不改字色:底本来就深,原字色对比度已达标。 */
+::selection {
+  background-color: rgba(217, 119, 87, 0.32);
+}
 [data-theme="light"] ::selection {
   background-color: rgba(204, 120, 92, 0.25);
   color: #0F172A;
@@ -82,6 +130,19 @@
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
+  outline: none;
+}
+
+/*
+ * 浅色档必须再写一遍，否则这条「不画内环」在浅色下根本不生效。
+ * 上面那条 `[data-theme="light"] :focus-visible` 的特异性是 (0,2,0)，
+ * 而 `textarea:focus-visible` 只有 (0,1,1)——属性选择器赢过元素选择器，
+ * 于是浅色主题下每个输入框仍然套着一圈橙环，和注释写的意图正好相反。
+ * 这类「注释说了、实际没生效」比没写还糟：后来人读注释就以为已经处理过了。
+ */
+[data-theme="light"] input:focus-visible,
+[data-theme="light"] textarea:focus-visible,
+[data-theme="light"] select:focus-visible {
   outline: none;
 }
 
@@ -123,25 +184,25 @@ select:focus-visible {
   cursor: not-allowed;
 }
 
-/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清） */
+/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清）。
+   元素级 color-scheme 会压过 tokens.css 在 [data-theme="light"] 上声明的 light，
+   所以浅色主题必须显式翻回来，否则米白页面里插一块黑底白字的原生 option 弹层。 */
 select {
   color-scheme: dark;
 }
 
-/* 让 option/optgroup 尽量随 color-scheme 自适应（Canvas/CanvasText 会随暗色方案变化） */
-select option,
-select optgroup {
-  color: CanvasText;
-  background-color: Canvas;
+[data-theme="light"] select {
+  color-scheme: light;
 }
 
-/* 兼容：极少数不支持 Canvas/CanvasText 的环境 */
-@supports not (color: CanvasText) {
-  select option,
-  select optgroup {
-    color: #111;
-    background-color: #fff;
-  }
+/* option/optgroup 直接用主题 token 上色。
+   原先用 Canvas/CanvasText 系统色，指望它跟随 color-scheme——但弹层是 UA 画的，
+   Canvas 在弹层里解析成什么由浏览器决定，实测暗色主题下会解析成白，
+   于是米白 option 列表浮在暗色页面上。token 是我们自己的双写值，两个主题都确定。 */
+select option,
+select optgroup {
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -311,4 +372,16 @@ select optgroup {
    选择器写在 tailwind 工具层之外（无 @layer）且特异度更高，稳定压过 `.table`。 */
 [class*="language-"] .token {
   display: inline;
+}
+
+/*
+ * Markdown 嵌在小卡片里的紧凑档。
+ *
+ * 标题类元素带着 mt-7 ~ mt-9（28-36px）的上边距——整篇阅读时那是章节之间的呼吸位，
+ * 对的；但当这段 markdown 是一张小卡的全部内容时，它就变成卡片顶部一条无内容的空带，
+ * 上留白是下留白的一倍半。判分里 B1 与 P3 各自独立报了这一处。
+ * 只压首元素，段间节奏一律不动。
+ */
+.md-compact > *:first-child {
+  margin-top: 0;
 }

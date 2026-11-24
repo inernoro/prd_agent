@@ -77,8 +77,7 @@ export function ConfigTab({ row, publicUrl, onConfigure, onArchive }: ConfigTabP
         </div>
         <p className="mt-1.5 text-xs text-muted-foreground">{strategyDescription(row)}</p>
         <pre
-          className="mt-3 max-h-[46vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
-          style={{ overscrollBehavior: 'contain' }}
+          className="mt-3 max-h-[46vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[0.7188rem] leading-6"
         >
           {scripts.join('\n')}
         </pre>
@@ -87,7 +86,7 @@ export function ConfigTab({ row, publicUrl, onConfigure, onArchive }: ConfigTabP
       {strategy?.detectedFrom && strategy.detectedFrom.length > 0 ? (
         <section className="cds-surface-raised cds-hairline rounded-lg p-4">
           <SectionLabel>探测依据</SectionLabel>
-          <ul className="mt-2 flex flex-col gap-1 text-[12.5px] text-muted-foreground">
+          <ul className="mt-2 flex flex-col gap-1 text-[0.7812rem] text-muted-foreground">
             {strategy.detectedFrom.map((item) => (
               <li key={item} className="font-mono">{item}</li>
             ))}
@@ -104,6 +103,8 @@ export function ConfigTab({ row, publicUrl, onConfigure, onArchive }: ConfigTabP
  */
 export function deployScriptLines(row: CenterRow): string[] {
   const strategy = row.target.strategy;
+  if (strategy?.mode === 'project-script') return [`# 读取指定提交中的文件，核对正文哈希`, `bash ./${strategy.scriptFile || 'cds-release.sh'} check`, `bash ./${strategy.scriptFile || 'cds-release.sh'} deploy`];
+  if (strategy?.mode === 'managed-script') return (strategy.script || '').split('\n');
   if (strategy?.mode === 'generated-compose') {
     return [
       `# CDS 动态生成，不写回项目仓库；每次发布固化脚本哈希`,
@@ -130,6 +131,8 @@ export function deployScriptLines(row: CenterRow): string[] {
 
 function strategyDescription(row: CenterRow): string {
   const mode = row.target.strategy?.mode || 'existing-script';
+  if (mode === 'project-script') return '项目维护并通过 CI 的发布脚本；CDS 只按指定提交执行，不推断部署类型。';
+  if (mode === 'managed-script') return 'CDS 独立维护的备选脚本，不自动代替项目脚本；修改须单独审查。';
   if (mode === 'generated-compose') return 'CDS 动态 Compose 发布：为指定 commit 建隔离 worktree，动态生成执行脚本。';
   if (mode === 'generated-static') return 'CDS 动态静态站发布：离线验证入口资源、归一权限、原子切换 current 并保留 previous。';
   return '项目现有脚本：CDS 只负责预检、日志、入口探测和版本记录，命令本身由项目仓库维护。';

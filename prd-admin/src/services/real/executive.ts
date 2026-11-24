@@ -8,6 +8,8 @@ import type {
   ExecutiveAgentStat,
   ExecutiveModelStat,
   ExecutiveLeaderboard,
+  TeamInsights,
+  GetTeamInsightsContract,
   GetExecutiveOverviewContract,
   GetExecutiveTrendsContract,
   GetExecutiveTeamContract,
@@ -44,4 +46,9 @@ export const getExecutiveModelsReal: GetExecutiveModelsContract = async (days = 
 export const getExecutiveLeaderboardReal: GetExecutiveLeaderboardContract = async (days = 0): Promise<ApiResponse<ExecutiveLeaderboard>> => {
   const d = Math.max(0, Math.floor(days));
   return await apiRequest<ExecutiveLeaderboard>(`${api.executive.leaderboard()}?days=${d}`);
+};
+
+export const getTeamInsightsReal: GetTeamInsightsContract = async (days = 0): Promise<ApiResponse<TeamInsights>> => {
+  const d = Math.max(0, Math.floor(days));
+  return await apiRequest<TeamInsights>(`${api.executive.teamInsights()}?days=${d}`);
 };

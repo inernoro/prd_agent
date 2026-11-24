@@ -1,3 +1,12 @@
+---
+paths:
+  - "exec_dep.sh"
+  - "fast.sh"
+  - "deploy/nginx/**/*"
+  - "docker-compose*.yml"
+  - ".github/workflows/*.yml"
+---
+
 # 生产发布安全触发规则
 
 **一句话**：改生产发布入口前必须先读那份安全合同：容器健康不等于页面健康，静态产物要先在非在线目录验完再原子切换，没拿到公网入口证据不许说发布完成。
@@ -14,7 +23,7 @@
 5. 发布失败必须指出首个失败阶段，并保存结构化证据和回滚结果。
 6. 未取得公网最终入口证据时，禁止声称生产发布完成。
 
-未偿实现项见 `doc/debt.platform.production-release.md`，不得因本规则已存在而将 open 债务误报为已实现。
+用 CDS 项目债务的 `platform.production-release` 模块读取发布机制未偿实现项，并核对每笔债务的实际状态。
 
 ## 技能路由
 

@@ -48,6 +48,34 @@ describe('Phase 8 — StateService.envMeta', () => {
     expect(svc.getEnvMeta('projA')).toEqual(meta);
   });
 
+  it('ensureGeneratedEnvKeys 只给缺值的 generate: secret 生成一次，已有值与普通项不动', () => {
+    svc.setEnvMeta('projA', {
+      INTERNAL_KEY: { kind: 'auto', generate: 'secret' },
+      PINNED_KEY: { kind: 'auto', generate: 'secret' },
+      PLAIN_KEY: { kind: 'auto' },
+    });
+    svc.setCustomEnvVar('PINNED_KEY', 'operator-pinned-value', 'projA');
+
+    expect(svc.ensureGeneratedEnvKeys('projA')).toEqual(['INTERNAL_KEY']);
+    const env = svc.getCustomEnv('projA');
+    expect(env.INTERNAL_KEY).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(env.PINNED_KEY).toBe('operator-pinned-value');
+    expect(env.PLAIN_KEY).toBeUndefined();
+
+    // 第二次部署不重生成：同一把 key 在项目内所有分支之间保持稳定。
+    const first = env.INTERNAL_KEY;
+    expect(svc.ensureGeneratedEnvKeys('projA')).toEqual([]);
+    expect(svc.getCustomEnv('projA').INTERNAL_KEY).toBe(first);
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
+  });
+
+  it('ensureGeneratedEnvKeys 把 TODO 占位当成缺值', () => {
+    svc.setEnvMeta('projA', { INTERNAL_KEY: { kind: 'auto', generate: 'secret' } });
+    svc.setCustomEnvVar('INTERNAL_KEY', 'TODO: 请填写实际值', 'projA');
+    expect(svc.ensureGeneratedEnvKeys('projA')).toEqual(['INTERNAL_KEY']);
+    expect(svc.getCustomEnv('projA').INTERNAL_KEY).not.toContain('TODO');
+  });
+
   it('upsertEnvMetaEntry 单 key 更新不影响其他', () => {
     svc.setEnvMeta('projA', {
       A: { kind: 'auto' },
@@ -86,6 +114,21 @@ describe('Phase 8 — StateService.envMeta', () => {
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['SMTP_PASSWORD']);
     svc.setCustomEnvVar('SMTP_PASSWORD', '   ', 'projA');
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['SMTP_PASSWORD']);
+  });
+
+  it('getMissingRequiredEnvKeys: 同组凭据任一完整方案即可放行', () => {
+    svc.setEnvMeta('projA', {
+      MAP_USER: { kind: 'required', requiredGroup: 'admin', requiredOption: 'map' },
+      MAP_PASSWORD: { kind: 'required', requiredGroup: 'admin', requiredOption: 'map' },
+      ROOT_USER: { kind: 'required', requiredGroup: 'admin', requiredOption: 'root' },
+      ROOT_PASSWORD: { kind: 'required', requiredGroup: 'admin', requiredOption: 'root' },
+    });
+
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['MAP_USER', 'MAP_PASSWORD']);
+    svc.setCustomEnvVar('ROOT_USER', 'operator', 'projA');
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['ROOT_PASSWORD']);
+    svc.setCustomEnvVar('ROOT_PASSWORD', 'secret', 'projA');
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
   });
 
   it('getMissingRequiredEnvKeys: 项目无 envMeta(老项目)→ 不 block', () => {

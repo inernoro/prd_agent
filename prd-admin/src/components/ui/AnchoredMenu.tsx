@@ -24,20 +24,46 @@ import { createPortal } from 'react-dom';
  * 锚点可传 anchorRef（包裹按钮的 ref）或 anchorEl（在 .map 列表里用 e.currentTarget
  * 存进 state 的元素），二选一。组件自带：视口边界夹取 + 下方放不下自动上翻 + 点外关闭
  * （排除锚点自身，便于按钮 toggle）+ ESC 关闭 + 滚动/缩放跟随重定位。
+ *
+ * 锚点在模态弹窗里时（如网页工作台），菜单挂进那个弹窗而不是 body：Radix 模态会把 body
+ * 设成 pointer-events:none、把焦点锁在弹窗内容里，挂在 body 下的菜单点不动、输入框也拿不到
+ * 焦点（2026-09-25 验收：工作台「发布给客户 → 生成链接并复制」点了没反应）。
  */
+
+type ClosestCapable = { closest(selector: string): Element | null };
+
+/** 菜单该挂到哪：锚点所在的弹窗，没有就是 body。 */
+export function resolveMenuPortalTarget<T>(anchor: ClosestCapable | null, body: T): Element | T {
+  return anchor?.closest('[role="dialog"]') ?? body;
+}
+
+/**
+ * 点在菜单与锚点之外时要不要关菜单。
+ * 从菜单里弹出的确认对话框渲染在别的弹窗里：在那里点按钮是这次菜单操作的一部分，不关；
+ * 但菜单所在的那个弹窗本身也是 dialog，点它的其它地方就是点外面，照常关。
+ */
+export function shouldCloseOnOutsidePointer(target: ClosestCapable | null, anchor: Node | null): boolean {
+  const dialog = target?.closest('[role="dialog"]');
+  if (!dialog) return true;
+  return anchor ? dialog.contains(anchor) : false;
+}
+
 type AnchoredMenuProps = {
   open: boolean;
   onClose: () => void;
   anchorRef?: RefObject<HTMLElement | null>;
   anchorEl?: HTMLElement | null;
   children: ReactNode;
-  /** 菜单右边缘对齐锚点右边缘（默认 right），或左对齐 */
-  align?: 'left' | 'right';
+  /** 默认对齐锚点右缘。窄屏也可贴视口右缘。 */
+  align?: 'left' | 'right' | 'viewport-right';
+  offsetX?: number;
   /** 菜单与锚点之间的垂直间距 */
   gap?: number;
   minWidth?: number;
   className?: string;
+  theme?: 'light' | 'dark';
   style?: CSSProperties;
+  ignoreAutomaticFrameFocus?: boolean;
 };
 
 export function AnchoredMenu({
@@ -47,12 +73,16 @@ export function AnchoredMenu({
   anchorEl,
   children,
   align = 'right',
+  offsetX = 0,
   gap = 6,
   minWidth = 180,
   className = '',
+  theme,
   style,
+  ignoreAutomaticFrameFocus = false,
 }: AnchoredMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const originRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   const getAnchor = useCallback(
@@ -67,10 +97,14 @@ export function AnchoredMenu({
     if (!anchor || !anchor.isConnected) return;
     const a = anchor.getBoundingClientRect();
     const menu = menuRef.current;
-    const mw = menu?.offsetWidth || minWidth;
-    const mh = menu?.offsetHeight || 0;
+    // 固定原点与菜单共用弹窗参照系，不依赖正在更新的菜单坐标。
+    const origin = originRef.current?.getBoundingClientRect();
+    const scaleX = origin?.width || 1;
+    const scaleY = origin?.height || 1;
+    const mw = (menu?.offsetWidth || minWidth) * scaleX;
+    const mh = (menu?.offsetHeight || 0) * scaleY;
 
-    let left = align === 'right' ? a.right - mw : a.left;
+    let left = (align === 'viewport-right' ? window.innerWidth - mw - 8 : align === 'right' ? a.right - mw : a.left) + offsetX;
     left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - mw - 8));
 
     let top = a.bottom + gap;
@@ -79,8 +113,8 @@ export function AnchoredMenu({
       const above = a.top - gap - mh;
       top = above >= 8 ? above : Math.max(8, window.innerHeight - mh - 8);
     }
-    setPos({ top, left });
-  }, [getAnchor, align, gap, minWidth]);
+    setPos({ top: (top - (origin?.top ?? 0)) / scaleY, left: (left - (origin?.left ?? 0)) / scaleX });
+  }, [getAnchor, align, offsetX, gap, minWidth]);
 
   // 打开时先定位一次，拿到真实尺寸后再用 rAF 校正一次（对齐 / 夹取 / 上翻）
   useLayoutEffect(() => {
@@ -104,43 +138,91 @@ export function AnchoredMenu({
     if (!open) return;
     const onScroll = () => reposition();
     const onResize = () => reposition();
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (menuRef.current?.contains(t)) return;
-      if (getAnchor()?.contains(t)) return; // 锚点自己负责 toggle
-      onClose();
+    let closing = false;
+    const closeOutside = (target: Node) => {
+      if (closing) return;
+      if (menuRef.current?.contains(target)) return;
+      if (getAnchor()?.contains(target)) return; // 锚点自己负责 toggle
+      // 从菜单里弹出的模态对话框（如发布前私有资料确认）渲染在别的 portal 里，DOM 上不在菜单内，
+      // 但它是这次菜单操作的一部分：在对话框里点按钮不该把下层菜单关掉，否则确认后的结果
+      // （例如刚生成的分享链接）没有地方就地显示。判定见 shouldCloseOnOutsidePointer。
+      if (!shouldCloseOnOutsidePointer(target instanceof Element ? target : null, getAnchor())) return;
+      closing = true; onClose();
+    };
+    const onDown = (event: PointerEvent | MouseEvent) => { if (event.target instanceof Node) closeOutside(event.target); };
+    // A focus change alone does not reliably report touches inside a cross-origin document.
+    const onFrameDown = (event: Event) => {
+      const frame = (event as CustomEvent<unknown>).detail;
+      if (frame instanceof HTMLIFrameElement && frame.isConnected) closeOutside(frame);
+    };
+    let blurTimer: ReturnType<typeof setTimeout> | undefined;
+    const onBlur = () => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        const target = document.activeElement;
+        const anchor = getAnchor();
+        if (!(target instanceof HTMLIFrameElement) || menuRef.current?.contains(target)
+          || anchor?.contains(target) || !shouldCloseOnOutsidePointer(target, anchor) || closing) return;
+        // A hosted page may acquire focus during startup while the pointer is still on the toolbar.
+        if (ignoreAutomaticFrameFocus && !target.matches(':hover')) {
+          anchor?.focus({ preventScroll: true });
+          return;
+        }
+        closing = true;
+        onClose();
+      }, 0);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     // 捕获阶段监听滚动，任意祖先滚动都能跟随
+    // 列表切换、标签筛选等会改变菜单尺寸，需重新夹取视口边界。
+    const sizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(reposition) : null;
+    if (menuRef.current) sizeObserver?.observe(menuRef.current);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
-    document.addEventListener('mousedown', onDown);
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('mousedown', onDown, true);
+    window.addEventListener('map-iframe-pointerdown', onFrameDown);
+    window.addEventListener('blur', onBlur);
     document.addEventListener('keydown', onKey);
+    // 弹窗出场动画期间带 transform、是 fixed 的参照系；动画一结束参照系换回视口，
+    // 在这期间打开的菜单要按新参照系重算一次，否则会停在错位的位置上。
+    const host = resolveMenuPortalTarget(getAnchor(), null);
+    host?.addEventListener('animationend', onResize);
     return () => {
+      host?.removeEventListener('animationend', onResize);
+      sizeObserver?.disconnect();
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('map-iframe-pointerdown', onFrameDown);
+      window.removeEventListener('blur', onBlur);
+      clearTimeout(blurTimer);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open, reposition, onClose, getAnchor]);
+  }, [open, reposition, onClose, getAnchor, ignoreAutomaticFrameFocus]);
 
   if (!open) return null;
 
-  return createPortal(
+  const portalTarget = resolveMenuPortalTarget(getAnchor(), document.body);
+  return createPortal(<>
+    {portalTarget !== document.body && <span ref={originRef} aria-hidden="true"
+      style={{ position: 'fixed', inset: '0 auto auto 0', width: 1, height: 1, visibility: 'hidden', pointerEvents: 'none' }} />}
     <div
       ref={menuRef}
+      data-theme={theme}
       className={`fixed z-[9999] rounded-[10px] py-1 ${className} border border-token-subtle`}
-      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, minWidth, visibility: pos ? 'visible' : 'hidden', background: 'var(--bg-elevated)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)', ...style }}
+      style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, minWidth: `min(${minWidth}px, calc(100vw - 16px))`, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 16px)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', visibility: pos ? 'visible' : 'hidden', background: 'var(--overlay-panel-solid)', boxShadow: 'var(--shadow-glass-dropdown)', ...style }}
       // portal 的 React 事件仍按组件树冒泡：挡住 mousedown/click，避免落到下层卡片的
       // onClick（导航）或触发其它点外关闭逻辑
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       {children}
-    </div>,
-    document.body,
+    </div>
+    </>, portalTarget,
   );
 }
 

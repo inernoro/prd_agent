@@ -27,7 +27,7 @@ export type RouteDataSource = 'mongo' | 'json-fallback';
 export interface RouteRecord {
   /** 主键(mongo _id 字符串化形式) */
   _id: string;
-  /** 精确域名(如 demo.miduo.org)或通配 *.miduo.org */
+  /** 精确域名（如 demo.example.com）或通配根域 */
   host: string;
   /** 可选路径前缀,空串等同 "/"(命中所有路径) */
   pathPrefix?: string;
@@ -64,6 +64,8 @@ export interface RouteRecord {
   replicaGroup?: string;
   /** 组内成员 id：'primary'（主容器）或成员短 id（rs 开头）。 */
   replicaMemberId?: string;
+  /** 这条路由把流量交给哪个服务（profileId）。响应头 X-CDS-Profile 与路由判定查询据此回答「落到了谁」。 */
+  profileId?: string;
 }
 
 /** 复制集选择上下文：由 forwarder-main 从请求提取，传给 resolveRoute。 */
@@ -98,6 +100,7 @@ export interface ReplicaResolveContext {
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */
 export interface ProxyStats {
+  widgetStreams?: { active: number; recovering: number; upstreamFailures: number };
   totalRequests: number;
   requestsByHost: Record<string, number>;
   statusCounts: Record<string, number>;

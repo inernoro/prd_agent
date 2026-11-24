@@ -543,10 +543,51 @@ export interface UploadedAttachment {
   size: number;
 }
 
+export interface UploadAttachmentOptions {
+  /**
+   * 字节上传进度。传了它就改走 XHR（fetch 拿不到上传进度）；不传时行为与原来一致。
+   * 注意：字节传完之后服务端还要提取正文，那段时间没有进度可报，调用方应另显示「正在读取」。
+   */
+  onProgress?: (loaded: number, total: number) => void;
+  signal?: AbortSignal;
+}
+
+function parseAttachmentResponse(text: string): ApiResponse<UploadedAttachment> {
+  try {
+    return JSON.parse(text) as ApiResponse<UploadedAttachment>;
+  } catch {
+    return { success: false, data: null, error: { code: 'PARSE_ERROR', message: text || '上传失败' } };
+  }
+}
+
+function uploadAttachmentWithProgress(
+  url: string,
+  headers: Record<string, string>,
+  body: FormData,
+  options: UploadAttachmentOptions,
+): Promise<ApiResponse<UploadedAttachment>> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) options.onProgress?.(event.loaded, event.total);
+    };
+    xhr.onload = () => resolve(parseAttachmentResponse(xhr.responseText));
+    xhr.onerror = () => resolve({ success: false, data: null, error: { code: 'NETWORK_ERROR', message: '网络中断，文件没有传上去' } });
+    xhr.onabort = () => resolve({ success: false, data: null, error: { code: 'ABORTED', message: '已取消上传' } });
+    options.signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    xhr.send(body);
+  });
+}
+
 /**
  * 上传附件文件（PDF/Word/Excel/PPT/图片等）
  */
-export async function uploadAttachment(file: File): Promise<ApiResponse<UploadedAttachment>> {
+export async function uploadAttachment(
+  file: File,
+  options?: UploadAttachmentOptions,
+): Promise<ApiResponse<UploadedAttachment>> {
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -557,13 +598,13 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
   const url = rawBase ? `${rawBase}/api/v1/attachments` : '/api/v1/attachments';
 
+  if (options?.onProgress || options?.signal) {
+    return uploadAttachmentWithProgress(url, headers, fd, options);
+  }
+
   const res = await fetch(url, { method: 'POST', headers, body: fd });
   const text = await res.text();
-  try {
-    return JSON.parse(text) as ApiResponse<UploadedAttachment>;
-  } catch {
-    return { success: false, data: null, error: { code: 'PARSE_ERROR', message: text || '上传失败' } };
-  }
+  return parseAttachmentResponse(text);
 }
 
 /**

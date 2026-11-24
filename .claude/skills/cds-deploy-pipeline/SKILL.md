@@ -1,18 +1,36 @@
 ---
 name: cds-deploy-pipeline
-version: 1.0.1
+version: 1.0.3
 description: Deploys code to an existing CDS branch, monitors readiness, runs layered smoke tests, fetches container logs, and diagnoses deploy failures (the hot path of CDS lifecycle). Activates when the user wants to push and verify on the grey/灰度 environment, inspect logs from a deployed branch, debug a failing deploy, restart a profile, or check live grey-env status. Every operation runs through cdscli (no hand-written curl). Does NOT handle initial project onboarding, tech-stack scanning, or cds-compose.yml generation — those belong to cds-project-scan (cold path). Does NOT handle credential setup or CDS self-update — those belong to cds (core). Trigger phrases include "部署到灰度", "deploy pipeline", "推送并测试", "灰度状态", "容器报错", "看容器日志", "deploy 失败", "帮我看看 cds 报错", "重启 api", "冒烟测试", "/cds-deploy", "/cds-debug", "/cds-smoke".
 ---
 
 # CDS 部署流水线
 
-> **版本**：v1.0.1 | **状态**：已落地 | **触发**：`/cds-deploy`、`/cds-debug`、`/cds-smoke`、"部署到灰度"、"看容器日志"、"deploy 失败"
+> **版本**：v1.0.3 | **状态**：已落地 | **触发**：`/cds-deploy`、`/cds-debug`、`/cds-smoke`、"部署到灰度"、"看容器日志"、"deploy 失败"
 
 > **热路径定位**：高频 / 每天 N 次。已部署项目的"代码 → 灰度 → 验证 → 排错"闭环。
 > 还没接入 CDS 的新项目 → 走 `cds-project-scan`（冷路径）。
 > 配置认证 / env / Key / CDS 服务自更新 → 走 `cds`（核心）。
 
 涉及 `exec_dep.sh`、`fast.sh`、nginx、静态产物或生产 workflow 时，必须先读 `doc/rule.platform.production-release-safety.md`。CDS 的 running/smoke 只证明灰度部署层，不能替代公网 HTML、入口资源和真人页面验收。
+
+## 主备实例选择
+
+部署、拉取、创建分支前先运行 `cdscli instance recommend`（见 `cds` 核心技能）。
+若 `state=high`，先在对话告知用户负载偏高、可选备用地址和“站点密钥各自独立”，
+按用户选择继续；若尚未选择则等选择后再写操作。不要只把通知藏在工具输出里。
+`unknown` 代表负载未确认，不能把超时、401 或维护误报为过载。
+CLI 的自动提示不停止原命令，也不自动切换，因此不能替代部署前的只读检查。
+
+部署前若用户选择备用 CDS，先执行 `instance list` → `instance check <实例ID>` →
+`instance use <实例ID>`。这些命令见 `cds` 核心技能。后续所有 CLI 命令读取所选实例独立授权。
+重新查询目标项目的 profile 与分支 ID，核对 CI 预构建模式、环境变量与外部依赖后再部署。
+不得把主用分支 ID、项目 Key 或旧预览地址带到备用；超时不自动跨实例重放部署请求。
+
+现有备用分支继续部署时，遵循 `cds` 核心技能的“备用继续部署：现有分支的完整验收路径”：
+固定同 CI 提交 → 只触发一次 branch deploy → 跟踪本次 DeploymentRun → 校验运行提交、
+预构建与漂移 → 读取实际预览 URL 并检查公网入口。首次安装优先用项目目录，缺省使用
+包内公开地址快照；包内没有任何站点授权，主备项目 Key 始终各自接入。
 
 ## 本技能处理 / 不处理
 

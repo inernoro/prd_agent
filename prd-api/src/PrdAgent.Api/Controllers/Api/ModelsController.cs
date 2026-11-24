@@ -743,6 +743,7 @@ public class ModelsController : ControllerBase
             // 按分辨率分组的尺寸选项，前端直接使用，无需转换
             sizesByResolution = adapterInfo.SizesByResolution,
             sizeParamFormat = adapterInfo.SizeParamFormat,
+            sizesNotApplicable = adapterInfo.SizesNotApplicable,
             limitations = new
             {
                 mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
@@ -803,6 +804,7 @@ public class ModelsController : ControllerBase
             // 按分辨率分组的尺寸选项，前端直接使用，无需转换
             sizesByResolution = adapterInfo.SizesByResolution,
             sizeParamFormat = adapterInfo.SizeParamFormat,
+            sizesNotApplicable = adapterInfo.SizesNotApplicable,
             limitations = new
             {
                 mustBeDivisibleBy = adapterInfo.MustBeDivisibleBy,
@@ -854,6 +856,7 @@ public class ModelsController : ControllerBase
                     sizesCount = totalSizesCount,
                     sizesByResolution = adapterInfo.SizesByResolution,
                     notes = adapterInfo.Notes,
+                    sizesNotApplicable = adapterInfo.SizesNotApplicable,
                     isAdaptive = adapterInfo.IsAdaptive,
                 };
             }

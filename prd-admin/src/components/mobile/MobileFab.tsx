@@ -36,7 +36,8 @@ export function MobileFab({ onClick, icon: Icon = Plus, label, accent }: MobileF
         background: `linear-gradient(135deg, ${from}, ${to})`,
         boxShadow: accent ? `0 12px 30px -8px ${from}99` : '0 12px 30px -8px var(--mobile-fab-shadow)',
         color: accent ? '#fff' : 'var(--mobile-fab-text)',
-        zIndex: 120,
+        // 页面级主操作必须低于 Dialog/SitePreviewModal 的 z=100，避免弹窗打开后继续浮在内容上方。
+        zIndex: 90,
         transition: 'transform 0.15s ease',
       }}
     >

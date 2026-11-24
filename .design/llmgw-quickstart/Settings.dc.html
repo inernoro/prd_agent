@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14); --ok: #22c55e;
+      --radius: 8px; --radius-sm: 6px;
+      --card-pad: 24px; --sp-tight: 8px; --sp-group: 20px; --sp-layer: 28px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</helmet>
+
+<div style="padding: 24px 28px; display: flex; flex-direction: column; gap: 20px;">
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.8;">服务网关设置</div>
+    <div style="font-size: 13px; color: var(--text-muted);">网关自己要调模型时用哪个池、哪个模型。</div>
+  </div>
+
+  <!-- 系统级模型：三选一 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+    <div style="font-size: 15px; font-weight: 650;">系统级模型</div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-group);">
+      <!-- 选中项：强调描边 + 浅底 + 右上角对勾，不靠颜色深浅一个信号 -->
+      <div style="position: relative; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l1.6 3.9L15.5 8l-3.9 1.6L10 13.5 8.4 9.6 4.5 8l3.9-1.1z"/><path d="M15.5 13.5l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7z"/></svg>
+          <strong style="font-size: 15px; font-weight: 650;">交给网关挑</strong>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#a78bfa" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="margin-left: auto;"><circle cx="9" cy="9" r="7"/><path d="M6 9.2l2 2 4-4.2"/></svg>
+        </div>
+        <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">按默认对话池调度，池里换成员不用改这里</span>
+      </div>
+
+      <div style="border: 1px solid var(--border-subtle); background: var(--bg-elevated); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#a1a1aa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3"/><circle cx="13" cy="12" r="3"/><path d="M9.4 8.9l1.2 1.2"/></svg>
+          <strong style="font-size: 15px; font-weight: 650; color: var(--text-secondary);">钉一个模型池</strong>
+        </div>
+        <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">只在这个池里调度，池内仍可自动换成员</span>
+      </div>
+
+      <div style="border: 1px solid var(--border-subtle); background: var(--bg-elevated); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#a1a1aa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2"/><circle cx="10" cy="10" r="2.5"/></svg>
+          <strong style="font-size: 15px; font-weight: 650; color: var(--text-secondary);">钉一个模型</strong>
+        </div>
+        <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">固定用这一个模型，不再自动换</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-group); border-top: 1px solid var(--border-subtle); padding-top: var(--sp-layer);">
+      <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted); line-height: 1.7;">保存后立刻生效；测试连接会真发一次极短对话，回报耗时与实际执行的模型。</span>
+      <div style="flex: none; display: flex; gap: var(--sp-tight);">
+        <button type="button" style="height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L3 7.8h3.4L6 12.5 11 6.2H7.6z"/></svg>
+          测试连接
+        </button>
+        <button type="button" style="height: 32px; padding: 0 16px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系统替你配好的：四项只读事实 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+    <div style="font-size: 15px; font-weight: 650;">系统替你配好的</div>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-group);">
+
+      <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">网关服务地址</div>
+        <div class="mono" style="font-size: 14px; color: var(--text-primary); line-height: 1.6; word-break: break-all;">http://llmgw-serve-prd-agent:8091</div>
+        <span style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">同一部署内的固定地址，不需要填。</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">系统调用用途码</div>
+        <div class="mono" style="font-size: 14px; color: var(--text-primary); line-height: 1.6; word-break: break-all;">llmgw-console.intent-draft::chat</div>
+        <span style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">网关自己的用量记在它名下，与业务用途码分开。</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">系统密钥</div>
+        <div style="display: flex; align-items: center; gap: var(--sp-tight);">
+          <span class="mono" style="font-size: 14px; color: var(--text-primary); word-break: break-all;">gwk_yOtrfJEe</span>
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(34,197,94,0.32); background: rgba(34,197,94,0.12); color: var(--ok); font-size: 12px; font-weight: 500;">已就绪</span>
+        </div>
+        <span style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">网关自己签的；明文只在服务端，永不下发。</span>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">归属团队</div>
+        <div style="display: flex; align-items: center; gap: var(--sp-tight);">
+          <span style="font-size: 14px; font-weight: 650; color: var(--text-primary);">系统内部</span>
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(167,139,250,0.32); background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 500;">单独计费</span>
+        </div>
+        <span style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">系统自己的团队，消耗不进任何业务团队的预算。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 谁在用它 -->
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+    <div style="display: flex; align-items: baseline; gap: 8px;">
+      <div style="font-size: 15px; font-weight: 650;">谁在用它</div>
+      <span style="font-size: 13px; color: var(--text-muted);">改上面那一项会影响下列功能</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: var(--sp-group); background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px 18px;">
+      <strong style="font-size: 14px; font-weight: 650;">Quickstart · 一句话推导调用用途码</strong>
+      <span class="mono" style="margin-left: auto; font-size: 13px; color: var(--text-muted); word-break: break-all;">llmgw-console.intent-draft::chat</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

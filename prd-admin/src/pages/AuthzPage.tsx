@@ -404,7 +404,7 @@ export default function AuthzPage() {
 
           {/* 弹窗内容 */}
           <div
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[360px] max-h-[70vh] overflow-hidden rounded-2xl"
+            className="surface-tone-dark fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[360px] max-h-[70vh] overflow-hidden rounded-2xl"
             style={{
               ...glassPopoverCompact,
               background: 'rgba(24, 24, 28, 0.95)',
@@ -529,7 +529,7 @@ export default function AuthzPage() {
 
           {/* 弹窗内容 */}
           <div
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[400px] max-h-[70vh] overflow-hidden rounded-2xl"
+            className="surface-tone-dark fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[400px] max-h-[70vh] overflow-hidden rounded-2xl"
             style={{
               ...glassPopoverCompact,
               background: 'rgba(24, 24, 28, 0.95)',
@@ -636,7 +636,7 @@ export default function AuthzPage() {
                             className="text-[10px] px-2 py-0.5 rounded-md"
                             style={{
                               background: 'rgba(99, 102, 241, 0.2)',
-                              color: 'rgba(99, 102, 241, 0.9)',
+                              color: 'var(--accent-fg-violet)',
                             }}
                           >
                             当前

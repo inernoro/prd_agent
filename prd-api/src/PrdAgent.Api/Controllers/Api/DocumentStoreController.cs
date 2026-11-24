@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Net.WebSockets;
@@ -9,15 +10,19 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
+using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -29,12 +34,18 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 [AdminController("document-store", AdminPermissionCatalog.DocumentStoreRead,
     WritePermission = AdminPermissionCatalog.DocumentStoreWrite)]
-public class DocumentStoreController : ControllerBase
+public partial class DocumentStoreController : ControllerBase
 {
     /// <summary>AgentApiKey scope：读文档空间（满足 admin 权限 document-store.read，见 AdminPermissionMiddleware.HasScopeGrant）</summary>
     public const string ScopeRead = "document-store:read";
     /// <summary>AgentApiKey scope：写文档空间（替代 AI 超级密钥，最小权限归档验收报告）</summary>
     public const string ScopeWrite = "document-store:write";
+
+    /// <summary>
+    /// 对 GitHub 同步子文档手动触发同步时的专属错误码。
+    /// 前端 userReadableError 按码取文案，因此这个码必须和前端登记的一致。
+    /// </summary>
+    public const string GithubChildEntrySyncErrorCode = "GITHUB_CHILD_ENTRY_SYNC";
 
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
@@ -42,6 +53,7 @@ public class DocumentStoreController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
@@ -52,6 +64,8 @@ public class DocumentStoreController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly DocumentStoreLiveTranscriptionRelay _liveTranscriptionRelay;
+    private readonly DocumentAssetCleanupService _documentAssetCleanup;
+    private readonly GitHubUserConnectionService _githubConnections;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -66,6 +80,32 @@ public class DocumentStoreController : ControllerBase
     private static readonly TimeSpan RecordingCleanupStaleLease = TimeSpan.FromMinutes(10);
     private const int RecordingOrphanChunkScanLimit = 500;
     private const int RecordingExpiredCleanupBatchSize = 500;
+
+    private sealed record StoredUploadAsset(StoredAsset Asset, string? StorageKey);
+
+    private static string? TryGetLocalAssetStorageKey(string? url)
+    {
+        var value = (url ?? string.Empty).Trim();
+        const string prefix = "/local-assets/";
+        if (!value.StartsWith(prefix, StringComparison.Ordinal)) return null;
+
+        var encodedKey = value[prefix.Length..];
+        var suffixIndex = encodedKey.IndexOfAny(['?', '#']);
+        if (suffixIndex >= 0) encodedKey = encodedKey[..suffixIndex];
+        try
+        {
+            var segments = encodedKey
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.UnescapeDataString)
+                .ToArray();
+            if (segments.Length == 0 || segments.Any(segment => segment is "." or "..")) return null;
+            return string.Join('/', segments);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -82,6 +122,7 @@ public class DocumentStoreController : ControllerBase
         IDocumentService documentService,
         IRunEventStore runEventStore,
         ISafeOutboundUrlValidator urlValidator,
+        IHttpClientFactory httpClientFactory,
         ITeamService teams,
         ITeamActivityService teamActivity,
         DocStoreServices.MentionService mentions,
@@ -94,8 +135,11 @@ public class DocumentStoreController : ControllerBase
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
         DocumentStoreLiveTranscriptionRelay liveTranscriptionRelay,
+        DocumentAssetCleanupService documentAssetCleanup,
         EntryContentWriteService entryContentWriter,
-        ILogger<DocumentStoreController> logger)
+        GitHubUserConnectionService githubConnections,
+        ILogger<DocumentStoreController> logger,
+        KnowledgeIndexRefreshQueue? knowledgeIndexRefresh = null)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -103,6 +147,7 @@ public class DocumentStoreController : ControllerBase
         _documentService = documentService;
         _runEventStore = runEventStore;
         _urlValidator = urlValidator;
+        _httpClientFactory = httpClientFactory;
         _teams = teams;
         _teamActivity = teamActivity;
         _mentions = mentions;
@@ -115,11 +160,15 @@ public class DocumentStoreController : ControllerBase
         _config = config;
         _assetNormalizer = assetNormalizer;
         _liveTranscriptionRelay = liveTranscriptionRelay;
+        _documentAssetCleanup = documentAssetCleanup;
         _entryContentWriter = entryContentWriter;
+        _githubConnections = githubConnections;
         _logger = logger;
+        _knowledgeIndexRefresh = knowledgeIndexRefresh ?? new KnowledgeIndexRefreshQueue(db, config);
     }
 
     private readonly EntryContentWriteService _entryContentWriter;
+    private readonly KnowledgeIndexRefreshQueue _knowledgeIndexRefresh;
 
     private readonly IConfiguration _config;
 
@@ -188,6 +237,8 @@ public class DocumentStoreController : ControllerBase
     /// </summary>
     private async Task<bool> IsProductKnowledgeMemberAsync(DocumentStore s, string userId)
     {
+        if (Equals(HttpContext.Items[AdminPermissionMiddleware.ProductKnowledgeCollaborationKey], s.Id))
+            return true;
         if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
         // 与 ProductAgentController.CanManage() 对齐：全局产品管理权限可读写所有产品知识库。
         // 否则管理员能通过 find-or-create 拿到 storeId，却在本控制器被拒（"文档空间不存在"）。
@@ -296,7 +347,7 @@ public class DocumentStoreController : ControllerBase
         return (entry, store, null);
     }
 
-    /// <summary>加载条目 + 其所属空间并校验可读（拥有者/公开/团队成员）。无权返回错误 IActionResult</summary>
+    /// <summary>加载可读条目；未发布写作草稿仅对知识库可写成员可见。</summary>
     private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? error)> LoadReadableEntryAsync(string entryId, string userId)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
@@ -307,6 +358,8 @@ public class DocumentStoreController : ControllerBase
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        if (entry.Writing != null && entry.Writing.Published == null && !await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -530,7 +583,14 @@ public class DocumentStoreController : ControllerBase
         if (request.Tags != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.Tags, request.Tags));
         if (request.IsPublic.HasValue)
+        {
+            if (Equals(HttpContext.Items[AdminPermissionMiddleware.ProductKnowledgeCollaborationKey], store!.Id)
+                && store.OwnerId != userId
+                && !User.HasClaim("permissions", AdminPermissionCatalog.Super)
+                && !User.HasClaim("permissions", ProductPermissionRules.MapAdmin))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅空间所有者或 MAP 管理员可更改公开状态。"));
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.IsPublic, request.IsPublic.Value));
+        }
         if (request.TemplateKey != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TemplateKey,
                 string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()));
@@ -604,89 +664,20 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { primaryEntryId = request.EntryId }));
     }
 
-    /// <summary>删除文档空间（级联清理所有关联数据）。
-    /// 仅 owner 可删——团队成员能写条目不等于能删整个 store，
-    /// 否则任何被分享团队的成员都能级联抹掉 owner 的所有条目/附件/分享/评论/点赞/收藏（codex-bot 2026-05-28 P1）。</summary>
+    /// <summary>知识库移入回收站，保留正文、附件与关联历史，30 天内由创建者恢复。
+    /// 仅 owner 可删——团队成员能写条目不等于能隐藏整个知识库。</summary>
     [HttpDelete("stores/{storeId}")]
     public async Task<IActionResult> DeleteStore(string storeId)
     {
         var userId = GetUserId();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        var store = await _db.DocumentStoresIncludingTrash.Find(s => s.Id == storeId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
         if (store.OwnerId != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以删除文档空间"));
 
-        // 1) 先拿到所有条目，收集正文/附件 ID 列表
-        var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
-        var documentIds = entries.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
-        var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
-
-        // 2) 级联清理关联数据（顺序不敏感，失败任何一步都不回滚——MongoDB 无事务）
-        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
-        var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => l.StoreId == storeId);
-        var likesResult = await _db.DocumentStoreLikes.DeleteManyAsync(l => l.StoreId == storeId);
-        var favoritesResult = await _db.DocumentStoreFavorites.DeleteManyAsync(f => f.StoreId == storeId);
-        var shareLinksResult = await _db.DocumentStoreShareLinks.DeleteManyAsync(s => s.StoreId == storeId);
-        var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
-        var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
-        var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
-        var tutorialGraphsResult = await _db.TutorialLinkGraphs.DeleteManyAsync(g => g.StoreId == storeId);
-        // 级联清理历史版本，避免删库后 document_entry_versions 残留全文快照（存储泄漏，与条目级删除一致）—— Bugbot
-        var versionsResult = await _db.DocumentEntryVersions.DeleteManyAsync(v => v.StoreId == storeId);
-        // 同步配对清理：本库作为本地侧(LocalStoreId)的记录无条件删。
-        // RemoteStoreId 匹配仅限【本地同环境配对】(LinkType=Local)——跨环境配对的 RemoteStoreId 是对端环境的库 Id，
-        // 本环境若恰好(克隆/导入后)有同 Id 的库，不能因为删它就误删那些本地侧仍在的跨环境配对（Codex P2）。
-        await _db.DocumentStoreSyncLinks.DeleteManyAsync(l =>
-            l.LocalStoreId == storeId
-            || (l.RemoteStoreId == storeId && l.LinkType == DocumentSyncLinkType.Local));
-
-        // 正文：只有通过此 Store 关联的 ParsedPrd 才删（其他模块可能也引用 documents 集合，所以按 ID 列表删）
-        long documentsDeleted = 0;
-        if (documentIds.Count > 0)
-        {
-            var res = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
-            documentsDeleted = res.DeletedCount;
-        }
-
-        // 附件
-        long attachmentsDeleted = 0;
-        if (attachmentIds.Count > 0)
-        {
-            var res = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
-            attachmentsDeleted = res.DeletedCount;
-        }
-
-        // 3) 最后删 store 自身
-        await _db.DocumentStores.DeleteOneAsync(s => s.Id == storeId);
-
-        _logger.LogInformation(
-            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links} views={Views} inlineComments={Comments} agentRuns={Runs} tutorialGraphs={TutorialGraphs}",
-            storeId, userId, entriesResult.DeletedCount, syncLogsResult.DeletedCount,
-            documentsDeleted, attachmentsDeleted,
-            likesResult.DeletedCount, favoritesResult.DeletedCount, shareLinksResult.DeletedCount,
-            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount,
-            tutorialGraphsResult.DeletedCount);
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            deletedEntries = entriesResult.DeletedCount,
-            deletedSyncLogs = syncLogsResult.DeletedCount,
-            deletedDocuments = documentsDeleted,
-            deletedAttachments = attachmentsDeleted,
-            deletedLikes = likesResult.DeletedCount,
-            deletedFavorites = favoritesResult.DeletedCount,
-            deletedShareLinks = shareLinksResult.DeletedCount,
-            deletedViewEvents = viewEventsResult.DeletedCount,
-            deletedInlineComments = inlineCommentsResult.DeletedCount,
-            deletedAgentRuns = agentRunsResult.DeletedCount,
-            deletedTutorialGraphs = tutorialGraphsResult.DeletedCount,
-        }));
+        return await MoveStoreToTrashAsync(store, userId);
     }
-
-    // ─────────────────────────────────────────────
-    // 文档条目 CRUD
-    // ─────────────────────────────────────────────
 
     /// <summary>向空间添加文档条目</summary>
     [HttpPost("stores/{storeId}/entries")]
@@ -819,7 +810,9 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? category = null,
         [FromQuery] string? tag = null,
         [FromQuery] string? versionId = null,
-        [FromQuery] bool excludeFolders = false)
+        [FromQuery] bool excludeFolders = false,
+        [FromQuery] bool navigation = false,
+        [FromQuery] string? cursor = null)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -830,11 +823,22 @@ public class DocumentStoreController : ControllerBase
         if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        pageSize = Math.Clamp(pageSize, 1, 500);
+        var canWrite = await CanWriteStoreAsync(store, userId, myTeamIds);
+        pageSize = Math.Clamp(pageSize, 1, navigation ? 2000 : 500);
         page = Math.Max(1, page);
+
+        DocumentEntryCursor? position = null;
+        if (navigation)
+        {
+            if (!string.IsNullOrEmpty(cursor) && !DocumentEntryCursor.TryDecode(cursor, storeId, out position))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分页位置已失效，请重新加载"));
+            position ??= new DocumentEntryCursor(storeId, DateTime.UtcNow, "");
+        }
 
         var filterBuilder = Builders<DocumentEntry>.Filter;
         var filter = filterBuilder.Eq(e => e.StoreId, storeId);
+        if (!canWrite)
+            filter &= filterBuilder.Where(e => e.Writing == null || e.Writing.Published != null);
 
         // 按层级过滤：all=true 返回全部，否则按 parentId 过滤
         if (!all && string.IsNullOrWhiteSpace(keyword))
@@ -885,38 +889,60 @@ public class DocumentStoreController : ControllerBase
                 filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
             };
 
-            // 启用内容搜索时，同时搜索 ContentIndex 字段
+            // 正文与阅读接口同源；旧 ContentIndex 只有前 2000 字且可能过期，不作为正文事实源。
             if (searchContent)
             {
-                searchFilters.Add(
-                    filterBuilder.Regex(e => e.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+                var contentMatches = await DocumentEntryContentSearch.FindAsync(_db,
+                    filter & !filterBuilder.Or(searchFilters), kw, HttpContext.RequestAborted);
+                searchFilters.Add(filterBuilder.In(e => e.Id, contentMatches));
             }
 
             filter &= filterBuilder.Or(searchFilters);
         }
 
-        var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
-        var items = await _db.DocumentEntries.Find(filter)
-            .SortByDescending(e => e.IsFolder) // 文件夹优先
-            .ThenByDescending(e => e.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
-            .ToListAsync();
+        // 导航采用不可变 ID 游标；同毫秒创建、插入与删除不会移动已读页面的边界。
+        var total = await _db.DocumentEntries.CountDocumentsAsync(filter, cancellationToken: HttpContext.RequestAborted);
+        List<DocumentEntry> items;
+        string? nextCursor = null;
+        // 大库首屏只需一批可见行，后续仍按调用方批量补齐；小库一页返回完整目录。
+        if (position != null && string.IsNullOrEmpty(position.AfterId)
+            && string.IsNullOrWhiteSpace(keyword) && total > 500)
+            pageSize = Math.Min(pageSize, 100);
+        if (position != null)
+        {
+            items = await _db.DocumentEntries.Find(filter & position.Filter())
+                .SortBy(e => e.Id)
+                .Project<DocumentEntry>(Builders<DocumentEntry>.Projection.Exclude(e => e.ContentIndex))
+                .Limit(pageSize + 1).ToListAsync(HttpContext.RequestAborted);
+            if (items.Count > pageSize)
+            {
+                items.RemoveAt(items.Count - 1);
+                nextCursor = (position with { AfterId = items[^1].Id }).Encode();
+            }
+        }
+        else
+        {
+            items = await _db.DocumentEntries.Find(filter)
+                .SortByDescending(e => e.IsFolder)
+                .ThenByDescending(e => e.CreatedAt)
+                .ThenBy(e => e.Id)
+                .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync(HttpContext.RequestAborted);
+        }
 
         // 标黄用：本批文档里哪些存在「单篇」有效分享（未撤销 + 未过期）
         // 过期判定放内存做，规避可空 DateTime 进 Mongo 表达式树
         var now = DateTime.UtcNow;
         var pageEntryIds = items.Where(e => !e.IsFolder).Select(e => e.Id).ToHashSet();
         var storeShareLinks = await _db.DocumentStoreShareLinks
-            .Find(l => l.StoreId == storeId && !l.IsRevoked)
-            .ToListAsync();
+            .Find(l => l.StoreId == storeId && !l.IsRevoked && pageEntryIds.Contains(l.EntryId!))
+            .ToListAsync(HttpContext.RequestAborted);
         var sharedEntryIds = storeShareLinks
             .Where(l => !string.IsNullOrEmpty(l.EntryId) && (l.ExpiresAt == null || l.ExpiresAt > now) && pageEntryIds.Contains(l.EntryId!))
             .Select(l => l.EntryId!)
             .Distinct()
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds, canWrite, nextCursor }));
     }
 
     /// <summary>
@@ -943,6 +969,76 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { folders }));
     }
 
+    /// <summary>
+    /// 跨知识库的「最近」文档流：把刚新增/刚改过的内容平铺成一条时间线。
+    /// 用户诉求原话是「我总是找不到我刚刚新增的内容」——按库分组的卡片列表答不了这个问题，
+    /// 因为新内容藏在某一张卡片的第二层里，得先想起来它当时存进了哪个库。
+    ///
+    /// 作用域与「我的空间 + 团队空间」两个 tab 的并集一致，不多给也不少给：
+    /// 自己拥有的普通库（排除项目/产品/识途三类专用库，与 ListStoresWithPreview 的 mine 口径同源）
+    /// ∪ 我所在团队被共享进来的库。没有任何可见库时直接返回空，不落到全表扫描。
+    /// </summary>
+    [HttpGet("entries/recent")]
+    public async Task<IActionResult> ListRecentEntries([FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        limit = Math.Clamp(limit, 1, 200);
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        // 没有团队时不拼一条恒假分支：驱动对常量谓词的翻译没有保证，
+        // 少一个分支比多一个「看着对但可能翻译不出去」的分支安全。
+        var visibleStoreBranches = new List<FilterDefinition<DocumentStore>>
+        {
+            Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null)),
+        };
+        if (myTeamIds.Count > 0)
+            visibleStoreBranches.Add(Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds));
+        var visibleStoreFilter = Builders<DocumentStore>.Filter.Or(visibleStoreBranches);
+
+        var visibleStores = await _db.DocumentStores.Find(visibleStoreFilter)
+            .Project(s => new { s.Id, s.Name })
+            .ToListAsync();
+        if (visibleStores.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = new List<object>() }));
+
+        var storeNameById = visibleStores
+            .GroupBy(s => s.Id)
+            .ToDictionary(g => g.Key, g => g.First().Name);
+        var visibleStoreIds = storeNameById.Keys.ToList();
+
+        // 文件夹本身不是「内容」，GitHub 目录订阅节点同理（与卡片预览口径一致）。
+        var entries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.In(e => e.StoreId, visibleStoreIds),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .SortByDescending(e => e.UpdatedAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        var items = entries.Select(e => new
+        {
+            id = e.Id,
+            storeId = e.StoreId,
+            storeName = storeNameById.GetValueOrDefault(e.StoreId, string.Empty),
+            title = e.Title,
+            contentType = e.ContentType,
+            tags = e.Tags ?? new List<string>(),
+            createdAt = e.CreatedAt,
+            updatedAt = e.UpdatedAt,
+            // 「新增」和「改过」要分开说：用户找的通常是前者，前端据此打不同的标。
+            // 判据放服务端，避免前端各算一遍再漂移（frontend-architecture.md 单一数据源）。
+            isNew = (e.UpdatedAt - e.CreatedAt) < TimeSpan.FromMinutes(1),
+            createdByName = e.CreatedByName,
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     /// <summary>获取文档条目详情</summary>
     [HttpGet("entries/{entryId}")]
     public async Task<IActionResult> GetEntry(string entryId)
@@ -961,6 +1057,9 @@ public class DocumentStoreController : ControllerBase
         var (userId, userName) = await GetActorInfoAsync();
         var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
         if (error != null) return error;
+
+        if (entry!.Writing != null && (request.Title != null || request.Summary != null || request.ContentType != null))
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
 
         var updates = new List<UpdateDefinition<DocumentEntry>>();
 
@@ -1006,124 +1105,16 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(updated!));
     }
 
-    /// <summary>删除文档条目（级联清理同步日志 + 正文 + 附件；文件夹会级联删除子条目）</summary>
+    /// <summary>条目移入回收站；文件夹及其正常子项同批回收，保留原目录、正文、附件和历史。</summary>
     [HttpDelete("entries/{entryId}")]
     public async Task<IActionResult> DeleteEntry(string entryId)
     {
         var userId = GetUserId();
-        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        var entry = await _db.DocumentEntriesIncludingTrash.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        var (store, error) = await LoadWritableStoreAsync(entry.StoreId, userId);
         if (error != null) return error;
-        if (entry is null || store is null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
-
-        var entryTitle = entry.Title;
-
-        // 收集要级联清理的条目 ID 列表
-        var idsToDelete = new List<string> { entryId };
-
-        // 如果是文件夹，递归收集所有后代
-        if (entry.IsFolder)
-        {
-            var all = await _db.DocumentEntries.Find(e => e.StoreId == entry.StoreId).ToListAsync();
-            var childrenByParent = all.GroupBy(e => e.ParentId ?? "").ToDictionary(g => g.Key, g => g.ToList());
-            var queue = new Queue<string>();
-            queue.Enqueue(entryId);
-            while (queue.Count > 0)
-            {
-                var cur = queue.Dequeue();
-                if (childrenByParent.TryGetValue(cur, out var kids))
-                {
-                    foreach (var k in kids)
-                    {
-                        idsToDelete.Add(k.Id);
-                        if (k.IsFolder) queue.Enqueue(k.Id);
-                    }
-                }
-            }
-        }
-        // 如果是 GitHub 目录订阅，还要清理所有以它为 parent 的子条目
-        else if (entry.SourceType == DocumentSourceType.GithubDirectory)
-        {
-            var ghChildren = await _db.DocumentEntries.Find(
-                e => e.StoreId == entry.StoreId &&
-                     e.Metadata.ContainsKey("github_parent_id") &&
-                     e.Metadata["github_parent_id"] == entryId
-            ).ToListAsync();
-            idsToDelete.AddRange(ghChildren.Select(c => c.Id));
-        }
-
-        // 收集被删条目引用的 DocumentId / AttachmentId
-        var targets = await _db.DocumentEntries.Find(e => idsToDelete.Contains(e.Id)).ToListAsync();
-        var documentIds = targets.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
-        var attachmentIds = targets.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
-
-        // 级联清理
-        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
-        var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => idsToDelete.Contains(l.EntryId));
-        var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
-        var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
-        var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => idsToDelete.Contains(r.SourceEntryId));
-        // 历史版本：级联清理这些条目的全部版本快照
-        var versionsDeleted = await _db.DocumentEntryVersions.DeleteManyAsync(v => idsToDelete.Contains(v.EntryId));
-        // 双链账本：清掉以这些 entry 为 from 或 to 的所有引用
-        var mentionsDeleted = await _mentions.CascadeDeleteAsync(MentionEntityType.Document, idsToDelete);
-
-        long documentsDeleted = 0;
-        if (documentIds.Count > 0)
-        {
-            // 重要：DocumentId 是内容 SHA-256（content-addressable），多 entry 可能共享同一 Document
-            // （同内容文件被多处订阅 / 重命名 / 跨知识库订阅同一 URL）。
-            // 必须先确认本次删除范围之外没有其他 entry 还引用这个 DocumentId，才能删 Document。
-            // 否则会把别人共享的 Document 一并删掉，对方下次预览就空白（hash 短路又导致永久回不来）。
-            var safeToDeleteDocIds = new List<string>();
-            foreach (var docId in documentIds.Distinct())
-            {
-                var otherRefs = await _db.DocumentEntries.CountDocumentsAsync(
-                    e => e.DocumentId == docId && !idsToDelete.Contains(e.Id));
-                if (otherRefs == 0) safeToDeleteDocIds.Add(docId);
-            }
-            if (safeToDeleteDocIds.Count > 0)
-            {
-                var r = await _db.Documents.DeleteManyAsync(d => safeToDeleteDocIds.Contains(d.Id));
-                documentsDeleted = r.DeletedCount;
-            }
-        }
-        long attachmentsDeleted = 0;
-        if (attachmentIds.Count > 0)
-        {
-            var r = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
-            attachmentsDeleted = r.DeletedCount;
-        }
-
-        // 按实际删除数原子递减，可与并发新增、删除交换顺序；历史少计时再以 $max
-        // 夹到零，既不产生负数，也不读取或覆盖任何陈旧条目统计。
-        await ApplyDocumentCountDeletionAsync(
-            _db.DocumentStores,
-            entry.StoreId,
-            checked((int)entriesResult.DeletedCount),
-            DateTime.UtcNow,
-            CancellationToken.None,
-            idsToDelete.Where(IsDeterministicRecordingEntryId).ToArray());
-
-        _logger.LogInformation(
-            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} versions={Versions} mentions={Mentions}",
-            entryId, entry.StoreId, userId,
-            entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
-            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount, versionsDeleted.DeletedCount, mentionsDeleted);
-
-        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryDeleted, "entry", entryId, entryTitle);
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            deleted = true,
-            deletedEntries = entriesResult.DeletedCount,
-            deletedSyncLogs = syncLogsResult.DeletedCount,
-            deletedDocuments = documentsDeleted,
-            deletedAttachments = attachmentsDeleted,
-            deletedViewEvents = viewEventsResult.DeletedCount,
-            deletedInlineComments = inlineCommentsResult.DeletedCount,
-            deletedAgentRuns = agentRunsResult.DeletedCount,
-        }));
+        return await MoveEntryToTrashAsync(entry, store!, userId);
     }
 
     /// <summary>移动文档条目到其他文件夹</summary>
@@ -1166,6 +1157,7 @@ public class DocumentStoreController : ControllerBase
         if (entry is null || store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
+        if (entry.Writing != null) return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
         if (entry.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持编辑"));
 
@@ -1196,11 +1188,39 @@ public class DocumentStoreController : ControllerBase
             contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
         }
 
+        TaskExecutionIdentity? indexRefreshIdentity = null;
+        if (await _knowledgeIndexRefresh.ShouldRefreshAsync(entry, store, userId))
+            indexRefreshIdentity = await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+
         // 核心写入（ParsedPrd 内容寻址 + 摘要索引 + 重锚评论 + 重算双链 + 双版本快照）
         // 抽取到 EntryContentWriteService，与版本恢复 / 自动补链批处理共用同一条路径。
         var writeResult = await _entryContentWriter.WriteAsync(
             entry, store, content, userId, userName,
             DocumentVersionSource.Edit, contentTypeOverride: request.ContentType);
+
+        if (writeResult.Conflicted)
+            return Conflict(ApiResponse<object>.Fail("DOCUMENT_TRASH_CONFLICT", "内容已被删除或发生变化，请刷新后重试"));
+
+        KnowledgeIndexRefreshStatus? knowledgeIndex = null;
+        if (indexRefreshIdentity is not null)
+        {
+            using var refreshScope = TaskExecutionContext.Enter(indexRefreshIdentity);
+            try
+            {
+                knowledgeIndex = await _knowledgeIndexRefresh.EnqueueAsync(entry, writeResult.DocumentId,
+                    writeResult.UpdatedAt, userId, indexRefreshIdentity.PermitId);
+            }
+            catch (Exception refreshError)
+            {
+                _logger.LogError(refreshError, "Knowledge index refresh queue failed entry={EntryId}", entryId);
+                knowledgeIndex = new KnowledgeIndexRefreshStatus("failed", null, writeResult.UpdatedAt,
+                    KnowledgeIndexRefreshQueue.TargetSeconds, null, false, "KB_INDEX_QUEUE_FAILED",
+                    "索引任务入队未确认，请核对状态后明确重新索引",
+                    "正文已保存，索引刷新入队未确认；旧内容已排除", false);
+            }
+        }
 
         // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
         if (contentCompliant.HasValue)
@@ -1216,12 +1236,24 @@ public class DocumentStoreController : ControllerBase
         {
             updated = true,
             updatedAt = writeResult.UpdatedAt,
+            knowledgeIndex,
             updatedBy = userId,
             updatedByName = userName,
             inlineCommentsRebound = writeResult.Rebound,
             inlineCommentsOrphaned = writeResult.Orphaned,
             mentionsWritten = writeResult.MentionsWritten,
         }));
+    }
+
+    /// <summary>当前正文索引状态；仅回读，不创建任务、许可或模型调用。</summary>
+    [HttpGet("entries/{entryId}/knowledge-index")]
+    public async Task<IActionResult> GetKnowledgeIndexStatus(string entryId)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        return Ok(ApiResponse<KnowledgeIndexRefreshStatus>.Ok(await _knowledgeIndexRefresh.GetStatusAsync(entry, userId)));
     }
 
     // ───────────────────────── 知识库版本控制 ─────────────────────────
@@ -1301,6 +1333,7 @@ public class DocumentStoreController : ControllerBase
         if (error != null) return error;
         if (entry is null || store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.Writing != null) return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
         if (entry.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持版本恢复"));
 
@@ -1311,6 +1344,9 @@ public class DocumentStoreController : ControllerBase
         var updatedAt = await ApplyContentToEntryAsync(
             entry, store, version.Content, userId, userName, DocumentVersionSource.Restore, versionId);
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
+
+        if (updatedAt == null)
+            return Conflict(ApiResponse<object>.Fail("DOCUMENT_TRASH_CONFLICT", "内容已被删除或发生变化，请刷新后重试"));
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -1324,7 +1360,7 @@ public class DocumentStoreController : ControllerBase
     /// 把一段正文写入条目（解析存 ParsedPrd + 更新摘要/索引 + 重锚评论 + 重算双链 + 版本快照）。
     /// 供版本恢复复用；核心写入路径抽取在 EntryContentWriteService，与 UpdateEntryContent 保持一致。
     /// </summary>
-    private async Task<DateTime> ApplyContentToEntryAsync(
+    private async Task<DateTime?> ApplyContentToEntryAsync(
         DocumentEntry entry, DocumentStore store, string content,
         string userId, string? userName, string source, string? restoredFromVersionId)
     {
@@ -1336,7 +1372,7 @@ public class DocumentStoreController : ControllerBase
         content = normalized.Content;
         var result = await _entryContentWriter.WriteAsync(
             entry, store, content, userId, userName, source, restoredFromVersionId);
-        return result.UpdatedAt;
+        return result.Conflicted ? null : result.UpdatedAt;
     }
 
     /// <summary>
@@ -1356,7 +1392,8 @@ public class DocumentStoreController : ControllerBase
 
         var entries = await _db.DocumentEntries
             .Find(e => e.StoreId == storeId)
-            .ToListAsync();
+            .Project(e => new { e.IsFolder, e.SourceType, e.DocumentId, e.AttachmentId })
+            .ToListAsync(HttpContext.RequestAborted);
 
         int docCount = 0, folderCount = 0;
         long documentBytes = 0, attachmentBytes = 0, imageBytes = 0;
@@ -1370,25 +1407,29 @@ public class DocumentStoreController : ControllerBase
 
         foreach (var e in entries)
         {
-            if (e.IsFolder) folderCount++;
+            if (e.IsFolder || e.SourceType == DocumentSourceType.GithubDirectory) folderCount++;
             else docCount++;
         }
 
         if (documentIds.Count > 0)
         {
-            var docs = await _db.Documents
-                .Find(d => documentIds.Contains(d.Id))
-                .Project<ParsedPrd>(Builders<ParsedPrd>.Projection.Include(d => d.RawContent))
-                .ToListAsync();
-            foreach (var d in docs)
-                documentBytes += System.Text.Encoding.UTF8.GetByteCount(d.RawContent ?? string.Empty);
+            // 在 Mongo 内计算 UTF-8 字节数，不为一个徽章把全库正文搬进 API 进程。
+            var total = await _db.Documents.Aggregate()
+                .Match(d => documentIds.Contains(d.Id))
+                .Group<MongoDB.Bson.BsonDocument>(new MongoDB.Bson.BsonDocument {
+                    { "_id", MongoDB.Bson.BsonNull.Value },
+                    { "bytes", new MongoDB.Bson.BsonDocument("$sum", new MongoDB.Bson.BsonDocument("$strLenBytes",
+                        new MongoDB.Bson.BsonDocument("$ifNull", new MongoDB.Bson.BsonArray { "$RawContent", "" }))) }
+                }).FirstOrDefaultAsync(HttpContext.RequestAborted);
+            documentBytes = total == null ? 0 : total["bytes"].ToInt64();
         }
 
         if (attachmentIds.Count > 0)
         {
             var atts = await _db.Attachments
                 .Find(a => attachmentIds.Contains(a.AttachmentId))
-                .ToListAsync();
+                .Project(a => new { a.Size, a.Type, a.MimeType })
+                .ToListAsync(HttpContext.RequestAborted);
             foreach (var a in atts)
             {
                 attachmentBytes += a.Size;
@@ -1604,6 +1645,15 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
+        if (!FileContentExtractor.IsStructurallyValid(bytes, mime))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "文件无法解析，请确认文件未损坏并重新选择"));
+        }
+
+        // 可解析格式也可能是合法的纯图片 PDF 或无文本 Office 文件。
+        // 正文为空时仍按附件保存，不能把“没有可提取文本”误判为文件损坏。
         var stored = await CreateUploadedDocumentEntryAsync(
             store, userId, userName, avatarFileName, file.FileName, mime, bytes, parentId, ct);
 
@@ -1697,6 +1747,7 @@ public class DocumentStoreController : ControllerBase
 
         var session = new DocumentRecordingUploadSession
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             StoreId = storeId,
             UserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config),
@@ -1834,7 +1885,10 @@ public class DocumentStoreController : ControllerBase
             cancellationToken: CancellationToken.None);
 
         var result = await _liveTranscriptionRelay.RelayAsync(browser, userId, sessionId);
-        var status = result.Completed
+        // 重连后的流只包含断线后的音频。它可以继续给用户实时反馈，但不能被当作
+        // 整场录音的完整原文；持久化为 degraded，完成链路会自动用完整音频校准。
+        var resumed = string.Equals(Request.Query["resumed"], "true", StringComparison.OrdinalIgnoreCase);
+        var status = result.Completed && !resumed
             ? DocumentLiveTranscriptStatus.Completed
             : DocumentLiveTranscriptStatus.Degraded;
         await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -1844,7 +1898,9 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.LiveTranscript, result.Transcript)
                 .Set(s => s.LiveTranscriptProvider, result.Provider)
                 .Set(s => s.LiveTranscriptModel, result.Model)
-                .Set(s => s.LiveTranscriptError, result.Error)
+                .Set(s => s.LiveTranscriptError, resumed && result.Completed
+                    ? "实时转写发生过重连，结束后将使用完整录音校准"
+                    : result.Error)
                 .Set(s => s.LiveTranscriptUpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (result.Completed && !string.IsNullOrWhiteSpace(result.Transcript))
@@ -1870,6 +1926,62 @@ public class DocumentStoreController : ControllerBase
                 }
             }
         }
+    }
+
+    /// <summary>用户主动唤醒卡住的录音云端归档；不会重复创建条目。</summary>
+    [HttpPost("entries/{entryId}/recording-archive/retry")]
+    public async Task<IActionResult> RetryRecordingArchive(string entryId)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音条目不存在"));
+
+        var now = DateTime.UtcNow;
+        var result = await QueueRecordingArchiveRetryAsync(
+            _db.DocumentRecordingUploadSessions,
+            entryId,
+            userId,
+            InstanceIdentity.Get(_config),
+            now,
+            CancellationToken.None);
+        if (result.MatchedCount == 0)
+        {
+            var completed = entry.Metadata?.GetValueOrDefault("audioArchiveStatus")
+                == DocumentRecordingArchiveStatus.Completed;
+            return completed
+                ? Ok(ApiResponse<object>.Ok(new { queued = false, completed = true }))
+                : Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前录音不在可重试状态"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { queued = true, completed = false }));
+    }
+
+    internal static async Task<UpdateResult> QueueRecordingArchiveRetryAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string entryId,
+        string userId,
+        string instanceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var recoverableStatus = Builders<DocumentRecordingUploadSession>.Filter.In(
+            session => session.ArchiveStatus,
+            [DocumentRecordingArchiveStatus.Pending, DocumentRecordingArchiveStatus.Archiving]);
+        return await sessions.UpdateOneAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.EntryId, entryId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(session => session.UserId, userId),
+                recoverableStatus),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(session => session.OwnerInstanceId, instanceId)
+                .Set(session => session.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                .Unset(session => session.ArchiveLeaseId)
+                .Set(session => session.ArchiveNextAttemptAt, now)
+                .Set(session => session.ArchiveError, null)
+                .Set(session => session.UpdatedAt, now),
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>
@@ -2290,11 +2402,13 @@ public class DocumentStoreController : ControllerBase
                     audioBytes,
                     parentId: null,
                     CancellationToken.None,
-                    storedAsset: new StoredAsset(
-                        string.Empty,
-                        interruptedAttachment.Url,
-                        interruptedAttachment.Size,
-                        interruptedAttachment.MimeType),
+                    storedAsset: new StoredUploadAsset(
+                        new StoredAsset(
+                            string.Empty,
+                            interruptedAttachment.Url,
+                            interruptedAttachment.Size,
+                            interruptedAttachment.MimeType),
+                        interruptedAttachment.StorageKey),
                     recordingSessionId: sessionId);
                 interruptedCompletedEntry = rebuilt.Entry;
             }
@@ -2395,7 +2509,7 @@ public class DocumentStoreController : ControllerBase
                         sessionId),
             }));
         }
-        StoredAsset recordingAsset;
+        StoredUploadAsset recordingAsset;
         try
         {
             // 降级判定只包住对象存储调用。附件、条目、计数或活动日志在存储成功后
@@ -2567,6 +2681,7 @@ public class DocumentStoreController : ControllerBase
                  && s.CompletionLeaseId == completionLeaseId,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                 .Set(s => s.EntryId, entry.Id)
                 .Set(
                     s => s.DeferredTranscriptionRunPending,
@@ -3007,6 +3122,7 @@ public class DocumentStoreController : ControllerBase
                  && s.CompletionLeaseId == completionLeaseId,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                 .Set(s => s.EntryId, entryId)
                 .Set(
                     s => s.DeferredTranscriptionRunPending,
@@ -3150,6 +3266,32 @@ public class DocumentStoreController : ControllerBase
                 .PullAll(RecordingCountedEntryIdsField, entryIds)
                 .Set(s => s.UpdatedAt, now),
             cancellationToken: cancellationToken);
+    }
+
+    internal sealed record EntryDeletionReceipt(string StoreId, string[] Counted, string[] Ordinary, long NormalDeleted, long ManagedDeleted)
+    {
+        public long DeletedCount => NormalDeleted + ManagedDeleted;
+    }
+
+    internal static async Task<EntryDeletionReceipt> BeginEntryDeletionAsync(MongoDbContext db, string storeId,
+        IReadOnlyCollection<string> entryIds)
+    {
+        var counted = await ShortVideoMaterialProcessor.ReadCountedEntryIdsAsync(db.DocumentStores, storeId, entryIds);
+        var ordinary = entryIds.Where(id => !counted.Contains(id)).ToArray();
+        long normalDeleted = ordinary.Length == 0 ? 0
+            : (await db.DocumentEntries.DeleteManyAsync(x => ordinary.Contains(x.Id), CancellationToken.None)).DeletedCount;
+        long managedDeleted = 0;
+        foreach (var id in counted)
+            managedDeleted += (await db.DocumentEntries.DeleteOneAsync(x => x.Id == id && x.StoreId == storeId, CancellationToken.None)).DeletedCount;
+        return new(storeId, counted.ToArray(), ordinary, normalDeleted, managedDeleted);
+    }
+
+    internal static async Task CompleteEntryDeletionCountsAsync(MongoDbContext db, EntryDeletionReceipt receipt, DateTime now)
+    {
+        await ApplyDocumentCountDeletionAsync(db.DocumentStores, receipt.StoreId, checked((int)receipt.NormalDeleted), now,
+            CancellationToken.None, receipt.Ordinary.Where(IsDeterministicRecordingEntryId).ToArray());
+        if (!await ShortVideoMaterialProcessor.ReleaseCountedEntriesAsync(db.DocumentStores, receipt.StoreId, receipt.Counted))
+            throw new InvalidOperationException("条目计数尚未核对完成，请稍后查看文档空间");
     }
 
     internal static async Task ApplyDocumentCountDeletionAsync(
@@ -3463,15 +3605,16 @@ public class DocumentStoreController : ControllerBase
             string? parentId,
             CancellationToken cancellationToken,
             int assetSaveAttempts = 1,
-            StoredAsset? storedAsset = null,
+            StoredUploadAsset? storedAsset = null,
             string? recordingSessionId = null)
     {
-        var stored = storedAsset ?? await SaveUploadedAssetAsync(
+        var storedUpload = storedAsset ?? await SaveUploadedAssetAsync(
             fileName,
             mime,
             bytes,
             cancellationToken,
             assetSaveAttempts);
+        var stored = storedUpload.Asset;
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -3489,6 +3632,8 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = bytes.LongLength,
             Url = stored.Url,
+            // `_it/` 那条受控路径自己带 key（它还牵着回收账），其余走存储回填的真实 key。
+            StorageKey = storedUpload.StorageKey ?? storedUpload.Asset.Key,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3575,10 +3720,22 @@ public class DocumentStoreController : ControllerBase
         if (entryCreated)
             await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
+        try
+        {
+            await _documentAssetCleanup.MarkUploadCommittedAsync(
+                storedUpload.StorageKey,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 条目已经建立有效引用；后台会据此识别上传已提交并移除待回滚任务。
+            _logger.LogWarning(ex, "[document-store] 上传提交后清理意图撤销延迟 entry={EntryId}", entry.Id);
+        }
+
         return (entry, attachment, documentId, stored.Url);
     }
 
-    private async Task<StoredAsset> SaveUploadedAssetAsync(
+    private async Task<StoredUploadAsset> SaveUploadedAssetAsync(
         string fileName,
         string mime,
         byte[] bytes,
@@ -3591,9 +3748,25 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                return await _assetStorage.SaveAsync(
-                    bytes, mime, cancellationToken,
-                    domain: "prd-agent", type: "doc", fileName: fileName);
+                if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+                {
+                    var extension = Regex.IsMatch(Path.GetExtension(fileName), @"^\.[a-zA-Z0-9]{1,10}$")
+                        ? Path.GetExtension(fileName).ToLowerInvariant()
+                        : ".bin";
+                    var key = $"_it/stable-smoke-document/{Guid.NewGuid():N}{extension}";
+                    await _documentAssetCleanup.TrackPendingUploadAsync(key, cancellationToken);
+                    await _assetStorage.UploadToKeyAsync(key, bytes, mime, cancellationToken);
+                    var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                    return new StoredUploadAsset(
+                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime, key),
+                        key);
+                }
+
+                return new StoredUploadAsset(
+                    await _assetStorage.SaveAsync(
+                        bytes, mime, cancellationToken,
+                        domain: "prd-agent", type: "doc", fileName: fileName),
+                    null);
             }
             catch (Exception ex) when (attempt < attempts && IsAssetStorageFailure(ex))
             {
@@ -3635,6 +3808,8 @@ public class DocumentStoreController : ControllerBase
         if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
+        if (entry.Writing != null) return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在作者工作区编辑并审核发布"));
+
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要替换的文件"));
         if (file.Length > MaxUploadBytes)
@@ -3644,6 +3819,9 @@ public class DocumentStoreController : ControllerBase
         // 否则每次替换都把上一版正文 + Attachment 记录变成永久孤儿（删条目时只按新 id 清理，清不到历史版本）
         var oldAttachmentId = entry.AttachmentId;
         var oldDocumentId = entry.DocumentId;
+        var oldAttachment = string.IsNullOrWhiteSpace(oldAttachmentId)
+            ? null
+            : await _db.Attachments.Find(a => a.AttachmentId == oldAttachmentId).FirstOrDefaultAsync(ct);
 
         var mime = InferMime(file.ContentType, file.FileName);
 
@@ -3654,7 +3832,8 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
+        var storedUpload = await SaveUploadedAssetAsync(file.FileName, mime, bytes, ct, assetSaveAttempts: 1);
+        var stored = storedUpload.Asset;
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -3669,6 +3848,8 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
+            // `_it/` 那条受控路径自己带 key（它还牵着回收账），其余走存储回填的真实 key。
+            StorageKey = storedUpload.StorageKey ?? storedUpload.Asset.Key,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3687,8 +3868,8 @@ public class DocumentStoreController : ControllerBase
         var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
         var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
 
-        await _db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entryId,
+        var replacement = await _db.DocumentEntries.UpdateOneAsync(
+            DocumentEntryWriteGuard.ForCurrentLifecycle(entry),
             Builders<DocumentEntry>.Update
                 .Set(e => e.AttachmentId, attachment.AttachmentId)
                 .Set(e => e.DocumentId, documentId)
@@ -3702,6 +3883,11 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedAt, DateTime.UtcNow)
                 .Set(e => e.LastChangedAt, DateTime.UtcNow),
             cancellationToken: ct);
+
+        // 没有提交替换时，不能重绑评论或清理旧引用：它们仍属于回收站/恢复后的内容。
+        if (replacement.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail(
+                "DOCUMENT_TRASH_CONFLICT", "内容已被删除或恢复，请刷新后重新选择文件"));
 
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
@@ -3739,7 +3925,7 @@ public class DocumentStoreController : ControllerBase
             {
                 // ParsedPrd.Id 由内容哈希派生：解析正文相同的多个条目会共享同一个 DocumentId。
                 // 删除前先做引用计数守卫——仍有其它条目指向它则跳过，避免误删共享正文/预览。
-                var stillReferenced = await _db.DocumentEntries
+                var stillReferenced = await _db.DocumentEntriesIncludingTrash
                     .Find(e => e.DocumentId == oldDocumentId && e.Id != entryId)
                     .AnyAsync(CancellationToken.None);
                 if (!stillReferenced)
@@ -3758,7 +3944,14 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
+                if (oldAttachment != null)
+                {
+                    await _documentAssetCleanup.TrackPendingAsync(
+                        new[] { oldAttachment },
+                        CancellationToken.None);
+                }
+                if (!await _db.DocumentEntriesIncludingTrash.Find(e => e.AttachmentId == oldAttachmentId).AnyAsync(CancellationToken.None))
+                    await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -3832,12 +4025,74 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             entryId = entry.Id,
-            title = title ?? entry.Title,
+            title = entry.Writing?.Published?.Title ?? title ?? entry.Title,
             content,
             contentType = entry.ContentType,
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
         }));
+    }
+
+    /// <summary>下载条目原始附件，并以原始文件名返回。</summary>
+    [HttpGet("entries/{entryId}/download")]
+    public async Task<IActionResult> DownloadEntryAttachment(string entryId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || string.IsNullOrWhiteSpace(entry.AttachmentId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档没有可下载的原始文件"));
+
+        var attachment = await _db.Attachments
+            .Find(item => item.AttachmentId == entry.AttachmentId)
+            .FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档没有可下载的原始文件"));
+
+        byte[]? bytes = null;
+        if (!string.IsNullOrWhiteSpace(attachment.StorageKey))
+        {
+            bytes = await _assetStorage.TryDownloadBytesAsync(attachment.StorageKey, ct);
+        }
+        else if (!string.IsNullOrWhiteSpace(attachment.Url))
+        {
+            try
+            {
+                var localStorageKey = TryGetLocalAssetStorageKey(attachment.Url);
+                if (!string.IsNullOrWhiteSpace(localStorageKey))
+                {
+                    bytes = await _assetStorage.TryDownloadBytesAsync(localStorageKey, ct);
+                }
+                else
+                {
+                    var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(attachment.Url, "文档附件地址", ct);
+                    var client = _httpClientFactory.CreateClient("SafeOutbound");
+                    using var response = await client.GetAsync(safeUri, HttpCompletionOption.ResponseHeadersRead, ct);
+                    if (response.IsSuccessStatusCode)
+                        bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Attachment download failed: entry={EntryId}", entryId);
+            }
+        }
+
+        if (bytes == null || bytes.Length == 0)
+            return NotFound(ApiResponse<object>.Fail(
+                "ASSET_NOT_FOUND",
+                "原始文件已不可用，请重新上传该文件后再下载"));
+
+        var fileName = Path.GetFileName(attachment.FileName);
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = "document.bin";
+        var mime = string.IsNullOrWhiteSpace(attachment.MimeType)
+            ? "application/octet-stream"
+            : attachment.MimeType;
+        return File(bytes, mime, fileName);
     }
 
     /// <summary>把知识库条目一键生成海报/教程/文案 HTML，并发布到网页托管。</summary>
@@ -4293,11 +4548,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
             Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory));
         var existingEntries = await _db.DocumentEntries.Find(existingFilter).ToListAsync();
-        var duplicate = existingEntries.FirstOrDefault(e =>
-            e.Metadata.GetValueOrDefault("github_owner") == owner &&
-            e.Metadata.GetValueOrDefault("github_repo") == repo &&
-            e.Metadata.GetValueOrDefault("github_path") == path &&
-            e.Metadata.GetValueOrDefault("github_branch") == branch);
+        var duplicate = existingEntries.FirstOrDefault(e => IsSameGitHubDirectory(e, owner, repo, path, branch));
         if (duplicate != null)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", $"该目录已订阅 (ID: {duplicate.Id})"));
 
@@ -4307,33 +4558,30 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(title))
             title = string.IsNullOrEmpty(path) ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}";
 
-        var entry = new DocumentEntry
+        // 手贴 URL 这条路径不要求先连 GitHub（历史行为：公开仓匿名可读），
+        // 但只要用户已经连过，就把连接盖在条目上，私有仓和 5000/h 限额同样受益。
+        //
+        // 盖之前先问一句连接现在还认不认：用户在 GitHub 那边撤销授权后记录仍在，
+        // 盖上去会让本来匿名就能同步的公开仓变成每天必然 401 —— 把能用的路径改坏了。
+        // 问不出结论（网络抖动）时仍然盖，保住私有仓那一侧（判据见 GitHubSyncCredentialPolicy）。
+        var existingConnection = await _githubConnections.GetConnectionAsync(userId, CancellationToken.None);
+        var usability = existingConnection == null
+            ? GitHubSyncCredentialPolicy.ConnectionUsability.Revoked
+            : MapUsability(await _githubConnections.ProbeConnectionAsync(userId, CancellationToken.None));
+        var stampConnection = GitHubSyncCredentialPolicy.ShouldStampConnection(existingConnection != null, usability);
+        if (existingConnection != null && !stampConnection)
         {
-            StoreId = storeId,
-            Title = title,
-            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
-            SourceType = DocumentSourceType.GithubDirectory,
-            SourceUrl = request.GithubUrl.Trim(),
-            SyncIntervalMinutes = interval,
-            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
-            ContentType = "application/x-github-directory",
-            CreatedBy = userId,
-            UpdatedBy = userId,
-            UpdatedByName = userName,
-            Metadata = new Dictionary<string, string>
-            {
-                ["github_owner"] = owner,
-                ["github_repo"] = repo,
-                ["github_path"] = path,
-                ["github_branch"] = branch,
-            },
-            Tags = request.Tags ?? new List<string>(),
-        };
-
-        if (!string.IsNullOrWhiteSpace(request.IncludeGlob))
-        {
-            entry.Metadata["github_include_glob"] = request.IncludeGlob.Trim();
+            _logger.LogInformation(
+                "[document-store] GitHub subscription for {Owner}/{Repo} not stamped: stored connection is revoked; falling back to anonymous sync",
+                owner, repo);
         }
+
+        var entry = BuildGitHubDirectoryEntry(
+            storeId, owner, repo, path, branch, title,
+            request.IncludeGlob, request.Tags, userId, userName,
+            connectionUserId: stampConnection ? userId : null,
+            sourceUrl: request.GithubUrl.Trim(),
+            syncIntervalMinutes: interval);
 
         await _db.DocumentEntries.InsertOneAsync(entry);
 
@@ -4348,6 +4596,238 @@ public class DocumentStoreController : ControllerBase
             entry.Id, owner, repo, path, branch, storeId);
 
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
+    }
+
+    /// <summary>
+    /// 批量添加 GitHub 目录订阅（登录 GitHub → 勾目录 → 一次开启同步）。
+    ///
+    /// 与单条 subscribe-github 的差别只有两点：一次收多个目录、且**要求已连接 GitHub**
+    /// （连接的 userId 会盖在每个条目上，同步 worker 据此带 token 请求，私有仓才拉得到）。
+    /// 已订阅过的目录不报错，走 skipped 返回，让"再勾一次"是幂等的。
+    /// </summary>
+    [HttpPost("stores/{storeId}/subscribe-github/batch")]
+    public async Task<IActionResult> AddGitHubSubscriptionBatch(
+        string storeId,
+        [FromBody] AddGitHubBatchSubscriptionRequest request,
+        CancellationToken ct)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        // 与单条 subscribe-github、以及手动触发同步（TriggerSync）一致，只认空间所有者。
+        // 放宽到「团队可写」会造出一批建得起来、却同步不了也删不掉的订阅：
+        // 那两条路径都按 OwnerId 判，团队成员建完立刻撞墙。
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (request == null || string.IsNullOrWhiteSpace(request.Owner) || string.IsNullOrWhiteSpace(request.Repo))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "owner / repo 不能为空"));
+
+        var owner = request.Owner.Trim();
+        var repo = request.Repo.Trim();
+        if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
+            return BadRequest(ApiResponse<object>.Fail(GitHubErrorCodes.PR_URL_INVALID, "owner/repo 含非法字符"));
+
+        var directories = request.Directories ?? new List<GitHubDirectorySelection>();
+        if (directories.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少要勾选一个目录"));
+        if (directories.Count > MaxGitHubBatchDirectories)
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT, $"一次最多订阅 {MaxGitHubBatchDirectories} 个目录，请分批开启"));
+
+        // 必须已连接：批量入口就是「GitHub 登录后勾目录」这条路径，
+        // 没有连接就没有 token，私有仓会在首次同步时静默 404。
+        var connection = await _githubConnections.GetConnectionAsync(userId, ct);
+        if (connection == null)
+            return StatusCode(412, ApiResponse<object>.Fail(
+                GitHubErrorCodes.GITHUB_NOT_CONNECTED, "尚未连接 GitHub 账号，请先授权"));
+
+        var branch = string.IsNullOrWhiteSpace(request.Branch) ? "main" : request.Branch.Trim();
+        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 1440, 60, 1440);
+
+        var existing = await _db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+                Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .ToListAsync(ct);
+
+        var created = new List<DocumentEntry>();
+        var skipped = new List<object>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        // 写入阶段用服务端自己的令牌：浏览器关掉 / 跳走会取消 ct，
+        // 那会在「已经建了几条」和「回写空间计数」之间断开，留下一批条目和一个偏小的 DocumentCount，
+        // 而且重试只会跳过已建的那些、计数再也补不回来（server-authority：客户端断开不取消服务端任务）。
+        var writeCt = CancellationToken.None;
+
+        // 计数回写放 finally：中途某条插入失败时，前面已经落库的那些条目必须被算进去。
+        // 漏算就再也补不回来——重试会把它们判成「已订阅」跳过，只有新插入的才计数。
+        try
+        {
+            foreach (var selection in directories)
+            {
+                var path = (selection?.Path ?? string.Empty).Trim().Trim('/');
+
+                // 同一次请求里勾重了：只建一次
+                if (!seen.Add(path))
+                {
+                    skipped.Add(new { path, reason = "duplicate_in_request" });
+                    continue;
+                }
+
+                var duplicate = existing.FirstOrDefault(e => IsSameGitHubDirectory(e, owner, repo, path, branch));
+                if (duplicate != null)
+                {
+                    skipped.Add(new { path, reason = "already_subscribed", entryId = duplicate.Id });
+                    continue;
+                }
+
+                var title = string.IsNullOrWhiteSpace(selection?.Title)
+                    ? (path.Length == 0 ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}")
+                    : selection!.Title!.Trim();
+
+                var entry = BuildGitHubDirectoryEntry(
+                    storeId, owner, repo, path, branch, title,
+                    request.IncludeGlob, request.Tags, userId, userName,
+                    connectionUserId: userId,
+                    sourceUrl: BuildGitHubDirectoryUrl(owner, repo, branch, path),
+                    syncIntervalMinutes: interval);
+
+                await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: writeCt);
+                created.Add(entry);
+            }
+        }
+        finally
+        {
+            if (created.Count > 0)
+            {
+                await _db.DocumentStores.UpdateOneAsync(
+                    s => s.Id == storeId,
+                    Builders<DocumentStore>.Update
+                        .Inc(s => s.DocumentCount, created.Count)
+                        .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: writeCt);
+            }
+        }
+
+        _logger.LogInformation(
+            "[document-store] GitHub batch subscription: store={StoreId} {Owner}/{Repo}@{Branch} created={Created} skipped={Skipped} login={Login}",
+            storeId, owner, repo, branch, created.Count, skipped.Count, connection.GitHubLogin);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            created = created.Select(e => new
+            {
+                e.Id,
+                e.Title,
+                path = e.Metadata.GetValueOrDefault("github_path"),
+                e.SyncStatus,
+            }),
+            createdCount = created.Count,
+            skipped,
+            connectedLogin = connection.GitHubLogin,
+            owner,
+            repo,
+            branch,
+        }));
+    }
+
+    /// <summary>一次批量订阅最多允许勾多少个目录（防止一次把整仓上千目录全塞进来）。</summary>
+    private const int MaxGitHubBatchDirectories = 50;
+
+    /// <summary>
+    /// GitHub 目录订阅父条目的唯一构造口径 —— 单条和批量共用，
+    /// 避免两处各写一份 metadata 后漂移（predicate-and-wiring-discipline 形状 3）。
+    /// </summary>
+    private static DocumentEntry BuildGitHubDirectoryEntry(
+        string storeId,
+        string owner,
+        string repo,
+        string path,
+        string branch,
+        string title,
+        string? includeGlob,
+        List<string>? tags,
+        string userId,
+        string userName,
+        string? connectionUserId,
+        string sourceUrl,
+        int syncIntervalMinutes)
+    {
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            Title = title,
+            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
+            SourceType = DocumentSourceType.GithubDirectory,
+            SourceUrl = sourceUrl,
+            SyncIntervalMinutes = syncIntervalMinutes,
+            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
+            ContentType = "application/x-github-directory",
+            CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
+            Metadata = new Dictionary<string, string>
+            {
+                ["github_owner"] = owner,
+                ["github_repo"] = repo,
+                ["github_path"] = path,
+                ["github_branch"] = branch,
+            },
+            Tags = tags ?? new List<string>(),
+        };
+
+        if (!string.IsNullOrWhiteSpace(includeGlob))
+        {
+            entry.Metadata["github_include_glob"] = includeGlob.Trim();
+        }
+
+        // 同步 worker 据此解出该用户的 token：私有仓能拉、限额从匿名 60/h 提到 5000/h。
+        if (!string.IsNullOrWhiteSpace(connectionUserId))
+        {
+            entry.Metadata["github_connection_user_id"] = connectionUserId!;
+        }
+
+        return entry;
+    }
+
+    /// <summary>拼出目录在 GitHub 上的可点击地址（也当条目的 SourceUrl）。</summary>
+    /// <summary>连接服务的三态翻成判据层的三态（两边各自独立演化，不共用枚举类型）。</summary>
+    private static GitHubSyncCredentialPolicy.ConnectionUsability MapUsability(
+        GitHubUserConnectionService.GitHubConnectionUsability probed)
+        => probed switch
+        {
+            GitHubUserConnectionService.GitHubConnectionUsability.Usable
+                => GitHubSyncCredentialPolicy.ConnectionUsability.Usable,
+            GitHubUserConnectionService.GitHubConnectionUsability.Revoked
+                => GitHubSyncCredentialPolicy.ConnectionUsability.Revoked,
+            _ => GitHubSyncCredentialPolicy.ConnectionUsability.Unknown,
+        };
+
+    /// <summary>
+    /// 这个条目订阅的是不是同一个 GitHub 目录（唯一判定，手贴与批量两条路共用）。
+    ///
+    /// owner / repo **大小写不敏感**：GitHub 的用户名与仓库名不区分大小写，而手贴地址保留用户
+    /// 敲进去的大小写、仓库接口返回的是规范大小写——两条路各建一份，就会出现两个指向同一目录的
+    /// 订阅，接着把同一批文档导入两遍。
+    /// path / branch 保持区分大小写：Git 的路径与分支名本来就区分。
+    /// </summary>
+    private static bool IsSameGitHubDirectory(
+        DocumentEntry entry, string owner, string repo, string path, string branch)
+        => string.Equals(entry.Metadata.GetValueOrDefault("github_owner"), owner, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.Metadata.GetValueOrDefault("github_repo"), repo, StringComparison.OrdinalIgnoreCase)
+        && entry.Metadata.GetValueOrDefault("github_path") == path
+        && entry.Metadata.GetValueOrDefault("github_branch") == branch;
+
+    /// <summary>
+    /// 父条目对外展示的 GitHub 地址。逐段转义：目录名里合法的 # 会把后半段变成 URL 片段、
+    /// ? 会开始查询串，而订阅抽屉直接拿这个值当链接——不转义就是点进去落到别的目录。
+    /// </summary>
+    private static string BuildGitHubDirectoryUrl(string owner, string repo, string branch, string path)
+    {
+        var baseUrl = $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+                    + $"/tree/{Uri.EscapeDataString(branch)}";
+        if (path.Length == 0) return baseUrl;
+        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+        return $"{baseUrl}/{safePath}";
     }
 
     /// <summary>置顶/取消置顶文档条目（支持多个置顶）</summary>
@@ -4551,6 +5031,16 @@ public class DocumentStoreController : ControllerBase
 
         if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
+
+        // GitHub 目录同步产出的子文件由父目录条目统一拉（见 DocumentSyncSchedule.IsGithubChildEntry）。
+        // 这里不拦的话，标了「同步中」却永远没人认领，用户看到的是一个卡死的转圈。
+        //
+        // 用专属错误码而不是通用的 INVALID_FORMAT：前端对通用校验码只放行少数几种句式，
+        // 这句「该去点哪里」的引导会被兜底文案吃掉，用户只看到「操作未完成，请检查输入后重试」。
+        if (DocumentSyncSchedule.IsGithubChildEntry(entry))
+            return BadRequest(ApiResponse<object>.Fail(
+                GithubChildEntrySyncErrorCode,
+                "该文档由所属的 GitHub 目录订阅统一同步，请对该目录条目触发同步"));
 
         // 暂停状态下不允许手动触发
         if (entry.IsPaused)
@@ -5198,11 +5688,19 @@ public class DocumentStoreController : ControllerBase
         if (styleErr != null) return styleErr;
 
         // 笔记 entry 的写权限（协作者也可整理，与转录发起对称）
-        var (_, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
+        var (noteEntry, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
         if (err != null) return err;
 
+        // restyle 与完整转录会写同一篇录音笔记。排队时先取得同一输出锁并分配
+        // 新代次，使较早启动但较晚返回的任务无法覆盖用户刚得到的新原文。
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            _db,
+            noteEntry!.Id,
+            DocumentStoreAgentRunKind.Transcribe,
+            CancellationToken.None);
         var run = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Kind = DocumentStoreAgentRunKind.Transcribe,
             SourceEntryId = prior.SourceEntryId,
             StoreId = prior.StoreId,
@@ -5214,9 +5712,15 @@ public class DocumentStoreController : ControllerBase
             TemplateKey = request.StyleKey?.Trim().ToLowerInvariant(),
             CustomPrompt = string.IsNullOrWhiteSpace(request.CustomPrompt) ? null : request.CustomPrompt.Trim(),
             StyleContext = string.IsNullOrWhiteSpace(request.StyleContext) ? null : request.StyleContext.Trim(),
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            _db,
+            noteEntry!.Id,
+            run,
+            outputLease,
+            CancellationToken.None);
+        if (generationEntry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录笔记不存在"));
 
         _logger.LogInformation(
             "[doc-store-agent] transcribe restyle queued: {RunId} prior={PriorId} style={Style}",
@@ -5248,12 +5752,33 @@ public class DocumentStoreController : ControllerBase
     {
         var entryId = entry.Id;
         var userId = GetUserId();
+        // 与 Worker 最终发布正文共用跨实例互斥锁。失联任务回收、新任务创建和旧任务
+        // 最后写回不能并发，否则旧 Worker 可能在重试已经创建后覆盖新结果。
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            _db,
+            entryId,
+            kind,
+            CancellationToken.None);
+        // entry 在取得跨实例输出锁前加载，等待锁期间可能已被另一任务推进代次。
+        // 转录去重必须以锁内重读的代次为准，否则会复用一个注定 superseded 的旧 run。
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var refreshedEntry = await ReloadMediaGenerationEntryAsync(
+                _db.DocumentEntries,
+                entry,
+                kind,
+                CancellationToken.None);
+            if (refreshedEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+            entry = refreshedEntry;
+        }
         // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
         // 按 UserId 过滤：GetAgentRun / StreamAgentRun 都要求 run.UserId == 调用者，
         // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(_config);
 
         // 归一化本次请求的整理方式：仅当在途 run 的风格与本次完全一致才复用，否则新建。
         // 否则「后台跑默认转录时点会议纪要快捷键」会复用默认 run，笔记出错风格（Codex P2）。
@@ -5265,6 +5790,35 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.TemplateKey, reqTemplateKey),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.CustomPrompt, reqCustomPrompt),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StyleContext, reqStyleContext));
+        var generationMatch = BuildReusableMediaRunGenerationFilter(
+            kind,
+            entryId,
+            entry.AgentOutputGeneration);
+
+        // 转录任务由 Worker 每 15 秒续一次 HeartbeatAt。用户重试时先原子终结超过一小时
+        // 没有心跳的同用户在途任务，否则下面的去重会把旧 runId 原样返回，界面永远只能
+        // “重试同一个坏任务”。旧文档没有 HeartbeatAt 时回退 StartedAt / CreatedAt。
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var stalledEndedAt = DateTime.UtcNow;
+            var stalledCount = await StalledTranscriptionRunRecovery.ReapAsync(
+                _db.DocumentStoreAgentRuns,
+                entryId,
+                userId,
+                reqTemplateKey,
+                reqCustomPrompt,
+                reqStyleContext,
+                compatibleOwnerIds,
+                stalledEndedAt,
+                CancellationToken.None);
+            if (stalledCount > 0)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] Reaped {Count} stalled transcription run(s) before retry entry={EntryId}",
+                    stalledCount,
+                    entryId);
+            }
+        }
 
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
         // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
@@ -5279,6 +5833,7 @@ public class DocumentStoreController : ControllerBase
                 // restyle run 是「换个整理方式」专用任务，不能被普通转录请求认领/复用
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
+                generationMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
@@ -5299,7 +5854,8 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+                generationMatch,
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
@@ -5311,6 +5867,7 @@ public class DocumentStoreController : ControllerBase
         // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
         var run = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Kind = kind,
             SourceEntryId = entryId,
             StoreId = store.Id,
@@ -5318,16 +5875,61 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
+            OutputGeneration = entry.AgentOutputGeneration,
             TemplateKey = reqTemplateKey,
             CustomPrompt = reqCustomPrompt,
             StyleContext = reqStyleContext,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
+                _db,
+                entryId,
+                run,
+                outputLease,
+                CancellationToken.None);
+            if (generationEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+        }
+        else
+        {
+            await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        }
 
         _logger.LogInformation("[doc-store-agent] {Kind} run queued: {RunId} entry={EntryId}", kind, run.Id, entryId);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
+
+    internal static FilterDefinition<DocumentStoreAgentRun> BuildReusableMediaRunGenerationFilter(
+        string kind,
+        string generationEntryId,
+        long currentOutputGeneration)
+    {
+        var filter = Builders<DocumentStoreAgentRun>.Filter;
+        if (kind != DocumentStoreAgentRunKind.Transcribe)
+            return filter.Empty;
+
+        return filter.And(
+            filter.Eq(run => run.OutputGeneration, currentOutputGeneration),
+            filter.Or(
+                filter.Eq(run => run.GenerationEntryId, generationEntryId),
+                filter.And(
+                    filter.Or(
+                        filter.Eq(run => run.GenerationEntryId, string.Empty),
+                        filter.Eq(run => run.GenerationEntryId, null!),
+                        filter.Exists(run => run.GenerationEntryId, false)),
+                    filter.Eq(run => run.SourceEntryId, generationEntryId))));
+    }
+
+    internal static async Task<DocumentEntry?> ReloadMediaGenerationEntryAsync(
+        IMongoCollection<DocumentEntry> entries,
+        DocumentEntry entry,
+        string kind,
+        CancellationToken cancellationToken)
+        => kind == DocumentStoreAgentRunKind.Transcribe
+            ? await entries.Find(candidate => candidate.Id == entry.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : entry;
 
     /// <summary>发起文档再加工任务（保留旧接口，等价于一次性发送首条 chat 消息）</summary>
     [HttpPost("entries/{entryId}/reprocess")]
@@ -5400,7 +6002,8 @@ public class DocumentStoreController : ControllerBase
         if (!string.IsNullOrEmpty(runId))
         {
             run = await _db.DocumentStoreAgentRuns
-                .Find(r => r.Id == runId && r.UserId == userId && r.SourceEntryId == entryId)
+                .Find(r => r.Id == runId && r.UserId == userId && r.SourceEntryId == entryId
+                    && r.Kind == DocumentStoreAgentRunKind.Reprocess)
                 .FirstOrDefaultAsync();
             if (run == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
@@ -5425,6 +6028,7 @@ public class DocumentStoreController : ControllerBase
         {
             run = new DocumentStoreAgentRun
             {
+                TaskPermitId = TaskExecutionContext.Current?.PermitId,
                 Kind = DocumentStoreAgentRunKind.Reprocess,
                 SourceEntryId = entryId,
                 StoreId = store!.Id,
@@ -5435,7 +6039,6 @@ public class DocumentStoreController : ControllerBase
                 Status = DocumentStoreRunStatus.Queued,
                 Phase = "排队中",
                 Messages = new List<ReprocessChatMessage> { userMsg },
-                ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             };
             await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
         }
@@ -5471,6 +6074,7 @@ public class DocumentStoreController : ControllerBase
                     && r.Messages.Count == prevSeq,
                 Builders<DocumentStoreAgentRun>.Update
                     .Push(r => r.Messages, userMsg)
+                    .Set(r => r.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                     .Set(r => r.Status, DocumentStoreRunStatus.Queued)
                     // 重新排队时把归属改成当前实例：这条 Done 的 run 可能由 main 或别的分支创建，
                     // 共享 Mongo 下若不改主，本实例（定向消费）会因 owner 不匹配而忽略它，
@@ -5481,7 +6085,7 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.GeneratedText, null)
                     .Set(r => r.EndedAt, (DateTime?)null)
                     .Set(r => r.ErrorMessage, null)
-                    .Set(r => r.ForceFullShadowSample, _llmRequestContext.Current?.ForceFullShadowSample == true),
+                    .Set(r => r.FailureCode, null),
                 cancellationToken: CancellationToken.None);
             if (updateResult.ModifiedCount == 0)
             {
@@ -5491,6 +6095,7 @@ public class DocumentStoreController : ControllerBase
             // 同步内存里的 run.Status，否则下面 return 时仍然返回旧的 "done"，
             // 客户端会误以为任务已经完成（Bugbot #1 三轮 Medium）
             run.Status = DocumentStoreRunStatus.Queued;
+            run.TaskPermitId = TaskExecutionContext.Current?.PermitId;
         }
 
         // 给 SSE 端推一条 userMessage 事件方便前端镜像（不影响处理流程）
@@ -5655,6 +6260,7 @@ public class DocumentStoreController : ControllerBase
         // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
         var tmpRun = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = Guid.NewGuid().ToString("N"),
             Kind = DocumentStoreAgentRunKind.Reprocess,
             SourceEntryId = entryId,
@@ -5823,6 +6429,7 @@ public class DocumentStoreController : ControllerBase
         // 团队库另一成员若复用到别人的 runId 会立刻 404 无法跟进度（Codex P2）；
         // 任务幂等，两个成员同时发起各跑一遍无害（第二遍 linksAdded=0）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(_config);
 
         // (1) 原子认领历史无主的 queued run（仅认领自己发起的）
         var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
@@ -5847,7 +6454,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
@@ -5855,6 +6462,7 @@ public class DocumentStoreController : ControllerBase
         // (3) 新建归属本实例的 run
         var run = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Kind = DocumentStoreAgentRunKind.AutoLink,
             SourceEntryId = string.Empty, // 库级任务
             StoreId = store!.Id,
@@ -5875,6 +6483,7 @@ public class DocumentStoreController : ControllerBase
     {
         var userId = GetUserId();
         var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync();
+        if (run?.Kind == WritingDocumentPolicy.RunKind) run = null;
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
         return Ok(ApiResponse<DocumentStoreAgentRun>.Ok(run));
@@ -5886,7 +6495,8 @@ public class DocumentStoreController : ControllerBase
         string entryId,
         [FromQuery] string kind,
         [FromQuery] string? status = null,
-        [FromQuery] bool requireOutput = false)
+        [FromQuery] bool requireOutput = false,
+        [FromQuery] bool ownUserOnly = false)
     {
         // writable 而非 owner-only：团队库协作者能转录/编辑笔记，也必须能查最近 run
         // 来发起「换个整理方式」（Codex P2：restyle 协作者被 404）
@@ -5905,6 +6515,8 @@ public class DocumentStoreController : ControllerBase
         };
         if (!string.IsNullOrWhiteSpace(status))
             filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, status.Trim().ToLowerInvariant()));
+        if (ownUserOnly)
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, GetUserId()));
         if (requireOutput)
         {
             filters.Add(Builders<DocumentStoreAgentRun>.Filter.And(
@@ -5930,6 +6542,7 @@ public class DocumentStoreController : ControllerBase
 
         var userId = GetUserId();
         var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync(cancellationToken);
+        if (run?.Kind == WritingDocumentPolicy.RunKind) run = null;
         if (run == null)
         {
             await WriteSseEventAsync(null, "error", System.Text.Json.JsonSerializer.Serialize(
@@ -6141,19 +6754,21 @@ public class DocumentStoreController : ControllerBase
     /// <summary>获取公开知识库的文档列表（匿名可访问）</summary>
     [HttpGet("public/stores/{storeId}/entries")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListPublicStoreEntries(string storeId)
+    public async Task<IActionResult> ListPublicStoreEntries(string storeId,
+        [FromQuery] int pageSize = 500, [FromQuery] string? cursor = null,
+        [FromQuery] string? keyword = null, [FromQuery] bool searchContent = false)
     {
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.IsPublic).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在或未公开"));
 
-        var items = await _db.DocumentEntries.Find(e => e.StoreId == storeId)
-            .SortByDescending(e => e.IsFolder)
-            .ThenByDescending(e => e.CreatedAt)
-            .Limit(500)
-            .ToListAsync();
-
-        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+        var page = await DocumentEntryNavigation.ReadAsync(_db, storeId,
+            Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId)
+                & Builders<DocumentEntry>.Filter.Where(e => e.Writing == null || e.Writing.Published != null), pageSize, cursor,
+            keyword, searchContent, HttpContext.RequestAborted);
+        return page == null
+            ? BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分页位置已失效，请重新加载"))
+            : Ok(ApiResponse<object>.Ok(page));
     }
 
     /// <summary>获取公开知识库内单个文档的内容（匿名可访问）</summary>
@@ -6162,7 +6777,7 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> GetPublicEntryContent(string entryId)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
+        if (entry == null || (entry.Writing != null && entry.Writing.Published == null))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.IsPublic).FirstOrDefaultAsync();
@@ -6467,7 +7082,7 @@ public class DocumentStoreController : ControllerBase
         await _db.DocumentStoreShareLinks.InsertOneAsync(link, cancellationToken: CancellationToken.None);
         // 数字短链 /s/{seq} 按需懒分配（与网页托管 2026-06-11 同口径）：默认 ShortSeq=0，
         // 对外只给不可枚举的 /s/lib/{token}。无条件分配会让 short_links 集合被每条分享污染，
-        // 且把「全局自增、可从 1 枚举」的地址当成常态发出去（见 doc/debt.platform.md「分享链接安全」）。
+        // 且把「全局自增、可从 1 枚举」的地址当成常态发出去（见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md「分享链接安全」）。
         if (request.AllocateShortLink)
             await TryAllocateDocumentStoreShortSeqAsync(link);
 
@@ -6603,28 +7218,22 @@ public class DocumentStoreController : ControllerBase
     /// <summary>列出分享链接对应知识库的文档（匿名，token 门禁；单篇分享只返回该篇）</summary>
     [HttpGet("public/share/{token}/entries")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListShareEntries(string token)
+    public async Task<IActionResult> ListShareEntries(string token,
+        [FromQuery] int pageSize = 500, [FromQuery] string? cursor = null,
+        [FromQuery] string? keyword = null, [FromQuery] bool searchContent = false)
     {
         var link = await ResolveActiveShareLinkAsync(token);
         if (link == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
 
-        List<DocumentEntry> items;
-        if (!string.IsNullOrEmpty(link.EntryId))
-        {
-            // 单篇分享：只暴露该篇
-            items = await _db.DocumentEntries.Find(e => e.Id == link.EntryId && e.StoreId == link.StoreId).ToListAsync();
-        }
-        else
-        {
-            items = await _db.DocumentEntries.Find(e => e.StoreId == link.StoreId)
-                .SortByDescending(e => e.IsFolder)
-                .ThenByDescending(e => e.CreatedAt)
-                .Limit(500)
-                .ToListAsync();
-        }
-
-        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+        var scope = Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, link.StoreId);
+        scope &= Builders<DocumentEntry>.Filter.Where(e => e.Writing == null || e.Writing.Published != null);
+        if (!string.IsNullOrEmpty(link.EntryId)) scope &= Builders<DocumentEntry>.Filter.Eq(e => e.Id, link.EntryId);
+        var page = await DocumentEntryNavigation.ReadAsync(_db, link.StoreId, scope,
+            pageSize, cursor, keyword, searchContent, HttpContext.RequestAborted);
+        return page == null
+            ? BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分页位置已失效，请重新加载"))
+            : Ok(ApiResponse<object>.Ok(page));
     }
 
     /// <summary>读取分享链接内某篇文档的正文（匿名，token 门禁 + entry 必须属于该库/单篇）</summary>
@@ -6641,7 +7250,7 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档不在分享范围内"));
 
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId && e.StoreId == link.StoreId).FirstOrDefaultAsync();
-        if (entry == null)
+        if (entry == null || (entry.Writing != null && entry.Writing.Published == null))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
 
         return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
@@ -6853,7 +7462,7 @@ public class DocumentStoreController : ControllerBase
         return new
         {
             entryId = entry.Id,
-            title = title ?? entry.Title,
+            title = entry.Writing?.Published?.Title ?? title ?? entry.Title,
             content,
             contentType = entry.ContentType,
             fileUrl,
@@ -7648,7 +8257,10 @@ public class DocumentStoreController : ControllerBase
 
         limit = Math.Clamp(limit, 1, 200);
 
-        var filter = Builders<DocumentInlineComment>.Filter.Eq(c => c.StoreId, storeId);
+        // 先限定正常条目再分页，不能让保留的评论泄露回收正文，也不能挤占有效结果。
+        var activeEntryIds = await _db.DocumentEntries.Find(e => e.StoreId == storeId).Project(e => e.Id).ToListAsync();
+        var filter = Builders<DocumentInlineComment>.Filter.Eq(c => c.StoreId, storeId)
+            & Builders<DocumentInlineComment>.Filter.In(c => c.EntryId, activeEntryIds);
         if (!string.IsNullOrWhiteSpace(since)
             && DateTime.TryParse(since, System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.RoundtripKind, out var sinceUtc))
@@ -7671,7 +8283,7 @@ public class DocumentStoreController : ControllerBase
             : await _db.DocumentEntries.Find(e => entryIds.Contains(e.Id)).ToListAsync();
         var titleMap = entries.ToDictionary(e => e.Id, e => e.Title);
 
-        var items = comments.Select(c => new
+        var items = comments.Where(c => titleMap.ContainsKey(c.EntryId)).Select(c => new
         {
             id = c.Id,
             entryId = c.EntryId,
@@ -7829,6 +8441,24 @@ public class AddGitHubSubscriptionRequest
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
     public string? IncludeGlob { get; set; }
+}
+
+public class AddGitHubBatchSubscriptionRequest
+{
+    public string Owner { get; set; } = string.Empty;
+    public string Repo { get; set; } = string.Empty;
+    public string? Branch { get; set; }
+    public List<GitHubDirectorySelection>? Directories { get; set; }
+    public string? IncludeGlob { get; set; }
+    public List<string>? Tags { get; set; }
+    public int? SyncIntervalMinutes { get; set; }
+}
+
+public class GitHubDirectorySelection
+{
+    /// <summary>仓库内目录路径；空串表示仓库根目录。</summary>
+    public string Path { get; set; } = string.Empty;
+    public string? Title { get; set; }
 }
 
 public class UpdateSubscriptionRequest

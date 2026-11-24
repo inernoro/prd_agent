@@ -13,13 +13,13 @@
 > 最后更新：2026-07-28 | 轨道：单轨（claude/workflow-issues-verification-8pkmcq）
 > **距离可发布**：阶段一二三均已达成各自判据。阶段三引入了本仓库唯一一处
 > **默认开启、无人值守、在生产机器上执行删除**的路径（远端产物回收），安全边界与
-> 对抗性回归见 [doc/debt.cds.release-system.md](./debt.cds.release-system.md) 债务 10；真出事的逃生阀是
+> 对抗性回归见 [doc/debt.cds.release-system.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md) 债务 10；真出事的逃生阀是
 > `CDS_RELEASE_ARTIFACT_RETENTION=0`（只巡检不回收，改环境变量重启即可，不必发版）。
 > 阶段四需单独立项，理由见下方判断。
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 | --- | --- | --- | --- | --- | --- |
-| 一 止血 | 100 | 已验收 | 无 | — | PR #1273（Codex 七轮 20+ 条逐条修复）；真 sshd 端到端四条行为 A/B/C/D 逐条红绿闭环，见 [doc/debt.cds.release-system.md](./debt.cds.release-system.md)「真实环境证据」 |
+| 一 止血 | 100 | 已验收 | 无 | — | PR #1273（Codex 七轮 20+ 条逐条修复）；真 sshd 端到端四条行为 A/B/C/D 逐条红绿闭环，见 [doc/debt.cds.release-system.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md)「真实环境证据」 |
 | 二 可见 | 100 | 已验收 | 无 | — | 四条判据逐条核过：`第 N/M 步 · 标题` + ETA 同屏（`ReleaseCenterPage.tsx`）；事件上 `cds-events-bus` 且 `isAlertCdsEvent` 收敛告警判定；状态页生产目标独立分组出 24h 柱条；发布中心实时探测数 = 0（`tests/routes/releases-center-health-snapshot.test.ts`，红检确认改回实时探测即红） |
 | 三 记账 | 100 | 已验收 | 无 | — | 七轮 Codex 审查收口（P1 8 条 / P2 12 条，逐条红绿闭环，见 PR #1281 收口小结）。四条判据逐条实测：落盘 1200 行从 1200 次降到 24 次（红检确认改回每行一落即 1200）；200 条 run 入库后按目标收敛到 100 且回滚链完整；`GET /releases/center` 带 DORA 四项且无样本恒 `null`；漂移告警 `release.drift-detected` 已上总线且 `isAlertCdsEvent` 为 true。远端回收另有对抗性套件 `tests/services/release-reclaim-adversarial.test.ts`（6 例，红检确认摘掉符号链接保护即红 4 例） |
 | 四 架构升级 | 0 | 未开始（需单独立项） | 依赖不可变产物链路改造，工作量大 | 见本节下方「阶段四判断」 | — |
@@ -81,7 +81,7 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 
 另外三条必须先说清的边界，避免下游误判：
 
-- [doc/debt.platform.production-release.md](./debt.platform.production-release.md)（open = 0）和 [doc/rule.platform.production-release-safety.md](./rule.platform.production-release-safety.md) 讲的是 **MAP 自己的 `exec_dep.sh` 发布链**，不是 CDS 的发布系统。CDS 只是通过 `existing-script` 模式把它 SSH 跑一遍。不要把那份"零债务"当成 CDS 发布系统没有债务。
+- [doc/debt.platform.production-release.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.production-release.md)（open = 0）和 [doc/rule.platform.production-release-safety.md](./rule.platform.production-release-safety.md) 讲的是 **MAP 自己的 `exec_dep.sh` 发布链**，不是 CDS 的发布系统。CDS 只是通过 `existing-script` 模式把它 SSH 跑一遍。不要把那份"零债务"当成 CDS 发布系统没有债务。
 - 回滚**不会**因为分支被回收而失效（走远端 git，不依赖本地 worktree）。受损的只有策略重检测与证据可追溯。
 - 目前 `doc/` 下**没有任何 CDS 发布系统的设计或规格文档**。两条生命周期之所以漂移到差一个代际，缺 SSOT 是结构性原因之一。本文补的就是这个缺口。
 
@@ -149,7 +149,7 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 | 去掉本仓脚本名硬编码 | 步骤来自 plan 而非 `./fast.sh` 字面量，CDS 恢复成通用产品 | — |
 | 发布 ETA | 发布耗时进耗时台账并在 UI 出"预计还需 MM:SS（近 N 次中位）"。**注意**：现有 `DeployDurationMode = 'release' \| 'source' \| 'restart'`里的 `release` 指的是**极速版构建模式**，不是生产发布，必须新增独立 bucket，不要复用 | 分支部署耗时台账的采样 + p50 + "近 N 次"文案口径 |
 | 生产存活监控 | `UptimeStateSource` 增加发布目标 getter，`selectProbeTargets` 多产一类 URL 型目标，探测走 `ReleaseTarget.ssh.healthcheckUrl`；状态页出现生产目标的 24h 可用率、响应时间、故障时间线 | `uptime-metrics.ts` 纯函数（采样 / 聚合 / 去抖 / incident 合成，有单测）+ `ProbeFn` 可注入+ 全 URL 探测函数 `probeHealthcheckStatus` 已存在 |
-| 事件上总线 + 告警外发 | 发布 started / succeeded / failed / rolled-back 上 `cds-events-bus`；告警通道与存活告警**共用一条**——[doc/debt.cds.md](./debt.cds.md) 已把"无告警外发"登记为 open，不要当两件事做 | `cds-events-bus` 已存在 |
+| 事件上总线 + 告警外发 | 发布 started / succeeded / failed / rolled-back 上 `cds-events-bus`；告警通道与存活告警**共用一条**——[doc/debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md) 已把"无告警外发"登记为 open，不要当两件事做 | `cds-events-bus` 已存在 |
 | SSE 补 `id:` 行 | 支持 `Last-Event-ID` 标准续传，与分支部署流对齐 | `routes/deployment-runs.ts:70-71,106` |
 | 停掉现场探测 | 发布中心健康改读监控快照，不再每次请求同步打生产 | 依赖上面的存活监控 |
 
@@ -223,10 +223,10 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 | 生产存活监控 | 采样 / 聚合 / 去抖 / incident 纯函数 + 可注入 `ProbeFn` | `cds/src/services/uptime-metrics.ts`、`uptime-monitor.ts:171` |
 | 探测实现 | 已有的全 URL 健康探测函数 | `cds/src/services/release-service.ts:825` |
 | ETA | 耗时采样 + p50 + "近 N 次"文案口径（**需新 bucket，勿复用 `'release'` 构建模式**） | `cds/src/services/state.ts:3436-3480` |
-| 事件外发 | `cds-events-bus` + uptime 告警通道（同一条） | 与 [doc/debt.cds.md](./debt.cds.md) 的 open 项合并做 |
+| 事件外发 | `cds-events-bus` + uptime 告警通道（同一条） | 与 [doc/debt.cds.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md) 的 open 项合并做 |
 | SSE 标准续传 | 分支部署流的 `id:` + `Last-Event-ID` 实现 | `cds/src/routes/deployment-runs.ts:70-71,106` |
 | 不可变产物 | `DeploymentVersion` 内容寻址 + 不可变镜像断言 | `cds/src/services/deployment-version.ts:52-72,178` |
-| 取证账本格式参考 | MAP 自己 `exec_dep.sh` 那套结构化取证（操作者 / PID / 起止 / SHA256 / 切换前后 owner-mode / 首个失败阶段 / 回滚结果） | [doc/debt.platform.production-release.md](./debt.platform.production-release.md) |
+| 取证账本格式参考 | MAP 自己 `exec_dep.sh` 那套结构化取证（操作者 / PID / 起止 / SHA256 / 切换前后 owner-mode / 首个失败阶段 / 回滚结果） | [doc/debt.platform.production-release.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.production-release.md) |
 
 ---
 
@@ -261,7 +261,44 @@ CDS 里有两条交付链路：**分支预览部署**和**生产发布**。前�
 - **通知账本**：服务端记录发布失败 / 自动回滚 / 现场漂移 / 健康掉线 / 自更新失败 / 预览探测失败 / 基础设施熔断七类告警，10 分钟内同目标同类型合并计次，可选外发到 MAP 站内通知。两条安全不变量：通知 `href` 只收同源相对路径（拒绝协议相对 URL 与 `javascript:` 等可执行 scheme，防止低权限项目级凭据写入的通知在全局运维会话里被点开执行）；去重与忽略均按调用方作用域（项目）隔离，防止一个项目的写入覆盖或误关另一个项目的通知。
 - **新建服务器就地化**：加环境向导内嵌新建服务器表单（密钥对 / 粘贴私钥 / 用户名密码三种接法），不再把用户支到系统设置再走回来。三条安全不变量：密码认证主机对外暴露的公开标识是与口令无关的随机串（不是口令派生的哈希，避免公开接口返回的指纹被离线撞库还原口令）；SSH 执行失败摘要与发布日志共用同一个脱敏器，统一盖住 Authorization 头 / JSON 口令字段 / URL userinfo 三类格式，避免凭据经由失败信息展示在发布中心；从私钥认证切到密码认证必须清掉旧的私钥口令，否则公开视图会继续谎报 `hasPassphrase`，日后换回新私钥时这枚陈年口令还会被拿去解新私钥，认证失败查不出原因。
 
-这批改动是阶段二"可见"与阶段三"记账"判据在真实界面上的落地延伸，不新增独立阶段编号；已知边界与安全取舍见 [doc/debt.cds.release-system.md](./debt.cds.release-system.md)。
+这批改动是阶段二"可见"与阶段三"记账"判据在真实界面上的落地延伸，不新增独立阶段编号；已知边界与安全取舍见 [doc/debt.cds.release-system.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md)。
+
+## 十一、发布控制台落地 + 事件驱动自动发布规则（2026-08-12 ~ 2026-08-14）
+
+在 v2 界面重做之后，发布中心又做了一轮更大的结构调整：从"先选目标再看它的六个页签"（控制台视角）换成两个各司其职的落地页。
+
+- **发布控制台**（`/release-console`，左项目环境 / 中状态与实时输出 / 右历史与失败与只读发布配置）取代原「Releases」的入口地位，成为日常发布时的默认落地页；「试跑」按钮删除，发布前检查并入「开始发布」的第一步，有阻断项就摊开原因拦在发布之前，不再让人误以为不点试跑就不检查。
+- **发布中心**退居低频管理面（建站向导 / 配置 / 自动发布规则 / 健康监测 / 证据归档），并按设计稿重构成"全环境矩阵 + 常驻监控条"：首屏是一句挂着数字的判断句（治理视角），而不是要人逐项去读的六个页签；矩阵横向对比所有环境的健康、可用率、落后主干提交数、DORA 指标，算不出的判断句宁可写「未监测 / 样本不足」也不编造。两页之间的下钻带着环境上下文互跳，但「查配置」不离开发布中心本页。
+- **事件驱动自动发布规则**：在原有的定时（scheduled-job）自动发布之外，新增「分支被 push / 开 PR 时自动发布」，支持分支 glob、路径过滤与手动批准；定时驱动的判据收敛成单一来源函数，替换掉此前散在四处的 `type !== 'manual'` 判断。事件规则的来源分支由触发事件本身决定（而不是要求预先填一个固定分支），修复了此前"来源分支必填"拒绝建规则、以及 `release/*` 类分支只能发到固定一个目标的问题。定时规则与事件规则在入口 UI 上做了明确区分（各自的标题与「新建规则」按钮不再重叠、混淆），复用既有的并发闸、审批、回滚、运行记录能力，不新增独立的执行链路。
+
+已知边界与安全取舍同样归入 [doc/debt.cds.release-system.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md)。
+
+## 十二、证据归档收敛 + 视觉基线换代（2026-08-14 ~ 08-15）
+
+发布控制台落地后，紧接着做了两轮收尾：先把证据归档打磨到设计稿的原样，再把发布中心整体换了一套视觉基线。
+
+- **证据归档收敛成设计稿点名的单张六列表**：此前证据归档与旧发布历史时间线各自渲染同一批记录，读者要在两处对同一件事核两遍；改为只保留设计稿定义的那一张表，「环境」列按 `run.targetId` 归属，不再对同一个环境名重复几十行。
+- **两处输入回归可用**：部署命令与回滚命令的编辑框从单行 input 换成 textarea，修复多行 shell 脚本被单行输入压平、保存后脚本损坏的问题；监控条的归因句改成"名字可截、数字不截"，环境名过长时不再把「占 N 次」这半句挤没。
+- **parity 守卫钉住设计稿与实现的一致性**：新增测试逐条核对设计稿 `design_handoff_release_center` 点名的元素与三分区（环境与配置 / 健康监测 / 证据归档）的接线，组件写好却没挂上分区的情况直接标红；证据归档同时恢复了此前被误删的步骤条与配置变更历史（后端一直在供数，只是前端从未渲染）。发布中心分区映射到独立的 URL query（环境与配置 / 自动发布规则 / 健康监测 / 证据归档各一个取值），一条链接就能分享当前那一屏。
+- **视觉基线换代**：全站英文字形统一到与分支名同一套等宽字体栈，修复此前首选字体从未真正加载、每台机器各凭系统兜底字体导致观感不一致的问题；配色换用设计稿 `design_handoff_release_center` 的调色板（近黑底 + 亮绿主色 + 极克制阴影），双主题 token 全量重写；新增 ok/warn/bad/info 四种语义状态色 token，把此前散落在六十余个文件里上千处硬编码的同类颜色收敛进 token 系统。
+
+已知边界与安全取舍同样归入 [doc/debt.cds.release-system.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md)。
+
+## 十三、视觉基线换代后的一轮微调与部分回退（2026-08-15）
+
+视觉基线换代落地后，实际观感暴露出几处问题，当天一轮修完，其中一处是主动回退：
+
+- **配色部分回退**：换代时切换的近黑底 + 亮绿主色配色被撤回，改回换代前的暖橙配色；语义 token 层（ok/warn/bad/info 四态）保留不动，只是把 token 的值改回旧观感——说明「新增 token 系统」与「token 具体取值」是两件事，后者可以单独调整而不影响前者。
+- **正文字体一并回退为比例字**（自托管 Inter），等宽字体只留给标识符（分支名、commit hash 等），修复了正文改用等宽后页面横向撑大约一成的问题；同时去掉了正文的负字距设置，修复中文与英文混排时中文字符被一起收紧、可读性下降的问题；随后又单独收紧了纯英文片段的字距（不影响中文），修复等宽 advance 让中文串里夹的数字两侧空隙看起来是正常字距两倍的问题。
+- **白天主题主色文字对比度不足**：统一走 `--primary-ink` 语义 token 而非直接用 `--primary` 当文字色，修复亮绿字落在白天浅色底上实测对比度只有 1.22:1、几乎读不出来的问题；新增调色板守卫测试，禁止用 `--primary` 当文字色、禁止硬编码调色板状态色、四态状态色必须双主题都定义。
+- **发布控制台的历史与本次操作分离**：从发布中心跳入控制台时，此前会把上一次发布的记录渲染成「刚刚发生」，与用户本次尚未触发的操作混在一起；改为显式区分「历史记录」与「本次操作」两个状态。版本下拉同时标出当前线上版本，选中该版本时明说「再发一次不会改变线上内容」，避免误解为空发布无意义。
+- **项目卡加派生标签**：发布控制台的项目栏卡片新增标签（推送即部署 / 共享服务 / 已暂停 / 克隆失败 / N 个在跑），全部从既有字段推导，不新增维护成本。
+
+已知边界与安全取舍同样归入 [doc/debt.cds.release-system.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.release-system.md)。
+
+## 十四、项目卡标记位置微调（2026-08-16）
+
+十三节新增的派生标签上线后暴露一处布局问题：标签独立占位时，项目名一长就会把标签挤出可视区，或者标签本身被截断看不清是哪种状态。改法是把标签从「独立占位」改成「紧挨项目名的图标标记」——项目名允许按需截断，标记固定跟在名字右侧不被挤没。不引入新数据源，仍是纯前端布局调整。
 
 ## 实现来源
 

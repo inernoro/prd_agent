@@ -11,8 +11,23 @@ public class AppSettings
     /// <summary>固定为 global</summary>
     public string Id { get; set; } = "global";
 
+    /// <summary>视觉创作开放模型及默认项，由 MAP 业务配置显式维护。</summary>
+    public VisualModelPolicy? VisualModelPolicy { get; set; }
+
     /// <summary>是否启用 Prompt Caching（关闭后将强制不使用缓存相关能力）</summary>
     public bool EnablePromptCache { get; set; } = true;
+
+    /// <summary>
+    /// 转录词云的系统级词典：人名、产品名、团队黑话这类通用分词器不认识的词。
+    ///
+    /// 由来：词云用 Intl.Segmenter 做词典分词，精度换了召回——ICU 词典不收专有名词，
+    /// 会上被反复叫到的人名（实测「泽坤」）会整个消失，而那恰恰是高价值信息。
+    /// 这张表是「加」不是「猜」：只保证表里的词被完整保留，不会引入新的边界猜测，
+    /// 所以不会把已经治好的半截词问题带回来。
+    ///
+    /// 所有用户默认引用这张表；个人补充见 UserPreferences.TranscriptLexicon。
+    /// </summary>
+    public List<string>? TranscriptLexicon { get; set; }
 
     /// <summary>请求 Body 最大字符数（默认 200k，所有大模型请求输入的字符限制统一来源）</summary>
     public int? RequestBodyMaxChars { get; set; }
@@ -107,6 +122,20 @@ public class AppSettings
 
     /// <summary>允许回跳的 HTTPS Origin，逗号分隔；支持以 *. 开头的子域通配</summary>
     public string? ConsoleSsoAllowedRedirectOrigins { get; set; }
+
+    /// <summary>
+    /// 本站是否允许别的 MAP 实例来申请一次性数据导出（本站作为「源站」）。
+    /// 与 ConsoleSso 分开配置：那是「让人登进外部控制台」，这是「让数据离开本站」，
+    /// 一个开关同时管两件事迟早会有人为了开前者顺手开了后者。
+    /// </summary>
+    public bool? DataSyncProviderEnabled { get; set; }
+
+
+    /// <summary>
+    /// 允许来要数据的目标站 Origin，逗号分隔；支持以 *. 开头的子域通配。
+    /// 为空即视为关闭——「没配」不等于「允许所有」，钓鱼面正在这里。
+    /// </summary>
+    public string? DataSyncAllowedConsumerOrigins { get; set; }
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

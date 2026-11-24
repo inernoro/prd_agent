@@ -226,6 +226,7 @@ export function WeeklyReportsTab() {
     <div className="flex flex-col flex-1 min-h-0">
       <DocBrowser
         entries={browserEntries}
+        immersiveOnMobile
         selectedEntryId={selectedId ?? undefined}
         onSelectEntry={(id) => setSelectedId(id)}
         loadContent={loadContent}

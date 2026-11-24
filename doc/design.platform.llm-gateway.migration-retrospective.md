@@ -1,12 +1,14 @@
 # LLM Gateway 全量迁移与生产发布复盘 · 设计
 
-> **版本**：v1.3 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v1.4 | **日期**：2026-10-04 | **状态**：已落地
 
 **一句话**：网关从控制台交接到协议路由、配置权威、生产全量切换的完整复盘。
 **谁该读**：做同类迁移的工程师；想复盘经验的人。
 **读完能做什么**：提炼出可复用的迁移步骤与踩过的坑。
 
 ---
+
+> **后记（2026-10-04）**：本文写于切换完成时。之后 MAP 的 `inproc`、`shadow`、模式开关、灰度白名单与分阶段发布脚本已整体删除，MAP 只剩 HTTP 一条路径，发布回到「预热镜像 + 按提交号部署」两步。下文提到这些能力「仍保留」的地方均为当时状态。
 
 > **复盘范围**：从 GW 控制台账号与物理剥离交接，到协议路由、配置权威、生产 `full-http` 发布完成
 > **生产环境**：`https://map.ebcone.net` | **当前发布提交**：`bad1b3b296b29a314c1ff94f177b2e8f37bcb82e`
@@ -17,7 +19,7 @@
 
 本次成功不等于“所有网关旧代码都已删除”。`inproc` 与 shadow 实现仍保留为回滚能力，视频按用户要求未在最终维护批次重测，serving 仍依赖 MAP 资产配置域。动态 caller 的 MAP 静态注册门已由 PR #1070 删除，生产无费用治理验收和图片、Vision、ASR 单次验收均通过。准确结论是：**生产 full-http、配置权威和动态 registry 迁移成功，可运行、可观测、可回滚；剩余工作是保留策略、物理解耦、探针元数据和视频独立债务。**
 
-首次 full-http 发布是在用户明确维护窗口下完成的快速切换。当时 release gate 将 `minCoverageHours`、`minPerApp`、`minTotal` 设为 `0`，全局 shadow 只有 5 条、覆盖约 `0.038h`。最终维护版本改为继承已成功 shadow，并补当前 commit 的 HTTP transport、四协议、active caller、配置权威、多模态和回滚证据；这仍不是 7 天稳定性证明。后续未完成项以 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 和 [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) 为准。
+首次 full-http 发布是在用户明确维护窗口下完成的快速切换。当时 release gate 将 `minCoverageHours`、`minPerApp`、`minTotal` 设为 `0`，全局 shadow 只有 5 条、覆盖约 `0.038h`。最终维护版本改为继承已成功 shadow，并补当前 commit 的 HTTP transport、四协议、active caller、配置权威、多模态和回滚证据；这仍不是 7 天稳定性证明。后续未完成项以 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md) 和 [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) 为准。
 
 任务持续时间过长是事实。对话中先后出现约 44 小时和 24 小时 8 分钟的连续目标运行记录，合计约 68 小时；用户将其概括为 60 小时。该数字混合了编码、CI、镜像构建、远程发布、上游等待、证据采样和反复修门禁，并不是 68 小时纯编码。更重要的是，本次没有从一开始维护逐事项计时台账，无法把每一分钟准确归属到子任务，这是执行管理缺陷。
 
@@ -316,10 +318,10 @@ MAP 前端 / MAP Agent / 外部系统
 | 维护发布证据门 | 已 full-http 的新 commit 无法在上线前自然积累 24 小时同提交 shadow，本次显式使用 0 阈值并以当前提交 HTTP/协议/caller/多模态证据补齐 | 发布成功可能被误读成长期稳定性已证明，或导致同镜像反复重建 | 拆分首次切流 gate 与维护发布 gate，维护发布继承最近成功 shadow 并强制同提交运行证据 |
 | 混合路由策略观测 | 单值 `LastObservedModelPolicy` 无法表达同一 caller 合法混用 auto 与 pinned | preflight 或验收会让 drift gate 来回变化 | 改为 route mode 集合/计数，或仅对禁止策略判漂移 |
 | GW 物理依赖未完全剥离 | serving 仍依赖 MAP 资产配置域 | MAP 配置或 Mongo 故障仍可能影响 GW | 把资产存储配置迁入 GW-owned 配置域并移除 readiness 的 MAP 必要依赖 |
-| `inproc`/shadow 源码仍存在 | 作为生产回滚通道保留 | 未来开发可能误用 | 稳定至少 7 天后另开清理任务；删除前保留版本级回滚 |
+| `inproc`/shadow 源码仍存在 | 作为生产回滚通道保留 | 未来开发可能误用 | 已于 2026-10-04 删除，回滚改为按提交号重新发布 |
 | 最终维护批次未重跑视频 | 为避免重复费用，`bad1b3b29...` 阶段显式跳过视频；ASR 已单次通过 | 不能声称视频在最终 commit 做了同提交重新取证 | 没有相关代码变化时不重复烧钱；下次改视频适配器时每 provider 最多一次受控复验 |
 | 视频/ASR 早期证据 | 2026-07-07 曾完成 Seedance submit/status/download 和四条 ASR raw 200 | 上游开通和余额会随时间变化 | 生产监控发现真实失败时再定向复验 |
-| 高级协议保真 | OpenAI Responses、Claude/Gemini 更完整原生事件仍有边界 | 外部系统使用高级字段时可能降级 | 继续跟踪 [debt.platform.llm-gateway.protocol-fidelity.md](./debt.platform.llm-gateway.protocol-fidelity.md) |
+| 高级协议保真 | OpenAI Responses、Claude/Gemini 更完整原生事件仍有边界 | 外部系统使用高级字段时可能降级 | 继续跟踪 [debt.platform.llm-gateway.protocol-fidelity.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.protocol-fidelity.md) |
 | 探针 `inproc` 日志 | client-stream 兼容探针可产生非业务 `inproc` 行 | 容易被误读为 MAP 业务回退 | 控制台默认按 probe 标记排除，保留诊断筛选 |
 | shadow 采样 | 生产当前 `ShadowFullSamplePercent=0` | 不再持续产生成本翻倍的 shadow 数据 | 仅在受控诊断窗口按 appCaller 开启 |
 
@@ -390,7 +392,7 @@ MAP 前端 / MAP Agent / 外部系统
 | 成本治理 | canary 有调用上限、预算、去重和停止条件 | 最终协议 canary 限制为 4 次；早期视频测试控制不足 | 需要把预算护栏前置为默认规则 |
 | 进度治理 | 每个工作项有 owner、耗时、状态和阻塞 | 后期有状态板，早期缺逐项计时 | 需要固定任务台账和熔断机制 |
 
-优先补齐项以 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 和 [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) 为执行入口：
+优先补齐项以 [debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md) 和 [plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md) 为执行入口：
 
 1. **P1 - 维护发布 gate**：区分首次切流和 full-http 维护版本，避免同 commit shadow 的循环依赖。
 2. **P1 - 物理解耦与保留**：迁移资产配置，审批并启用日志、审计和 multipart 生命周期策略。
@@ -402,8 +404,16 @@ MAP 前端 / MAP Agent / 外部系统
 
 - [doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)：全量迁移发布 gate、测试矩阵和生产取证原始记录
 - [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)：四协议入口、请求契约、appCaller 和 GW 模型池当前架构
-- [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)：生产隐性风险和待偿还边界
+- [doc/debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)：生产隐性风险和待偿还边界
 - [doc/plan.platform.llm-gateway.full-cutover.md](./plan.platform.llm-gateway.full-cutover.md)：旧路径清理与生产切换门禁
 - [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)：控制面、数据面和跨进程 serving 物理剥离
-- [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)：保留的运行和清理债务
-- [doc/debt.platform.llm-gateway.protocol-fidelity.md](./debt.platform.llm-gateway.protocol-fidelity.md)：协议高级字段保真边界
+- [doc/debt.platform.llm-gateway.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.md)：保留的运行和清理债务
+- [doc/debt.platform.llm-gateway.protocol-fidelity.md](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.protocol-fidelity.md)：协议高级字段保真边界
+
+## 十二、MDS 管理面退场与网关自清理（2026-08-25）
+
+模型管理旧控制台（`/mds` 四个 tab：应用模型池/模型池/平台/中继）整套下线，`prd-admin` 侧改为指向 LLM Gateway 控制台的墓碑页；`prd-api` 新增 `MdsWriteRetiredFilter`，对 `api/mds` 下的写操作统一返回 410 并指路网关，读接口与运行时解析路径原样保留（避免破坏尚未迁移完的调用方）。判据按路由模板分段匹配，不误伤 `api/mdsomething-else` 这类前缀相似但不属于该命名空间的路径。
+
+配套落地网关自身的「删除即清理」能力：删除模型池 / 模型时，同步回收 MAP 遗留的 `model_groups` 与 `llmmodels`（此前只有阻挡清单能数出引用、没有端点能一并清掉）；平台托管默认池不再因为「不许摘活成员」的规则反过来卡死「删除已被摘除上游的死成员」——死成员判定综合上游存在性、模型存在性、是否中继成员三个条件，只对确认失效的成员放开手工摘除。
+
+同批修了池健康与可用性口径上的两处漂移：一是健康统计不再把「指不到任何上游或模型的成员」算作 healthy；二是成员可用性归一收进唯一入口（`IsResolvablePoolMemberKey`），删除了运行 gate 里抄的第二份判据，界面不再出现「已中断的池、第一顺位却显示绿点」这类自相矛盾的状态。不可用原因现在会说清楚是「上游没了」还是「模型没了」，而不是「不可用（连续失败 0 次）」这种循环论证。

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -34,6 +36,26 @@ public class HostedSiteComment
     /// <summary>评论正文</summary>
     public string Content { get; set; } = string.Empty;
 
+    public List<HostedSiteCommentFile> Attachments { get; set; } = new();
+    public bool IsAi { get; set; }
+    public string? AiReplyStatus { get; set; }
+    public DateTime? AiReplyDueAt { get; set; }
+    public string? AiReplyDeployment { get; set; }
+
+    /// <summary>从正文解析的站内引用索引，不授予访问权；读取时按原评论和目标文档的权限裁剪。</summary>
+    public List<string> ReferencedSiteIds { get; set; } = new();
+
+    /// <summary>根讨论的网页定位信息；整页评论和回复为空。</summary>
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+
+    /// <summary>回复所属的根讨论 ID。只允许一层关联。</summary>
+    public string? ParentId { get; set; }
+
+    public bool IsResolved { get; set; }
+
+    public string? ContentVersion { get; set; }
+    public string? RevisionId { get; set; }
+
     /// <summary>软删除标记（删除不抹除记录，便于审计）</summary>
     public bool IsDeleted { get; set; }
 
@@ -42,4 +64,91 @@ public class HostedSiteComment
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+[BsonIgnoreExtraElements]
+public class HostedSiteCommentFile
+{
+    public string Name { get; set; } = string.Empty;
+    public long Length { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+    public byte[] Data { get; set; } = Array.Empty<byte>();
+}
+
+/// <summary>网页批注的可迁移定位信息。选择器只作为定位数据，不作为代码执行。</summary>
+[BsonIgnoreExtraElements]
+public class HostedSiteCommentAnchor
+{
+    public string Kind { get; set; } = "element";
+    public string PagePath { get; set; } = string.Empty;
+    public string Selector { get; set; } = string.Empty;
+    public string TagName { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public string Prefix { get; set; } = string.Empty;
+    public string Suffix { get; set; } = string.Empty;
+    public string ElementText { get; set; } = string.Empty;
+    public string ContentVersion { get; set; } = string.Empty;
+}
+
+public static class HostedSiteCommentRules
+{
+    public static string SubmissionId(string siteId, string authorUserId, Guid clientId)
+    {
+        var scope = string.Join('\n', "hosted-comment-v1", siteId, authorUserId, clientId.ToString("N"));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scope)).AsSpan(0, 16)).ToLowerInvariant();
+    }
+
+    public static bool MatchesSubmission(HostedSiteComment saved, string content, HostedSiteCommentAnchor? anchor,
+        string? parentId, string? revisionId, string? expectedContentVersion) =>
+        saved.Content == content && saved.ParentId == parentId
+        && (parentId != null || ((revisionId == null || revisionId == saved.RevisionId)
+            && MatchesExpectedVersion(expectedContentVersion, StoredVersion(saved))))
+        && SameAnchor(saved.Anchor, anchor);
+
+    private static bool SameAnchor(HostedSiteCommentAnchor? left, HostedSiteCommentAnchor? right) =>
+        left == null || right == null ? left == right :
+        left.Kind == right.Kind && left.PagePath == right.PagePath && left.Selector == right.Selector
+        && left.TagName == right.TagName && left.Text == right.Text && left.Prefix == right.Prefix
+        && left.Suffix == right.Suffix && left.ElementText == right.ElementText && left.ContentVersion == right.ContentVersion;
+
+    public static string VersionKey(DateTime version) =>
+        (version.Ticks - version.Ticks % TimeSpan.TicksPerMillisecond).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public static string? StoredVersion(HostedSiteComment comment)
+    {
+        if (!string.IsNullOrWhiteSpace(comment.ContentVersion)) return comment.ContentVersion;
+        return long.TryParse(comment.Anchor?.ContentVersion, out var ticks) && ticks > 0 && ticks <= DateTime.MaxValue.Ticks
+            ? VersionKey(new DateTime(ticks, DateTimeKind.Utc)) : null;
+    }
+
+    // Read-only access authorizes current content. Every history entry point requires site editing permission.
+    public static bool CanViewReviewVersion(string? version, DateTime current, bool canViewHistory) =>
+        canViewHistory || string.Equals(version, VersionKey(current), StringComparison.Ordinal);
+
+    public static bool IsPublishedVersion(HostedSiteRevision? revision, string siteId) =>
+        revision != null && revision.SiteId == siteId && revision.Status == HostedSiteRevisionStatuses.Published
+        && revision.PublishedContentVersion.HasValue;
+
+    public static bool MatchesExpectedVersion(string? expected, string? actual) =>
+        expected == null || string.Equals(expected, actual, StringComparison.Ordinal);
+
+    public static bool IsValidAnchor(HostedSiteCommentAnchor? anchor) => anchor == null ||
+        ((anchor.Kind == "element" || anchor.Kind == "text")
+         && !string.IsNullOrWhiteSpace(anchor.PagePath) && anchor.PagePath.StartsWith('/') && anchor.PagePath.Length <= 2000
+         && !string.IsNullOrWhiteSpace(anchor.Selector) && anchor.Selector.Length <= 2000
+         && !string.IsNullOrWhiteSpace(anchor.TagName) && anchor.TagName.Length <= 40
+         && System.Text.RegularExpressions.Regex.IsMatch(anchor.TagName, "^[A-Za-z][A-Za-z0-9-]*$")
+         && anchor.Text != null && anchor.Text.Length <= 1000
+         && (anchor.Kind != "text" || !string.IsNullOrWhiteSpace(anchor.Text))
+         && anchor.Prefix != null && anchor.Prefix.Length <= 100
+         && anchor.Suffix != null && anchor.Suffix.Length <= 100
+         && anchor.ElementText != null && anchor.ElementText.Length <= 1000
+         && anchor.ContentVersion != null && anchor.ContentVersion.Length <= 100);
+
+    public static bool CanResolve(HostedSiteComment comment, HostedSite site, string? userId) =>
+        !comment.IsDeleted && string.IsNullOrEmpty(comment.ParentId) && !string.IsNullOrWhiteSpace(userId)
+        && (comment.AuthorUserId == userId || site.OwnerUserId == userId);
+
+    public static bool CanReplyTo(HostedSiteComment? parent, string siteId) =>
+        parent != null && !parent.IsDeleted && parent.SiteId == siteId && string.IsNullOrEmpty(parent.ParentId);
 }

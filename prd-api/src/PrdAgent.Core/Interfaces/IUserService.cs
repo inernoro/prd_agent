@@ -37,6 +37,9 @@ public interface IUserService
     /// <summary>更新密码（传入已哈希的密码）</summary>
     Task UpdatePasswordAsync(string userId, string passwordHash);
 
+    /// <summary>只有旧散列还是那一份时才换密；返回是否换成。</summary>
+    Task<bool> TryReplacePasswordAsync(string userId, string expectedHash, string passwordHash);
+
     /// <summary>更新 MustResetPassword 标志</summary>
     Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword);
 }

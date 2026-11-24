@@ -128,7 +128,7 @@ def verify_http_log(console_base: str, token: str, app_caller: str, started_at: 
 
 def map_seed_command(cell: str, evidence: Path, map_base: str, gw_base: str, commit: str) -> list[str]:
     command = [
-        sys.executable, "scripts/llmgw-map-shadow-seed.py",
+        sys.executable, "scripts/llmgw-map-acceptance-seed.py",
         "--base", map_base,
         "--gw-base", gw_base,
         "--release-commit", commit,

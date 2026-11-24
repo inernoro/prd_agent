@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14); --ok: #22c55e;
+      --radius: 8px; --radius-sm: 6px;
+      --card-pad: 16px; --sp-tight: 8px; --sp-group: 20px; --sp-layer: 28px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</helmet>
+
+<div style="padding: 16px 12px 24px; display: flex; flex-direction: column; gap: var(--sp-group);">
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;">服务网关设置</div>
+    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6;">网关自己要调模型时用哪个池、哪个模型。</div>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+    <div style="font-size: 15px; font-weight: 650;">系统级模型</div>
+
+    <!-- 三选一纵向排开，每张卡自带 44px 以上命中区 -->
+    <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+      <div style="border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l1.6 3.9L15.5 8l-3.9 1.6L10 13.5 8.4 9.6 4.5 8l3.9-1.1z"/></svg>
+          <strong style="font-size: 15px; font-weight: 650;">交给网关挑</strong>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#a78bfa" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="margin-left: auto;"><circle cx="9" cy="9" r="7"/><path d="M6 9.2l2 2 4-4.2"/></svg>
+        </div>
+        <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">按默认对话池调度，池里换成员不用改这里</span>
+      </div>
+      <div style="border: 1px solid var(--border-subtle); background: var(--bg-elevated); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#a1a1aa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3"/><circle cx="13" cy="12" r="3"/><path d="M9.4 8.9l1.2 1.2"/></svg>
+          <strong style="font-size: 15px; font-weight: 650; color: var(--text-secondary);">钉一个模型池</strong>
+        </div>
+        <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">只在这个池里调度，池内仍可自动换成员</span>
+      </div>
+      <div style="border: 1px solid var(--border-subtle); background: var(--bg-elevated); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#a1a1aa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2"/><circle cx="10" cy="10" r="2.5"/></svg>
+          <strong style="font-size: 15px; font-weight: 650; color: var(--text-secondary);">钉一个模型</strong>
+        </div>
+        <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">固定用这一个模型，不再自动换</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: var(--sp-group); border-top: 1px solid var(--border-subtle); padding-top: var(--sp-layer);">
+      <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">测试连接会真发一次极短对话，回报耗时与实际执行的模型。</span>
+      <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+        <button type="button" style="height: 44px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;">测试连接</button>
+        <button type="button" style="height: 44px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+    <div style="font-size: 15px; font-weight: 650;">系统替你配好的</div>
+    <!-- 窄屏四项纵向，长串一律 break-all 完整可见 -->
+    <div style="display: flex; flex-direction: column; gap: var(--sp-group);">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">网关服务地址</div>
+        <div class="mono" style="font-size: 14px; line-height: 1.6; word-break: break-all;">http://llmgw-serve-prd-agent:8091</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">系统调用用途码</div>
+        <div class="mono" style="font-size: 14px; line-height: 1.6; word-break: break-all;">llmgw-console.intent-draft::chat</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">系统密钥</div>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-tight);">
+          <span class="mono" style="font-size: 14px; word-break: break-all;">gwk_yOtrfJEe</span>
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(34,197,94,0.32); background: rgba(34,197,94,0.12); color: var(--ok); font-size: 12px; font-weight: 500;">已就绪</span>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">归属团队</div>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-tight);">
+          <span style="font-size: 14px; font-weight: 650;">系统内部</span>
+          <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(167,139,250,0.32); background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 500;">单独计费</span>
+        </div>
+        <span style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">系统自己的团队，消耗不进任何业务团队的预算。</span>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

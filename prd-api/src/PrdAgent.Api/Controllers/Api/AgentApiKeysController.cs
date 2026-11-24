@@ -1,8 +1,13 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers; // OpenApiController.ScopeCall（位于父命名空间，显式 using 让跨命名空间引用更清晰）
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -25,15 +30,17 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class AgentApiKeysController : ControllerBase
 {
-    // 固定 scope 白名单（市场开放接口核心 scope）
-    private static readonly HashSet<string> FixedAllowedScopes = new(StringComparer.OrdinalIgnoreCase)
+    // 固定 scope 白名单 = 接入台能力目录（视觉创作 / 文学创作 / 知识库 / 网页托管 / 海鲜市场）
+    // 加上不属于任何能力卡的既有 scope。能力目录是 SSOT，这里不再手抄第二份清单。
+    //
+    // marketplace.skills:write 单列在这里：它没有任何 MCP 工具（上传走 multipart，MCP 传不了二进制），
+    // 所以从能力卡上摘掉了；但市场上传的 REST 接口一直在用它，签发白名单不能跟着摘 —— 那会打断存量用法。
+    private static readonly HashSet<string> FixedAllowedScopes = new HashSet<string>(
+        McpCapabilityCatalog.AllScopes, StringComparer.OrdinalIgnoreCase)
     {
-        MarketplaceSkillsOpenApiController.ScopeRead,
         MarketplaceSkillsOpenApiController.ScopeWrite,
         DefectAgentController.AgentFixScope,
         DefectAgentController.AgentShareScope,
-        DocumentStoreController.ScopeRead,
-        DocumentStoreController.ScopeWrite,
         OpenApiController.ScopeCall,
     };
 
@@ -46,11 +53,30 @@ public class AgentApiKeysController : ControllerBase
 
     private readonly IAgentApiKeyService _keyService;
     private readonly MongoDbContext _db;
+    private readonly IAdminPermissionService _permissions;
+    private readonly ILiteraryMcpModelSelectionService _literaryModels;
 
-    public AgentApiKeysController(IAgentApiKeyService keyService, MongoDbContext db)
+    public AgentApiKeysController(
+        IAgentApiKeyService keyService,
+        MongoDbContext db,
+        IAdminPermissionService permissions,
+        ILiteraryMcpModelSelectionService literaryModels)
     {
         _keyService = keyService;
         _db = db;
+        _permissions = permissions;
+        _literaryModels = literaryModels;
+    }
+
+    /// <summary>
+    /// 当前登录用户的有效权限位。签发密钥时用它跟请求的 scope 取交集 ——
+    /// 没有这一步，任何人都能自己签一把带 `visual-agent:use` 的密钥，
+    /// 绕过管理员分配的权限位（scope 在 AdminPermissionMiddleware 里是直接放行的）。
+    /// </summary>
+    private Task<IReadOnlyList<string>> OwnedPermissionsAsync(string userId, CancellationToken ct)
+    {
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        return _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
     }
 
     /// <summary>
@@ -59,8 +85,28 @@ public class AgentApiKeysController : ControllerBase
     /// 2. AgentScopeFormat.Pattern 匹配的 agent.* scope，且该 scope 必须
     ///    已经被某条 AgentOpenEndpoint 登记过（防止用户创建"空头"scope）
     /// </summary>
-    private async Task<(bool ok, string? reason)> ValidateScopeAsync(string scope, CancellationToken ct)
+    private async Task<(bool ok, string? reason)> ValidateScopeAsync(
+        string scope, IReadOnlyList<string> ownedPermissions, CancellationToken ct)
     {
+        // 受权限位把关的 scope：必须是用户自己就有的权限位，不能靠签发密钥凭空长出来。
+        //
+        // 查的是「签发口径」（IsIssuancePermissionChecked），比鉴权口径宽一档：
+        //   - PermissionCheckedScopes：本轮新接的四个，签发查、鉴权也查
+        //   - IssuanceOnlyPermissionCheckedScopes：document-store 两个，只在签发时查。
+        //     它们等价于 document-store.read/.write 权限位（见 HasScopeGrant），谁能自签就等于
+        //     自己长出了文档空间写权限；但存量密钥早就在跑，鉴权时才开始查会把它们当场打死，
+        //     所以只收住「从现在起新签的」。
+        // 不查整个能力目录：`marketplace.skills:read` 这类历史 scope 在权限目录里没有对应权限位
+        //（它的闸门是 [RequireScope] 自己），拿它去查交集会把所有人——包括 root——挡在门外。
+        if (McpCapabilityCatalog.IsIssuancePermissionChecked(scope))
+        {
+            if (!McpCapabilityCatalog.PermissionsAllowScope(ownedPermissions, scope))
+            {
+                var perm = McpCapabilityCatalog.ToPermission(scope);
+                return (false, $"你自己还没有「{McpCapabilityCatalog.DescribePermission(perm)}」权限，不能把 `{scope}` 授权给智能体。请先找管理员开通。");
+            }
+            return (true, null);
+        }
         if (FixedAllowedScopes.Contains(scope)) return (true, null);
         if (!AgentScopeFormat.Pattern.IsMatch(scope))
             return (false, $"scope 格式无效: {scope}（允许 {string.Join(" / ", FixedAllowedScopes)} 或 `agent.{{agent-key}}:{{action}}`）");
@@ -79,6 +125,7 @@ public class AgentApiKeysController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var keys = await _keyService.ListByOwnerAsync(userId, ct);
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
 
         // 汇总 scope：固定 + AgentOpenEndpoint 登记的所有 agent.* scope
         var endpoints = await _db.AgentOpenEndpoints
@@ -97,7 +144,7 @@ public class AgentApiKeysController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = keys.Select(ToDto),
+            items = keys.Select(k => ToDto(k, ownedPermissions)),
             allowedScopes = allowed,
             agentEndpoints = endpoints.Select(e => new
             {
@@ -114,7 +161,41 @@ public class AgentApiKeysController : ControllerBase
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
         public int? TtlDays { get; set; }
+
+        /// <summary>
+        /// `auto` = 能力范围跟着主人走，不存清单；其余（含缺省）= 按 Scopes 钉死。
+        ///
+        /// 缺省必须是 manual：密钥管理页那条老路径不传这个字段，语义一个字都不能变。
+        /// </summary>
+        public string? ScopeMode { get; set; }
     }
+
+    /// <summary>
+    /// 把请求里的 `auto` / `manual` 翻成枚举。**认不出来就说认不出来。**
+    ///
+    /// 上一版是「不是 auto 就当 manual」，理由是「拼错一个字母也不该悄悄把范围放到最大」——
+    /// 那个方向没错，但它把另一半吃掉了：`{"scopeMode":"atuo"}` 会被当成 manual，
+    /// 走下面的快照分支把钥匙**永久钉死**，而接口返回 200。调用方以为自己开了自动档，
+    /// 实际上关掉了它，还没有任何线索。
+    ///
+    /// 安全的默认与明确的报错并不冲突：认不出来就 400，既不放宽也不静默。
+    /// null（不传）仍走默认 —— 那是「没表达意见」，不是「表达错了」。
+    /// </summary>
+    private static bool TryParseScopeMode(string? raw, out AgentApiKeyScopeMode mode)
+    {
+        mode = AgentApiKeyScopeMode.Manual;
+        if (string.Equals(raw, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = AgentApiKeyScopeMode.Auto;
+            return true;
+        }
+        return string.Equals(raw, "manual", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IActionResult BadScopeMode(string? raw)
+        => new BadRequestObjectResult(ApiResponse<object>.Fail(
+            ErrorCodes.INVALID_FORMAT,
+            $"scopeMode 只认 auto 或 manual，收到的是「{raw}」。"));
 
     /// <summary>
     /// 创建 Key。返回明文 —— 仅此一次，丢了只能重生成。
@@ -125,24 +206,44 @@ public class AgentApiKeysController : ControllerBase
         var userId = this.GetRequiredUserId();
         if (string.IsNullOrWhiteSpace(req.Name))
             return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", "Key 名称不能为空"));
+        // 名字没有上限的话，它会顺着每一次调用被整个抄进审计行 —— 一把名字几 MB 的密钥
+        // 等于给自己配了个放大器。审计那头也截，但源头收住才是根治。
+        var nameTooLong = McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name");
+        if (nameTooLong != null) return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", nameTooLong));
 
+        var scopeMode = AgentApiKeyScopeMode.Manual;
+        if (req.ScopeMode != null && !TryParseScopeMode(req.ScopeMode, out scopeMode))
+            return BadScopeMode(req.ScopeMode);
         var scopes = (req.Scopes ?? new List<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Select(s => s.Trim())
             .ToList();
-        if (scopes.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
-        foreach (var s in scopes)
+
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
+
+        // 自动模式不收清单，也就没什么可校验的：它每次鉴权现算「主人当前权限 ∩ 平台当前开放」，
+        // 而这个交集本身就是签发校验要求的东西 —— 长不出主人没有的权限。
+        // 传进来的 scopes 一律忽略，不留一份将来会漂的快照。
+        if (scopeMode == AgentApiKeyScopeMode.Auto)
         {
-            var (ok, reason) = await ValidateScopeAsync(s, ct);
-            if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
+            scopes = new List<string>();
+        }
+        else
+        {
+            if (scopes.Count == 0)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
+            foreach (var s in scopes)
+            {
+                var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
+                if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
+            }
         }
 
         var ttl = req.TtlDays is > 0 and <= MaxTtlDays ? req.TtlDays.Value : DefaultTtlDays;
-        var (entity, plaintext) = await _keyService.CreateAsync(userId, req.Name, req.Description, scopes, ttl, ct);
+        var (entity, plaintext) = await _keyService.CreateAsync(userId, req.Name, req.Description, scopes, ttl, ct, scopeMode);
 
         // 明文 Key 仅此处返回一次
-        return Ok(ApiResponse<object>.Ok(new { item = ToDto(entity), apiKey = plaintext, warning = "这是 Key 唯一一次明文显示，请妥善保存。" }));
+        return Ok(ApiResponse<object>.Ok(new { item = ToDto(entity, ownedPermissions), apiKey = plaintext, warning = "这是 Key 唯一一次明文显示，请妥善保存。" }));
     }
 
     public class UpdateRequest
@@ -150,31 +251,235 @@ public class AgentApiKeysController : ControllerBase
         public string? Name { get; set; }
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
+        /// <summary>接入台逐能力更新：仅替换指定能力，其他存储授权保持不变。</summary>
+        public Dictionary<string, string>? McpCapabilityAccess { get; set; }
         public bool? IsActive { get; set; }
+        public bool? WebPublicExposureAllowed { get; set; }
+
+        // 接入台（MCP）配额上限。null = 不改；配额触顶时的提示就是指这里，
+        // 光有提示没有入口等于告诉用户一条走不通的路。
+        public int? McpDailyImageQuota { get; set; }
+        public int? McpDailyWriteQuota { get; set; }
+        public int? McpRateLimitPerMin { get; set; }
+
+        /// <summary>follow-user-panel 或 fixed；null 表示本次不改。</summary>
+        public string? McpLiteraryImageModelMode { get; set; }
+
+        /// <summary>固定模式使用的逻辑模型 PublicId。</summary>
+        public string? McpLiteraryImageModelPublicId { get; set; }
+
+        /// <summary>
+        /// 显式切换能力范围模式。null = 不显式切，但**存了 scopes 就自动钉成 manual**
+        /// （存清单那一刻就是「动过高级设置」那一刻）。
+        /// </summary>
+        public string? ScopeMode { get; set; }
+    }
+
+    /// <summary>
+    /// 这次 PATCH 最终会把这把钥匙落到哪一档。
+    ///
+    /// 关键在于「手动」有**两扇门**：显式写 <c>scopeMode: "manual"</c>，
+    /// 和只带一个 <c>scopes</c> 字段（服务层据此推断 —— 存了清单那一刻就是动过高级设置那一刻）。
+    /// 判据只认前一扇门的话，后一扇门上的所有保护都不生效。
+    /// </summary>
+    internal static AgentApiKeyScopeMode ResultingScopeMode(
+        AgentApiKeyScopeMode current,
+        AgentApiKeyScopeMode? explicitMode,
+        bool scopesSupplied)
+        => explicitMode ?? (scopesSupplied ? AgentApiKeyScopeMode.Manual : current);
+
+    /// <summary>
+    /// 要不要把当前有效清单快照下来。
+    ///
+    /// 成立条件：这把钥匙现在是自动档、这次请求会把它变成手动档、而给出的清单是空的
+    /// （没给，或者给了一个空数组 / 全是空白项）。三者齐了才快照。
+    ///
+    /// 「给的清单是不是空的」要认空数组，不能只认 null —— <c>&#123;"scopeMode":"manual"&#125;</c> 与
+    /// <c>&#123;"scopeMode":"manual","scopes":[]&#125;</c> 是同一个意思；
+    /// 而「会不会变成手动」要认两扇门，不能只认显式那扇 —— <c>&#123;"scopes":[]&#125;</c>
+    /// 不带 scopeMode 时同样会把自动档钥匙钉成手动，上一版这条路径直接落到校验分支，
+    /// 零个 scope「全部校验通过」，空清单原样入库，接口返回 200 而钥匙失去全部工具。
+    /// 两次都是同一个形状：以为设成 A 其实是 B，而且没有任何线索。
+    /// </summary>
+    internal static bool NeedsScopeSnapshot(
+        AgentApiKeyScopeMode current,
+        AgentApiKeyScopeMode? explicitMode,
+        IReadOnlyList<string>? scopes)
+    {
+        if (explicitMode == AgentApiKeyScopeMode.Auto) return false;
+        if (current != AgentApiKeyScopeMode.Auto) return false;
+        if (ResultingScopeMode(current, explicitMode, scopes != null) != AgentApiKeyScopeMode.Manual)
+            return false;
+        return scopes == null || scopes.All(string.IsNullOrWhiteSpace);
+    }
+
+    internal static bool TryApplyMcpCapabilityAccess(
+        AgentApiKey key, IReadOnlyList<string> permissions, IReadOnlyDictionary<string, string> changes,
+        out List<string> scopes, out string? error)
+    {
+        // 自动转手动快照当前能力；手动档从存储清单出发，不能用有效权限投影覆盖它。
+        scopes = key.ScopeMode == AgentApiKeyScopeMode.Auto
+            ? McpCapabilityCatalog.AutoScopesFor(permissions).ToList()
+            : key.Scopes.ToList();
+        error = null;
+        foreach (var (capability, level) in changes)
+        {
+            var cap = McpCapabilityCatalog.All.FirstOrDefault(item => item.Key == capability);
+            if (cap == null || level is not ("none" or "read" or "write")
+                || (level == "read" && cap.ReadScope == null) || (level == "write" && cap.WriteScope == null))
+            {
+                error = "无效的能力或授权档位。";
+                return false;
+            }
+            var added = new List<string>();
+            if (level != "none" && cap.ReadScope != null) added.Add(cap.ReadScope);
+            if (level == "write" && cap.WriteScope != null) added.Add(cap.WriteScope);
+            if (added.Any(scope => McpCapabilityCatalog.IsIssuancePermissionChecked(scope)
+                && !McpCapabilityCatalog.PermissionsAllowScope(permissions, scope)))
+            {
+                error = "当前账号无权授予所选能力。";
+                return false;
+            }
+            var replaced = cap.AllScopes().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            scopes.RemoveAll(scope => replaced.Contains(scope));
+            scopes.AddRange(added);
+        }
+        return true;
     }
 
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateRequest req, CancellationToken ct)
     {
+        // 默认认证策略兼容 AgentApiKey；改独立授权时必须另外验证真实用户 JWT，不能相信同一调用方的声明。
+        if (req.WebPublicExposureAllowed.HasValue)
+        {
+            var jwt = await HttpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
+            var jwtUserId = jwt.Principal?.FindFirst("sub")?.Value
+                ?? jwt.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var callerUserId = this.GetUserIdOrNull();
+            if (!jwt.Succeeded || string.IsNullOrWhiteSpace(callerUserId)
+                || !string.Equals(jwtUserId, callerUserId, StringComparison.Ordinal))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "请登录 MAP，在智能体接入台的客户端设置中调整对外发布授权"));
+        }
         var userId = this.GetRequiredUserId();
         var key = await _keyService.GetByIdAsync(id, ct);
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
-        if (req.Scopes != null)
+        // 切回自动：清单作废（服务层会一并清空），也就没有 scope 要校验。
+        // 顺序在 scope 校验之前 —— 否则「既传 scopeMode=auto 又带着一串旧 scope」的请求
+        // 会拿一份马上要被丢掉的清单去撞校验，报一个用户根本无从理解的错。
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
+        AgentApiKeyScopeMode? explicitScopeMode = null;
+        if (req.ScopeMode != null)
+        {
+            if (!TryParseScopeMode(req.ScopeMode, out var parsedMode))
+                return BadScopeMode(req.ScopeMode);
+            explicitScopeMode = parsedMode;
+        }
+        if (req.McpCapabilityAccess != null)
+        {
+            if (req.Scopes != null || explicitScopeMode == AgentApiKeyScopeMode.Auto)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "逐能力更新不能与完整授权清单或自动模式同时提交。"));
+            if (!TryApplyMcpCapabilityAccess(key, ownedPermissions, req.McpCapabilityAccess, out var scopes, out var error))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", error!));
+            req.Scopes = scopes;
+            explicitScopeMode = AgentApiKeyScopeMode.Manual;
+        }
+        else if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
+        {
+            req.Scopes = null;
+        }
+        else if (NeedsScopeSnapshot(key.ScopeMode, explicitScopeMode, req.Scopes))
+        {
+            // 切档但没给清单：自动档的 Scopes 本来就是空的，照直写下去这把钥匙
+            // 会在返回 200 的同时失去全部工具 —— 接口说成了、钥匙却废了。
+            // 「按清单钉死」的意思是把它**此刻拿得到的那些**定下来，不是清零。
+            // 取值走唯一那处判据，所以这份快照天然只含主人现在真有权限的 scope，不用再过一遍校验。
+            req.Scopes = McpCapabilityCatalog
+                .EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
+                .ToList();
+        }
+        else if (req.Scopes != null)
         {
             var scopes = req.Scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
             foreach (var s in scopes)
             {
-                var (ok, reason) = await ValidateScopeAsync(s, ct);
+                var (ok, reason) = await ValidateScopeAsync(s, ownedPermissions, ct);
                 if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
             }
             req.Scopes = scopes;
         }
 
-        await _keyService.UpdateMetadataAsync(id, req.Name, req.Description, req.Scopes, req.IsActive, ct);
+        // 配额上限：给出的值必须落在合理区间，避免「调成 0 把自己锁死」或「调成天文数字等于没有闸门」。
+        // 校验排在写库之前，且配额与元数据**合成同一次 Mongo 写**：
+        // 分两次写的话，第二次失败会留下「接口报错了、但名字已经改了」的半截状态，
+        // 用户照报错重试，状态和提示对不上。要么整笔生效，要么整笔不生效。
+        var nameTooLong = McpInputBounds.Text(req.Name, McpInputBounds.TitleBytes, "name");
+        if (nameTooLong != null) return BadRequest(ApiResponse<object>.Fail("INVALID_NAME", nameTooLong));
+
+        if (req.McpDailyImageQuota is < 1 or > 500)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日生图上限需在 1-500 之间"));
+        if (req.McpDailyWriteQuota is < 1 or > 2000)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每日写入上限需在 1-2000 之间"));
+        if (req.McpRateLimitPerMin is < 1 or > 600)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每分钟调用上限需在 1-600 之间"));
+
+        AgentApiKeyLiteraryImageModelPatch? literaryImageModelPatch = null;
+        if (req.McpLiteraryImageModelMode != null)
+        {
+            McpLiteraryImageModelMode mode;
+            if (string.Equals(req.McpLiteraryImageModelMode, "follow-user-panel", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = McpLiteraryImageModelMode.FollowUserPanel;
+            }
+            else if (string.Equals(req.McpLiteraryImageModelMode, "fixed", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = McpLiteraryImageModelMode.Fixed;
+            }
+            else
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_MODE",
+                    "文学配图模型模式只认 follow-user-panel 或 fixed。"));
+            }
+
+            var publicId = req.McpLiteraryImageModelPublicId?.Trim();
+            if (mode == McpLiteraryImageModelMode.Fixed)
+            {
+                var validation = await _literaryModels.ValidateFixedModelAsync(publicId ?? string.Empty, ct);
+                if (!validation.Success)
+                    return Conflict(ApiResponse<object>.Fail(validation.ErrorCode ?? "MODEL_UNAVAILABLE",
+                        validation.ErrorMessage ?? "固定模型当前不可用。"));
+            }
+            literaryImageModelPatch = new AgentApiKeyLiteraryImageModelPatch(mode, publicId);
+        }
+        else if (req.McpLiteraryImageModelPublicId != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_MODE",
+                "更新固定模型时必须同时传 mcpLiteraryImageModelMode=fixed。"));
+        }
+
+        if (req.WebPublicExposureAllowed == true)
+        {
+            var resultingMode = ResultingScopeMode(key.ScopeMode, explicitScopeMode, req.Scopes != null);
+            var resultingScopes = McpCapabilityCatalog.EffectiveScopesFor(
+                resultingMode, req.Scopes ?? key.Scopes, ownedPermissions);
+            if (!AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out _)
+                || !resultingScopes.Contains(McpCapabilityCatalog.ScopeWebPagesWrite, StringComparer.OrdinalIgnoreCase))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "当前客户端没有可用的网页写入权限，请先恢复密钥或网页写入授权"));
+        }
+
+        await _keyService.UpdateMetadataAsync(
+            id, req.Name, req.Description, req.Scopes, req.IsActive, ct,
+            new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin),
+            explicitScopeMode,
+            literaryImageModelPatch,
+            req.WebPublicExposureAllowed);
+
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     public class RenewRequest
@@ -191,10 +496,11 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         var ttl = req?.TtlDays is > 0 and <= MaxTtlDays ? req.TtlDays!.Value : RenewTtlDays;
         await _keyService.RenewAsync(id, ttl, ct);
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     /// <summary>撤销（立即失效，不可恢复）</summary>
@@ -206,9 +512,10 @@ public class AgentApiKeysController : ControllerBase
         if (key == null || key.OwnerUserId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "Key 不存在或无权访问"));
 
+        var ownedPermissions = await OwnedPermissionsAsync(userId, ct);
         await _keyService.RevokeAsync(id, ct);
         var reloaded = await _keyService.GetByIdAsync(id, ct);
-        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded) }));
+        return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
     }
 
     [HttpDelete("{id}")]
@@ -227,7 +534,14 @@ public class AgentApiKeysController : ControllerBase
     // Helpers
     // ======================================================================
 
-    private static object ToDto(AgentApiKey k)
+    /// <summary>
+    /// 列表/详情行。<paramref name="ownedPermissions"/> 是密钥主人此刻的权限位 ——
+    /// 必须传，因为 `scopes` 这一列要显示「它此刻真拿得到什么」，不是库里存了什么：
+    ///   - 自动档的钥匙存的是**空清单**，照着存的显示就是「零个能力」，而它什么都调得动；
+    ///   - 手动档的钥匙里，权限被回收的那几个 scope 鉴权时就被剥掉了，显示出来是假的。
+    /// 判据与鉴权同一个函数（McpCapabilityCatalog.EffectiveScopesFor），不在这里另写一份。
+    /// </summary>
+    private static object ToDto(AgentApiKey k, IReadOnlyList<string> ownedPermissions)
     {
         var now = DateTime.UtcNow;
         int? daysLeft = k.ExpiresAt.HasValue ? (int)Math.Ceiling((k.ExpiresAt.Value - now).TotalDays) : null;
@@ -235,10 +549,8 @@ public class AgentApiKeysController : ControllerBase
         if (k.RevokedAt.HasValue) status = "revoked";
         else if (!k.IsActive) status = "disabled";
         else if (k.ExpiresAt.HasValue && k.ExpiresAt.Value < now)
-        {
-            var graceEnd = k.ExpiresAt.Value.AddDays(k.GracePeriodDays);
-            status = graceEnd < now ? "expired" : "grace";
-        }
+            // 能不能用走 AgentApiKey.IsUsableAt（与鉴权同一处判据），这里只负责把它翻成标签
+            status = AgentApiKey.IsUsableAt(k, now, out _) ? "grace" : "expired";
         else if (daysLeft is <= 30) status = "expiring-soon";
         else status = "active";
 
@@ -248,7 +560,16 @@ public class AgentApiKeysController : ControllerBase
             k.Name,
             k.Description,
             keyPrefix = k.KeyPrefix,
-            scopes = k.Scopes ?? new List<string>(),
+            // 用不了的钥匙一个 scope 都不该报（鉴权会拒掉它、授权自检也回 toolCount=0）。
+            // 「能不能用」这层判断收在 EffectiveScopesForKey 里，不在这里各写一遍 ——
+            // 这件事已经在两处投影上各漏过一次。
+            scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, now),
+            scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            webPublicExposureAllowed = k.WebPublicExposureAllowed,
+            mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
+                ? "fixed"
+                : "follow-user-panel",
+            mcpLiteraryImageModelPublicId = k.McpLiteraryImageModelPublicId,
             k.IsActive,
             k.CreatedAt,
             expiresAt = k.ExpiresAt,

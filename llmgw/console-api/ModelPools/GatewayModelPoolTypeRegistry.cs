@@ -42,7 +42,7 @@ public static class GatewayModelPoolTypeRegistry
         {
             "vision" => Flag(model, "IsVision") || HasCapability(model, "vision", "image_input", "multimodal"),
             "generation" => Flag(model, "IsImageGen") || HasCapability(model, "image_generation", "text_to_image", "image"),
-            "intent" => Flag(model, "IsIntent") || Flag(model, "IsMain"),
+            "intent" => IsIntentCapable(model),
             "chat" => Flag(model, "IsMain") || Flag(model, "IsIntent") || HasCapability(model, "chat", "text_generation", "reasoning"),
             "code" => HasCapability(model, "code", "code_generation", "code_completion"),
             "long-context" => HasCapability(model, "long_context", "long-context") || Flag(model, "IsMain"),
@@ -56,6 +56,23 @@ public static class GatewayModelPoolTypeRegistry
             _ => false,
         };
     }
+
+    /// <summary>
+    /// intent 池成员资格的唯一判据。
+    ///
+    /// 为什么单独抽出来：这条判据原先只认 <c>IsIntent</c> / <c>IsMain</c> 两个布尔位，而这两位**只在
+    /// 建模型那一刻**由能力勾选写入（见 GatewayConfigurationProvisioning.BuildModelDocument）。
+    /// 从上游批量导入的模型永远拿到 false，而控制台唯一能维护的能力面是 <c>Capabilities</c> 数组——
+    /// 判据读的不是运维真正能改的那个值，于是 intent 默认池对全部批量导入模型永久关闭：
+    /// PUT 池成员报 INCOMPATIBLE_MODEL_TYPE，bulk-import 直接筛不出候选，没有第三条路。
+    /// 现在三个值都认，谁写的都算数。
+    ///
+    /// 刻意**不**认 chat 能力：intent 与 chat 语义相邻，但默认池会在建模型时自动追加所有兼容模型
+    /// （EnsureGatewayModelPoolTypesAsync），认了 chat 就等于把几百个对话模型无差别灌进 intent 池。
+    /// 要进 intent 池必须有人显式声明这条能力。
+    /// </summary>
+    public static bool IsIntentCapable(BsonDocument model)
+        => Flag(model, "IsIntent") || Flag(model, "IsMain") || HasCapability(model, "intent");
 
     private static bool Flag(BsonDocument model, string name) => model.AsNullableBool(name) == true;
 

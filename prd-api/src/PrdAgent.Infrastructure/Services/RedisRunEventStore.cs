@@ -17,15 +17,29 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
     private readonly ConnectionMultiplexer _redis;
     private readonly IDatabase _db;
     private readonly TimeSpan _defaultTtl;
+    private readonly ITaskExecutionCoordinator? _taskExecutions;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    // 高频流块一次往返完成序号分配、事件追加、游标及续期；同一 run 的并发追加不可交错。
+    // JSON 在 .NET 序列化，仅在 Redis 拼入序号，避免 Lua cjson 改写 payload 中的数值或转义。
+    private const string AppendEventScript = """
+        redis.call('INCR', KEYS[1])
+        local seq = redis.call('GET', KEYS[1])
+        redis.call('ZADD', KEYS[2], seq, ARGV[1] .. seq .. '}')
+        redis.call('HSET', KEYS[3], 'lastSeq', seq)
+        redis.call('PEXPIRE', KEYS[1], ARGV[2])
+        redis.call('PEXPIRE', KEYS[2], ARGV[2])
+        redis.call('PEXPIRE', KEYS[3], ARGV[2])
+        return seq
+        """;
 
-    public RedisRunEventStore(string connectionString, TimeSpan? defaultTtl = null)
+    public RedisRunEventStore(string connectionString, TimeSpan? defaultTtl = null, ITaskExecutionCoordinator? taskExecutions = null)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new ArgumentException("Redis 连接字符串不能为空", nameof(connectionString));
         _redis = ConnectionMultiplexer.Connect(connectionString.Trim());
         _db = _redis.GetDatabase();
         _defaultTtl = defaultTtl ?? TimeSpan.FromHours(24);
+        _taskExecutions = taskExecutions;
     }
 
     private static string Norm(string raw) => (raw ?? string.Empty).Trim();
@@ -48,6 +62,7 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
         {
             RunId = Norm(runId),
             Kind = Norm(kind),
+            TaskPermitId = map.TryGetValue("taskPermitId", out var permitId) && !string.IsNullOrWhiteSpace(permitId) ? permitId : null,
             Status = map.TryGetValue("status", out var st) ? st : RunStatuses.Queued,
             GroupId = map.TryGetValue("groupId", out var gid) ? gid : null,
             SessionId = map.TryGetValue("sessionId", out var sid) ? sid : null,
@@ -77,6 +92,7 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
         var entries = new List<HashEntry>
         {
             new("status", meta.Status ?? RunStatuses.Queued),
+            new("taskPermitId", meta.TaskPermitId ?? string.Empty),
             new("lastSeq", meta.LastSeq),
             new("cancelRequested", meta.CancelRequested ? "true" : "false"),
             new("createdAt", meta.CreatedAt.ToString("O")),
@@ -100,7 +116,13 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
     public async Task<bool> TryMarkCancelRequestedAsync(string kind, string runId, CancellationToken ct = default)
     {
         var k = MetaKey(kind, runId);
-        // 非原子：足够；worker/stream 会轮询
+        var meta = await GetRunAsync(kind, runId, CancellationToken.None);
+        if (meta?.TaskPermitId is { Length: > 0 } permitId)
+        {
+            if (_taskExecutions is null) throw new InvalidOperationException("任务存储未接入平台授权撤销。");
+            await _taskExecutions.RevokeAsync(permitId, runId, CancellationToken.None);
+        }
+        // 先持久撤销，再发布取消状态；被动断线不会走这里。
         await _db.HashSetAsync(k, new[] { new HashEntry("cancelRequested", "true") });
         return true;
     }
@@ -121,30 +143,23 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
         var evKey = EventsKey(kind, rid);
         var metaKey = MetaKey(kind, rid);
 
-        var seq = (long)await _db.StringIncrementAsync(seqKey, 1);
-        if (seq <= 0) seq = 1;
-
-        var record = new RunEventRecord
+        var record = new
         {
             RunId = rid,
-            Seq = seq,
             EventName = (eventName ?? string.Empty).Trim(),
             PayloadJson = JsonSerializer.Serialize(payload ?? new { }, JsonOptions),
             CreatedAt = DateTime.UtcNow
         };
-        var member = JsonSerializer.Serialize(record, JsonOptions);
-
-        await _db.SortedSetAddAsync(evKey, member, seq);
-
-        // 更新 meta.lastSeq（Redis Hash）
-        await _db.HashSetAsync(metaKey, new[] { new HashEntry("lastSeq", seq) });
-
+        var memberPrefix = JsonSerializer.Serialize(record, JsonOptions)[..^1] + ",\"seq\":";
         var t = TtlOrDefault(ttl, _defaultTtl);
-        await _db.KeyExpireAsync(seqKey, t);
-        await _db.KeyExpireAsync(evKey, t);
-        await _db.KeyExpireAsync(metaKey, t);
-
-        return seq;
+        var ttlMilliseconds = Math.Max(1L, (long)Math.Ceiling(t.TotalMilliseconds));
+        // NoScriptCache 保证冷连接也只发一次 EVAL，不先 EVALSHA 再因 NOSCRIPT 重发。
+        // 错误仍交由调用方原有投影退化处理；不重试，避免未知结果时重复追加。
+        return (long)await _db.ScriptEvaluateAsync(
+            AppendEventScript,
+            new RedisKey[] { seqKey, evKey, metaKey },
+            new RedisValue[] { memberPrefix, ttlMilliseconds },
+            CommandFlags.NoScriptCache);
     }
 
     public async Task<IReadOnlyList<RunEventRecord>> GetEventsAsync(string kind, string runId, long afterSeq, int limit, CancellationToken ct = default)
@@ -206,5 +221,3 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
         _redis.Dispose();
     }
 }
-
-

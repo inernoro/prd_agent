@@ -2,7 +2,7 @@
  * SSH 连接串解析 —— 让「加一台服务器」可以从粘贴一行开始。
  *
  * 为什么要有这个：加服务器时用户手上通常已经有一行现成的东西
- * （`ssh root@1.2.3.4 -p 2222`、`root@map.ebcone.net:22`、运维群里发的一串），
+ * （`ssh root@1.2.3.4 -p 2222`、`root@host.example.com:22`、运维群里发的一串），
  * 逼他把这行拆成主机/端口/用户三个输入框再逐个敲，是纯粹的搬运工作。
  * 粘进去就填好，才叫少绕路。
  *
@@ -35,10 +35,10 @@ function normalizePort(raw: string | number | undefined): number | null {
  *
  *   ssh://root@1.2.3.4:2222
  *   ssh root@1.2.3.4 -p 2222
- *   root@map.ebcone.net:22
- *   root@map.ebcone.net
- *   map.ebcone.net:2222
- *   map.ebcone.net
+ *   root@host.example.com:22
+ *   root@host.example.com
+ *   host.example.com:2222
+ *   host.example.com
  *
  * 端口在 `-p` 与 `:port` 同时出现时以 `-p` 为准（那是 ssh 命令的真实语义）。
  */
@@ -111,7 +111,7 @@ export function parseSshTarget(input: string): SshTarget | null {
 export function suggestHostName(host: string): string {
   const trimmed = host.trim();
   if (!trimmed) return '';
-  // 域名取最有辨识度的那一段（map.ebcone.net → map），IP 原样保留。
+  // 域名取最有辨识度的那一段（host.example.com → host），IP 原样保留。
   if (/^[0-9.]+$/.test(trimmed) || trimmed.includes(':')) return trimmed;
   const [first] = trimmed.split('.');
   return first || trimmed;

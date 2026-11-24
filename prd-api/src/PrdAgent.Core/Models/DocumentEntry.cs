@@ -5,6 +5,13 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public class DocumentEntry
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public WritingDocumentState? Writing { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("hasWritingPublication")]
+    public bool HasWritingPublication => Writing?.Published != null;
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -58,6 +65,12 @@ public class DocumentEntry
 
     /// <summary>扩展元数据（键值对，便于不同来源携带额外信息）</summary>
     public Dictionary<string, string> Metadata { get; set; } = new();
+
+    /// <summary>
+    /// 后台任务产物发布代次。创建新的字幕或转录任务时原子递增，旧 Worker 只能向
+    /// 自己持有的代次发布，防止失联任务恢复后覆盖新结果。
+    /// </summary>
+    public long AgentOutputGeneration { get; set; }
 
     /// <summary>上传/创建者 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
@@ -114,6 +127,12 @@ public class DocumentEntry
 
     /// <summary>最近一次"内容真正发生变化"的时间（用于 UI 显示 (new) 徽标）</summary>
     public DateTime? LastChangedAt { get; set; }
+
+    /// <summary>回收状态；null 为正常数据，恢复时只解除此标记。</summary>
+    public DocumentTrashState? Trash { get; set; }
+
+    /// <summary>回收代次；恢复后仍保留，拒绝删除前发出的陈旧正文写入。</summary>
+    public long LifecycleVersion { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

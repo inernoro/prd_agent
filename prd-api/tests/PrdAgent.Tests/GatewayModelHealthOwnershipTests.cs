@@ -1,5 +1,6 @@
 using PrdAgent.Infrastructure.LlmGateway;
 using Xunit;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Tests;
 

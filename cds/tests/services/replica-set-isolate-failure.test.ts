@@ -15,7 +15,7 @@ vi.mock('../../src/services/replica-db-clone.js', () => ({
   resolveReplicaDbTarget: () => ({
     target: {
       engine: 'mongo', sourceDb: 'appdb', envKeys: ['MongoDB__DatabaseName'],
-      infra: { containerName: 'cds-infra-mongo', env: {}, containerPort: 27017 },
+      infra: { id: 'mongodb', containerName: 'cds-infra-mongo', env: {}, containerPort: 27017 },
     },
   }),
   envOverrideFromSnapshot: () => ({}),
@@ -35,6 +35,11 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rsisofail-'));
   state = new StateService(path.join(tmpDir, 'state.json'));
   state.addProject({ id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString() } as Parameters<typeof state.addProject>[0]);
+  state.addInfraService({
+    id: 'mongodb', projectId: 'proj', name: 'MongoDB', dockerImage: 'mongo:8',
+    containerPort: 27017, hostPort: 27017, containerName: 'cds-infra-mongo',
+    status: 'running', volumes: [], env: {}, createdAt: new Date().toISOString(),
+  });
   state.getState().buildProfiles.push({
     id: 'api', projectId: 'proj', name: 'api', dockerImage: 'app:1', containerPort: 8080, dbScope: 'shared',
     env: { MongoDB__DatabaseName: 'appdb' },
@@ -71,6 +76,24 @@ afterEach(async () => {
 });
 
 describe('isolateProfile 克隆阶段失败', () => {
+  it('MongoDB 凭据轮换未结束时拒绝在首个克隆 I/O 前启动', () => {
+    state.updateInfraService('mongodb', {
+      credentialRotation: {
+        id: 'rotation-active', idempotencyKey: 'rotation-request', projectId: 'proj', serviceId: 'mongodb',
+        runtime: 'mongodb', stage: 'deployed', previousFingerprint: '1'.repeat(16), nextFingerprint: '2'.repeat(16),
+        consumerIds: ['proj-main/api'], startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        events: [{ stage: 'deployed', at: new Date().toISOString() }],
+      },
+    }, 'proj');
+
+    const r = svc.isolateProfile('proj-main', 'api');
+    expect(r).toMatchObject({ accepted: false });
+    expect(r.reason).toContain('轮换凭据');
+    expect(() => svc.addMember('proj-main', 'api', { dbMode: 'isolated' })).toThrow('轮换凭据');
+    expect(state.listActiveInfraMaintenanceJobs({ projectId: 'proj', serviceId: 'mongodb' })).toEqual([]);
+    expect(state.getBranch('proj-main')!.replicaSets!.api.members[0].status).toBe('running');
+  });
+
   it('健康成员恢复 running 回到分流（不毒化），隔离标记不落地', async () => {
     const r = svc.isolateProfile('proj-main', 'api');
     expect(r.accepted).toBe(true);

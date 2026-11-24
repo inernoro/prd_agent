@@ -18,11 +18,30 @@
 import { describe, it, expect } from 'vitest';
 import { resolveApiLabel } from '../../src/server.js';
 
+it('labels the exact fixed design share handoff route at startup and at runtime', () => {
+  const route = '/projects/demo-a/design/shares/SHARE-a/handoff';
+  expect(resolveApiLabel('POST', '/projects/:projectId/design/shares/:preparationId/handoff')).toBe('交接稿件分享');
+  expect(resolveApiLabel('POST', route)).toBe('交接稿件分享');
+  expect(resolveApiLabel('GET', route)).not.toBe('交接稿件分享');
+  expect(resolveApiLabel('POST', `${route}/other`)).not.toBe('交接稿件分享');
+});
+
 describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fix)', () => {
   it('单段 branch id → 查看分支详情', () => {
     expect(resolveApiLabel('GET', '/branches/twenty-demo-main')).toBe('查看分支详情');
     expect(resolveApiLabel('GET', '/branches/abc123')).toBe('查看分支详情');
     expect(resolveApiLabel('GET', '/branches/prd-agent-main')).toBe('查看分支详情');
+  });
+
+  /**
+   * 2026-09-02（Codex P2，核对属实）：新增 `/metrics/series` 端点时漏了 label。
+   * 已有的 `/metrics` pattern 用 `$` 收尾，接不住 `/metrics/series`，于是
+   * Activity Monitor 上只显示一串裸 URL，启动时 auditApiLabels 也会打 warning
+   * （cds/CLAUDE.md §0.1 要求每条 /api/* 都有中文 label）。
+   */
+  it('GET /branches/:id/metrics 与 /metrics/series 各有各的 label，互不截胡', () => {
+    expect(resolveApiLabel('GET', '/branches/abc/metrics')).toBe('查看分支指标');
+    expect(resolveApiLabel('GET', '/branches/abc/metrics/series')).toBe('查看指标历史');
   });
 
   it('GET /branches/:id/logs → 查看操作日志(不被详情吞)', () => {
@@ -50,6 +69,22 @@ describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fi
     expect(resolveApiLabel('GET', '/branches/stream')).toBe('订阅分支状态流');
   });
 
+  /*
+   * 同一类坑的第二次：只往 staticMap 加 `PUT /projects/:id/agent-profile`。
+   * auditApiLabels 拿 express 路由原样比对，`:id` 字面量能命中，启动零 warning；
+   * 而真实请求带的是具体 id，一路落到 `^PUT /projects/(.+)$` 被吞成「更新项目」。
+   * 也就是说：那道启动自检对这类缺陷永远不会红。所以判据必须用**真实路径**断言。
+   */
+  it('GET/PUT /projects/:id/agent-profile 用真实 id 也要拿到自己的 label', () => {
+    expect(resolveApiLabel('GET', '/projects/prd-agent/agent-profile')).toBe('获取项目 Agent 角色');
+    expect(resolveApiLabel('PUT', '/projects/prd-agent/agent-profile')).toBe('更新项目 Agent 角色');
+    expect(resolveApiLabel('GET', '/projects/demo-a/agent-profile')).toBe('获取项目 Agent 角色');
+    expect(resolveApiLabel('PUT', '/projects/demo-a/agent-profile')).toBe('更新项目 Agent 角色');
+    // 不能反过来把项目本身的读写也吞掉
+    expect(resolveApiLabel('GET', '/projects/demo-a')).toBe('查询项目');
+    expect(resolveApiLabel('PUT', '/projects/demo-a')).toBe('更新项目');
+  });
+
   it('regex 本身不允许跨 / 段 — 模拟 id 含 / 的脏路径', () => {
     // 即使 patterns 数组顺序错位,这种路径也不应被 detail pattern 吞
     // (理论上 router 会把 /branches/foo/bar 路由到 sub-route,但 label 解析
@@ -57,5 +92,12 @@ describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fi
     const label = resolveApiLabel('GET', '/branches/foo/unknown-sub');
     // 不应该是"查看分支详情"
     expect(label).not.toBe('查看分支详情');
+  });
+
+  it('项目设置历史在路由审计和真实请求中都有专用 label', () => {
+    expect(resolveApiLabel('GET', '/projects/:id/identity-history')).toBe('查看设置记录');
+    expect(resolveApiLabel('GET', '/projects/demo-a/identity-history')).toBe('查看设置记录');
+    expect(resolveApiLabel('GET', '/projects/demo-a')).toBe('查询项目');
+    expect(resolveApiLabel('GET', '/projects/demo-a/extra/identity-history')).not.toBe('查看设置记录');
   });
 });

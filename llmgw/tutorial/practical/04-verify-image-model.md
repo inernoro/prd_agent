@@ -16,9 +16,10 @@
 3. 进入 LLMGW“工作区 → 请求记录”，按完整 requestId 搜索。
 4. 列表主标题应显示逻辑模型，次级信息显示实际 Provider 和实际模型。
 5. 核对图片统计：输出显示上游实际返回的图片数，速度显示平均每张生成耗时；上游返回 token 时在详情保留真实 token，上游未返回时保持未知，不补造 prompt 或 token。
-6. 打开“请求与响应 → 响应内容”，确认先显示缩略图、媒体类型和文件大小；原始 Base64 不进入日志正文。Base64 或临时 URL 图片由后台异步保存；URL 抓取必须经过公网地址校验、禁止跳转和体积限制，不能增加模型响应等待时间，也不能让管理员浏览器直连第三方地址。
-7. 打开详情“路由”，核对 LogicalModelId、PublicId、OfferingId、实际模型、协议、上游尝试和回退原因；`GatewayTransport` 应为 `http`，`ModelGroupId` 应为空。
-8. 若允许一次故障切换测试，让首个假上游失败，再核对同一 PublicId 下第二个 Offering 成功。
+6. 若 Offering 协议为 `openrouter-image`，OpenRouter 请求 Endpoint 应以 `/api/v1/images` 结尾，多图请求应使用 `input_references`；不得出现 `/api/images` 或 `chat/completions + modalities`。
+7. 打开“请求与响应 → 响应内容”，确认先显示缩略图、媒体类型和文件大小；原始 Base64 不进入日志正文。Base64 或临时 URL 图片由后台异步保存；URL 抓取必须经过公网地址校验、禁止跳转和体积限制，不能增加模型响应等待时间，也不能让管理员浏览器直连第三方地址。
+8. 打开详情“路由”，核对 LogicalModelId、PublicId、OfferingId、实际模型、协议、上游尝试和回退原因；`GatewayTransport` 应为 `http`，`ModelGroupId` 应为空。
+9. 若允许一次故障切换测试，让首个假上游失败，再核对同一 PublicId 下第二个 Offering 成功。
 
 ## 必须保存的证据
 
@@ -52,5 +53,5 @@
 - 日志只有实际模型：日志模型或 API 投影没有贯通 LogicalModelId 与 OfferingId。
 - 图片输出、速度都是 `—`：先核对上游响应是否有 `data[]`、图片数和请求耗时；有数据仍为空属于日志解析缺陷，不能用前端常量填充。
 - 响应内容只有超长 Base64：后台图片捕获没有完成；检查 capture 状态和资产存储，不能让浏览器直接渲染整段 Base64 文本。
-- 日志仍是 `inproc` 或带旧 `ModelGroupId`：MAP 只更新了模型列表，执行链没有进入独立 Gateway；逻辑模型请求必须 fail-closed，禁止同名旧池接管。
+- 日志带旧 `ModelGroupId`：执行链没有按逻辑模型解析；逻辑模型请求必须 fail-closed，禁止同名旧池接管。
 - 选择一个模型却命中另一个 PublicId：显式模型解析错误，必须停止发布；默认池只允许在没有选择时使用。

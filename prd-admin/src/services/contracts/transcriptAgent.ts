@@ -34,7 +34,7 @@ export interface TranscriptRun {
   itemId: string;
   workspaceId: string;
   type: 'asr' | 'copywrite';
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: 'scoped_queued' | 'queued' | 'processing' | 'completed' | 'failed';
   templateId?: string;
   result?: string;
   error?: string;

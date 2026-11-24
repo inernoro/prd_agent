@@ -1,3 +1,10 @@
+---
+paths:
+  - "prd-admin/src/pages/**/*.tsx"
+  - "prd-admin/src/layouts/**/*.tsx"
+  - "prd-desktop/src/components/**/*.tsx"
+---
+
 # 页面必须撑开高度（Full-Height Layout）
 
 **一句话**：宽屏页面必须撑满视口高度，根容器走 h-full + min-h-0 + flex，禁止 calc(100vh - N px) 魔数，滚动发生在最靠近内容的那一层。

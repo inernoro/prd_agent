@@ -54,6 +54,7 @@ export const SYSTEM_TAB_LABELS: Record<string, string> = {
   github: 'GitHub 集成',
   'github-whitelist': 'GitHub 白名单',
   'webhook-log': 'Webhook 日志',
+  'alarm-notify': '通知通道',
   storage: '存储后端',
   scheduler: '调度器',
   cluster: '集群',
@@ -71,14 +72,27 @@ export const PROJECT_TAB_LABELS: Record<string, string> = {
   env: '项目环境变量',
   'runtime-defaults': '新分支默认',
   compose: '项目配置',
+  'db-isolation': '数据库隔离',
   infra: '基础设施',
   storage: '存储',
   migration: '迁移',
   cache: '缓存诊断',
+  backup: '周期备份',
+  // 「交付模式」是这条守卫落地时才发现漏登记的（它比周期备份早）。补的是名字，
+  // 让命令面板显示得出路径；它还缺 PROJECT_SETTINGS_INDEX 条目，记在台账 E89。
+  delivery: '交付模式',
   stats: '统计',
   activity: '活动日志',
   danger: '删除项目',
 };
+
+export function resolveProjectSettingsTab(search = '', hash = ''): string {
+  const hashTab = hash.replace(/^#/, '');
+  if (Object.hasOwn(PROJECT_TAB_LABELS, hashTab)) return hashTab;
+  const queryTab = new URLSearchParams(search).get('tab') || '';
+  if (queryTab === 'build' || queryTab === 'routing') return 'compose';
+  return Object.hasOwn(PROJECT_TAB_LABELS, queryTab) ? queryTab : 'general';
+}
 
 /*
  * 系统级设置（/cds-settings#<tab>）。tab 取值见
@@ -387,6 +401,32 @@ export const PROJECT_SETTINGS_INDEX: SettingsIndexEntry[] = [
       'readiness', 'readiness timeout', 'readiness-timeout', 'health', 'healthcheck',
       '端口探测', 'tcp 探活', 'probe', '超时', '180', '180s', '240', '240s',
       '探测超时', '启动探测', 'cds.readiness-timeout',
+    ],
+  },
+  // —— 数据库隔离（项目默认；分支抽屉里只剩本分支覆盖）——
+  {
+    id: 'proj:db-isolation:scope',
+    label: '数据库隔离（共享库 / 分支独立库）',
+    hint: '数据库隔离 · 项目内每个服务多分支之间共不共用数据库，批量或逐服务设置',
+    tab: 'db-isolation',
+    scope: 'project',
+    keywords: [
+      '数据库隔离', '数据库', '隔离', '共享库', '分支独立库', '独立库', '分库', '切库',
+      '按分支', '每分支', '分支数据库', '库名后缀', 'migration 互相影响', '多分支',
+      'dbscope', 'db scope', 'db-scope', 'per-branch', 'per branch', 'shared', 'database',
+      'isolation', 'db isolation', 'mysql_database', 'postgres_db', 'mongo_initdb_database',
+    ],
+  },
+  {
+    id: 'proj:backup:health',
+    label: '周期备份',
+    hint: '周期备份 · 每 6 小时一轮的结果：哪些目标成了、哪些没成、盘上还留着几份',
+    tab: 'backup',
+    scope: 'project',
+    keywords: [
+      '周期备份', '备份', '自动备份', '定时备份', '备份状态', '备份健康', '备份记录',
+      '离机备份', '异地备份', '恢复演练', '副本', '快照',
+      'backup', 'backups', 'auto backup', 'offsite', 'restore drill', 'dump',
     ],
   },
   {

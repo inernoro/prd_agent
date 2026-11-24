@@ -57,22 +57,11 @@ import {
   type GalaxyInputEntry,
   type GalaxyInputLink,
 } from '@/lib/docGalaxy/buildDocGalaxy';
+import { DOC_TYPE_COLOR, colorForDocType } from '@/lib/docGalaxy/docTypeColors';
 
-// ── docType → 颜色注册表（数值 SSOT = 演示版 doc-tree-3d.html TYPE_COLORS，照抄） ──
-const TYPE_COLOR: Record<string, string> = {
-  spec: '#4ade80',
-  design: '#60a5fa',
-  plan: '#fbbf24',
-  rule: '#f87171',
-  guide: '#a78bfa',
-  report: '#22d3ee',
-  debt: '#fb923c',
-  unknown: '#94a3b8',
-};
-export function colorForDocType(docType?: string | null): string {
-  if (!docType) return TYPE_COLOR.unknown;
-  return TYPE_COLOR[docType] ?? TYPE_COLOR.unknown;
-}
+// ── docType → 颜色注册表：SSOT 在 lib/docGalaxy/docTypeColors（首页片花也用同一份） ──
+const TYPE_COLOR = DOC_TYPE_COLOR;
+export { colorForDocType };
 
 export function rotateOrbitOffsetByPixels(
   offset: THREE.Vector3,
@@ -3741,8 +3730,15 @@ export function DocumentGalaxyView({ storeId, storeName, listEntries, loadGraph,
       </div>
     ) : null;
 
+  /*
+   * 星图是真·暗色区域（星点画在深空底上，浅色档没有等价形态），所以底色钉死深空色是对的。
+   * 但只钉底色不够：区域里的图例、tooltip、阅读抽屉的正文都走 var(--text-*)，
+   * 浅色主题下这些 token 解析成深色 —— 深字压深底，正文直接看不见
+   * （用户 2026-08-14 在知识库分享页截到的就是这个：标题是写死的浅色所以可见，正文全糊）。
+   * surface-tone-dark 让这一整块的 token 翻回暗色档，钉死的底色与 token 文字才对得上。
+   */
   return (
-    <div className="h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
+    <div className="surface-tone-dark h-full w-full min-h-0 flex flex-col relative" style={{ background: '#02030a' }}>
       {/* 极简兜底顶栏：galaxy 尚未构建成功（加载中 / 失败 / 超时）时也要有「返回」——
           本路由是全屏，隐藏了 AppShell 导航，否则用户只能靠浏览器后退（Codex P2）。 */}
       {!galaxy && (

@@ -8,6 +8,8 @@ namespace PrdAgent.Core.Interfaces;
 /// </summary>
 public interface IHostedSiteService
 {
+    /// <summary>归档可推算地址上的历史资源，并在对外分享前确认旧地址完成源站清理。</summary>
+    Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default, bool relocateCurrent = false);
     // ── 创建 ──
 
     /// <summary>从 HTML 文件字节创建站点</summary>
@@ -16,28 +18,136 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         CancellationToken ct = default);
 
+    /// <summary>返回 CreateFromHtml 最终会写入对象存储的确定性字节。</summary>
+    byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
+
+    /// <summary>
+    /// 返回已通过演示稿浏览器质检的 OpenDesign 产物托管字节。
+    /// 保留父窗口导航桥接，但不向已自带导航的演示稿叠加第二套视觉提示。
+    /// </summary>
+    byte[] PrepareTrustedPresentationHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
+
+    /// <summary>
+    /// 以稳定 sourceRef 创建 HTML 站点。站点 ID 和对象 key 均由 owner + sourceRef 确定，
+    /// 因此并发重试或进程在写入后崩溃都不会产生第二个站点。
+    /// </summary>
+    Task<HostedSite> CreateFromHtmlIdempotentAsync(
+        string userId,
+        byte[] htmlBytes,
+        string fileName,
+        string? title,
+        string? description,
+        string? folder,
+        List<string>? tags,
+        string sourceType,
+        string sourceRef,
+        CancellationToken ct = default);
+
     /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
+    /// <param name="uploadId">
+    /// 可选。传了就把解包进度写进 <see cref="IUploadProgressService"/>，
+    /// 供前端另开一路轮询展示「已解包 N / M 个文件」。不传 = 不记录，老调用方零影响。
+    /// </param>
     Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? sourceRef = null);
+
+    /// <summary>从可寻址 ZIP 流创建站点，调用方负责流的生命周期。</summary>
+    Task<HostedSite> CreateFromZipAsync(
+        string userId, Stream zipStream,
+        string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? sourceRef = null,
+        string? entryFile = null,
+        int? entryIndex = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
+    /// <param name="maxStoredBytes">
+    /// 落盘上限（字节）。服务端还会重写绝对路径并注入翻页垫片，**存下去的那份比调用方给的大**；
+    /// 对外承诺过「单页不超过 N」的调用方（如 MCP 开放层）把 N 传进来，由实现按变换后的真实字节判，
+    /// 超了直接拒绝上传。传 null 维持原行为（不限）。
+    /// </param>
     Task<HostedSite> CreateFromContentAsync(
         string userId, string htmlContent,
         string? title, string? description,
         string sourceType, string? sourceRef,
         List<string>? tags, string? folder,
+        CancellationToken ct = default,
+        int? maxStoredBytes = null);
+
+    /// <summary>
+    /// 从已验证的完整文件包创建新站点。先把全部目标 key 登记到设计 Run 的补偿账本，
+    /// 全部上传成功后才插入站点记录；已有站点的整包版本发布走 ReplaceWithVerifiedFilesAsync。
+    /// </summary>
+    Task<HostedSite> CreateFromVerifiedFilesAsync(
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string? title,
+        string? description,
+        string sourceType,
+        string sourceRef,
+        List<string>? tags,
+        string? folder,
+        string leaseOwnerId,
         CancellationToken ct = default);
 
     // ── 替换内容 ──
 
     /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>
+    /// <param name="uploadId">可选，同 <see cref="CreateFromZipAsync"/>。</param>
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? reuploadRef = null);
+
+    /// <summary>用可寻址 ZIP 流替换站点，调用方负责流的生命周期。</summary>
+    Task<HostedSite> ReuploadAsync(
+        string siteId, string userId, Stream zipStream, string fileName,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? reuploadRef = null,
+        string? zipEntryFile = null,
+        int? zipEntryIndex = null);
+
+    /// <summary>
+    /// 读取可微调的入口 HTML。会执行站点编辑权限与形态校验，且限制正文最多 2MB。
+    /// </summary>
+    Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
+        string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 读取用于版本基线的入口 HTML。与直接微调不同，允许正文已经内嵌到入口 HTML 的 Markdown 包装站；
+    /// PDF、视频等依赖原始资产的包装站仍然拒绝。
+    /// </summary>
+    Task<HostedSiteEditableEntry> GetRevisionEntryHtmlAsync(
+        string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 只替换入口 HTML，保留 ZIP 站点里的 CSS、图片等其余文件。
+    /// </summary>
+    Task<HostedSite> ReplaceEntryHtmlAsync(
+        string siteId, string userId, string html,
+        DateTime? expectedContentVersion = null,
+        string? publishedRevisionId = null,
+        CancellationToken ct = default);
+
+    /// <summary>发布已验证的完整 OpenDesign 文件包，并以单次站点 CAS 切换全部文件。</summary>
+    Task<HostedSite> ReplaceWithVerifiedFilesAsync(
+        string siteId,
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        DateTime expectedContentVersion,
+        string publishedRevisionId,
         CancellationToken ct = default);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
@@ -58,6 +168,29 @@ public interface IHostedSiteService
 
     /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
+
+    /// <summary>同步关联访问范围时，将团队与分组限制作为同一份权限一次写入，避免中间态放宽访问。</summary>
+    Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 这个用户能不能把网页放进这个团队空间（owner / editor）。与 SetSharedTeamsAsync 同一条判据，
+    /// 供「发起生成时就冻结目标空间」在用户还在场的那一刻先量一次。
+    /// </summary>
+    Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 批量版的 <see cref="CanPublishIntoTeamAsync"/>：返回这批团队里用户**不能**投放的那些
+    /// （viewer / 非成员），保持入参顺序。成员关系只加载一次，逐个团队走同一条判据；
+    /// 调用方拿一批团队做预检时必须用它，不许循环调单个版本（每次都会全量重载成员关系）。
+    /// </summary>
+    Task<IReadOnlyList<string>> GetTeamsNotPublishableAsync(
+        string userId, IReadOnlyCollection<string> teamIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// 这个用户能不能编辑这个站点。与编辑端点同一道角色门，供分享页决定显不显示编辑坞。
+    /// 前端不得再拿 createdBy 之类的代理量自己推。
+    /// </summary>
+    Task<bool> CanEditSiteAsync(HostedSite site, string userId, CancellationToken ct = default);
 
     /// <summary>
     /// 把自己的站点物理复制一份进团队空间（COS 文件完整拷贝，副本与原件互相独立）。
@@ -80,12 +213,46 @@ public interface IHostedSiteService
 
     Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct = default);
 
+    /// <summary>
+    /// 补偿尚未完成的设计任务所创建的私有站点。仅删除 Id、owner、design-agent 来源和 run 引用均精确匹配、
+    /// 且仍未公开的站点，并清理该站点的对象、版本和分享记录。
+    /// </summary>
+    Task<bool> CompensateGeneratedSiteAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        CancellationToken ct = default);
+
+    /// <summary>接管执行租约与清理租约均已过期的生成补偿，清理完成前禁止重新发布。</summary>
+    Task<bool> RecoverGeneratedSiteCleanupAsync(
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default);
+
+    /// <summary>执行中的 Worker 补偿必须原子校验发布租约归属，旧 Worker 不得清理接管者的产物。</summary>
+    Task<bool> CompensateGeneratedSiteWithLeaseAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default);
+
     Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct = default);
 
     // ── 可见性 ──
 
     /// <summary>切换站点可见性（private / public），首次 public 时写入 PublishedAt</summary>
     Task<HostedSite?> SetVisibilityAsync(string siteId, string userId, string visibility, CancellationToken ct = default);
+
+    /// <summary>这个用户能不能改站点可见性（只有站点创建者）。与 SetVisibilityAsync 同一判据，供私有资料确认闸在记录确认前先判。</summary>
+    bool CanSetVisibility(HostedSite site, string userId);
+
+    /// <summary>
+    /// 这个用户能不能为这些站点建分享链接（每个站点都要 CreateShare 权限）。与 CreateShareAsync 同一判据，
+    /// 供私有资料核查接口与分享前确认在返回资料名 / 记录确认之前先判。GetByIdAsync 对 viewer 也放行，不能拿它当这道门。
+    /// </summary>
+    Task<bool> CanCreateShareAsync(IReadOnlyCollection<string> siteIds, string userId, CancellationToken ct = default);
 
     /// <summary>按用户名获取该用户所有公开的站点（公开页聚合，无需登录）</summary>
     Task<List<HostedSite>> ListPublicByUserIdAsync(string ownerUserId, int limit = 60, CancellationToken ct = default);
@@ -111,7 +278,33 @@ public interface IHostedSiteService
         string purpose = "share",
         bool forceNew = false,
         string visibility = "owner-only",
-        bool allocateShortLink = false);
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null);
+
+    Task<WebPageShareLink> CreateCollectionShareAsync(string userId, string displayName,
+        HostedCollectionSnapshot snapshot, string? title, string? description, string? password,
+        int expiresInDays, string visibility, CancellationToken ct = default);
+
+    Task<WebPageShareLink> CreateFixedRevisionShareAsync(string userId, string displayName,
+        string siteId, HostedSiteFixedRevision revision, string? title, string? description,
+        string? password, TimeSpan validity, string visibility, CancellationToken ct = default);
+
+    /// <summary>
+    /// 与 <see cref="CreateShareAsync"/> 同一条路径，另外告诉调用方这次**有没有真的写下什么**。
+    /// 只有「复用了既有链接且一个字段都没动」才为 true —— 复用路径会刷新有效期并追一条续期审计，
+    /// 那是有副作用的，不能报成幂等命中（否则同一个键可以无限续期而不扣额度）。
+    /// </summary>
+    Task<(WebPageShareLink Link, bool ReusedWithoutChange)> CreateShareWithReuseInfoAsync(
+        string userId, string displayName,
+        string? siteId, List<string>? siteIds, string shareType,
+        string? title, string? description,
+        string? password, int expiresInDays,
+        CancellationToken ct = default,
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only",
+        bool allocateShortLink = false,
+        List<string>? askSuggestedQuestions = null);
 
     /// <summary>
     /// 事后为某条已存在的分享按需分配数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
@@ -122,9 +315,27 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 列出分享：默认包含未过期 + 过期 ≤ 7 天（允许续期）的链接。
-    /// 已撤销 / 过期 > 7 天的链接不返回，但保留 DB 行用于审计。
+    /// 过期 > 7 天的链接不返回，但保留 DB 行用于审计。
+    ///
+    /// <paramref name="includeRevoked"/> 默认 false —— 保持既有调用方行为不变。
+    /// 传 true 时把已撤销的链接一并返回（分享管理面板的「已撤销」一层要用：
+    /// 撤销不可逆，但用户仍需要看到「哪条被我撤了、什么时候撤的」并能重新分享，
+    /// 直接从列表里消失等于这段历史无处可查）。
     /// </summary>
-    Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct = default);
+    /// <summary>
+    /// 我建的分享链接。<paramref name="siteId"/> 非空时只返回指向该站点的（两个字段都认）。
+    ///
+    /// 不带 siteId 时结果按时间取最近 100 条。想判断「某个站点有没有活着的链接」必须带上
+    /// siteId：否则它的链接落在这 100 条之外时会被判成「没有」，调用方据此再建一条重复的。
+    /// </summary>
+    Task<List<WebPageShareLink>> ListSharesAsync(
+        string userId, CancellationToken ct = default, bool includeRevoked = false, string? siteId = null);
+
+    /// <summary>
+    /// 批量取站点标题（id → title）。分享列表的「指向的站点」一列要用。
+    /// 查不到的 id（站点已删）不会出现在结果里，调用方自己决定怎么显示。
+    /// </summary>
+    Task<Dictionary<string, string>> GetTitlesByIdsAsync(IEnumerable<string> siteIds, CancellationToken ct = default);
 
     /// <summary>
     /// 续期某条分享链接。仅创建者可调用。
@@ -135,7 +346,23 @@ public interface IHostedSiteService
     /// </summary>
     Task<RenewShareResult> RenewShareAsync(string shareId, string userId, int extendDays, CancellationToken ct = default);
 
-    Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct = default);
+    /// <summary>
+    /// 就地改一条已存在分享链接的设置（分享下拉面板里的「谁能打开 / 有效期」）。
+    ///
+    /// 与 <see cref="RenewShareAsync"/> 的区别：续期是**累加**（在现有到期日上加 N 天），
+    /// 这里是**重设**（从现在起算 N 天，0 = 永久）——用户在面板里选「7 天」，期待的是
+    /// 「这条链接还有 7 天」，不是「在原来剩的 3 天上再加 7 天」。
+    ///
+    /// 两个参数都是 null 表示不动该项（局部更新）。已撤销的链接一律拒绝：撤销不可逆，
+    /// 允许改设置等于把死链复活。
+    /// </summary>
+    Task<UpdateShareSettingsResult> UpdateShareSettingsAsync(
+        string shareId, string userId, string? visibility, int? expiresInDays, CancellationToken ct = default);
+
+    /// <summary>
+    /// 撤销分享链接（不可逆）。<paramref name="reason"/> 可选，记一句「为什么撤」。
+    /// </summary>
+    Task<bool> RevokeShareAsync(string shareId, string userId, string? reason = null, CancellationToken ct = default);
 
     Task<ShareViewResult?> ViewShareAsync(string token, string? password,
         string? viewerUserId = null, string? viewerName = null,
@@ -179,6 +406,20 @@ public interface IHostedSiteService
     /// <summary>切换站点是否允许评论（仅 owner / editor 可调）。返回更新后的站点；无权或不存在返回 null。</summary>
     Task<HostedSite?> SetCommentsEnabledAsync(string siteId, string userId, bool enabled, CancellationToken ct = default);
 
+    // ── 向我提问 ──
+
+    /// <summary>
+    /// 写入站点的「向我提问」配置（仅 owner / editor 可调，与评论开关同一套角色门）。
+    /// 返回更新后的站点；无权或不存在返回 null。
+    /// </summary>
+    /// <summary>
+    /// 能不能维护该站点的提问配置（owner / editor）。与「站点可见」是两件事：
+    /// GetByIdAsync 对任一共享团队成员（含 viewer）都放行，写路径不能拿它当权限。
+    /// </summary>
+    Task<bool> CanMaintainAskAsync(string siteId, string userId, CancellationToken ct = default);
+
+    Task<HostedSite?> SetAskConfigAsync(string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default);
+
     /// <summary>
     /// 直连 siteId 列出评论（owner / 有访问权的团队成员视角）。
     /// 校验 viewer 对站点的访问权（与 GetByIdAsync 同款 owner/team 规则）；无权或不存在返回 null。
@@ -187,37 +428,117 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 经分享链接列出评论（公开访问路径）。校验分享访问门（撤销 / 过期 / 可见性 / 密码）。
-    /// 通过后返回分享首个站点的评论；门禁不过时 Result.Error 非空。
+    /// 通过后返回所选站点的评论（未指定则取首站点）；站点必须属于该分享。
     /// </summary>
-    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
+    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default, string? siteId = null);
 
     /// <summary>直连 siteId 发表评论（需 viewer 对站点有访问权）。站点不存在 / 无权 / 评论关闭时 Error 非空。</summary>
     Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
-        string content, CancellationToken ct = default);
+        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null, string? clientId = null, IReadOnlyList<HostedSiteCommentFile>? attachments = null);
 
     /// <summary>经分享链接发表评论（公开路径，需登录）。校验分享访问门 + 评论开关；通过后插入。</summary>
     Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
-        string content, string? ipAddress, CancellationToken ct = default);
+        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null, string? clientId = null, IReadOnlyList<HostedSiteCommentFile>? attachments = null);
+
+    Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
+        bool resolved, CancellationToken ct = default);
+
+    Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password, string commentId,
+        string userId, bool resolved, CancellationToken ct = default, string? siteId = null);
 
     /// <summary>删除评论（作者本人或站点 owner）。无权 / 不存在返回 false。</summary>
     Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 经分享链接解析出一个可读取正文的站点（公开访问路径）。校验分享门禁（撤销 / 过期 / 可见性 / 密码），
+    /// 与 ListCommentsByShareAsync 同一套判定源。siteId 为空取分享首站点；指定时必须属于该分享。
+    /// 供预览页取回站点入口 HTML 用（浏览器直接 fetch 托管域名会被 CORS 拦掉，必须走服务端同源代理）。
+    /// </summary>
+    Task<ShareSiteResolveResult> ResolveCollectionShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
+
+    Task<ShareSiteResolveResult> ResolveFixedRevisionShareAsync(string token, string revisionId,
+        string? password, string? viewerUserId, string? proof, CancellationToken ct = default);
+
+    Task<ShareSiteResolveResult> ResolveShareSiteAsync(
+        string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
+}
+
+public record HostedSiteEditableEntry(
+    HostedSite Site,
+    string Html,
+    DateTime ContentVersion);
+
+/// <summary>站点「向我提问」配置的写入入参（owner 在提问设置抽屉里改的那几项）。</summary>
+public class AskConfigUpdate
+{
+    public bool? AiReplyEnabled { get; set; }
+
+    /// <summary>是否开放提问；null 表示本次不改站点自己的三态配置。</summary>
+    public bool? Enabled { get; set; }
+
+    /// <summary>面板欢迎语（空则前端用站点标题兜底）</summary>
+    public string? Welcome { get; set; }
+
+    /// <summary>站点级开场问题题库；分享时可从中挑选</summary>
+    public List<string>? SuggestedQuestions { get; set; }
+
+    /// <summary>是否允许未登录访客提问</summary>
+    public bool AllowAnonymous { get; set; }
+
+    /// <summary>每日提问上限（0 = 用系统默认）</summary>
+    public int DailyLimit { get; set; }
+}
+
+/// <summary>分享链接解析结果：拿到站点，或拿到一个可映射成 HTTP 状态的门禁错误。</summary>
+public class ShareSiteResolveResult
+{
+    public HostedSite? Site { get; set; }
+
+    /// <summary>
+    /// 门禁通过时带回分享链接本身。提问端点要读它的 AskSuggestedQuestions
+    /// （本链接自选的开场问题）；只有 Site 的话调用方就得再查一次库，
+    /// 而且会绕开这里已经做完的门禁判定。
+    /// </summary>
+    public WebPageShareLink? Share { get; set; }
+
+    public string? Error { get; set; }
+    public int HttpStatus { get; set; } = 200;
+    /// <summary>错误码：not_found / expired / VISIBILITY_DENIED / UNAUTHORIZED / rate_limited</summary>
+    public string? ErrorCode { get; set; }
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class HostedSiteCommentDto
 {
+    public bool IsAi { get; set; }
+    public string? AiReplyStatus { get; set; }
+    public IReadOnlyList<HostedSiteCommentFileDto> Attachments { get; set; } = Array.Empty<HostedSiteCommentFileDto>();
+    public string? ContentVersion { get; set; }
+    public string? RevisionId { get; set; }
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+    public string? ParentId { get; set; }
+    public bool IsResolved { get; set; }
+    public bool CanResolve { get; set; }
     public string Id { get; set; } = string.Empty;
     public string SiteId { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string AuthorUserId { get; set; } = string.Empty;
+    public bool IsMine { get; set; }
     public string AuthorName { get; set; } = "用户";
     public string? AuthorAvatarFileName { get; set; }
+    public string? AuthorAvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; }
     /// <summary>当前 viewer 是否可删除本评论（作者本人或站点 owner）</summary>
     public bool CanDelete { get; set; }
 }
+
+public record HostedSiteCommentFileDto(int Index, string Name, long Length);
 
 public class SiteCommentsResult
 {
@@ -252,6 +573,12 @@ public class TagCountResult
 
 public class ShareViewResult
 {
+    public string? RevisionId { get; set; }
+    public string? DocumentCollectionId { get; set; }
+    public string? CollectionId { get; set; }
+    public string? MainSiteId { get; set; }
+    public long CollectionVersion { get; set; }
+    public bool CollectionNeedsUpdate { get; set; }
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string ShareType { get; set; } = "single";
@@ -259,12 +586,38 @@ public class ShareViewResult
     public string? CreatedBy { get; set; }
     public string? CreatedByName { get; set; }
     public List<SharedSiteInfo> Sites { get; set; } = new();
+
+    /// <summary>
+    /// 本次分享的「向我提问」呈现配置（首站点的开关 + 本链接实际该显示的开场问题）。
+    /// 随分享视图一起返回，省掉一次额外的受门禁保护的往返；关闭时为 null。
+    /// </summary>
+    public ShareAskInfo? Ask { get; set; }
+
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
     /// <summary>错误码：visibility_denied / expired / wrong_password / rate_limited / not_found</summary>
     public string? ErrorCode { get; set; }
     /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试（驱动倒计时 UI）</summary>
     public int? RetryAfterSeconds { get; set; }
+}
+
+/// <summary>分享页渲染「向我提问」入口所需的一切（访客视角，不含 owner 才该看的配额等内部项）。</summary>
+public class ShareAskInfo
+{
+    /// <summary>被提问的站点 ID（合集分享取首站点）</summary>
+    public string SiteId { get; set; } = string.Empty;
+
+    /// <summary>是否显示提问入口</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>是否允许未登录访客提问；false 时前端要引导登录而不是直接开问</summary>
+    public bool AllowAnonymous { get; set; }
+
+    /// <summary>欢迎语（可空，前端用站点标题兜底）</summary>
+    public string? Welcome { get; set; }
+
+    /// <summary>本链接实际该显示的开场问题（已过 AskOpeningQuestions.Resolve，前端直接渲染即可）</summary>
+    public List<string> OpeningQuestions { get; set; } = new();
 }
 
 public class RenewShareResult
@@ -274,13 +627,55 @@ public class RenewShareResult
     public DateTime? NewExpiresAt { get; set; }
 }
 
+/// <summary>
+/// 就地改分享设置的结果。回传**改完之后的实际值**而不是「改成功了」——
+/// 面板那几行显示的就是这两个值，让前端拿请求参数去乐观更新，等于把服务端的规范化
+/// （白名单回退、天数夹取）绕过去，界面会显示一个后端根本没存的值。
+/// </summary>
+public class UpdateShareSettingsResult
+{
+    public bool Ok { get; set; }
+    public string? Error { get; set; }
+    public string Visibility { get; set; } = string.Empty;
+    public DateTime? ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// 分享链接「还能不能续期」的唯一判定源。
+///
+/// 这条判据原先在三处各写了一遍 <c>AddDays(-7)</c>（续期端点的拒绝分支、分享列表的
+/// inGracePeriod、数据抽屉的可续条数），改一处忘一处就会让界面承诺一件后端会拒绝的事。
+/// </summary>
+public static class ShareRenewPolicy
+{
+    /// <summary>过期之后仍然允许续期的宽限天数。</summary>
+    public const int GraceDays = 7;
+
+    /// <summary>早于这个时刻过期的链接就出了宽限窗。</summary>
+    public static DateTime GraceCutoff(DateTime now) => now.AddDays(-GraceDays);
+
+    /// <summary>
+    /// 这条链接现在能不能续期。与 RenewShareAsync 的两个拒绝分支同源：
+    /// 已撤销不可续；过期超过宽限窗不可续（没有过期时间的一直可续）。
+    /// </summary>
+    public static bool CanRenew(bool isRevoked, DateTime? expiresAt, DateTime now)
+        => !isRevoked && (!expiresAt.HasValue || expiresAt.Value >= GraceCutoff(now));
+}
+
 public class ShareAnalyticsResult
 {
     public int TotalShares { get; set; }
     public int ActiveShares { get; set; }
     public int ExpiredShares { get; set; }
+    /// <summary>已过期之中，续期真的能救回来的条数（未撤销且还在宽限窗内）。</summary>
+    public int RenewableExpiredShares { get; set; }
     public long TotalViews { get; set; }
     public int UniqueIpCount { get; set; }
+    /// <summary>
+    /// 独立访客数是不是取自被截断的样本。TotalViews 走无上限聚合，而去重访客只能在
+    /// 取回的那一批日志上算；命中上限时这个数只是下界，界面不得据它算人均。
+    /// </summary>
+    public bool VisitorSampleCapped { get; set; }
     public long CommentCount { get; set; }
     public List<ShareAnalyticsTimelineEntry> Timeline { get; set; } = new();
     public List<ShareAnalyticsLinkSummary> TopLinks { get; set; } = new();
@@ -398,7 +793,28 @@ public class SharedSiteInfo
     public string? Description { get; set; }
     public string SiteUrl { get; set; } = string.Empty;
     public string EntryFile { get; set; } = string.Empty;
+    /// <summary>与站内预览相同的文件结构判据；多文件网站需要真实文档 URL。</summary>
+    public string ContentShape { get; set; } = string.Empty;
+    public bool RequiresPreviewBridge { get; set; }
+    public string? ZipHomepageAssetPath { get; set; }
     public long TotalSize { get; set; }
+
+    /// <summary>
+    /// 入口文件**自己**的字节数（不是 TotalSize 那个所有文件之和）。
+    ///
+    /// 前端拿它判「取正文的同源代理装不装得下这一份」：那条路由读满 2MB 就断
+    /// （见 WebPagesController.FetchSiteHtmlResultAsync 的 maxBytes），而托管上传允许到
+    /// 500MB。此前前端只能拿 TotalSize 近似，于是只对单文件站成立——多文件站里入口 HTML
+    /// 本身超过 2MB 的那一类就漏掉了，按钮看着能用、点下去必然失败（Codex 第四轮 P2）。
+    /// 给出入口自己的大小之后，判据对两种站点是同一条，不再有特例。
+    ///
+    /// 找不到入口文件条目时为 0（前端据此退回「不拦，失败时给受控文案」）。
+    /// </summary>
+    public long EntrySize { get; set; }
+
+    /// <summary>仅可经本站点受控附件端点下载的 PDF 相对路径，不包含存储键。</summary>
+    public List<string> PdfFilePaths { get; set; } = new();
+
     public int FileCount { get; set; }
     public string? CoverImageUrl { get; set; }
 
@@ -408,4 +824,26 @@ public class SharedSiteInfo
     /// PDF Viewer 接管；否则嵌套 iframe + sandbox 会被 Chrome 屏蔽。
     /// </summary>
     public string? PdfAssetUrl { get; set; }
+
+    /// <summary>
+    /// 包装资产类型（pdf / video / markdown …），普通 HTML 站为 null。
+    ///
+    /// 前端要靠它判断「这个站点有没有可读的 HTML 正文」。包装站的入口同样是 index.html，
+    /// 光看 entryFile 分不出来；而正文代理对任何非空包装类型都会拒绝，
+    /// 前端不知情就会拿一个「预期之内的拒绝」当失败，在一个本来显示正常的直链预览上
+    /// 盖一条错误角标。
+    /// </summary>
+    public string? WrappedAssetType { get; set; }
+
+    /// <summary>
+    /// 当前访问者能不能编辑这个站点，由服务端用编辑端点那同一道角色门算出来。
+    ///
+    /// 前端**不要**再拿 createdBy 之类的代理量自己推：那是「谁建了这条分享链接」，
+    /// 而后端明确允许团队编辑者建分享——两者一错位，真正的站点主人进不去编辑坞，
+    /// 只建过链接的人反而看得见。匿名访问恒为 false。
+    /// </summary>
+    public bool ViewerCanEdit { get; set; }
+
+    /// <summary>当前访问者是否为网页作者；与分享链接创建者无关，匿名访问恒为 false。</summary>
+    public bool ViewerIsOwner { get; set; }
 }

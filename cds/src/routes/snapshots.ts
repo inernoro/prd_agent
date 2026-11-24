@@ -91,6 +91,7 @@ export function createSnapshotsRouter(deps: SnapshotsRouterDeps): Router {
       });
       res.json({ rolledBack: true, snapshot: { id: target.id, label: target.label }, message: `已回滚到「${target.label}」` });
     } catch (err) {
+      if ((err as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(err as Error).message}); return; }
       res.status(400).json({ error: (err as Error).message });
     }
   });
@@ -137,6 +138,7 @@ export function createSnapshotsRouter(deps: SnapshotsRouterDeps): Router {
       stateService.markDestructiveOpUndone(op.id);
       res.json({ undone: true, message: `已通过回滚快照撤销「${op.summary}」` });
     } catch (err) {
+      if ((err as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(err as Error).message}); return; }
       res.status(500).json({ error: (err as Error).message });
     }
   });

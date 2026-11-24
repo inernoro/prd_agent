@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LLM Gateway serving availability and auth probe.
 
-This read-only probe is meant for S5/S6 rollout evidence. It checks protected
+This read-only probe runs after every production deploy (exec_dep.sh). It checks protected
 /gw/v1/readyz dependencies with a key, repeatedly checks /gw/v1/healthz without a key,
 verifies the reported commit is stable, and checks that protected endpoints
 reject unauthenticated access.
@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -19,6 +20,118 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+
+
+# 发布范围显式选择功能；不扫描未启用 Agent，也不把配置退化升级为实例摘流。
+# 每项为 (appCallerCode, modelType, requiresThinking)，能力需求属于用途，不按模型名猜测。
+FEATURE_ROUTES = {
+    "defect-agent": (
+        ("defect-agent.polish::chat", "chat", False),
+        ("defect-agent.polish-stream::chat", "chat", True),
+    ),
+    "image-generation": (
+        ("visual-agent.image.text2img::generation", "generation", False),
+        ("visual-agent.image.img2img::generation", "generation", False),
+        ("visual-agent.image.vision::generation", "generation", False),
+        ("literary-agent.illustration.text2img::generation", "generation", False),
+        ("literary-agent.illustration.img2img::generation", "generation", False),
+        ("video-agent.image.text2img::generation", "generation", False),
+    ),
+}
+
+def _failed_readiness_components(payload: dict) -> list[str]:
+    components = payload.get("components") or payload.get("Components") or []
+    return sorted({
+        name for item in components if isinstance(item, dict)
+        if item.get("ready", item.get("Ready")) is False
+        for name in [item.get("name") or item.get("Name") or ""]
+        if isinstance(name, str) and re.fullmatch(r"[a-z0-9-]+", name)
+    })
+
+
+def _readiness_baseline(base: str, key: str, output: str) -> int:
+    code, raw, _ = _request(base, "/readyz", key=key)
+    try:
+        payload = _json(raw)
+        failed = _failed_readiness_components(payload) if code == 503 else []
+    except (ValueError, TypeError, AttributeError):
+        failed = []
+    _write_json(output, {"httpStatus": code, "failedComponents": failed})
+    if failed or code != 200:
+        print(f"WARN: 发布前生产网关已有故障 (HTTP {code}): {', '.join(failed) or '未取得组件状态'}")
+    else:
+        print("发布前生产网关检查通过")
+    return 0
+
+
+def _readiness_disposition(code: int, status: str, failed: list[str],
+                           baseline: dict, forced: bool, images_in_scope: bool = False) -> str:
+    if code == 200 and status.lower() in {"ready", "ok"}:
+        return "pass"
+    if code == 503 and status.lower() == "not-ready" and failed:
+        known = set(baseline.get("failedComponents", [])) & {"scenario-capability", "asset-storage"}
+        if images_in_scope:
+            known.discard("scenario-capability")
+        if set(failed) <= known:
+            return "existing"
+        # 场景能力校验的是本地路由配置。强制发布只能放行已识别的外部故障。
+        if forced and set(failed) <= known | {"asset-storage"}:
+            return "forced"
+    return "fail"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, _req, _fp, _code, _msg, _headers, _newurl):
+        return None
+
+
+def _feature_routes(features: list[str]) -> list[tuple[str, str, bool]]:
+    selected = [part.strip() for item in features for part in item.split(",") if part.strip()]
+    if "none" in selected:
+        if selected != ["none"]:
+            raise ValueError("feature none cannot be combined with a model feature")
+        return []
+    unknown = sorted(set(selected) - FEATURE_ROUTES.keys())
+    if unknown:
+        raise ValueError("unknown release features: " + ",".join(unknown))
+    return list(dict.fromkeys(route for feature in selected for route in FEATURE_ROUTES[feature]))
+
+
+def _check_feature_routes(base: str, key: str, routes: list[tuple[str, str, bool]]) -> list[dict]:
+    checks = []
+    for caller, model_type, requires_thinking in routes:
+        code, raw, latency = _request(base, "/resolve", key=key, method="POST", body={
+            "AppCallerCode": caller, "ModelType": model_type, "ReadOnlyMetadata": True,
+        })
+        try:
+            payload = _json(raw)
+            if not isinstance(payload, dict):
+                payload = {}
+        except (ValueError, TypeError):
+            payload = {}
+        error = payload.get("error") or payload.get("Error") or {}
+        success = payload.get("success", payload.get("Success")) is True
+        failure_code = payload.get("failureCode") or payload.get("FailureCode")
+        if not failure_code and isinstance(error, dict):
+            failure_code = error.get("code") or error.get("Code")
+        # 对齐该用途实际请求的能力门禁：非 strict 下未知能力仍允许，明确 false 才拒绝。
+        # 同步润色没有 thinking 意图，不能因共用 chat 模型而一并要求此能力。
+        thinking_unsupported = (code == 200 and success and requires_thinking
+                                and payload.get("supportsThinking", payload.get("SupportsThinking")) is False)
+        ready = code == 200 and success and not thinking_unsupported
+        if thinking_unsupported:
+            failure_code = "THINKING_UNSUPPORTED"
+        checks.append({
+            "appCallerCode": caller, "modelType": model_type, "requiresThinking": requires_thinking,
+            "ok": ready, "httpStatus": code, "latencyMs": latency,
+            "failureCode": failure_code or ("" if ready else "ROUTE_READINESS_FAILED"),
+            "failureStage": payload.get("failureStage") or payload.get("FailureStage") or "",
+            "logicalModel": payload.get("logicalModelPublicId") or payload.get("LogicalModelPublicId") or "",
+            "nextAction": "" if ready else (
+                "核对该用途的模型授权、启用状态、能力与可用线路；恢复后重跑相同范围验收。"
+                if code not in (401, 403) else "核对发布凭据的 route:read 权限和目标用途范围后重跑。"),
+        })
+    return checks
 
 
 def _env_first(names: list[str]) -> tuple[str, str]:
@@ -67,7 +180,7 @@ def _request(
         req.add_header("X-Gateway-Key", key)
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=30) as resp:
             elapsed_ms = (time.monotonic() - started) * 1000
             return resp.status, resp.read().decode("utf-8", "replace"), elapsed_ms
     except urllib.error.HTTPError as exc:
@@ -102,7 +215,6 @@ def _default_protected_checks() -> list[dict]:
     return [
         {"method": "GET", "path": "/route-self-test", "body": None},
         {"method": "GET", "path": "/pools?appCallerCode=report-agent.generate%3A%3Achat&modelType=chat", "body": None},
-        {"method": "GET", "path": "/shadow-comparisons", "body": None},
         {"method": "POST", "path": "/resolve", "body": chat_body},
         {"method": "POST", "path": "/send", "body": chat_body},
         {"method": "POST", "path": "/stream", "body": chat_body},
@@ -200,6 +312,11 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- keyEnv: `{cell(route.get('keyEnv') or '')}`\n")
         fh.write(f"- protocols: `{cell(','.join(route.get('protocols') or []))}`\n")
         fh.write(f"- missingProtocols: `{cell(','.join(route.get('missingProtocols') or []))}`\n")
+        fh.write("\n## Release Feature Routes\n\n")
+        fh.write(f"- scope: `{cell(','.join(report.get('featureScope') or []))}`\n\n")
+        fh.write("| appCaller | ready | failureCode | nextAction |\n|---|---|---|---|\n")
+        for item in report.get("featureRoutes") or []:
+            fh.write(f"| {cell(item['appCallerCode'])} | {cell(item['ok'])} | {cell(item['failureCode'])} | {cell(item['nextAction'])} |\n")
         fh.write("\n## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -275,7 +392,7 @@ def _route_self_test_result(raw: str, status_code: int, latency_ms: float, requi
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="LLM Gateway serving availability/auth probe")
-    parser.add_argument("--base", default=_default_base(), help="serving base URL, e.g. https://host/gw/v1")
+    parser.add_argument("--base", help="serving base URL, e.g. https://host/gw/v1")
     parser.add_argument("--expect-commit", default=os.environ.get("GIT_COMMIT", ""))
     parser.add_argument("--samples", type=int, default=int(os.environ.get("LLMGW_SERVING_PROBE_SAMPLES", "12")))
     parser.add_argument("--interval", type=float, default=float(os.environ.get("LLMGW_SERVING_PROBE_INTERVAL_SECONDS", "5")))
@@ -285,6 +402,8 @@ def main() -> int:
                         help="protected endpoint that must reject missing key, format 'METHOD /path' or METHOD:/path; repeatable")
     parser.add_argument("--key", default="", help="Gateway key for authenticated route-self-test; defaults to key envs.")
     parser.add_argument("--key-env", default="LLMGW_GATE_KEY")
+    parser.add_argument("--feature", action="append", default=[],
+                        help="required release feature, repeatable/comma-separated; defect-agent, image-generation or explicit none")
     parser.add_argument(
         "--require-route-self-test",
         action="store_true",
@@ -294,22 +413,34 @@ def main() -> int:
     parser.add_argument("--json-out", default=os.environ.get("LLMGW_SERVING_PROBE_JSON_OUT", ""))
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_SERVING_PROBE_REPORT_MD", ""))
     parser.add_argument("--print-json", action="store_true")
+    parser.add_argument("--readiness-baseline-out", default="")
+    parser.add_argument("--readiness-baseline", default="")
+    parser.add_argument("--force-external", action="store_true")
     args = parser.parse_args()
+    features = args.feature or [os.environ.get("LLMGW_RELEASE_FEATURES", "")]
 
-    base = (args.base or "").strip().rstrip("/")
+    base = (args.base or _default_base()).strip().rstrip("/")
     key_name, key = _env_first([args.key_env, "LLMGW_GATE_KEY", "LLMGW_SERVE_KEY"])
     key = (args.key or key).strip()
     if args.key:
         key_name = "cli"
+    if args.readiness_baseline_out:
+        return _readiness_baseline(base, key, args.readiness_baseline_out)
+    baseline = {}
+    if args.readiness_baseline:
+        with open(args.readiness_baseline, encoding="utf-8") as source:
+            baseline = json.load(source)
     sample_count = max(1, args.samples)
     interval = max(0, args.interval)
     try:
+        feature_routes = _feature_routes(features)
         protected_checks = [{"method": "GET", "path": path, "body": None} for path in args.protected_path]
         protected_checks.extend(_parse_protected_endpoint(item) for item in args.protected_endpoint)
         if not protected_checks:
             protected_checks = _default_protected_checks()
         protected_parse_failure = ""
     except ValueError as exc:
+        feature_routes = []
         protected_checks = []
         protected_parse_failure = str(exc)
 
@@ -330,6 +461,8 @@ def main() -> int:
         },
         "healthSamples": [],
         "protectedChecks": [],
+        "featureScope": features,
+        "featureRoutes": [],
         "routeSelfTest": {
             "required": bool(args.require_route_self_test),
             "ok": not bool(args.require_route_self_test),
@@ -339,6 +472,7 @@ def main() -> int:
             "missingProtocols": [],
         },
         "failures": [],
+        "warnings": [],
     }
 
     if not base:
@@ -352,6 +486,7 @@ def main() -> int:
             "status": "",
             "commit": "",
             "components": [],
+            "failedComponents": [],
             "latencyMs": ready_latency,
             "raw": ready_raw[:500],
         }
@@ -365,13 +500,21 @@ def main() -> int:
                 for item in components
                 if isinstance(item, dict)
             ]
+            readiness["failedComponents"] = _failed_readiness_components(ready_payload)
         except Exception as exc:
             report["failures"].append(f"readyz invalid JSON: {exc}")
         report["readiness"] = readiness
-        if ready_code != 200 or readiness["status"].lower() not in {"ready", "ok"}:
-            report["failures"].append(
-                f"readyz not ready: HTTP {ready_code}, status={readiness['status'] or 'empty'}"
-            )
+        disposition = _readiness_disposition(
+            ready_code, readiness["status"], readiness["failedComponents"], baseline, args.force_external,
+            any(caller.endswith("::generation") for caller, _, _ in feature_routes))
+        if disposition != "pass":
+            detail = f"HTTP {ready_code}, {readiness['status'] or 'empty'}, 组件 {', '.join(readiness['failedComponents']) or '未知'}"
+            if disposition == "existing":
+                report["warnings"].append(f"生产环境已有依赖故障，继续发布（{detail}）")
+            elif disposition == "forced":
+                report["warnings"].append(f"强制发布放行外部依赖故障（{detail}）")
+            else:
+                report["failures"].append(f"readyz not ready: {detail}")
         if args.expect_commit and readiness["commit"] and readiness["commit"] != args.expect_commit:
             report["failures"].append(
                 f"readyz commit mismatch: actual={readiness['commit']}, expected={args.expect_commit}"
@@ -443,6 +586,15 @@ def main() -> int:
                         f"missingProtocols={','.join(route_result.get('missingProtocols') or []) or 'none'}"
                     )
 
+        report["featureRoutes"] = _check_feature_routes(base, key, feature_routes)
+        for item in report["featureRoutes"]:
+            if not item["ok"]:
+                # /resolve 只读取路由和能力配置，既不调用模型，也不能确认上游业务服务故障。
+                report["failures"].append(
+                    f"feature route {item['appCallerCode']} failed: HTTP {item['httpStatus']} "
+                    f"{item['failureCode']}; {item['nextAction']}"
+                )
+
     report["verdict"] = "fail" if report["failures"] else "pass"
     _write_json(args.json_out, report)
     _write_markdown(args.report_md, report)
@@ -454,7 +606,14 @@ def main() -> int:
     print(f"- readiness={report['readiness'].get('status')}")
     print(f"- protected_checks={len(report['protectedChecks'])}")
     print(f"- route_self_test={report['routeSelfTest'].get('ok')}")
+    print(f"- feature_routes={len(report['featureRoutes'])}")
+    for failure in report["failures"]:
+        print(f"- {failure}")
+    for warning in report["warnings"]:
+        print(f"WARN: {warning}")
     print(f"- failures={len(report['failures'])}")
+    if report["failures"]:
+        print(f"ERROR: 网关发布验证失败 · {report['failures'][0]}", file=sys.stderr)
     return 1 if report["failures"] else 0
 
 

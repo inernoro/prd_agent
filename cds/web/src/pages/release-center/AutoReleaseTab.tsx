@@ -1,5 +1,10 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
- * 自动发布页签：满足条件时由 CDS 自己发，不需要人在场。
+ * 定时发布规则：到点由 CDS 自己发，不需要人在场。
+ *
+ * 与「自动发布规则」（AutoRulesSection，事件驱动，分支被推时发）是两种触发面，
+ * 同屏上下并列。标题必须叫「定时发布规则」——两块都叫「自动发布规则」时，
+ * 屏幕上会出现两个同名标题和两个「新建规则」按钮，用户分不清点哪个。
  *
  * 底座复用 scheduled-job（interval / daily / manual 调度、超时、运行记录都是现成的），
  * 这里只负责「发布到某环境」这一种动作的配置面：不另起调度器，不另起一张任务表。
@@ -9,7 +14,7 @@
  * - 立即试跑走 check-target，对 release 只跑发布前检查，**不发布**。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Play, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
@@ -25,6 +30,7 @@ import type {
 } from './types';
 
 export interface AutoReleaseTabProps {
+  refreshVersion?: number;
   row: CenterRow;
   /** 同项目的其它环境，用作 promote 来源候选。 */
   otherRows: CenterRow[];
@@ -68,33 +74,43 @@ function emptyDraft(defaults: { branchId: string; fromTargetId: string }): RuleD
   };
 }
 
-export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleaseTabProps): JSX.Element {
+export function AutoReleaseTab({ row, otherRows, branches, onToast, refreshVersion = 0 }: AutoReleaseTabProps): JSX.Element {
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<RuleDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyJobId, setBusyJobId] = useState('');
+  const requestSeq = useRef(0);
+  const loadedProject = useRef<string | null>(null);
 
   const load = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError('');
     try {
       const res = await apiRequest<{ jobs: ScheduledJobSummary[] }>(
         `/api/scheduled-jobs?project=${encodeURIComponent(row.target.projectId)}`,
       );
+      if (seq !== requestSeq.current) return;
+      loadedProject.current = row.target.projectId;
       setJobs(res.jobs || []);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setError(err instanceof ApiError ? err.message : String(err));
-      setJobs([]);
+      if (loadedProject.current !== row.target.projectId) setJobs([]);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [row.target.projectId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { requestSeq.current++; }; }, [load, refreshVersion]);
 
-  const releaseJobs = jobs.filter((job) => releaseActionOf(job, row.target.id) !== undefined);
+  // 事件驱动的 push 规则归 AutoRulesSection（设计稿 §4）。不排掉的话同一条规则
+  // 会在两块里各出现一次，而且在这里被当成定时规则编辑。
+  const releaseJobs = jobs.filter(
+    (job) => job.schedule.type !== 'push' && releaseActionOf(job, row.target.id) !== undefined,
+  );
 
   const submit = async (): Promise<void> => {
     if (!draft) return;
@@ -117,10 +133,10 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
       };
       if (draft.id) {
         await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body });
-        onToast('自动发布规则已更新');
+        onToast('定时发布规则已更新');
       } else {
         await apiRequest('/api/scheduled-jobs', { method: 'POST', body });
-        onToast('自动发布规则已创建');
+        onToast('定时发布规则已创建');
       }
       setDraft(null);
       await load();
@@ -167,7 +183,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
     setBusyJobId(job.id);
     try {
       await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
-      onToast('自动发布规则已删除');
+      onToast('定时发布规则已删除');
       await load();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
@@ -180,9 +196,9 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
     <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">自动发布规则</h3>
+          <h3 className="text-sm font-semibold">定时发布规则</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            满足条件时由 CDS 自己发。需人工确认的规则永不自动发布，只会到点跑一次预检并通知你。
+            按时间触发，与上面的事件规则各走各的。需人工确认的规则永不自动发布，只会到点跑一次预检并通知你。
           </p>
         </div>
         <Button
@@ -193,7 +209,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
           }))}
         >
           <Plus />
-          新建规则
+          新建定时规则
         </Button>
       </div>
 
@@ -210,26 +226,23 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
         />
       ) : null}
 
-      {loading ? (
-        <div className="cds-surface-raised cds-hairline flex items-center gap-2 rounded-lg px-4 py-8 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在读取自动发布规则
-        </div>
-      ) : error ? (
+      {error && loadedProject.current === row.target.projectId ? <p role="alert" className="text-xs text-bad">规则请求失败，保留上次结果：{error}</p> : null}
+      {loading && loadedProject.current !== row.target.projectId ? <ContentLoading label="读取定时发布规则" variant="rows" /> : error && loadedProject.current !== row.target.projectId ? (
         <div className="cds-surface-raised cds-hairline rounded-lg px-4 py-8 text-sm text-muted-foreground">
           规则列表暂时读不到：{error}
         </div>
       ) : releaseJobs.length === 0 ? (
         <div className="cds-surface-raised cds-hairline rounded-lg px-4 py-10 text-center">
-          <p className="text-sm font-medium">这个环境还没有自动发布规则</p>
+          <p className="text-sm font-medium">这个环境还没有定时发布规则</p>
           <p className="mx-auto mt-1.5 max-w-lg text-xs text-muted-foreground">
-            典型用法：预发环境「main 有新提交就发」，生产环境「每天固定时间把预发这一版发上来，但需要人点头」。
+            典型用法：生产环境「每天固定时间把预发这一版发上来，但需要人点头」。分支一有提交就发那种，用上面的事件规则。
           </p>
         </div>
       ) : (
         <section className="cds-surface-raised cds-hairline overflow-hidden rounded-lg">
           {releaseJobs.map((job) => (
             <RuleRow
+              refreshVersion={refreshVersion}
               key={job.id}
               job={job}
               action={releaseActionOf(job, row.target.id)!}
@@ -249,6 +262,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
 }
 
 function RuleRow({
+  refreshVersion,
   job,
   action,
   row,
@@ -259,6 +273,7 @@ function RuleRow({
   onEdit,
   onDelete,
 }: {
+  refreshVersion: number;
   job: ScheduledJobSummary;
   action: ScheduledJobActionSummary;
   row: CenterRow;
@@ -281,12 +296,12 @@ function RuleRow({
         }`}
       >
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${job.enabled ? 'left-[18px]' : 'left-0.5'}`}
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${job.enabled ? 'left-[1.125rem]' : 'left-0.5'}`}
         />
       </button>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[13px] font-semibold">{job.name}</span>
+          <span className="truncate text-[0.8125rem] font-semibold">{job.name}</span>
           <Chip>{scheduleText(job)}</Chip>
           {action.requireApproval ? <Chip tone="warn">需人工确认</Chip> : null}
           {action.dryRun ? <Chip>仅预检</Chip> : null}
@@ -304,11 +319,11 @@ function RuleRow({
             : ''}
         </div>
         {job.autoDisabledReason ? (
-          <div className="mt-1.5 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 text-[11.5px] text-amber-700 dark:text-amber-300">
+          <div className="mt-1.5 rounded-md border border-warn/35 bg-warn-soft px-2.5 py-1.5 text-[0.7188rem] text-warn">
             已被系统自动停用：{job.autoDisabledReason}
           </div>
         ) : null}
-        <JobRuns jobId={job.id} />
+        <JobRuns jobId={job.id} refreshVersion={refreshVersion} />
       </div>
       <div className="col-start-2 flex flex-wrap gap-2 md:col-start-3">
         <Button size="sm" variant="outline" onClick={onDryRun} disabled={busy}>
@@ -325,33 +340,38 @@ function RuleRow({
   );
 }
 
-function JobRuns({ jobId }: { jobId: string }): JSX.Element {
+function JobRuns({ jobId, refreshVersion }: { jobId: string; refreshVersion: number }): JSX.Element {
   const [runs, setRuns] = useState<ScheduledJobRunSummary[] | null>(null);
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!open || runs !== null) return;
+    if (!open) return;
+    let active = true;
+    setError('');
     apiRequest<{ runs: ScheduledJobRunSummary[] }>(
       `/api/scheduled-jobs/runs?jobId=${encodeURIComponent(jobId)}&limit=10`,
     )
-      .then((res) => setRuns(res.runs || []))
-      .catch(() => setRuns([]));
-  }, [open, runs, jobId]);
+      .then((res) => { if (active) setRuns(res.runs || []); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : String(err)); });
+    return () => { active = false; };
+  }, [open, jobId, refreshVersion]);
 
   return (
     <details className="mt-2" onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}>
-      <summary className="inline-flex cursor-pointer items-center gap-1 text-[11.5px] text-muted-foreground">
+      <summary className="inline-flex cursor-pointer items-center gap-1 text-[0.7188rem] text-muted-foreground">
         <ChevronDown className="h-3.5 w-3.5" />
         运行记录
       </summary>
-      {runs === null ? (
-        <div className="mt-1.5 text-[11.5px] text-muted-foreground">正在读取…</div>
+      {error ? <p role="alert" className="text-xs text-bad">运行记录读取失败：{error}</p> : null}
+      {error && runs === null ? null : runs === null ? (
+        <ContentLoading label="读取规则运行记录" className="mt-1.5" />
       ) : runs.length === 0 ? (
-        <div className="mt-1.5 text-[11.5px] text-muted-foreground">还没有运行记录。</div>
+        <div className="mt-1.5 text-[0.7188rem] text-muted-foreground">还没有运行记录。</div>
       ) : (
         <ul className="mt-1.5 flex flex-col gap-1">
           {runs.map((run) => (
-            <li key={run.id} className="text-[11.5px] text-muted-foreground">
+            <li key={run.id} className="text-[0.7188rem] text-muted-foreground">
               {formatDateTime(run.startedAt || run.queuedAt)} · {run.status}
               {run.releaseStatus ? ` · 发布 ${run.releaseStatus}` : ''}
               {run.error ? ` · ${run.error}` : ''}
@@ -385,7 +405,7 @@ function RuleForm({
   const set = (patch: Partial<RuleDraft>): void => onChange({ ...draft, ...patch });
   return (
     <section className="cds-surface-raised cds-hairline rounded-lg p-4">
-      <h4 className="text-sm font-semibold">{draft.id ? '编辑自动发布规则' : '新建自动发布规则'}</h4>
+      <h4 className="text-sm font-semibold">{draft.id ? '编辑定时发布规则' : '新建定时发布规则'}</h4>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         <label className="grid gap-1 text-sm">
           <span className="text-muted-foreground">规则名称</span>
@@ -573,7 +593,9 @@ function draftFromJob(
   return {
     id: job.id,
     name: job.name,
-    scheduleType: job.schedule.type,
+    // 这个编辑器只管定时调度；push 规则归 AutoRulesSection，本页不列它们。
+    // 真被喂进来（列表过滤漏了）时退回 manual，不把一条事件规则改写成定时规则。
+    scheduleType: job.schedule.type === 'push' ? 'manual' : job.schedule.type,
     timeOfDay: job.schedule.timeOfDay || '03:00',
     intervalMinutes: String(job.schedule.intervalMinutes || 60),
     timezone: job.schedule.timezone || 'Asia/Shanghai',

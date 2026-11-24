@@ -94,8 +94,36 @@ public class ImageMasterWorkspace
     /// <summary>是否公开到作品广场（文学创作投稿 = 公开 workspace）</summary>
     public bool IsPublic { get; set; }
 
+    /// <summary>
+    /// 禁止生成完成后自动投稿。MCP 创建的工作区默认开启，避免网页端的全局自动投稿偏好
+    /// 越过工作区的私有意图；用户仍可在界面中明确点击“投稿当前”进行公开。
+    /// </summary>
+    public bool SuppressAutoSubmit { get; set; }
+
+    /// <summary>
+    /// 开放接口建稿时请求载荷的指纹（标题 / 正文 / 带标记正文 / 文件夹）。
+    /// 同一个 clientRequestId 带着不同内容再来时据此回冲突，而不是悄悄把旧文章当成新建结果返回。
+    /// 网页建的工作区与存量数据为 null，不参与比对。
+    /// </summary>
+    public string? CreateRequestFingerprint { get; set; }
+
+    /// <summary>
+    /// 这篇文章上次**明确指定**过的配图风格 / 水印 / 尺寸（智能体经开放接口传入时记下）。
+    /// 之后生图不再传时沿用它，而不是退回账号默认：用户说「重画一张」，预期当然是原来那套。
+    /// 从没指定过为 null，此时用账号默认。
+    /// </summary>
+    public LiteraryIllustrationPrefs? IllustrationPrefs { get; set; }
+
     /// <summary>首次公开时间</summary>
     public DateTime? PublishedAt { get; set; }
 }
 
-
+/// <summary>一篇文学文章记住的配图选择。值与生图接口的参数同形：风格 / 水印存配置 ID（或 none），尺寸存宽x高。</summary>
+public class LiteraryIllustrationPrefs
+{
+    public string? StyleId { get; set; }
+    public string? WatermarkId { get; set; }
+    public string? Size { get; set; }
+    public string? SizeAspectRatio { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}

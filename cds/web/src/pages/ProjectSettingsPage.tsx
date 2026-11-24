@@ -1,5 +1,12 @@
+import { ConfirmAction } from '@/components/ui/confirm-action';
+import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
+import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { ProjectSettingsRefreshContext, useProjectSettingsRefresh, useSettingsReadRequest, type SettingsRead, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
+import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -9,6 +16,7 @@ import {
   ChevronRight,
   Copy,
   Database,
+  DatabaseZap,
   Download,
   Eye,
   FileText,
@@ -19,7 +27,6 @@ import {
   Loader2,
   Plug,
   RefreshCw,
-  RotateCcw,
   Rocket,
   Save,
   Send,
@@ -49,14 +56,24 @@ import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
+import { CommentTemplateTab } from '@/pages/project-settings/CommentTemplateTab';
+import { BackupTab } from '@/pages/project-settings/BackupTab';
+import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
+import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
+import { resolveProjectSettingsTab } from '@/lib/settingsSearchIndex';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+import { ProjectIdentityHistory } from '@/components/project/ProjectIdentityHistory';
+import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
 
 interface ProjectSummary {
   id: string;
   slug: string;
   name: string;
   aliasName?: string;
-  aliasSlug?: string;
+  identityVersion?: string;
+  /** 项目声明的 Agent 角色（GET /api/projects 带出）；未声明时缺省。 */
+  agentProfile?: { role: string; experience: string; cardTitle?: string };
   resourceChipDisplay?: ResourceChipDisplay;
   description?: string;
   kind?: string;
@@ -66,6 +83,7 @@ interface ProjectSummary {
   createdAt?: string;
   updatedAt?: string;
   autoSmokeEnabled?: boolean;
+  agentPrebuiltOnly?: boolean;
   inheritGlobalEnv?: boolean;
   branchCount?: number;
   runningBranchCount?: number;
@@ -91,6 +109,8 @@ interface ProjectSummary {
   autoPublishAfterMinutes?: number;
   /** Deprecated: 项目级自动停止已收敛到系统调度器，保存生命周期时会清零。 */
   autoStopAfterMinutes?: number;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 type ResourceChipDisplay = {
@@ -117,7 +137,32 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
 interface BuildProfileSummary {
   id: string;
   name: string;
-  deployModes?: Record<string, { label?: string }>;
+  /** 构建配置自己的基线模式：新分支默认里「跟随构建配置」用的就是它 */
+  activeDeployMode?: string;
+  deployModes?: Record<string, { label?: string; prebuilt?: boolean }>;
+}
+
+/**
+ * 新分支默认运行模式下拉里的「跟随构建配置」（2026-10-08）。
+ *
+ * defaultDeployModes 里「键不存在」与「键为空串」是两回事：缺键 = 新分支沿用构建配置的基线模式；
+ * 空串会被原样拷进分支覆盖 = 强制源码，哪怕基线是极速版。这一页以前保存时给**每个**服务都写，
+ * 没选过的写成空串、下拉里还叫「源码默认」——mdimp 六个基线是极速版的服务就这样在每条新分支里
+ * 被悄悄改成了源码编译。现在没选过的服务一律不写，下拉里明示基线是什么。
+ */
+const FOLLOW_PROFILE_BASELINE = '__follow_profile_baseline__';
+
+function defaultModeSelection(saved: Record<string, string>, profileId: string): string {
+  return Object.prototype.hasOwnProperty.call(saved, profileId) ? saved[profileId] : FOLLOW_PROFILE_BASELINE;
+}
+
+function profileModeLabel(profile: BuildProfileSummary, modeId: string | undefined): string {
+  if (!modeId) return '热加载 / 源码';
+  return profile.deployModes?.[modeId]?.label || modeId;
+}
+
+function isPrebuiltModeOf(profile: BuildProfileSummary, modeId: string | undefined): boolean {
+  return Boolean(modeId && profile.deployModes?.[modeId]?.prebuilt);
 }
 
 interface BuildProfilesResponse {
@@ -157,32 +202,6 @@ interface ActivityLogEntry {
 interface ActivityLogsResponse {
   logs: ActivityLogEntry[];
   total: number;
-}
-
-interface TemplateVariableDef {
-  key: string;
-  label: string;
-  example: string;
-}
-
-interface CommentTemplateResponse {
-  ok: boolean;
-  body: string;
-  updatedAt: string | null;
-  isDefault: boolean;
-  defaultBody: string;
-  variables: TemplateVariableDef[];
-}
-
-interface CommentTemplateSaveResponse {
-  ok: boolean;
-  body: string;
-  updatedAt: string;
-}
-
-interface CommentTemplatePreviewResponse {
-  ok: boolean;
-  rendered: string;
 }
 
 interface GithubEventPolicy {
@@ -284,8 +303,10 @@ type TabValue =
   | 'runtime-defaults'
   | 'delivery'
   | 'compose'
+  | 'db-isolation'
   | 'infra'
   | 'storage'
+  | 'backup'
   | 'migration'
   | 'cache'
   | 'stats'
@@ -299,10 +320,17 @@ interface TabItem {
 }
 
 interface TabGroup {
-  label: string;
+  /** 只能用 settingsTaxonomy 词表里的组名；写别的编译不过。 */
+  label: SettingsGroupLabel;
   items: TabItem[];
 }
 
+/*
+ * 分组按「用户来这里要回答的问题」切，组名与顺序来自 settingsTaxonomy（与系统设置共用）。
+ * 2026-09-02 之前 11 个页签全塞在「运行时」里，环境变量、备份、统计混在一起；现在
+ * 运行 = 它怎么跑起来，数据 = 它的数据放哪 / 分不分 / 备不备 / 搬不搬，观测 = 它跑得怎么样。
+ * 新增页签先回答它属于哪个问题，再落组（见 web/src/lib/settingsTaxonomy.ts）。
+ */
 const tabGroups: TabGroup[] = [
   {
     label: '接入',
@@ -313,16 +341,28 @@ const tabGroups: TabGroup[] = [
     ],
   },
   {
-    label: '运行时',
+    label: '运行',
     items: [
+      { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
       { value: 'delivery', label: '交付模式', icon: Server },
-      { value: 'compose', label: '项目配置', icon: FileText },
+    ],
+  },
+  {
+    label: '数据',
+    items: [
+      { value: 'db-isolation', label: '数据库隔离', icon: DatabaseZap },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'storage', label: '存储', icon: Database },
+      { value: 'backup', label: '周期备份', icon: ShieldCheck },
       { value: 'migration', label: '迁移', icon: Send },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
+    ],
+  },
+  {
+    label: '观测',
+    items: [
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
     ],
@@ -333,24 +373,31 @@ const tabGroups: TabGroup[] = [
   },
 ];
 
-const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
-
 const inputClass =
   'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
 const monoInputClass = `${inputClass} font-mono`;
 const textareaClass =
   'min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
 
+/** 角色 id 转中文名。项目未声明角色时右列不显示这一行，不猜。 */
+const AGENT_ROLE_LABELS: Record<string, string> = {
+  pm: '产品经理',
+  owner: '业务专家 / 需求专家',
+  'domain-expert': '领域专家',
+  dev: '开发',
+  qa: '测试与验收',
+};
+
+function agentRoleLabel(role: string): string {
+  return AGENT_ROLE_LABELS[role] || role;
+}
+
 function displayName(project: ProjectSummary): string {
   return project.aliasName || project.name || project.slug || project.id;
 }
 
 function getInitialTab(): TabValue {
-  const hash = window.location.hash.replace(/^#/, '');
-  if (tabs.some((tab) => tab.value === hash)) return hash as TabValue;
-
-  const queryTab = new URLSearchParams(window.location.search).get('tab') || '';
-  return tabs.some((tab) => tab.value === queryTab) ? (queryTab as TabValue) : 'general';
+  return resolveProjectSettingsTab(window.location.search, window.location.hash) as TabValue;
 }
 
 function formatDate(value?: string | null): string {
@@ -376,46 +423,173 @@ function messageFromError(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err);
 }
 
+/**
+ * 保存接口回的项目对象没有 `repoSharing`（那是 GET 才做的富化），直接拿它替换页面
+ * 状态会让同仓横幅在保存之后凭空消失。这里只做一件事：新对象没带这段富化时，把上
+ * 一次的值原样留着，别让它掉。权威值由调用方随后静默重取。
+ *
+ * 单独抽出来是为了能直接断言这个行为——它藏在 useState 的更新函数里就只能靠源码扫描
+ * 证明「写在那儿」，证明不了「算得对」。
+ */
+export function preserveRepoSharing(
+  prev: ProjectSummary | null,
+  next: ProjectSummary,
+): ProjectSummary {
+  if (!prev || prev.id !== next.id) return next;
+  // 新对象自己带了（哪怕是 undefined 以外的空值）就以它为准，不要拿旧的盖新的
+  if (next.repoSharing !== undefined) return next;
+  if (prev.repoSharing === undefined) return next;
+  return { ...next, repoSharing: prev.repoSharing };
+}
+
 function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
   setProject: (project: ProjectSummary) => void;
+  refreshing: boolean;
+  refreshError: string;
 } {
   const [state, setState] = useState<ProjectState>({ status: 'loading' });
+  const request = useRef<AbortController | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
 
   const refresh = useCallback(async () => {
     if (!projectId) {
       setState({ status: 'error', message: '缺少项目 ID' });
       return;
     }
-    setState({ status: 'loading' });
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setRefreshing(true);
+    setRefreshError('');
+    setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'loading' });
     try {
-      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
-      setState({ status: 'ok', project });
+      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`, { signal: controller.signal });
+      if (!controller.signal.aborted) setState({ status: 'ok', project });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (!controller.signal.aborted) {
+        const message = messageFromError(err);
+        setRefreshError(message);
+        setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'error', message });
+      }
+    } finally {
+      if (!controller.signal.aborted) setRefreshing(false);
+    }
+  }, [projectId]);
+
+  /**
+   * 静默重取「只有 GET 才带」的富化字段（`repoSharing`）。
+   *
+   * 各个保存接口回的是裸 Project / toSummary，没有这一段——直接拿它整体替换页面状态，
+   * 同仓横幅就会在保存之后凭空消失，直到用户手动刷新（2026-09-02 Codex P2）。绑仓库
+   * 那条更糟：正是「这一刻该出现横幅」的操作，把横幅弄没了。
+   *
+   * 不走 `refresh()`：那会把状态打回 loading，整页闪一下（expectation-management
+   * 里的「变化必须可感知」反面：凭空消失再凭空出现）。这里只补差，不动 status。
+   */
+  const reloadSharing = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const fresh = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
+      setState((prev) => (prev.status === 'ok' && prev.project.id === fresh.id
+        ? { status: 'ok', project: { ...prev.project, repoSharing: fresh.repoSharing } }
+        : prev));
+    } catch {
+      // 富化字段取不到就维持现状，不要因此打断刚刚成功的那次保存
     }
   }, [projectId]);
 
   useEffect(() => {
     void refresh();
+    return () => request.current?.abort();
   }, [refresh]);
 
   return {
-    state,
+    state: state.status === 'ok' && state.project.id !== projectId ? { status: 'loading' } : state,
     refresh,
-    setProject: (project) => setState({ status: 'ok', project }),
+    refreshing,
+    refreshError,
+    /*
+     * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
+     * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
+     * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
+     */
+    setProject: (project) => {
+      // 保存结果比保存前发出的 GET 更新；不允许旧快照覆盖刚接受的写入。
+      request.current?.abort();
+      setRefreshing(false);
+      setRefreshError('');
+      setState((prev) => ({
+        status: 'ok',
+        project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
+      }));
+      void reloadSharing();
+    },
   };
 }
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
-  const { state, refresh, setProject } = useProject(projectId);
+  const fromBranch = new URLSearchParams(window.location.search).get('fromBranch');
+  const returnToBranch = `/branches/${encodeURIComponent(projectId || '')}${fromBranch ? `?branch=${encodeURIComponent(fromBranch)}&branchTab=config&configSection=settings` : ''}`;
+  const { state, refresh: refreshProject, setProject, refreshing: refreshingProject, refreshError } = useProject(projectId);
+  const reads = useRef(new Set<SettingsRead>());
+  const registerRead = useCallback((read: SettingsRead) => {
+    reads.current.add(read);
+    return () => { reads.current.delete(read); };
+  }, []);
+  const [refreshingTabs, setRefreshingTabs] = useState(false);
+  const [tabRefreshError, setTabRefreshError] = useState('');
+  const refreshSequence = useRef(0);
+  useEffect(() => {
+    setRefreshingTabs(false); setTabRefreshError('');
+    return () => { refreshSequence.current++; };
+  }, [projectId]);
+  const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
+    setRefreshingTabs(true);
+    setTabRefreshError('');
+    try {
+      const results = await Promise.allSettled([refreshProject(), ...Array.from(reads.current, read => read())]);
+      if (sequence !== refreshSequence.current) return;
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failed) setTabRefreshError(messageFromError(failed.reason));
+    } finally {
+      if (sequence === refreshSequence.current) setRefreshingTabs(false);
+    }
+  }, [refreshProject]);
+  const refreshing = refreshingProject || refreshingTabs;
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const tabsListRef = useSettingsTabVisibility(activeTab);
   const [toast, setToast] = useState('');
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [applyingScope, setApplyingScope] = useState(false);
+
+  /**
+   * 一键采纳系统给的范围建议。系统看得出本项目待在哪个目录，也说得出凭什么，
+   * 所以这里只要一次确认，不必让用户去对话框里再挑一遍。
+   */
+  async function applyScopeSuggestion(): Promise<void> {
+    if (!projectId) return;
+    setApplyingScope(true);
+    try {
+      const res = await apiRequest<{ applied: Array<{ profileId: string }>; scope: string[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/scope-options/apply`,
+        { method: 'POST' },
+      );
+      setToast(`已固定为 ${res.scope.join('、')}；下次推送生效`);
+      await refresh();
+    } catch (err) {
+      setToast(messageFromError(err));
+    } finally {
+      setApplyingScope(false);
+    }
+  }
 
   useEffect(() => {
-    window.history.replaceState(null, '', `#${activeTab}`);
+    window.history.replaceState(window.history.state, '', `#${activeTab}`);
   }, [activeTab]);
 
   useEffect(() => {
@@ -438,6 +612,7 @@ export function ProjectSettingsPage(): JSX.Element {
    * Tab list and content surfaces upgrade to surface-raised tokens.
    */
   return (
+    <ProjectSettingsRefreshContext.Provider value={registerRead}>
     <AppShell
       active="projects"
       topbar={
@@ -473,17 +648,18 @@ export function ProjectSettingsPage(): JSX.Element {
                   项目
                 </Link>
               </Button>
-              <Button asChild variant="ghost" size="sm" title="分支控制台">
-                <Link to={`/branches/${encodeURIComponent(projectId || '')}`}>
+              <Button asChild variant="ghost" size="sm" title={fromBranch ? "返回分支设置" : "分支控制台"}>
+                <Link to={returnToBranch}>
                   <GitBranch />
-                  <span className="md:hidden">分支控制台</span>
+                  <span className={fromBranch ? undefined : "md:hidden"}>{fromBranch ? '返回分支' : '分支控制台'}</span>
                 </Link>
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => void refresh()}
-                aria-label="刷新项目设置"
+                disabled={refreshing}
+                aria-label={refreshing ? '正在刷新项目设置' : '刷新项目设置'}
                 title="刷新"
               >
                 <RefreshCw />
@@ -494,10 +670,13 @@ export function ProjectSettingsPage(): JSX.Element {
         />
       }
     >
-      <Workspace>
-        {state.status === 'loading' ? <LoadingBlock label="加载项目设置" /> : null}
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {(refreshError || tabRefreshError) && state.status === 'ok' ? <p role="alert" className="px-6 py-3 text-sm text-destructive">刷新失败：{refreshError || tabRefreshError}；当前显示上次读取的内容。</p> : null}
+        {state.status === 'loading' ? (
+          <SettingsPageSkeleton label="加载项目设置" project projectTab={activeTab} />
+        ) : null}
         {state.status === 'error' ? (
-          <div className="space-y-4">
+          <div className="space-y-4 p-6">
             <ErrorBlock message={state.message} />
             <Button asChild variant="outline">
               <Link to="/project-list">
@@ -509,15 +688,28 @@ export function ProjectSettingsPage(): JSX.Element {
         ) : null}
 
         {project ? (
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-            <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-              <TabsList
-                aria-label="项目设置分区"
-                className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
-              >
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setActiveTab(value as TabValue)}
+            className="cds-settings-shell"
+          >
+            {/*
+             * 方向 A：设置页属于全屏外壳，而不是浮在页面中间的两张白卡。
+             * 导航贴左边成为固定栏（只留一条 hairline，从顶通到底），内容区
+             * 铺满剩余宽度；可读宽度由内容区自己的表单列负责，不再靠
+             * workspace 的 1240 上限把整页缩到中间。
+             */}
+            <div className="cds-settings-layout">
+              <SettingsDirectory groups={tabGroups} value={activeTab} label="项目设置目录" onChange={value => setActiveTab(value as TabValue)} />
+              <div className="cds-settings-desktop-directory">
+              <TabsList ref={tabsListRef} aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
+                <div className="cds-settings-rail-head">
+                  <div className="text-sm font-semibold">项目设置</div>
+                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.slug || project.id}</div>
+                </div>
                 {tabGroups.map((group, groupIdx) => (
-                  <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
-                    <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                  <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
+                    <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
                       {group.label}
                     </div>
                     {group.items.map((tab) => {
@@ -532,8 +724,25 @@ export function ProjectSettingsPage(): JSX.Element {
                   </div>
                 ))}
               </TabsList>
+              </div>
 
-              <div className="cds-settings-content cds-surface-raised cds-hairline min-w-0 p-5">
+              <div className="cds-settings-content min-w-0">
+                <div className="cds-settings-section-body">
+                {/*
+                 * 同仓关系放在所有分区之上、每个分区都看得见：用户是在这个项目里
+                 * 干活时才需要知道「改这里会连累谁」，切到哪个 tab 都成立。
+                 */}
+                {project.repoSharing ? (
+                  <div className="mb-4">
+                    <RepoSharingBanner
+                      sharing={project.repoSharing}
+                      selfId={project.id}
+                      onDeclareScope={() => setScopeDialogOpen(true)}
+                      onApplySuggestion={() => void applyScopeSuggestion()}
+                      applying={applyingScope}
+                    />
+                  </div>
+                ) : null}
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -547,10 +756,13 @@ export function ProjectSettingsPage(): JSX.Element {
                   <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="delivery">
-                  <ProjectDeliveryTab projectId={project.id} onToast={setToast} />
+                  <ProjectDeliveryTab key={project.id} projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="compose">
                   <ProjectComposeTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="db-isolation">
+                  <DbIsolationTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="infra">
                   <ProjectInfraTab projectId={project.id} onToast={setToast} />
@@ -558,11 +770,14 @@ export function ProjectSettingsPage(): JSX.Element {
                 <TabsContent value="storage">
                   <ProjectStorageTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
+                <TabsContent value="backup">
+                  <BackupTab projectId={project.id} />
+                </TabsContent>
                 <TabsContent value="migration">
                   <ProjectMigrationTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="comment-template">
-                  <CommentTemplateTab projectId={project.id} onToast={setToast} />
+                  <CommentTemplateTab key={project.id} projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="cache">
                   <CacheDiagnosticTab onToast={setToast} />
@@ -576,9 +791,19 @@ export function ProjectSettingsPage(): JSX.Element {
                 <TabsContent value="danger">
                   <DangerZoneTab project={project} onToast={setToast} />
                 </TabsContent>
+                </div>
               </div>
             </div>
           </Tabs>
+        ) : null}
+
+        {project ? (
+          <BuildScopeDialog
+            open={scopeDialogOpen}
+            onOpenChange={setScopeDialogOpen}
+            projectId={project.id}
+            onSaved={(message) => { setToast(message); void refresh(); }}
+          />
         ) : null}
 
         {toast ? (
@@ -592,6 +817,7 @@ export function ProjectSettingsPage(): JSX.Element {
         ) : null}
       </Workspace>
     </AppShell>
+    </ProjectSettingsRefreshContext.Provider>
   );
 }
 
@@ -629,6 +855,21 @@ function ProjectEnvTab({
 
   return (
     <div className="space-y-4">
+      <EnvEditor
+        scope={project.id}
+        title="项目环境变量"
+        description={
+          <>
+            只注入 <CodePill>{name}</CodePill> 的分支容器，保存后重新部署生效。全局继承目前{project.inheritGlobalEnv ? '已开启' : '已关闭'}，同名项目变量优先。CDS 系统级配置请放到{' '}
+            <Link className="text-primary underline-offset-4 hover:underline" to="/cds-settings#global-vars">
+              CDS 全局变量
+            </Link>
+            。
+          </>
+        }
+        emptyDescription="当前项目没有独有环境变量。添加后重新部署分支即可生效。"
+        onToast={onToast}
+      />
       <div className="flex flex-col gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1 text-sm">
           <div className="font-semibold text-foreground">继承 CDS 全局变量</div>
@@ -655,28 +896,14 @@ function ProjectEnvTab({
         <div className="space-y-1 text-sm">
           <div className="font-semibold text-foreground">配置向导</div>
           <div className="text-xs text-muted-foreground">
-            按"必填 / CDS 自动 / 推导"三色分组弹窗,适合一次性把缺失项填齐。
+            检查缺失的必填变量，按提示补齐项目配置。
           </div>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
           打开向导
         </Button>
       </div>
-      <EnvEditor
-        scope={project.id}
-        title="项目环境变量"
-        description={
-          <>
-            只注入 <CodePill>{name}</CodePill> 的分支容器。CDS 系统级配置请放到{' '}
-            <Link className="text-primary underline-offset-4 hover:underline" to="/cds-settings#global-vars">
-              CDS 全局变量
-            </Link>
-            。
-          </>
-        }
-        emptyDescription="当前项目没有独有环境变量。添加后重新部署分支即可生效。"
-        onToast={onToast}
-      />
+
       <EnvSetupDialog
         projectId={wizardOpen ? project.id : null}
         projectName={name}
@@ -711,8 +938,12 @@ function RuntimeDefaultsTab({
   const [aligning, setAligning] = useState(false);
   const [error, setError] = useState('');
 
+  const previousModes = useRef(project.defaultDeployModes || {});
   useEffect(() => {
-    setModes(project.defaultDeployModes || {});
+    const previous = previousModes.current;
+    const next = project.defaultDeployModes || {};
+    setModes(current => mergeCleanSettings(current, previous, next));
+    previousModes.current = next;
   }, [project.defaultDeployModes]);
 
   // 当前下拉选择是否与「已保存」的项目默认有出入。align-deploy-modes 后端按
@@ -726,7 +957,7 @@ function RuntimeDefaultsTab({
       ...Object.keys(savedModes),
       ...Object.keys(modes),
     ]);
-    for (const k of keys) if ((modes[k] || '') !== (savedModes[k] || '')) return true;
+    for (const k of keys) if (defaultModeSelection(modes, k) !== defaultModeSelection(savedModes, k)) return true;
     return false;
   })();
 
@@ -749,30 +980,28 @@ function RuntimeDefaultsTab({
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const beginRead = useSettingsReadRequest();
+  const loadProfiles = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setLoading(true);
     setError('');
-    apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`)
-      .then((res) => {
-        if (!cancelled) setProfiles(res.profiles || []);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(messageFromError(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [projectId]);
+    try {
+      const res = await apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`, { signal });
+      if (!signal.aborted) setProfiles(res.profiles || []);
+    } catch (err) { if (!signal.aborted) setError(messageFromError(err)); }
+    finally { if (!signal.aborted) setLoading(false); }
+  }, [projectId, beginRead]);
+  useEffect(() => { void loadProfiles(); }, [loadProfiles]);
+  useProjectSettingsRefresh(() => loadProfiles(true));
 
   async function saveDefaults(): Promise<void> {
     setSaving(true);
     setError('');
     try {
+      // 只写用户显式选过的服务；「跟随构建配置」的不写键，新分支直接用构建配置基线。
       const cleaned: Record<string, string> = {};
       for (const profile of profiles) {
-        cleaned[profile.id] = modes[profile.id] || '';
+        if (Object.prototype.hasOwnProperty.call(modes, profile.id)) cleaned[profile.id] = modes[profile.id];
       }
       const result = await apiRequest<ProjectSaveResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
         method: 'PUT',
@@ -791,7 +1020,7 @@ function RuntimeDefaultsTab({
     <div className="space-y-6">
       <Section
         title="新分支默认运行模式"
-        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。"
+        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。「跟随构建配置」的服务不复制，新分支直接用构建配置里的模式。"
       >
         {loading ? <LoadingBlock label="加载构建配置" /> : null}
         {error ? <ErrorBlock message={error} /> : null}
@@ -803,20 +1032,40 @@ function RuntimeDefaultsTab({
         <div className="space-y-3">
           {profiles.map((profile) => {
             const entries = Object.entries(profile.deployModes || {});
+            const selection = defaultModeSelection(modes, profile.id);
+            const baselineLabel = profileModeLabel(profile, profile.activeDeployMode);
+            // 构建配置基线是极速版，这里却显式选了非极速版：新分支会改走宿主编译，必须让人看见
+            const overridesPrebuiltBaseline = selection !== FOLLOW_PROFILE_BASELINE
+              && isPrebuiltModeOf(profile, profile.activeDeployMode)
+              && !isPrebuiltModeOf(profile, selection || undefined);
             return (
               <div key={profile.id} className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{profile.name || profile.id}</div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">{profile.id}</div>
+                  {overridesPrebuiltBaseline ? (
+                    <div className="mt-1 text-xs text-warn">
+                      构建配置基线是{baselineLabel}，这里选了{profileModeLabel(profile, selection || undefined)}：新分支会改在 CDS 宿主上编译
+                    </div>
+                  ) : null}
                 </div>
                 <select
-                  className="h-9 min-w-[180px] rounded-md border border-input bg-background px-3 text-sm"
-                  value={modes[profile.id] || ''}
-                  onChange={(event) => setModes((current) => ({ ...current, [profile.id]: event.target.value }))}
+                  className="h-9 min-w-[11.25rem] rounded-md border border-input bg-background px-3 text-sm"
+                  value={selection}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setModes((current) => {
+                      const next = { ...current };
+                      if (value === FOLLOW_PROFILE_BASELINE) delete next[profile.id];
+                      else next[profile.id] = value;
+                      return next;
+                    });
+                  }}
                   disabled={entries.length === 0}
                   title="只作为新分支模板，不影响已有分支"
                 >
-                  <option value="">热加载 / 源码默认</option>
+                  <option value={FOLLOW_PROFILE_BASELINE}>跟随构建配置（{baselineLabel}）</option>
+                  <option value="">热加载 / 源码</option>
                   {entries.map(([modeId, mode]) => (
                     <option key={modeId} value={modeId}>
                       {mode.label || modeId}
@@ -891,8 +1140,12 @@ function ReadinessFloorSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const previousSeconds = useRef(initial);
   useEffect(() => {
-    setSeconds(Number(project.deployReadinessFloorSeconds) || 0);
+    const previous = previousSeconds.current;
+    const next = Number(project.deployReadinessFloorSeconds) || 0;
+    setSeconds(current => current === previous ? next : current);
+    previousSeconds.current = next;
   }, [project.deployReadinessFloorSeconds]);
 
   async function save(): Promise<void> {
@@ -980,10 +1233,13 @@ function AutoLifecycleSection({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const previousPublish = useRef(initialPublish);
   useEffect(() => {
-    const p = Number(project.autoPublishAfterMinutes) || 0;
-    setPublishEnabled(p > 0);
-    setPublishMinutes(p > 0 ? p : 3);
+    const previous = previousPublish.current;
+    const next = Number(project.autoPublishAfterMinutes) || 0;
+    setPublishEnabled(current => current === (previous > 0) ? next > 0 : current);
+    setPublishMinutes(current => current === (previous > 0 ? previous : 3) ? (next > 0 ? next : 3) : current);
+    previousPublish.current = next;
   }, [project.autoPublishAfterMinutes]);
 
   async function save(): Promise<void> {
@@ -1059,7 +1315,7 @@ function AutoLifecycleSection({
   );
 }
 
-function GeneralTab({
+export function GeneralTab({
   project,
   projectId,
   onSaved,
@@ -1072,10 +1328,12 @@ function GeneralTab({
 }): JSX.Element {
   const [name, setName] = useState(project.name || '');
   const [aliasName, setAliasName] = useState(project.aliasName || '');
-  const [aliasSlug, setAliasSlug] = useState(project.aliasSlug || '');
+  const savedSlug = project.slug;
+  const [slug, setSlug] = useState(savedSlug);
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
+  const [agentPrebuiltOnly, setAgentPrebuiltOnly] = useState(Boolean(project.agentPrebuiltOnly));
   const [resourceChipDisplay, setResourceChipDisplay] = useState<Required<ResourceChipDisplay>>(
     normalizeResourceChipDisplay(project.resourceChipDisplay),
   );
@@ -1106,14 +1364,25 @@ function GeneralTab({
     }
   }
 
+  const previousProject = useRef(project);
+  const acceptSavedDraft = useRef(false);
   useEffect(() => {
-    setName(project.name || '');
-    setAliasName(project.aliasName || '');
-    setAliasSlug(project.aliasSlug || '');
-    setDescription(project.description || '');
-    setGitRepoUrl(project.gitRepoUrl || '');
-    setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
-    setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
+    const previous = previousProject.current;
+    const changedProject = previous.id !== project.id || acceptSavedDraft.current;
+    acceptSavedDraft.current = false;
+    // 刷新同步远端变化，同时保留用户尚未保存的字段；骨架和后台刷新都不能抹掉输入。
+    setName(value => changedProject || value === (previous.name || '') ? project.name || '' : value);
+    setAliasName(value => changedProject || value === (previous.aliasName || '') ? project.aliasName || '' : value);
+    setSlug(value => changedProject || value === previous.slug ? project.slug : value);
+    setDescription(value => changedProject || value === (previous.description || '') ? project.description || '' : value);
+    setGitRepoUrl(value => changedProject || value === (previous.gitRepoUrl || '') ? project.gitRepoUrl || '' : value);
+    setAutoSmokeEnabled(value => changedProject || value === Boolean(previous.autoSmokeEnabled) ? Boolean(project.autoSmokeEnabled) : value);
+    setAgentPrebuiltOnly(value => changedProject || value === Boolean(previous.agentPrebuiltOnly) ? Boolean(project.agentPrebuiltOnly) : value);
+    setResourceChipDisplay(value => {
+      const old = normalizeResourceChipDisplay(previous.resourceChipDisplay);
+      return changedProject || value.icon === old.icon && value.name === old.name && value.port === old.port ? normalizeResourceChipDisplay(project.resourceChipDisplay) : value;
+    });
+    previousProject.current = project;
   }, [project]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -1135,13 +1404,16 @@ function GeneralTab({
         body: {
           name: trimmedName,
           aliasName: aliasName.trim(),
-          aliasSlug: aliasSlug.trim(),
+          slug: slug.trim(),
+          expectedIdentityVersion: project.identityVersion,
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
           autoSmokeEnabled,
+          agentPrebuiltOnly,
           resourceChipDisplay,
         },
       });
+      acceptSavedDraft.current = true;
       onSaved(result.project);
       onToast('项目设置已保存');
     } catch (err) {
@@ -1164,33 +1436,46 @@ function GeneralTab({
     <div className="space-y-8">
       <Section
         title="项目基础信息"
-        description="这些字段只影响项目展示、仓库来源和项目级自动冒烟测试，不会改写项目 ID 或 Docker 网络。"
+        description="修改展示名称、项目 slug 和仓库来源；保存前可核对变化，保存后可查看记录。"
       >
-        <form className="max-w-3xl space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+        {/*
+         * 方向 A：表单列锁可读宽度（620px），右列放这一组设置的「当前生效 /
+         * 改动影响」。宽屏下富余的横向空间变成信息，而不是留白；窄屏与中屏
+         * 自动退回单列（.cds-settings-columns 的 1280px 断点）。
+         */}
+        <div className="cds-settings-columns">
+        <form className="cds-settings-form-col space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">项目名称</span>
             <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} maxLength={60} />
           </label>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">显示别名</span>
-            <input
-              className={inputClass}
-              value={aliasName}
-              onChange={(event) => setAliasName(event.target.value)}
-              maxLength={60}
-              placeholder="留空则使用项目名称"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">别名 slug</span>
-            <input
-              className={monoInputClass}
-              value={aliasSlug}
-              onChange={(event) => setAliasSlug(event.target.value.toLowerCase())}
-              maxLength={50}
-              placeholder="留空则使用项目原 slug"
-            />
-          </label>
+          <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">项目 slug</span>
+              <input className={monoInputClass} value={slug}
+                onChange={(event) => setSlug(event.target.value.toLowerCase())}
+                maxLength={Math.max(50, project.slug.length)} required aria-describedby="project-slug-help" />
+            </label>
+            <p id="project-slug-help" className="text-xs text-muted-foreground break-all">
+              当前使用：<span className="font-mono text-foreground">{savedSlug}</span>。
+              用于各分支预览地址的项目部分，修改项目名称或仓库不会自动改变它。
+            </p>
+            {slug.trim() !== savedSlug ? (
+              <p className="text-xs text-warn break-all" role="status">
+                保存后使用：{slug.trim() || '请填写标识'}。将影响该项目已有和未来分支的预览地址；已分享的链接可能受影响。
+              </p>
+            ) : null}
+          </div>
+          <details className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">高级显示设置</summary>
+            <div className="mt-3 space-y-3">
+              <label className="block space-y-1.5">
+                <span>显示名称覆盖（可选）</span>
+                <input className={inputClass} value={aliasName} onChange={(event) => setAliasName(event.target.value)}
+                  maxLength={60} placeholder={name || '使用项目名称'} />
+              </label>
+            </div>
+          </details>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">描述</span>
             <textarea
@@ -1221,11 +1506,25 @@ function GeneralTab({
               <span className="block text-muted-foreground">需要项目可访问 AI access key 后才会执行。</span>
             </span>
           </label>
+          <label className="flex max-w-3xl items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
+            <input
+              className="mt-1 h-4 w-4"
+              type="checkbox"
+              checked={agentPrebuiltOnly}
+              onChange={(event) => setAgentPrebuiltOnly(event.target.checked)}
+            />
+            <span className="text-sm leading-6">
+              <span className="font-medium">Agent 只允许极速版（CI 预构建）部署</span>
+              <span className="block text-muted-foreground">
+                开启后，Agent 凭据发起的部署只要有服务会在 CDS 宿主上源码编译就被拦下，Agent 也不能把分支或项目默认切成 dev / static。真人在页面上的操作不受限。默认关闭，不影响其它项目。
+              </span>
+            </span>
+          </label>
           <div className="max-w-3xl space-y-3 cds-surface-raised cds-hairline px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-medium">分支资源标签</div>
-              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 text-xs text-emerald-700 dark:text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-ok/30 bg-ok-soft px-2 text-xs text-ok">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden />
                 {resourceChipDisplay.icon ? <Plug className="h-3.5 w-3.5" aria-hidden /> : null}
                 {resourceChipDisplay.name ? <span className="font-semibold">Node.js</span> : null}
                 {resourceChipDisplay.port ? <span className="font-mono text-muted-foreground">:3000</span> : null}
@@ -1263,18 +1562,62 @@ function GeneralTab({
             保存修改
           </Button>
         </form>
+
+          <aside className="cds-settings-aside-col">
+            <div className="cds-surface-raised cds-hairline rounded-lg p-4">
+              <div className="pb-3 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
+                当前生效
+              </div>
+              <dl className="grid gap-2.5 text-xs">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">项目 ID</dt>
+                  <dd className="truncate font-mono">{project.id}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">项目 slug</dt>
+                  <dd className="break-all font-mono">{savedSlug}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Docker 网络</dt>
+                  <dd className="truncate font-mono">{project.dockerNetwork}</dd>
+                </div>
+                {project.agentProfile ? (
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Agent 角色</dt>
+                    <dd className="truncate">{agentRoleLabel(project.agentProfile.role)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+
+            <div className="rounded-lg border border-warn/35 bg-warn-soft p-4">
+              <div className="flex items-center gap-1.5 pb-1.5 text-xs font-semibold text-warn">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                改动影响
+              </div>
+              <p className="text-xs leading-relaxed">
+                修改项目名称只影响展示；修改项目 slug 会改变预览入口。项目 ID 与 Docker 网络保持稳定。
+              </p>
+            </div>
+          </aside>
+        </div>
       </Section>
 
-      <Section title="项目标识">
+      <ProjectIdentityHistory projectId={projectId} version={project.identityVersion} />
+
+      <details className="rounded-lg border border-border p-4">
+        <summary className="cursor-pointer text-sm text-muted-foreground">技术信息</summary>
+      <Section title="内部项目标识">
         <div className="grid max-w-4xl gap-3 md:grid-cols-2">
           <InfoRow label="项目 ID" value={project.id} action={<CopyButton onClick={() => void copyProjectId()} />} />
-          <InfoRow label="项目 slug" value={project.slug} />
           <InfoRow label="Docker 网络" value={project.dockerNetwork || '暂无'} />
           <InfoRow label="项目类型" value={project.kind || 'git'} />
           <InfoRow label="创建时间" value={formatDate(project.createdAt)} />
           <InfoRow label="最近更新" value={formatDate(project.updatedAt)} />
         </div>
       </Section>
+
+      </details>
 
       <Section title="GitHub 关联">
         <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
@@ -1292,12 +1635,12 @@ function GeneralTab({
                     <span
                       className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${
                         autoDeployEnabled
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          ? 'border-ok/30 bg-ok-soft text-ok'
                           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ${autoDeployEnabled ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
+                        className={`h-1.5 w-1.5 rounded-full ${autoDeployEnabled ? 'bg-ok' : 'bg-muted-foreground'}`}
                         aria-hidden
                       />
                       {autoDeployEnabled ? '自动部署开启' : '自动部署关闭'}
@@ -1356,26 +1699,22 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
   const [items, setItems] = useState<Item[] | null>(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await apiRequest<{ items: Item[] }>(
-          `/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`,
-        );
-        if (cancelled) return;
-        setItems(Array.isArray(r?.items) ? r.items : []);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof ApiError ? err.message : String(err));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [projectId]);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async () => {
+    const signal = beginRead(); setError('');
+    try {
+      const r = await apiRequest<{ items: Item[] }>(`/api/projects/${encodeURIComponent(projectId)}/recent-auto-deploys?limit=5`, { signal });
+      if (!signal.aborted) setItems(Array.isArray(r?.items) ? r.items : []);
+    } catch (err) {
+      if (!signal.aborted) setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [projectId, beginRead]);
+  useEffect(() => { void load(); }, [load]);
+  useProjectSettingsRefresh(load);
 
-  if (error) return null; // 旧 CDS 没这个端点,静默不显示
+  if (error && !items) return null; // 旧 CDS 没这个端点,静默不显示
   if (!items) {
-    return <div className="text-xs text-muted-foreground">正在读取自动部署历史…</div>;
+    return <ContentLoading label="读取自动部署历史" />;
   }
   if (items.length === 0) {
     return (
@@ -1400,8 +1739,8 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
               </a>
             </div>
             <span
-              className={`rounded border px-1.5 py-0.5 text-[10px] ${
-                it.status === 'running' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              className={`rounded border px-1.5 py-0.5 text-[0.625rem] ${
+                it.status === 'running' ? 'border-ok/40 bg-ok-soft text-ok'
                 : it.status === 'error' ? 'border-destructive/40 bg-destructive/10 text-destructive'
                 : 'border-[hsl(var(--hairline))] text-muted-foreground'
               }`}
@@ -1493,15 +1832,22 @@ function GithubProjectTab({
   const [botPushFilterSaving, setBotPushFilterSaving] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
 
-  const loadApp = useCallback(async () => {
-    setAppState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const loadApp = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setAppState({ status: 'loading' });
     try {
-      const app = await apiRequest<GithubAppStatus>('/api/github/app');
+      const app = await apiRequest<GithubAppStatus>('/api/github/app', { signal });
+      if (signal.aborted) return;
       setAppState({ status: 'ok', app });
     } catch (err) {
-      setAppState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setAppState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, []);
+  }, [beginRead]);
+  useProjectSettingsRefresh(() => loadApp(true));
 
   useEffect(() => {
     void loadApp();
@@ -1558,14 +1904,8 @@ function GithubProjectTab({
   async function unlinkRepo(): Promise<void> {
     setUnlinking(true);
     try {
-      await apiRequest(`/api/projects/${encodeURIComponent(project.id)}/github/link`, { method: 'DELETE' });
-      onSaved({
-        ...project,
-        githubInstallationId: undefined,
-        githubRepoFullName: undefined,
-        githubAutoDeploy: undefined,
-        githubLinkedAt: undefined,
-      });
+      const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(project.id)}/github/link`, { method: 'DELETE' });
+      onSaved(result.project);
       setUnlinkOpen(false);
       onToast('GitHub 仓库绑定已解除');
     } catch (err) {
@@ -1580,11 +1920,7 @@ function GithubProjectTab({
 
   return (
     <div className="space-y-8">
-      <Section title="GitHub App" description="CDS 用 GitHub App 接收 webhook、写入 Check Run，并把仓库绑定到项目。">
-        {appState.status === 'loading' ? <LoadingBlock label="加载 GitHub App 状态" /> : null}
-        {appState.status === 'error' ? <ErrorBlock message={appState.message} /> : null}
-        {appState.status === 'ok' ? <GithubAppCard app={appState.app} /> : null}
-      </Section>
+      {appState.status === 'loading' ? <ContentLoading label="读取 GitHub 接入状态" variant="inline" /> : appState.status === 'error' ? <div className="space-y-2"><ErrorBlock message={`GitHub 接入状态未确认：${appState.message}`} /><Button type="button" variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={()=>void loadApp()}>重试读取 GitHub 接入状态</Button></div> : !appState.app.configured ? <p role="alert" className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-warn">GitHub App 尚未配置，暂不能绑定新仓库；已有绑定与策略显示如下，配置步骤见本页下方。</p> : null}
 
       <Section
         title="项目仓库绑定"
@@ -1607,17 +1943,17 @@ function GithubProjectTab({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button asChild variant="outline">
+                <Button asChild variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs">
                   <a href={`https://github.com/${project.githubRepoFullName}`} target="_blank" rel="noreferrer">
                     <Github />
                     打开仓库
                   </a>
                 </Button>
-                <Button variant="outline" onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
+                <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
                   <Link2 />
                   重新绑定
                 </Button>
-                <Button variant="outline" onClick={() => setUnlinkOpen(true)}>
+                <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => setUnlinkOpen(true)}>
                   <Unlink />
                   解除绑定
                 </Button>
@@ -1648,7 +1984,7 @@ function GithubProjectTab({
                 </div>
               </div>
             </div>
-            <Button onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={() => setRepoPickerOpen(true)} disabled={!appConfigured}>
               <Link2 />
               绑定 GitHub 仓库
             </Button>
@@ -1698,6 +2034,8 @@ function GithubProjectTab({
         </div>
       </Section>
 
+      {appState.status === 'ok' ? <Section title="GitHub App" description="CDS 用 GitHub App 接收 webhook、写入 Check Run，并把仓库绑定到项目。"><GithubAppCard app={appState.app} /></Section> : null}
+
       <GithubRepoPickerDialog
         open={repoPickerOpen}
         onOpenChange={setRepoPickerOpen}
@@ -1708,18 +2046,30 @@ function GithubProjectTab({
         }}
       />
       <Dialog open={unlinkOpen} onOpenChange={setUnlinkOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]">
+          <DialogHeader className="pr-10">
             <DialogTitle>解除 GitHub 仓库绑定</DialogTitle>
             <DialogDescription>
               解除后，GitHub webhook 不再把该仓库事件路由到此项目。已有分支和 Check Run 不会被删除。
             </DialogDescription>
           </DialogHeader>
+          {/*
+           * 共用同一个仓库时，用户最容易担心的是「我解绑会不会把别人也断了」。
+           * 答案是不会 —— 但这句话必须写出来，让人敢按下去。
+           */}
+          {project.repoSharing && project.repoSharing.siblings.length > 1 ? (
+            <p className="text-sm text-muted-foreground">
+              这个仓库还绑着
+              {' '}
+              {project.repoSharing.siblings.filter((s) => s.id !== project.id).map((s) => s.name).join('、')}
+              。解绑只影响本项目，它们照常收 push。
+            </p>
+          ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
               取消
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void unlinkRepo()} disabled={unlinking}>
+            <Button className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" type="button" variant="destructive" onClick={() => void unlinkRepo()} disabled={unlinking}>
               {unlinking ? <Loader2 className="animate-spin" /> : <Unlink />}
               解除绑定
             </Button>
@@ -1733,7 +2083,7 @@ function GithubProjectTab({
 function GithubAppCard({ app }: { app: GithubAppStatus }): JSX.Element {
   if (!app.configured) {
     return (
-      <div className="max-w-3xl rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-4">
+      <div className="max-w-3xl rounded-md border border-warn/40 bg-warn-soft px-4 py-4">
         <div className="font-medium">GitHub App 尚未配置</div>
         <div className="mt-2 text-sm leading-6 text-muted-foreground">
           需要在 CDS 启动环境里配置 GitHub App ID、Private Key、Webhook Secret 和公开访问地址。
@@ -1756,7 +2106,7 @@ export CDS_PUBLIC_BASE_URL="https://cds.your-domain.com"`}
       <InfoRow label="Public Base URL" value={app.publicBaseUrl || '暂无'} />
       <InfoRow label="Webhook URL" value={app.webhookUrl || '暂无'} />
       {app.installUrl ? (
-        <Button asChild variant="outline">
+        <Button asChild variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs">
           <a href={app.installUrl} target="_blank" rel="noreferrer">
             <Github />
             在 GitHub 管理安装
@@ -1793,6 +2143,21 @@ function GithubRepoPickerDialog({
   const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null);
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState('');
+  /**
+   * 仓库已被别的项目绑走：非空时弹窗切到「确认共用」那一屏。
+   *
+   * 必须把**被确认的那个目标**整个存下来（仓库 + 安装），不能等按下去再回头读当前
+   * 选择：用户完全可以在看到警告之后又去点另一个仓库，那时按钮上的「知道了」说的是
+   * 前一个仓库，绑上的却是新选的那个，而且绕过了它自己那道 409（Codex P2）。
+   */
+  const [sharedConfirm, setSharedConfirm] = useState<
+    {
+      repoFullName: string;
+      installationId: number;
+      siblings: Array<{ id: string; name: string; scoped?: boolean }>;
+    } | null
+  >(null);
 
   const loadInstallations = useCallback(async () => {
     setInstallationsState({ status: 'loading' });
@@ -1810,6 +2175,15 @@ function GithubRepoPickerDialog({
     if (open) void loadInstallations();
   }, [open, loadInstallations]);
 
+  /*
+   * 选择一变就清掉确认态 —— 收在这一处，而不是散在「点仓库」「换安装」「重载列表」
+   * 三个调用点上：同一个判断抄三份，改一处忘两处是迟早的事。
+   */
+  useEffect(() => {
+    setSharedConfirm(null);
+    setLinkError('');
+  }, [selectedRepo]);
+
   async function loadRepos(installation: GithubInstallation): Promise<void> {
     setRepoState({ status: 'loading', installation });
     setSelectedRepo(null);
@@ -1821,34 +2195,63 @@ function GithubRepoPickerDialog({
     }
   }
 
-  async function linkRepo(): Promise<void> {
-    if (!selectedRepo || repoState.status !== 'ok') return;
+  /**
+   * 绑仓库。仓库已被别的项目绑走时后端回 409 —— 那不是错误，是一个必须由人当场
+   * 回答的问题（「你是要共用，还是填错了仓库」）。所以这里把 409 转成弹窗里的
+   * 一次确认，而不是一句红字报错。
+   */
+  async function linkRepo(
+    /** 显式目标：确认共用时传的是**被确认的那一个**，不是当前选择 */
+    target?: { repoFullName: string; installationId: number },
+  ): Promise<void> {
+    const effective = target
+      || (selectedRepo && repoState.status === 'ok'
+        ? { repoFullName: selectedRepo.fullName, installationId: repoState.installation.id }
+        : null);
+    if (!effective) return;
     setLinking(true);
+    setLinkError('');
     try {
       const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(projectId)}/github/link`, {
         method: 'POST',
         body: {
-          installationId: repoState.installation.id,
-          repoFullName: selectedRepo.fullName,
+          installationId: effective.installationId,
+          repoFullName: effective.repoFullName,
           autoDeploy,
+          ...(target ? { allowShared: true } : {}),
         },
       });
       onLinked(result.project);
+      setSharedConfirm(null);
       onOpenChange(false);
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string; scoped?: boolean }> } | null) : null;
+      if (body?.error === 'already_linked') {
+        setSharedConfirm({ ...effective, siblings: body.siblings || [] });
+      } else {
+        setLinkError(messageFromError(err));
+      }
     } finally {
       setLinking(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Esc / 点遮罩关闭也要清确认态，否则下次打开还端着上一个仓库的警告
+        if (!next) { setSharedConfirm(null); setLinkError(''); }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-2xl">
-        <DialogHeader>
+        <DialogHeader className="pr-10">
           <DialogTitle>绑定 GitHub 仓库</DialogTitle>
           <DialogDescription>先选择 GitHub App 安装，再选择仓库并确认绑定到当前项目。</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-5 md:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="grid gap-5 md:grid-cols-[15rem_minmax(0,1fr)]">
           <div className="space-y-2">
             <div className="text-sm font-medium">安装</div>
             {installationsState.status === 'loading' ? <LoadingBlock label="加载安装" /> : null}
@@ -1924,194 +2327,40 @@ function GithubRepoPickerDialog({
           </span>
         </label>
 
+        {linkError ? <ErrorBlock message={linkError} /> : null}
+
+        {/*
+         * 打断这一档只留给「正要把仓库绑给第二个项目」这一刻：从这里往后，一次
+         * 推送会变成两个项目各构建一遍，用户有权在按下去之前知道。
+         */}
+        {sharedConfirm ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3">
+            <div className="mb-2 text-sm font-semibold text-warn">这个仓库已经绑给别的项目了</div>
+            <RepoSharingConfirmBody
+              repoFullName={sharedConfirm.repoFullName}
+              siblings={sharedConfirm.siblings}
+            />
+          </div>
+        ) : null}
+
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => { setSharedConfirm(null); onOpenChange(false); }}>
             取消
           </Button>
-          <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
-            {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
-            确认绑定
-          </Button>
+          {sharedConfirm ? (
+            <Button type="button" onClick={() => void linkRepo(sharedConfirm)} disabled={linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              知道了，共用这个仓库
+            </Button>
+          ) : (
+            <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              确认绑定
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CommentTemplateTab({
-  projectId,
-  onToast,
-}: {
-  projectId: string;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [state, setState] = useState<
-    | { status: 'loading' }
-    | { status: 'error'; message: string }
-    | {
-        status: 'ok';
-        body: string;
-        defaultBody: string;
-        variables: TemplateVariableDef[];
-        updatedAt: string | null;
-        isDefault: boolean;
-        preview: string;
-      }
-  >({ status: 'loading' });
-  const [saving, setSaving] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
-    try {
-      const data = await apiRequest<CommentTemplateResponse>(
-        `/api/comment-template?projectId=${encodeURIComponent(projectId)}`,
-      );
-      setState({
-        status: 'ok',
-        body: data.body || data.defaultBody || '',
-        defaultBody: data.defaultBody || '',
-        variables: data.variables || [],
-        updatedAt: data.updatedAt || null,
-        isDefault: Boolean(data.isDefault),
-        preview: '',
-      });
-    } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
-    }
-  }, [projectId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  function updateBody(body: string): void {
-    setState((current) => (current.status === 'ok' ? { ...current, body } : current));
-  }
-
-  function insertVariable(key: string): void {
-    if (state.status !== 'ok') return;
-    const textarea = textareaRef.current;
-    const token = `{{${key}}}`;
-    if (!textarea) {
-      updateBody(`${state.body}${token}`);
-      return;
-    }
-    const start = textarea.selectionStart ?? state.body.length;
-    const end = textarea.selectionEnd ?? state.body.length;
-    const next = `${state.body.slice(0, start)}${token}${state.body.slice(end)}`;
-    updateBody(next);
-    window.requestAnimationFrame(() => {
-      textarea.focus();
-      const caret = start + token.length;
-      textarea.setSelectionRange(caret, caret);
-    });
-  }
-
-  async function save(): Promise<void> {
-    if (state.status !== 'ok') return;
-    setSaving(true);
-    try {
-      const result = await apiRequest<CommentTemplateSaveResponse>(
-        `/api/projects/${encodeURIComponent(projectId)}/comment-template`,
-        {
-          method: 'PUT',
-          body: { body: state.body },
-        },
-      );
-      setState({ ...state, body: result.body || '', updatedAt: result.updatedAt, isDefault: !result.body });
-      onToast(result.body ? '评论模板已保存' : '评论模板已恢复默认');
-    } catch (err) {
-      onToast(messageFromError(err));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function preview(): Promise<void> {
-    if (state.status !== 'ok') return;
-    setPreviewing(true);
-    try {
-      const source = state.body.trim() ? state.body : state.defaultBody;
-      const result = await apiRequest<CommentTemplatePreviewResponse>('/api/comment-template/preview', {
-        method: 'POST',
-        body: { body: source },
-      });
-      setState({ ...state, preview: result.rendered || '(空)' });
-    } catch (err) {
-      setState({ ...state, preview: `预览失败：${messageFromError(err)}` });
-    } finally {
-      setPreviewing(false);
-    }
-  }
-
-  if (state.status === 'loading') return <LoadingBlock label="加载评论模板" />;
-  if (state.status === 'error') return <ErrorBlock message={state.message} />;
-
-  return (
-    <div className="space-y-8">
-      <Section
-        title="GitHub PR 预览评论模板"
-        description="每当 PR 打开或部署完成时，CDS 会在 PR 下发或刷新预览评论。这里编辑当前项目的 Markdown 模板，留空保存会回到默认模板。"
-      >
-        <div className="space-y-4">
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">模板正文</span>
-            <textarea
-              ref={textareaRef}
-              className="min-h-80 w-full resize-y rounded-md border border-input bg-background px-3 py-3 font-mono text-sm leading-6 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              value={state.body}
-              onChange={(event) => updateBody(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <div className="text-xs text-muted-foreground">
-            {state.isDefault ? '当前使用默认模板。' : `最近保存：${formatDate(state.updatedAt)}`}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void save()} disabled={saving}>
-              {saving ? <Loader2 className="animate-spin" /> : <Save />}
-              保存
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void preview()} disabled={previewing}>
-              {previewing ? <Loader2 className="animate-spin" /> : <Eye />}
-              预览
-            </Button>
-            <Button type="button" variant="outline" onClick={() => updateBody(state.defaultBody)}>
-              <RotateCcw />
-              填入默认模板
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => updateBody('')}>
-              留空使用默认
-            </Button>
-          </div>
-        </div>
-      </Section>
-
-      <Section title="可用变量" description="点击变量会插入到模板光标位置。未识别变量会原样保留，便于排查拼写。">
-        <div className="grid gap-2">
-          {state.variables.map((variable) => (
-            <button
-              key={variable.key}
-              type="button"
-              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[180px_180px_minmax(0,1fr)] md:items-center"
-              onClick={() => insertVariable(variable.key)}
-            >
-              <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">{`{{${variable.key}}}`}</code>
-              <span className="text-sm font-medium">{variable.label}</span>
-              <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{variable.example}</span>
-            </button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="示例预览" description="使用示例 PR 和分支数据渲染当前模板，保存前可先检查 Markdown 效果。">
-        <div className="min-h-32 whitespace-pre-wrap break-words cds-surface-raised cds-hairline px-4 py-4 font-mono text-sm leading-6">
-          {state.preview || '点击“预览”后显示渲染结果。'}
-        </div>
-      </Section>
-    </div>
   );
 }
 
@@ -2131,15 +2380,22 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   const [purgeTarget, setPurgeTarget] = useState<DisplayCacheDir | null>(null);
   const [purging, setPurging] = useState(false);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const data = await apiRequest<CacheStatusResponse>('/api/cache/status');
+      const data = await apiRequest<CacheStatusResponse>('/api/cache/status', { signal });
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, []);
+  }, [beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2226,7 +2482,7 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   }
 
   if (state.status === 'loading') return <LoadingBlock label="加载缓存诊断" />;
-  if (state.status === 'error') return <ErrorBlock message={state.message} />;
+  if (state.status === 'error') return <div className="space-y-3"><ErrorBlock message={`实例共享缓存读取失败：${state.message}`} /><Button type="button" variant="outline" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" onClick={()=>void load()}>重新读取实例共享缓存</Button></div>;
 
   const data = state.data;
   const rows: DisplayCacheDir[] = [
@@ -2237,19 +2493,15 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
   return (
     <div className="space-y-8">
       <Section
-        title="缓存诊断"
-        description="检查 BuildProfile cacheMount 的宿主机目录、容器路径、目录大小和最近写入，定位 restore 或 install 反复冷下载的问题。"
+        title="实例共享缓存诊断"
+        description="这里管理整个 CDS 实例的共享构建缓存，不按当前项目筛选。清空会影响所有引用该目录的服务；不会主动停止容器，后续 restore 或 install 需要重新下载依赖。"
       >
         <div className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-3">
-            <InfoRow label="项目 slug" value={data.projectSlug || '暂无'} />
-            <InfoRow label="缓存根目录" value={data.cacheBase || '暂无'} />
-            <InfoRow label="总占用" value={data.totalBytesHuman || formatBytes(data.totalBytes)} />
-          </div>
+          <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm"><div><dt className="inline text-muted-foreground">实例共享缓存根目录：</dt><dd className="inline break-all font-mono">{data.cacheBase || '未提供'}</dd></div><div><dt className="inline text-muted-foreground">总占用：</dt><dd className="inline">{data.totalBytesHuman || formatBytes(data.totalBytes)}</dd></div><div><dt className="inline text-muted-foreground">配置标记（非项目筛选）：</dt><dd className="inline break-all font-mono">{data.projectSlug || '未提供'}</dd></div></dl>
 
           {data.warnings?.length ? (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-600 dark:text-amber-400">
+            <div className="rounded-md border border-warn/40 bg-warn-soft px-4 py-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-warn">
                 <AlertTriangle className="h-4 w-4" />
                 发现 {data.warnings.length} 条告警
               </div>
@@ -2264,11 +2516,8 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
           ) : null}
 
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void repair()} disabled={repairing}>
-              {repairing ? <Loader2 className="animate-spin" /> : <Wrench />}
-              修复缓存挂载
-            </Button>
-            <Button type="button" variant="outline" onClick={() => void load()}>
+            <ConfirmAction scopeKey={JSON.stringify([data.cacheBase,rows.map(row=>[row.name,row.usedByProfiles])])} title="更新实例共享缓存挂载配置？" description="这会核对本 CDS 实例全部项目的构建配置，按当前构建方式退役自动生成的旧宿主缓存挂载声明。原宿主目录和数据不移动、不删除；不会立即重建容器。" confirmLabel="更新共享挂载配置" disabled={repairing} onConfirm={repair} trigger={<Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" disabled={repairing}>{repairing ? <Loader2 className="animate-spin" /> : <Wrench />}核对共享挂载配置</Button>} />
+            <Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => void load()}>
               <RefreshCw />
               刷新
             </Button>
@@ -2278,12 +2527,9 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
         </div>
       </Section>
 
-      <Section
-        title="导入缓存包"
-        description="迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入到当前缓存根目录。"
-      >
-        <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
-          <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+      <details className="group/cache-import"><summary className="flex min-h-[3.25rem] cursor-pointer items-center gap-2 text-sm font-medium"><ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 transition-transform group-open/cache-import:rotate-90" />导入实例共享缓存包</summary><p className="mt-2 text-sm text-muted-foreground">迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入本 CDS 实例的共享缓存根目录。同名路径可能被覆盖，所有引用者都能读取导入内容。</p>
+        <div className="mt-3 max-w-3xl">
+          <div className="grid gap-3 md:grid-cols-[11.25rem_minmax(0,1fr)_auto] md:items-end">
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">缓存名称</span>
               <input
@@ -2312,26 +2558,26 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
             {importFile ? `${importFile.name}，${formatBytes(importFile.size)}` : '尚未选择文件。'}
           </div>
         </div>
-      </Section>
+      </details>
 
       <Dialog open={Boolean(purgeTarget)} onOpenChange={(open) => !open && setPurgeTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="border-border [&>button:last-child]:min-h-[3.25rem] [&>button:last-child]:min-w-[3.25rem]">
+          <DialogHeader className="pr-10">
             <DialogTitle>清空缓存目录</DialogTitle>
             <DialogDescription>
-              这会清空缓存 {purgeTarget?.name ? `“${purgeTarget.name}”` : ''}，下次 restore 或 install 会重新下载依赖。
+              这会清空本 CDS 实例的共享缓存 {purgeTarget?.name ? `“${purgeTarget.name}”` : ''}，影响全部引用服务；下次 restore 或 install 会重新下载依赖。
             </DialogDescription>
           </DialogHeader>
           {purgeTarget ? (
             <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {purgeTarget.hostPath}
+              <p className="break-all">{purgeTarget.hostPath}</p><p className="mt-2 break-all">引用服务：{purgeTarget.usedByProfiles.length ? purgeTarget.usedByProfiles.join('、') : '当前没有已声明的引用服务'}</p>
             </div>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPurgeTarget(null)}>
+            <Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="outline" onClick={() => setPurgeTarget(null)}>
               取消
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void purgeCache()} disabled={purging}>
+            <Button type="button" className="min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs" variant="destructive" onClick={() => void purgeCache()} disabled={purging}>
               {purging ? <Loader2 className="animate-spin" /> : <Trash2 />}
               清空缓存
             </Button>
@@ -2364,8 +2610,8 @@ function CacheTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[920px] border-collapse text-sm">
+    <><div className="hidden overflow-x-auto rounded-md border border-border xl:block">
+      <table className="w-full min-w-[57.5rem] border-collapse text-sm">
         <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
           <tr>
             <th className="px-3 py-2 font-medium">名称</th>
@@ -2384,7 +2630,7 @@ function CacheTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </div><div className="divide-y divide-border xl:hidden">{rows.map(cache=><article key={cache.hostPath+cache.containerPath} data-cache-name={cache.name} className="space-y-2 py-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">{cache.name}</h3><span className={`text-xs ${getCacheStatus(cache).className}`}>{getCacheStatus(cache).label}</span></div><p className="text-sm text-muted-foreground">{formatBytes(cache.sizeBytes)} · {cache.fileCount ?? '未确认'} 个文件 · {formatDate(cache.lastModified)}</p><dl className="space-y-1 text-sm"><div><dt className="text-muted-foreground">实例共享宿主路径</dt><dd className="break-all font-mono">{cache.hostPath}</dd></div><div><dt className="text-muted-foreground">容器路径</dt><dd className="break-all font-mono">{cache.containerPath}</dd></div><div><dt className="text-muted-foreground">全部引用服务</dt><dd className="break-all">{cache.usedByProfiles.length?cache.usedByProfiles.join('、'):'当前没有已声明的引用服务'}</dd></div></dl><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" className="min-h-[3.25rem] text-base" onClick={()=>onExport(cache.name)} disabled={!cache.exists}><Download/>导出</Button><Button type="button" variant="outline" className="min-h-[3.25rem] text-base" onClick={()=>onPurge(cache)} disabled={!cache.exists}><Trash2/>清空</Button></div></article>)}</div></>
   );
 }
 
@@ -2407,16 +2653,16 @@ function CacheRow({
           {cache.orphan ? <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">孤儿</span> : null}
         </div>
       </td>
-      <td className="max-w-[260px] truncate px-3 py-2 font-mono text-xs" title={cache.hostPath}>
+      <td className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-xs" title={cache.hostPath}>
         {cache.hostPath}
       </td>
-      <td className="max-w-[180px] truncate px-3 py-2 font-mono text-xs" title={cache.containerPath}>
+      <td className="max-w-[11.25rem] truncate px-3 py-2 font-mono text-xs" title={cache.containerPath}>
         {cache.containerPath}
       </td>
       <td className="px-3 py-2 text-right">{formatBytes(cache.sizeBytes)}</td>
       <td className="px-3 py-2 text-right">{cache.fileCount == null ? '暂无' : cache.fileCount.toLocaleString()}</td>
       <td className="px-3 py-2 text-muted-foreground">{formatDate(cache.lastModified)}</td>
-      <td className="max-w-[180px] truncate px-3 py-2 text-muted-foreground" title={cache.usedByProfiles.join(', ')}>
+      <td className="max-w-[11.25rem] truncate px-3 py-2 text-muted-foreground" title={cache.usedByProfiles.join(', ')}>
         {cache.usedByProfiles.length ? cache.usedByProfiles.join(', ') : '暂无'}
       </td>
       <td className="px-3 py-2">
@@ -2438,63 +2684,63 @@ function CacheRow({
 function getCacheStatus(cache: CacheDirInfo): { label: string; className: string } {
   if (!cache.exists) return { label: '目录不存在', className: 'bg-destructive' };
   if ((cache.sizeBytes || 0) === 0 && (cache.fileCount || 0) === 0) {
-    return { label: '目录为空', className: 'bg-amber-500' };
+    return { label: '目录为空', className: 'bg-warn' };
   }
-  return { label: '已有缓存', className: 'bg-emerald-500' };
+  return { label: '已有缓存', className: 'bg-ok' };
 }
 
 function StatsTab({ project, projectId }: { project: ProjectSummary; projectId: string }): JSX.Element {
   return (
     <div className="space-y-8">
       <Section title="项目运营汇总" description="计数来自项目和分支状态，随 MongoDB split store 持久化。">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <MetricTile
             label="分支数"
             value={numberValue(project.branchCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="运行分支"
             value={numberValue(project.runningBranchCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="运行服务"
             value={numberValue(project.runningServiceCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="最近部署"
             value={formatDate(project.lastDeployedAt)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="累计部署"
             value={numberValue(project.deployCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="累计拉取"
             value={numberValue(project.pullCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="停止容器"
             value={numberValue(project.stopCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
           <MetricTile
             label="AI 占用"
             value={numberValue(project.aiOpCount)}
-            className="bg-card p-4"
-            valueClassName="text-xl font-semibold"
+            className="min-w-0 bg-card p-4"
+            valueClassName="whitespace-normal overflow-visible text-clip break-all text-xl font-semibold"
           />
         </div>
       </Section>
@@ -2510,15 +2756,22 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
     | { status: 'ok'; branches: BranchSummary[] }
   >({ status: 'loading' });
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
+      if (signal.aborted) return;
       setState({ status: 'ok', branches: data.branches || [] });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2535,7 +2788,7 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
       ) : null}
       {state.status === 'ok' && state.branches.length > 0 ? (
         <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
+          <table className="w-full min-w-[45rem] border-collapse text-sm">
             <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">分支</th>
@@ -2574,17 +2827,24 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
     | { status: 'ok'; logs: ActivityLogEntry[] }
   >({ status: 'loading' });
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
       const data = await apiRequest<ActivityLogsResponse>(
         `/api/projects/${encodeURIComponent(projectId)}/activity-logs?limit=50`,
       );
+      if (signal.aborted) return;
       setState({ status: 'ok', logs: data.logs || [] });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -2634,10 +2894,10 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
 function classifyActor(raw: string | undefined): { label: string; tone: string } {
   if (!raw) return { label: '系统', tone: 'border-muted bg-muted/20 text-muted-foreground' };
   if (raw === 'system:webhook') {
-    return { label: 'GitHub Webhook', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+    return { label: 'GitHub Webhook', tone: 'border-info/40 bg-info-soft text-info' };
   }
   if (raw === 'system:slash-command') {
-    return { label: 'PR 指令', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+    return { label: 'PR 指令', tone: 'border-info/40 bg-info-soft text-info' };
   }
   if (raw.startsWith('system:')) {
     return { label: raw.slice('system:'.length) || '系统', tone: 'border-muted bg-muted/30 text-muted-foreground' };
@@ -2649,10 +2909,10 @@ function classifyActor(raw: string | undefined): { label: string; tone: string }
     return { label: 'AI', tone: 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300' };
   }
   if (raw === 'user') {
-    return { label: '用户', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+    return { label: '用户', tone: 'border-ok/40 bg-ok-soft text-ok' };
   }
   // 兜底:可能是真实用户名
-  return { label: raw, tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  return { label: raw, tone: 'border-ok/40 bg-ok-soft text-ok' };
 }
 
 function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
@@ -2667,7 +2927,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
   const rowTone = isError
     ? 'border border-destructive/40 bg-destructive/5'
     : isAborted
-      ? 'border border-amber-500/40 bg-amber-500/5'
+      ? 'border border-warn/40 bg-warn-soft'
       : 'cds-surface-raised cds-hairline';
 
   return (
@@ -2675,12 +2935,12 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[20px_160px_120px_minmax(0,1fr)_140px] md:items-center hover:bg-muted/10"
+        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[1.25rem_10rem_7.5rem_minmax(0,1fr)_8.75rem] md:items-center hover:bg-muted/10"
         aria-expanded={expanded}
       >
         {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
         <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
-        <div className={`font-medium ${isError ? 'text-destructive' : isAborted ? 'text-amber-700 dark:text-amber-300' : ''}`}>
+        <div className={`font-medium ${isError ? 'text-destructive' : isAborted ? 'text-warn' : ''}`}>
           {typeLabel}
         </div>
         <div className="min-w-0 truncate text-muted-foreground">
@@ -2690,7 +2950,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
         </div>
         <div className="flex justify-end">
           <span
-            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
+            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[0.6875rem] ${actor.tone}`}
             title={entry.actor || '系统'}
           >
             {actor.label}
@@ -2823,9 +3083,15 @@ const activityTypeLabels: Record<string, string> = {
   'ai-release': 'AI 占用结束',
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
+  'branch-archived': '归档分支',
+  'branch-restored': '恢复归档',
 };
 
 interface ProjectDeliveryResponse {
+  revision: string;
+  projectRevision: string;
+  planBranches: Array<{ id: string; branch: string }>;
+  generationSource: { branchId: string; branch: string; commitSha: string | null } | null;
   projectId: string;
   mode: 'managed' | 'compose';
   managedSpec: {
@@ -2852,114 +3118,109 @@ interface ProjectDeliveryResponse {
 
 function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast: (message: string) => void }): JSX.Element {
   const [state, setState] = useState<{ status: 'loading' | 'ok' | 'error'; data?: ProjectDeliveryResponse; message?: string }>({ status: 'loading' });
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [specText, setSpecText] = useState('');
+  const [draftMode, setDraftMode] = useState<'managed' | 'compose'>('compose');
   const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const [saveError, setSaveError] = useState('');
+  const [resultUnknown, setResultUnknown] = useState(false);
+  const [readError, setReadError] = useState('');
+  const [sourceNotice, setSourceNotice] = useState('');
+  const selectedBranch = useRef(new URLSearchParams(window.location.search).get('fromBranch') || '');
+  const [branchId, setBranchId] = useState(selectedBranch.current);
+  const savedSpec = useRef('');
+  const savedMode = useRef<'managed' | 'compose'>('compose');
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false, sourceId = selectedBranch.current) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
+    setReadError('');
     try {
-      const data = await apiRequest<ProjectDeliveryResponse>(`/api/projects/${encodeURIComponent(projectId)}/delivery`);
-      setState({ status: 'ok', data });
-      setSpecText(JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2));
+      const endpoint = `/api/projects/${encodeURIComponent(projectId)}/delivery`;
+      let data = await apiRequest<ProjectDeliveryResponse>(`${endpoint}${sourceId ? `?branchId=${encodeURIComponent(sourceId)}` : ''}`, { signal });
+      const branches = data.planBranches || [];
+      const sourceUnavailable = Boolean(sourceId && !branches.some(branch => branch.id === sourceId));
+      if (sourceUnavailable) sourceId = '';
+      let notice = sourceUnavailable ? '原分支已不可用，请重新选择生成依据。' : '';
+      if (!sourceId && branches.length === 1) {
+        sourceId = branches[0].id;
+        if (sourceUnavailable) notice = `原分支已不可用，已改用唯一可用分支 ${branches[0].branch}，保存前请核对。`;
+        data = await apiRequest<ProjectDeliveryResponse>(`${endpoint}?branchId=${encodeURIComponent(sourceId)}`, { signal });
+      }
+      if (!signal.aborted) setSourceNotice(notice);
+      if (signal.aborted) return;
+      selectedBranch.current = sourceId;
+      setBranchId(sourceId);
+      const previousSpec = savedSpec.current, previousMode = savedMode.current;
+      const next = JSON.stringify(data.managedSpec || { apps: [], capabilities: [] }, null, 2);
+      savedSpec.current = next; savedMode.current = data.mode;
+      setSpecText(current => preserve && current !== previousSpec ? current : next);
+      setDraftMode(current => preserve && current !== previousMode ? current : data.mode);
+      setState({ status: 'ok', data }); setSaveError(''); setResultUnknown(false);
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (signal.aborted) return;
+      const message = messageFromError(err); setReadError(message);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
+      if (preserve) throw err;
     }
-  }, [projectId]);
-
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
   useEffect(() => { void load(); }, [load]);
 
-  const saveMode = useCallback(async (mode: 'managed' | 'compose') => {
-    setSaving(true);
-    try {
-      let managedSpec: unknown;
-      if (mode === 'managed') {
-        try {
-          managedSpec = specText.trim() ? JSON.parse(specText) : { apps: [], capabilities: [] };
-        } catch {
-          throw new Error('高级声明不是合法 JSON');
-        }
-      }
-      await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/delivery`, {
-        method: 'PUT',
-        body: { mode, managedSpec },
-      });
-      if (mode === 'managed') {
-        try {
-          await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/managed-plan`, { method: 'POST', body: {} });
-          onToast('已启用托管模式并生成生效配置');
-        } catch (err) {
-          onToast(`托管模式已保存，计划尚未生成:${messageFromError(err)}`);
-        }
-      } else {
-        onToast('已切换到 compose 模式，现有项目配置继续生效');
-      }
-      await load();
-    } catch (err) {
-      onToast(`交付模式保存失败:${messageFromError(err)}`);
-    } finally {
-      setSaving(false);
+  async function save(): Promise<void> {
+    if (state.status !== 'ok' || !state.data || saving || resultUnknown || !state.data.revision || !state.data.projectRevision) return;
+    let managedSpec: ProjectDeliveryResponse['managedSpec'] | undefined;
+    if (draftMode === 'managed') {
+      try { managedSpec = JSON.parse(specText) as ProjectDeliveryResponse['managedSpec']; }
+      catch { setSaveError('应用声明不是有效 JSON，请修正后保存。'); return; }
     }
-  }, [load, onToast, projectId, specText]);
-
+    setSaving(true); setSaveError('');
+    try {
+      const result = await apiRequest<{ mode: 'managed' | 'compose'; managedSpec: ProjectDeliveryResponse['managedSpec']; plan: { profiles: ProjectDeliveryResponse['effectiveProfiles']; generatedAt: string } | null }>(`/api/projects/${encodeURIComponent(projectId)}/delivery`, {
+        method: 'PUT', body: { mode: draftMode, managedSpec, generatePlan: true, branchId: draftMode === 'managed' ? branchId : undefined, expectedRevision: draftMode === 'managed' ? state.data.revision : state.data.projectRevision },
+      });
+      if (!alive.current) return;
+      beginRead.cancel();
+      savedMode.current = result.mode; savedSpec.current = specText;
+      setState(current => current.data ? { status: 'ok', data: { ...current.data, mode: result.mode, managedSpec: result.managedSpec, effectiveProfiles: result.plan?.profiles || [], planUpdatedAt: result.plan?.generatedAt } } : current);
+      onToast(result.mode === 'managed' ? '交付模式与生成配置已保存，重新部署分支后使用。' : 'Compose 交付模式已保存，现有项目配置继续使用。');
+      try { await load(true); } catch { setReadError('保存已确认，重新读取失败。当前显示已保存结果，请稍后刷新核对。'); }
+    } catch (err) {
+      if (!alive.current) return;
+      const knownRejection = err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408;
+      setResultUnknown(!knownRejection || (err instanceof ApiError && [409, 428].includes(err.status)));
+      const body = err instanceof ApiError && err.body && typeof err.body === 'object' ? err.body as {error?:string;message?:string} : null;
+      setSaveError(`${knownRejection ? '未保存，原配置保持不变' : '保存结果未确认，请先重新读取核对，勿重复提交'}：${body?.message || body?.error || messageFromError(err)}`);
+    } finally { if (alive.current) setSaving(false); }
+  }
   if (state.status === 'loading') return <LoadingBlock label="加载交付模式" />;
-  if (state.status === 'error' || !state.data) return <ErrorBlock message={state.message || '交付模式加载失败'} />;
+  if (state.status === 'error' || !state.data) return <div className="space-y-3"><ErrorBlock message={state.message || '交付模式加载失败'} /><Button onClick={() => void load()}>重试</Button></div>;
   const data = state.data;
-
-  return (
-    <div className="space-y-6">
-      <Section
-        title="交付模式"
-        description="托管模式由 CDS 自动检测技术栈、拆分构建与启动并绑定资源；compose 模式保留完整高级控制。"
-      >
-        <div className="grid gap-3 md:grid-cols-2">
-          <button
-            type="button"
-            className={`rounded-md border p-4 text-left transition-colors ${data.mode === 'managed' ? 'border-primary bg-primary/5' : 'border-[hsl(var(--hairline))] hover:border-primary/40'}`}
-            onClick={() => void saveMode('managed')}
-            disabled={saving}
-          >
-            <div className="font-semibold">托管模式</div>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">常规 Web、API、Worker 推荐。无需手写 BuildProfile，重复部署直接复用不可变产物。</p>
-          </button>
-          <button
-            type="button"
-            className={`rounded-md border p-4 text-left transition-colors ${data.mode === 'compose' ? 'border-primary bg-primary/5' : 'border-[hsl(var(--hairline))] hover:border-primary/40'}`}
-            onClick={() => void saveMode('compose')}
-            disabled={saving}
-          >
-            <div className="font-semibold">Compose 模式</div>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">适合特殊网络、多服务和自定义镜像。原有 cds-compose 与 BuildProfile 行为保持不变。</p>
-          </button>
-        </div>
-      </Section>
-
-      {data.mode === 'managed' ? (
-        <>
-          <Section
-            title="最小声明"
-            description="apps 留空时自动扫描仓库；capabilities 只写逻辑资源引用和环境变量名，不写密钥值。"
-          >
-            <textarea
-              className={`${textareaClass} min-h-56 font-mono text-xs leading-5`}
-              value={specText}
-              onChange={(event) => setSpecText(event.target.value)}
-              spellCheck={false}
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button onClick={() => void saveMode('managed')} disabled={saving}>
-                {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                保存并重新生成
-              </Button>
-              <Button variant="outline" onClick={() => setSpecText(JSON.stringify({ apps: [], capabilities: [] }, null, 2))} disabled={saving}>
-                恢复自动识别
-              </Button>
-            </div>
-          </Section>
-
-          <Section
-            title="最终生效配置"
-            description={data.planUpdatedAt ? `最近生成于 ${new Date(data.planUpdatedAt).toLocaleString()}` : '尚未生成；保存后 CDS 会使用项目第一条分支进行检测。'}
-          >
+  const atomicContractAvailable = typeof data.revision === 'string' && Boolean(data.revision) && typeof data.projectRevision === 'string' && Boolean(data.projectRevision);
+  const dirty = draftMode !== savedMode.current || (draftMode === 'managed' && specText !== savedSpec.current);
+  const sourceReady = data.generationSource?.branchId === branchId && Boolean(data.generationSource.commitSha);
+  return <div className="space-y-5">
+    <Section title="交付模式" description="设置影响当前项目。保存托管模式会生成并替换项目配置；不会自动部署，分支重新部署后使用。">
+      <p role="status" className="mb-3 text-sm text-muted-foreground">上次读取的已保存模式：{data.mode === 'managed' ? '托管' : 'Compose'}{dirty ? ' · 有未保存修改' : ''}</p>
+      <fieldset className="grid gap-3 md:grid-cols-2" disabled={saving}><legend className="sr-only">选择交付模式（点击不会保存）</legend>
+        {(['managed', 'compose'] as const).map(mode => <label key={mode} className={`flex cursor-pointer items-start gap-3 rounded-md border p-4 ${draftMode === mode ? 'border-primary bg-primary/5' : 'border-border'}`}><input type="radio" name="delivery-mode" className="mt-1 h-4 w-4 accent-primary" checked={draftMode === mode} onChange={() => setDraftMode(mode)} /><span><span className="font-semibold">{mode === 'managed' ? '托管模式' : 'Compose 模式'}</span><span className="mt-1 block text-sm leading-6 text-muted-foreground">{mode === 'managed' ? 'CDS 根据分支代码生成构建与启动配置，适合常规 Web、API 和 Worker。' : '自行维护 cds-compose.yml，适合特殊网络、多服务和自定义镜像。'}</span></span></label>)}
+      </fieldset>
+    </Section>
+    {draftMode === 'managed' ? <Section title="托管应用声明" description="apps 留空时扫描所选分支；capabilities 仅写逻辑资源引用和变量名，不填密钥值。">
+      <div className="mb-3 space-y-2 text-sm">
+        {sourceNotice ? <p role="status" className="text-warn">{sourceNotice}</p> : null}
+        {data.planBranches?.length === 1 ? <p>生成依据：<strong>{data.planBranches[0].branch}</strong></p> : <label className="grid gap-2">生成依据分支<select aria-label="生成依据分支" className={inputClass} value={branchId} disabled={saving} onChange={event => { const id = event.target.value; selectedBranch.current = id; setBranchId(id); void load(true, id).catch(() => undefined); }}><option value="">请选择分支</option>{data.planBranches?.map(branch => <option key={branch.id} value={branch.id}>{branch.branch}</option>)}</select></label>}
+        {sourceReady ? <p className="text-muted-foreground">代码版本 <code>{data.generationSource?.commitSha?.slice(0, 12)}</code></p> : <p className="text-warn">{!data.planBranches?.length ? '项目还没有分支。先创建并同步分支，再生成托管配置。' : branchId ? '分支版本未确认或有未提交文件。请同步并提交或还原变更后重新读取。' : '选择分支后读取代码版本，保存时以该版本生成配置。'}</p>}
+      </div>
+      <textarea aria-label="托管应用声明" className={`${textareaClass} min-h-56 font-mono text-sm leading-5`} value={specText} onChange={event => setSpecText(event.target.value)} disabled={saving} spellCheck={false} />
+      <Button className="mt-2" variant="ghost" onClick={() => setSpecText(JSON.stringify({ apps: [], capabilities: [] }, null, 2))} disabled={saving}>改用自动识别（待保存）</Button>
+    </Section> : null}
+    {!atomicContractAvailable ? <p role="alert" className="text-sm text-warn">当前服务版本未确认，暂不能保存交付设置。请重新读取；若持续出现，请联系系统管理员确认更新完成。</p> : null}
+    {saveError ? <p role="alert" className="text-sm text-destructive">{saveError}。声明草稿已保留。</p> : null}
+    {readError ? <p role="alert" className="text-sm text-destructive">{readError}</p> : null}
+    <div className="flex flex-wrap gap-2"><Button onClick={() => void save()} disabled={saving || !atomicContractAvailable || resultUnknown || (!dirty && draftMode === 'compose') || (draftMode === 'managed' && !sourceReady)}>{saving ? <Loader2 className="animate-spin" /> : <Save />}{draftMode === 'managed' ? dirty ? '保存并生成项目配置' : '重新生成项目配置' : '保存交付模式'}</Button><Button variant="outline" disabled={saving} onClick={() => void load(true).catch(() => undefined)}>重新读取并核对</Button></div>
+    {data.mode === 'managed' ? <Section title="已保存的托管配置" description={data.planUpdatedAt ? `生成于 ${new Date(data.planUpdatedAt).toLocaleString()}；修改上方草稿不会改变这些配置。` : '尚未生成项目配置。'}>
             {data.effectiveProfiles.length === 0 ? (
               <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
                 暂无生效配置。项目至少需要一条已克隆分支，或在 apps 中显式声明应用目录。
@@ -2974,7 +3235,7 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
                       <CodePill>{profile.workDir}</CodePill>
                       <span className="text-xs text-muted-foreground">端口 {profile.containerPort}</span>
                     </div>
-                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[100px_minmax(0,1fr)]">
+                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[6.25rem_minmax(0,1fr)]">
                       <dt className="text-muted-foreground">构建</dt>
                       <dd className="break-all font-mono">{[profile.managedBuild?.installCommand, profile.managedBuild?.buildCommand].filter(Boolean).join(' && ') || '无需构建'}</dd>
                       <dt className="text-muted-foreground">启动</dt>
@@ -2988,11 +3249,8 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
                 ))}
               </div>
             )}
-          </Section>
-        </>
-      ) : null}
-    </div>
-  );
+    </Section> : null}
+  </div>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -3034,9 +3292,9 @@ interface ProjectComposeResponse {
 }
 
 const AUTHORITY_META: Record<'repo' | 'platform' | 'user', { label: string; desc: string; cls: string }> = {
-  repo: { label: 'repo 权威', desc: '构建/启动方式，由仓库结构决定，可改但应回写 repo', cls: 'bg-blue-500/10 text-blue-700 dark:text-blue-300' },
-  platform: { label: 'platform 权威', desc: '端口/网络/域名，由 CDS 分配，只读', cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-300' },
-  user: { label: 'user 权威', desc: '环境变量等运营参数，用户可覆盖', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
+  repo: { label: 'repo 权威', desc: '构建/启动方式，由仓库结构决定，可改但应回写 repo', cls: 'bg-info-soft text-info' },
+  platform: { label: 'platform 权威', desc: '端口/网络/域名，由 CDS 分配，只读', cls: 'bg-warn-soft text-warn' },
+  user: { label: 'user 权威', desc: '环境变量等运营参数，用户可覆盖', cls: 'bg-ok-soft text-ok' },
 };
 
 function ProjectComposeTab({
@@ -3046,25 +3304,57 @@ function ProjectComposeTab({
   projectId: string;
   onToast: (message: string) => void;
 }): JSX.Element {
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const query = new URLSearchParams(window.location.search);
+  const section = query.get('section') || (query.get('tab') === 'build' ? 'services' : query.get('tab') === 'routing' ? 'routing' : '');
+  const sectionKey = section === 'services' ? 'services' : section === 'routing' ? 'x-cds-routing' : '';
+  function locateSection(): void {
+    const editor = editorRef.current;
+    if (!editor || !sectionKey) return;
+    const match = new RegExp(`^${sectionKey}:.*$`, 'm').exec(editor.value);
+    if (!match) return;
+    editor.focus({ preventScroll: true });
+    editor.setSelectionRange(match.index, match.index + match[0].length);
+    const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || parseFloat(getComputedStyle(editor).fontSize);
+    editor.scrollTop = editor.value.slice(0, match.index).split('\n').length * lineHeight - editor.clientHeight / 3;
+  }
   const [data, setData] = useState<ProjectComposeResponse | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const savedYaml = useRef('');
+  const [readError, setReadError] = useState('');
+  const beginRefreshRead = useSettingsReadRequest();
+  const refresh = useCallback(async (preserve = false) => {
+    const signal = beginRefreshRead();
+    setReadError('');
     try {
-      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include', signal });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载失败:${body.error || res.status}`); return; }
+      if (signal.aborted) return;
+      if (!res.ok) { setReadError(body.error || String(res.status)); onToast(`加载失败:${body.error || res.status}`); return; }
       setData(body as ProjectComposeResponse);
-      setDraft(body.yaml || '');
-      setDirty(false);
+      const previous = savedYaml.current;
+      const next = body.yaml || '';
+      savedYaml.current = next;
+      setDraft(current => preserve && current !== previous ? current : next);
+      if (!preserve) setDirty(false);
     } catch (err) {
+      if (signal.aborted) return;
+      setReadError((err as Error).message);
       onToast(`加载异常:${(err as Error).message}`);
     }
-  }, [projectId, onToast]);
+  }, [projectId, onToast, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(() => refresh(true));
+
+  useEffect(() => {
+    if (data) locateSection();
+    // 定位只在首次读取目标配置后执行，后续编辑不抢焦点。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(data), sectionKey]);
 
   const onSave = useCallback(async () => {
     if (!draft.trim()) { onToast('配置不能为空'); return; }
@@ -3095,6 +3385,7 @@ function ProjectComposeTab({
     }
   }, [draft, projectId, onToast, refresh]);
 
+  if (!data && readError) return <div className="space-y-3"><ErrorBlock message={readError} /><Button onClick={() => void refresh()}>重试</Button></div>;
   if (!data) return <LoadingBlock label="加载项目配置…" />;
 
   // 按权威分组统计
@@ -3108,12 +3399,19 @@ function ProjectComposeTab({
       <div>
         <h3 className="text-base font-semibold">项目配置(cds-compose.yml)</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          这是本项目的配置 SSOT。build profile / 基础设施都从它派生。
+          修改影响当前项目的所有分支配置；保存不会自动重新部署，构建与路由变更需在相应分支重新部署后生效。
           {data.hasPersisted
             ? <> 当前 <span className="font-mono">v{data.version}</span>{data.updatedAt ? ` · ${new Date(data.updatedAt).toLocaleString()}` : ''}{data.source ? ` · 来源 ${data.source}` : ''}。</>
             : <> 该项目尚未固化配置,下方是从已落库 profile/infra 反向生成的<strong>只读起点</strong>,编辑保存后即成为正式 SSOT。</>}
         </p>
       </div>
+
+      {sectionKey ? <div className="flex flex-wrap items-center gap-2 text-sm" role="status">
+        <strong>{section === 'services' ? '构建与启动' : '自定义路由'}</strong>
+        {new RegExp(`^${sectionKey}:`, 'm').test(draft)
+          ? <><span className="text-muted-foreground">编辑下方 <code>{sectionKey}</code> 配置。</span><Button type="button" variant="outline" size="sm" onClick={locateSection}>定位配置段</Button></>
+          : <span className="text-muted-foreground">当前配置没有 <code>{sectionKey}</code> 段。{section === 'routing' ? '尚未定义额外自定义路由；服务路径也可在 services 的 cds.path-prefix 标签中配置。' : '请先在项目配置中定义服务。'}</span>}
+      </div> : null}
 
       {/* 三级权威图例 */}
       <div className="flex flex-wrap gap-2 text-xs">
@@ -3128,28 +3426,30 @@ function ProjectComposeTab({
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" asChild>
           <a href={apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose.yml`)} download="cds-compose.yml">
-            <Download className="h-3.5 w-3.5" /> 下载 cds-compose.yml
+            <Download /> 下载 cds-compose.yml
           </a>
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(draft); onToast('已复制到剪贴板'); }}>
           复制
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
-          <RefreshCw className="h-3.5 w-3.5" /> 重新加载
+          <RefreshCw /> 重新加载
         </Button>
         <Button type="button" variant="default" size="sm" onClick={() => void onSave()} disabled={busy || !dirty}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} 保存配置
+          {busy ? <Loader2 className="animate-spin" /> : <Save />} 保存配置
         </Button>
       </div>
 
       <textarea
+        ref={editorRef}
+        aria-label="项目配置 YAML"
         value={draft}
         onChange={(e) => { setDraft(e.target.value); setDirty(true); }}
         className="w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
         rows={20}
         spellCheck={false}
         disabled={busy}
-        style={{ minHeight: 320, overflowY: 'auto' }}
+        style={{ minHeight: '20rem', overflowY: 'auto' }}
       />
 
       {/* 字段权威明细 */}
@@ -3206,7 +3506,56 @@ interface DataPlanResult {
   manualBridge: Array<{ store: string; download: string; restore: string; note: string }>;
 }
 
-function ProjectMigrationTab({
+interface StandbyAudit {
+  checkedAt: string;
+  remoteReachable: boolean;
+  protocolReady: boolean;
+  repositoryMatches: boolean;
+  configMatches: boolean;
+  secretKeysMatch: boolean;
+  defaultBranchMatches: boolean;
+  dataSnapshotReady: boolean;
+  currentDataVerified?: boolean;
+  dataReadinessReason?: string;
+  readyForFailover: boolean;
+  missingBranches: string[];
+  divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  performance: {
+    samples: number;
+    healthP50Ms: number | null;
+    healthP95Ms: number | null;
+    fingerprintMs: number | null;
+    localFingerprintMs: number;
+  };
+  error?: string;
+}
+
+interface StandbyConfig {
+  peerId: string;
+  remoteProjectId: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  branchSyncPolicy?: 'audit-only' | 'catalog' | 'warm-running';
+  autoFailover: false;
+  lastAudit?: StandbyAudit;
+  lastBranchSync?: StandbyBranchSyncResult;
+}
+
+interface StandbyBranchSyncResult {
+  completedAt: string;
+  dryRun: boolean;
+  policy: 'audit-only' | 'catalog' | 'warm-running';
+  sourceBranchCount: number;
+  targetBranchCount: number;
+  planned: Array<{ name: string; kind: 'create' | 'deploy' | 'stop' | 'divergent'; reason: string }>;
+  created: string[];
+  deployed: string[];
+  stopped: string[];
+  divergent: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  failed: Array<{ name: string; action: string; error: string }>;
+}
+
+export function ProjectMigrationTab({
   projectId,
   onToast,
 }: {
@@ -3217,6 +3566,7 @@ function ProjectMigrationTab({
 
   const [peers, setPeers] = useState<MigrationPeer[] | null>(null);
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
+  const peerSelectionEdited = useRef(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [newKey, setNewKey] = useState('');
@@ -3230,49 +3580,102 @@ function ProjectMigrationTab({
 
   const [scanning, setScanning] = useState(false);
   const [dataPlan, setDataPlan] = useState<DataPlanResult | null>(null);
+  const [standby, setStandby] = useState<StandbyConfig | null>(null);
+  const [standbyRemoteProjectId, setStandbyRemoteProjectId] = useState(projectId);
+  const [standbyEnabled, setStandbyEnabled] = useState(false);
+  const [standbyInterval, setStandbyInterval] = useState(15);
+  const [branchSyncPolicy, setBranchSyncPolicy] = useState<'audit-only' | 'catalog' | 'warm-running'>('audit-only');
+  const [savingStandby, setSavingStandby] = useState(false);
+  const [auditingStandby, setAuditingStandby] = useState(false);
+  const [syncingBranches, setSyncingBranches] = useState<'dry' | 'apply' | null>(null);
+  const [branchSyncResult, setBranchSyncResult] = useState<StandbyBranchSyncResult | null>(null);
+  const [auditElapsedSeconds, setAuditElapsedSeconds] = useState(0);
+  const standbyReadyForFailover = standby?.lastAudit?.readyForFailover && standby.lastAudit.currentDataVerified === true;
 
   // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
   // ② 旧项目的慢响应到达时用 liveProjectId 丢弃,避免覆盖新项目视图(Bugbot High「Stale migration preview leak」)。
   const liveProjectId = useRef(projectId);
   liveProjectId.current = projectId;
   useEffect(() => {
+    peerSelectionEdited.current = false;
     setPeers(null); setPreview(null); setSelectedPeerId('');
     setReplicateResult(null); setDataPlan(null); setShowYaml(false);
     setReplicating(null); setScanning(false);
+    setStandby(null); setStandbyRemoteProjectId(projectId); setStandbyEnabled(false);
+    setStandbyInterval(15); setBranchSyncPolicy('audit-only'); setBranchSyncResult(null);
+    setSavingStandby(false); setAuditingStandby(false); setSyncingBranches(null);
   }, [projectId]);
 
+  const beginPeersRead = useSettingsReadRequest();
   const loadPeers = useCallback(async () => {
+    const signal = beginPeersRead();
     const reqPid = projectId;
     try {
-      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`${base}/peers`), { credentials: 'include', signal });
       const body = await res.json();
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应
-      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers([]); return; }
+      if (!res.ok) { onToast(`加载迁移目标失败:${body.error || res.status}`); setPeers(previous => previous ?? []); return; }
       const list = (body.peers || []) as MigrationPeer[];
       setPeers(list);
       setSelectedPeerId((prev) => prev || (list[0]?.id ?? ''));
     } catch (err) {
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
-      setPeers([]); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
+      setPeers(previous => previous ?? []); // 失败也要退出 loading,否则一直卡在「加载迁移设置…」(Bugbot「Migration tab infinite loading」)
     }
-  }, [base, onToast, projectId]);
+  }, [base, onToast, projectId, beginPeersRead]);
 
+  const beginPreviewRead = useSettingsReadRequest();
   const loadPreview = useCallback(async () => {
+    const signal = beginPreviewRead();
     const reqPid = projectId;
     try {
-      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`${base}/config-preview`), { credentials: 'include', signal });
       const body = await res.json();
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return; // 项目已切换,丢弃旧响应(防别项目 cds-compose + env 泄露)
       if (!res.ok) { onToast(`加载配置预览失败:${body.error || res.status}`); return; }
       setPreview(body as ConfigPreview);
     } catch (err) {
+      if (signal.aborted) return;
       if (reqPid !== liveProjectId.current) return;
       onToast(`加载异常:${(err as Error).message}`);
     }
+  }, [base, onToast, projectId, beginPreviewRead]);
+
+  const loadStandby = useCallback(async () => {
+    const reqPid = projectId;
+    try {
+      const res = await fetch(apiUrl(`${base}/standby`), { credentials: 'include' });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (!res.ok) { onToast(`加载备用站设置失败:${body.error || res.status}`); return; }
+      const config = (body.config || null) as StandbyConfig | null;
+      setStandby(config);
+      if (config) {
+        if (!peerSelectionEdited.current) setSelectedPeerId(config.peerId);
+        setStandbyRemoteProjectId(config.remoteProjectId);
+        setStandbyEnabled(config.enabled);
+        setStandbyInterval(config.intervalMinutes);
+        setBranchSyncPolicy(config.branchSyncPolicy || 'audit-only');
+        setBranchSyncResult(config.lastBranchSync || null);
+      }
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`加载备用站设置异常:${(err as Error).message}`);
+    }
   }, [base, onToast, projectId]);
 
-  useEffect(() => { void loadPeers(); void loadPreview(); }, [loadPeers, loadPreview]);
+  useEffect(() => { void loadPeers(); void loadPreview(); void loadStandby(); }, [loadPeers, loadPreview, loadStandby]);
+  useProjectSettingsRefresh(() => Promise.all([loadPeers(), loadPreview(), loadStandby()]));
+
+  useEffect(() => {
+    if (!auditingStandby) { setAuditElapsedSeconds(0); return undefined; }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setAuditElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1_000);
+    return () => window.clearInterval(timer);
+  }, [auditingStandby]);
 
   const addPeer = useCallback(async () => {
     if (!newUrl.trim()) { onToast('请填写目标节点地址'); return; }
@@ -3288,7 +3691,7 @@ function ProjectMigrationTab({
       onToast('已添加迁移目标');
       setNewName(''); setNewUrl(''); setNewKey('');
       await loadPeers();
-      if (body.peer?.id) setSelectedPeerId(body.peer.id);
+      if (body.peer?.id) { peerSelectionEdited.current = true; setSelectedPeerId(body.peer.id); }
     } catch (err) {
       onToast(`添加异常:${(err as Error).message}`);
     } finally {
@@ -3376,6 +3779,98 @@ function ProjectMigrationTab({
     }
   }, [base, selectedPeerId, onToast]);
 
+  const saveStandby = useCallback(async (): Promise<boolean> => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return false; }
+    if (!standbyRemoteProjectId.trim()) { onToast('请填写目标项目 ID'); return false; }
+    const reqPid = projectId;
+    setSavingStandby(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/standby`), {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: selectedPeerId,
+          remoteProjectId: standbyRemoteProjectId.trim(),
+          enabled: standbyEnabled,
+          intervalMinutes: standbyInterval,
+          branchSyncPolicy,
+        }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return false;
+      if (!res.ok) { onToast(`保存备用站设置失败:${body.error || res.status}`); return false; }
+      setStandby(body.config as StandbyConfig);
+      onToast('备用站设置已保存');
+      return true;
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`保存备用站设置异常:${(err as Error).message}`);
+      return false;
+    } finally {
+      if (reqPid === liveProjectId.current) setSavingStandby(false);
+    }
+  }, [base, branchSyncPolicy, onToast, projectId, selectedPeerId, standbyEnabled, standbyInterval, standbyRemoteProjectId]);
+
+  const auditStandby = useCallback(async () => {
+    if (!(await saveStandby())) return;
+    const reqPid = projectId;
+    setAuditingStandby(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/standby/audit`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: selectedPeerId, remoteProjectId: standbyRemoteProjectId.trim() }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (body.audit) {
+        setStandby((current) => current ? { ...current, lastAudit: body.audit as StandbyAudit } : current);
+      }
+      if (!res.ok) onToast(`备用站核对未通过:${body.audit?.error || body.error || res.status}`);
+      else onToast(body.audit?.readyForFailover ? '备用站已具备切换条件' : '核对完成，仍有未通过项');
+      await loadStandby();
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`备用站核对异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setAuditingStandby(false);
+    }
+  }, [base, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
+
+  const reconcileBranches = useCallback(async (dryRun: boolean) => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    if (!standbyRemoteProjectId.trim()) { onToast('请填写目标项目 ID'); return; }
+    // 预演只提交临时方案；不能暗中保存 enabled 并触发后台真实同步。
+    if (!dryRun && !(await saveStandby())) return;
+    const reqPid = projectId;
+    setSyncingBranches(dryRun ? 'dry' : 'apply');
+    try {
+      const res = await fetch(apiUrl(`${base}/standby/reconcile`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: selectedPeerId,
+          remoteProjectId: standbyRemoteProjectId.trim(),
+          policy: branchSyncPolicy,
+          dryRun,
+        }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (body.result) setBranchSyncResult(body.result as StandbyBranchSyncResult);
+      if (!res.ok && res.status !== 207) {
+        onToast(`分支同步失败:${body.error || res.status}`);
+      } else if (body.result?.failed?.length) {
+        onToast(`分支同步部分完成，${body.result.failed.length} 项失败`);
+      } else {
+        onToast(dryRun ? '分支同步预演完成' : '分支同步完成');
+      }
+      if (!dryRun) await loadStandby();
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`分支同步异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setSyncingBranches(null);
+    }
+  }, [base, branchSyncPolicy, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
+
   if (!peers) return <LoadingBlock label="加载迁移设置…" />;
 
   const renderRemotePreview = (result: unknown): JSX.Element | null => {
@@ -3421,18 +3916,18 @@ function ProjectMigrationTab({
         <div className="mb-3 flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">名称(可选)</label>
-            <input className={inputClass} style={{ width: 180 }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
+            <input className={inputClass} style={{ width: '11.25rem' }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">节点地址</label>
-            <input className={monoInputClass} style={{ width: 280 }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
+            <input className={monoInputClass} style={{ width: '17.5rem' }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">Access Key(可选,留空用本机同款)</label>
-            <input className={monoInputClass} style={{ width: 240 }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
+            <input className={monoInputClass} style={{ width: '15rem' }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
           </div>
           <Button type="button" size="sm" onClick={() => void addPeer()} disabled={adding}>
-            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} 添加目标
+            {adding ? <Loader2 className="animate-spin" /> : <Plus />} 添加目标
           </Button>
         </div>
 
@@ -3447,21 +3942,21 @@ function ProjectMigrationTab({
                 key={p.id}
                 className={`flex flex-wrap items-center gap-2 rounded-md border p-2.5 ${selectedPeerId === p.id ? 'border-[hsl(var(--primary))]' : 'border-[hsl(var(--hairline))]'}`}
               >
-                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => setSelectedPeerId(p.id)} />
+                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => { peerSelectionEdited.current = true; setSelectedPeerId(p.id); }} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {p.name}
-                    {p.remoteLabel ? <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-300">{p.remoteLabel}</span> : null}
+                    {p.remoteLabel ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">{p.remoteLabel}</span> : null}
                   </div>
                   <div className="truncate font-mono text-xs text-muted-foreground">
                     {p.baseUrl} · key {p.keyMasked || '本机回退'}{p.lastVerifiedAt ? ` · 验证于 ${new Date(p.lastVerifiedAt).toLocaleString()}` : ''}
                   </div>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={() => void verifyPeer(p.id)} disabled={verifyingId === p.id}>
-                  {verifyingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />} 测试连接
+                  {verifyingId === p.id ? <Loader2 className="animate-spin" /> : <ShieldCheck />} 测试连接
                 </Button>
                 <Button type="button" variant="ghost" size="sm" onClick={() => void deletePeer(p.id)}>
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash2 />
                 </Button>
               </div>
             ))}
@@ -3485,7 +3980,7 @@ function ProjectMigrationTab({
             <span className="rounded bg-[hsl(var(--surface-sunken))] px-2 py-1">路由规则 {preview.summary.routingRules}</span>
             <span className="text-muted-foreground">{preview.bytes} 字节</span>
             <Button type="button" variant="ghost" size="sm" onClick={() => setShowYaml((v) => !v)}>
-              <Eye className="h-3.5 w-3.5" /> {showYaml ? '隐藏' : '查看'} YAML
+              <Eye /> {showYaml ? '隐藏' : '查看'} YAML
             </Button>
           </div>
         ) : null}
@@ -3494,16 +3989,16 @@ function ProjectMigrationTab({
           <textarea
             readOnly value={preview.yaml}
             className="mb-3 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
-            rows={12} spellCheck={false} style={{ minHeight: 200, overflowY: 'auto' }}
+            rows={12} spellCheck={false} style={{ minHeight: '12.5rem', overflowY: 'auto' }}
           />
         ) : null}
 
         <div className="mb-2 flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void replicate(true)} disabled={replicating !== null || !selectedPeerId}>
-            {replicating === 'dry' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} 预演(dry-run)
+            {replicating === 'dry' ? <Loader2 className="animate-spin" /> : <Eye />} 预演(dry-run)
           </Button>
           <Button type="button" size="sm" onClick={() => void replicate(false)} disabled={replicating !== null || !selectedPeerId}>
-            {replicating === 'apply' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} 推送复刻
+            {replicating === 'apply' ? <Loader2 className="animate-spin" /> : <Send />} 推送复刻
           </Button>
         </div>
 
@@ -3512,7 +4007,7 @@ function ProjectMigrationTab({
         </p>
 
         {replicateResult ? (
-          <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
+          <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-ok/40 bg-ok-soft' : 'border-destructive/40 bg-destructive/5'}`}>
             <div className="text-sm font-medium">
               {replicateResult.ok ? (replicateResult.dryRun ? '预演成功' : '已推送复刻') : '推送失败'}
               <span className="ml-2 text-xs text-muted-foreground">远端 HTTP {replicateResult.remoteStatus} · 发送 {replicateResult.sentBytes} 字节 · {replicateResult.cleanMode}</span>
@@ -3523,7 +4018,154 @@ function ProjectMigrationTab({
         ) : null}
       </section>
 
-      {/* 3. 数据迁移(扫描,高级折叠) */}
+      {/* 3. 备用站持续核对 */}
+      <section className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" />
+              <h4 className="text-sm font-semibold">备用站核对</h4>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              对比配置指纹、密钥项、主分支提交、数据快照证据与访问耗时。密钥值不会跨节点传输，自动切流保持关闭。
+            </p>
+          </div>
+          <Button type="button" size="sm" onClick={() => void auditStandby()} disabled={auditingStandby || savingStandby || !selectedPeerId}>
+            {auditingStandby ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {auditingStandby ? `正在核对 ${auditElapsedSeconds}s` : '保存并立即核对'}
+          </Button>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            目标项目 ID
+            <input
+              className={monoInputClass}
+              style={{ width: '17.5rem' }}
+              value={standbyRemoteProjectId}
+              onChange={(event) => setStandbyRemoteProjectId(event.target.value)}
+              placeholder={projectId}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            自动核对间隔（分钟）
+            <input
+              className={monoInputClass}
+              style={{ width: '9rem' }}
+              type="number"
+              min={5}
+              max={1440}
+              value={standbyInterval}
+              onChange={(event) => setStandbyInterval(Number(event.target.value))}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            分支同步策略
+            <select
+              className={monoInputClass}
+              style={{ width: '13rem' }}
+              value={branchSyncPolicy}
+              onChange={(event) => setBranchSyncPolicy(event.target.value as typeof branchSyncPolicy)}
+            >
+              <option value="audit-only">只核对</option>
+              <option value="catalog">补齐分支目录</option>
+              <option value="warm-running">补齐并对齐运行态</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 pb-2 text-sm">
+            <input type="checkbox" checked={standbyEnabled} onChange={(event) => setStandbyEnabled(event.target.checked)} />
+            按间隔持续核对
+          </label>
+          <Button type="button" variant="outline" size="sm" onClick={() => void saveStandby()} disabled={savingStandby || auditingStandby || !selectedPeerId}>
+            {savingStandby ? <Loader2 className="animate-spin" /> : <Save />} 保存设置
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void reconcileBranches(true)} disabled={syncingBranches !== null || savingStandby || !selectedPeerId}>
+            {syncingBranches === 'dry' ? <Loader2 className="animate-spin" /> : <Eye />} 预演分支同步
+          </Button>
+          <Button type="button" size="sm" onClick={() => void reconcileBranches(false)} disabled={syncingBranches !== null || savingStandby || branchSyncPolicy === 'audit-only' || !selectedPeerId}>
+            {syncingBranches === 'apply' ? <Loader2 className="animate-spin" /> : <RefreshCw />} 立即同步分支
+          </Button>
+        </div>
+
+        <p className="mb-3 text-xs text-muted-foreground">
+          “补齐分支目录”只创建缺少的分支，不启动容器；“补齐并对齐运行态”会让备用站跟随源站启动或停止。目标独有分支不会删除，提交不同的分支不会自动覆盖。
+        </p>
+
+        {branchSyncResult ? (
+          <div className="mb-3 overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">分支同步</th>
+                  <th className="px-3 py-2 font-medium">数量</th>
+                  <th className="px-3 py-2 font-medium">结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2">源站 / 目标</td>
+                  <td className="px-3 py-2">{branchSyncResult.sourceBranchCount} / {branchSyncResult.targetBranchCount}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{branchSyncResult.dryRun ? '预演' : '已执行'} · {branchSyncResult.policy}</td>
+                </tr>
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2">本轮动作</td>
+                  <td className="px-3 py-2">{branchSyncResult.planned.length}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    创建 {branchSyncResult.created.length}，启动 {branchSyncResult.deployed.length}，停止 {branchSyncResult.stopped.length}，分叉 {branchSyncResult.divergent.length}，失败 {branchSyncResult.failed.length}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {standby?.lastAudit ? (
+          <div className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">核对项</th>
+                  <th className="px-3 py-2 font-medium">结果</th>
+                  <th className="px-3 py-2 font-medium">证据</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['目标 CDS', standby.lastAudit.remoteReachable, standby.lastAudit.protocolReady ? '可达，协议兼容' : (standby.lastAudit.error || '不可达')],
+                  ['代码仓库', standby.lastAudit.repositoryMatches, standby.lastAudit.repositoryMatches ? '两端绑定同一仓库' : '仓库身份不同或缺失'],
+                  ['配置与密钥项', standby.lastAudit.configMatches && standby.lastAudit.secretKeysMatch, `配置 ${standby.lastAudit.configMatches ? '一致' : '不一致'}，密钥项 ${standby.lastAudit.secretKeysMatch ? '齐全' : '有差异'}`],
+                  ['主分支提交', standby.lastAudit.defaultBranchMatches, standby.lastAudit.defaultBranchMatches ? '提交一致' : '提交不一致或缺少主分支'],
+                  ['当前数据就绪', standby.lastAudit.currentDataVerified === true, standby.lastAudit.dataReadinessReason
+                    || (standby.lastAudit.dataSnapshotReady ? '已有历史快照，请重新核对当前数据' : '尚无当前数据一致性证据')],
+                ].map(([label, passed, evidence]) => (
+                  <tr key={String(label)} className="border-t border-[hsl(var(--hairline))]">
+                    <td className="px-3 py-2 font-medium">{String(label)}</td>
+                    <td className={`px-3 py-2 ${passed ? 'text-ok' : 'text-warn'}`}>{passed ? '通过' : '未通过'}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{String(evidence)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2 font-medium">控制面耗时</td>
+                  <td className="px-3 py-2">{standby.lastAudit.performance.samples} 次样本</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    目标健康 p50 {standby.lastAudit.performance.healthP50Ms ?? '-'} ms，p95 {standby.lastAudit.performance.healthP95Ms ?? '-'} ms，指纹 {standby.lastAudit.performance.fingerprintMs ?? '-'} ms
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div className={`border-t border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium ${standbyReadyForFailover ? 'text-ok' : 'text-warn'}`}>
+              {standbyReadyForFailover ? '全部门禁通过，可以进入切流演练' : '尚不允许切流，请先处理表格中的未通过项'}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">核对于 {new Date(standby.lastAudit.checkedAt).toLocaleString()}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] p-4 text-center text-sm text-muted-foreground">
+            尚无核对记录。选择上方目标节点，填写目标项目 ID 后运行一次核对。
+          </div>
+        )}
+      </section>
+
+      {/* 4. 数据迁移(扫描,高级折叠) */}
       <details className="rounded-md border border-[hsl(var(--hairline))] p-4">
         <summary className="flex cursor-pointer items-center gap-2">
           <Database className="h-4 w-4" />
@@ -3532,7 +4174,7 @@ function ProjectMigrationTab({
         </summary>
 
         <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void runDataPlan()} disabled={scanning || !selectedPeerId}>
-          {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 扫描数据迁移计划
+          {scanning ? <Loader2 className="animate-spin" /> : <RefreshCw />} 扫描数据迁移计划
         </Button>
 
         {dataPlan ? (
@@ -3550,10 +4192,10 @@ function ProjectMigrationTab({
                   <div className="mt-1 flex flex-wrap gap-2">
                     <Button type="button" variant="outline" size="sm" asChild>
                       <a href={apiUrl(b.download)} download>
-                        <Download className="h-3.5 w-3.5" /> 下载源库快照
+                        <Download /> 下载源库快照
                       </a>
                     </Button>
-                    <code className="self-center font-mono text-[11px] text-muted-foreground">恢复到 → {b.restore}</code>
+                    <code className="self-center font-mono text-[0.6875rem] text-muted-foreground">恢复到 → {b.restore}</code>
                   </div>
                 </div>
               ))
@@ -3605,22 +4247,31 @@ function ProjectStorageTab({
   const [data, setData] = useState<ProjectStorageResponse | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [readError, setReadError] = useState('');
+  const beginRefreshRead = useSettingsReadRequest();
   const refresh = useCallback(async () => {
+    const signal = beginRefreshRead();
+    setReadError('');
     setBusy(true);
     try {
-      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include', signal });
       const body = await res.json();
-      if (!res.ok) { onToast(`加载失败：${body.error || res.status}`); return; }
+      if (signal.aborted) return;
+      if (!res.ok) { setReadError(body.error || String(res.status)); onToast(`加载失败：${body.error || res.status}`); return; }
       setData(body as ProjectStorageResponse);
     } catch (err) {
+      if (signal.aborted) return;
+      setReadError((err as Error).message);
       onToast(`加载异常：${(err as Error).message}`);
     } finally {
-      setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
-  }, [projectId, onToast]);
+  }, [projectId, onToast, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
 
+  if (!data && readError) return <div className="space-y-3"><ErrorBlock message={readError} /><Button onClick={() => void refresh()}>重试</Button></div>;
   if (!data) return <LoadingBlock label="加载存储信息…" />;
 
   const disk = data.diskInfo;
@@ -3636,7 +4287,7 @@ function ProjectStorageTab({
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+          {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />} 刷新
         </Button>
       </div>
 
@@ -3671,7 +4322,7 @@ function ProjectStorageTab({
       </div>
 
       {data.note ? (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+        <div className="flex items-start gap-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>{data.note}</span>
         </div>
@@ -3752,21 +4403,26 @@ function ProjectInfraTab({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [resyncOpen, setResyncOpen] = useState(false);
 
+  const beginRefreshRead = useSettingsReadRequest();
   const refresh = useCallback(async () => {
+    const signal = beginRefreshRead();
     try {
       setError(null);
       const data = await apiRequest<{ services?: ProjectInfraService[] }>(
-        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`,
+        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`, { signal },
       );
+      if (signal.aborted) return;
       setServices(data.services || []);
     } catch (err) {
+      if (signal.aborted) return;
       const msg = err instanceof ApiError ? err.message : (err as Error).message;
       setError(msg || '加载失败');
-      setServices([]);
+      setServices(previous => previous ?? []);
     }
-  }, [projectId]);
+  }, [projectId, beginRefreshRead]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
 
   const doStart = useCallback(async (id: string) => {
     setBusy(id);
@@ -3854,34 +4510,34 @@ function ProjectInfraTab({
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
+    <div className="space-y-3" data-project-infra>
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold">项目基础设施</h3>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
             mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
           </p>
-          <p className="text-[11px] text-muted-foreground/80 mt-1">
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
             <span className="font-medium text-foreground/80">数据卷不丢失</span>:删除/停止容器不影响 docker named volume,
             下次同名 infra 创建会自动挂回原数据。
           </p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <Button type="button" variant="outline" size="sm"
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm"
             onClick={doStartAll} disabled={busy !== null || stoppedCount === 0}
             title={stoppedCount === 0 ? '没有可启动的服务' : `启动 ${stoppedCount} 个已停止的服务`}>
             全部启动 {stoppedCount > 0 ? `(${stoppedCount})` : ''}
           </Button>
-          <Button type="button" variant="outline" size="sm"
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm"
             onClick={doStopAll} disabled={busy !== null || runningCount === 0}
             title={runningCount === 0 ? '没有正在运行的服务' : `停止 ${runningCount} 个运行中的服务(数据保留)`}>
             全部停止 {runningCount > 0 ? `(${runningCount})` : ''}
           </Button>
-          <Button type="button" variant="default" size="sm" onClick={() => setResyncOpen(true)} disabled={busy !== null}>
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="default" size="sm" onClick={() => setResyncOpen(true)} disabled={busy !== null}>
             重新同步配置
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
-            <RefreshCw className="h-3 w-3" /> 刷新
+          <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
+            <RefreshCw /> 刷新
           </Button>
         </div>
       </div>
@@ -3907,60 +4563,62 @@ function ProjectInfraTab({
             return (
               <div
                 key={svc.id}
+                data-infra-id={svc.id}
                 className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3"
               >
-                <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-semibold text-foreground">{svc.name}</span>
-                      <CodePill>{svc.id}</CodePill>
+                    <div className="flex flex-wrap items-start gap-x-3 gap-y-1 text-sm">
+                      <span className="min-w-0 break-words font-semibold text-foreground">{svc.name}</span>
                       <span className={
-                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ` +
+                        `inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-xs ` +
                         (svc.status === 'running'
-                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          ? 'bg-ok-soft text-ok'
                           : svc.status === 'error'
-                            ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                            ? 'bg-bad-soft text-bad'
                             : 'bg-muted text-muted-foreground')
                       }>
                         {svc.status === 'running' ? '运行中' : svc.status === 'error' ? '错误' : '已停止'}
                       </span>
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground font-mono">
+                    <code className="mt-1 block break-all font-mono text-xs text-muted-foreground">{svc.id}</code>
+                    <div className="mt-1 break-all text-xs text-muted-foreground font-mono">
                       {svc.dockerImage}
                       {' · '}
                       :{svc.hostPort}→{svc.containerPort}
                     </div>
                     {cmdText ? (
-                      <div className="mt-1 text-[11px] text-foreground/70 font-mono break-all">
+                      <div className="mt-1 text-xs leading-5 text-muted-foreground font-mono break-all">
                         cmd: {cmdText}
                       </div>
                     ) : null}
                     {svc.errorMessage ? (
-                      <div className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">
+                      <div className="mt-1.5 text-xs leading-5 break-words text-bad">
                         {svc.errorMessage}
                       </div>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {svc.status === 'running' ? (
-                      <Button type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         停止
                       </Button>
                     ) : (
-                      <Button type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
-                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
+                        {isBusy ? <Loader2 className="animate-spin" /> : null}
                         启动
                       </Button>
                     )}
                     <Button
+                      className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0"
                       type="button"
                       variant="destructive"
                       size="sm"
                       onClick={() => setConfirmDeleteId(svc.id)}
                       disabled={isBusy}
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Trash2 />
                       删除
                     </Button>
                   </div>
@@ -3979,19 +4637,20 @@ function ProjectInfraTab({
               确认删除 infra 服务
             </DialogTitle>
             <DialogDescription>
-              将停止并删除容器 <code className="font-mono">{confirmDeleteId}</code>,以及对应的持久卷映射记录。
+              将停止并删除容器 <code className="break-all font-mono">{confirmDeleteId}</code>,以及对应的持久卷映射记录。
               数据卷本身不会被删(volumes 由 docker 单独管理),但服务不会再启动。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={() => setConfirmDeleteId(null)}>取消</Button>
+            <Button className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0" type="button" variant="outline" onClick={() => setConfirmDeleteId(null)}>取消</Button>
             <Button
+                      className="min-h-[3.25rem] min-w-[3.25rem] sm:min-h-0 sm:min-w-0"
               type="button"
               variant="destructive"
               onClick={() => confirmDeleteId && doDelete(confirmDeleteId)}
               disabled={busy !== null}
             >
-              {busy !== null ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              {busy !== null ? <Loader2 className="animate-spin" /> : null}
               确认删除
             </Button>
           </DialogFooter>
@@ -4110,6 +4769,7 @@ function InfraResyncDialog({
       onToast('删除项需要输入 yes 确认');
       return;
     }
+    if (diff.adds.length > 0 && !window.confirm(`将为新增 ${diff.adds.length} 个服务中需要存储的服务创建独立空数据卷。不会接管或替换历史卷；已有或无法确认的卷会中止。是否继续？`)) return;
     setBusy(true);
     try {
       const res = await fetch(
@@ -4118,12 +4778,12 @@ function InfraResyncDialog({
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined, deleteVolumes }),
+          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined, deleteVolumes, ...(diff.adds.length > 0 ? {initializeStorage: 'new-only'} : {}) }),
         },
       );
       const body = await res.json();
       if (!res.ok) {
-        onToast(`执行失败:${body.error || res.status}`);
+        onToast(`执行失败:${body.error || res.status}${body.recoveryRequired ? '；已保留已分配的存储与原配置，请先核对结果，不要重复新建。' : ''}`);
         return;
       }
       const a = body.applied || {};
@@ -4155,8 +4815,8 @@ function InfraResyncDialog({
         <DialogHeader>
           <DialogTitle>重新同步项目基础设施</DialogTitle>
           <DialogDescription>
-            粘贴 cds-compose.yml,先预览 diff,再执行。<strong>docker named volume 保留</strong>,
-            被删/重建的容器其数据卷会被新容器自动接回。
+            粘贴 cds-compose.yml，先预览再执行。已有服务只复用经核验的原存储映射；
+            新增服务经确认后创建独立空卷。已有或无法确认的历史卷不会被接管、替换或重新创建。
           </DialogDescription>
         </DialogHeader>
 
@@ -4192,12 +4852,12 @@ function InfraResyncDialog({
               rows={8}
               placeholder={`x-cds-project:\n  name: my-project\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ["27017"]\n    volumes: [mongodb-data:/data/db]\n`}
               disabled={busy}
-              style={{ minHeight: 160, maxHeight: 280, overflowY: 'auto' }}
+              style={{ minHeight: '10rem', maxHeight: '17.5rem', overflowY: 'auto' }}
             />
           </div>
 
           {previewError ? (
-            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+            <div className="rounded-md border border-bad/30 bg-bad-soft p-3 text-sm text-bad">
               <div className="font-semibold">预览失败</div>
               <div>{previewError}</div>
               {cmdError ? <div className="mt-2 font-mono text-xs">{cmdError}</div> : null}
@@ -4207,7 +4867,7 @@ function InfraResyncDialog({
           {!diff ? (
             <div className="flex justify-end">
               <Button type="button" onClick={onPreview} disabled={busy || !yamlText.trim()}>
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                {busy ? <Loader2 className="animate-spin" /> : null}
                 预览 diff
               </Button>
             </div>
@@ -4215,11 +4875,11 @@ function InfraResyncDialog({
             <div className="space-y-3 max-h-[40vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
               {diff.adds.length > 0 ? (
                 <div>
-                  <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                  <div className="text-xs font-semibold text-ok">
                     新增 {diff.adds.length}
                   </div>
                   {diff.adds.map((a) => (
-                    <div key={`add-${a.id}`} className="mt-1 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-xs">
+                    <div key={`add-${a.id}`} className="mt-1 rounded border border-ok/30 bg-ok-soft px-2 py-1 text-xs">
                       <code className="font-mono">{a.id}</code> · {a.dockerImage}:{a.containerPort}
                     </div>
                   ))}
@@ -4227,13 +4887,13 @@ function InfraResyncDialog({
               ) : null}
               {diff.updates.length > 0 ? (
                 <div>
-                  <div className="text-xs font-semibold text-sky-700 dark:text-sky-300">
+                  <div className="text-xs font-semibold text-info">
                     更新 {diff.updates.length}(image/cmd/env/volumes/ports 任一变化即重建)
                   </div>
                   {diff.updates.map((u) => (
-                    <div key={`upd-${u.id}`} className="mt-1 rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1 text-xs">
+                    <div key={`upd-${u.id}`} className="mt-1 rounded border border-info/30 bg-info-soft px-2 py-1 text-xs">
                       <code className="font-mono">{u.id}</code>
-                      <ul className="mt-0.5 list-disc pl-4 text-[11px] text-foreground/80">
+                      <ul className="mt-0.5 list-disc pl-4 text-[0.6875rem] text-foreground/80">
                         {u.reasons.map((r, i) => <li key={i}>{r}</li>)}
                       </ul>
                     </div>
@@ -4242,11 +4902,11 @@ function InfraResyncDialog({
               ) : null}
               {diff.removes.length > 0 ? (
                 <div>
-                  <div className="text-xs font-semibold text-red-700 dark:text-red-300">
+                  <div className="text-xs font-semibold text-bad">
                     删除 {diff.removes.length}(yaml 中已不存在 · 默认仅删容器,数据卷保留)
                   </div>
                   {diff.removes.map((r) => (
-                    <div key={`rm-${r.id}`} className="mt-1 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs">
+                    <div key={`rm-${r.id}`} className="mt-1 rounded border border-bad/30 bg-bad-soft px-2 py-1 text-xs">
                       <code className="font-mono">{r.id}</code> · {r.containerName} · {r.status}
                     </div>
                   ))}
@@ -4259,7 +4919,7 @@ function InfraResyncDialog({
                       className="mt-0.5"
                     />
                     <span>
-                      <span className="font-semibold text-red-700 dark:text-red-300">同时删除数据卷(不可恢复)</span>
+                      <span className="font-semibold text-bad">同时删除数据卷(不可恢复)</span>
                       <br />
                       <span className="text-muted-foreground">
                         默认不勾:只删容器,docker named volume 保留,数据安全。
@@ -4300,7 +4960,7 @@ function InfraResyncDialog({
           {diff && (diff.adds.length + diff.updates.length + diff.removes.length) > 0 ? (
             <Button type="button" variant="default" onClick={onExecute}
               disabled={busy || (diff.removes.length > 0 && confirmTextInput.trim().toLowerCase() !== 'yes')}>
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              {busy ? <Loader2 className="animate-spin" /> : null}
               执行同步
             </Button>
           ) : null}

@@ -173,7 +173,7 @@ export default function PublicProfilePage() {
               <Globe size={14} />
               <span>公开主页</span>
               {isSelf && (
-                <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] text-sky-200 ring-1 ring-sky-400/40">
+                <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] text-[color:var(--accent-fg-blue)] ring-1 ring-sky-400/40">
                   这是你
                 </span>
               )}
@@ -373,7 +373,7 @@ function SitesGrid({
           rel="noopener noreferrer"
           className="group flex flex-col overflow-hidden rounded-2xl border border-token-subtle bg-token-nested transition-all hover-border-token hover-bg-soft hover:shadow-[0_0_24px_rgba(56,189,248,0.15)]"
         >
-          <div className="relative overflow-hidden" style={{ aspectRatio: '16 / 9', background: '#0f1014' }}>
+          <div className="surface-tone-dark relative overflow-hidden" style={{ aspectRatio: '16 / 9', background: '#0f1014' }}>
             {s.coverImageUrl ? (
               <img
                 src={s.coverImageUrl}
@@ -483,7 +483,7 @@ function SkillsGrid({
             {s.publishedAt && <span>公开于 {fmtDate(s.publishedAt)}</span>}
             <button
               onClick={() => download(s)}
-              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-400/25 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-100 transition-all hover:bg-violet-500/20 hover:text-violet-50"
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-400/25 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-[color:var(--accent-fg-violet)] transition-all hover:bg-violet-500/20 hover:text-[color:var(--accent-fg-violet)]"
               title="下载技能描述文件（JSON）"
             >
               <Download size={10} /> 下载
@@ -599,7 +599,7 @@ function PromptsGrid({
                   <Feather size={11} className="text-amber-300/80" />
                   <span>文学提示词</span>
                   {p.scenarioType && (
-                    <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-amber-100">
+                    <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[color:var(--accent-fg-amber)]">
                       {p.scenarioType}
                     </span>
                   )}
@@ -763,7 +763,7 @@ function WorkflowsGrid({
             <div className="flex flex-wrap items-center gap-1 rounded-md border border-cyan-400/10 bg-cyan-500/[0.04] px-2 py-1.5">
               {w.nodeTypes.map((t, i) => (
                 <span key={`${t}-${i}`} className="inline-flex items-center gap-1">
-                  <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] text-cyan-100/85">
+                  <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] text-[color:var(--accent-fg-blue)]">
                     {t}
                   </span>
                   {i < w.nodeTypes!.length - 1 && (

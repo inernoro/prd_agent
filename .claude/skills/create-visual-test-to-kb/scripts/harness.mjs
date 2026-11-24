@@ -8,9 +8,13 @@
 // 运行：PWPATH=$(npm root -g)/playwright node driver.mjs
 
 import { createRequire } from 'module';
+import { loadPlaywright } from './playwright-runtime.mjs';
 const require = createRequire(import.meta.url);
-const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium, devices } = require(PW);
+let playwrightRuntime;
+function getPlaywrightRuntime() {
+  playwrightRuntime ||= loadPlaywright();
+  return playwrightRuntime;
+}
 const pageEnvironments = new WeakMap();
 
 export function loadConfig(path) {
@@ -35,6 +39,12 @@ export async function launch(cfg, opts = {}) {
     ],
   };
   if (process.env.ACC_BROWSER_PROXY) launchOpts.proxy = { server: process.env.ACC_BROWSER_PROXY };
+  // 镜像预装的 Chromium 与 playwright 包自带的版本号常常对不上（包要 chromium-1217，
+  // 镜像只有 chromium-1194），此时 launch 会让人去跑 `npx playwright install` —— 在受限
+  // 沙箱里那条路走不通，验收会卡在第一步。给一个与 ACC_BROWSER_PROXY 同构的 env 口子，
+  // 显式指到镜像里那个可执行文件即可，不设则维持原行为。
+  if (process.env.ACC_BROWSER_EXECUTABLE) launchOpts.executablePath = process.env.ACC_BROWSER_EXECUTABLE;
+  const { chromium } = getPlaywrightRuntime();
   const browser = await chromium.launch(launchOpts);
   // opts.viewport 允许调用方覆盖视口（手机端验收时传 {width:390,height:844}）。
   const vp = opts.viewport || { width: sc.width || 1440, height: sc.height || 900 };
@@ -59,6 +69,7 @@ export async function launch(cfg, opts = {}) {
     configuredMobile: Boolean(opts.isMobile),
     deviceName: opts.isMobile ? (opts.deviceName || 'custom-mobile') : 'desktop',
     mobilePathId: opts.mobilePathId || null,
+    targetEnvironment: opts.environment || null,
   });
   // v1.0（issue #605 二.2 / 楼上一致共识）：默认挂上 console/network/pageerror 自动捕获——
   // 这是"人眼扫静态图永远漏的维度"，最该让机器补。driver 无需手动开，launch 即装。
@@ -72,6 +83,7 @@ export async function launch(cfg, opts = {}) {
 export async function createMobileContext(browser, cfg, opts = {}) {
   const session = _captureSession;
   const deviceName = opts.deviceName || 'iPhone 13';
+  const { devices } = getPlaywrightRuntime();
   const profile = devices[deviceName];
   if (!profile) throw new Error(`未知 Playwright 移动设备：${deviceName}`);
   const viewport = opts.viewport || profile.viewport || { width: 390, height: 844 };
@@ -93,6 +105,7 @@ export async function createMobileContext(browser, cfg, opts = {}) {
     configuredMobile: true,
     deviceName,
     mobilePathId: opts.mobilePathId || 'mobile-primary',
+    targetEnvironment: opts.environment || null,
   });
   attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
   return { ctx, page };
@@ -429,7 +442,7 @@ export async function waitForReady(page, { timeout = 12000, minTextLen = 100, cu
  * 截图后内容校验。命中失败词 / 太空 / 文件过小都记录 warning 到返回值。
  * expectText: 字符串或正则，断言截图时页面 body 文本中应包含此内容。
  */
-async function validateShot(page, path, expectText) {
+async function validateShot(page, path, expectText, allowBlockingOverlay = false) {
   const warnings = [];
   const fs = require('fs');
   try {
@@ -449,6 +462,27 @@ async function validateShot(page, path, expectText) {
   if (expectText) {
     const ok = expectText instanceof RegExp ? expectText.test(bodyText) : bodyText.includes(expectText);
     if (!ok) warnings.push(`expectText 未命中: ${expectText}`);
+  }
+
+  if (!allowBlockingOverlay) {
+    try {
+      const blocker = await page.evaluate(() => {
+        const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+        const candidates = [...document.querySelectorAll('div')].filter((element) => {
+          if (!(element instanceof HTMLElement) || element.classList.contains('__acc_box')) return false;
+          const style = getComputedStyle(element);
+          if (style.position !== 'fixed' || style.pointerEvents === 'none' || Number(style.zIndex || 0) < 9000) return false;
+          const rect = element.getBoundingClientRect();
+          const visibleWidth = Math.max(0, Math.min(rect.right, innerWidth) - Math.max(rect.left, 0));
+          const visibleHeight = Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0));
+          return visibleWidth * visibleHeight / viewportArea >= 0.45;
+        });
+        const top = candidates.at(-1);
+        if (!(top instanceof HTMLElement)) return null;
+        return (top.getAttribute('aria-label') || top.getAttribute('title') || top.innerText || '未命名遮罩').trim().slice(0, 80);
+      });
+      if (blocker) warnings.push(`存在覆盖主要内容的高层弹窗/遮罩：${blocker}；若本图就是验收该弹窗，需显式 allowBlockingOverlay=true`);
+    } catch { /* 遮罩检测失败不阻断其他校验 */ }
   }
 
   // 版式健康自动护栏（2026-06-02 反哺）：检测开启的 modal/弹窗是否「撑破」视口。
@@ -496,6 +530,24 @@ async function validateShot(page, path, expectText) {
  *   - expectText: 断言页面含此文本（强烈推荐：让 caption 不只是描述、更是断言）
  *   - skipReady: 跳过就绪等待（仅极少数确知场景，如登录页输入框未就绪）
  *   - customLoaderSelectors: 项目特有的 loader 选择器
+ *   - module: 全面视觉验收时的主业务模块名称，供模块预算门禁计数
+ *   - slotId: 全面视觉验收计划中的唯一验收位，供门禁防重复占位和漏测
+ *   - evidenceState: 当前截图证明的状态，例如入口、输入、加载、结果或失败恢复
+ *   - primaryState: 当前截图唯一负责证明的标准状态；全面视觉门禁按它逐项核销
+ *   - coverageStates: 当前截图证明的标准状态数组，供全面视觉覆盖门禁逐项核对
+ *   - testType: 冒烟、功能、视觉或回归
+ *   - status: 通过、不通过、部分通过、未执行或需干预
+ *   - automatedStatus: 自动检查结论；不传时由截图 warning 推导
+ *   - manualStatus: 人工视觉结论；不传时沿用调用方声明的 status
+ *   - theme: light 或 dark；不传时从页面主题自动识别
+ *   - methodAnchor: 报告内关联测试方法锚点
+ *   - breadcrumb: 从入口到当前状态的真实页面操作路径
+ *   - environment: cds 或 production；不传时继承 launch/createMobileContext 的同名选项
+ *   - runId: 本轮稳定冒烟运行标识；不传时读取 STABLE_SMOKE_RUN_ID
+ *   - commit: 本轮待验收提交；不传时读取 STABLE_SMOKE_COMMIT
+ *   - failureEvidence: 当前图是否专门证明一个真实失败；只能用于 conditional/fail 报告
+ *   - failureReason: failureEvidence=true 时必须说明失败事实，归档门禁会核对
+ *   - allowBlockingOverlay: 当前截图本来就在验收全屏弹窗或教程遮罩；默认 false
  */
 export async function shot(page, outDir, name, caption, opts = {}) {
   const {
@@ -506,6 +558,24 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     overview = false,
     mobilePathId,
     mobileStage,
+    module,
+    slotId,
+    evidenceState,
+    primaryState,
+    coverageStates,
+    testType,
+    status,
+    automatedStatus,
+    manualStatus,
+    theme,
+    methodAnchor,
+    breadcrumb,
+    environment: targetEnvironment,
+    runId,
+    commit,
+    failureEvidence = false,
+    failureReason,
+    allowBlockingOverlay = false,
   } = opts;
   assertOutsideRepo(outDir, '截图输出目录');
   require('fs').mkdirSync(outDir, { recursive: true });
@@ -518,7 +588,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   await page.screenshot({ path, fullPage });
 
   // 3) 校验
-  let warnings = await validateShot(page, path, expectText);
+  let warnings = await validateShot(page, path, expectText, allowBlockingOverlay);
 
   // 4) 有 warning 时再等 2s 重试一次（覆盖"刚好慢一拍"的情况）
   if (warnings.length > 0) {
@@ -526,7 +596,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     await page.waitForTimeout(2500);
     if (!skipReady) await waitForReady(page, { timeout: 8000, customLoaderSelectors });
     await page.screenshot({ path, fullPage });
-    warnings = await validateShot(page, path, expectText);
+    warnings = await validateShot(page, path, expectText, allowBlockingOverlay);
   }
 
   // 5) v1.0：把"截这张图之前自动捕获到的 ≥blockSeverity 错误"折叠进本图 warnings。
@@ -546,25 +616,97 @@ export async function shot(page, outDir, name, caption, opts = {}) {
 
   const viewport = page.viewportSize();
   const touchPoints = await page.evaluate(() => Number(navigator.maxTouchPoints || 0)).catch(() => 0);
-  const environment = pageEnvironments.get(page) || {};
+  const pageEnvironment = pageEnvironments.get(page) || {};
   const isMobile = Boolean(
-    environment.configuredMobile
+    pageEnvironment.configuredMobile
     && viewport
     && viewport.width <= 480
     && touchPoints >= 1,
   );
+  // 实测，不取脚本意图：这个字段曾经把 20 张暗色图全记成 light（调用方传什么就记什么），
+  // 于是「浅色其实没切成功」在账面上看不出来 —— predicate-and-wiring-discipline 形状 6。
+  // 现在无论调用方传没传 theme，都以页面当时真实渲染出来的为准。
+  const resolvedTheme = await page.evaluate(() => {
+    const root = document.documentElement;
+    // 标记只当**线索**，不当结论。切主题时 data-theme / class 先翻，对应的 CSS 没生效
+    // （变量没加载、样式表 404、选择器写错）是完全可能的 —— 而那恰恰是双主题验收要抓的
+    // 那一种失败：标记说 light、屏幕上是暗的，证据却按 light 记账，覆盖检查还判通过。
+    // 所以先量真实底色；量得出来就以量到的为准，量不出来才退回标记。
+    const marker = (() => {
+      const declared = root.getAttribute('data-theme') || document.body?.getAttribute('data-theme');
+      if (declared === 'light' || declared === 'dark') return declared;
+      if (root.classList.contains('dark') || document.body?.classList.contains('dark')) return 'dark';
+      if (root.classList.contains('light') || document.body?.classList.contains('light')) return 'light';
+      return null;
+    })();
+    // 兜底量真实底色，而不是问 prefers-color-scheme —— 无头浏览器默认答 light，
+    // 于是一整套暗色截图会被记成 light（这正是那次 20 张全记错的成因）。
+    //
+    // 必须看 alpha：body 的背景常常是 rgba(0,0,0,0)（完全透明，看得见的底色其实来自 html
+    // 或更外层）。只取 rgb 三个分量的话，那三个 0 会被当成纯黑 —— 浅色页反而被记成 dark，
+    // 双主题证据比不量还错。所以只认**不透明**的背景，半透明/全透明一律往外层找；
+    // 都不透明不了就退回媒体查询。
+    const opaqueTheme = (el) => {
+      if (!el) return null;
+      const m = (getComputedStyle(el).backgroundColor || '').match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const parts = m[1].split(',').map((v) => parseFloat(v));
+      const [r, g, b] = parts;
+      const a = parts.length > 3 ? parts[3] : 1;
+      if (![r, g, b, a].every((v) => Number.isFinite(v))) return null;
+      if (a < 1) return null;
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128 ? 'dark' : 'light';
+    };
+    const measured = opaqueTheme(document.body) || opaqueTheme(root);
+    if (measured) return measured;
+    if (marker) return marker;
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }).catch(() => null);
+  const actualPageUrl = page.url();
+  let pageOrigin;
+  let pagePath;
+  try {
+    const parsedPageUrl = new URL(actualPageUrl);
+    pageOrigin = parsedPageUrl.origin;
+    pagePath = parsedPageUrl.pathname;
+  } catch {
+    pageOrigin = undefined;
+    pagePath = undefined;
+  }
   const rec = {
     name,
     caption,
     path,
+    runId: runId || process.env.STABLE_SMOKE_RUN_ID || undefined,
+    commit: commit || process.env.STABLE_SMOKE_COMMIT || undefined,
+    capturedAt: new Date().toISOString(),
+    pageOrigin,
+    pagePath,
     annotated,
     overview,
     viewport,
     touchPoints,
     isMobile,
-    deviceName: environment.deviceName || null,
-    mobilePathId: mobilePathId || environment.mobilePathId || null,
+    deviceName: pageEnvironment.deviceName || null,
+    mobilePathId: mobilePathId || pageEnvironment.mobilePathId || null,
     mobileStage: mobileStage || null,
+    module: module || null,
+    slotId: slotId || null,
+    evidenceState: evidenceState || null,
+    primaryState: primaryState || null,
+    coverageStates: Array.isArray(coverageStates) ? coverageStates : undefined,
+    testType: testType || undefined,
+    status: status || undefined,
+    automatedStatus: warnings.length > 0 ? '不通过' : automatedStatus || '通过',
+    manualStatus: manualStatus || status || undefined,
+    theme: resolvedTheme || undefined,
+    viewportClass: isMobile ? 'mobile' : 'desktop',
+    methodAnchor: methodAnchor || undefined,
+    breadcrumb: breadcrumb || undefined,
+    environment: targetEnvironment || pageEnvironment.targetEnvironment || undefined,
+    failureEvidence: Boolean(failureEvidence),
+    failureReason: failureReason || null,
+    allowBlockingOverlay: Boolean(allowBlockingOverlay),
     warnings: warnings.length ? warnings : undefined,
   };
   shots.push(rec);
@@ -597,6 +739,9 @@ export function writeManifest(outDir, extra = {}) {
     last.warnings = (last.warnings || []).concat(
       orphanBlockers.map((f) => `自动捕获(${f.severity},${f.kind},末次截图后/未挂载): ${f.message}`),
     );
+    // 稳定冒烟视觉门禁按结构化状态裁决，不读取 warnings 文案。晚到 blocker 除了留下诊断证据，
+    // 还必须把最后一条证据的自动结论降为不通过，否则归档会拒收、前置门禁却可能误放行。
+    last.automatedStatus = '不通过';
     orphanBlockers.forEach((f) => { f._attached = true; });
   }
   fs.writeFileSync(`${outDir}/manifest.json`, JSON.stringify(shots, null, 2));

@@ -44,12 +44,12 @@
 }
 
 .fea-subtitle-warm {
-  color: rgba(199, 210, 254, 0.58);
+  color: rgba(199, 210, 254, 0.78);
   letter-spacing: 0.01em;
 }
 
 .fea-subtitle-muted {
-  color: rgba(199, 210, 254, 0.38);
+  color: var(--accent-fg-blue);
 }
 
 .fea-header-rule {
@@ -68,7 +68,7 @@
 .fea-vintage-badge {
   border-color: rgba(99, 102, 241, 0.35);
   background: rgba(99, 102, 241, 0.12);
-  color: rgba(199, 210, 254, 0.82);
+  color: var(--accent-fg-blue);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-size: 10px;
@@ -115,19 +115,19 @@
 .fea-task-pill-idle {
   border-color: rgba(99, 102, 241, 0.14);
   background: rgba(255, 255, 255, 0.04);
-  color: rgba(199, 210, 254, 0.55);
+  color: var(--accent-fg-blue);
 }
 
 .fea-task-pill-idle:hover {
   background: rgba(99, 102, 241, 0.1);
-  color: rgba(199, 210, 254, 0.78);
+  color: var(--accent-fg-blue);
   border-color: rgba(99, 102, 241, 0.28);
 }
 
 .fea-task-pill-active {
   border-color: rgba(99, 102, 241, 0.55) !important;
   background: rgba(99, 102, 241, 0.18) !important;
-  color: rgba(199, 210, 254, 0.95) !important;
+  color: var(--accent-fg-blue) !important;
   box-shadow: 0 0 24px rgba(99, 102, 241, 0.18);
   animation: fea-pulse-ring 2.6s ease-in-out infinite;
 }
@@ -333,7 +333,7 @@
 }
 
 .fea-input::placeholder {
-  color: rgba(199, 210, 254, 0.32);
+  color: var(--accent-fg-blue);
 }
 
 .fea-input:focus {
@@ -345,11 +345,11 @@
 .fea-aside-hint {
   border-color: rgba(99, 102, 241, 0.1);
   background: rgba(99, 102, 241, 0.03);
-  color: rgba(199, 210, 254, 0.38);
+  color: var(--accent-fg-blue);
 }
 
 .fea-section-label {
-  color: rgba(199, 210, 254, 0.72);
+  color: var(--accent-fg-blue);
   letter-spacing: 0.08em;
 }
 

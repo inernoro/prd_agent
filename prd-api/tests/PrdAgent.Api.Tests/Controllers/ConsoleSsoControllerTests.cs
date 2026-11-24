@@ -1,6 +1,8 @@
 using System.Reflection;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Controllers.Api;
 using Xunit;
 
@@ -8,6 +10,23 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public sealed class ConsoleSsoControllerTests
 {
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("synthetic-test", false)]
+    [InlineData("agent-apikey", false)]
+    public void FederationPolicy_ShouldRejectSyntheticAndNonBrowserSessions(string? authType, bool expected)
+    {
+        var claims = new List<Claim>
+        {
+            new("clientType", "admin"),
+            new("sessionKey", "session-1"),
+        };
+        if (!string.IsNullOrWhiteSpace(authType)) claims.Add(new Claim("authType", authType));
+        var user = new ClaimsPrincipal(new ClaimsIdentity(claims, "test"));
+
+        Assert.Equal(expected, FederatedConsoleSessionPolicy.IsEligibleBrowserSession(user));
+    }
+
     [Theory]
     [InlineData("https://cds.miduo.org/auth/sso", true)]
     [InlineData("https://branch-cds.miduo.org/auth/sso", true)]

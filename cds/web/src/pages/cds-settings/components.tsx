@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { useContext, type ReactNode } from 'react';
+import { SettingsContentSkeleton, SettingsLoadingContext } from '@/components/skeletons/SettingsSkeleton';
+import { AlertCircle, ExternalLink, FileText, GitCommitHorizontal, Layers, ShieldCheck, TerminalSquare, Wrench } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,21 +12,24 @@ export function Section({
   description,
   children,
   tone = 'default',
+  actions,
 }: {
   title: string;
   description?: ReactNode;
   children: ReactNode;
   tone?: 'default' | 'danger';
+  actions?: ReactNode;
 }): JSX.Element {
   return (
-    <section className="border-b border-border pb-8 last:border-b-0">
-      <h2 className={tone === 'danger' ? 'text-lg font-semibold text-destructive' : 'text-lg font-semibold'}>
-        {title}
-      </h2>
+    <section className="border-b border-border pb-5 last:border-b-0 last:pb-0">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className={tone === 'danger' ? 'text-lg font-semibold text-destructive' : 'text-lg font-semibold'}>{title}</h2>
+        {actions}
+      </div>
       {description ? (
-        <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</div>
+        <div className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">{description}</div>
       ) : null}
-      <div className="mt-5">{children}</div>
+      <div className="mt-3">{children}</div>
     </section>
   );
 }
@@ -46,6 +50,8 @@ export function Field({
 }
 
 export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.Element {
+  const settings = useContext(SettingsLoadingContext);
+  if (settings) return <SettingsContentSkeleton label={label} />;
   return <PartialLoadingPanel label={label} />;
 }
 
@@ -59,73 +65,175 @@ const PANEL_SKELETON_ROWS = ['64%', '92%', '78%', '48%'] as const;
  * label/detail 仅供无障碍朗读(role=status + aria-label),不再作为大字居中。
  * 复用 index.css 的 .cds-loading-skeleton-line/-panel(reduced-motion 自动静止)。
  */
-function PartialLoadingPanel({
-  label,
-  detail,
-  className,
-  expanded = false,
-}: {
-  label: string;
-  detail?: ReactNode;
-  className?: string;
-  expanded?: boolean;
-}): JSX.Element {
-  const a11yLabel = detail && typeof detail === 'string' ? `${label}：${detail}` : label;
+function PartialLoadingPanel({ label }: { label: string }): JSX.Element {
   return (
     <div
       role="status"
       aria-live="polite"
-      aria-label={a11yLabel}
+      aria-label={label}
       aria-busy="true"
-      className={cn('w-full rounded-md', expanded ? 'min-h-[320px] p-5' : 'min-h-28 p-4', className)}
+      className="w-full rounded-md min-h-28 p-4"
     >
-      {expanded ? (
-        <div className="flex flex-col gap-4">
-          {/* 头部:标题 + 副标题 */}
-          <div className="flex flex-col gap-2.5">
-            <div className="cds-loading-skeleton-line h-6 w-1/3 min-w-[140px]" />
-            <div className="cds-loading-skeleton-line h-3.5 w-2/3 max-w-md" />
-          </div>
-          {/* 指标条 */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[0, 1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="cds-loading-skeleton-panel h-16 rounded-lg"
-                style={{ animationDelay: `${i * 0.12}s` }}
-              />
-            ))}
-          </div>
-          {/* 内容块 */}
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
-            <div className="cds-loading-skeleton-panel h-40 rounded-lg" style={{ animationDelay: '0.2s' }} />
-            <div className="cds-loading-skeleton-panel h-40 rounded-lg" style={{ animationDelay: '0.32s' }} />
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {PANEL_SKELETON_ROWS.map((width, i) => (
-            <div
-              key={i}
-              className="cds-loading-skeleton-line h-4"
-              style={{ width, animationDelay: `${i * 0.1}s` }}
-            />
-          ))}
-        </div>
-      )}
+      <div className="flex flex-col gap-2.5">
+        {PANEL_SKELETON_ROWS.map((width, i) => (
+          <div
+            key={i}
+            className="cds-loading-skeleton-line h-4"
+            style={{ width, animationDelay: `${i * 0.1}s` }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
-export function BranchDetailLoadingSkeleton({ className }: { className?: string }): JSX.Element {
-  return (
-    <PartialLoadingPanel
-      className={className}
-      expanded
-      label="加载分支详情"
-      detail="正在读取分支状态、服务拓扑、最近部署记录和运行日志索引。"
-    />
-  );
+export const BRANCH_DETAIL_GRID_CLASS = 'grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]';
+export const BRANCH_DETAIL_COLUMN_CLASS = 'min-w-0 space-y-5';
+export const BRANCH_DETAIL_HEADER_CLASS = 'flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between';
+export const BRANCH_SELECTOR_GRID_CLASS = 'grid gap-3 md:grid-cols-2';
+export const BRANCH_DIAGNOSTIC_TABS_CLASS = 'cds-surface-raised cds-hairline grid grid-cols-4 gap-1 p-1';
+
+export function BranchDetailLoadingSkeleton({ selectBranch = false, canManage = true }: { selectBranch?: boolean; canManage?: boolean }): JSX.Element {
+  const status = {
+    role: 'status',
+    'aria-label': '加载分支详情',
+    'aria-busy': true,
+  };
+
+  if (selectBranch) {
+    return <div {...status} className="max-w-5xl space-y-4">
+      <div className="cds-surface-raised cds-hairline space-y-2 px-5 py-4" aria-hidden>
+        <div className="cds-loading-skeleton-line h-6 w-32" />
+        <div className="cds-loading-skeleton-line h-5 w-48" />
+      </div>
+      <div className={BRANCH_SELECTOR_GRID_CLASS} aria-hidden>
+        {[0, 1, 2].map(i => <div key={i} className="cds-surface-raised cds-hairline space-y-2 p-4">
+          <div className="cds-loading-skeleton-line h-6 w-24" />
+          <div className="flex gap-2">
+            <div className="cds-loading-skeleton-line h-4 w-32" />
+            <div className="cds-loading-skeleton-line h-4 w-14" />
+          </div>
+        </div>)}
+      </div>
+      <div className="cds-loading-skeleton-panel h-9 w-28 rounded-md" aria-hidden />
+    </div>;
+  }
+
+  return <div {...status} className={BRANCH_DETAIL_GRID_CLASS}>
+    <div className={BRANCH_DETAIL_COLUMN_CLASS} aria-hidden>
+      <Card className="rounded-md">
+        <CardHeader className="p-5">
+          <div className={BRANCH_DETAIL_HEADER_CLASS}>
+            <div className="min-w-0">
+              <div className="cds-loading-skeleton-line h-7 w-32" />
+              <div className="mt-2 flex flex-wrap gap-2">
+                <div className="cds-loading-skeleton-line h-5 w-28" />
+                <div className="cds-loading-skeleton-line h-5 w-12" />
+                <div className="cds-loading-skeleton-line h-5 w-20" />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <div className="cds-loading-skeleton-panel h-9 w-28 rounded-md" />
+              <div className="cds-loading-skeleton-panel h-9 w-24 rounded-md" />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 p-5 pt-0">
+          <div className="flex h-6 items-center"><div className="cds-loading-skeleton-line h-4 w-52 max-w-full" /></div>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            {['w-14', 'w-20', 'w-52', 'w-[13.25rem]'].map(w => <div className={`flex h-5 items-center ${w}`} key={w}>
+              <div className="cds-loading-skeleton-line h-3.5 w-full" />
+            </div>)}
+          </div>
+          <div className="flex h-10 items-center rounded-md border border-border bg-muted/30 p-3">
+            <div className="cds-loading-skeleton-line h-3.5 w-32" />
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="rounded-md">
+        <CardHeader className="p-5"><CardTitle className="text-base">服务</CardTitle></CardHeader>
+        <CardContent className="space-y-3 p-5 pt-0">
+          {[0, 1].map(i => <div key={i} className="flex flex-col gap-3 rounded-md border border-border bg-card p-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex h-6 items-center gap-2">
+                <div className="cds-loading-skeleton-line h-4 w-4 rounded-full" />
+                <div className="cds-loading-skeleton-line h-4 w-24" />
+              </div>
+              <div className="flex gap-2">
+                <div className="cds-loading-skeleton-line h-5 w-12" />
+                <div className="cds-loading-skeleton-line h-5 w-11" />
+                <div className="cds-loading-skeleton-line h-5 w-8" />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {['w-20', 'w-16', 'w-24'].map(width => <div key={width} className={`cds-loading-skeleton-panel h-8 rounded-md ${width}`} />)}
+            </div>
+          </div>)}
+          <div className="ml-auto cds-loading-skeleton-panel h-8 w-24 rounded-md" />
+        </CardContent>
+      </Card>
+      <div>
+        <div className={BRANCH_DIAGNOSTIC_TABS_CLASS}>
+          {([[FileText, '日志'], [Wrench, '配置'], [GitCommitHorizontal, '历史'], [ShieldCheck, 'Bridge']] as const).map(([Icon, label], i) => (
+            <span key={label} className={cn('flex min-h-11 items-center justify-center gap-1 rounded-md text-sm text-muted-foreground', i === 0 && 'bg-accent font-medium text-accent-foreground')}>
+              <Icon className="h-4 w-4 shrink-0" />{label}
+            </span>
+          ))}
+        </div>
+        <div className="space-y-4">
+          <div className="overflow-hidden rounded-md border border-border bg-card/70 shadow-sm">
+            <BranchDetailDisclosureHeading icon={<TerminalSquare className="h-4 w-4" />} title="容器日志" />
+            <div className="space-y-3 border-t border-border p-5">
+              <div className="ml-auto cds-loading-skeleton-panel h-8 w-16 rounded-md" />
+              <div className="cds-loading-skeleton-line h-4 w-24" />
+              <div className="cds-loading-skeleton-panel h-16 rounded-md border border-dashed border-border" />
+            </div>
+          </div>
+          {canManage ? <div className="rounded-md border border-border bg-card/70 shadow-sm">
+            <BranchDetailDisclosureHeading icon={<ExternalLink className="h-4 w-4" />} title="HTTP 转发日志" />
+          </div> : null}
+        </div>
+      </div>
+      <div className="rounded-md border border-border bg-card/70 shadow-sm">
+        <BranchDetailDisclosureHeading icon={<Layers className="h-4 w-4" />} title="生效配置" />
+      </div>
+      <div className="rounded-md border border-border bg-card/70 shadow-sm">
+        <BranchDetailDisclosureHeading icon={<FileText className="h-4 w-4" />} title="构建日志" />
+      </div>
+    </div>
+    <div className={BRANCH_DETAIL_COLUMN_CLASS} aria-hidden>
+      <Card className="rounded-md">
+        <CardHeader className="p-5">
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle className="text-base">预览别名</CardTitle>
+            {canManage ? <div className="cds-loading-skeleton-panel h-8 w-16 rounded-md" /> : null}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 p-5 pt-0">
+          <div className="space-y-2">
+            <div className="cds-loading-skeleton-line h-4 w-20" />
+            <div className="cds-loading-skeleton-line h-5 w-52 max-w-full" />
+          </div>
+          <div className="cds-loading-skeleton-panel h-16 rounded-md border border-dashed border-border" />
+          <div className="cds-loading-skeleton-line h-4 w-24" />
+          <div className="cds-loading-skeleton-panel h-20 rounded-md border border-dashed border-border" />
+        </CardContent>
+      </Card>
+    </div>
+  </div>;
+}
+
+function BranchDetailDisclosureHeading({ icon, title }: { icon: ReactNode; title: string }): JSX.Element {
+  return <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+    <div className="flex items-center gap-2">
+      <span className="text-muted-foreground">{icon}</span>
+      <div className="space-y-1">
+        <div className="font-semibold">{title}</div>
+        <div className="cds-loading-skeleton-line h-4 w-24" />
+      </div>
+    </div>
+    <div className="cds-loading-skeleton-line h-3 w-8" />
+  </div>;
 }
 
 export function ErrorBlock({ message, transient = false }: { message: string; transient?: boolean }): JSX.Element | null {
@@ -238,7 +346,10 @@ export function CodePill({ children }: { children: ReactNode }): JSX.Element {
   );
 }
 
+export function isSensitiveEnvKey(key: string): boolean {
+  return /password|secret|token|key|pat|jwt|credential|private/i.test(key);
+}
+
 export function maskSecret(key: string, value: string): string {
-  if (!/password|secret|token|key|pat/i.test(key) || value.length <= 4) return value;
-  return `****${value.slice(-4)}`;
+  return isSensitiveEnvKey(key) && value ? '••••••••' : value;
 }

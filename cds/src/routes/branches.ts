@@ -1,5 +1,31 @@
+import {assertConfigOnlyInfraStorage,planFreshCatalogInfra,assertFreshLegacyVolumesAbsent,type FreshInfraPlan} from '../services/fresh-catalog-storage-plan.js';
+import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../services/profile-storage-provision.js';
+import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
+import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
+import { UnsafeDeploymentStorageError } from '../services/deployment-storage-plan.js';
+import { assertProfileStorageBoundary } from '../services/deployment-storage-boundary.js';
+import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
+import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
+import { createPreviewAddressRouter } from './preview-address.js';
+import { computePublishedBranchWebEntries, publicPreviewHost } from '../services/branch-web-entrypoints.js';
+import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
+import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
+import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
+import { deploymentPhaseBudget, type SourceStartAdmission } from '../services/deployment-phase-budget.js';
+import { remoteProxyOwner, readOwnedRemoteChunk, type RemoteDeploymentIdentity } from '../services/remote-deployment-owner.js';
+import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
+import { replaceDirectoriesAtomically, type AtomicDirectoryReplacement } from '../services/atomic-directory-replacement.js';
+import { SelfMaintenanceRuntime, type SelfMaintenanceOwner, type SelfMaintenanceSource } from '../services/self-maintenance-runtime.js';
+export { replaceDirectoriesAtomically, type AtomicDirectoryReplacement } from '../services/atomic-directory-replacement.js';
+import { serveContainerLogStream } from '../services/container-log-stream-response.js';
+import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
-import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
+import { DatabasePassService, databasePassClientIp, type DatabasePass } from '../services/database-pass.js';
+import type { DatabasePassTarget } from '../services/database-pass-accounts.js';
+import { componentInputComparator } from '../services/prebuilt-reuse.js';
+import { resolveProjectScope } from '../services/project-scope.js';
+import { resolvePreviewDispatch, type PreviewProjectFacts } from '../services/preview-dispatch.js';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import fs from 'node:fs';
@@ -10,30 +36,69 @@ import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
+import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
-import { WorktreeService } from '../services/worktree.js';
-import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
+import { WorktreeService, deploymentNeedsSourceCheckout, hasDeploymentSource, type DeploymentSourceRecoveryPolicy } from '../services/worktree.js';
+import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
+import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
+import { appendEnvironmentAudit, freezeEnvironmentAudit } from '../services/environment-audit.js';
+import { admittedArtifactProfile, artifactInspectionContext, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
+import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
+import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
+import { createJanitorObservationRouter } from './janitor-observation.js';
+import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../services/self-update-handoff.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
+import { isCommitShaLike } from '../services/release-commit-clock.js';
 import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
+  DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
-import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode, assertValidDefaultDeployModes, InvalidDefaultDeployModeError } from '../services/deploy-runtime.js';
+import {
+  buildPrebuiltGateRejection,
+  findNonPrebuiltProfiles,
+  isAgentGatedRequest,
+  isAgentPrebuiltOnly,
+  isPrebuiltMode,
+  PREBUILT_DEFINITION_FIELDS,
+  withoutSourceFallback,
+} from '../services/agent-prebuilt-gate.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
+import { resolveInfraForDb } from '../services/replica-db-clone.js';
+import { resolveBranchEnvLayers } from '../services/branch-env-layers.js';
 import {
   branchEntrypointDepsFromState,
-  isGatewayConsoleEntry,
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedServiceLabels,
   occupiedHostOwners,
+  projectBranchPreviewSlugs,
+  projectBranchPublishedServiceHosts,
   resolveBranchEntrypointsEnv,
-  resolveServiceLandingPath,
 } from '../services/preview-entrypoints.js';
+import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { normalizeReadOnlyStatement, normalizeConsoleWrite } from '../services/sql-statement-policy.js';
+import { SqlConsoleExecutionError, type SqlConsoleResult } from '../services/sql-console-results.js';
+import { executeSqlConsole, type SqlConsoleOptions } from '../services/sql-console-executor.js';
+import { RESOURCE_TCP_PROXY_SCRIPT, resourceTcpAccessConfig } from '../services/resource-tcp-access.js';
+import { databaseApprovalBinding } from '../services/database-approval-binding.js';
+import { operatorOpRegistry } from '../services/operator-console.js';
+import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
+import {
+  branchDbAccountName,
+  branchDbCredentialOwner,
+  branchDbCredentialsBelongTo,
+  explainBranchDbAuthFailure,
+  foreignBranchDbEnvKeys,
+  type BranchDbRuntime,
+} from '../services/branch-db-identity.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
   resolveBranchProtection,
@@ -43,15 +108,25 @@ import {
 } from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
+import { countReservedContainers } from '../services/resource-usage-sampler.js';
+import { getEventLoopLag } from '../services/event-loop-lag.js';
+import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
+import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
+import { branchPinActor, createBranchPin, mayChangePin } from '../services/branch-pin.js';
+import { branchVersionFacts, confirmedRunningRevisionSha } from '../services/running-version.js';
+import { buildStandbyBranchConfiguration } from '../services/standby-mirror.js';
+import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
+import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
-import { recordBuild } from '../services/build-activity-tracker.js';
-import type { ContainerService } from '../services/container.js';
+import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
+import type { ContainerService, ContainerRemoveContext } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance, DeploymentVersion } from '../types.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveCommandTemplate, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
@@ -73,8 +148,12 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
-import { getInfraCatalogPublic } from '../services/infra-catalog.js';
+import { markDropped, settleBranchDbsOnDelete, type BranchDbDeleteChoice } from '../services/db-ledger.js';
+import { realDbLedgerOps } from '../services/db-ledger-ops.js';
+import { getInfraCatalogPublic, recommendedVolumePathsFromCatalog } from '../services/infra-catalog.js';
+import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
+import { createBranchServiceIsolationRouter } from './branch-service-isolation.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
@@ -83,11 +162,12 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
-import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
-import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
+import { buildUnifiedBranchResources, getUnifiedResourceInternalRaw, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { selfStatusCache, type RemoteBranchEntry } from '../services/self-status-cache.js';
+import { describeRestartWait, getRestartWait, resolveRestartStatus, setRestartWait } from '../services/self-restart-wait.js';
 import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { installSelfUpdateEventProjector } from '../services/self-update-event-projector.js';
@@ -97,10 +177,11 @@ import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
-import { isPreviewInstance } from '../services/preview-instance.js';
+import { isPreviewInstance, profileHostsPreviewInstance } from '../services/preview-instance.js';
+import { buildPreviewMirror, findMirrorLeaks, replayPreviewMirrorSeries, writePreviewMirror } from '../services/preview-mirror.js';
 import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
-import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
+import { preparePrebuiltImageClaim, verifyPrebuiltWorkflowRun } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -108,18 +189,32 @@ import {
   BranchOperationSupersededError,
   type BranchOperationCoordinator,
   type BranchOperationDecision,
+  type BranchOperationRequest,
   type BranchOperationKind,
   type BranchOperationLease,
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
-import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
+import { pendingDeployRoute, pendingDeployBody } from '../services/branch-operation-coordinator.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
-import type { DeploymentRunService } from '../services/deployment-run.js';
+import { DeploymentRunService, type BeginDeploymentRunInput } from '../services/deployment-run.js';
+import { DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
-import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
+import type { DeploymentRun, DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
+import {
+  buildSecureMongoDockerInvocation,
+  buildSecureMongoHostInvocation,
+  buildSecureRedisDockerInvocation,
+  clearMigrationCredentials,
+  describeSecureInvocation,
+  invocationShellCommand,
+  publicDataMigration,
+  redactSecretValues,
+  sealMigrationConnections,
+  unsealMigrationConnections,
+} from '../services/secure-database-cli.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -272,10 +367,23 @@ type BranchDeployRuntime = {
    */
   pendingPublish: boolean;
   /**
-   * 2026-06-23 极速版（CI 预构建）：是否有任一 profile 走预构建镜像部署模式。
-   * true 时前端把徽章从「发布版」细化为「极速版」（拉取 CI 镜像,非本机编译）。
+   * 2026-06-23 极速版（CI 预构建）：是否有**任一** profile 走预构建镜像部署模式。
+   * 「等 CI 镜像」「阶段条」这类机制判断用它；**不能**拿它当「这条分支是极速版」展示——
+   * 9 个服务里 1 个极速、8 个在宿主编译时它也是 true（2026-10-08 用户指出闪电图标误导）。
+   * 展示一律看 prebuiltCoverage。
    */
   prebuilt: boolean;
+  /**
+   * 2026-10-08 极速版覆盖程度：all = 全部服务都走预构建镜像（才配显示「极速版」与闪电）；
+   * partial = 只有一部分（显示「混合 · 极速 x/y」）；none = 没有。
+   */
+  prebuiltCoverage: 'all' | 'partial' | 'none';
+  /**
+   * 2026-09-29 走极速版（预构建镜像）的是哪几个 profile。一条分支可以一部分服务极速版、一部分源码版，
+   * 只重部署其中一个源码服务时，卡片阶段条要按「这次动的那个服务」选步骤，不能按上面这个「任一」判
+   * （Codex P2，PR #1646）。
+   */
+  prebuiltProfileIds: string[];
   /**
    * 2026-05-29 P0 止血：期望态 vs 实际态漂移检测。
    *
@@ -395,11 +503,15 @@ function summarizeBranchDeployRuntime(
   let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
   let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
   let prebuilt = false;       // 配置=极速版（任一 profile 走预构建镜像）
+  const prebuiltProfileIds: string[] = [];
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
-    if (effectiveProfile.prebuiltImage === true) prebuilt = true;
+    if (effectiveProfile.prebuiltImage === true) {
+      prebuilt = true;
+      prebuiltProfileIds.push(profile.id);
+    }
     const configMode = effectiveProfile.activeDeployMode;
     const configLabel = configMode
       ? effectiveProfile.deployModes?.[configMode]?.label || configMode
@@ -477,6 +589,10 @@ function summarizeBranchDeployRuntime(
     modes: modeLabels,
     pendingPublish,
     prebuilt,
+    prebuiltProfileIds,
+    prebuiltCoverage: prebuiltProfileIds.length === 0
+      ? 'none'
+      : prebuiltProfileIds.length === profiles.length ? 'all' : 'partial',
     // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
     drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
@@ -735,24 +851,25 @@ async function computeSelfStatusPayload(
   const daemonReadyAt = stateService.getState().daemonReadyAt || null;
   const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
   const lastSelfUpdate = history[0] || null;
-  let restartStatus: 'not_required' | 'pending' | 'completed' | 'incomplete' = 'not_required';
-  if (activeSelfUpdate) {
-    restartStatus = 'pending';
-  } else if (lastSelfUpdate?.status === 'success' && lastSelfUpdate.updateMode !== 'web-only') {
-    const updateMs = lastSelfUpdate.ts ? Date.parse(lastSelfUpdate.ts) : Number.NaN;
-    // 重启"已确认" = 当前正在跑的进程确实是这次更新之后才起来的。两个独立信号，
-    // 任一成立即视为已重启，避免单一信号丢失导致长期误报"重启未确认"：
-    //   1) daemonReadyAt：新进程 server.listen 后由 recordDaemonReady() 盖戳，
-    //      但只在能回填上一条 totalElapsedMs 时才 save()，偶发不落盘 → 读到旧值/空。
-    //   2) pidStartedAt（__CDS_PROCESS_STARTED_AT）：进程模块加载即盖戳（index.ts:45），
-    //      无条件可靠，作为权威兜底信号。进程启动时刻 >= 更新开始时刻即证明已重启。
-    // 二者皆早于/缺失才判 incomplete（即更新成功但进程没换 = 真的没重启）。
-    const readyMs = daemonReadyAt ? Date.parse(daemonReadyAt) : Number.NaN;
-    const pidMs = pidStartedAt ? Date.parse(pidStartedAt) : Number.NaN;
-    const confirmedByDaemon = Number.isFinite(readyMs) && Number.isFinite(updateMs) && readyMs >= updateMs;
-    const confirmedByPid = Number.isFinite(pidMs) && Number.isFinite(updateMs) && pidMs >= updateMs;
-    restartStatus = confirmedByDaemon || confirmedByPid ? 'completed' : 'incomplete';
-  }
+  const restartWaitState = getRestartWait();
+  const restartWait = restartWaitState
+    ? {
+        phase: restartWaitState.phase,
+        source: restartWaitState.source,
+        waitedMs: restartWaitState.waitedMs,
+        timeoutMs: restartWaitState.timeoutMs,
+        pendingRuns: restartWaitState.pendingRuns,
+        message: describeRestartWait(restartWaitState),
+      }
+    : null;
+  // 判定只在 self-restart-wait.ts 一处；这里不再自己比时间。
+  const restartStatus = resolveRestartStatus({
+    activeSelfUpdate,
+    restartWait: restartWaitState,
+    lastSelfUpdate: lastSelfUpdate as { status?: string; updateMode?: string; ts?: string; noOp?: boolean } | null,
+    daemonReadyAt,
+    pidStartedAt,
+  });
 
   return {
     currentBranch,
@@ -777,6 +894,7 @@ async function computeSelfStatusPayload(
     runningPid: process.pid,
     pidStartedAt,
     restartStatus,
+    restartWait,
     bundleStale: bundleFreshness.bundleStale,
     bundleFreshness,
     degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
@@ -905,6 +1023,7 @@ export type ValidateProgressEvent = {
 type ValidateBuildOptions = {
   skipTsc?: boolean;
   onProgress?: (event: ValidateProgressEvent) => void;
+  onFirstFailure?: () => void;
 };
 
 function formatValidationTimings(timings: ValidateTimings): string {
@@ -1018,10 +1137,16 @@ export async function validateBuildReadiness(
       ? '依赖校验中: pnpm install (cds + web 并行)'
       : '依赖校验中: pnpm install (cds)',
   });
-  const [installResult, webInstallResult] = await Promise.all([
+  const installs = [
     runPnpmInstallWithCache(shell, cdsDir),
     webExists ? runPnpmInstallWithCache(shell, webDir) : Promise.resolve(null),
-  ]);
+  ] as const;
+  const [installResult, webInstallResult] = await Promise.all(installs).catch(async (error) => {
+    // 首败不能让尚在写同一维护树的兄弟脱管；只等本轮原任务，不重试或重置预算。
+    options.onFirstFailure?.();
+    await Promise.allSettled(installs);
+    throw error;
+  });
   timings['install_cds_ms'] = installResult._timing.ms;
   timings[installResult._timing.skipped ? 'install_cds_skipped' : 'install_cds_ran'] = 1;
   if (webInstallResult) {
@@ -1161,7 +1286,7 @@ export async function validateBuildReadiness(
     const result = await fn();
     return { result, ms: Date.now() - t0 };
   };
-  const [tscCdsTimed, tscWebTimed] = await Promise.all([
+  const checks = [
     timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
       skipCdsTsc
         ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
@@ -1174,7 +1299,12 @@ export async function validateBuildReadiness(
             : shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: webDir, timeout: webTscTimeoutMs }),
         )
       : Promise.resolve(null),
-  ]);
+  ] as const;
+  const [tscCdsTimed, tscWebTimed] = await Promise.all(checks).catch(async (error) => {
+    options.onFirstFailure?.();
+    await Promise.allSettled(checks);
+    throw error;
+  });
   const tscResult = tscCdsTimed.result;
   const webTscResult = tscWebTimed?.result ?? null;
   timings['tsc_cds_ms'] = tscCdsTimed.ms;
@@ -1410,6 +1540,7 @@ export async function buildCheckRunFailurePostmortem(
   // 已被删/改名残留的 zombie 服务(deploy 主路径用 activeServices 算 hasError,这里
   // 必须同口径),否则 check-run 会把旧 profile 的日志当成本次失败的根因误导 agent。
   activeProfileIds?: ReadonlySet<string>,
+  snapshots?: readonly OperationLogContainerSnapshot[],
 ): Promise<string> {
   const errorServices = Object.entries(entry.services || {}).filter(
     ([sid, svc]) => svc.status === 'error' && (!activeProfileIds || activeProfileIds.has(sid)),
@@ -1419,7 +1550,10 @@ export async function buildCheckRunFailurePostmortem(
   for (const [profileId, svc] of errorServices) {
     let logs = '';
     try {
-      logs = await containerService.getLogs(svc.containerName, 60);
+      // 已收回的候选只用收回前快照；快照失败时不借恢复后的旧入口日志。
+      logs = snapshots
+        ? (snapshots.find(snapshot => snapshot.profileId === profileId)?.logs || '').split('\n').slice(-60).join('\n')
+        : await containerService.getLogs(svc.containerName, 60);
     } catch {
       // 容器名不存在 / docker 拉不到 — 仍用 errorMessage 作为根因兜底
     }
@@ -1504,25 +1638,28 @@ async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: n
 
 function normalizeIpv4Allowlist(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
+  if (input.length > 20) throw new Error('IP allowlist 最多允许 20 项');
   const result: string[] = [];
   for (const raw of input.slice(0, 20)) {
     const item = String(raw || '').trim();
     if (!item) continue;
-    const [ip, prefixRaw] = item.split('/');
+    const parts = item.split('/');
+    if (parts.length > 2) throw new Error(`IP allowlist 格式不正确：${item}`);
+    const [ip, prefixRaw] = parts;
     if (isIP(ip) !== 4) {
       throw new Error(`IP allowlist 目前仅支持 IPv4/CIDR：${item}`);
     }
     if (prefixRaw !== undefined) {
       const prefix = Number(prefixRaw);
-      if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
-        throw new Error(`CIDR 前缀必须在 0-32 之间：${item}`);
+      if (!Number.isInteger(prefix) || prefix < 1 || prefix > 32) {
+        throw new Error(`CIDR 前缀必须在 1-32 之间，禁止向所有 IP 开放：${item}`);
       }
       result.push(`${ip}/${prefix}`);
     } else {
       result.push(`${ip}/32`);
     }
   }
-  return Array.from(new Set(result));
+  return normalizeRestrictedIpv4Allowlist(result);
 }
 
 async function ensureDockerNetwork(shell: IShellExecutor, network: string): Promise<void> {
@@ -1535,9 +1672,12 @@ async function ensureDockerNetwork(shell: IShellExecutor, network: string): Prom
 async function cleanupResourceExternalFirewall(shell: IShellExecutor, chain: string, port?: number): Promise<void> {
   if (!/^[A-Z0-9_]{1,28}$/.test(chain)) return;
   if (port && port >= 1 && port <= 65535) {
-    for (let i = 0; i < 8; i += 1) {
-      const del = await shell.exec(`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
-      if (del.exitCode !== 0) break;
+    for (const direction of [' --ctdir ORIGINAL', '']) {
+      // Also remove old undirected rules, which blocked return traffic.
+      for (let i = 0; i < 8; i += 1) {
+        const del = await shell.exec(`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port}${direction} -j ${chain}`, { timeout: 5000 });
+        if (del.exitCode !== 0) break;
+      }
     }
   }
   await shell.exec(`iptables -F ${chain} 2>/dev/null || true`, { timeout: 5000 });
@@ -1559,8 +1699,13 @@ async function applyResourceExternalFirewall(
   if (probe.exitCode !== 0) {
     throw new Error(`IP allowlist 需要主机 iptables DOCKER-USER 链，但当前不可用：${combinedOutput(probe).slice(0, 240)}`);
   }
-  await shell.exec(`iptables -N ${chain} 2>/dev/null || true`, { timeout: 5000 });
-  await shell.exec(`iptables -F ${chain}`, { timeout: 5000 });
+  const exists = await shell.exec(`iptables -L ${chain} -n`, { timeout: 5000 });
+  if (exists.exitCode !== 0) {
+    const create = await shell.exec(`iptables -N ${chain}`, { timeout: 5000 });
+    if (create.exitCode !== 0) throw new Error('无法创建白名单防火墙链，未开放端口');
+  }
+  const flush = await shell.exec(`iptables -F ${chain}`, { timeout: 5000 });
+  if (flush.exitCode !== 0) throw new Error('无法刷新白名单防火墙链，未开放端口');
   for (const cidr of allowlist) {
     const add = await shell.exec(`iptables -A ${chain} -s ${cidr} -j ACCEPT`, { timeout: 5000 });
     if (add.exitCode !== 0) {
@@ -1571,9 +1716,9 @@ async function applyResourceExternalFirewall(
   if (drop.exitCode !== 0) {
     throw new Error(`写入 IP allowlist 默认拒绝规则失败：${combinedOutput(drop).slice(0, 240)}`);
   }
-  const check = await shell.exec(`iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+  const check = await shell.exec(`iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} --ctdir ORIGINAL -j ${chain}`, { timeout: 5000 });
   if (check.exitCode !== 0) {
-    const jump = await shell.exec(`iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+    const jump = await shell.exec(`iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport ${port} --ctdir ORIGINAL -j ${chain}`, { timeout: 5000 });
     if (jump.exitCode !== 0) {
       throw new Error(`挂载 IP allowlist 链失败：${combinedOutput(jump).slice(0, 240)}`);
     }
@@ -1581,40 +1726,6 @@ async function applyResourceExternalFirewall(
   return { enforced: true, chain };
 }
 
-const RESOURCE_TCP_PROXY_SCRIPT = `
-const net = require('net');
-const targetHost = process.env.TARGET_HOST;
-const targetPort = Number(process.env.TARGET_PORT || 0);
-const listenPort = Number(process.env.LISTEN_PORT || 15432);
-const allowlist = (process.env.ALLOWLIST || '').split(',').map((x) => x.trim()).filter(Boolean);
-const block = new net.BlockList();
-if (allowlist.length === 0) {
-  throw new Error('ALLOWLIST is required for CDS resource TCP proxy');
-}
-for (const rule of allowlist) {
-  const [ip, prefixRaw] = rule.split('/');
-  const prefix = Number(prefixRaw || '32');
-  if (Number.isInteger(prefix) && prefix >= 0 && prefix <= 32) block.addSubnet(ip, prefix, 'ipv4');
-}
-function normalizeIp(ip) {
-  return String(ip || '').replace(/^::ffff:/, '');
-}
-const server = net.createServer((client) => {
-  const ip = normalizeIp(client.remoteAddress);
-  if (!block.check(ip, 'ipv4')) {
-    client.destroy();
-    return;
-  }
-  const upstream = net.connect({ host: targetHost, port: targetPort });
-  upstream.on('error', () => client.destroy());
-  client.on('error', () => upstream.destroy());
-  client.pipe(upstream);
-  upstream.pipe(client);
-});
-server.listen(listenPort, '0.0.0.0');
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-process.on('SIGINT', () => server.close(() => process.exit(0)));
-`;
 
 function resourceTcpProxyImage(): string {
   const image = process.env.CDS_RESOURCE_TCP_PROXY_IMAGE || 'node:20-alpine';
@@ -1636,6 +1747,7 @@ interface RunServiceWithPortRetryOptions {
   customEnv?: Record<string, string>;
   requestId?: string | null;
   operationId?: string | null;
+  operationGeneration?: number;
   actor?: string | null;
   trigger?: string | null;
   assertCurrent?: (step: string) => void;
@@ -1643,10 +1755,17 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  sourceStartAdmission?: SourceStartAdmission;
+  sourceCheckout?: { path: string; commitSha: string };
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
   /** CI 构建输入路径在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
   isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+  /** 本次部署 pull 到的完整提交：极速版先试它的 CI 镜像（见 container.ts runService 同名字段）。 */
+  latestCommitSha?: string;
+  artifactCommitSha?: string;
+  /** 用上了最新提交的镜像时回调，调用方改正部署记录里的提交。 */
+  onLatestCommitImage?: (commitSha: string) => void;
 }
 
 /**
@@ -1667,6 +1786,8 @@ function buildPrebuiltReuseInputs(
   shell: IShellExecutor,
   entry: BranchEntry,
   profileId: string,
+  repoRoot: string,
+  assertCurrent: () => void,
 ): {
   ledgerImages: string[];
   isComponentUnchangedSince: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
@@ -1677,61 +1798,87 @@ function buildPrebuiltReuseInputs(
     .map((v) => (v.profiles || []).find((p) => p.profileId === profileId)?.artifactImage)
     .filter((im): im is string => !!im);
 
-  const isComponentUnchangedSince = async (
-    fromSha: string,
-    toSha: string,
-    scopePaths: readonly string[],
-  ): Promise<boolean> => {
-    // scopePaths 是 CI 的 path-filter 口径（buildScope），**不是**运行时挂载目录：
-    // compose 里服务常写 `.:/repo`，workDir 因此是 `.`，比整仓等于永远「变了」，
-    // 复用一次都不会发生（Codex PR #1275 三轮 P1）。规整与拒绝规则见
-    // prebuilt-reuse.normalizeBuildScope，这里只做最后一道防线式的复核。
-    const paths = normalizeBuildScope(scopePaths as string[]);
-    if (!paths || !entry.worktreePath) return false;
-    // 两端都必须是完整 sha：只有 CI 打在镜像 tag 上的 commit 才是可信比较基准。
-    if (!/^[0-9a-f]{40}$/.test(fromSha) || !/^[0-9a-f]{40}$/.test(toSha)) return false;
-    if (fromSha === toSha) return false;
-    // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
-    const pathArgs = paths.map((p) => shellQuote(p)).join(' ');
-    const r = await shell.exec(
-      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${pathArgs}`,
-    ).catch(() => null);
-    return !!r && r.exitCode === 0;
-  };
+  const isComponentUnchangedSince = componentInputComparator(shell,
+    stateService.getProjectRepoRoot(entry.projectId, repoRoot), assertCurrent);
 
   return { ledgerImages, isComponentUnchangedSince };
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  options = {...options, sourceCheckout: options.sourceCheckout ? {...options.sourceCheckout} : undefined};
+  [options.profile] = await options.containerService.preflightDeploymentStorage(
+    {...options.entry, worktreePath: options.sourceCheckout?.path || options.entry.worktreePath}, [options.profile],
+    {assertCurrent:options.assertCurrent,sourceCommitSha:options.sourceCheckout?.commitSha || options.artifactCommitSha,
+      customEnv:options.customEnv,operationId:options.operationId || undefined,onOutput:(_id,chunk)=>options.onOutput?.(chunk)});
+  // 分支独立库「时间点克隆」初始化（数据库隔离收敛 4）：容器起来之前先把库准备好。
+  // 幂等：目标库已存在就跳过；克隆失败抛错让部署如实失败，不让应用对着半份数据启动。
+  options.assertCurrent?.(`before-db-init-${options.profile.id}`);
+  const dbInit = await ensurePerBranchDbInitialized(options.stateService, options.entry, options.profile, {
+    onOutput: (line) => options.onOutput?.(`${line}\n`),
+  });
+  if (dbInit.kind === 'refused') options.onOutput?.(`── 分支独立库未做时间点克隆：${dbInit.reason} ──\n`);
+  const target = await prepareServiceReplacement({ entry: options.entry, service: options.service,
+    profile: options.profile, state: options.stateService, container: options.containerService,
+    portStart: options.config.portStart, operationId: options.operationId ?? undefined, assertCurrent: options.assertCurrent });
+  const replacing = target !== options.service;
   const maxAttempts = 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       options.assertCurrent?.(`before-run-${options.profile.id}`);
+      if (replacing) {
+        options.service.pendingRuntime = runtimeRef(target);
+        options.stateService.save([{ kind: 'branches', id: options.entry.id }]); await options.stateService.flush();
+      }
       await options.containerService.runService(
-        options.entry,
+        replacing ? replacementLaunchEntry(options.entry) : options.entry,
         options.profile,
-        options.service,
+        target,
         options.onOutput,
         options.customEnv,
         {
           requestId: options.requestId ?? null,
           operationId: options.operationId ?? null,
+          operationGeneration: options.operationGeneration,
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
+          preserveContainerNames: replacing ? preserveReplacementNames(options.entry, target) : undefined,
+          onRuntimeCreated: replacing ? async runtime => {
+            options.assertCurrent?.('before created runtime receipt');
+            options.service.pendingRuntime = runtimeRef(runtime);
+            options.stateService.save([{ kind: 'branches', id: options.entry.id }]); await options.stateService.flush();
+            options.assertCurrent?.('after created runtime receipt');
+          } : undefined,
+          sourceCheckout: options.sourceCheckout,
           onSourceCompileFallback: options.onSourceCompileFallback,
+          sourceStartAdmission: options.sourceStartAdmission,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
+          latestCommitSha: options.latestCommitSha,
+          onLatestCommitImage: options.onLatestCommitImage,
+          artifactCommitSha: options.artifactCommitSha,
         },
       );
+      options.assertCurrent?.(`after candidate start ${options.profile.id}`);
+      if (replacing) {
+        Object.assign(options.service, target); options.service.pendingRuntime = undefined;
+        options.stateService.save([{ kind: 'branches', id: options.entry.id }]); await options.stateService.flush();
+      }
       return;
     } catch (err) {
+      options.assertCurrent?.(`before candidate error ${options.profile.id}`);
+      if (replacing && options.service.pendingRuntime?.containerName === target.containerName) {
+        options.service.pendingRuntime = runtimeRef(target);
+        options.stateService.save([{ kind: 'branches', id: options.entry.id }]);
+      }
       if (!isPortConflictError(err) || attempt === maxAttempts) throw err;
-      const oldPort = options.service.hostPort;
+      const oldPort = target.hostPort;
       const listeningPorts = await collectListeningPorts(options.shell);
+      options.assertCurrent?.(`after port inspection ${options.profile.id}`);
       listeningPorts.add(oldPort);
       const newPort = options.stateService.allocatePort(options.config.portStart, listeningPorts);
-      options.service.hostPort = newPort;
+      target.hostPort = newPort;
+      if (replacing) options.service.pendingRuntime = runtimeRef(target);
       options.service.errorMessage = undefined;
       options.stateService.save();
       options.serverEventLogStore?.record({
@@ -1771,7 +1918,7 @@ export interface SmokeRunResult {
 
 export interface SmokeRunOptions {
   branch: BranchEntry;
-  previewHost: string;        // e.g. "https://my-branch.miduo.org"
+  previewHost: string;        // e.g. "https://my-branch.example.com"
   accessKey: string;           // resolved AI_ACCESS_KEY
   impersonateUser?: string;    // default 'admin'
   skip?: string;               // comma-separated smoke keys to skip
@@ -1871,6 +2018,7 @@ export function resolveSmokeScriptDir(): { dir: string; entry: string; exists: b
 }
 
 export interface RouterDeps {
+  sqlConsoleExecutor?: (options: SqlConsoleOptions) => Promise<SqlConsoleResult>;
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
@@ -1910,6 +2058,8 @@ export interface RouterDeps {
   deploymentVersionService?: DeploymentVersionService;
   /** Generates the constrained managed delivery plan; compose projects bypass it. */
   managedProjectService?: ManagedProjectService;
+  /** 同一createServer的维护写者与状态投影；直接router消费者独立构造。 */
+  selfMaintenanceRuntime?: SelfMaintenanceRuntime;
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -2004,92 +2154,6 @@ function selfUpdatePrebuiltEnabled(): boolean {
   return !['0', 'false', 'off', 'no'].includes(raw);
 }
 
-export interface AtomicDirectoryReplacement {
-  currentPath: string;
-  nextPath: string;
-  /**
-   * 指定后保留 currentPath 的上一代。适用于内容哈希静态资源：
-   * 新 index.html 上线后，已打开的旧页面仍可以请求上一代懒加载模块。
-   */
-  previousPath?: string;
-}
-
-export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]): void {
-  const stamp = Date.now();
-  const backups = pairs.map((pair, idx) => ({
-    ...pair,
-    backupPath: `${pair.currentPath}.old.${stamp}.${idx}`,
-    previousBackupPath: pair.previousPath
-      ? `${pair.previousPath}.old.${stamp}.${idx}`
-      : undefined,
-    hadCurrent: fs.existsSync(pair.currentPath),
-    hadPrevious: Boolean(pair.previousPath && fs.existsSync(pair.previousPath)),
-    currentMoved: false,
-    nextMoved: false,
-  }));
-  try {
-    for (const pair of backups) {
-      if (!fs.existsSync(pair.nextPath)) {
-        throw new Error(`atomic replacement candidate missing: ${pair.nextPath}`);
-      }
-    }
-    for (const pair of backups) {
-      if (pair.previousPath) {
-        if (pair.hadPrevious && pair.previousBackupPath) {
-          fs.renameSync(pair.previousPath, pair.previousBackupPath);
-        }
-        if (pair.hadCurrent) {
-          fs.renameSync(pair.currentPath, pair.previousPath);
-          pair.currentMoved = true;
-        }
-      } else if (pair.hadCurrent) {
-        fs.renameSync(pair.currentPath, pair.backupPath);
-        pair.currentMoved = true;
-      }
-    }
-    for (const pair of backups) {
-      fs.renameSync(pair.nextPath, pair.currentPath);
-      pair.nextMoved = true;
-    }
-  } catch (err) {
-    for (const pair of [...backups].reverse()) {
-      try {
-        if (pair.nextMoved && fs.existsSync(pair.currentPath)) {
-          fs.rmSync(pair.currentPath, { recursive: true, force: true });
-        }
-        if (pair.previousPath) {
-          if (pair.currentMoved && fs.existsSync(pair.previousPath)) {
-            fs.renameSync(pair.previousPath, pair.currentPath);
-          }
-          if (pair.hadPrevious && pair.previousBackupPath && fs.existsSync(pair.previousBackupPath)) {
-            fs.renameSync(pair.previousBackupPath, pair.previousPath);
-          }
-        } else if (pair.currentMoved && fs.existsSync(pair.backupPath)) {
-          fs.renameSync(pair.backupPath, pair.currentPath);
-        }
-      } catch {
-        /* best-effort rollback */
-      }
-    }
-    throw err;
-  }
-  // 新产物已全部就位后才清理临时备份。清理失败不能反向触发回滚：
-  // rmSync 可能已部分删除备份，此时回滚反而会丢失已上线的完整产物。
-  for (const pair of backups) {
-    try {
-      if (pair.previousPath) {
-        if (pair.hadPrevious && pair.previousBackupPath) {
-          fs.rmSync(pair.previousBackupPath, { recursive: true, force: true });
-        }
-      } else if (pair.hadCurrent) {
-        fs.rmSync(pair.backupPath, { recursive: true, force: true });
-      }
-    } catch {
-      /* stale backup is safe to clean on the next maintenance pass */
-    }
-  }
-}
-
 export type WebDistValidation =
   | { ok: true; entryFiles: string[] }
   | { ok: false; error: string };
@@ -2152,11 +2216,18 @@ export function validateWebDistCandidate(candidatePath: string): WebDistValidati
   return { ok: true, entryFiles: files };
 }
 
+interface MaintenanceArtifactCleanup {
+  assertActive(): void;
+  remove(directory: string): Promise<boolean>;
+  removeMany(directories: string[]): Promise<boolean>;
+}
+
 async function tryApplyCdsPrebuiltForSelfUpdate(input: {
   shell: IShellExecutor;
   repoRoot: string;
   targetFullSha: string;
   send: (step: string, status: string, title: string) => void;
+  createCleanup: (stagingRoot: string) => MaintenanceArtifactCleanup;
 }): Promise<{ applied: boolean; reason?: string }> {
   const { shell, repoRoot, targetFullSha, send } = input;
   const repoFullName = await resolveSelfUpdatePrebuiltRepoFullName(shell, repoRoot);
@@ -2172,6 +2243,7 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
 
   const cdsDir = path.join(repoRoot, 'cds');
   const stagingRoot = path.join(cdsDir, '.cds', `prebuilt-self-update-${Date.now()}`);
+  const cleanup = input.createCleanup(stagingRoot);
   send('prebuilt', 'running', `正在拉取 CI 预构建产物 ${decision.imageRef}`);
   const fetched = await fetchCdsPrebuilt(
     {
@@ -2183,7 +2255,9 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
           return null;
         }
       },
-      rmrf: (p) => fs.rmSync(p, { recursive: true, force: true }),
+      rmrf: async (p) => {
+        if (!await cleanup.remove(p)) throw new Error('CDS 预构建暂存清理失败，未开始复制。');
+      },
       mkdirp: (p) => fs.mkdirSync(p, { recursive: true }),
     },
     decision.imageRef,
@@ -2192,38 +2266,39 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
     { pullTimeoutMs: 45_000 },
   );
   if (!fetched.ok || !fetched.distDir || !fetched.webDistDir) {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
     return { applied: false, reason: fetched.reason || 'prebuilt fetch failed' };
   }
 
   const distEntry = path.join(fetched.distDir, 'index.js');
   const webValidation = validateWebDistCandidate(fetched.webDistDir);
   if (!fs.existsSync(distEntry)) {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
     return { applied: false, reason: 'prebuilt artifact missing dist/index.js' };
   }
   if (!webValidation.ok) {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
     return { applied: false, reason: `prebuilt web artifact invalid: ${webValidation.error}` };
   }
 
   try {
-    replaceDirectoriesAtomically([
+    await replaceDirectoriesAtomically([
       { currentPath: path.join(cdsDir, 'dist'), nextPath: fetched.distDir },
       {
         currentPath: path.join(cdsDir, 'web', 'dist'),
         nextPath: fetched.webDistDir,
         previousPath: path.join(cdsDir, 'web', 'dist.previous'),
       },
-    ]);
+    ], cleanup);
     try { fs.writeFileSync(path.join(cdsDir, 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
     try { fs.writeFileSync(path.join(cdsDir, 'web', 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
     send('prebuilt', 'done', `已应用 CI 预构建产物 ${targetFullSha.slice(0, 8)},跳过本机编译`);
     return { applied: true };
   } catch (err) {
+    cleanup.assertActive();
     return { applied: false, reason: `prebuilt atomic replace failed: ${(err as Error).message}` };
   } finally {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
   }
 }
 
@@ -2246,7 +2321,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
     managedProjectService,
   } = deps;
 
+  if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  router.use(createJanitorObservationRouter(janitorService));
+  router.use(createBranchServiceIsolationRouter(stateService, branchOperationCoordinator,
+    (entry, excluded) => containerService.assertBranchStoppedForIsolation(entry, excluded)));
+  router.use((req, res, next) => {
+    if (req.method === 'POST') {
+      const match = /^\/branches\/([^/]+)\/(?:deploy(?:\/[^/]+)?|restart|force-rebuild\/[^/]+|prebuilt-image\/claim)\/?$/.exec(req.path);
+      const branch = match ? stateService.getBranch(match[1]) : undefined;
+      if (branch?.archive) {
+        const mismatch = assertProjectAccess(req as any, branch.projectId || 'default');
+        if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+        res.status(409).json({ error: 'branch_archived', message: '分支已归档，请先从归档列表恢复后再启动或部署。' }); return;
+      }
+    }
+    next();
+  });
+  const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(shell, config.repoRoot);
+
+  function guardStandbyRuntimeSnapshot(req: Request, res: Response, entry: BranchEntry, operation: 'deploy' | 'stop'): boolean {
+    const expected = req.body?.standbyExpected;
+    if (expected === undefined) return true; // 人工操作保持原有合同。
+    const status = String(entry.status);
+    const stable = operation === 'deploy' ? status === 'idle' || status === 'stopped' : status === 'running';
+    const projectId = entry.projectId || 'default';
+    let configuration: ReturnType<typeof buildStandbyBranchConfiguration> | undefined;
+    try { configuration = buildStandbyBranchConfiguration({ branch: entry, profiles: stateService.getBuildProfilesForProject(projectId),
+      env: stateService.getCustomEnv(projectId), branchEnv: stateService.getCustomEnvScope(entry.id),
+      infra: stateService.getInfraServicesForProject(projectId), routingRules: stateService.getRoutingRulesForProject(projectId) }); }
+    catch { /* Unknown effective configuration must not become automatic permission. */ }
+    if (!expected || typeof expected !== 'object' || typeof expected.commitSha !== 'string' || !/^[a-f0-9]{40}$/i.test(expected.commitSha)
+      || expected.pinnedCommit !== null || entry.pinnedCommit || !stable || expected.status !== entry.status
+      || typeof expected.configHash !== 'string' || !/^[a-f0-9]{64}$/i.test(expected.configHash) || expected.configHash !== configuration?.configHash
+      || typeof expected.configurationRevision !== 'string' || !/^[a-f0-9]{64}$/i.test(expected.configurationRevision)
+      || expected.configurationRevision !== configuration?.configurationRevision
+      || (operation === 'stop' && confirmedRunningRevisionSha(entry) !== expected.commitSha)
+      || expected.commitSha !== entry.githubCommitSha || (operation === 'deploy' && req.body?.commitSha !== expected.commitSha)) {
+      res.status(409).json({ error: 'standby_snapshot_changed', message: '分支提交、生效配置、固定版本或运行状态已变化，尚未执行自动同步，请重新核对' });
+      return false;
+    }
+    return true;
+  }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
   // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
@@ -2308,8 +2424,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 刻意不走「打开自动补发」那条路——`CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关
    * 是 2026-06-24 为治重试风暴做的决策，补发是事后补偿，会把那个旧事故放回来。
    *
-   * 等待有上限：超时就照常重启并把仍在途的 run 如实记进事件日志。卡住的部署
-   * 不该把自更新永久堵死——自更新往往正是去修那个卡住它的 bug。
+   * 等待有上限：超时取消本次更新与重启，并立即释放入口闸；不打断其他项目。
+   * 更新前先取得安全窗口，避免取消时已经切换代码和前端产物。
    */
   /**
    * 重启后多久仍活着就判定「重启没生效」，提前放开排空闸。
@@ -2318,53 +2434,155 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   const RESTART_GATE_RELEASE_MS = 15_000;
 
+  // 四个维护入口共享同一写入树；磁盘marker失败/过期和HTTP断开都不代表写者结束。
+  function acquireSelfMaintenance(req: Request, source: SelfMaintenanceSource, actor: string,
+    active: ReturnType<StateService['getActiveSelfUpdate']>): SelfMaintenanceOwner | null {
+    const identity = req as Request & { cdsRequestId?: string; cdsOperationId?: string };
+    return selfMaintenance.acquire({ source, actor,
+      requestId: identity.cdsRequestId,
+      operationId: identity.cdsOperationId,
+    }, isSelfUpdateBusy(active));
+  }
+  function releaseSelfMaintenance(owner: SelfMaintenanceOwner): boolean {
+    return selfMaintenance.release(owner);
+  }
+  function finishSelfMaintenance(owner: SelfMaintenanceOwner): void {
+    // 只有本票的全部写者已收尾且真正释放，才能打开前置排空闸。
+    if (selfMaintenance.finish(owner)) {
+      endSelfUpdateDrain();
+      setRestartWait(null);
+    }
+  }
+  function selfMaintenanceShell(owner: SelfMaintenanceOwner): IShellExecutor {
+    return {
+      // 明确投影index既有operation默认15分钟，不继承外层只读观测wrapper的30秒。
+      exec: (command, options = {}) => selfMaintenance.exec(owner, command, {
+        ...options, timeout: options.timeout ?? 15 * 60_000,
+      }),
+    };
+  }
+
+  /** 只消费本次维护的固定产物；一阶段共用原operation上界，不逐目录续时。 */
+  function maintenanceArtifactCleanup(owner: SelfMaintenanceOwner, stage: 'backend' | 'web' | 'prebuilt',
+    stagingRoot?: string): MaintenanceArtifactCleanup {
+    const cds = path.resolve(config.repoRoot, 'cds');
+    const identity = (parent: string) => {
+      const stat = fs.lstatSync(parent);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('CDS 产物父目录身份未确认，未开始清理。');
+      return { real: fs.realpathSync(parent), dev: stat.dev, ino: stat.ino };
+    };
+    const parents = new Map([cds, path.join(cds, 'web'), path.join(cds, '.cds')]
+      .map(parent => [parent, identity(parent)]));
+    const deadline = performance.now() + 15 * 60_000;
+    if (stage === 'prebuilt' && (!stagingRoot || path.dirname(stagingRoot) !== path.join(cds, '.cds')
+      || !/^prebuilt-self-update-\d+$/.test(path.basename(stagingRoot)))) {
+      throw new Error('CDS 预构建暂存身份不匹配，未开始清理。');
+    }
+    const assertActive = (): void => {
+      const view = selfMaintenance.observe();
+      if (!view || view.id !== owner.id || view.state !== 'running') {
+        throw new Error('CDS 维护写者停止尚未确认，已保留恢复点，未继续清理。');
+      }
+      if (performance.now() >= deadline) {
+        selfMaintenance.requestStop(owner);
+        throw new Error('CDS 产物清理阶段已到原截止，已停止更新并保留恢复点。');
+      }
+    };
+    const validate = (directories: string[]): void => {
+      for (const directory of directories) {
+        const relative = path.relative(cds, directory);
+        const backend = stage !== 'web' && (relative === 'dist.next' || /^dist\.old\.[A-Za-z0-9._-]+$/.test(relative)
+          || stage === 'prebuilt' && relative === 'dist');
+        const web = stage !== 'backend' && (/^web\/dist(?:\.previous)?\.old\.\d+\.\d+$/.test(relative)
+          || relative === 'web/dist' || relative === 'web/dist.next');
+        const staging = stage === 'prebuilt' && directory === stagingRoot;
+        const parent = path.dirname(directory), expectedParent = parents.get(parent);
+        if (directory !== path.resolve(directory) || !(backend || web || staging) || !expectedParent) {
+          throw new Error('CDS 产物清理路径或目录身份已变化，未执行删除。');
+        }
+        const actualParent = identity(parent);
+        if (actualParent.real !== expectedParent.real || actualParent.dev !== expectedParent.dev
+          || actualParent.ino !== expectedParent.ino) {
+          throw new Error('CDS 产物清理路径或目录身份已变化，未执行删除。');
+        }
+      }
+    };
+    const removeMany = async (directories: string[]): Promise<boolean> => {
+      assertActive();
+      if (directories.length === 0) return true;
+      validate(directories);
+      const timeout = Math.floor(deadline - performance.now());
+      if (timeout <= 0) { selfMaintenance.requestStop(owner); assertActive(); }
+      const result = await selfMaintenance.exec(owner, `/bin/rm -rf -- ${directories.map(shellQuote).join(' ')}`, {
+        cwd: cds, timeout,
+        beforeStart: () => { assertActive(); validate(directories); },
+      });
+      return result.exitCode === 0;
+    };
+    return { assertActive, removeMany, remove: directory => removeMany([directory]) };
+  }
+
   async function drainDeploysBeforeSelfUpdateRestart(context: {
     trigger: string;
     branch?: string;
     toSha?: string;
+    source: string;
+    timeoutMs?: number;
+    ownerActive?: () => boolean;
+    isQueuedPreserved?: (id: string) => boolean;
+    onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }): Promise<void> {
-    // 0 必须当 0 用（Codex 第三十七轮 P2）：`parseInt('0') || 默认值` 会把显式关闭
-    // 的 0 吞掉换成 5 分钟——文档明写「设 0 关闭」，实际却照等不误，还顺带把部署闸
-    // 关满五分钟。只有「没设 / 设了非数字」才落默认值。
-    const rawDrainTimeout = Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS ?? '', 10);
-    const timeoutMs = Number.isFinite(rawDrainTimeout) ? Math.max(0, rawDrainTimeout) : 5 * 60_000;
-    // 先关闸再开始等（顺序要紧）：等待期间与「等完到进程退出」之间到达的新部署
-    // 若还能建 run，重启照样把它腰斩，排空只是把窗口从几分钟压到几秒。闸门自带
-    // 过期时间，重启万一没发生也会自动开，不会把部署永久锁死。
-    // 显式设 0 = 整个机制关闭，连闸也不关（回到旧版行为，Codex 第三十七轮 P2）。
-    // 排空之外只多留 1 分钟给 flush（上限 1s）+ spawn 交接，不再多占五分钟。
-    if (timeoutMs > 0) beginSelfUpdateDrain(Date.now(), timeoutMs + 60_000);
+    const timeoutMs = context.timeoutMs ?? resolveSelfUpdateDrainTimeoutMs({});
+    // Close admission before observing work, including when the wait limit is 0.
+    const holdMs = Math.max(DRAIN_GATE_MAX_HOLD_MS, timeoutMs + 60_000);
+    const ownerActive = context.ownerActive;
+    beginSelfUpdateDrain(Date.now(), holdMs, ownerActive);
+    const drainSince = Date.now();
+    let lastProgressAt = -Infinity;
     const outcome = await drainInFlightDeploys({
-      // 部署 + 发布一起排空（Codex PR #1273 P1）：deploy-drain 早就支持发布口径，
-      // 但这个唯一调用点只喂了部署 run，于是自更新会在预览部署落地后立刻重启，
-      // 把一条正在跑的生产发布 SSH 拦腰砍断——而发布被腰斩的代价比部署大得多
-      // （run 停在 running，在途守卫从此拒绝该目标的一切新发布）。
-      listRuns: () => collectDrainableRuns({
-        deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
-        releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
-      }),
+      listRuns: () => [
+        ...collectDrainableRuns({
+          deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
+          releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
+        }).filter(run => run.kind === 'release' || !context.isQueuedPreserved?.(run.id)),
+        // Pull/stop and other branch writes may have no deployment-run record.
+        ...(branchOperationCoordinator?.getRestartBlockingOperations() || []).map((op) => ({
+          id: `operation:${op.operationId}`, status: 'preparing', branchId: op.branchId,
+        })),
+      ],
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
       timeoutMs,
       onWait: (pending, waitedMs) => {
-        if (waitedMs === 0 || waitedMs % 30_000 < 2_500) {
-          const releases = pending.filter((r) => r.kind === 'release').length;
-          const suffix = releases > 0 ? `（其中 ${releases} 个是生产发布）` : '';
-          console.log(`[self-update] 等待 ${pending.length} 个在途部署/发布落地再重启${suffix}（已等 ${Math.round(waitedMs / 1000)}s）`);
+        const state = {
+          source: context.source,
+          phase: 'draining-deploys' as const,
+          since: drainSince,
+          waitedMs,
+          timeoutMs,
+          pendingRuns: pending.map((r) => r.id),
+        };
+        setRestartWait(state);
+        if (waitedMs - lastProgressAt >= 10_000) {
+          lastProgressAt = waitedMs;
+          context.onProgress?.('running', describeRestartWait(state));
         }
       },
     });
-    if (outcome.skipped) return;
     serverEventLogStore?.record({
-      category: 'system',
-      severity: outcome.drained ? 'info' : 'warn',
-      source: 'self-update',
-      action: outcome.drained ? 'self-update.deploy-drain.completed' : 'self-update.deploy-drain.timeout',
-      message: outcome.drained
-        ? `自更新重启前已等到全部在途部署落地（等待 ${Math.round(outcome.waitedMs / 1000)}s）`
-        : `自更新重启前等待在途部署超时（${Math.round(outcome.waitedMs / 1000)}s），仍在途 ${outcome.remaining.length} 个，将照常重启（这些 run 会被收敛为中断，需重新触发部署）`,
+      category: 'system', severity: outcome.drained ? 'info' : 'warn', source: 'self-update',
+      action: outcome.drained ? 'self-update.deploy-drain.completed' : 'self-update.deploy-drain.cancelled',
+      message: outcome.drained ? '在途操作已结束，可安全更新 CDS' : '等待在途操作超时，取消更新与重启，保留其他项目继续运行',
       details: { ...context, waitedMs: outcome.waitedMs, remaining: outcome.remaining },
     });
+    if (!outcome.drained) {
+      const error = new SelfUpdateRestartBlockedError(outcome.remaining, outcome.waitedMs);
+      context.onProgress?.('warning', error.message);
+      throw error;
+    }
+    beginSelfUpdateDrain(Date.now(), holdMs, ownerActive);
+    setRestartWait({ source: context.source, phase: 'flushing', since: drainSince, waitedMs: outcome.waitedMs, timeoutMs, pendingRuns: [] });
+    context.onProgress?.('done', outcome.skipped ? '没有在途操作，可安全更新' : '在途操作已全部结束，可安全更新');
   }
 
   async function flushSelfUpdateStateBeforeRestart(context: {
@@ -2373,12 +2591,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     fromSha?: string;
     toSha?: string;
     actor?: string;
-  }): Promise<void> {
+    source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
+    timeoutMs?: number;
+    onSafeToRestart: () => void;
+    onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
+  }, maintenanceOwner: SelfMaintenanceOwner): Promise<BoundedFlushResult> {
     // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
     // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
+    selfMaintenance.setPhase(maintenanceOwner, 'drain');
     await drainDeploysBeforeSelfUpdateRestart({
       trigger: context.trigger, branch: context.branch, toSha: context.toSha,
+      source: context.source, timeoutMs: context.timeoutMs, onProgress: context.onProgress,
+      ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+      isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
     });
+    context.onSafeToRestart();
+    selfMaintenance.setPhase(maintenanceOwner, 'flush');
     const result = await waitForFlushWithTimeout(
       () => stateService.flush(),
       SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
@@ -2404,36 +2632,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
         severity: 'warn',
         source: 'self-update',
         action: 'self-update.state-flush-timeout',
-        message: 'self-update state flush timed out before restart; continuing restart to avoid stale daemon',
+        message: 'self-update state flush timed out before restart; restart must be cancelled',
         details: {
           ...context,
           timeoutMs: SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
         },
       });
     }
+    return result;
   }
 
-  function scheduleDetachedCdsRestart(input: {
+  async function scheduleDetachedCdsRestart(input: {
     branchLabel: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
+    maintenanceOwner: SelfMaintenanceOwner;
     delayMs?: number;
-    exitOnFailure?: boolean;
-  }): void {
-    const launch = () => {
+    preserveQueued?: boolean;
+    rollback?: () => Promise<void>;
+  }): Promise<void> {
+      selfMaintenance.setPhase(input.maintenanceOwner, 'handoff');
+      await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, input.delayMs || 0)));
+      const deadline = Date.now() + SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS;
       const cdsDir = path.join(config.repoRoot, 'cds');
       const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
-      /**
-       * 记账动作一律各自 try/catch。
-       *
-       * 2026-07-30 真实事故：一次强制同步把 dist/ 和 web/dist 都换成了新版本，
-       * 但进程没重启 —— 生产变成「新前端 + 旧后端」，而 lastSelfUpdate 还写着
-       * success。根因是整个 launch 被一个大 try 包着，而 `process.exit(0)` 排在
-       * 写日志文件、`fs.openSync`、`interruptAll` **后面**：这些记账动作里任意
-       * 一处同步抛异常，都会跳到 catch，而 catch 在 exitOnFailure 未设时**不退出**。
-       * 于是一个写日志的小失败取消掉了整件事的目的。
-       *
-       * 现在的顺序保证：spawn 成功 → 退出一定会被排上，任何记账失败都碰不到它。
-       */
+      const waitSoFar = getRestartWait();
+      setRestartWait({
+        source: input.source,
+        phase: 'spawning',
+        since: waitSoFar?.since ?? Date.now(),
+        waitedMs: waitSoFar ? Date.now() - waitSoFar.since : 0,
+        timeoutMs: waitSoFar?.timeoutMs ?? 0,
+        pendingRuns: [],
+      });
+      // 日志失败不阻断交接；状态保存失败必须取消脚本并恢复旧源码/真实产物。
       const safely = (label: string, fn: () => void): void => {
         try {
           fn();
@@ -2452,68 +2683,60 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // stdio 目标拿不到就退回 'ignore'：日志重定向失败绝不能成为不重启的理由。
       let stdio: ['ignore', number | 'ignore', number | 'ignore'] = ['ignore', 'ignore', 'ignore'];
+      const fds: number[] = [];
       safely('open-log-fd', () => {
-        stdio = ['ignore', fs.openSync(errorLogPath, 'a'), fs.openSync(errorLogPath, 'a')];
+        for (let index = 0; index < 2; index++) fds.push(fs.openSync(errorLogPath, 'a'));
+        stdio = ['ignore', fds[0], fds[1]];
       });
 
-      let spawned = false;
+      let permit: ReturnType<typeof prepareDetachedCdsRestart> | undefined;
+      let operationsInterrupted = false;
       try {
-        const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
-          cwd: cdsDir,
-          detached: true,
-          stdio,
-          env: { ...process.env },
-        });
-        child.on('error', (err) => {
-          safely('spawn-error-log', () => {
-            fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
-          });
-        });
-        child.unref();
-        spawned = true;
-      } catch (spawnErr) {
-        safely('pre-spawn-log', () => {
-          fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
-        });
-      }
-
-      if (!spawned) {
-        // 只有**spawn 本身**失败才不退出：退出了就没人把 CDS 拉起来，等于自己造停机。
-        safely('interrupt-on-failure', () => {
-          branchOperationCoordinator?.interruptAll(
-            `CDS restart failed for ${input.source}`,
-            input.source,
-          );
-        });
-        if (input.exitOnFailure) {
-          setTimeout(() => process.exit(1), 1000);
-        } else {
-          // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
-          endSelfUpdateDrain();
+        try { permit = prepareDetachedCdsRestart(spawn, cdsDir, { ...process.env }, stdio); }
+        catch (error) { safely('spawn-error', () => fs.appendFileSync(errorLogPath, `spawn error: ${(error as Error).message}\n`)); }
+        // 已知保存失败或没有子进程时，旧服务继续运行，不能先破坏其部署任务。
+        if (input.preserveQueued !== true || !permit?.hasChildPid) {
+          throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
         }
-        return;
-      }
-
-      // 退出先排上，再做剩下的记账 —— 顺序即保障。
-      setTimeout(() => process.exit(0), 1000);
-      // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
-      // 只有「重启没真的发生」时它才会跑到，把排空闸提前放掉。否则闸要等满
-      // timeoutMs+60s（默认 6 分钟）才 fail-open，这期间每一次 webhook 部署都拿
-      // 503 + 红灯 CI —— 2026-07-28 实际中招一次。
-      safely('gate-release-timer', () => {
-        setTimeout(() => {
-          endSelfUpdateDrain();
-          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
-        }, RESTART_GATE_RELEASE_MS).unref?.();
-      });
-      safely('interrupt-all', () => {
+        if (branchOperationCoordinator && !branchOperationCoordinator.isQuiescentForRestart()) {
+          throw new Error('CDS 重启未获可靠交接许可：检测到新的在途分支操作，已取消更新与重启。请等待该操作结束后重试。');
+        }
+        operationsInterrupted = Boolean(branchOperationCoordinator);
         branchOperationCoordinator?.interruptAll(
-          `CDS restart requested by ${input.source}`,
-          input.source,
+          `CDS restart requested by ${input.source}`, input.source,
+          { normalShutdown: input.preserveQueued === true && permit?.hasChildPid === true },
         );
-      });
-    };
-    setTimeout(launch, Math.max(0, input.delayMs || 0));
+        const saved = await waitForFlushWithTimeout(() => stateService.flush(), Math.max(0, deadline - Date.now()));
+        if (saved !== 'flushed' || input.preserveQueued !== true || !permit?.hasChildPid) {
+          throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
+        }
+        if (branchOperationCoordinator && !branchOperationCoordinator.isQuiescentForRestart()) {
+          throw new Error('CDS 重启最终保存期间出现新的在途分支操作，已取消重启并保留原操作资格。请等待该操作结束后重试。');
+        }
+        await permit.release();
+        // 原一秒退出期限从本次launch开始计算；不串联新的等待预算。
+        setTimeout(() => process.exit(0), Math.max(0, deadline - Date.now()));
+        setTimeout(() => {
+          if (releaseSelfMaintenance(input.maintenanceOwner)) {
+            endSelfUpdateDrain();
+            setRestartWait(null);
+            console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+          }
+        }, RESTART_GATE_RELEASE_MS).unref?.();
+        input.maintenanceOwner.restartScheduled = true;
+        selfMaintenance.setPhase(input.maintenanceOwner, 'restart-scheduled');
+      } catch (error) {
+        // 先确认许可子进程已停，再恢复原合法待办；回滚失败不能跳过队列收尾。
+        await permit?.cancel();
+        try { await input.rollback?.(); }
+        finally {
+          if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);
+        }
+        // 回滚/写者停止未确认时不能开前置部署闸；由路由同票finish成功统一释放。
+        throw error;
+      } finally {
+        for (const fd of fds) safely('close-log-fd', () => fs.closeSync(fd));
+      }
   }
 
   async function flushBranchStateBeforeSuccess(context: {
@@ -2681,6 +2904,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     deploymentRunService.fail(runId, classifyDeploymentFailure({ message, phase, run }));
   }
 
+  /** 只回写原执行体的真实清理进展；排队、失效身份和终态均不能借此续命。 */
+  function createCleanupProgressReporter(run: DeploymentRun | undefined, lease: BranchOperationLease | null | undefined,
+    entry: Pick<BranchEntry, 'id' | 'projectId'>, profileId: string,
+    emit: (event: OperationLogEvent) => void): ContainerRemoveContext['onProgress'] {
+    const original = run && { id: run.id, projectId: run.projectId, branchId: run.branchId, profileId: run.profileId,
+      operationId: run.operationId, generation: run.operationGeneration };
+    const projectId = entry.projectId || 'default', branchId = entry.id;
+    return step => {
+      assertBranchOperationCurrent(lease, 'cleanup progress');
+      if (!original || !lease || !deploymentRunService) return;
+      const current = deploymentRunService.get(original.id), branch = stateService.getBranch(branchId);
+      if (current !== run || !current || DEPLOYMENT_RUN_TERMINAL_STATUSES.has(current.status)
+        || current.projectId !== original.projectId || current.branchId !== original.branchId || current.profileId !== original.profileId
+        || current.operationId !== original.operationId || current.operationGeneration !== original.generation
+        || original.projectId !== projectId || original.branchId !== branchId || (branch?.projectId || 'default') !== projectId || !branch
+        || lease.operationId !== original.operationId || lease.generation !== original.generation || lease.branchId !== branchId
+        || lease.request.branchId !== branchId || (lease.request.projectId || 'default') !== projectId
+        || (lease.request.profileId || undefined) !== original.profileId || (original.profileId && original.profileId !== profileId)) return;
+      const progress = { admitted: '清理已获准，开始核对容器', 'diagnostics-returned': '容器核对已返回，准备停止命令',
+        stop: '执行槽已就绪，开始停止容器', 'stop-returned': '停止命令已返回，准备移除命令',
+        rm: '执行槽已就绪，开始移除容器', 'rm-returned': '移除命令已返回，继续核对回收结果' };
+      emit({ step: 'remove-orphan-service', status: 'running', title: `服务 "${profileId}" ${progress[step]}`,
+        timestamp: new Date().toISOString(), detail: { runId: original.id, projectId, branchId, profileId,
+          operationId: original.operationId, operationGeneration: original.generation, cleanupStep: step } });
+    };
+  }
+
   // 部署静默阶段的 run 心跳（Codex P2「Do not reap live quiet deployment runs」）：
   // 构建容器输出与就绪探测只走 SSE/opLog，不写 run 事件——慢启动在 1200s 就绪
   // 下限内可能超过周期收割器的 15 分钟心跳阈值而被误杀。凡有构建输出/探测尝试
@@ -2708,6 +2958,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const run = deploymentRunService.get(runId);
     if (!run || run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') return;
     deploymentRunService.cancel(runId, message, 'cancelled');
+  }
+
+  /**
+   * 分支停止的施动者来源 -> 生命周期意图种类。
+   *
+   * stopAttributionFromRequest 早就算出了 source（webhook / ai / scheduler / cds / user…），
+   * 以前只有渲染好的 reason 字符串往下传，状态在半路丢了，停机原因于是分不出
+   * 「有人主动停的」和「系统自动降温」。这里把状态接回去。
+   */
+  function stopIntentKindFrom(
+    source: NonNullable<BranchEntry['lastStopSource']>,
+  ): 'cds-stop' | 'cds-stop-idle' {
+    // 自动省资源的两种来源容器都保留、随后可秒级唤醒，结论与「有人按了停止」不同。
+    return source === 'scheduler' || source === 'cds' ? 'cds-stop-idle' : 'cds-stop';
   }
 
   function stopAttributionFromRequest(req: Request): {
@@ -2744,7 +3008,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (trigger === 'auto-lifecycle') {
       return {
-        reason: 'CDS 生命周期策略触发停止',
+        reason: req.body?.lifecycleReason === 'startup-timeout'
+          ? '整组未完全启动超过30分钟，自动停止本分支容器，保留数据'
+          : req.body?.lifecycleReason === 'archive' ? '分支归档前停止容器，保留数据30天' : 'CDS 生命周期策略触发停止',
         source: 'cds',
         archiveSource: 'auto-lifecycle-stop',
         archiveMessage: 'captured after auto lifecycle stop preserved containers',
@@ -2766,6 +3032,358 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  /**
+   * 找「在途那次部署」的 run。首选按协调器给的 activeOperationId 精确匹配——
+   * 部署一拿到租约就把 operationId 写进了 run。
+   *
+   * 不拿 commitSha 当判据：run.commitSha 会在部署过程中被改写成解析后的真实 SHA
+   * （请求里写 `4444…`、落库可能是 `abc1234`），拿它比对必然静默漏配；何况
+   * 「是不是同一个提交」协调器已经判过了，这里再判一遍就是第二份会漂的判据。
+   *
+   * 未提供操作身份时才在「排除自己后恰好只剩一条非终态 run」的情况下兜底；有歧义就返回
+   * null，让调用方摘掉响应头退回分支状态轮询，而不是指一条可能错的 run。
+   */
+  function findLiveDeploymentRunId(branchId: string, activeOperationId: string | null, excludeRunId: string | null): string | null {
+    if (!deploymentRunService) return null;
+    const live = deploymentRunService.list({ branchId })
+      .filter((run) => run.id !== excludeRunId && !DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status));
+    if (activeOperationId) {
+      const exact = live.find((run) => run.operationId === activeOperationId);
+      if (exact) return exact.id;
+    }
+    return activeOperationId ? null : live.length === 1 ? live[0].id : null;
+  }
+
+  function buildBranchOperationRequest(req: Request, entry: BranchEntry, input: Parameters<typeof beginBranchOperation>[3]): BranchOperationRequest {
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    return {
+      branchId: entry.id,
+      projectId: entry.projectId,
+      profileId: input.profileId || null,
+      kind: input.kind,
+      trigger: triggerFromRequest(req),
+      actor: resolveActorFromRequest(req),
+      requestId: requestId || null,
+      commitSha: input.commitSha || null,
+      versionId: input.versionId || null,
+      hasOneShotOptions: input.hasOneShotOptions || req.body?.standbyExpected !== undefined,
+      commitPinned: input.commitPinned || false,
+      configHash: input.configHash || null,
+      source: input.source,
+      reason: input.reason || null,
+      continueWith: input.continueWith || null,
+      pendingReplay: req.body?.pendingReplay || null,
+    };
+  }
+
+  async function normalizeArtifactRequestTarget(req: Request, res: Response, entry: BranchEntry, profiles: BuildProfile[], profileId?: string): Promise<boolean> {
+    const requested = req.body?.commitSha;
+    if (typeof requested !== 'string' || !/^[0-9a-f]{7,39}$/i.test(requested) || req.body?.pendingReplay || req.body?.versionId) return true;
+    const required = profiles.filter(profile => !profileId || profile.id === profileId).map(profile => resolveEffectiveProfile(profile, entry))
+      .some(profile => profile.prebuiltImage && !profile.managedBuild && !profile.localArtifact);
+    if (!required) return true;
+    let ticket: ReturnType<BranchOperationCoordinator['beginArtifactTargetRead']> | undefined;
+    const projectId = entry.projectId || 'default', branchName = entry.branch;
+    const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+    const assertCurrent = () => {
+      ticket?.assertCurrent();
+      const current = stateService.getBranch(entry.id);
+      if (!current || (current.projectId || 'default') !== projectId || current.branch !== branchName
+        || !stateService.getProject(projectId)
+        || stateService.getProjectRepoRoot(current.projectId, config.repoRoot) !== repoRoot) {
+        throw new BranchOperationSupersededError('', entry.id, 'artifact-target-owner');
+      }
+    };
+    try {
+      if (!branchOperationCoordinator) throw new Error('目标解析资格能力不可用');
+      ticket = branchOperationCoordinator.beginArtifactTargetRead(buildBranchOperationRequest(req, entry, {
+        kind: profileId ? 'deploy-profile' : 'deploy', profileId, commitSha: requested, commitPinned: true, source: 'artifact-target-resolution',
+      }));
+      const full = await resolveArtifactCommitIdentity(shell, repoRoot, requested, assertCurrent);
+      ticket.confirmIdentity(full);
+      assertCurrent();
+      const access = assertProjectAccess(req as any, projectId);
+      if (access) { res.status(access.status).json(access.body); return false; }
+      if (stateService.getProject(projectId)?.paused && req.query.force !== '1' && req.query.force !== 'true') {
+        res.status(423).json({ error: 'project_paused', message: '项目已暂停，部署尚未受理；恢复项目后再重试' }); return false;
+      }
+      req.body = { ...req.body, commitSha: full };
+      return true;
+    } catch (error) {
+      const superseded = error instanceof BranchOperationSupersededError;
+      res.status(superseded ? 409 : 503).json({ error: superseded ? 'target_request_superseded' : 'target_identity_unavailable',
+        message: superseded ? '新的部署或终止操作已取代本请求，尚未开始部署'
+          : '暂时无法确认短提交的完整身份，部署尚未受理；请使用完整提交号，或在项目仓库同步后重试' });
+      return false;
+    } finally { ticket?.release(); }
+  }
+
+  const latestTargetPreparations = new WeakMap<DeploymentInputSnapshot, { assertCurrent: () => void; release: () => void }>();
+
+  /** 未点名的预构建请求固定真实远端目标；资格保持到同步受理，不能借用旧CI记录。 */
+  async function resolveUnpinnedArtifactTarget(req: Request, res: Response, entry: BranchEntry,
+    input: DeploymentInputSnapshot, profileId?: string, versionId?: string): Promise<boolean> {
+    if (input.targetCommitSha || req.body?.commitSha || versionId
+      || isSyntheticCdsManagedRuntimeBranch(entry, stateService.getProject(entry.projectId || 'default'))) return true;
+    const required = input.profiles.filter(profile => !profileId || profile.id === profileId)
+      .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)))
+      .some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
+    if (!required) return true;
+    const branchName = entry.branch, projectId = entry.projectId || 'default';
+    const originalProject = stateService.getProject(projectId);
+    const repoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    const request: BranchOperationRequest = { projectId, branchId: entry.id, profileId,
+      kind: profileId ? 'deploy-profile' : 'deploy', trigger: triggerFromRequest(req), source: 'api.latest-remote-target' };
+    let ticket: ReturnType<BranchOperationCoordinator['beginDeploymentPreparation']> | undefined;
+    const controller = new AbortController();
+    let retained = false, released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      req.off('aborted', onAbort); res.off('close', onAbort); res.off('finish', release);
+      ticket?.release();
+    };
+    const onAbort = () => { controller.abort(); release(); };
+    req.once('aborted', onAbort); res.once('close', onAbort);
+    if (req.aborted || res.destroyed) controller.abort();
+    const assertCurrent = () => {
+      controller.signal.throwIfAborted(); ticket?.assertCurrent();
+      if (!originalProject || stateService.getProject(projectId) !== originalProject
+        || (originalProject.paused && req.query.force !== '1' && req.query.force !== 'true')
+        || stateService.getBranch(entry.id) !== entry || entry.branch !== branchName
+        || (entry.projectId || 'default') !== projectId
+        || stateService.getProjectRepoRoot(projectId, config.repoRoot) !== repoRoot) {
+        throw new BranchOperationSupersededError('', entry.id, 'latest-remote-target');
+      }
+      const access = assertProjectAccess(req as any, projectId);
+      if (access) throw new BranchOperationSupersededError('', entry.id, 'latest-remote-target-access');
+    };
+    try {
+      if (!branchOperationCoordinator) throw new Error('目标解析资格能力不可用');
+      ticket = branchOperationCoordinator.beginDeploymentPreparation(request);
+      assertCurrent();
+      const target = await worktreeService.resolveLatestRemoteHead(repoRoot, branchName, controller.signal, assertCurrent);
+      assertCurrent();
+      input.targetCommitSha = target; input.targetOrigin = 'remote-head';
+      input.remoteHeadObservedAt = new Date().toISOString();
+      latestTargetPreparations.set(input, { assertCurrent, release });
+      retained = true; res.once('finish', release);
+      return true;
+    } catch (error) {
+      if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
+        error: 'latest_target_unavailable', message: '无法确认本次远端最新提交，尚未开始部署；请稍后重试',
+      });
+      return false;
+    } finally { if (!retained) release(); }
+  }
+
+  async function inspectArtifactInput(entry: BranchEntry, input: DeploymentInputSnapshot, profileId: string | null | undefined,
+    assertCurrent: () => void, explicitTarget?: string): Promise<ArtifactAdmission> {
+    const profiles = input.profiles.filter(profile => !profileId || profile.id === profileId)
+      .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)));
+    const target = input.artifactAdmission!.targetCommitSha;
+    const projectId = entry.projectId || 'default', branchName = entry.branch;
+    const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+    const assertOwner = () => {
+      assertCurrent(); const current = stateService.getBranch(entry.id);
+      if (!current || current !== entry || (current.projectId || 'default') !== projectId || current.branch !== branchName
+        || !stateService.getProject(projectId) || stateService.getProjectRepoRoot(current.projectId, config.repoRoot) !== repoRoot
+        || input.artifactAdmission?.targetCommitSha !== target) throw new BranchOperationSupersededError('', entry.id, 'artifact-input-owner');
+    };
+    const context = artifactInspectionContext(shell, worktreeService, repoRoot, assertOwner), compare = context.isComponentUnchangedSince;
+    // 当前单服务入口执行于本机；整分支按其实际派发执行器核验，不借Master架构冒充。
+    const executor = profileId ? null : resolveDeployTarget(entry, explicitTarget);
+    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertOwner, context), executorId: 'local' };
+    assertCurrent();
+    const response = await fetch(`http://${executor.host}:${executor.port}/exec/artifact-preflight`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': config.executorToken || '' },
+      body: JSON.stringify({ profiles, commitSha: target, owner: { branchId: entry.id, branchName, projectId }, remainingMs: context.remainingMs() }),
+      signal: AbortSignal.timeout(context.remainingMs()),
+    });
+    context.remainingMs();
+    if (!response.ok) return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+      reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
+    const reader = response.body?.getReader();
+    const chunks: Buffer[] = []; let bytes = 0;
+    if (!reader) throw new Error('执行器未返回产物核验结果');
+    try {
+      for (;;) {
+        context.remainingMs(); const { value, done } = await reader.read(); if (done) break;
+        bytes += value.byteLength;
+        if (bytes > 1024 * 1024) throw new Error('执行器产物核验结果超过读取预算');
+        chunks.push(Buffer.from(value));
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    const result = JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')) as ArtifactAdmission;
+    context.remainingMs();
+    if (!result || result.targetCommitSha !== target || !['ready', 'waiting'].includes(result.state) || !Array.isArray(result.artifacts)) {
+      return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+        reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
+    }
+    if (result.state === 'ready' && !await verifyArtifactAdmission(profiles, target, result, compare, () => { context.remainingMs(); })) {
+      return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+        reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
+    }
+    return { ...result, executorId: executor.id };
+  }
+
+  if (branchOperationCoordinator) registerArtifactWaitRefresher(branchOperationCoordinator, async () => {
+    const ready = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService,
+      getBranch: id => stateService.getBranch(id), inspect: (pending, input, entry, assertCurrent) =>
+        inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent),
+      onChecked: (pending, previous, result) => {
+        if (previous.state === result.state && previous.reason === result.reason
+          && previous.profileIds?.join(',') === result.profileIds?.join(',')) return;
+        const run = deploymentRunService?.getForOperation(pending.operationId, pending.generation);
+        if (!run || run.status !== 'queued') return;
+        const messages: Partial<Record<NonNullable<ArtifactAdmission['reason']>, string>> = {
+          missing: '必需镜像尚未发布，等待CI产物；旧服务继续保留',
+          'access-denied': '执行器无法访问必需镜像，请检查镜像访问权限；旧服务继续保留',
+          'revision-mismatch': '镜像内容与目标提交不一致，等待正确产物；旧服务继续保留',
+          'platform-mismatch': '镜像平台与执行器不匹配，等待适用产物；旧服务继续保留',
+          'target-unresolved': '目标提交的完整身份尚未确认，暂不部署；旧服务继续保留',
+          'image-unresolved': '必需镜像引用尚未确认，暂不部署；旧服务继续保留',
+          'cache-budget': '宿主镜像总量预算不足，等待回收或容量调整；旧服务继续保留',
+        };
+        const phase = result.state === 'ready' ? 'artifact-ready' : 'artifact-wait';
+        deploymentRunService!.heartbeat(run.id, phase);
+        deploymentRunService!.append(run.id, { phase, status: 'queued', level: 'info',
+          message: result.state === 'ready' ? '全部必需产物核验通过，等待部署资格与执行槽'
+            : messages[result.reason!] || '产物核验暂不可用，等待重试；旧服务继续保留',
+          detail: { reason: result.reason, profileIds: result.profileIds, targetCommitSha: result.targetCommitSha } });
+      } });
+    for (const pending of ready) dispatchPendingWebhookDeploy(pending);
+  });
+
+  async function admitBranchDeployment(
+    req: Request, res: Response, entry: BranchEntry, input: Parameters<typeof beginBranchOperation>[3],
+    runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
+    deploymentInput?: DeploymentInputSnapshot,
+  ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
+    // 备用同步的实时条件不进入会丢失条件的重放；沿用一次性选项先核产物的路径。
+    if (req.body?.standbyExpected !== undefined) input = { ...input, hasOneShotOptions: true };
+    const artifactProfiles = deploymentInput?.profiles.filter(profile => !input.profileId || profile.id === input.profileId)
+      .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(deploymentInput!, entry))) || [];
+    const requiresArtifacts = artifactProfiles.some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
+    if (deploymentInput && requiresArtifacts && !deploymentInput.artifactAdmission) {
+      const target = deploymentInput.targetCommitSha || (input.commitPinned ? input.commitSha : deploymentInput.ciTargetSha || entry.githubCommitSha) || '';
+      deploymentInput.artifactAdmission = { state: 'waiting', targetCommitSha: target, checkedAt: '', reason: 'verification-unavailable', artifacts: [] };
+      if (/^[0-9a-f]{40}$/i.test(target)) {
+        deploymentInput.targetCommitSha = target.toLowerCase();
+        input = { ...input, commitSha: target.toLowerCase(), commitPinned: true };
+        runInput = { ...runInput, commitSha: target.toLowerCase() };
+      }
+      // 带版本/一次性选项沿用既有不能持久重放的契约：先核验，缺产物时拒绝而非丢选项排队。
+      if (input.versionId || input.hasOneShotOptions) {
+        let preparation: ReturnType<BranchOperationCoordinator['beginDeploymentPreparation']> | undefined;
+        try {
+          if (!branchOperationCoordinator) throw new Error('产物核验资格能力不可用');
+          preparation = latestTargetPreparations.has(deploymentInput) ? undefined : branchOperationCoordinator.beginDeploymentPreparation(buildBranchOperationRequest(req, entry, input));
+          deploymentInput.artifactAdmission = await inspectArtifactInput(entry, deploymentInput, input.profileId, (latestTargetPreparations.get(deploymentInput) || preparation!).assertCurrent, req.body?.targetExecutorId);
+        } catch {
+          deploymentInput.artifactAdmission = { ...deploymentInput.artifactAdmission, state: 'waiting', reason: 'verification-unavailable', artifacts: [] };
+        } finally { preparation?.release(); }
+      }
+    }
+    const waitForArtifacts = deploymentInput?.artifactAdmission?.state === 'waiting';
+    if (waitForArtifacts && (!branchOperationCoordinator || !deploymentRunService)) {
+      res.status(503).json({ error: 'artifact_wait_unavailable', message: '产物尚未确认齐备，可靠排队能力不可用，请稍后重试；尚未开始部署' });
+      return { started: false, lease: null, run: undefined };
+    }
+    // 目标读取资格在同一同步段交给受理决策，关闭读取完成到受理之间的撤销窗口。
+    const preparation = deploymentInput && latestTargetPreparations.get(deploymentInput);
+    let decision: ReturnType<BranchOperationCoordinator['begin']> | undefined;
+    try {
+      preparation?.assertCurrent();
+      if (req.body?.standbyExpected !== undefined && !guardStandbyRuntimeSnapshot(req, res, entry, 'deploy')) {
+        return { started: false, lease: null, run: undefined };
+      }
+      // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
+      decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), {
+        waitForArtifacts, requireImmediate: req.body?.standbyExpected !== undefined,
+      });
+    } catch (error) {
+      if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
+        error: 'latest_target_unavailable', message: '本次目标读取资格已失效，尚未开始部署',
+      });
+      return { started: false, lease: null, run: undefined };
+    } finally {
+      preparation?.release();
+      if (deploymentInput) latestTargetPreparations.delete(deploymentInput);
+    }
+    if (decision?.status === 'rejected') {
+      beginBranchOperation(req, res, entry, input, decision);
+      return { started: false, lease: null, run: undefined };
+    }
+    if (decision && deploymentInput) branchOperationCoordinator?.rememberDeploymentInput(decision.operationId, decision.generation, deploymentInput);
+    const originalRequest = decision?.lease?.request || branchOperationCoordinator?.getPendingWebhookDeploy(entry.id, input.profileId)?.request;
+    const executionInput = deploymentInput && originalRequest ? { request: originalRequest, input: deploymentInput } : undefined;
+    const operationAdmissionGeneration = decision?.lease?.admissionGeneration ?? decision?.generation;
+    let run: DeploymentRun | undefined;
+    try {
+      if (decision) run = deploymentRunService?.getForOperation(decision.operationId, decision.generation);
+      if (decision?.status === 'joined') {
+        if (!run && decision.joinedPending) {
+          const pending = branchOperationCoordinator?.getPendingWebhookDeploy(entry.id, input.profileId);
+          run = await deploymentRunService?.begin({ ...runInput, executionInput, operationAdmissionGeneration, projectId: entry.projectId || 'default', branchId: entry.id,
+            profileId: input.profileId || undefined, operationId: decision.operationId, operationGeneration: decision.generation,
+            trigger: pending?.request.trigger === 'webhook' ? 'webhook' : 'manual', initialStatus: 'queued', phase: 'operation-queue',
+            message: '沿用已受理的目标部署，等待当前操作释放' });
+        }
+        if (!run && !decision.joinedPending) {
+          const legacyId = findLiveDeploymentRunId(entry.id, decision.operationId, null);
+          run = legacyId ? deploymentRunService?.get(legacyId) : undefined;
+        }
+        if (run) await deploymentRunService?.waitForAcceptance(run.id);
+        if (decision.cancelledPending) await deploymentRunService?.flush();
+      } else if (run) {
+        // 内部重放复用原排队记录，不能再创建一条与调用方脱节的 run。
+        await deploymentRunService?.waitForAcceptance(run.id);
+        if (DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status)) throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '原排队部署已结束');
+        if (decision?.status === 'started') await deploymentRunService?.claimQueued(run.id);
+      } else {
+        run = await deploymentRunService?.begin({ ...runInput, executionInput, operationAdmissionGeneration, projectId: entry.projectId || 'default', branchId: entry.id,
+          profileId: input.profileId || undefined, operationId: decision?.operationId, operationGeneration: decision?.generation,
+          initialStatus: decision?.status === 'merged' ? 'queued' : 'pending',
+          phase: decision?.status === 'merged' ? (waitForArtifacts ? 'artifact-wait' : 'operation-queue') : runInput.phase,
+          message: decision?.status === 'merged' ? (waitForArtifacts ? '目标部署已可靠排队，等待全部必需产物核验' : '目标部署已排队，等待当前操作释放') : runInput.message });
+      }
+      if (run?.status === 'cancelled' || run?.status === 'failed') throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '受理期间原部署已结束');
+      decision?.lease?.assertCurrent('after-admission-persistence');
+    } catch (err) {
+      const superseded = err instanceof BranchOperationSupersededError;
+      const failedRun = run || (decision && deploymentRunService?.getForOperation(decision.operationId, decision.generation));
+      try {
+        if (!superseded) serverEventLogStore?.record({
+          category: 'system', severity: 'error', source: 'branch-deployment-admission', action: 'branch.deployment.admission-failed',
+          message: '部署受理失败，尚未开始执行；旧服务保留，请按请求标识查看诊断原因',
+          projectId: entry.projectId || 'default', branchId: entry.id, profileId: input.profileId || null,
+          requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+          operationId: decision?.operationId || null, operationKind: input.kind,
+          operationTrigger: triggerFromRequest(req), operationSource: input.source, commitSha: input.commitSha || null,
+          error: { code: 'deployment_admission_failed', message: maskSecretsText(err instanceof Error ? err.message : String(err), { mask: true }).slice(0, 1200) },
+          details: { operationGeneration: decision?.generation, admissionStatus: decision?.status, runId: failedRun?.id || null },
+        });
+      } catch { /* 诊断故障不能阻止原租约释放与拒绝执行。 */ }
+      if (decision?.lease) completeBranchOperation(decision.lease, err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed');
+      else if (decision) branchOperationCoordinator?.abandonAdmission(decision.operationId, decision.generation);
+      res.status(superseded ? 409 : 503).json({ error: superseded
+        ? '部署已被更新的操作取代，请查看最新部署结果'
+        : '部署记录暂未能可靠保存，尚未开始执行，请稍后重试' });
+      return { started: false, lease: null, run };
+    }
+    if (run) {
+      res.setHeader('X-CDS-Deployment-Run-Id', run.id);
+      (res.locals as Record<string, unknown>).cdsAdmissionDeploymentRunId = run.id;
+    }
+    if (decision && decision.status !== 'started') {
+      beginBranchOperation(req, res, entry, input, decision);
+      if (waitForArtifacts && branchOperationCoordinator) void requestArtifactWaitRefresh(branchOperationCoordinator);
+      return { started: false, lease: null, run };
+    }
+    return { started: true, lease: decision?.lease || null, run };
+  }
+
   function beginBranchOperation(
     req: Request,
     res: Response,
@@ -2776,30 +3394,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha?: string | null;
       versionId?: string | null;
       hasOneShotOptions?: boolean;
+      /** commitSha 是请求自己钉住的（而非分支缓存兜底），才允许参与并入判定。 */
+      commitPinned?: boolean;
+      /** 本次部署将要落地的有效配置指纹，用于同 commit 并入判定。 */
+      configHash?: string | null;
       source: string;
       reason?: string | null;
       sse?: boolean;
       continueWith?: 'deploy' | 'deploy-profile' | null;
+      /** 既有调用方提供的关联记录，仅供未走统一受理流程时排除候选记录。 */
+      deploymentRunId?: string | null;
     },
+    decisionOverride?: BranchOperationDecision,
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
-    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
-    const decision = branchOperationCoordinator.begin({
-      branchId: entry.id,
-      projectId: entry.projectId,
-      profileId: input.profileId || null,
-      kind: input.kind,
-      trigger: triggerFromRequest(req),
-      actor: resolveActorFromRequest(req),
-      requestId: requestId || null,
-      commitSha: input.commitSha || null,
-      versionId: input.versionId || null,
-      hasOneShotOptions: input.hasOneShotOptions || false,
-      source: input.source,
-      reason: input.reason || null,
-      continueWith: input.continueWith || null,
-    });
+    const decision = decisionOverride || branchOperationCoordinator.begin(buildBranchOperationRequest(req, entry, input));
     if (decision.status === 'started') return decision.lease || null;
+
+    // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
+    // joined 直接并入在途的同 commit 部署（2026-09-08，治 push 后紧跟手动 deploy 拆两遍容器）。
+    const accepted = decision.status === 'merged' || decision.status === 'joined';
+
+    // 并入和排队都向调用方返回原始 run；未配置 run 台账时保留分支轮询兜底。
+    const acceptedRunId = (res.locals as Record<string, unknown>).cdsAdmissionDeploymentRunId as string | undefined;
+    const joinedRunId = decision.status === 'joined'
+      ? acceptedRunId || findLiveDeploymentRunId(entry.id, decision.operationId || null, input.deploymentRunId || null)
+      : null;
+    if (decision.status === 'joined' && !res.headersSent) {
+      if (joinedRunId) res.setHeader('X-CDS-Deployment-Run-Id', joinedRunId);
+      else res.removeHeader('X-CDS-Deployment-Run-Id');
+    }
+    (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId = joinedRunId || undefined;
 
     const payload = {
       ok: true,
@@ -2808,17 +3433,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
-      message: decision.status === 'merged'
-        ? (triggerFromRequest(req) === 'manual'
-          ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
-          : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
-        : decision.reason || '同分支已有写操作正在运行',
+      deploymentRunId: acceptedRunId || joinedRunId || undefined,
+      message: decision.reason === 'waiting for required deployment artifacts' ? '目标部署已可靠排队，等待全部必需产物；旧服务继续保留'
+        : decision.status === 'joined'
+        ? (decision.joinedPending ? '同一目标部署已在队列，本次请求沿用原排队任务'
+          : `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`)
+        : decision.status === 'merged'
+          ? (triggerFromRequest(req) === 'manual'
+            ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
+            : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
+          : decision.reason || '同分支已有写操作正在运行',
     };
-    if (input.sse) {
+    if ((input.versionId || req.body?.standbyExpected !== undefined) && !accepted) {
+      // 版本分发器以 HTTP 回执判定受理；200 的 error 流会把产物拒绝误报为成功。
+      res.status(409).json({ ...payload, ok: false, error: payload.message });
+    } else if (input.sse) {
       initSSE(res);
-      sendSSE(res, decision.status === 'merged' ? 'complete' : 'error', payload);
+      sendSSE(res, accepted ? 'complete' : 'error', payload);
       res.end();
-    } else if (decision.status === 'merged') {
+    } else if (accepted) {
       res.status(202).json(payload);
     } else {
       res.status(409).json({ ...payload, ok: false });
@@ -2892,6 +3525,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!pending) return;
     const branch = stateService.getBranch(pending.branchId);
     if (!branch) {
+      branchOperationCoordinator?.cancelBranch(pending.branchId, 'branch removed before dispatch');
+      branchOperationCoordinator?.releasePendingReplay(pending, 'branch removed before dispatch');
       serverEventLogStore?.record({
         category: 'system',
         severity: 'warn',
@@ -2918,21 +3553,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`;
-    void fetch(url, {
+    const url = `http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`;
+    void Promise.resolve().then(() => fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CDS-Internal': '1',
-        // 透传原始 trigger：合并进 pending 的 manual deploy 重发时仍以 manual
-        // 身份进入（保持优先级 80 语义与 run 账本归因），webhook 照旧。
-        'X-CDS-Trigger': pending.request.trigger,
-        'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
-        ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
-        'X-CDS-Source-Branch-Id': pending.branchId,
-      },
-      body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
-    }).then((response) => {
+      headers: internalPendingReplayAuth.headersFor(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, pending, branch.projectId || 'default'),
+      body: JSON.stringify(pendingDeployBody(pending)),
+    })).then((response) => {
       if (!response.ok) {
         return response.text().then((body) => {
           throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);
@@ -2950,6 +3576,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })();
       }
     }).catch((err) => {
+      for (const ready of branchOperationCoordinator?.releasePendingReplay(pending, 'pending dispatch failed') || []) dispatchPendingWebhookDeploy(ready);
       serverEventLogStore?.record({
         category: 'system',
         severity: 'error',
@@ -3009,28 +3636,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     error?: string,
   ): void {
     if (!lease || !branchOperationCoordinator) return;
-    const pending = branchOperationCoordinator.complete(lease, status, error);
-    dispatchPendingWebhookDeploy(pending);
+    for (const pending of branchOperationCoordinator.completeAll(lease, status, error)) {
+      dispatchPendingWebhookDeploy(pending);
+    }
   }
 
   function assertBranchOperationCurrent(lease: BranchOperationLease | null | undefined, step: string): void {
     lease?.assertCurrent(step);
   }
 
-  async function waitForRestartSafeBranchOperationsForRoute(
-    source: string,
-    // 默认 timeout=0: self-update 不再为 in-flight branch operation 等 180s。
-    // 需要强一致排空时由请求显式传 drain=true 或 drainTimeoutMs。
-    timeoutMs: number,
-    intervalMs = 1000,
-  ) {
-    return waitForRestartSafeBranchOperations({
-      source,
-      getActiveOperations: () => branchOperationCoordinator?.getActiveOperations() || [],
-      serverEventLogStore,
-      timeoutMs,
-      intervalMs,
-    });
+  async function persistBranchCancellation(entry: Pick<BranchEntry, 'id' | 'projectId'>, lease: BranchOperationLease | null | undefined): Promise<void> {
+    await (deploymentRunService || new DeploymentRunService(stateService)).persistBranchCancellation(entry.projectId || 'default', entry.id, lease);
   }
 
   async function captureContainerLogSnapshots(
@@ -3039,29 +3655,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     profileIds?: Set<string>,
     tailLines = 500,
   ): Promise<OperationLogContainerSnapshot[]> {
+    if (source === 'deploy-error') {
+      const archived = await archiveBranchContainerLogs({ stateService, containerService, branch: entry,
+        source, profileIds, tailLines, serverEventLogStore });
+      return archived.map(snapshot => ({ ...snapshot, source, tailLines }));
+    }
     const services = Object.entries(entry.services || {})
       .filter(([profileId, svc]) => (!profileIds || profileIds.has(profileId)) && !!svc.containerName);
     const snapshots: OperationLogContainerSnapshot[] = [];
 
     for (const [profileId, svc] of services) {
+      const { containerName, hostPort } = svc, status = svc.status;
       try {
-        const raw = await containerService.getLogs(svc.containerName, tailLines);
+        const raw = await containerService.getLogs(containerName, tailLines);
         const maskedLogs = maskSecretsText(raw, { mask: true });
         stateService.appendContainerLogArchive(entry.id, {
           projectId: entry.projectId,
           profileId,
-          containerName: svc.containerName,
-          hostPort: svc.hostPort,
-          status: svc.status,
+          containerName,
+          hostPort,
+          status,
           source,
           masked: true,
           logs: maskedLogs,
         });
         snapshots.push({
           profileId,
-          containerName: svc.containerName,
-          hostPort: svc.hostPort,
-          status: svc.status,
+          containerName,
+          hostPort,
+          status,
           capturedAt: new Date().toISOString(),
           tailLines,
           source,
@@ -3070,9 +3692,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch (err) {
         snapshots.push({
           profileId,
-          containerName: svc.containerName,
-          hostPort: svc.hostPort,
-          status: svc.status,
+          containerName,
+          hostPort,
+          status,
           capturedAt: new Date().toISOString(),
           tailLines,
           source,
@@ -3277,7 +3899,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
         const updated = stateService.getInfraServiceForProjectAndId(projectId, current.id);
         if (!updated) throw err;
-        current = updated;
+        // Only the assigned port changes; retain the accepted image/mount receipt across retries.
+        current.hostPort = nextPort;
       }
     }
     return current;
@@ -3359,6 +3982,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *    `/exec` middleware accepts the call. This token is the shared cluster
    *    secret minted during bootstrap.
    */
+  // Master-local profile P is not a migration protocol. Include held births and
+  // publication holds, even when that profile was removed from the current graph.
+  function hasMasterLocalProfileStorage(entry: BranchEntry): boolean {
+    const projectId = entry.projectId || 'default';
+    const snapshot = stateService.getState();
+    const ownsTarget = (target: { projectId: string; branchId: string }) =>
+      target.projectId === projectId && target.branchId === entry.id;
+    return Object.values(snapshot.profileStorageBindings || {}).some(row => ownsTarget(row.target))
+      || Object.values(snapshot.profileStoragePublications || {}).some(row => ownsTarget(row.binding.target))
+      || Object.values(snapshot.storageBirths || {}).some(row => row.binding.scope === 'branch-private'
+        && row.binding.projectId === projectId && row.binding.branchId === entry.id);
+  }
+
   async function proxyDeployToExecutor(
     executor: ExecutorNode,
     entry: BranchEntry,
@@ -3366,15 +4002,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
     context: {
       requestId?: string | null;
       operationId?: string | null;
+      lease?: BranchOperationLease | null;
       actor?: string | null;
       trigger?: string | null;
       deploymentRunId?: string;
+      requestedCommitSha?: string;
+      artifactCommitSha?: string;
       deploymentVersionId?: string;
       deploymentConfigHash?: string;
       deploymentCapabilities?: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
       profiles?: BuildProfile[];
+      env?: Record<string, string>;
     } = {},
   ): Promise<'completed' | 'failed'> {
+    // Refuse before ownership/status changes, SSE or the remote deploy request.
+    if (hasMasterLocalProfileStorage(entry)) {
+      const message = 'storage_provision_target_daemon_unconfirmed';
+      failDeploymentRun(context.deploymentRunId, message, 'storage-preflight');
+      res.status(409).json({ error: message });
+      return 'failed';
+    }
+    if (!context.lease || !context.deploymentRunId || !branchOperationCoordinator) {
+      res.status(409).json({ error: '远端部署缺少原操作资格，旧服务保持，请重新部署' }); return 'failed';
+    }
+    const owner: RemoteDeploymentIdentity = { projectId: entry.projectId || 'default', branchId: entry.id,
+      executorId: executor.id, deploymentRunId: context.deploymentRunId,
+      operationId: context.lease.operationId, operationGeneration: context.lease.generation };
+    const remoteHeaders = { 'Content-Type': 'application/json', ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}) };
+    const ownerGuard = remoteProxyOwner({ owner, entry, state: stateService, coordinator: branchOperationCoordinator,
+      lease: context.lease, url: `http://${executor.host}:${executor.port}/exec/deployment-owner`, headers: remoteHeaders });
+    try { await ownerGuard.claim(); ownerGuard.assertCurrent(); }
+    catch {
+      await ownerGuard.close(true);
+      failDeploymentRun(context.deploymentRunId, '执行器原代次能力未确认，旧服务保留；请升级执行器后重新部署', 'remote-owner');
+      res.status(409).json({ error: '执行器原代次能力未确认，旧服务保留；请升级执行器后重新部署' }); return 'failed';
+    }
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
     res.writeHead(200, {
@@ -3399,6 +4061,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // next retry will still target this executor (sticky).
     entry.executorId = executor.id;
     entry.status = 'building';
+    entry.errorMessage = undefined;
     // 本轮构建起点锚点 —— 远端执行器路径同样要钉，否则预览等待页 ETA 会回退到
     // 历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
     entry.lastDeployStartedAt = new Date().toISOString();
@@ -3419,7 +4082,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       title: `派发到执行器 ${executor.id} (${executor.host}:${executor.port})`,
       timestamp: new Date().toISOString(),
     };
-    res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
+    sendSSE(res, 'step', preamble);
     appendDeploymentRunEvent(context.deploymentRunId, preamble);
 
     // 用户反馈 2026-05-06 (#3):远程执行器部署的 log 一直没回流到 master,
@@ -3437,6 +4100,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...deriveCommitMeta(entry),
     };
     let proxyHasError = false;
+    let remoteCompleted = false;
     // 远端 error 事件携带的失败原因（executor SSE error.message），供 finally 把分支态从派发时的 building
     // 落到 error 时回填 errorMessage（Bugbot「Remote deploy error stuck building」）。
     let proxyErrorMessage: string | null = null;
@@ -3469,11 +4133,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profiles = normalizeProjectProfileDependencies(rawProfiles, remoteProfileSuffix);
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
     opLog.deployMode = deriveDeployMode(profiles);
-    const env = getMergedEnv(entry.projectId || 'default', entry.id);
+    const env = context.env || getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
       branchId: entry.id,
       branchName: entry.branch,
+      commitSha: context.artifactCommitSha || context.requestedCommitSha,
+      artifactCommitSha: context.artifactCommitSha,
       // 2026-04-24: thread the master's project attribution so the
       // executor stamps it on its local entry instead of falling back
       // to a hardcoded 'default'. Older executors that ignore this
@@ -3484,27 +4150,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
       requestId: context.requestId || null,
       operationId: context.operationId || null,
       deploymentRunId: context.deploymentRunId || null,
+      operationGeneration: owner.operationGeneration,
+      executorId: executor.id,
+      admissionId: ownerGuard.admissionId(),
       actor: context.actor || null,
       trigger: context.trigger || 'manual',
     };
 
     const upstreamUrl = `http://${executor.host}:${executor.port}/exec/deploy`;
     try {
+      ownerGuard.assertCurrent();
       const upstream = await fetch(upstreamUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
-        },
+        headers: remoteHeaders,
         body: JSON.stringify(payload),
+        signal: ownerGuard.signal,
       });
+      ownerGuard.assertCurrent();
 
       if (!upstream.ok || !upstream.body) {
         const errText = await (upstream.text ? upstream.text() : Promise.resolve('(no body)'));
+        ownerGuard.assertCurrent();
         const errEvent = {
           message: `执行器拒绝部署请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
         };
-        res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`);
+        sendSSE(res, 'error', errEvent);
         entry.status = 'error';
         entry.errorMessage = errEvent.message;
         proxyHasError = true;
@@ -3534,6 +4204,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return { frames: out, tail: rest };
       };
       const ingestFrame = (frame: string): void => {
+        ownerGuard.assertCurrent();
         if (!frame.trim()) return;
         let eventName = 'message';
         const dataLines: string[] = [];
@@ -3546,6 +4217,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
+        if (eventName === 'phase-wait') {
+          deploymentRunService?.observeRemoteExecutionWait(owner, parsed);
+          if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
+          return;
+        }
+        if (eventName === 'complete') remoteCompleted = true;
+        // Reuse complete frames already parsed for history; never forward raw
+        // executor network chunks to members, including split credentials.
+        if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
         if (eventName === 'error') {
           proxyHasError = true;
           if (typeof parsed.message === 'string' && parsed.message.trim() !== '') proxyErrorMessage = parsed.message;
@@ -3665,7 +4345,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       };
 
       while (true) {
-        const { done, value } = await reader.read();
+        ownerGuard.assertCurrent();
+        const { done, value } = await readOwnedRemoteChunk(reader, ownerGuard.signal);
+        ownerGuard.assertCurrent();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
@@ -3676,11 +4358,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // client sees updates promptly rather than waiting for the full
         // upstream response to arrive.
         try {
-          res.write(chunk);
+          if (!res.locals.cdsScopedHuman) res.write(chunk);
         } catch {
-          // Client disconnected mid-stream — stop piping; the remote will
-          // continue its build independently of this pipe going away.
-          break;
+          // 浏览器断开不结束服务器的原代次读取与收尾。
         }
       }
       // If the upstream ended mid-event (rare), drain the final bytes.
@@ -3691,7 +4371,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 残留时,res.write(finalChunk) 等于 res.write('') 没意义 — 拆成两个独立 guard。
       const finalChunk = decoder.decode();
       if (finalChunk) {
-        try { res.write(finalChunk); } catch { /* client gone */ }
+        try { if (!res.locals.cdsScopedHuman) res.write(finalChunk); } catch { /* client gone */ }
         buffer += finalChunk;
       }
       // 警告 Bugbot 2026-05-06 6927c312:之前直接 ingestFrame(buffer) 把"多个完整
@@ -3705,6 +4385,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const frame of drained.frames) ingestFrame(frame);
         if (drained.tail.trim()) ingestFrame(drained.tail);
       }
+      if (!remoteCompleted && !proxyHasError) throw new Error('执行器没有返回完整部署回执，请查看运行记录后重新部署');
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
@@ -3750,15 +4431,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
     } catch (err) {
+      ownerGuard.assertCurrent();
       const msg = (err as Error).message;
       const errEvent = { message: `派发到执行器失败: ${msg}` };
-      try { res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`); } catch { /* ignore */ }
+      sendSSE(res, 'error', errEvent);
       entry.status = 'error';
       entry.errorMessage = errEvent.message;
       proxyHasError = true;
       opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
       stateService.save();
     } finally {
+      // 本机保存失败仍须失败收尾，但不能撤销已成功完成的远端执行与后续心跳资格。
+      const remoteExecutionFailed = proxyHasError || !remoteCompleted;
+      try {
+      ownerGuard.assertCurrent();
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
@@ -3826,6 +4512,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: context.actor || null,
         trigger: context.trigger || null,
       });
+      ownerGuard.assertCurrent();
       if (flushResult !== 'flushed') {
         proxyHasError = true;
         if (!entry.errorMessage) entry.errorMessage = branchStateFlushFailureMessage(flushResult, '远端部署执行完成');
@@ -3841,7 +4528,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           commitSha: entry.githubCommitSha,
         });
       }
-      try { res.end(); } catch { /* ignore */ }
+      } finally {
+        deploymentRunService?.clearRemoteExecutionWait(owner.deploymentRunId);
+        await ownerGuard.close(remoteExecutionFailed);
+        try { res.end(); } catch { /* ignore */ }
+      }
     }
     return proxyHasError ? 'failed' : 'completed';
   }
@@ -3878,7 +4569,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // Branch-scoped env overrides project/global values for one preview branch.
   // Reserved project identity keys are still restored at the end.
   function getMergedEnv(projectId?: string, branchId?: string): Record<string, string> {
-    const cdsEnv = stateService.getCdsEnvVars(projectId);   // CDS_HOST, CDS_MONGODB_PORT, etc.
+    return { ...stateService.getCdsEnvVars(projectId), ...getConfiguredDeploymentEnv(projectId, branchId) };
+  }
+
+  function getDeploymentEnv(input: DeploymentInputSnapshot, projectId?: string): Record<string, string> {
+    return { ...stateService.getCdsEnvVars(projectId), ...input.configuredEnv };
+  }
+
+  function getConfiguredDeploymentEnv(projectId?: string, branchId?: string): Record<string, string> {
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     // Scoped custom env: _global when no projectId, else { _global..., <projectId>... }
     const customEnv = stateService.getCustomEnv(projectId);
@@ -3897,7 +4595,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 系统派生真值。view 与 deploy 两端口因此输出完全一致,前端"显示安全"
     // 不再骗"实际危险"。原 customEnv 最后一条"operator can override"语义被
     // 修正为"operator can override 任何 key,**除了**项目身份这两个保留 key"。
-    return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
+    return { ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
   }
 
   /**
@@ -3928,7 +4626,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * extraProfiles、漏了 profileOverrides）。状态层保持明文供 deploy 直读。
    */
   function branchForView<T extends BranchEntry>(branch: T): T {
-    return maskBranchExtraProfilesEnv(branch);
+    return maskBranchExtraProfilesEnv({ ...branch, ...branchVersionFacts(branch, branch.currentVersionId ? stateService.getDeploymentVersion(branch.currentVersionId) : undefined) });
   }
 
   function isSqlInitInfra(service: InfraService): boolean {
@@ -4002,21 +4700,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function runDatabaseInitializationForDeploy(params: {
     entry: BranchEntry;
+    /** Effective profiles already admitted to fixed runtime artifacts by storage preflight. */
     profiles: BuildProfile[];
     requestId?: string;
     operationId?: string;
     actor?: string;
     trigger?: string;
     assertCurrent?: (step: string) => void;
+    customEnv?: Record<string, string>;
     logEvent: (ev: OperationLogEvent) => void;
   }): Promise<void> {
     const { entry, profiles, requestId, operationId, actor, trigger, assertCurrent, logEvent } = params;
     if (profiles.length === 0) return;
     const projectId = entry.projectId || 'default';
-    const customEnv = getMergedEnv(projectId, entry.id);
-    const firstEffective = resolveEffectiveProfile(profiles[0], entry);
+    const customEnv = params.customEnv || getMergedEnv(projectId, entry.id);
+    const firstEffective = profiles[0];
     const scanTargets: Array<{ profile: BuildProfile; scanDir: string; label: string; root: boolean }> = profiles.map((profile) => {
-      const effective = resolveEffectiveProfile(profile, entry);
+      const effective = profile;
       return {
         profile: effective,
         scanDir: path.resolve(entry.worktreePath, effective.workDir || '.'),
@@ -4027,7 +4727,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const rootDir = path.resolve(entry.worktreePath);
     if (!scanTargets.some((target) => target.scanDir === rootDir)) {
       scanTargets.push({
-        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app' },
+        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app',
+          // A component artifact contains only its component checkout. Root-level
+          // migrations keep the admitted image identity but read a separate root
+          // source copy; never retag or rebuild the already admitted app artifact.
+          ...(firstEffective.localArtifact ? { prebuiltImage: false, localArtifact: undefined, managedBuild: undefined } : {}),
+        },
         scanDir: rootDir,
         label: '仓库根目录',
         root: true,
@@ -4184,7 +4889,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function sendSSE(res: import('express').Response, event: string, data: unknown) {
     try {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      const visible = res.locals.cdsScopedHuman
+        ? (event === 'log' || event === 'smoke-line'
+          // Raw chunks can split a credential across writes; keep progress but
+          // do not attempt per-chunk credential parsing for project members.
+          ? { profileId: data && typeof data === 'object' ? (data as { profileId?: string }).profileId : undefined,
+            chunk: '[原始输出仅系统所有者可查看]\n', text: '[原始输出仅系统所有者可查看]' }
+          : logPayloadForHumanView(res.locals.cdsHumanRequest, data))
+        : data;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(visible)}\n\n`);
     } catch { /* client disconnected */ }
   }
 
@@ -4276,14 +4989,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function computeCapacity(): { current: number; max: number; totalMemGB: number } {
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
     const max = Math.max(2, (totalMemGB - 1) * 2);
-    let current = 0;
-    for (const b of stateService.getAllBranches()) {
-      for (const svc of Object.values(b.services)) {
-        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
-          current++;
-        }
-      }
-    }
+    const current = countReservedContainers(stateService.getAllBranches());
     return { current, max, totalMemGB };
   }
 
@@ -4335,7 +5041,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string[] {
     const args: string[] = ['--host', host, '--port', String(port), '--archive', '--gzip'];
     if (auth.username) args.push('--username', auth.username);
-    if (auth.password) args.push('--password', auth.password);
     if (auth.authDatabase) args.push('--authenticationDatabase', auth.authDatabase);
     if (database) args.push('--db', database);
     if (collections && collections.length === 1) {
@@ -4354,7 +5059,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string[] {
     const args: string[] = ['--host', host, '--port', String(port), '--archive', '--gzip'];
     if (auth.username) args.push('--username', auth.username);
-    if (auth.password) args.push('--password', auth.password);
     if (auth.authDatabase) args.push('--authenticationDatabase', auth.authDatabase);
     if (opts.drop) args.push('--drop');
     // Cross-database rename: --nsFrom="srcDb.*" --nsTo="tgtDb.*"
@@ -4439,14 +5143,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     tool: 'mongodump' | 'mongorestore',
     args: string[],
     dockerContainer: string | undefined,
+    password: string,
   ): string {
-    const inner = [tool, ...args.map(shq)].join(' ');
-    if (dockerContainer) {
-      // docker exec -i for restore (stdin), no -i for dump
-      const flags = tool === 'mongorestore' ? '-i' : '';
-      return `docker exec ${flags} ${shq(dockerContainer)} sh -c ${shq(inner)}`.replace(/  +/g, ' ');
-    }
-    return inner;
+    const invocation = dockerContainer
+      ? buildSecureMongoDockerInvocation(dockerContainer, tool, args, password)
+      : buildSecureMongoHostInvocation(tool, args, password);
+    return invocationShellCommand(invocation);
   }
 
   // ── Remote branches ──
@@ -4455,6 +5157,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   - `git fetch origin --prune` 每个 repoRoot 独立 cache 5 分钟
   //   - 5 分钟内只跑 `for-each-ref`(纯本地读 refs,毫秒级)
   //   - `?nofetch=true` 强制跳过 fetch,纯本地读(用户主动刷新前置场景)
+  //   - `?force=true` 是用户主动刷新，绕过五分钟缓存；nofetch 仍优先
   //   - 响应额外字段 `cachedAt`、`fetched` 让前端能展示"上次同步于 N 分钟前"
 
   const REMOTE_FETCH_CACHE_MS = 5 * 60 * 1000;
@@ -4464,6 +5167,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const projectId = resolveProjectIdParam(req.query.project);
       const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
+      const forceFetch = req.query.force === 'true' || req.query.force === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
@@ -4474,14 +5178,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const cacheValid = now - lastFetchedAt < REMOTE_FETCH_CACHE_MS;
 
       let fetched = false;
-      if (!noFetch && !cacheValid) {
+      if (!noFetch && (forceFetch || !cacheValid)) {
         const auth = await gitAuthForRepo(repoRoot);
         const fetchResult = await shell.exec(
           'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
           { cwd: repoRoot, timeout: 30_000, env: auth.env },
         );
         if (fetchResult.exitCode !== 0) {
-          const output = combinedOutput(fetchResult).slice(0, 500);
+          const output = logPayloadForHumanView(req, combinedOutput(fetchResult)).slice(0, 500);
           res.status(502).json({
             error: 'git_fetch_failed',
             message: output || 'git fetch origin --prune 失败',
@@ -4531,10 +5235,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branches,
         defaultBranch,
         fetched,
-        cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
+        cachedAt: fetched ? now : cacheValid ? lastFetchedAt : null,
       });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json(logPayloadForHumanView(req, { error: (err as Error).message }));
     }
   });
 
@@ -4578,7 +5282,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const dataObject = data && typeof data === 'object' && !Array.isArray(data)
         ? data as Record<string, unknown>
         : { value: data };
-      const payload = { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` };
+      const payload = logPayloadForHumanView(req, { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` });
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`); }
       catch { /* client gone */ }
     };
@@ -4588,6 +5292,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // branch.projectId. Legacy/global events without project identity are
     // ignored so a malformed event cannot blank or mutate another project.
     const eventMatchesFilter = (type: string, payload: any): boolean => {
+      if (isScopedHuman(req)) {
+        const projectId = payload?.branch?.projectId || payload?.projectId
+          || (payload?.branchId && stateService.getBranch(payload.branchId)?.projectId);
+        if (!projectId || !canHumanAccessProject(req, stateService, projectId)) return false;
+      }
       if (!projectFilter) return true;
       if (payload?.branch?.projectId) return payload.branch.projectId === projectFilter;
       if (payload?.projectId) return payload.projectId === projectFilter;
@@ -4598,12 +5307,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // hints. Dashboard list authority is GET /api/branches?project=...
     // so clients must not treat this event as permission to replace the
     // full branch list.
-    const all = stateService.getAllBranches();
+    const all = stateService.getAllBranches().filter(b => canHumanAccessProject(req, stateService, b.projectId || 'default'));
     const snapshot = projectFilter
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
-    for (const branch of snapshot) reconcileBranchStatus(branch);
-    safeSend('snapshot', { branches: snapshot.map(branchForView), projectId: projectFilter || undefined, ts: nowIso() });
+    // 每条新连接都把（范围内的）全部分支脱敏并序列化一遍；预览页挂件不带 project，
+    // 拿到的是全平台所有分支。断线重连同样走这里。
+    timeMainThreadSection(projectFilter ? 'sse.branches.snapshot.project' : 'sse.branches.snapshot.all', () => {
+      for (const branch of snapshot) reconcileBranchStatus(branch);
+      safeSend('snapshot', { branches: snapshot.map(branch => branchForHumanView(req, branchForView(branch))), projectId: projectFilter || undefined, ts: nowIso() });
+    });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
@@ -4614,9 +5327,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 流式 branch.status / branch.updated 事件同样要给 extraProfiles env 脱敏（Bugbot Medium
       // 「SSE leaks extra service secrets」）：此前只有初始 snapshot 走了 branchForView，后续事件
       // 直接从 state 取原始 branch，订阅者会收到额外服务明文密钥。这里统一过 branchForView。
-      return branchForView(withSha);
+      return branchForHumanView(req, branchForView(withSha));
     };
+    // 每个事件 × 每条连接各算一遍（脱敏 + 序列化完整分支），连接之间不共享。
     const anyHandler = (envelope: any) => {
+      timeMainThreadSection('sse.branches.event', () => dispatchEnvelope(envelope));
+    };
+    const dispatchEnvelope = (envelope: any) => {
       if (!envelope || !envelope.type) return;
       if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
       if (envelope.payload?.branch) {
@@ -4728,12 +5445,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // membership check is O(1) against the set. Single docker round-trip
     // regardless of project size.
     if (live) {
-      const runningNames = await containerService.getRunningContainerNames();
+      const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
       for (const b of branches) {
         for (const [profileId, svc] of Object.entries(b.services)) {
           if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
             svc.status = 'stopped';
             b.services[profileId] = svc;
+          }
+          // 替换旧容器的退出通知可能残留到部署被控制面重启中断之后。
+          // 显式对账可恢复已就绪的新容器；普通读取及真实崩溃均不走此路径。
+          const previousError = svc.errorMessage;
+          if (!b.executorId && svc.status === 'error'
+            && previousError?.includes('kind=cds-pre-run-replace')
+            && runningNames.has(svc.containerName)
+            && !(branchOperationCoordinator?.getActiveOperations(b.id) || []).some((op) => !op.cancelled)) {
+            const baseline = stateService.getEffectiveProfilesForBranch(b).find((p) => p.id === profileId);
+            const probe = baseline ? resolveEffectiveProfile(baseline, b).readinessProbe : undefined;
+            if (probe?.path && probe.noHttp !== true) {
+              const ready = await containerService.waitForReadiness(svc.hostPort,
+                { ...probe, noHttp: false, timeoutSeconds: 3, intervalSeconds: 1 },
+                undefined, undefined, svc.containerName).catch(() => false);
+              // await 期间的新操作/新错误优先，不能用旧探测覆盖其状态。
+              if (ready && b.services[profileId] === svc && svc.status === 'error'
+                && svc.errorMessage === previousError
+                && !(branchOperationCoordinator?.getActiveOperations(b.id) || []).some((op) => !op.cancelled)) {
+                svc.status = 'running';
+                svc.errorMessage = undefined;
+                serverEventLogStore?.record({ category: 'container', severity: 'info',
+                  source: 'api.branches.live', action: 'service.reconcile.replacement-ready',
+                  message: `replacement container passed HTTP readiness: ${svc.containerName}`,
+                  projectId: b.projectId, branchId: b.id, profileId, requestId,
+                  details: { readinessPath: probe.path, reason: 'stale-pre-run-replace-error' } });
+              }
+            }
           }
         }
         // Update overall status
@@ -4768,7 +5512,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             aiOpCount: b.aiOpCount || derivedAi?.count,
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
-            subject: '',
+            subject: b.mirror?.subject || '',
             builder: buildGithubSenderBuilder(b),
             projectSlug,
             previewSlug,
@@ -4803,7 +5547,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             aiOpCount: b.aiOpCount || derivedAi?.count,
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
-            subject: '',
+            subject: b.mirror?.subject || '',
             builder: buildGithubSenderBuilder(b),
             projectSlug,
             previewSlug,
@@ -4830,14 +5574,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // project B has 10 additional containers running (actual free = 171/186).
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
     const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
-    let runningContainers = 0;
-    for (const b of Object.values(state.branches)) {
-      for (const svc of Object.values(b.services)) {
-        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
-          runningContainers++;
-        }
-      }
-    }
+    const runningContainers = countReservedContainers(Object.values(state.branches));
     markTiming('capacity');
     timings.total = Date.now() - startedAt;
     const slowThresholdRaw = Number.parseInt(process.env.CDS_BRANCHES_SLOW_MS || '1000', 10);
@@ -4865,28 +5602,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    // 每个分支直接下发 CDS 在公开 previewDomain 上实际发布的全部逻辑入口：
-    // 既包含分支主入口，也包含可路由 profile 通过 cds.subdomain 发布的命名入口。
+    // 每个分支直接下发 CDS 在公开 previewDomain 上实际发布的用户可见 Web 入口。
+    // 路由拓扑(cds.subdomain)与入口展示(cds.web-entry-*)是两份职责：API/健康
+    // 路由可以发布，但不能因此自动出现在给人点击的 previewUrl(s) 中。
     // rootDomains 可能包含隐藏、备用或内部路由域名，不能枚举到 Agent 面向的
     // previewUrl(s) 中。仅在旧配置缺少 previewDomain 时兼容取首个 rootDomain。
     // CLI / Agent 只能消费 previewUrl(s)，不得再根据其他字段猜域名。
-    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')
-      .replace(/^https?:\/\//, '')
-      .replace(/\/+$/, '')
-      .trim();
+    const previewHost = publicPreviewHost(config);
     for (const b of branchesWithSubject as Array<BranchEntry & {
       previewSlug?: string;
       previewUrl?: string;
       previewUrls?: string[];
+      previewEntries?: Array<{ name: string; url: string; serviceId?: string; primary: boolean }>;
     }>) {
-      const mainUrls = b.previewSlug && previewHost
-        ? [`https://${b.previewSlug}.${previewHost}`]
-        : [];
-      const namedServiceUrls = previewHost
-        ? computeBranchGatewayUrls(b, previewHost).map((entry) => entry.url)
-        : [];
-      b.previewUrls = Array.from(new Set([...mainUrls, ...namedServiceUrls]));
+      const entries = previewHost ? computeBranchWebEntries(b, previewHost) : [];
+      b.previewEntries = entries;
+      b.previewUrls = Array.from(new Set(entries.map((entry) => entry.url)));
       b.previewUrl = b.previewUrls[0] || '';
+      // 父实例镜像来的分支：地址用父实例算好的那份（本实例的域名算出来的是一个不存在的入口）
+      if (b.mirror?.previewUrl) {
+        b.previewUrl = b.mirror.previewUrl;
+        b.previewUrls = b.mirror.previewUrls?.length ? [...b.mirror.previewUrls] : [b.mirror.previewUrl];
+        // 入口卡也跟着换：名字沿用本实例按 compose 算出的入口名，地址换成父实例的
+        b.previewEntries = b.previewUrls.map((url, i) => ({ name: entries[i]?.name || (i === 0 ? '主应用入口' : `入口 ${i + 1}`), url, serviceId: entries[i]?.serviceId, primary: i === 0 }));
+      }
     }
     const profilesByProject = new Map<string, BuildProfile[]>();
     const infraByProject = new Map<string, InfraService[]>();
@@ -4932,7 +5671,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     // 预序列化一次：缓存命中的并发请求直接复用这串，免去每请求 res.json 再全量序列化
     // （48 分支 + 资源，单次约 30-50ms，是 10 并发下单线程串行的主要成本）。
-    return { payload, serialized: JSON.stringify(payload), timings };
+    // 非 live 路径整段同步（无真实 I/O），总耗时就是它占主线程的时间；live 路径含
+    // docker/git 等待，不能算进主线程分段，否则卡顿归因会把等待误当成阻塞。
+    if (!live) recordMainThreadSection('api.branches.compute', timings.total);
+    const serialized = timeMainThreadSection('api.branches.serialize', () => JSON.stringify(payload), (out) => out.length);
+    return { payload, serialized, timings };
   }
 
   router.get('/branches', async (req, res) => {
@@ -4942,7 +5685,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 3b: optional ?project=<id> filter（缺省=全部，与历史一致）。
     const projectFilter = resolveProjectIdParam(req.query.project);
     let result: BranchesListResult;
-    if (live || BRANCHES_CACHE_TTL_MS === 0) {
+    if (live || req.query.fresh === '1' || BRANCHES_CACHE_TTL_MS === 0) {
       result = await computeBranchesListPayload({ projectFilter, live, requestId });
     } else {
       const key = projectFilter || 'all';
@@ -4963,6 +5706,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.setHeader('Server-Timing', Object.entries(result.timings)
       .map(([name, duration]) => `${name};dur=${duration}`)
       .join(', '));
+    if (isScopedHuman(req)) {
+      const payload = result.payload as { branches: BranchEntry[]; defaultBranch?: string; capacity?: unknown };
+      res.json({
+        ...payload,
+        branches: payload.branches.filter(b => canHumanAccessProject(req, stateService, b.projectId || 'default')).map(b => branchForHumanView(req, b)),
+        // Global capacity/default branch describe projects this user may not see.
+        capacity: undefined,
+        defaultBranch: projectFilter ? stateService.getDefaultBranchFor(projectFilter) : undefined,
+      });
+      return;
+    }
     // widget(预览页)请求带 x-cds-source-* 头，必须走 res.json 让 server.ts 的跨项目
     // 过滤 wrapper 逐请求裁剪；dashboard(无 source 头)无需裁剪，直接发预序列化串，
     // 把每请求的全量再序列化省掉——这是高并发下单线程的主要可省成本。
@@ -4972,7 +5726,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || req.headers['x-cds-source-branch-id']
     );
     if (isWidgetRequest) {
-      res.json(result.payload);
+      timeMainThreadSection('api.branches.widget-serialize', () => res.json(result.payload));
     } else {
       res.type('application/json').send(result.serialized);
     }
@@ -4983,7 +5737,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = stateService.getAllBranches().filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
-    const runningNames = await containerService.getRunningContainerNames();
+    const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const discoveredApps = await containerService.discoverAppContainers();
     const issues: Array<{
       severity: 'warn' | 'info';
@@ -5171,9 +5925,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectFilter = sweep.projectFilter ?? null;
     }
     const branches = Object.values(stateService.getState().branches).filter(
-      (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
+      (b) => !b.archive && (!projectFilter || (b.projectId || 'default') === projectFilter),
     );
-    const runningNames = await containerService.getRunningContainerNames();
+    const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const removed: Array<{ branchId: string; branch: string; profileId: string; containerName: string }> = [];
     const skippedRunning: Array<{ branchId: string; profileId: string; containerName: string }> = [];
     const skippedBusy: Array<{ branchId: string; reason: string }> = [];
@@ -5318,7 +6072,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 否则「按文档 pin 住」的非主干分支挡得住降温与 janitor，却会被
     // /cleanup、/cleanup-orphans、cleanup-stopped 删掉（Codex PR #1273 P1）。
     const protection = resolveBranchProtection(entry, stateService, deps.config?.scheduler?.pinnedBranches ?? []);
-    let reason = protection.reason;
+    let reason = entry.archive ? 'archived-retention' as const : protection.reason;
     // 额外一道兜底：旧的全局 state.defaultBranch。SSOT 的 default-branch 判定走
     // getDefaultBranchFor(projectId)，若项目上显式写了 defaultBranch: null，就不会
     // 再回落到这个全局值。这里保留 /cleanup 的历史行为，方向只会更保守（少删）。
@@ -5435,6 +6189,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let branchOperationLease: BranchOperationLease | null = null;
       let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
       try {
+        stateService.assertBranchStorageRemovalAllowed(branch.id);
         branchOperationLease = beginSilentBranchOperation(req, branch, {
           kind: 'cleanup-stopped',
           source: 'api.cleanup-stopped',
@@ -5449,7 +6204,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const [profileId, svc] of Object.entries(branch.services || {})) {
           if (!svc.containerName) continue;
           assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before ${profileId}`);
-          await containerService.remove(svc.containerName, {
+          await containerService.removeRuntimeGroup(svc, {
             projectId: branch.projectId,
             branchId: branch.id,
             profileId,
@@ -5482,7 +6237,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before remove ${branch.id}`);
         // 删分支即删分支网：隔离的 cds-br-* 网随删，避免在 worker/host 堆积（Codex P2「Remove branch
         // networks from all cleanup flows」——此前仅 DELETE 路径删网，批量清理/孤儿/恢复出厂都漏了）。
-        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
+        await containerService.removeBranchNetwork(branch.id, branch.replacementNetworks).catch(() => { /* best-effort */ });
         stateService.removeLogs(branch.id);
         stateService.removeBranch(branch.id);
         removed.push({ branchId: branch.id, branch: branch.branch, projectId: branch.projectId });
@@ -5665,6 +6420,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationLease = decision.lease;
       }
       try {
+        await persistBranchCancellation({ id: item.branchId, projectId: item.projectId || 'default' }, branchOperationLease);
         assertBranchOperationCurrent(branchOperationLease, `cleanup orphan before remove ${item.profileId}`);
         await containerService.remove(item.containerName, {
           projectId: item.projectId || undefined,
@@ -5713,7 +6469,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch, projectId, sourceBranchId } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string };
+      const { branch, projectId, sourceBranchId, inheritSourceModes, expectedCommit } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string; inheritSourceModes?: boolean; expectedCommit?: string };
+      if (expectedCommit !== undefined && (typeof expectedCommit !== 'string' || !/^[a-f0-9]{40}$/i.test(expectedCommit))) {
+        res.status(400).json({ error: '同步源提交必须是完整 Git 提交标识' });
+        return;
+      }
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -5743,16 +6503,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      assertValidDefaultDeployModes(
+        targetProject.defaultDeployModes,
+        stateService.getBuildProfilesForProject(effectiveProjectId),
+      );
+
       // Branch ID scoping: legacy default keeps the bare slugified name
       // for back-compat (existing URLs, saved links). Non-legacy
       // projects auto-prefix with the project slug so two projects can
       // each register "main" without colliding — this matches the
       // already-scoped worktree layout below. The preview domain still
-      // resolves via `<branchId>.miduo.org`, no extra subdomain config.
+      // resolves via `<branchId>.<root-domain>`, no extra subdomain config.
       const slugified = StateService.slugify(branch);
       const id = targetProject.legacyFlag
         ? slugified
-        : `${targetProject.slug}-${slugified}`;
+        : `${projectResourceNamespace(targetProject)}-${slugified}`;
       // Collide on the computed id (same-project same-name in the current
       // formula) OR on the (projectId, branch) tuple — the latter catches
       // projects whose `legacyFlag` flipped after an existing branch was
@@ -5808,8 +6573,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Two projects sharing a branch name (e.g. "main") get their
       // own subdirectories instead of colliding.
       const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, effectiveProjectId, id);
-      await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-      await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
       // 波3 配置树:分支从分支派生(快照拷贝语义,design.cds.config-tree)。
       // sourceBranchId 必须在建 worktree 之前校验,避免坏参数留下孤儿 worktree。
@@ -5823,6 +6586,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!sourceBranch) {
           res.status(400).json({ error: `来源分支 "${sourceBranchId}" 不存在` });
           return;
+        }
+        if (sourceBranch.excludedProjectProfileIds?.length) {
+          res.status(409).json({ error: '隔离测试分支的配置不能直接派生，请单独配置目标分支' }); return;
         }
         // 跨项目派生禁止:profileOverrides 引用的 profileId、extraProfiles 的 projectId
         // 都是项目内语义,跨项目拷贝会产出悬空引用 + 隔离穿透。
@@ -5841,7 +6607,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
-      // 先套项目模板(保底),再用来源分支快照覆盖(拷贝赢模板)——之后两分支各自独立。
+      // 深拷贝来源配置；项目极速默认优先，复制模式例外须显式授权。已有分支不受影响。
       applyProjectDefaultDeployModes(
         entry,
         targetProject.defaultDeployModes,
@@ -5863,8 +6629,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.derivedFromBranchId = sourceBranch.id;
         entry.derivedFromBranchName = sourceBranch.branch;
         entry.derivedAt = new Date().toISOString();
+        if (inheritSourceModes !== true) {
+          const profiles = stateService.getBuildProfilesForProject(effectiveProjectId);
+          const expressDefaults = Object.fromEntries(profiles.flatMap(profile => {
+            const mode = targetProject.defaultDeployModes?.[profile.id];
+            return mode && isPrebuiltMode(profile, mode) ? [[profile.id, mode]] : [];
+          }));
+          applyProjectDefaultDeployModes(entry, expressDefaults, profiles);
+        }
       }
-      stateService.addBranch(entry);
+      stateService.assertBranchPreviewAddressAvailable(entry);
+      const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(
+        stateService.getBuildProfilesForProject(effectiveProjectId), entry,
+      ).map(profile => resolveEffectiveProfile(profile, entry)));
+      await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+        if (needsSource) {
+          await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
+          if (expectedCommit) await worktreeService.create(branchRepoRoot, branch, worktreePath, expectedCommit);
+          else await worktreeService.create(branchRepoRoot, branch, worktreePath);
+        } else if (expectedCommit) {
+          // 纯镜像分支保持免源码：只核远端身份，不物化 worktree。
+          const actual = await worktreeService.resolveLatestRemoteHead(branchRepoRoot, branch);
+          if (actual !== expectedCommit.toLowerCase()) throw new Error('源提交快照与目标远端分支不同，请重新核对后再同步');
+        }
+        if (expectedCommit) entry.githubCommitSha = expectedCommit.toLowerCase();
+        stateService.addBranch(entry);
+      });
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
       //
       // Bugbot fix(PR #521 第九轮 Bug 3)— 写回项目级 scope(撤回第八轮误改)。
@@ -5897,7 +6687,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(flushResult === 'timeout' ? 503 : 500).json({
           error: flushResult === 'timeout' ? 'state_flush_timeout' : 'state_flush_failed',
           message: branchStateFlushFailureMessage(flushResult, `分支 "${entry.id}" 已创建`),
-          branch: entry,
+          branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry,
         });
         return;
       }
@@ -5909,8 +6699,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         payload: { branch: entry, source: 'manual', ts: nowIso() },
       });
 
-      res.status(201).json({ branch: entry });
+      res.status(201).json({ branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry });
     } catch (err) {
+      if (err instanceof InvalidDefaultDeployModeError) {
+        res.status(409).json({ error: err.message, code: err.code });
+        return;
+      }
+      if (err instanceof WorktreeClaimHeldError) {
+        res.status(409).json({ error: err.message, code: err.code });
+        return;
+      }
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -5945,7 +6743,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(m.status).json(m.body);
       return;
     }
-    res.json({ branch: branchForView(branch) });
+    res.json({ branch: branchForHumanView(req, branchForView(branch)) });
   });
 
   router.get('/branches/:id/resources', async (req, res) => {
@@ -5965,7 +6763,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const live = req.query.live === 'true' || req.query.live === '1';
     const infraServices = stateService.getInfraServicesForProject(projectId);
     if (live) {
-      const runningNames = await containerService.getRunningContainerNames();
+      const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
       for (const [profileId, svc] of Object.entries(branch.services || {})) {
         if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
           svc.status = 'stopped';
@@ -5999,7 +6797,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: branch.id,
       branchName: branch.branch,
       projectId,
-      resources,
+      resources: resources.map(resource => resourceForHumanView(req, resource)),
     });
   });
 
@@ -6011,8 +6809,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function hasProjectScopedOrCookieAuth(req: Request, projectId: string): boolean {
     const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
-    const cookieAuth = (req as any)._cdsCookieAuth === true;
-    return cookieAuth || Boolean(projKey && projKey.projectId === projectId);
+    return isHumanSystemOwner(req) || Boolean(projKey && projKey.projectId === projectId);
   }
 
   function requireSecretRevealAccess(req: Request, res: Response, projectId: string): boolean {
@@ -6051,7 +6848,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (explicit === 'owner' || explicit === 'admin') return 'admin';
     if (explicit === 'developer' || explicit === 'dev') return 'developer';
     if (explicit === 'member' || explicit === 'viewer' || explicit === 'read-only') return 'member';
-    if ((req as any)._cdsCookieAuth === true) return 'admin';
+    if (isHumanSystemOwner(req)) return 'admin';
     if ((req as any).cdsProjectKey) return 'developer';
     if ((req as any)._aiSession) return 'developer';
     return 'member';
@@ -6302,8 +7099,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${prefix}_${suffix}`.slice(0, 64);
   }
 
+  /**
+   * 派发给该分支的数据库账号名。身份由 branch-db-identity 一处算（抗碰撞：可读前缀
+   * 可以撞，指纹保证唯一），这里不再自己拼——旧写法把 slug 截到 24 字符当身份，
+   * 兄弟分支算出同一个账号后互相覆盖口令/删账号，正是 1045 那次事故的根因。
+   */
   function branchDatabaseUser(branch: BranchEntry): string {
-    return `cds_${StateService.slugify(branch.id).replace(/-/g, '_').slice(0, 24)}`.slice(0, 32);
+    return branchDbAccountName(branch.id);
   }
 
   interface MysqlBranchDatabaseResult {
@@ -6338,11 +7140,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   type ResourceDatabaseRuntime = 'mysql' | 'postgres' | 'mongodb' | 'redis';
 
-  interface DbDataQueryResult {
-    columns: string[];
-    rows: string[][];
-    rowCount: number;
-  }
+  type DbDataQueryResult = SqlConsoleResult;
 
   interface SqlTableRef {
     schema?: string;
@@ -6351,9 +7149,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   type SqlDataRuntime = 'mysql' | 'postgres';
 
+  /**
+   * 分支作用域的 env，**只在它确实是派发给这台服务时**才返回；否则返回空表。
+   *
+   * 分支 env 是一张平表（MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE 各一份），而一个分支
+   * 可以挂多台同类型库。不做归属判断就会把 A 库的账号、口令、库名喂给 B 库——账号在 B
+   * 上不存在，于是「CDS 自己建的库，CDS 自己连不上」（2026-09-01 现场）。
+   */
+  /** 只有这三种运行时有「分支凭据」这套东西；其余（redis / rabbitmq / minio / unknown）没有。 */
+  function isBranchDbRuntime(runtime: string): runtime is BranchDbRuntime {
+    return runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb';
+  }
+
+  function ownedBranchEnv(branch: BranchEntry, runtime: BranchDbRuntime, service: InfraService): Record<string, string> {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    return branchDbCredentialsBelongTo(branchEnv, runtime, service.id) ? branchEnv : {};
+  }
+
+  /**
+   * 展开这台服务自己的 env 模板。
+   *
+   * 模板变量里必须先把**别人家的分支凭据**摘掉：`POSTGRES_USER: ${POSTGRES_USER}` 是 CDS
+   * 支持的标准写法，而 getMergedEnv 里躺着分支作用域那一份平表凭据。不摘，B 服务就绕开
+   * ownedBranchEnv 的归属判定，照样把 A 的账号口令展开进自己的 env，1045 原样复现
+   * （Codex P1，2026-09-01）。摘掉之后回落到项目/全局层的同名值，而不是让这个 key 凭空消失。
+   */
   function resolvedInfraEnv(service: InfraService, branch?: BranchEntry): Record<string, string> {
     const projectId = service.projectId || branch?.projectId || 'default';
-    const vars = branch ? getMergedEnv(projectId, branch.id) : stateService.getCustomEnv(projectId);
+    if (!branch) return resolveEnvTemplates(service.env || {}, stateService.getCustomEnv(projectId));
+    const vars = getMergedEnv(projectId, branch.id);
+    const foreignKeys = foreignBranchDbEnvKeys(stateService.getCustomEnvScope(branch.id), service.id);
+    if (foreignKeys.length) {
+      const withoutBranchScope = getMergedEnv(projectId);
+      for (const key of foreignKeys) {
+        if (key in withoutBranchScope) vars[key] = withoutBranchScope[key];
+        else delete vars[key];
+      }
+    }
     return resolveEnvTemplates(service.env || {}, vars);
   }
 
@@ -6374,6 +7206,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return password ? ` -p${shq(password)}` : '';
   }
 
+  /**
+   * CDS 到底拿不拿得到这台 MySQL 的管理员（root）口令。
+   *
+   * 判据不能用 `mysqlRootPassword()` 是否非空：那个函数会一路回落到 `MYSQL_PASSWORD`，
+   * 而那是**应用账号**的口令，拿它当 root 口令用必然 1045。真正决定「能不能以管理员
+   * 身份改账号」的只有两种情形：显式配了 root 口令，或显式允许空口令 root。
+   * 官方镜像的 `MYSQL_RANDOM_ROOT_PASSWORD` 属于第三种——口令只在容器日志里出现过一次，
+   * CDS、运维、用户手上都没有，任何需要 root 的动作（建库 / 重置凭据）都做不了。
+   */
+  function resolveMysqlAdmin(service: InfraService, branch?: BranchEntry): { available: boolean; password: string } {
+    const env = resolvedInfraEnv(service, branch);
+    // 判空可以，**不能 trim 后当口令用**：首尾带空白的 root 口令是合法的，改一个字符
+    // 就连不上，而 available 还报 true（Codex P2，2026-09-01）。口令原样带出去。
+    const rootPassword = String(env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '');
+    if (rootPassword) return { available: true, password: rootPassword };
+    const allowEmpty = String(env.MYSQL_ALLOW_EMPTY_PASSWORD || env.MARIADB_ALLOW_EMPTY_ROOT_PASSWORD || '').trim();
+    // 显式允许空口令 root：**口令就是空的**。这里必须把这个事实带出去——判「能不能」与
+    // 取「用什么连」如果是两个函数，就会出现「判定说能，实际却拿应用账号的口令去连 root」
+    // 的错位，报出来还是 1045（Codex P1，2026-09-01）。
+    if (/^(1|true|yes)$/i.test(allowEmpty)) return { available: true, password: '' };
+    return { available: false, password: '' };
+  }
+
+  function mysqlAdminAvailable(service: InfraService, branch?: BranchEntry): boolean {
+    return resolveMysqlAdmin(service, branch).available;
+  }
+
   function maskTextSecrets(textValue: string, secrets: string[]): string {
     let masked = textValue;
     for (const secret of secrets) {
@@ -6383,7 +7242,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mysqlClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const env = resolvedInfraEnv(service, branch);
     const database = mysqlDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MYSQL_USER || '';
@@ -6399,73 +7258,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { user, password, database, secrets: [password] };
   }
 
-  function parseDbTsv(stdout: string): DbDataQueryResult {
-    const lines = stdout.replace(/\r\n/g, '\n').split('\n').filter((line) => line.length > 0);
-    if (lines.length === 0) return { columns: [], rows: [], rowCount: 0 };
-    const columns = lines[0].split('\t');
-    const rows = lines.slice(1).map((line) => line.split('\t'));
-    return { columns, rows, rowCount: rows.length };
+  // 方言必须传：`#` 在 MySQL 是行注释、在 PostgreSQL 是 JSON 运算符（`#>>` / `#>` / `#-`）。
+  // 不传就按「# 不是注释」处理，写语句不会被截断成假的只读（Codex P1，2026-09-01）。
+  function normalizeReadOnlySql(sql: string, runtime: SqlDataRuntime): string {
+    // 判据在 sql-statement-policy（唯一一份，前端那份由守卫钉着与它一致）。
+    return normalizeReadOnlyStatement(sql, runtime);
   }
 
-  function normalizeReadOnlySql(sql: string): string {
-    const trimmed = sql.trim();
-    if (!trimmed) throw new Error('SQL 不能为空');
-    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
-    if (withoutTrailing.includes(';')) {
-      throw new Error('只读 SQL Console 一次只允许执行一条语句');
-    }
-    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-    if (!['select', 'show', 'describe', 'desc', 'explain'].includes(head)) {
-      throw new Error('第一阶段 SQL Console 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN');
-    }
-    // 危险关键字检查必须覆盖全部放行语句头，不只 select：PostgreSQL 的
-    // EXPLAIN ANALYZE UPDATE ... 会真实执行底层 UPDATE，仅查 select 头会被
-    // 绕过 /data/query-write 的 data-write 权限与确认门（PR #799 Codex P1）
-    if (/\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|set|use|load|outfile|dumpfile|lock|unlock)\b/i.test(withoutTrailing)) {
-      throw new Error('检测到写入或高风险关键字，已拒绝执行');
-    }
-    return withoutTrailing;
-  }
-
-  function normalizeDangerousWriteSql(sql: string): string {
-    const trimmed = sql.trim();
-    if (!trimmed) throw new Error('SQL 不能为空');
-    if (trimmed.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-    const withoutTrailing = trimmed.replace(/;+$/g, '').trim();
-    if (withoutTrailing.includes(';')) {
-      throw new Error('写 SQL 一次只允许执行一条语句');
-    }
-    const head = withoutTrailing.match(/^\s*([a-z]+)/i)?.[1]?.toLowerCase() || '';
-    if (!['insert', 'update', 'delete', 'create', 'alter', 'drop', 'truncate', 'replace'].includes(head)) {
-      throw new Error('写 SQL 只允许 INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE');
-    }
-    if (/\b(grant|revoke|load\s+data|outfile|dumpfile|copy\s+.*program|pg_read_file|pg_ls_dir)\b/i.test(withoutTrailing)) {
-      throw new Error('检测到权限或文件系统高风险 SQL，已拒绝执行');
-    }
-    return withoutTrailing;
-  }
-
-  async function runMysqlDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
-    if (service.status !== 'running') {
-      throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
-    }
-    const creds = mysqlClientCredentials(service, branch);
-    if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) {
-      throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
-    }
-    const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --batch --raw --default-character-set=utf8mb4 ${shq(creds.database)} -e ${shq(sql)}`,
-      { timeout: timeoutMs },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets));
-    }
-    return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
+  function normalizeDangerousWriteSql(sql: string, runtime: SqlDataRuntime): string {
+    return normalizeConsoleWrite(sql, runtime);
   }
 
   function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.POSTGRES_DB
@@ -6479,35 +7284,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function postgresClientCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const env = resolvedInfraEnv(service, branch);
     const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
     const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
     return { user, password, database: postgresDatabaseForBranch(service, branch), secrets: [password] };
   }
 
-  async function runPostgresDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
-    if (service.status !== 'running') {
-      throw new Error(`PostgreSQL 服务当前未运行（status=${service.status}）`);
-    }
-    const creds = postgresClientCredentials(service, branch);
-    if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) {
-      throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
-    }
-    const result = await shell.exec(
-      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -A -F ${shq('\t')} -P footer=off -X -q -c ${shq(sql)}`,
-      { timeout: timeoutMs },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets));
-    }
-    return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
+  /** Auto-generated MySQL CA is public material; legacy servers may have no TLS CA. */
+  async function mysqlResourceCa(containerName: string): Promise<string | undefined> {
+    if (isPreviewInstance() || !containerName) return undefined;
+    const read = await shell.exec(`docker exec ${routeShellQuote(containerName)} cat /var/lib/mysql/ca.pem`, { timeout: 5000 });
+    return read.exitCode === 0 && read.stdout.includes('BEGIN CERTIFICATE') ? read.stdout : undefined;
   }
 
-  async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
-    return runtime === 'postgres'
-      ? runPostgresDataQuery(service, branch, sql, timeoutMs)
-      : runMysqlDataQuery(service, branch, sql, timeoutMs);
+  async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000, readOnly = true, boundCredentials?: ReturnType<typeof mysqlClientCredentials>): Promise<DbDataQueryResult> {
+    if (service.status !== 'running') throw new Error('数据库服务当前未运行，请启动后重试。');
+    const creds = boundCredentials || (runtime === 'postgres' ? postgresClientCredentials(service, branch) : mysqlClientCredentials(service, branch));
+    if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) throw new Error('数据库名不合法，未执行 SQL。');
+    try {
+      const mysqlCa = runtime === 'mysql' ? await mysqlResourceCa(service.containerName || '') : undefined;
+      return await (deps.sqlConsoleExecutor || executeSqlConsole)({
+        runtime, port: service.hostPort, user: creds.user, password: creds.password,
+        database: creds.database, sql, timeoutMs, readOnly, ...(mysqlCa ? { mysqlCa } : {}),
+      });
+    } catch (error) {
+      const message = explainBranchDbAuthFailure({
+        runtime, branchId: branch.id, user: creds.user,
+        rawError: maskTextSecrets((error as Error).message, creds.secrets),
+        adminAvailable: runtime === 'mysql' ? mysqlAdminAvailable(service, branch) : undefined,
+      });
+      if (error instanceof SqlConsoleExecutionError) throw new SqlConsoleExecutionError(message, error.partialResult);
+      throw new Error(message);
+    }
   }
 
   async function runSqlDataInitScript(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string): Promise<{ exitCode: number; output: string; error: string | null; truncated: boolean }> {
@@ -6524,6 +7333,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -v ON_ERROR_STOP=1 -P pager=off`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })()
       : (() => {
@@ -6531,13 +7341,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           command: `printf %s ${shq(trimmed)} | docker exec -i ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --default-character-set=utf8mb4 ${shq(creds.database)}`,
           secrets: creds.secrets,
+          user: creds.user,
         };
       })();
     const result = await shell.exec(command.command, { timeout: 120_000 });
     const rawOutput = result.stdout || '';
     const rawError = result.stderr || '';
     const output = maskTextSecrets(rawOutput.slice(0, 256 * 1024), command.secrets);
-    const error = maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets);
+    const error = explainBranchDbAuthFailure({
+      runtime,
+      branchId: branch.id,
+      user: command.user,
+      rawError: maskTextSecrets(rawError.slice(0, 16 * 1024), command.secrets),
+      adminAvailable: runtime === 'mysql' ? mysqlAdminAvailable(service, branch) : undefined,
+    });
     return {
       exitCode: result.exitCode,
       output,
@@ -6580,7 +7397,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'postgres') {
       return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
     }
-    return sqlIdent(ref.table);
+    // MySQL 这一侧此前把 schema 丢了，永远只查连接的默认库：表树里点一张属于别的库的表
+    // 就是 `Table 'default_db.x' doesn't exist`，报文里的库名还和面板上显示的对不上。
+    return ref.schema ? `${sqlIdent(ref.schema)}.${sqlIdent(ref.table)}` : sqlIdent(ref.table);
   }
 
   function redisPassword(service: InfraService): string {
@@ -6589,7 +7408,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mongoDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MONGO_INITDB_DATABASE
@@ -6619,8 +7438,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return businessDatabase || validDatabases[0] || configuredDatabase;
   }
 
-  function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+  function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; authDatabase: string; secrets: string[] } {
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const env = resolvedInfraEnv(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
@@ -6639,26 +7458,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const authSourceDb = user
       ? (branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? database : 'admin'))
       : '';
-    const uri = user
-      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:27017/${encodeURIComponent(database)}?authSource=${encodeURIComponent(authSourceDb)}`
-      : `mongodb://localhost:27017/${encodeURIComponent(database)}`;
-    return { user, password, database, uri, secrets: [password] };
+    return { user, password, database, authDatabase: authSourceDb, secrets: [password] };
   }
 
-  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000): Promise<unknown> {
+  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000, expectJson = true, boundCredentials?: ReturnType<typeof mongoCredentials>): Promise<unknown> {
     if (service.status !== 'running') {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
-    const creds = mongoCredentials(service, branch, databaseOverride);
+    const creds = boundCredentials || mongoCredentials(service, branch, databaseOverride);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongosh',
+      [
+        '--host', 'localhost', '--port', '27017', creds.database, '--quiet', '--eval', script,
+        ...(creds.user ? ['--username', creds.user, '--authenticationDatabase', creds.authDatabase || 'admin'] : []),
+      ],
+      creds.password,
+    );
     const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
-      { timeout: timeoutMs },
+      invocationShellCommand(invocation),
+      { timeout: timeoutMs, stdin: invocation.stdinPrefix },
     );
     const stdout = maskTextSecrets((result.stdout || '').trim(), creds.secrets);
     const stderr = maskTextSecrets((result.stderr || '').trim(), creds.secrets);
     if (result.exitCode !== 0) {
       throw new Error(stderr || stdout || 'MongoDB 查询失败');
     }
+    if (!expectJson) return stdout;
     const jsonLine = stdout.split('\n').reverse().find((line) => {
       const t = line.trim();
       return t.startsWith('{') || t.startsWith('[');
@@ -6692,6 +7518,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const text = JSON.stringify(value ?? {});
     if (text.length > 20_000) throw new Error('MongoDB 查询 JSON 过长（上限 20KB）');
     return text;
+  }
+
+  function buildMongoStructuredWrite(input: Record<string, unknown>, fallbackDatabase: string) {
+    const action = String(input.action || '').trim();
+    let database = '';
+    let collection = '';
+    let script = '';
+      database = mongoDatabaseFromRequest(input.database, fallbackDatabase);
+      collection = mongoCollectionFromRequest(input.collection);
+      if (action === 'insertOne') {
+        const document = mongoJsonObject(input.document, 'document');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
+      } else if (action === 'updateMany') {
+        const filter = mongoJsonObject(input.filter, 'filter');
+        const update = mongoJsonObject(input.update, 'update');
+        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
+      } else if (action === 'deleteMany') {
+        const filter = mongoJsonObject(input.filter, 'filter');
+        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
+      } else if (action === 'createCollection') {
+        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
+      } else if (action === 'dropCollection') {
+        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
+      } else {
+        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
+      }
+    return { action, database, collection, script };
   }
 
   // 把命令里的字符串/正则字面量内容抹成空白，只留「代码骨架」，供高危/写操作扫描使用。
@@ -6836,10 +7691,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
     }
     const password = redisPassword(service);
-    const authArgs = password ? ['-a', password, '--no-auth-warning'] : [];
+    const invocation = buildSecureRedisDockerInvocation(service.containerName || '', ['--raw', ...args], password);
     const result = await shell.exec(
-      ['docker', 'exec', shq(service.containerName || ''), 'redis-cli', '--raw', ...authArgs.map(shq), ...args.map(shq)].join(' '),
-      { timeout: timeoutMs },
+      invocationShellCommand(invocation),
+      { timeout: timeoutMs, stdin: invocation.stdinPrefix },
     );
     const output = maskTextSecrets((result.stdout || '').trim(), [password]);
     const error = maskTextSecrets((result.stderr || '').trim(), [password]);
@@ -6894,7 +7749,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { kind: type || 'unknown', values: [], truncated: false };
   }
 
-  async function createMysqlBranchDatabase(service: InfraService, branch: BranchEntry, targetDatabase: string): Promise<MysqlBranchDatabaseResult> {
+  async function createMysqlBranchDatabase(
+    service: InfraService,
+    branch: BranchEntry,
+    targetDatabase: string,
+  ): Promise<MysqlBranchDatabaseResult> {
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
     const rootPassword = mysqlRootPassword(service);
@@ -6966,7 +7825,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingMysqlConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const branchPassword = branchEnv.MYSQL_PASSWORD || '';
     const branchUser = branchEnv.MYSQL_USER || '';
     if (!branchUser || !branchPassword) return null;
@@ -7088,7 +7947,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
-  function mongoAdminUri(service: InfraService): { uri: string; secrets: string[]; rootUser: string; rootPassword: string } {
+  function mongoAdminUri(service: InfraService): { secrets: string[]; rootUser: string; rootPassword: string } {
     const env = resolvedInfraEnv(service);
     const rootUser = env.MONGO_INITDB_ROOT_USERNAME
       || env.MONGO_USERNAME
@@ -7098,10 +7957,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || env.MONGO_PASSWORD
       || env.MONGODB_PASSWORD
       || '';
-    const uri = rootUser
-      ? `mongodb://${encodeURIComponent(rootUser)}:${encodeURIComponent(rootPassword)}@localhost:27017/admin`
-      : 'mongodb://localhost:27017/admin';
-    return { uri, secrets: [rootPassword], rootUser, rootPassword };
+    return { secrets: [rootPassword], rootUser, rootPassword };
   }
 
   async function runMongoAdminScript(service: InfraService, script: string, timeoutMs = 60_000): Promise<void> {
@@ -7109,9 +7965,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
     const admin = mongoAdminUri(service);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongosh',
+      [
+        '--host', 'localhost', '--port', '27017', 'admin', '--quiet', '--eval', script,
+        ...(admin.rootUser ? ['--username', admin.rootUser, '--authenticationDatabase', 'admin'] : []),
+      ],
+      admin.rootPassword,
+    );
     const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mongosh ${shq(admin.uri)} --quiet --eval ${shq(script)}`,
-      { timeout: timeoutMs },
+      invocationShellCommand(invocation),
+      { timeout: timeoutMs, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 管理命令失败').trim(), admin.secrets));
@@ -7141,7 +8006,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingPostgresConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'postgres', service);
     const branchUser = branchEnv.POSTGRES_USER || '';
     const branchPassword = branchEnv.POSTGRES_PASSWORD || '';
     const database = branchEnv.POSTGRES_DB || postgresDatabaseForBranch(service, branch);
@@ -7150,7 +8015,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function getExistingMongoConnectionEnv(service: InfraService, branch: BranchEntry): MysqlConnectionEnvResult | null {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
     const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || mongoDatabaseForBranch(service, branch);
     const branchUser = branchEnv.MONGODB_USERNAME || '';
     const branchPassword = branchEnv.MONGODB_PASSWORD || '';
@@ -7203,13 +8068,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (service.status !== 'running') {
       throw new Error(`MySQL 服务当前未运行（status=${service.status}）`);
     }
+    // 重新派发要以 root 身份 ALTER USER。拿不到 root 就当场说清为什么、给替代路径，
+    // 而不是硬跑一条注定 1045 的命令，让用户对着「Access denied for user 'root'」再猜一轮。
+    const admin = resolveMysqlAdmin(service, branch);
+    if (!admin.available) {
+      throw new Error(
+        `服务 "${service.id}" 没有 CDS 拿得到的管理员口令（容器用的是随机 root 口令，或没配置 root 口令），`
+        + '重新派发分支账号需要管理员身份，无法执行。'
+        + '可行的两条：一是由有权限的人直连这台库为该分支账号重设口令、或改用容器自带的应用账号；'
+        + '二是给这个服务补上 MYSQL_ROOT_PASSWORD 并重建容器后再来重置。',
+      );
+    }
     const database = mysqlDatabaseForBranch(service, branch);
     if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
       throw new Error(`数据库名不合法: ${database || '(empty)'}`);
     }
     const branchUser = branchDatabaseUser(branch);
     const branchPassword = randomUUID().replace(/-/g, '').slice(0, 24);
-    const rootPassword = mysqlRootPassword(service);
+    // 用上面解出来的管理员口令（空口令 root 就是空串），不再走会回落到应用账号口令的旧取法。
+    const rootPassword = admin.password;
     const sql = [
       `CREATE USER IF NOT EXISTS ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
       `ALTER USER ${sqlString(branchUser)}@'%' IDENTIFIED BY ${sqlString(branchPassword)}`,
@@ -7284,7 +8161,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function mysqlDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = ownedBranchEnv(branch, 'mysql', service);
     const env = resolvedInfraEnv(service, branch);
     return String(
       branchEnv.MYSQL_DATABASE
@@ -7308,6 +8185,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'postgres') return postgresDatabaseForBranch(service, branch);
     if (runtime === 'mongodb') return mongoDatabaseForBranch(service, branch);
     return undefined;
+  }
+
+  /**
+   * 项目共享基础库的库名——**刻意不看分支 scope**。
+   *
+   * 上面那组 `*DatabaseForBranch` 是「这个分支现在该连哪个库」，分支 scope 优先是对的：
+   * 建过分支独立库之后，那里存的就是 `imp_b_<token>`。但「哪个库是不可 DROP 的基础库」
+   * 是**项目级**事实，跟分支建没建过独立库无关。
+   *
+   * 拿分支版当基础库判据，会在两个方向同时出错（predicate-and-wiring-discipline 形状 6：
+   * 判据读的值不是真正生效的那个值）：
+   *   - 误挡：分支独立库一旦建成，分支 scope 里就是它，于是 `target === base` 恒成立，
+   *     reset 被自己永久挡死——恰好挡在唯一需要它的场景上（2026-08-30 实测撞到）。
+   *   - 漏挡：某个分支的 scope 若指回共享基础库，`target !== base` 反而放行，DROP 真的落到共享库。
+   */
+  function projectBaseDatabaseForRuntime(runtime: ResourceDatabaseRuntime, service: InfraService): string {
+    // 不传 branch：resolvedInfraEnv 走 stateService.getCustomEnv(projectId)，只含项目级变量。
+    const env = resolvedInfraEnv(service);
+    if (runtime === 'mysql') {
+      return String(env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .slice(0, 64);
+    }
+    if (runtime === 'postgres') {
+      return String(env.POSTGRES_DB || resolvedServiceDbName(service) || env.POSTGRES_USER || 'postgres')
+        .replace(/[^a-zA-Z0-9_]/g, '_')
+        .slice(0, 63);
+    }
+    if (runtime === 'mongodb') {
+      return String(resolvedServiceDbName(service) || env.MONGO_INITDB_DATABASE || 'app')
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 63);
+    }
+    return String(resolvedServiceDbName(service) || 'app').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
   }
 
   function makeResourceBackupFileName(params: {
@@ -7469,9 +8380,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const fileName = makeResourceBackupFileName({ service, branch, runtime: 'mongodb', database, reason });
     const filePath = path.posix.join(dir, fileName);
     const creds = mongoCredentials(service, branch);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongodump',
+      [
+        '--db', database, '--archive', '--gzip',
+        ...(creds.user ? ['--username', creds.user, '--authenticationDatabase', creds.authDatabase || 'admin'] : []),
+      ],
+      creds.password,
+    );
     const result = await shell.exec(
-      `mkdir -p ${shq(dir)} && docker exec ${shq(service.containerName || '')} mongodump --uri ${shq(creds.uri)} --db ${shq(database)} --archive --gzip > ${shq(filePath)}`,
-      { timeout: 1_800_000 },
+      `mkdir -p ${shq(dir)} && ${invocationShellCommand(invocation)} > ${shq(filePath)}`,
+      { timeout: 1_800_000, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 备份失败').trim(), creds.secrets));
@@ -7773,9 +8693,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason: 'pre-restore',
     });
     const creds = mongoCredentials(service, branch);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongorestore',
+      [
+        '--db', database, '--archive', '--gzip', '--drop',
+        ...(creds.user ? ['--username', creds.user, '--authenticationDatabase', creds.authDatabase || 'admin'] : []),
+      ],
+      creds.password,
+    );
     const result = await shell.exec(
-      `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(creds.uri)} --db ${shq(database)} --archive --gzip --drop < ${shq(filePath)}`,
-      { timeout: 1_800_000 },
+      `{ cat; cat ${shq(filePath)}; } | ${invocationShellCommand(invocation)}`,
+      { timeout: 1_800_000, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 恢复失败').trim(), creds.secrets));
@@ -7811,9 +8740,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb', { service, branch });
     const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
     const admin = mongoAdminUri(service);
+    const invocation = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongorestore',
+      [
+        '--archive', '--gzip', '--drop', '--nsFrom', `${sourceDatabase}.*`, '--nsTo', `${targetDatabase}.*`,
+        ...(admin.rootUser ? ['--username', admin.rootUser, '--authenticationDatabase', 'admin'] : []),
+      ],
+      admin.rootPassword,
+    );
     const result = await shell.exec(
-      `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(admin.uri)} --archive --gzip --drop --nsFrom ${shq(`${sourceDatabase}.*`)} --nsTo ${shq(`${targetDatabase}.*`)} < ${shq(filePath)}`,
-      { timeout: 1_800_000 },
+      `{ cat; cat ${shq(filePath)}; } | ${invocationShellCommand(invocation)}`,
+      { timeout: 1_800_000, stdin: invocation.stdinPrefix },
     );
     if (result.exitCode !== 0) {
       throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 新库恢复失败').trim(), [...admin.secrets, branchDb.branchPassword]));
@@ -7934,32 +8872,66 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   }
 
+  /**
+   * 删库前置条件不成立时抛这个：路由据此回 409（拒绝，不是故障）。
+   * 以前靠匹配「拒绝删除共享数据库」这句文案判状态码，加一条新的拒绝理由就会漏判成 500——
+   * 判据挂在措辞上，改一次文案就漂一次。
+   */
+  function deleteRefusal(message: string): Error {
+    return Object.assign(new Error(message), { cdsDeleteRefusal: true });
+  }
+
   function branchOwnedDatabaseForDelete(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string {
+    // 顺序有讲究：先答「本分支到底有没有独立库」，再答「这套 env 是不是这台服务的」。
+    // 反过来的话，一个压根没有分支库的分支会先撞上归属报错，说的却不是它真正的处境。
     const branchEnv = stateService.getCustomEnvScope(branch.id);
-    if (runtime === 'mysql') {
-      const database = branchEnv.MYSQL_DATABASE || '';
-      if (!database || !branchEnv.MYSQL_USER) {
-        throw new Error('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+    const database = ((): string => {
+      if (runtime === 'mysql') {
+        const value = branchEnv.MYSQL_DATABASE || '';
+        if (!value || !branchEnv.MYSQL_USER) {
+          throw deleteRefusal('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
       }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
-    }
-    if (runtime === 'postgres') {
-      const database = branchEnv.POSTGRES_DB || '';
-      if (!database || !branchEnv.POSTGRES_USER) {
-        throw new Error('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+      if (runtime === 'postgres') {
+        const value = branchEnv.POSTGRES_DB || '';
+        if (!value || !branchEnv.POSTGRES_USER) {
+          throw deleteRefusal('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
       }
-      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
-    }
-    if (runtime === 'mongodb') {
-      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
-      const env = resolvedInfraEnv(service);
-      const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
-      if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
-        throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+      if (runtime === 'mongodb') {
+        const value = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
+        const env = resolvedInfraEnv(service);
+        const serviceRequiresAuth = Boolean(env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME);
+        if (!value || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
+          throw deleteRefusal('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+        }
+        return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
       }
-      return database.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
+      throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    })();
+
+    // 删库要以分支 env 里的库名为准，而分支 env 只有一份、可能是**另一台同类型库**的。
+    // 不判归属就会「删 B 资源，掉的是 A 的库」——这是数据丢失，不是连不上而已。
+    const owner = branchDbCredentialOwner(branchEnv, runtime as BranchDbRuntime);
+    // 破坏性路径**失败关闭**：读路径可以在「判断不出归属」时沿用老行为，删库不行——
+    // 同一分支挂两台同类型库时，拿一份没有归属标记的库名去删，掉的可能是另一台的同名库
+    // （Codex P1，2026-09-01）。没有证据就不动手。
+    if (!owner) {
+      throw deleteRefusal(
+        `分支环境变量里有库名 ${database}，却没有归属标记（缺 *_HOST，连接串也解析不出 host），`
+        + `无法证明它属于本分支的资源 "${service.id}"；删库不可逆，拒绝执行。`
+        + '请先在该资源上重新注入连接信息（会写入归属标记）再来删。',
+      );
     }
-    throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
+    if (owner !== service.id) {
+      throw deleteRefusal(
+        `分支环境变量里的库名/账号是派发给服务 "${owner}" 的，不是 "${service.id}"；`
+        + '拒绝按它删库（否则会删掉另一台库的数据）。请先为本资源重新注入连接信息再操作。',
+      );
+    }
+    return database;
   }
 
   async function clearResourceData(params: {
@@ -7997,12 +8969,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 清空数据失败').trim(), creds.secrets));
     } else if (runtime === 'mongodb') {
-      const creds = mongoCredentials(service, branch);
-      const result = await shell.exec(
-        `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq('db.dropDatabase()')}`,
-        { timeout: 120_000 },
-      );
-      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 清空数据失败').trim(), creds.secrets));
+      await runMongoJson(service, branch, 'db.dropDatabase()', database, 120_000, false);
     } else {
       await runRedisCli(service, ['FLUSHALL']);
     }
@@ -8041,13 +9008,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const database = branchOwnedDatabaseForDelete(runtime, service, branch);
     const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
+    const accountNotes: string[] = [];
     if (runtime === 'mysql') {
       const rootPassword = mysqlRootPassword(service);
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'mysql', service);
       const user = branchEnv.MYSQL_USER || '';
+      // MySQL 账号是**实例级**的：旧派发规则按分支名截断，兄弟分支会共用同一个账号，
+      // 那时删本分支的库顺手 DROP USER，等于把还在用它的兄弟分支一起打死（1045 事故
+      // 的第二条路径）。所以只有能证明「这个账号就是本分支的」时才删。
+      const dropUser = user && user === branchDatabaseUser(branch);
+      if (user && !dropUser) {
+        accountNotes.push(`账号 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `DROP DATABASE IF EXISTS ${sqlIdent(database)}`,
-        user ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
+        dropUser ? `DROP USER IF EXISTS ${sqlString(user)}@'%'` : '',
         'FLUSH PRIVILEGES',
       ].filter(Boolean).join('; ');
       const result = await shell.exec(
@@ -8056,16 +9031,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MySQL 删除数据库失败').trim(), [rootPassword]));
     } else if (runtime === 'postgres') {
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'postgres', service);
       const user = branchEnv.POSTGRES_USER || '';
       const env = resolvedInfraEnv(service);
       const adminUser = env.POSTGRES_USER || 'postgres';
       const adminPassword = env.POSTGRES_PASSWORD || '';
       const adminDb = env.POSTGRES_DB || adminUser || 'postgres';
+      // 同 MySQL：role 是实例级的，只有能证明是本分支的账号才删。
+      const dropRole = user && user === branchDatabaseUser(branch);
+      if (user && !dropRole) {
+        accountNotes.push(`角色 ${user} 不是按当前抗碰撞规则派发给本分支的（可能与兄弟分支共用），已保留不删`);
+      }
       const sql = [
         `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${pgString(database)} AND pid <> pg_backend_pid();`,
         `DROP DATABASE IF EXISTS ${pgIdent(database)};`,
-        user ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
+        dropRole ? `DROP ROLE IF EXISTS ${pgIdent(user)};` : '',
       ].filter(Boolean).join('\n');
       const result = await shell.exec(
         `printf %s ${shq(sql)} | docker exec -i -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} psql -U ${shq(adminUser)} -d ${shq(adminDb)} -v ON_ERROR_STOP=1`,
@@ -8073,18 +9053,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 删除数据库失败').trim(), [adminPassword]));
     } else if (runtime === 'mongodb') {
-      const creds = mongoCredentials(service, branch);
-      const branchEnv = stateService.getCustomEnvScope(branch.id);
+      const branchEnv = ownedBranchEnv(branch, 'mongodb', service);
       const user = branchEnv.MONGODB_USERNAME || '';
       const script = [
         'db.dropDatabase();',
         user ? `db.dropUser(${mongoSafeJson(user)});` : '',
       ].filter(Boolean).join(' ');
-      const result = await shell.exec(
-        `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
-        { timeout: 120_000 },
-      );
-      if (result.exitCode !== 0) throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 删除数据库失败').trim(), creds.secrets));
+      await runMongoJson(service, branch, script, database, 120_000, false);
     }
     removeBranchResourceEnv(runtime, branch);
     stateService.recordDestructiveOp({
@@ -8102,7 +9077,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName,
       result: 'success',
-      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`,
+      note: `${resourceName} 分支数据库 ${database} 已删除，操作前备份 ${safetyBackup.name}`
+        + (accountNotes.length > 0 ? `；${accountNotes.join('；')}` : ''),
     });
     return { database, safetyBackup };
   }
@@ -8125,10 +9101,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const adminUser = env.POSTGRES_USER || 'postgres';
     const adminPassword = env.POSTGRES_PASSWORD || '';
     const result = await shell.exec(
-      [
+      `bash -o pipefail -c ${shq([
         `docker exec -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} pg_dump -U ${shq(adminUser)} -d ${shq(sourceDatabase)} --no-owner --no-privileges`,
         `docker exec -i -e PGPASSWORD=${shq(branchDb.branchPassword)} ${shq(service.containerName || '')} psql -U ${shq(branchDb.branchUser)} -d ${shq(targetDatabase)} -v ON_ERROR_STOP=1`,
-      ].join(' | '),
+      ].join(' | '))}`,
       { timeout: 1_800_000 },
     );
     if (result.exitCode !== 0) {
@@ -8152,16 +9128,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
     const admin = mongoAdminUri(service);
-    const result = await shell.exec(
-      [
-        `docker exec ${shq(service.containerName || '')} mongodump --uri ${shq(admin.uri)} --db ${shq(sourceDatabase)} --archive --gzip`,
-        `docker exec -i ${shq(service.containerName || '')} mongorestore --uri ${shq(admin.uri)} --archive --gzip --drop --nsFrom ${shq(`${sourceDatabase}.*`)} --nsTo ${shq(`${targetDatabase}.*`)}`,
-      ].join(' | '),
-      { timeout: 1_800_000 },
+    const authArgs = admin.rootUser ? ['--username', admin.rootUser, '--authenticationDatabase', 'admin'] : [];
+    const producer = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongodump',
+      ['--db', sourceDatabase, '--archive', '--gzip', ...authArgs],
+      admin.rootPassword,
     );
-    if (result.exitCode !== 0) {
-      throw new Error(maskTextSecrets((result.stderr || result.stdout || 'MongoDB 克隆失败').trim(), [...admin.secrets, branchDb.branchPassword]));
-    }
+    const consumer = buildSecureMongoDockerInvocation(
+      service.containerName || '',
+      'mongorestore',
+      ['--archive', '--gzip', '--drop', '--nsFrom', `${sourceDatabase}.*`, '--nsTo', `${targetDatabase}.*`, ...authArgs],
+      admin.rootPassword,
+    );
+    await new Promise<void>((resolve, reject) => {
+      const dump = spawn(producer.command, producer.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+      const restore = spawn(consumer.command, consumer.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+      let dumpError = '';
+      let restoreError = '';
+      let dumpCode: number | null = null;
+      let restoreCode: number | null = null;
+      let settled = false;
+      const finish = () => {
+        if (settled || dumpCode === null || restoreCode === null) return;
+        settled = true;
+        clearTimeout(timer);
+        if (dumpCode === 0 && restoreCode === 0) resolve();
+        else reject(new Error(maskTextSecrets(
+          (restoreError || dumpError || 'MongoDB 克隆失败').trim().slice(-400),
+          [...admin.secrets, branchDb.branchPassword],
+        )));
+      };
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { dump.kill('SIGKILL'); } catch { /* noop */ }
+        try { restore.kill('SIGKILL'); } catch { /* noop */ }
+        reject(new Error(maskTextSecrets(err.message, [...admin.secrets, branchDb.branchPassword])));
+      };
+      const timer = setTimeout(() => fail(new Error('MongoDB 克隆超时')), 1_800_000);
+      dump.stderr.on('data', (chunk: Buffer) => { dumpError = (dumpError + chunk.toString()).slice(-4000); });
+      restore.stderr.on('data', (chunk: Buffer) => { restoreError = (restoreError + chunk.toString()).slice(-4000); });
+      dump.on('error', fail);
+      restore.on('error', fail);
+      dump.on('close', (code) => { dumpCode = code ?? -1; finish(); });
+      restore.on('close', (code) => { restoreCode = code ?? -1; finish(); });
+      dump.stdin.end(producer.stdinPrefix);
+      restore.stdin.write(consumer.stdinPrefix);
+      dump.stdout.pipe(restore.stdin);
+    });
     return branchDb;
   }
 
@@ -8339,7 +9355,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    // 归属判断同工作台：分支 env 只有一份，别把另一台库的账号/库名显示成这台的连接串。
+    // 只有三种数据库运行时有分支凭据；redis / rabbitmq / minio / unknown 一律走原始 env
+    // （给它们传 unknown 会在归属查表上抛，把只读端点打成 500——Codex P1）。
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const db = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || env.MARIADB_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
@@ -8375,7 +9396,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   ): string {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = resolvedInfraEnv(service, branch);
-    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchEnv = isBranchDbRuntime(runtime)
+      ? ownedBranchEnv(branch, runtime, service)
+      : stateService.getCustomEnvScope(branch.id);
     if (runtime === 'mysql') {
       const database = branchEnv.MYSQL_DATABASE || env.MYSQL_DATABASE || resolvedServiceDbName(service) || 'app';
       const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
@@ -8410,11 +9433,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${host}:${port}`;
   }
 
+  const resourceExternalMutations = new Set<string>();
+  const externalMutationKey = (projectId: string, branchId: string, resourceId: string) => JSON.stringify([projectId, branchId, resourceId]);
+
   async function disableTcpResourceExternalAccess(policy?: ResourceExternalAccessPolicy | null): Promise<void> {
     if (!policy) return;
     const proxyContainerName = policy.proxyContainerName;
     if (proxyContainerName && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(proxyContainerName)) {
-      await shell.exec(`docker rm -f ${routeShellQuote(proxyContainerName)} 2>/dev/null || true`, { timeout: 15_000 });
+      const result = await shell.exec(`docker rm -f ${routeShellQuote(proxyContainerName)}`, { timeout: 15_000 });
+      if (result.exitCode !== 0 && !/No such container/i.test(combinedOutput(result))) throw new Error('临时访问代理未能关闭，请重试或联系管理员');
     }
     if (policy.firewallChain) {
       await cleanupResourceExternalFirewall(shell, policy.firewallChain, policy.port);
@@ -8434,37 +9461,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
     policy?: ResourceExternalAccessPolicy,
   ): Promise<ResourceExternalAccessPolicy | undefined> {
     if (!policy || !isResourceExternalAccessExpired(policy)) return policy;
-    await disableTcpResourceExternalAccess(policy).catch(() => undefined);
-    const expired = stateService.upsertResourceExternalAccess({
-      projectId,
-      branchId: branch.id,
-      resourceId,
-      enabled: false,
-      kind: policy.kind,
-      address: policy.address,
-      host: policy.host,
-      port: policy.port,
-      connectionString: policy.connectionString,
-      proxyContainerName: undefined,
-      targetHost: undefined,
-      targetPort: undefined,
-      allowlistEnforced: false,
-      firewallChain: undefined,
-      allowlist: policy.allowlist || [],
-      expiresAt: policy.expiresAt,
-      updatedBy: 'system:ttl-expired',
-    });
-    stateService.appendActivityLog(projectId, {
-      type: 'resource-external-access',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor: 'system:ttl-expired',
-      resourceId,
-      result: 'success',
-      note: `资源外部访问已在 ${policy.expiresAt} 到期并自动关闭`,
-    });
-    stateService.save();
-    return expired;
+    const mutationKey = externalMutationKey(projectId, branch.id, resourceId);
+    if (resourceExternalMutations.has(mutationKey)) return policy;
+    resourceExternalMutations.add(mutationKey);
+    try {
+      await disableTcpResourceExternalAccess(policy);
+      const expired = stateService.upsertResourceExternalAccess({
+        projectId,
+        branchId: branch.id,
+        resourceId,
+        enabled: false,
+        kind: policy.kind,
+        address: policy.address,
+        host: policy.host,
+        port: policy.port,
+        connectionString: policy.connectionString,
+        proxyContainerName: undefined,
+        targetHost: undefined,
+        targetPort: undefined,
+        allowlistEnforced: false,
+        firewallChain: undefined,
+        allowlist: policy.allowlist || [],
+        expiresAt: policy.expiresAt,
+        updatedBy: 'system:ttl-expired',
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-external-access',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor: 'system:ttl-expired',
+        resourceId,
+        result: 'success',
+        note: `资源外部访问已在 ${policy.expiresAt} 到期并自动关闭`,
+      });
+      stateService.save();
+      return expired;
+    } finally { resourceExternalMutations.delete(mutationKey); }
   }
 
   async function getActiveResourceExternalAccessForBranch(projectId: string, branch: BranchEntry): Promise<ResourceExternalAccessPolicy[]> {
@@ -8509,6 +9541,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     resource: UnifiedBranchResource;
     allowlist: string[];
     currentPolicy?: ResourceExternalAccessPolicy;
+    expiresAt: string;
   }): Promise<{
     address: string;
     host: string;
@@ -8523,7 +9556,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (input.resource.source !== 'infra') {
       throw new Error('只有 infra TCP 资源需要资源级 TCP proxy');
     }
-    const service = input.resource.raw as InfraService;
+    const service = getUnifiedResourceInternalRaw(input.resource) as InfraService;
     const targetContainer = resourceContainerName(input.resource);
     if (!targetContainer) throw new Error(`资源 "${input.resource.displayName}" 没有关联目标容器`);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(targetContainer)) {
@@ -8537,8 +9570,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!targetPort || targetPort < 1 || targetPort > 65535) {
       throw new Error(`资源 "${input.resource.displayName}" 缺少可代理的容器端口`);
     }
-    const host = resourcePublicHost();
-    if (!host) throw new Error('CDS 未配置 previewDomain/rootDomains，无法生成公网 TCP host');
+    const tcpConfig = resourceTcpAccessConfig();
+    if (!tcpConfig.enabled) throw new Error(tcpConfig.reason);
+    const host = tcpConfig.host;
     if (input.allowlist.length === 0) {
       throw new Error('开启数据库/缓存公网 TCP 访问必须填写 IP allowlist，禁止空 allowlist 暴露到公网');
     }
@@ -8551,8 +9585,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const reusePort = input.currentPolicy?.enabled ? input.currentPolicy.port : undefined;
     const port = await allocateResourceExternalPort(shell, reusePort, reusePort);
     await disableTcpResourceExternalAccess(input.currentPolicy);
+    // The old runtime is gone. Persist that fact before any replacement step can fail.
+    if(input.currentPolicy?.enabled){
+      stateService.upsertResourceExternalAccess({...input.currentPolicy,enabled:false,address:undefined,host:undefined,port:undefined,
+        connectionString:undefined,proxyContainerName:undefined,targetHost:undefined,targetPort:undefined,
+        allowlistEnforced:false,firewallChain:undefined,expiresAt:null,updatedBy:'system:replacing-external-access'});
+      stateService.save();
+    }
     await ensureDockerNetwork(shell, network);
-    const firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist);
+    let firewall: { enforced: boolean; chain?: string };
+    try { firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist); }
+    catch (err) { await cleanupResourceExternalFirewall(shell, firewallChain, port); throw err; }
 
     const scriptB64 = Buffer.from(RESOURCE_TCP_PROXY_SCRIPT, 'utf8').toString('base64');
     const evalScript = "eval(Buffer.from(process.env.CDS_PROXY_SCRIPT_B64,'base64').toString('utf8'))";
@@ -8569,14 +9612,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     ];
     const cmd = [
       'docker run -d',
+      ...DOCKER_LOG_LIMIT_FLAGS,
+      // 资源代理也是托管工作负载，同样挂低权重 slice（Codex PR #1516 P2）。
+      ...workloadCgroupFlags(),
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
-      `-p 0.0.0.0:${port}:${listenPort}`,
+      // 仅实例显式配置的网卡可发布临时端口；数据库本身的端口保持内部访问。
+      `-p ${tcpConfig.bindIp}:${port}:${listenPort}`,
       ...labels.map((label) => `--label ${routeShellQuote(label)}`),
       `-e ${routeShellQuote(`TARGET_HOST=${targetContainer}`)}`,
       `-e ${routeShellQuote(`TARGET_PORT=${targetPort}`)}`,
       `-e ${routeShellQuote(`LISTEN_PORT=${listenPort}`)}`,
       `-e ${routeShellQuote(`ALLOWLIST=${input.allowlist.join(',')}`)}`,
+      `-e ${routeShellQuote(`EXPIRES_AT=${input.expiresAt}`)}`,
       `-e ${routeShellQuote(`CDS_PROXY_SCRIPT_B64=${scriptB64}`)}`,
       '--restart unless-stopped',
       resourceTcpProxyImage(),
@@ -8640,7 +9688,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName: resource.displayName,
       runtime,
-      service: resource.raw as InfraService,
+      service: getUnifiedResourceInternalRaw(resource) as InfraService,
     };
   }
 
@@ -8675,7 +9723,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId,
       resourceId,
       resourceName: resource.displayName,
-      service: resource.raw as InfraService,
+      service: getUnifiedResourceInternalRaw(resource) as InfraService,
     };
   }
 
@@ -8710,9 +9758,89 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId,
       resourceId,
       resourceName: resource.displayName,
-      service: resource.raw as InfraService,
+      service: getUnifiedResourceInternalRaw(resource) as InfraService,
     };
   }
+
+  const databaseIngressMutations = new Set<string>();
+  function databaseIngressKey(resource: UnifiedBranchResource): string {
+    const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+    return JSON.stringify([resourceRuntimeKey(resource.runtime), resourceContainerName(resource) || `port:${service.hostPort}`, service.containerPort || resource.containerPort]);
+  }
+  function assertNoLegacyDatabaseIngress(scope: Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>, resource: UnifiedBranchResource): void {
+    const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+    const host = resourceContainerName(resource), port = service.containerPort || resource.containerPort;
+    const shared = !service.projectId;
+    if (stateService.getAllResourceExternalAccess().some(policy => policy.kind === 'tcp'
+      && (policy.enabled || policy.proxyContainerName || policy.firewallChain)
+      && ((policy.resourceId === scope.resourceId && (policy.projectId === scope.projectId || shared || !policy.targetHost))
+        || (!!host && policy.targetHost === host && policy.targetPort === port)))) {
+      throw new Error('共享数据库的旧版 TCP 入口尚未确认关闭。请先关闭相关分支的旧入口，再申请通行证；已删除分支的残留策略需管理员清理。');
+    }
+  }
+
+  async function databasePassTarget(scope: Pick<DatabasePass, 'projectId'|'branchId'|'resourceId'>): Promise<DatabasePassTarget> {
+    const branch=stateService.getBranch(scope.branchId);
+    if(!branch || (branch.projectId||'default')!==scope.projectId)throw new Error('通行证目标项目或分支已不存在');
+    const resource=(await getBranchResourceSnapshot(branch)).find(r=>r.id===scope.resourceId);
+    if(!resource || resource.source!=='infra')throw new Error('通行证仅支持当前项目基础数据库');
+    const service=getUnifiedResourceInternalRaw(resource) as InfraService;
+    const runtime=resourceRuntimeKey(resource.runtime);
+    if(!['mysql','postgres','mongodb'].includes(runtime)||service.status!=='running'||!service.hostPort)throw new Error('目标数据库未运行或不支持通行证');
+    const env=resolvedInfraEnv(service,branch);
+    const mysqlAdmin=runtime==='mysql'?resolveMysqlAdmin(service,branch):undefined;
+    if(mysqlAdmin&&!mysqlAdmin.available)throw new Error('MySQL未配置可用的root管理员凭据，不能签发通行证');
+    const mysqlCa = runtime === 'mysql' ? await mysqlResourceCa(resourceContainerName(resource)) : undefined;
+    return {runtime:runtime as DatabasePassTarget['runtime'],port:service.hostPort,
+      database:runtime==='mongodb'?mongoDatabaseForBranch(service,branch):sqlDataDatabase(runtime as SqlDataRuntime,service,branch),
+      adminUser:runtime==='mysql'?'root':runtime==='postgres'?(env.POSTGRES_USER||'postgres'):(env.MONGO_INITDB_ROOT_USERNAME||''),
+      adminPassword:runtime==='mysql'?mysqlAdmin!.password:runtime==='postgres'?(env.POSTGRES_PASSWORD||''):(env.MONGO_INITDB_ROOT_PASSWORD||''),mysqlCa};
+  }
+  const databasePasses=new DatabasePassService(path.join(stateService.getCacheBase(),'database-passes'),databasePassTarget);
+  async function databasePassContext(req:Request,res:Response){
+    const context=await resolveResourceForRequest(req,res);if(!context)return null;
+    if(!requireResourcePermission(req,res,'external-temporary-access',context.branch,context.resource))return null;
+    const user=(req as Request & {cdsUser?:{id:string}}).cdsUser;
+    const owner=user?.id?`human:${user.id}`:isHumanSystemOwner(req)?'human:system-owner':'';
+    if(!owner){res.status(403).json({error:'请由已授权的项目管理员登录后签发通行证。'});return null;}
+    return {scope:{projectId:context.projectId,branchId:context.branch.id,resourceId:context.resourceId},owner,resource:context.resource};
+  }
+  const passRoute='/branches/:id/resources/:resourceId/database-passes';
+  router.get(passRoute,async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;res.json({capability:databasePasses.capability(),currentIp:databasePassClientIp(req),passes:await databasePasses.list(context.scope,context.owner),events:await databasePasses.events(context.scope,context.owner)});}
+    catch{res.status(503).json({error:'无法读取通行证或审计记录，请稍后重试。'});}
+  });
+  router.post(passRoute,async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;
+      const key=databaseIngressKey(context.resource);
+      if(databaseIngressMutations.has(key))throw new Error('数据库入口策略正在更新，请稍后重试。');
+      databaseIngressMutations.add(key);
+      try{
+        assertNoLegacyDatabaseIngress(context.scope,context.resource);
+        const allowlist=normalizeIpv4Allowlist(req.body?.allowlist ?? [databasePassClientIp(req)]);
+        res.json({pass:await databasePasses.prepare(context.scope,context.owner,allowlist,req.body?.ttlMinutes===undefined?30:Number(req.body.ttlMinutes))});
+      }finally{databaseIngressMutations.delete(key);}}
+    catch(error){res.status(409).json({error:maskTextSecrets((error as Error).message,[])});}
+  });
+  router.post(passRoute+'/:passId/activate',async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;assertNoLegacyDatabaseIngress(context.scope,context.resource);res.json({pass:await databasePasses.activate(req.params.passId,context.owner,context.scope)});}
+    catch(error){res.status(409).json({error:maskTextSecrets((error as Error).message,[])});}
+  });
+  router.get(passRoute+'/:passId/credentials',async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;assertNoLegacyDatabaseIngress(context.scope,context.resource);res.setHeader('Cache-Control','no-store');res.json(await databasePasses.credentials(req.params.passId,context.owner,context.scope));}
+    catch{res.status(409).json({error:'通行证已失效或当前用户不能复制该凭据。'});}
+  });
+  router.delete(passRoute+'/:passId',async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;res.json({pass:await databasePasses.revoke(req.params.passId,context.owner,context.scope)});}
+    catch{res.status(409).json({error:'撤销未完成，请刷新状态；入口关闭与账号回收分别显示。'});}
+  });
+
+  router.get('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
+    const ctx = await resolveResourceForRequest(req, res);
+    if (!ctx) return;
+    const capability = resourceTcpAccessConfig();
+    res.json({ enabled: capability.enabled, host: capability.host, maxTtlMinutes: 1440, reason: capability.reason, passportEnabled: databasePasses.capability().enabled });
+  });
 
   router.put('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
     const branch = stateService.getBranch(req.params.id);
@@ -8732,6 +9860,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const enabled = Boolean(req.body?.enabled);
+    if(enabled && databasePasses.capability().enabled && ['mysql','postgres','mongodb'].includes(resourceRuntimeKey(resource.runtime))) {
+      res.status(409).json({error:'本实例数据库直连需使用独立临时账号通行证，请在连接页申请通行证。'});return;
+    }
+    if (enabled && resource.source === 'infra' && !resourceTcpAccessConfig().enabled) {
+      res.status(409).json({ error: resourceTcpAccessConfig().reason });
+      return;
+    }
     let allowlist: string[];
     try {
       allowlist = normalizeIpv4Allowlist(req.body?.allowlist);
@@ -8744,6 +9879,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const ttlMinutesRaw = Number(req.body?.ttlMinutes);
+    if (enabled && resource.source === 'infra' && (!Number.isInteger(ttlMinutesRaw) || ttlMinutesRaw < 1 || ttlMinutesRaw > 1440)) {
+      res.status(400).json({ error: '临时数据库直连必须设置 1–1440 分钟的有效期，不能永久开放。' });
+      return;
+    }
     const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw > 0
       ? Math.min(ttlMinutesRaw, 7 * 24 * 60)
       : null;
@@ -8754,79 +9893,96 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? 'external-policy-admin'
       : 'external-temporary-access';
     if (!requireResourcePermission(req, res, externalAction, branch, resource)) return;
-    const previewHost = resourcePublicHost();
-    const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
-    let runtime: Partial<ResourceExternalAccessPolicy> = {};
-    if (resource.source === 'infra') {
-      try {
-        if (enabled) {
-          runtime = await enableTcpResourceExternalAccess({
-            branch,
-            projectId,
-            resourceId,
-            resource,
-            allowlist,
-            currentPolicy,
-          });
-        } else {
-          await disableTcpResourceExternalAccess(currentPolicy);
-          runtime = {
-            address: currentPolicy?.address || resource.externalAccess?.address,
-            host: currentPolicy?.host || resource.externalAccess?.host || previewHost,
-            port: currentPolicy?.port || resource.externalAccess?.port,
-            connectionString: currentPolicy?.connectionString || resource.externalAccess?.connectionString,
-            proxyContainerName: undefined,
-            targetHost: undefined,
-            targetPort: undefined,
-            allowlistEnforced: false,
-            firewallChain: undefined,
-          };
+    const databaseRuntime=resourceRuntimeKey(resource.runtime);
+    const databaseKey=resource.source==='infra'&&['mysql','postgres','mongodb'].includes(databaseRuntime)?databaseIngressKey(resource):undefined;
+    if(databaseKey&&databaseIngressMutations.has(databaseKey)){res.status(409).json({error:'数据库入口策略正在更新，请稍后重试。'});return;}
+    const mutationKey = externalMutationKey(projectId, branch.id, resourceId);
+    if (resourceExternalMutations.has(mutationKey)) { res.status(409).json({ error: '该资源的访问策略正在更新，请稍后重试。' }); return; }
+    resourceExternalMutations.add(mutationKey);
+    if(databaseKey)databaseIngressMutations.add(databaseKey);
+    try {
+      if(enabled&&databaseKey){
+        const service=getUnifiedResourceInternalRaw(resource) as InfraService;
+        if(databasePasses.hasUnreclaimedPassesForTarget({runtime:databaseRuntime as DatabasePassTarget['runtime'],port:service.hostPort},{projectId,resourceId,shared:!service.projectId})){
+          res.status(409).json({error:'此数据库仍有待回收的通行证，请先撤销并确认账号回收，再启用旧版 TCP 入口。'});return;
         }
-      } catch (err) {
-        res.status(500).json({ error: (err as Error).message });
+      }
+      const previewHost = resourcePublicHost();
+      const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
+      let runtime: Partial<ResourceExternalAccessPolicy> = {};
+      if (resource.source === 'infra') {
+        try {
+          if (enabled) {
+            runtime = await enableTcpResourceExternalAccess({
+              branch,
+              projectId,
+              resourceId,
+              resource,
+              allowlist,
+              currentPolicy,
+              expiresAt: expiresAt!,
+            });
+          } else {
+            await disableTcpResourceExternalAccess(currentPolicy);
+            runtime = {
+              address: currentPolicy?.address || resource.externalAccess?.address,
+              host: currentPolicy?.host || resource.externalAccess?.host || previewHost,
+              port: currentPolicy?.port || resource.externalAccess?.port,
+              connectionString: currentPolicy?.connectionString || resource.externalAccess?.connectionString,
+              proxyContainerName: undefined,
+              targetHost: undefined,
+              targetPort: undefined,
+              allowlistEnforced: false,
+              firewallChain: undefined,
+            };
+          }
+        } catch (err) {
+          res.status(500).json({ error: (err as Error).message });
+          return;
+        }
+      }
+      const fallbackAddress = resource.source === 'app'
+        ? resource.externalUrl || resource.externalAccess?.address || ''
+        : runtime.address || resource.externalAccess?.address || (previewHost && runtime.port ? `tcp://${previewHost}:${runtime.port}` : '');
+      if (enabled && !fallbackAddress) {
+        res.status(409).json({ error: `资源 "${resource.displayName}" 没有可用的外部地址或端口` });
         return;
       }
-    }
-    const fallbackAddress = resource.source === 'app'
-      ? resource.externalUrl || resource.externalAccess?.address || ''
-      : runtime.address || resource.externalAccess?.address || (previewHost && runtime.port ? `tcp://${previewHost}:${runtime.port}` : '');
-    if (enabled && !fallbackAddress) {
-      res.status(409).json({ error: `资源 "${resource.displayName}" 没有可用的外部地址或端口` });
-      return;
-    }
-    const actor = resolveActorFromRequest(req);
-    const policy = stateService.upsertResourceExternalAccess({
-      projectId,
-      branchId: branch.id,
-      resourceId,
-      enabled,
-      kind: resource.source === 'app' ? 'https' : 'tcp',
-      address: enabled ? fallbackAddress : resource.externalAccess?.address || fallbackAddress || undefined,
-      host: runtime.host || previewHost || resource.externalAccess?.host,
-      port: runtime.port || resource.externalAccess?.port || resource.port,
-      connectionString: runtime.connectionString || resource.externalAccess?.connectionString,
-      proxyContainerName: enabled ? runtime.proxyContainerName || resource.externalAccess?.proxyContainerName : undefined,
-      targetHost: enabled ? runtime.targetHost || resource.externalAccess?.targetHost : undefined,
-      targetPort: enabled ? runtime.targetPort || resource.externalAccess?.targetPort : undefined,
-      allowlistEnforced: Boolean(runtime.allowlistEnforced),
-      firewallChain: enabled ? runtime.firewallChain || resource.externalAccess?.firewallChain : undefined,
-      allowlist,
-      expiresAt,
-      updatedBy: actor,
-    });
-    stateService.appendActivityLog(projectId, {
-      type: 'resource-external-access',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor,
-      resourceId,
-      resourceName: resource.displayName,
-      result: 'success',
-      note: `${enabled ? '开启' : '关闭'} ${resource.displayName} 外部访问${expiresAt ? `，有效期至 ${expiresAt}` : ''}`,
-    });
-    stateService.save();
-    const nextResources = await getBranchResourceSnapshot(branch);
-    res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
+      const actor = resolveActorFromRequest(req);
+      const policy = stateService.upsertResourceExternalAccess({
+        projectId,
+        branchId: branch.id,
+        resourceId,
+        enabled,
+        kind: resource.source === 'app' ? 'https' : 'tcp',
+        address: enabled ? fallbackAddress : resource.externalAccess?.address || fallbackAddress || undefined,
+        host: runtime.host || previewHost || resource.externalAccess?.host,
+        port: runtime.port || resource.externalAccess?.port || resource.port,
+        connectionString: runtime.connectionString || resource.externalAccess?.connectionString,
+        proxyContainerName: enabled ? runtime.proxyContainerName || resource.externalAccess?.proxyContainerName : undefined,
+        targetHost: enabled ? runtime.targetHost || resource.externalAccess?.targetHost : undefined,
+        targetPort: enabled ? runtime.targetPort || resource.externalAccess?.targetPort : undefined,
+        allowlistEnforced: Boolean(runtime.allowlistEnforced),
+        firewallChain: enabled ? runtime.firewallChain || resource.externalAccess?.firewallChain : undefined,
+        allowlist,
+        expiresAt,
+        updatedBy: actor,
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-external-access',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'success',
+        note: `${enabled ? '开启' : '关闭'} ${resource.displayName} 外部访问${expiresAt ? `，有效期至 ${expiresAt}` : ''}`,
+      });
+      stateService.save();
+      const nextResources = await getBranchResourceSnapshot(branch);
+      res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
+    } finally { resourceExternalMutations.delete(mutationKey);
+      if(databaseKey)databaseIngressMutations.delete(databaseKey); }
   });
 
   router.get('/branches/:id/resources/:resourceId/connection-string', async (req, res) => {
@@ -8851,8 +10007,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (!requireSecretRevealAccess(req, res, projectId)) return;
     if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
-    const service = resource.raw as InfraService;
-    const scope = String(req.query.scope || 'internal') === 'external' ? 'external' : 'internal';
+    const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+    const scope = req.query.scope === 'ssh' ? 'ssh' : req.query.scope === 'external' ? 'external' : 'internal';
+    const localPort = Number(req.query.localPort || 13306);
+    const sshTarget = String(req.query.sshTarget || '').trim();
+    if (scope === 'ssh' && (!/^[a-zA-Z0-9_][a-zA-Z0-9_.@:\[\]-]*$/.test(sshTarget) || !Number.isInteger(localPort) || localPort < 1024 || localPort > 65535)) {
+      res.status(400).json({ error: '请填写 SSH 主机（例如 user@server 或 SSH 配置别名），本地端口须为 1024–65535。' });
+      return;
+    }
+    if (scope === 'ssh' && (service.status !== 'running' || !service.hostPort)) {
+      res.status(409).json({ error: '资源没有运行中的宿主端口，暂时无法通过 SSH 隧道连接。请先启动资源。' });
+      return;
+    }
     const policy = await expireResourceExternalAccessIfNeeded(
       projectId,
       branch,
@@ -8862,13 +10028,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let host = service.id;
     let port = service.containerPort || resource.containerPort || resource.port;
     if (scope === 'external') {
-      if (!policy?.enabled || !policy.host || !policy.port) {
+      if (!policy?.enabled || !policy.host || !policy.port || isResourceExternalAccessExpired(policy)) {
         res.status(409).json({ error: '资源尚未开启公网访问，无法生成外部连接串' });
         return;
       }
       host = policy.host;
       port = policy.port;
     }
+    if (scope === 'ssh') { host = '127.0.0.1'; port = localPort; }
     if (!host || !port) {
       res.status(409).json({ error: `资源 "${resource.displayName}" 缺少可用 host/port` });
       return;
@@ -8883,7 +10050,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName: resource.displayName,
       result: 'success',
-      note: `${resource.displayName} 复制${scope === 'external' ? '外部' : '内部'}连接串`,
+      note: `${resource.displayName} 复制${scope === 'ssh' ? 'SSH 隧道' : scope === 'external' ? '外部' : '内部'}连接串`,
     });
     stateService.save();
     res.json({
@@ -8892,6 +10059,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       scope,
       connectionString,
       maskedConnectionString,
+      ...(scope === 'ssh' ? { localHost: '127.0.0.1', localPort, remotePort: service.hostPort, database: resolvedServiceDbName(service), sshCommand: `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:${localPort}:127.0.0.1:${service.hostPort} ${shq(sshTarget)}` } : {}),
       expiresAt: scope === 'external' ? policy?.expiresAt || null : null,
     });
   });
@@ -8911,7 +10079,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const logs = stateService.getActivityLogs(projectId)
       .filter((entry) => entry.branchId === branch.id && entry.resourceId === resourceId)
       .slice(0, limit);
-    res.json({ branchId: branch.id, resourceId, logs, total: logs.length });
+    res.json(logPayloadForHumanView(req, { branchId: branch.id, resourceId, logs, total: logs.length }));
   });
 
   router.get('/branches/:id/resources/:resourceId/permissions', async (req, res) => {
@@ -8971,7 +10139,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const logs = await containerService.getLogs(ctx.containerName, tail);
       const mask = shouldMask(req);
       const maskedLogs = maskSecretsText(logs, { mask });
-      res.json({
+      res.json(logPayloadForHumanView(req, {
         branchId: ctx.branch.id,
         projectId: ctx.projectId,
         resourceId: ctx.resourceId,
@@ -8981,10 +10149,108 @@ export function createBranchRouter(deps: RouterDeps): Router {
         tail,
         masked: mask,
         logs: maskedLogs,
-      });
+      }));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // Resolve before approval and again immediately before execution. Resource IDs,
+  // names and ports can be reused; the running Docker ID and credentials cannot.
+  async function resolveDatabaseApproval(args: Record<string, unknown> | undefined, mongo: boolean) {
+    if (isPreviewInstance()) throw new Error('预览实例不能执行数据库审批操作。');
+    const branch = stateService.getBranch(String(args?.branchId || ''));
+    if (!branch || !args?.projectId || branch.projectId !== args.projectId) throw new Error('项目与分支不匹配，未执行数据库操作。');
+    const resource = (await getBranchResourceSnapshot(branch)).find((item) => item.id === args?.resourceId);
+    if (!resource || resource.source !== 'infra' || resource.kind !== 'database') throw new Error('数据库资源不存在，未执行操作。');
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (mongo ? runtime !== 'mongodb' : runtime !== 'mysql' && runtime !== 'postgres') throw new Error('数据库类型与审批通道不匹配。');
+    const service = structuredClone(getUnifiedResourceInternalRaw(resource) as InfraService);
+    const frozenBranch = structuredClone(branch);
+    if (service.status !== 'running' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName || '')) throw new Error('数据库实例未运行，请启动后重新申请。');
+    const write = mongo ? buildMongoStructuredWrite(mongoJsonObject(args?.write, 'write'), mongoDatabaseForBranch(service, frozenBranch)) : null;
+    const sql = mongo ? '' : normalizeConsoleWrite(String(args?.sql || ''), runtime as SqlDataRuntime);
+    const credentials = mongo ? mongoCredentials(service, frozenBranch, write!.database)
+      : runtime === 'postgres' ? postgresClientCredentials(service, frozenBranch) : mysqlClientCredentials(service, frozenBranch);
+    const inspected = await shell.exec(`docker inspect --format '{"id":{{json .Id}},"running":{{json .State.Running}}}' ${routeShellQuote(service.containerName!)}`, { timeout: 5000 });
+    let container: { id?: string; running?: boolean } = {};
+    try { container = JSON.parse(inspected.stdout); } catch { /* fail closed */ }
+    if (inspected.exitCode !== 0 || container.running !== true || !/^[a-f0-9]{64}$/.test(container.id || '')) throw new Error('无法确认数据库实例身份，请重新申请。');
+    const identity = { version: 1, runtime, database: credentials.database, port: service.hostPort,
+      projectId: branch.projectId, branchId: branch.id, resourceId: resource.id,
+      serviceId: service.id, serviceCreatedAt: service.createdAt || '', containerId: container.id!,
+      user: credentials.user, authDatabase: 'authDatabase' in credentials ? credentials.authDatabase : '' };
+    const target = { ...identity, binding: databaseApprovalBinding(path.join(stateService.getCacheBase(), 'database-passes'), identity, credentials.password) };
+    return { branch: frozenBranch, resource, service, runtime, sql, write, credentials, target };
+  }
+
+  async function prepareDatabaseApproval(args: Record<string, unknown> | undefined, mongo: boolean): Promise<Record<string, unknown>> {
+    const resolved = await resolveDatabaseApproval(args, mongo);
+    return { ...args, databaseTarget: resolved.target };
+  }
+
+  function assertDatabaseApprovalTarget(approved: unknown, current: unknown): void {
+    if (!approved || JSON.stringify(approved) !== JSON.stringify(current)) {
+      throw new Error('数据库目标或连接凭据已变化，本次未执行。请重新提交并审批。');
+    }
+  }
+
+  operatorOpRegistry.register({
+    id: 'database.sql',
+    name: '执行项目数据库 SQL',
+    description: '项目 Agent 提交明确的项目、分支、数据库资源与 SQL；系统所有者批准后在同一连接执行，失败即停止。',
+    danger: 'destructive',
+    confirmText: '确认执行数据库 SQL',
+    estimatedSeconds: 10,
+    prepareArgs: (args) => prepareDatabaseApproval(args, false),
+    run: async ({ actor, log }, args) => {
+      const resolved = await resolveDatabaseApproval(args, false);
+      assertDatabaseApprovalTarget(args?.databaseTarget, resolved.target);
+      const { branch, resource, service, sql, credentials } = resolved;
+      const runtime = resolved.runtime as SqlDataRuntime;
+      log('info', `在 ${resource.displayName} 执行已批准的 SQL`);
+      try {
+        const result = await runSqlDataQuery(runtime, service, branch, sql, 120_000, false, credentials);
+        stateService.recordDestructiveOp({ type: 'purge-database', projectId: branch.projectId, summary: `已批准数据库 SQL：${resource.displayName}`, triggeredBy: actor });
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'success', note: '执行已批准的数据库 SQL' });
+        stateService.save();
+        return { summary: `${resource.displayName} SQL 执行完成`, details: result as unknown as Record<string, unknown> };
+      } catch (error) {
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'failed', note: `已批准 SQL 执行失败：${(error as Error).message}` });
+        stateService.save();
+        throw error;
+      }
+    },
+  });
+
+  operatorOpRegistry.register({
+    id: 'database.mongo',
+    name: '执行项目 MongoDB 结构化写入',
+    description: '项目 Agent 提交明确的数据库、collection、固定动作与 JSON；所有者批准本次请求后执行。',
+    danger: 'destructive',
+    confirmText: '确认执行 MongoDB 写入',
+    estimatedSeconds: 10,
+    prepareArgs: (args) => prepareDatabaseApproval(args, true),
+    run: async ({ actor, log }, args) => {
+      const resolved = await resolveDatabaseApproval(args, true);
+      assertDatabaseApprovalTarget(args?.databaseTarget, resolved.target);
+      const { branch, resource, service } = resolved;
+      const { action, database, collection, script } = resolved.write!;
+      // Pin Docker exec to the immutable ID, never a recycled container name.
+      service.containerName = resolved.target.containerId;
+      log('info', `在 ${resource.displayName} 执行已批准的 ${action}：${database}.${collection}`);
+      try {
+        const result = await runMongoJson(service, branch, script, database, 30_000, true, resolved.credentials as ReturnType<typeof mongoCredentials>);
+        stateService.recordDestructiveOp({ type: 'purge-database', projectId: branch.projectId, summary: `已批准 MongoDB ${action}：${database}.${collection}`, triggeredBy: actor });
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'success', note: `已批准 MongoDB ${action}：${database}.${collection}` });
+        stateService.save();
+        return { summary: `${resource.displayName} ${action} 执行完成`, details: { database, collection, action, result } };
+      } catch (error) {
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'failed', note: `已批准 MongoDB 写入失败：${(error as Error).message}` });
+        stateService.save();
+        throw error;
+      }
+    },
   });
 
   router.get('/branches/:id/resources/:resourceId/data/tables', async (req, res) => {
@@ -9060,6 +10326,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const sql = ctx.runtime === 'postgres'
         ? [
           'SELECT column_name, data_type, is_nullable,',
@@ -9073,7 +10343,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : [
           'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
           'FROM information_schema.COLUMNS',
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
+          `WHERE TABLE_SCHEMA = ${ref.schema ? sqlString(ref.schema) : 'DATABASE()'} AND TABLE_NAME = ${sqlString(ref.table)}`,
           'ORDER BY ORDINAL_POSITION',
         ].join(' ');
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
@@ -9087,7 +10357,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }));
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9105,11 +10382,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
+      // MySQL 的 schema 就是 database：允许请求方自带库名，等于让工作台读到同实例里
+      // 别的分支/项目的库（回落到服务自带账号时尤其明显）。执行前就挡住。
+      if (ctx.runtime === 'mysql' && ref.schema && ref.schema !== database) {
+        res.status(400).json({ error: foreignSchemaRefusal({ database, requestedSchema: ref.schema, table: ref.table }) });
+        return;
+      }
       const ident = sqlTableIdent(ctx.runtime, ref);
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      // 表在别的库/别台容器上时，1146 报的库名和面板显示的对不上，得把差异讲出来。
+      res.status(500).json({
+        error: explainMissingTable({
+          database: sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch),
+          requestedSchema: ref.schema,
+          table: ref.table,
+          rawError: (err as Error).message,
+        }),
+      });
     }
   });
 
@@ -9118,7 +10409,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!ctx) return;
     let sql = '';
     try {
-      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeReadOnlySql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9150,7 +10441,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${ctx.resourceName} 只读 SQL 失败：${(err as Error).message}`,
       });
       stateService.save();
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({ error: (err as Error).message, ...(err instanceof SqlConsoleExecutionError ? { partialResult: err.partialResult } : {}) });
     }
   });
 
@@ -9172,14 +10463,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     let sql = '';
     try {
-      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '');
+      sql = normalizeDangerousWriteSql(typeof req.body?.sql === 'string' ? req.body.sql : '', ctx.runtime);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
     }
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
-      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
+      const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql, 30_000, false);
       stateService.recordDestructiveOp({
         type: 'purge-database',
         projectId: ctx.projectId,
@@ -9210,7 +10501,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${ctx.resourceName} 写 SQL 失败：${(err as Error).message}`,
       });
       stateService.save();
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({ error: (err as Error).message, ...(err instanceof SqlConsoleExecutionError ? { partialResult: err.partialResult } : {}) });
     }
   });
 
@@ -9518,32 +10809,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const action = String(req.body?.action || '').trim();
-    let database = '';
-    let collection = '';
-    let script = '';
+    let action = '', database = '', collection = '', script = '';
     try {
-      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
-      collection = mongoCollectionFromRequest(req.body?.collection);
-      if (action === 'insertOne') {
-        const document = mongoJsonObject(req.body?.document, 'document');
-        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
-      } else if (action === 'updateMany') {
-        const filter = mongoJsonObject(req.body?.filter, 'filter');
-        const update = mongoJsonObject(req.body?.update, 'update');
-        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
-        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
-      } else if (action === 'deleteMany') {
-        const filter = mongoJsonObject(req.body?.filter, 'filter');
-        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
-        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
-      } else if (action === 'createCollection') {
-        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
-      } else if (action === 'dropCollection') {
-        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
-      } else {
-        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
-      }
+      ({ action, database, collection, script } = buildMongoStructuredWrite(req.body || {}, mongoDatabaseForBranch(ctx.service, ctx.branch)));
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -9606,7 +10874,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '只有数据库/缓存资源支持备份列表' });
       return;
     }
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     try {
       const database = resourceDatabaseForRuntime(runtime as ResourceDatabaseRuntime, rawInfra, branch);
       const backups = await listResourceBackupEntries(rawInfra, branch, runtime as ResourceDatabaseRuntime, database);
@@ -9639,7 +10907,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const actor = resolveActorFromRequest(req);
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId,
+        serviceId: rawInfra.id,
+        runtime: runtime === 'mongodb' ? 'mongodb' : runtime === 'redis' ? 'redis' : 'other',
+        kind: 'resource-backup',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? '资源正在轮换凭据，请稍后再备份。' : '无法登记资源备份作业。' });
+      return;
+    }
+    let maintenanceSucceeded = false;
     try {
       const backup = await createResourceBackupFile({
         runtime: runtime as ResourceDatabaseRuntime,
@@ -9652,6 +10934,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         reason: 'manual',
       });
       stateService.save();
+      maintenanceSucceeded = true;
       res.status(201).json({ branchId: branch.id, resourceId, backup });
     } catch (err) {
       stateService.appendActivityLog(projectId, {
@@ -9666,6 +10949,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
+    } finally {
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, maintenanceSucceeded ? 'completed' : 'failed');
     }
   });
 
@@ -9692,13 +10977,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
-    const acceptedNames = new Set([resource.displayName, resource.serviceName, (resource.raw as InfraService).id].filter(Boolean));
+    const acceptedNames = new Set([resource.displayName, resource.serviceName, (getUnifiedResourceInternalRaw(resource) as InfraService).id].filter(Boolean));
     if (!acceptedNames.has(confirmResourceName)) {
       res.status(409).json({ error: `恢复会覆盖当前库，请输入资源名确认：${resource.displayName}` });
       return;
     }
     const actor = resolveActorFromRequest(req);
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId,
+        serviceId: rawInfra.id,
+        runtime: runtime === 'mongodb' ? 'mongodb' : runtime === 'redis' ? 'redis' : 'other',
+        kind: 'resource-restore',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? '资源正在轮换凭据，请稍后再恢复。' : '无法登记资源恢复作业。' });
+      return;
+    }
+    let maintenanceSucceeded = false;
     try {
       const restored = await restoreResourceBackupFile({
         runtime: runtime as ResourceDatabaseRuntime,
@@ -9711,6 +11010,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         backupName: req.body?.backupName,
       });
       stateService.save();
+      maintenanceSucceeded = true;
       res.json({ branchId: branch.id, resourceId, restored });
     } catch (err) {
       stateService.appendActivityLog(projectId, {
@@ -9726,6 +11026,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       const message = (err as Error).message;
       res.status(message.includes('备份文件不属于当前资源或分支') ? 409 : 500).json({ error: message });
+    } finally {
+      await stateService.finishInfraMaintenanceJob(maintenanceJob.id, maintenanceSucceeded ? 'completed' : 'failed');
     }
   });
 
@@ -9765,7 +11067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const result = await clearResourceData({
         runtime: runtime as ResourceDatabaseRuntime,
-        service: resource.raw as InfraService,
+        service: getUnifiedResourceInternalRaw(resource) as InfraService,
         branch,
         resourceId,
         resourceName: resource.displayName,
@@ -9826,7 +11128,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const result = await deleteBranchDatabaseResource({
         runtime: runtime as ResourceDatabaseRuntime,
-        service: resource.raw as InfraService,
+        service: getUnifiedResourceInternalRaw(resource) as InfraService,
         branch,
         resourceId,
         resourceName: resource.displayName,
@@ -9849,7 +11151,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       const message = (err as Error).message;
-      res.status(message.includes('拒绝删除共享数据库') ? 409 : 500).json({ error: message });
+      const refused = Boolean((err as { cdsDeleteRefusal?: boolean }).cdsDeleteRefusal)
+        || message.includes('拒绝删除共享数据库');
+      res.status(refused ? 409 : 500).json({ error: message });
     }
   });
 
@@ -9879,7 +11183,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `${resource.runtime} 暂不支持凭据重置` });
       return;
     }
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
     const acceptedNames = new Set([resource.displayName, resource.serviceName, rawInfra.id].filter(Boolean));
     if (!acceptedNames.has(confirmResourceName)) {
@@ -9889,7 +11193,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const actor = resolveActorFromRequest(req);
     try {
       const result = await resetResourceBranchCredentials(runtime, rawInfra, branch);
+      const previous = stateService.getCustomEnvScope(branch.id);
       injectBranchEnv(branch, result.injectedEnv);
+      appendEnvironmentAudit(stateService, req, branch.id, 'set', previous, stateService.getCustomEnvScope(branch.id),
+        Object.keys(result.injectedEnv), { rotation: true });
       stateService.appendActivityLog(projectId, {
         type: 'resource-credentials-reset',
         branchId: branch.id,
@@ -9951,7 +11258,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `${resource.runtime} 暂不支持连接变量注入` });
       return;
     }
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     const connection = getExistingResourceConnectionEnv(runtime, rawInfra, branch);
     if (!connection) {
       res.status(409).json({ error: `当前分支没有独立 ${resource.runtime} 凭据；请先创建空库、克隆 main/prod，或重置凭据。` });
@@ -10045,6 +11352,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const mode = typeof req.body?.mode === 'string' ? req.body.mode : 'empty';
+    if (mode === 'reset') {
+      // reset 已撤下（2026-08-30）。它要 DROP DATABASE，安全性取决于「这个库是不是本分支的」，
+      // 而这个问题在 review 里被连续打穿四次：分支 env 可写、建库台账可伪造（mode=empty
+      // 接受任意库名 + CREATE DATABASE IF NOT EXISTS）、派生库名因 slug 截断会撞车、
+      // 兄弟分支可先用 mode=empty 把自己绑到本分支派生的名字上。每修一次就多一道拒绝，
+      // 下一轮又出新进路——所有权模型不存在，护栏就补不完。
+      // 重开条件见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md：建库时记录「这个库是我建的」+ 破坏性操作改用抗碰撞身份。
+      res.status(400).json({
+        error: 'reset_withdrawn',
+        message: 'mode=reset 已撤下：它的安全性依赖一个尚不存在的库所有权模型，连续四次被发现跨分支删除路径。分支库需要推倒重建时请由有权限的人直连数据库处理；可在 CDS 工程债务的 cds 模块查看重开条件。',
+      });
+      return;
+    }
     if (!['empty', 'clone-main', 'restore-backup', 'connect-existing'].includes(mode)) {
       res.status(400).json({ error: 'mode 必须是 empty / clone-main / restore-backup / connect-existing' });
       return;
@@ -10057,13 +11377,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!requireResourcePermission(req, res, cloneAction, branch, resource)) return;
     const runtime = resourceRuntimeKey(resource.runtime);
     const actor = resolveActorFromRequest(req);
-    const rawInfra = resource.raw as InfraService;
+    const rawInfra = getUnifiedResourceInternalRaw(resource) as InfraService;
     const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
       ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
       : resolvedServiceDbName(rawInfra) || 'app';
-    const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
-      .replace(/[^a-zA-Z0-9_]/g, '_')
-      .slice(0, 64);
+    // 项目共享基础库名。**刻意不看分支 scope**——见 projectBaseDatabaseForRuntime 的注释：
+    // baseDb 走 `*DatabaseForBranch`（分支 scope 优先），而分支 scope 里存的正是上一次
+    // 建好的分支库名，拿它当基础库判据会两头出错。
+    const projectBaseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
+      ? projectBaseDatabaseForRuntime(runtime, rawInfra)
+      : (resolvedServiceDbName(rawInfra) || 'app');
+    const sanitizeDbName = (v: string) => String(v).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    const defaultTarget = branchDatabaseName(baseDb, branch);
+    const targetDatabase = sanitizeDbName(String(req.body?.targetDatabase || defaultTarget));
+
     const strategy = mode === 'connect-existing'
       ? 'external-connection'
       : mode === 'restore-backup'
@@ -10071,12 +11398,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : mode === 'clone-main'
           ? (runtime === 'mysql' ? 'mysqldump' : 'background-copy')
           : 'branch-database';
+    if (!stateService.canStartInfraMaintenance(projectId, rawInfra.id)) {
+      res.status(409).json({ error: '资源正在轮换凭据，暂不能创建数据库克隆或恢复任务。' });
+      return;
+    }
     const task = stateService.addResourceCloneTask({
       projectId,
       branchId: branch.id,
       resourceId,
       runtime,
-      mode: mode as 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing',
+      mode: mode as 'empty' | 'reset' | 'clone-main' | 'restore-backup' | 'connect-existing',
       strategy,
       status: mode === 'empty' ? 'running' : 'pending',
       progress: mode === 'empty' ? 20 : 5,
@@ -10089,6 +11420,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       actor,
       log: `[${new Date().toISOString()}] ${actor} created ${mode} task for ${resource.displayName}`,
     });
+    // active/pending 台账必须先于任何数据库 mutation 耐久落盘；否则进程崩溃或轮换并发
+    // 会出现「任务已经动库，撤销门禁却看不见」的窗口。
+    stateService.save();
+    await stateService.flush();
 
     let resultTask = task;
     try {
@@ -10099,10 +11434,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             throw new Error(`MySQL 服务当前未运行（status=${rawInfra.status}）`);
           }
           branchDb = await createMysqlBranchDatabase(rawInfra, branch, targetDatabase);
-        } else if (runtime === 'postgres') {
-          branchDb = await createPostgresBranchDatabase(rawInfra, branch, targetDatabase);
-        } else if (runtime === 'mongodb') {
-          branchDb = await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
+        } else if (runtime === 'postgres' || runtime === 'mongodb') {
+          branchDb = runtime === 'postgres'
+            ? await createPostgresBranchDatabase(rawInfra, branch, targetDatabase)
+            : await createMongoBranchDatabase(rawInfra, branch, targetDatabase);
         } else {
           throw new Error(`${resource.runtime} 暂不支持创建分支独立数据库`);
         }
@@ -10381,6 +11716,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     newHead: string,
     send: (step: string, status: string, title: string) => void,
     res: import('express').Response,
+    shell: IShellExecutor,
+    maintenanceOwner: SelfMaintenanceOwner,
   ): Promise<Partial<SelfUpdateTimingBreakdown>> => {
     const webBuildOverallStartedAt = Date.now();
     const finishWebBuildTiming = (
@@ -10464,6 +11801,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return finishWebBuildTiming(true, 'web-input-match');
     }
     send('web-build', 'running', `正在候选目录重建 web/dist (日志: cds/.cds/web-build.log)`);
+    const cleanup = maintenanceArtifactCleanup(maintenanceOwner, 'web');
     try {
       const buildStartedAt = Date.now();
       // 用户反馈 2026-05-06:"network error 用时 2m12s" — 中间层(浏览器/nginx)
@@ -10508,7 +11846,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 禁止 Vite 直接清空在线 web/dist。候选目录必须与 dist 同父目录，
           // 这样后续 rename 是同文件系统原子操作。构建失败期间旧 index 和旧 chunk
           // 始终保持可读。
-          try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
+          await cleanup.remove(webDistNext);
           const wBuild = await shell.exec(
             WEB_DIST_BUILD_COMMAND,
             { cwd: webDir, timeout: 300_000 },
@@ -10551,11 +11889,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
               abortWebBuild(message);
             }
             try {
-              replaceDirectoriesAtomically([{
+              await replaceDirectoriesAtomically([{
                 currentPath: webDist,
                 nextPath: webDistNext,
                 previousPath: webDistPrevious,
-              }]);
+              }], cleanup);
             } catch (err) {
               const message = `web/dist 原子切换失败，已保留旧产物: ${(err as Error).message}`;
               send('web-build', 'error', message);
@@ -10590,7 +11928,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       } finally {
         clearInterval(heartbeat);
-        try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
+        await cleanup.remove(webDistNext);
       }
     } catch (err) {
       if (!res.writableEnded) {
@@ -10696,8 +12034,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // + plaintext. Lock it down: only cdsp_ project key matching this
     // project, or human cookie auth, may reveal.
     const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
-    const cookieAuth = (req as any)._cdsCookieAuth === true;
-    const ownerOk = (projKey && projKey.projectId === projectId) || cookieAuth;
+    const ownerOk = (projKey && projKey.projectId === projectId) || isHumanSystemOwner(req);
     if (!ownerOk) {
       res.status(403).json({
         error: 'forbidden_secret_reveal',
@@ -10746,76 +12083,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(projectId);
 
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
-    const cdsEnv = stateService.getCdsEnvVars(projectId);
-    const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = project?.inheritGlobalEnv === true
-      ? stateService.getCustomEnvScope('_global')
-      : {};
-    const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
-    const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
-    const derivedReserved: Record<string, string> = {};
-    if (project) {
-      derivedReserved.CDS_PROJECT_ID = project.id;
-      derivedReserved.CDS_PROJECT_SLUG = project.slug;
-    }
-    const customLayers: EnvLayer[] = [
-      { source: 'cds-builtin' as const, env: cdsEnv },
-      { source: 'mirror' as const, env: mirrorEnv },
-      { source: 'global' as const, env: rawGlobal },
-      { source: 'project' as const, env: rawProjectScoped },
-      { source: 'branch' as const, env: rawBranchScoped },
-      // 项目身份保留 key 放最后 —— 即便 global/project 写了同名 key,生效的也是系统派生真值
-      { source: 'cds-derived' as const, env: derivedReserved },
-    ].filter((l) => Object.keys(l.env).length > 0);
-
+    // 分层装配抽到 branch-env-layers（与引用分区共用一份，plan.cds.service-relations 第三批）
+    const resolution = resolveBranchEnvLayers(stateService, entry, {
+      jwtIssuer: config.jwt.issuer,
+      previewHost: config.previewDomain || config.rootDomains?.[0],
+    });
+    const customLayers = resolution.customLayers;
     const envLayers = customLayers.map((l) => ({
       source: l.source,
       count: Object.keys(l.env).length,
       keys: Object.keys(l.env).sort(),
     }));
-
-    // ── 每个有效 profile(项目底座 + 分支临时额外服务)的逐 key 溯源 ──
-    const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
-    const profiles = effectiveProfiles.map((baseline) => {
-      const isExtra = extraIds.has(baseline.id);
+    const profiles = resolution.profiles.map((r) => {
+      const { baseline, effective, isExtra, envError } = r;
       const override = entry.profileOverrides?.[baseline.id];
-      const effective = resolveEffectiveProfile(baseline, entry);
-      // profile env 三层拆分,相对顺序与部署合并链一致:
-      // baseline.env → override.env(applyProfileOverride) → deployModes[mode].env(resolveProfileWithMode)
-      const activeMode = override?.activeDeployMode !== undefined
-        ? override.activeDeployMode
-        : baseline.activeDeployMode;
-      const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
-      const profileLayers: EnvLayer[] = [
-        { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
-        { source: 'branch-override' as const, env: override?.env || {} },
-        { source: 'deploy-mode' as const, env: modeEnv || {} },
-      ].filter((l) => Object.keys(l.env).length > 0);
-
-      let envProvenance: EnvKeyProvenance[] = [];
-      let envError: string | undefined;
-      try {
-        const resolved = resolveProfileRuntimeEnvWithProvenance(
-          entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
-          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
-          {
-            jwtIssuer: config.jwt.issuer,
-            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
-            publishedEntrypoints: resolveBranchEntrypointsEnv(
-              entry,
-              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
-            ),
-          },
-        );
-        // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
-        const maskedEnv = maskSecrets(resolved.env);
-        envProvenance = resolved.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
-      } catch (err) {
-        // 缺模板值等解析失败:不 fail 整个端点,把缺口显性化(这正是检查器要暴露的问题)
-        envError = (err as Error).message;
-      }
+      const maskedEnv = maskSecrets(Object.fromEntries(r.provenance.map((p) => [p.key, p.value])));
+      const envProvenance = r.provenance.map((p) => ({ ...p, value: maskedEnv[p.key] ?? p.value }));
       return {
         profileId: baseline.id,
         profileName: baseline.name || baseline.id,
@@ -10828,6 +12112,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dbScope: effective.dbScope || 'shared',
         dbScopeSource: override?.dbScope !== undefined ? 'branch-override' : (baseline.dbScope !== undefined ? 'baseline' : 'default'),
         envProvenance,
+        // 收敛 2：分支独立库没跟随的连接串（库名段指向别的库），配置检查器标「连接串未跟随」
+        dbUrlUnfollowed: r.perBranchDb?.unfollowedUrls ?? [],
         ...(envError ? { envError } : {}),
       };
     });
@@ -10919,6 +12205,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `来源分支 "${source.id}" 属于项目 "${source.projectId}",不能跨项目拷贝配置(profileId 引用与隔离语义均为项目内)` });
       return;
     }
+    if (source.excludedProjectProfileIds?.length || entry.excludedProjectProfileIds?.length) {
+      res.status(409).json({ error: '隔离测试分支不能直接复制配置，请沿本分支隔离入口调整' }); return;
+    }
+    try { stateService.assertProfileStorageDeclarationsPreserved([{...entry,
+      profileOverrides:structuredClone(source.profileOverrides || {}),extraProfiles:structuredClone(source.extraProfiles || [])}]); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     // 拷贝前自动快照(含分支层),误拷可回滚
     const snapshot = stateService.createConfigSnapshot({
       trigger: 'pre-destructive',
@@ -11021,6 +12313,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const statsMap = await containerService.getServiceStats(runningContainers);
 
+    // 抽屉打开期间这里是 5s 一帧，比后台采样器（45s）密得多。两路都写进同一个
+    // 历史存储：读的一侧只认 container-metrics-history，不存在「谁的数据更新」的问题。
+    const sampledAt = Date.now();
+    for (const [containerName, stat] of statsMap) {
+      recordContainerSample(containerName, {
+        containerId: stat.id,
+        cpuPercent: stat.cpuPercent,
+        memUsedBytes: stat.memUsedBytes,
+        memLimitBytes: stat.memLimitBytes,
+        netRxBytes: stat.netRxBytes,
+        netTxBytes: stat.netTxBytes,
+        blockReadBytes: stat.blockReadBytes,
+        blockWriteBytes: stat.blockWriteBytes,
+      }, sampledAt);
+    }
+
     const result = services.map(([profileId, svc]) => ({
       profileId,
       containerName: svc.containerName,
@@ -11036,6 +12344,71 @@ export function createBranchRouter(deps: RouterDeps): Router {
       services: result,
       runningCount: runningContainers.length,
       totalCount: services.length,
+    });
+  });
+
+  // GET /api/branches/:id/metrics/series — 该分支各 service 的历史序列（2026-09-01）
+  //
+  // 查询契约借 Netdata 的形状：调用方声明「多长的窗口、要多少个点、怎么聚合」，
+  // 降采样在服务端做完再下发。以前是前端每 5s 打一次瞬时值、自己在 React state
+  // 里攒 60 点 ring —— 关掉抽屉就全丢，窗口最长只有 5 分钟，图上画不了部署竖线
+  // （部署几乎不会正好落在那 5 分钟里）。
+  //
+  //   after   窗口起点。负数 = 相对现在往前多少秒（-3600 = 近一小时）；正数 = 毫秒时间戳
+  //   before  窗口终点，省略或 0 = 现在
+  //   points  期望点数（默认 120，上限 1000）；实际点数不超过它
+  //   group   average（看趋势，默认）| max（找毛刺）
+  //
+  // 数据来自 container-metrics-history：45s 常驻采样器 + 抽屉打开时的 5s 端点
+  // 两路都往那里写，所以抽屉没开的时段也有基线，打开就有图，不用等攒点。
+  // 历史在内存里、进程重启即丢——这是观测视图不是审计账本。
+  router.get('/branches/:id/metrics/series', async (req, res) => {
+    const { id } = req.params;
+    const branch = stateService.getBranch(id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const m2 = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (m2) {
+      res.status(m2.status).json(m2.body);
+      return;
+    }
+
+    const num = (raw: unknown, fallback: number): number => {
+      const v = Number.parseInt(String(raw ?? ''), 10);
+      return Number.isFinite(v) ? v : fallback;
+    };
+    const services = Object.entries(branch.services || {});
+    const byContainer = new Map(services.map(([profileId, svc]) => [svc.containerName, profileId]));
+
+    const seriesQuery = {
+      after: num(req.query.after, -1800),
+      before: num(req.query.before, 0),
+      points: num(req.query.points, 120),
+    };
+    // 预览实例：没有容器可采，从父实例镜像里回放（点位锚到当下）；镜像里没有这些容器就走原路（空图）
+    const replayed = isPreviewInstance() ? replayPreviewMirrorSeries([...byContainer.keys()], seriesQuery) : null;
+    const result = replayed ?? queryContainerSeries({
+      containers: [...byContainer.keys()],
+      ...seriesQuery,
+      group: req.query.group === 'max' ? 'max' : 'average',
+    });
+
+    res.json({
+      branchId: branch.id,
+      mirror: replayed ? 'parent-cds' : undefined,
+      after: result.after,
+      before: result.before,
+      groupSeconds: result.groupSeconds,
+      group: result.group,
+      // 按 profileId 下发，前端不必再认容器名
+      services: services.map(([profileId, svc]) => ({
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        points: result.series[svc.containerName] ?? [],
+      })),
     });
   });
 
@@ -11126,7 +12499,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       branchId: branch.id,
       branchStatus: branch.status,
       diagnosisSource: branch.lastDeploymentRunId && deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
@@ -11136,7 +12509,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
         : undefined,
       failedServices,
-    });
+    }));
   });
 
   router.delete('/branches/:id', async (req, res) => {
@@ -11152,6 +12525,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
     }
+
+    if (entry.archive && triggerFromRequest(req) === 'webhook') {
+      res.status(409).json({ error: 'archived_branch_auto_delete_refused', message: '分支已归档，自动删除由归档保留策略统一处理。' }); return;
+    }
+    try { stateService.assertBranchStorageRemovalAllowed(id); }
+    catch (error) { res.status(409).json({error:'storage_retained_branch_delete_refused',message:(error as Error).message}); return; }
 
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const actor = resolveActorFromRequest(req);
@@ -11170,12 +12549,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (branchOperationCoordinator && !branchOperationLease) return;
     const deleteStartedAt = nowIso();
     const previousDeleteIntent = {
+      deleting: entry.deleting,
       status: entry.status,
       lastStoppedAt: entry.lastStoppedAt,
       lastStopSource: entry.lastStopSource,
       lastStopReason: entry.lastStopReason,
     };
     try {
+      await persistBranchCancellation(entry, branchOperationLease);
       entry.status = 'stopping';
       // 克隆完成栅栏（Codex 第十六轮 P1）：先置删除标记再遍历快照台账。
       // 复制集的在途克隆完成回调查到该标记即自弃（drop 刚克隆的库、不入账），
@@ -11270,18 +12651,58 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 容器 + 留存一份数据。必须在删台账前逐个 drop。best-effort：单个失败记
       // 服务器事件不阻断删除主流程（dropReplicaDb 自带 cds-rsdb-/_rs_ 命名双保险，
       // 不会误删共享主库）。
-      for (const snapshot of entry.replicaDbSnapshots ?? []) {
+      // 数据台账（收敛 3，2026-09-03）：删分支**默认保留**派生库——隔离库与分支独立库转为
+      // 台账里的孤儿条目，随时可备份 / 丢弃；只有请求体里明确勾选丢弃、且过了「演练验证过的
+      // 备份或复述库名」门禁的才真删。级联清理只对这些条目跑（下面沿用既有的墓碑 / 重试逻辑）。
+      const dbChoices: BranchDbDeleteChoice[] = Array.isArray((req.body as any)?.dbs) ? (req.body as any).dbs : [];
+      const dbSettlement = settleBranchDbsOnDelete(stateService, entry, dbChoices, new Date());
+      const dropSnapshotIds = new Set(dbSettlement.toDrop.filter((e) => e.snapshotId).map((e) => e.snapshotId!));
+      for (const derived of dbSettlement.toDrop.filter((e) => !e.snapshotId)) {
+        try {
+          const rawInfra = stateService.getInfraServicesForProject(entry.projectId)
+            .find((svc) => svc.containerName === derived.infraContainer || svc.id === derived.infraId);
+          if (!rawInfra) throw new Error(`找不到承载 ${derived.dbName} 的基础设施实例`);
+          // 记录里的密码常是 ${CDS_...} 模板，按项目环境变量解析后再连库（2026-09-04 真实分支复验：模板当字面量 → 丢弃静默失败）
+          await realDbLedgerOps.dropDb(derived.engine, resolveInfraForDb(stateService, rawInfra), derived);
+          markDropped(stateService, derived, actor, new Date());
+        } catch (err) {
+          // 丢弃失败：库还在、分支没了——如实转孤儿条目，别让它顶着一个已删分支的「活跃」标签
+          try {
+            stateService.upsertDbLedgerEntry({ ...derived, status: 'orphaned', orphanedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), note: `删分支时丢弃失败：${(err as Error).message}` });
+            stateService.save();
+          } catch { /* 记账尽力而为 */ }
+          serverEventLogStore?.record({
+            category: 'container', severity: 'warn', source: 'branch-delete', action: 'branch.delete.derived-db-drop-failed',
+            message: `删分支丢弃分支独立库失败: ${derived.dbName} — ${(err as Error).message}（条目保留为孤儿，可在数据台账重试）`,
+            projectId: entry.projectId, branchId: entry.id, requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null, ...operationAuditFields,
+            details: { dbName: derived.dbName, engine: derived.engine },
+          });
+        }
+      }
+      if (dbSettlement.kept.length > 0 || dbSettlement.refused.length > 0) {
+        serverEventLogStore?.record({
+          category: 'container', severity: 'info', source: 'branch-delete', action: 'branch.delete.derived-db-kept',
+          message: `删分支保留 ${dbSettlement.kept.length} 个派生库为台账孤儿条目${dbSettlement.refused.length ? `；${dbSettlement.refused.length} 个丢弃请求被门禁拒绝（${dbSettlement.refused.map((r) => r.dbName).join(', ')}）` : ''}`,
+          projectId: entry.projectId, branchId: entry.id, requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null, ...operationAuditFields,
+          details: { kept: dbSettlement.kept.map((e) => e.dbName), refused: dbSettlement.refused },
+        });
+      }
+      for (const snapshot of (entry.replicaDbSnapshots ?? []).filter((s) => dropSnapshotIds.has(s.id))) {
         try {
           const snapshotInfra = stateService.getInfraServicesForProject(entry.projectId)
             .find((svc) => svc.containerName === snapshot.infraContainer);
           await dropReplicaDb(snapshot, snapshotInfra?.env || {});
+          const ledgerEntry = dbSettlement.toDrop.find((e) => e.snapshotId === snapshot.id);
+          if (ledgerEntry) markDropped(stateService, ledgerEntry, actor, new Date());
         } catch (err) {
           // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
           // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按
           // 墓碑持续重试 rm -f -v（removeVolumes 标记，连匿名数据卷一并删——
           // 卷里装的是生产派生克隆，只删容器会让它永久失去追踪，Codex 第三十二轮 P1）。
           // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
-          // 记事件供人工收口（残留台账见 doc/debt.cds.md「CDS 复制集模式工程债务」 #19）。
+          // 记事件供人工收口（残留台账见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 复制集模式工程债务」 #19）。
           if (snapshot.dedicatedContainer) {
             try {
               stateService.addContainerTeardownTombstones([{
@@ -11320,7 +12741,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
       // 下面 removeBranch 一并清除,无需单独处理。
-      await containerService.removeBranchNetwork(id).catch(() => { /* best-effort */ });
+      await containerService.removeBranchNetwork(id, entry.replacementNetworks).catch(() => { /* best-effort */ });
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
@@ -11450,6 +12871,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/delete`;
         let proxied = false;
+        let retainedStorageRefusal = false;
         try {
           const upstream = await fetch(upstreamUrl, {
             method: 'POST',
@@ -11474,10 +12896,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
             });
           } else {
             const errText = await upstream.text().catch(() => '');
+            if (upstream.status === 409) {
+              try { retainedStorageRefusal = JSON.parse(errText).error === 'storage_retained_branch_delete_refused'; } catch { /* ordinary legacy rejection */ }
+            }
             sendSSE(res, 'step', {
               step: 'dispatch',
               status: 'warning',
-              title: `执行器拒绝删除 (HTTP ${upstream.status})，仍继续清理主节点状态`,
+              title: retainedStorageRefusal ? '执行器保留私有存储，主节点停止删除' : `执行器拒绝删除 (HTTP ${upstream.status})，仍继续清理主节点状态`,
               log: errText.slice(0, 200),
             });
           }
@@ -11488,6 +12913,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
             title: `无法连接执行器 ${remoteExecutor.id}，仍继续清理主节点状态`,
             log: (err as Error).message,
           });
+        }
+
+        if (retainedStorageRefusal) {
+          branchOperationFinalStatus = 'failed';
+          entry.status = previousDeleteIntent.status;
+          entry.deleting = previousDeleteIntent.deleting;
+          entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
+          entry.lastStopSource = previousDeleteIntent.lastStopSource;
+          entry.lastStopReason = previousDeleteIntent.lastStopReason;
+          stateService.save();
+          await stateService.flush();
+          sendSSE(res,'error',{code:'storage_retained_branch_delete_refused',message:'执行器保留了私有存储，主节点保留原分支配置；请改用停止。'});
+          return;
         }
 
         // Drop master-side state unconditionally — if the executor is
@@ -11517,7 +12955,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
         try {
-          await containerService.remove(svc.containerName, {
+          await containerService.removeRuntimeGroup(svc, {
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -11611,6 +13049,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  function deploymentSourceRecovery(entry: BranchEntry, assertCurrent: () => void): DeploymentSourceRecoveryPolicy {
+    const projectId = entry.projectId || 'default', project = stateService.getProject(projectId);
+    const repoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    const base = config.worktreeBase, branch = entry.branch, directory = entry.worktreePath;
+    const check = () => {
+      assertCurrent();
+      if (stateService.getBranch(entry.id) !== entry || stateService.getProject(projectId) !== project
+        || (entry.projectId || 'default') !== projectId || entry.branch !== branch || entry.worktreePath !== directory
+        || config.worktreeBase !== base || stateService.getProjectRepoRoot(projectId, config.repoRoot) !== repoRoot) {
+        throw new BranchOperationSupersededError('', entry.id, 'deployment-source-owner');
+      }
+    };
+    check();
+    if (!project || path.resolve(directory) !== path.resolve(WorktreeService.worktreePathFor(base, projectId, entry.id))) {
+      return { kind: 'existing-only' };
+    }
+    return { kind: 'managed-missing', worktreeBase: base, projectId, branchId: entry.id, assertCurrent: check };
+  }
+
+  // canonical缺失时在同项目仓库读取元数据；切换源码模式也不能 checkout/reset 共享仓库。
+  function metadataOnlyGitRepository(entry: BranchEntry): string | undefined {
+    try { fs.lstatSync(entry.worktreePath); return undefined; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    return stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+  }
+
   // ── Pull latest code ──
 
   router.post('/branches/:id/pull', async (req, res) => {
@@ -11620,10 +13084,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
     try {
       const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const metadataRepo = metadataOnlyGitRepository(entry);
       const result = isSyntheticCdsManagedRuntimeBranch(entry, project)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : metadataRepo
+        ? await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, undefined, metadataRepo)
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'pullCount');
@@ -11683,21 +13154,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     try {
-      const profile = resolveEffectiveProfile(baseProfile, entry);
-      const result = await containerService.runProfileCommand(
-        entry,
-        profile,
-        rawCommand,
-        undefined,
-        getMergedEnv(entry.projectId || 'default', entry.id),
-        {
-          requestId,
-          operationId: branchOperationLease?.operationId || undefined,
-          actor: resolveActorFromRequest(req),
-          trigger: triggerFromRequest(req),
-          timeoutMs: profile.buildTimeout ?? 600_000,
-        },
-      );
+      const profile = structuredClone(resolveEffectiveProfile(baseProfile, entry));
+      const customEnv = {...getMergedEnv(entry.projectId || 'default', entry.id)};
+      const originalProject = stateService.getProject(entry.projectId || 'default');
+      const manualFacts = () => JSON.stringify({
+        branch: [entry.id, entry.projectId, entry.branch, entry.worktreePath, entry.executorId],
+        config: [config.repoRoot, config.storageInstanceId],
+        profile: stateService.getEffectiveProfilesForBranch(entry).find(row => row.id === profile.id),
+        env: getMergedEnv(entry.projectId || 'default', entry.id),
+      });
+      const acceptedFacts = manualFacts();
+      const assertCurrent = (step: string) => {
+        assertBranchOperationCurrent(branchOperationLease, step);
+        if (req.aborted || res.destroyed || originalProject?.paused || stateService.getBranch(id) !== entry
+          || stateService.getProject(entry.projectId || 'default') !== originalProject
+          || manualFacts() !== acceptedFacts) throw new Error('手动迁移受理的分支或配置已变化，已拒绝继续');
+      };
+      const run = async (runEntry: BranchEntry, runProfile: BuildProfile) => {
+        assertCurrent('manual migration before run');
+        const result = await containerService.runProfileCommand(runEntry, runProfile, rawCommand, undefined, customEnv, {
+          requestId, operationId: branchOperationLease?.operationId || undefined,
+          actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req),
+          timeoutMs: runProfile.buildTimeout ?? 600_000, assertCurrent,
+        });
+        assertCurrent('manual migration after run');
+        return result;
+      };
+      assertProfileStorageBoundary(profile, entry.worktreePath);
+      const result = deploymentNeedsSourceCheckout([profile])
+        ? await worktreePathActivity.withClaim([entry.worktreePath, WorktreeService.deploymentSourceRootFor(entry.worktreePath)], async () => {
+          assertCurrent('manual migration before local HEAD');
+          // Explicit manual migration means this accepted checkout HEAD, never remote latest.
+          const head = await shell.exec("git rev-parse --verify 'HEAD^{commit}'", {
+            cwd: entry.worktreePath, timeout: 3000,
+            beforeStart: () => assertCurrent('manual migration HEAD slot'),
+          });
+          assertCurrent('manual migration after local HEAD');
+          const acceptedHead = head.stdout.trim().toLowerCase();
+          if (head.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(acceptedHead)) throw new Error('当前分支提交无法确认，已拒绝手动迁移');
+          const source = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, acceptedHead);
+          assertCurrent('manual migration source prepared');
+          if (source.afterFull !== acceptedHead) throw new Error('手动迁移源码未匹配受理提交');
+          const sourceEntry = {...entry, worktreePath: source.sourcePath, githubCommitSha: acceptedHead, ciTargetSha: undefined};
+          const [acceptedProfile] = await containerService.preflightDeploymentStorage(sourceEntry, [profile], {
+            sourceCommitSha: acceptedHead, customEnv, operationId: branchOperationLease?.operationId || undefined, assertCurrent,
+          });
+          assertCurrent('manual migration storage accepted');
+          return run(sourceEntry, acceptedProfile);
+        }) : await run({...entry}, profile);
       const output = maskSecretsText(combinedOutput(result), { mask: true });
       completeBranchOperation(branchOperationLease, result.exitCode === 0 ? 'completed' : 'failed');
       res.status(result.exitCode === 0 ? 200 : 500).json({
@@ -11738,6 +13242,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(plan.status).json({ error: plan.error, message: plan.message });
       return;
     }
+
+    const project = stateService.getProject(entry.projectId || 'default');
+    let authorization: string | undefined;
+    try {
+      const installationId = entry.githubInstallationId || project?.githubInstallationId;
+      const token = githubApp && installationId
+        ? await githubApp.getInstallationToken(installationId)
+        : stateService.getGithubDeviceAuth(project?.githubCredentialUserId)?.token;
+      authorization = token ? `Bearer ${token}` : undefined;
+    } catch {
+      res.status(503).json({ error: 'ci_evidence_unavailable', message: '暂时无法核对项目的 GitHub 回执，未认领镜像；请稍后重试。' }); return;
+    }
+    const evidence = await verifyPrebuiltWorkflowRun({
+      repository: entry.githubRepoFullName || project?.githubRepoFullName || '',
+      branch: entry.branch, commitSha, workflowRunUrl, authorization,
+    });
+    if (!evidence.ok) {
+      res.status(evidence.status).json({ error: evidence.error, message: evidence.message }); return;
+    }
+    const current = stateService.getBranch(id);
+    if (!current || current !== entry || current.ciTargetSha !== plan.previous.ciTargetSha
+      || current.githubCommitSha !== plan.previous.githubCommitSha) {
+      res.status(409).json({ error: 'ci_target_changed', message: '核对期间分支目标已更新，未覆盖新状态；请重试。' }); return;
+    }
+
+    plan.patch.ciWorkflowRunUrl = evidence.workflowRunUrl;
+    plan.noChange = plan.noChange && plan.previous.ciWorkflowRunUrl === evidence.workflowRunUrl;
 
     if (!dryRun) {
       stateService.updateBranchGithubMeta(id, plan.patch);
@@ -11810,6 +13341,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    if (!guardStandbyRuntimeSnapshot(req, res, entry, 'deploy')) return;
+    if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
+      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
+      return;
+    }
+
     // P4 Part 18 (G1.5): same clone-ready guard as POST /branches.
     // Deploy uses worktree pull/create which would fail with a
     // cryptic git error if the target project's clone isn't ready.
@@ -11847,11 +13384,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
     const requestedVersionId = typeof req.body?.versionId === 'string' ? req.body.versionId.trim() : '';
-    const requestedCommitForPlan = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+    let requestedCommitForPlan = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    let managedPlan: ManagedProjectPlan | null = null;
-    if (!requestedVersionId && managedProjectService) {
+    const replayInput = branchOperationCoordinator?.getDeploymentInputForReplay(buildBranchOperationRequest(req, entry, {
+      kind: 'deploy', commitSha: requestedCommitForPlan, commitPinned: Boolean(requestedCommitForPlan),
+      versionId: requestedVersionId || null, hasOneShotOptions: forceDeployWhilePaused || Boolean(req.query.ignoreRequired || req.body?.targetExecutorId), source: 'api.deploy-branch',
+    }));
+    let managedPlan: ManagedProjectPlan | null = replayInput?.managedPlan || null;
+    if (!replayInput && !requestedVersionId && managedProjectService) {
       try {
         managedPlan = managedProjectService.planForBranch(entry, requestedCommitForPlan);
       } catch (err) {
@@ -11863,7 +13404,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
     }
-    const currentProfiles = managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry);
+    if (!replayInput && !requestedVersionId) {
+      if (!await normalizeArtifactRequestTarget(req, res, entry, managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry))) return;
+      requestedCommitForPlan = typeof req.body?.commitSha === 'string' ? req.body.commitSha : undefined;
+    }
+    const deploymentInput = replayInput || captureDeploymentInput(entry, managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry),
+      getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), managedPlan, requestedCommitForPlan);
+    if (!replayInput) deploymentInput.environmentAuditIds = freezeEnvironmentAudit(
+      stateService, entry.projectId || 'default', entry.id, deploymentInput.configuredEnv, deploymentInput.profiles);
+    const currentProfiles = deploymentInput.profiles;
+    const inputBranch = () => deploymentInputBranch(deploymentInput, entry);
+
+    // Agent 极速版门禁（2026-09-08）：项目开了 agentPrebuiltOnly，机器凭据发起的部署只要有一个
+    // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
+    // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）。项目按 `entry.projectId || 'default'`
+    // 取：没存 projectId 的老分支归 default 项目，不能因 deployProject 为空就漏判（Codex 第二轮 P1）。
+    // 判的对象是下面真正要部署的 `profiles`（带 versionId 时是版本物化后的清单，全是不可变镜像，
+    // 不编译源码），不是 currentProfiles——否则分支基线已切回源码模式时，重放一个合规的历史版本也会被
+    // 误拦（Codex 第七轮 P2）。
+    const gateProject = stateService.getProject(entry.projectId || 'default');
+    deploymentInput.agentRequest ||= isAgentGatedRequest(req);
+    const agentPrebuiltGated = Boolean(deploymentInput.agentPrebuiltGated || (gateProject && isAgentPrebuiltOnly(gateProject) && deploymentInput.agentRequest));
+    deploymentInput.agentPrebuiltGated = agentPrebuiltGated;
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -11885,14 +13447,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     let profiles = selectedDeploymentVersion
-      ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
+      ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles, inputBranch())
       : currentProfiles;
-    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
-    let deploymentConfigHash = selectedDeploymentVersion?.configHash
+    if (selectedDeploymentVersion) {
+      // 准入和执行必须核验同一份历史产物；当前分支模式不得替换版本的固定镜像。
+      deploymentInput.profiles = profiles;
+      deploymentInput.profileOverrides = undefined;
+      deploymentInput.targetCommitSha = /^[0-9a-f]{40}$/i.test(selectedDeploymentVersion.commitSha)
+        ? selectedDeploymentVersion.commitSha.toLowerCase() : undefined;
+    }
+    if (!replayInput && !await resolveUnpinnedArtifactTarget(req, res, entry, deploymentInput, undefined, requestedVersionId)) return;
+    const effectiveProfilesForHash = currentProfiles.map((profile) => { const effective = resolveEffectiveProfile(profile, inputBranch()); return effective.prebuiltImage ? withoutSourceFallback(effective) : effective; });
+    let deploymentConfigHash = deploymentInput.configHash || selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
         effectiveProfilesForHash,
-        getMergedEnv(entry.projectId || 'default', entry.id),
+        getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
       );
+    deploymentInput.configHash = deploymentConfigHash;
     // 归属远端执行器但无法确认其在线时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline
     // executor removals」+ Bugbot「Missing executor skips offline guard」）：round-17/27 只在「注册表里查到该
     // executor 且离线」时挡，漏了「executorId 指向远端但注册表查不到（已注销/陈旧归属）或 registry 不可用」——
@@ -11940,28 +13511,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : undefined;
       const remoteOwned = !!owningRemoteNode; // 在线远端 owned（离线已被上方护栏挡下）
       if (!remoteOwned) {
-        const cleanupRun = await deploymentRunService?.begin({
-          projectId: entry.projectId || 'default',
-          branchId: entry.id,
-          trigger: deploymentRunTriggerFromRequest(req, entry),
-          commitSha: entry.githubCommitSha,
-          phase: 'accepted',
-          message: '空期望清单清理请求已受理',
-        });
-        if (cleanupRun) res.setHeader('X-CDS-Deployment-Run-Id', cleanupRun.id);
-        const cleanupLease = beginBranchOperation(req, res, entry, {
-          kind: 'deploy',
-          source: 'api.deploy-branch',
-          reason: '期望清单为空，清理残留服务容器',
-          // deploy 端点契约是 SSE event-stream；本「就地清空」路径以前回 200 JSON，EventSource 客户端会
-          // 因 content-type 不符报错/挂起（Bugbot Medium「Deploy route returns JSON not SSE」）。改为 SSE：
-          // 拿不到租约时 beginBranchOperation 直接发 SSE 终止事件；拿到后下面 initSSE 开流、逐步 push、complete 收尾。
-          sse: true,
-        });
-        if (branchOperationCoordinator && !cleanupLease) {
-          cancelDeploymentRun(cleanupRun?.id, '清理请求未取得分支操作租约');
-          return;
-        }
+        const cleanupAdmission = await admitBranchDeployment(req, res, entry, {
+          kind: 'deploy', source: 'api.deploy-branch', reason: '期望清单为空，清理残留服务容器', sse: true,
+          commitSha: requestedCommitForPlan || entry.githubCommitSha, commitPinned: Boolean(requestedCommitForPlan), configHash: deploymentConfigHash,
+          hasOneShotOptions: forceDeployWhilePaused || Boolean(req.query.ignoreRequired || req.body?.targetExecutorId),
+        }, { trigger: deploymentRunTriggerFromRequest(req, entry), commitSha: entry.githubCommitSha,
+          phase: 'accepted', message: '空期望清单清理请求已受理', configHash: deploymentConfigHash }, deploymentInput);
+        if (!cleanupAdmission.started) return;
+        const cleanupRun = cleanupAdmission.run;
+        const cleanupLease = cleanupAdmission.lease;
         advanceDeploymentRun(cleanupRun?.id, 'preparing', {
           phase: 'prepare',
           message: '残留服务清理上下文已准备完成',
@@ -11992,12 +13550,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
             appendDeploymentRunEvent(cleanupRun?.id, startingEvent);
             sendSSE(res, 'step', startingEvent);
             try {
-              await containerService.remove(svc.containerName, {
+              await containerService.removeRuntimeGroup(svc, {
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: sid,
                 requestId: cleanupReqId || null,
                 operationId: cleanupLease?.operationId || null,
+                operationGeneration: cleanupLease?.generation,
+                assertCurrent: step => assertBranchOperationCurrent(cleanupLease, step),
+                onProgress: createCleanupProgressReporter(cleanupRun, cleanupLease, entry, sid, event => {
+                  appendDeploymentRunEvent(cleanupRun?.id, event); sendSSE(res, 'step', event);
+                }),
                 actor: cActor,
                 trigger: cTrigger,
                 operation: 'deploy-empty-profiles-cleanup',
@@ -12072,6 +13635,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // profiles.length > 0：env 必填闸门是给「要构建启动的服务」用的；走到这里 profiles 非空（空已在上面
     // 的清理分支处理/放行）。保留判断让远端空 payload 收敛路径（remoteOwned 放行）不被 env 闸门误拦。
     const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
+    if (entry.projectId && profiles.length > 0) {
+      // 内部密钥（x-cds-env-meta 里 generate: secret）由 CDS 自己补齐，不进必填闸门、不让人去生成。
+      const generatedEnvKeys = stateService.ensureGeneratedEnvKeys(entry.projectId);
+      if (generatedEnvKeys.length > 0) stateService.save();
+    }
     if (!ignoreRequired && entry.projectId && profiles.length > 0) {
       const missingRequired = stateService.getMissingRequiredEnvKeys(entry.projectId);
       if (missingRequired.length > 0) {
@@ -12089,31 +13657,95 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    const requestCommitSha = selectedDeploymentVersion?.commitSha || (
+    const requestCommitSha = selectedDeploymentVersion?.commitSha || deploymentInput.targetCommitSha || (
       typeof req.body?.commitSha === 'string'
         && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
         ? req.body.commitSha
         : undefined
     );
+    if (agentPrebuiltGated && gateProject) {
+      // 没点名版本时，下方还有一次按 requestCommitSha + deploymentConfigHash 的自动复用（findReusable）：
+      // 命中就跑不可变产物、不编译源码。门禁在这里用同一组输入先探一次，命中就按物化清单判——否则
+      // managed 配置明明有可复用版本，点名 versionId 放行、同一 commit 自动复用却被拦（Codex 第八轮 P2）。
+      let gateProfiles = profiles;
+      let gateVersion = selectedDeploymentVersion;
+      if (!gateVersion && requestCommitSha && deploymentVersionService && deploymentConfigHash) {
+        const reusableForGate = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: requestCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        if (reusableForGate) {
+          try {
+            gateProfiles = deploymentVersionService.materializeProfiles(reusableForGate, currentProfiles, inputBranch());
+            gateVersion = reusableForGate;
+          } catch {
+            /* 物化失败（版本所需配置已不在）：下方复用同样会失败，按当前清单判 */
+          }
+        }
+      }
+      // 版本物化后的清单在执行时不再套分支覆盖（运行循环里 selectedDeploymentVersion ? profile : resolve…），
+      // 判定也不能套：分支此刻若选了显式 prebuilt: false 的模式，重放合规版本会被误拦（Codex 第八轮 P2）。
+      const violations = findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : inputBranch());
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(gateProject, gateProfiles, violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
+    // 空转部署熔断（2026-08-29）：同一分支反复部署**同一个 commit** 是「部署环」的
+    // 特征，正常连推每次都是新 SHA、永远不命中。判据与阈值见
+    // build-activity-tracker.ts 的 assessDeployLoop 注释（含事故经过）。
+    // 放在 deploymentRun 登记与租约之前——被拦下的请求不该留下 run 记录、不该占租约。
+    // 此处尚未进入 SSE，响应头未发出，可以正常返 JSON。
+    const deployLoopSha = requestCommitSha || entry.githubCommitSha;
+    const loopAssessment = assessDeployLoop(entry.id, deployLoopSha);
+    const ignoreDeployLoopGuard = req.query.ignoreDeployLoopGuard === '1'
+      || req.body?.ignoreDeployLoopGuard === true;
+    if (loopAssessment.level === 'trip' && !ignoreDeployLoopGuard) {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-blocked',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        // 用既有的 failed 而不是新增 'blocked'：这次部署确实没发生，
+        // 语义够用，且不必让每个 result 消费方都跟着改（不必要的枚举涟漪）。
+        result: 'failed',
+        note: `空转部署熔断：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次，本次已拒绝`,
+      });
+      stateService.save();
+      res.status(429).json({
+        error: 'deploy_loop_detected',
+        message: `空转部署熔断：最近 ${loopAssessment.windowMinutes} 分钟内，本分支已对同一个提交 ${loopAssessment.commitSha} 部署了 ${loopAssessment.sameCommitCount} 次，代码没有任何变化。这通常意味着某个部署步骤在自己重新触发部署，形成无法收敛的环——它会让分支永远停在 building、预览域名长期 503，并独占宿主构建槽把其它分支饿死。请先查清是谁在反复触发。`,
+        branchId: entry.id,
+        commitSha: loopAssessment.commitSha,
+        sameCommitCount: loopAssessment.sameCommitCount,
+        windowMinutes: loopAssessment.windowMinutes,
+        escapeHatch: {
+          hint: '推一个新提交即可自动解除（判据按「分支 + 提交」计数）；确认这次重复部署是有意为之，可附加 ?ignoreDeployLoopGuard=1 强制放行',
+        },
+      });
+      return;
+    }
+    if (loopAssessment.level === 'warn') {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-warning',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        result: 'pending',
+        note: `空转部署告警：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次；达到 ${loopAssessment.tripAt} 次将拒绝`,
+      });
+      // 这里不显式 save()：appendActivityLog 只改内存，而告警是放行路径，
+      // 后续部署流程本来就会落盘。上面 trip 分支必须自己存，因为它立即 return。
+    }
+
+    deploymentInput.configHash = deploymentConfigHash;
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
-    const deploymentRun = await deploymentRunService?.begin({
-      projectId: entry.projectId || 'default',
-      branchId: entry.id,
-      trigger: deploymentRunTriggerFromRequest(req, entry),
-      commitSha: requestCommitSha || entry.githubCommitSha,
-      versionId: selectedDeploymentVersion?.id,
-      configHash: deploymentConfigHash,
-      phase: 'accepted',
-      message: '分支部署请求已受理',
-    });
-    if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
-    if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
-
-    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
-    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
-    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
-
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
+    const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
       // 版本重部署（body.versionId）不参与 manual 合并去重：pending 重放只送
@@ -12123,14 +13755,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
+      // 只有请求自己钉住了提交（webhook 的 head sha / body.commitSha）才允许并入：
+      // 没钉住时源码准备取当时的远端 HEAD，entry 上那个缓存 SHA
+      // 说明不了这次要部署什么（Codex 六轮 P1）。
+      commitPinned: Boolean(requestCommitSha),
+      // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
+      // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
+      configHash: deploymentConfigHash || null,
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
-    });
-    if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
-      return;
-    }
+    }, {
+      trigger: deploymentRunTriggerFromRequest(req, entry),
+      commitSha: requestCommitSha || entry.githubCommitSha,
+      versionId: selectedDeploymentVersion?.id,
+      configHash: deploymentConfigHash,
+      phase: 'accepted',
+      message: '分支部署请求已受理',
+    }, deploymentInput);
+    if (!admission.started) return;
+    const deploymentRun = admission.run;
+    const branchOperationLease = admission.lease;
+    if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
+
+    // 记一次构建活动。**必须在拿到分支操作租约之后**——这个账本同时喂着资源面板的
+    // 构建频次和 assessDeployLoop 的空转熔断计数。
+    //
+    // 记在租约之前的话，被协调器 409 拒掉、或合并进 pending 的请求也会计数：
+    // 一次部署在途时 agent 连打六次同 SHA 重试，实际只会产生一个 pending 部署，
+    // 熔断计数却已经满了，于是把**下一个真实请求**429 掉——熔断的反效果。
+    // （Codex 在 PR #1453 的 P1；判据算的是「请求数」，要判的是「真实部署数」。）
+    // 资源面板那一侧口径也因此更准：它要的是「这个分支真的重建了多少次」。
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req), deployLoopSha);
+
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
 
@@ -12166,6 +13823,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       operationId: branchOperationLease?.operationId,
       commitSha: entry.githubCommitSha,
     });
+    const materializeAdmittedReusableVersion = (version: DeploymentVersion): BuildProfile[] | undefined => {
+      const materialized = deploymentVersionService!.materializeProfiles(version, currentProfiles, inputBranch());
+      try {
+        // 同B的fallback可正常前移；旧快照只有仍匹配本轮已核验内容才可自动替代。
+        for (const profile of materialized) admittedArtifactProfile(profile, deploymentInput.artifactAdmission);
+      } catch { return undefined; }
+      return materialized;
+    };
     if (!selectedDeploymentVersion && requestCommitSha && deploymentVersionService && deploymentConfigHash) {
       const reusable = deploymentVersionService.findReusable({
         projectId: entry.projectId || 'default',
@@ -12173,9 +13838,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         commitSha: requestCommitSha,
         configHash: deploymentConfigHash,
       });
-      if (reusable) {
+      const reusableProfiles = reusable && materializeAdmittedReusableVersion(reusable);
+      if (reusable && reusableProfiles) {
         selectedDeploymentVersion = reusable;
-        profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
+        profiles = reusableProfiles;
         if (deploymentRun) deploymentRunService?.attachVersion(deploymentRun.id, reusable.id, deploymentConfigHash);
       }
     }
@@ -12188,27 +13854,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // the dispatcher picks based on current load. Returns null for the local
     // path (embedded master or no cluster), which is the previous behavior.
     const explicitTarget = (req.body?.targetExecutorId as string | undefined) || undefined;
-    const remoteTarget = resolveDeployTarget(entry, explicitTarget);
+    const checkedExecutor = deploymentInput.artifactAdmission?.executorId;
+    const remoteTarget = checkedExecutor === 'local' ? null : resolveDeployTarget(entry, checkedExecutor || explicitTarget);
     if (remoteTarget) {
-      // Clear any stale error + clear the local services map since we're
-      // handing this branch off to the remote — the master isn't running
-      // containers for it, the executor is.
-      entry.errorMessage = undefined;
       try {
         branchOperationFinalStatus = await proxyDeployToExecutor(remoteTarget, entry, res, {
           requestId: requestId || null,
+          lease: branchOperationLease,
           operationId: branchOperationLease?.operationId || null,
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           deploymentRunId: deploymentRun?.id,
+          requestedCommitSha: requestCommitSha,
+          artifactCommitSha: deploymentInput.artifactAdmission?.state === 'ready' ? deploymentInput.artifactAdmission.targetCommitSha : undefined,
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
+          env: getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
           deploymentCapabilities: managedPlan?.capabilities,
-          profiles: selectedDeploymentVersion || managedPlan ? profiles : undefined,
+          // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
+          // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
+          // 未门禁时保持原样（版本 / managed 传已物化清单，否则由 proxy 内部自行 resolve）。
+          profiles: (agentPrebuiltGated
+            ? (selectedDeploymentVersion || managedPlan
+                ? profiles
+                : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))
+              ).map((p) => withoutSourceFallback(p))
+            : (selectedDeploymentVersion || managedPlan ? profiles : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))))
+            .map(profile => admittedArtifactProfile(profile, deploymentInput.artifactAdmission)),
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-        throw err;
+        const message = branchOperationFinalStatus === 'cancelled' ? '原部署已结束，请查看最新任务' : '远端部署未完成，请查看运行记录';
+        if (branchOperationFinalStatus === 'failed') failDeploymentRun(deploymentRun?.id, message, 'remote-proxy');
+        if (!res.headersSent) res.status(branchOperationFinalStatus === 'cancelled' ? 409 : 500).json({ error: message });
+        else if (!res.writableEnded && !res.destroyed) { sendSSE(res, 'error', { message, status: branchOperationFinalStatus }); try { res.end(); } catch { /* 浏览器已经断开。 */ } }
       } finally {
         completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
@@ -12304,6 +13983,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         if (svc.errorMessage) svc.errorMessage = undefined;
       }
+      for (const service of Object.values(entry.services)) preserveServingRuntime(service);
       const __prevStatus = entry.status;
       entry.status = 'building';
       entry.lastAccessedAt = new Date().toISOString();
@@ -12338,46 +14018,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 误杀对方的 check run（Codex P2，PR #1235）。
       openedCheckRunId = await checkRunRunner.ensureOpen(entry);
 
-      // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
-      // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
-      // deploy-finalize（pull + infra + db-init + 整个构建循环之后）才拆孤儿，若这些 fallible 步骤在
-      // PUT /extra-services?redeploy=1 已落库缩短后的 extraProfiles 之后中途 abort，被移除服务的容器与
-      // entry.services 行就留在原地、却没有任何有效 profile 元数据（pathPrefixes 等路由信息消失而旧容器仍跑）。
-      // executor 路径已把这步上移到 git pull 之前；本地路径同款前移。profiles 非空已由上方 profiles.length===0
-      // 分支保证（空清单走专门的就地清空路径），不会误删全部。fencing-safe：remove 前后各 assertCurrent。
-      {
-        const desiredIds = new Set(profiles.map((p) => p.id));
-        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
-        if (orphans.length > 0) {
-          const oActor = resolveActorFromRequest(req);
-          const oTrigger = triggerFromRequest(req);
-          for (const [sid, svc] of orphans) {
-            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan before ${sid}`);
-            logEvent({
-              step: 'remove-orphan-service', status: 'running',
-              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
-              detail: { profileId: sid, status: svc.status, container: svc.containerName },
-              timestamp: new Date().toISOString(),
-            });
-            try {
-              await containerService.remove(svc.containerName, {
-                projectId: entry.projectId, branchId: entry.id, profileId: sid,
-                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
-                actor: oActor, trigger: oTrigger,
-                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
-                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
-              });
-            } catch (err) {
-              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
-            }
-            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan after ${sid}`);
-            delete entry.services[sid];
-            stateService.save();
-            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
-          }
-        }
-      }
-
       // 指定不可变版本时不触碰源码；普通部署仍先 pull，再按 commit + configHash 查找可复用版本。
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
@@ -12389,14 +14029,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
         title: selectedDeploymentVersion ? '准备不可变版本…' : '拉取最新代码…',
         summary: selectedDeploymentVersion
           ? `分支: \`${entry.branch}\`\n版本: \`${selectedDeploymentVersion.id}\``
-          : `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
+          : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
-      const pullResult = selectedDeploymentVersion
+      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      // Reject known-invalid declarations before any full source snapshot is allocated.
+      // Runtime preflight still revalidates native identity and current references.
+      for (const profile of profiles) assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
+      let pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath);
+        : deploymentNeedsSourceCheckout(profiles.map(p => resolveEffectiveProfile(p, inputBranch())))
+        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha, deploymentRepoRoot, deploymentSourceRecovery(entry, () => assertBranchOperationCurrent(branchOperationLease, 'deployment source recovery')))
+        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, requestCommitSha, deploymentRepoRoot, deploymentSourceRecovery(entry, () => assertBranchOperationCurrent(branchOperationLease, 'deployment source recovery')));
+      // Automatic database initialization reads repository files even for image-only services.
+      // Inspect the resolved target tree, never the mutable canonical checkout, before skipping source.
+      if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)
+        && await worktreeService.needsDatabaseInitializationSource(fs.existsSync(entry.worktreePath) ? entry.worktreePath : deploymentRepoRoot, pullResult.afterFull,
+          profiles.map(p => resolveEffectiveProfile(p, inputBranch()).workDir || '.'))) {
+        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, pullResult.afterFull, deploymentRepoRoot, deploymentSourceRecovery(entry, () => assertBranchOperationCurrent(branchOperationLease, 'deployment source recovery')));
+      }
+      const deploymentSourceEntry = hasDeploymentSource(pullResult)
+        ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
+        : inputBranch();
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
         status: 'done',
@@ -12408,23 +14064,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
       // （Codex P2: refresh prebuilt SHA after pulling latest code）。
       // **极速版例外**：极速版镜像由 CI 按 commit 预构建,只有 ciTargetSha(=CI ready 的 SHA)
-      // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
-      // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
-      // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
+      // 才确定有可拉取的镜像,所以 githubCommitSha 不跟随 pull 后的新 HEAD,镜像标签仍锁在
+      // 记录的提交上（Codex P2: require CI readiness for the deployed SHA）。
+      // 2026-10-08 方案甲：记录的提交可能早已过期（项目关了 push 事件就不再推进）,所以
+      // runService 会**先试** pull 到的 HEAD 的镜像——per-SHA 标签拉得到即 CI 已就绪——
+      // 拉不到才回到这里锁定的提交（见下方 latestCommitSha）。
       // pull() 的 head 是 `git log --oneline -1`（带标题），不是裸 SHA；必须用 parsePulledSha
       // 取裸 SHA（优先 after = rev-parse --short HEAD），否则旧的 bare-SHA 正则永不匹配、整段跳过，
       // 历史「版本」列停在 pull 前旧 SHA（Codex P2）。
       const pulledSha = parsePulledSha(pullResult);
-      // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
-      // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
+      // 源码部署使用独立目录：显式请求锁定该提交，未点名请求锁定此次解析的远端 HEAD。
       // 「是否真的从源码构建」必须把**两种**极速版形态都排掉（Codex PR #1275 四轮 P2
       // 修复时发现）：branchUsesPrebuiltMode 只认 deployModes.<mode>.prebuilt，认不出
       // profile 级的 prebuiltImage=true。后者部署的是 tag 锁死在某个 sha 的镜像，
       // 落地的 commit 就是那个 sha，与 worktree 刚拉到的 HEAD 无关；漏判会把 opLog /
       // run / version 全部贴成 pulledSha。单 profile 部署路径本来就是按 profile 的
       // prebuiltImage 判的，这里对齐它。
-      const usesPrebuilt = branchUsesPrebuiltMode(profiles, entry)
-        || profiles.some((p) => resolveEffectiveProfile(p, entry).prebuiltImage === true);
+      const usesPrebuilt = branchUsesPrebuiltMode(profiles, inputBranch())
+        || profiles.some((p) => resolveEffectiveProfile(p, inputBranch()).prebuiltImage === true);
       const isSourcePull = !usesPrebuilt
         && !(pullResult as { skipped?: boolean }).skipped
         && !!pulledSha;
@@ -12432,26 +14089,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // entry.githubCommitSha 被 check-run/release/集成复用：仅在**未显式请求** commit 时跟随 HEAD。
         entry.githubCommitSha = pulledSha;
       }
-      // 构建历史「版本」列必须记**实际部署**的 SHA = pulledSha，**不受 requestCommitSha 影响**：
-      // 即使 webhook 带 requestCommitSha=A、origin 已前进到 B，pull hard-reset 到分支 HEAD 落地的是 B，
-      // 冻结在请求 SHA 上会给 reviewer 指错版本（Codex P2「Do not freeze webhook history on the
-      // requested SHA」）。极速版/skip 除外（镜像锁 CI 就绪 SHA，opLog 保持 deriveCommitMeta(entry,…) 初值）。
+      // 历史记实际独立源码提交；预构建镜像继续记录所用产物身份。
       if (isSourcePull) {
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
-      // run 台账 / 不可变版本记的也必须是**实际落地**的 SHA（Codex PR #1275 四轮 P2）。
-      // 上面那段只在 `!requestCommitSha` 时才把 entry.githubCommitSha 跟到 HEAD —— 这是
-      // 有意的（该字段被 check-run/release 复用）。但 webhook 带 requestCommitSha=A 而
-      // origin 已前进到 B 时，pull 硬 reset 落地的是 B，entry 上却仍是 A：opLog 已经用
-      // pulledSha 记对了，run 与 version 却照抄 entry，于是部署审计挂在一份**没有被部署过**
-      // 的代码上，findReusable 还可能据此复用 A 的构建产物顶替 B。这里统一取实际落地值。
-      // 已选中不可变版本时，真正启动的是**那个版本的产物**（下面 building 的文案就是
-      // 「不可变版本已准备，开始启动服务」），此刻落地的 commit 是版本自己的 sha，
-      // 不是 worktree 刚拉到的 HEAD —— 否则又会反过来把 run 贴错成 pulledSha。
-      // 用 let：极速版镜像拉不到时 runService 会**自动回退源码编译**（container.ts 的
-      // sourceFallbackProfile 分支），那一刻实际落地的就从「镜像锁定的 sha」变成了
-      // 刚 pull 到的 HEAD。回退发生在这句之后，所以只能由回调回来修正
-      //（Codex PR #1275 六轮 P2）。
+      // run/version 与实际源码或已选版本一致；镜像回退时由回调修正为独立源码提交。
       let deployedCommitSha = selectedDeploymentVersion?.commitSha
         ?? (isSourcePull ? pulledSha : entry.githubCommitSha);
       // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
@@ -12466,12 +14108,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
 
 
-      // Clear pinned commit — deploy always restores to branch HEAD
+      // 清除分支级手工固定；本次独立源码仍遵守请求目标提交。
       if (entry.pinnedCommit && !selectedDeploymentVersion) {
         entry.pinnedCommit = undefined;
-        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+        logEvent({ step: 'pull', status: 'done', title: '已取消分支固定提交，本次部署使用已准备的目标源码', timestamp: new Date().toISOString() });
       }
       stateService.save();
+
+      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
+      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
+      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
+        const refreshedEffectiveProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
+        deploymentConfigHash = deploymentVersionService.computeConfigHash(
+          refreshedEffectiveProfiles,
+          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
+        );
+        const reusable = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: deployedCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        const reusableProfiles = reusable && materializeAdmittedReusableVersion(reusable);
+        if (reusable && reusableProfiles) {
+          selectedDeploymentVersion = reusable;
+          profiles = reusableProfiles;
+          logEvent({
+            step: 'version-reuse',
+            status: 'done',
+            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
+            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
+        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
+      }
+
+      // ── Compute startup layers (topological sort by dependsOn) ──
+      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
+      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
+      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
+      const deployProjectId = entry.projectId || 'default';
+      const deployProfileSuffix = deployProjectId === 'default'
+        ? ''
+        : `-${deployProject?.slug || deployProjectId}`;
+      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix, deploymentInput.profileOverrides);
 
       // ── Ensure required infrastructure is running ──
       // A profile can depend on project infra such as mongodb/redis and use
@@ -12499,6 +14182,58 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const actualInfraState = await containerService.discoverInfraContainers();
       const requiredInfraIds = computeRequiredInfra(profiles, projectInfra, actualInfraState);
       const startedInfraIds = new Set<string>();
+      const storageProfiles = profiles.map(candidate => admittedArtifactProfile(selectedDeploymentVersion ? candidate
+        : agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(candidate,inputBranch()))
+        : resolveEffectiveProfile(candidate,inputBranch()),deploymentInput.artifactAdmission));
+      const storageAccepted = await containerService.preflightDeploymentStorage(deploymentSourceEntry,storageProfiles,
+        {assertCurrent:step=>assertBranchOperationCurrent(branchOperationLease,step),
+          sourceCommitSha:hasDeploymentSource(pullResult)?pullResult.afterFull:deployedCommitSha,
+          customEnv:getDeploymentEnv(deploymentInput,entry.projectId),operationId:branchOperationLease?.operationId,
+          onOutput:(profileId,chunk)=>sendSSE(res,'log',{profileId,chunk})});
+      const acceptedProfiles = new Map(storageAccepted.map(profile=>[profile.id,profile]));
+      const acceptedInfra = new Map<string, InfraService>();
+      for (const infraId of requiredInfraIds) {
+        const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
+        if (infra) acceptedInfra.set(infraId, await containerService.preflightInfraStorage(infra,
+          {allowOriginalRuntime: true, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step)}));
+      }
+      // 全图存储准入成功后才移除孤儿；准入失败时保留全部原运行实例。
+      {
+        const desiredIds = new Set(profiles.map((p) => p.id));
+        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
+        if (orphans.length > 0) {
+          const oActor = resolveActorFromRequest(req);
+          const oTrigger = triggerFromRequest(req);
+          for (const [sid, svc] of orphans) {
+            assertBranchOperationCurrent(branchOperationLease, `admitted-remove-orphan before ${sid}`);
+            logEvent({
+              step: 'remove-orphan-service', status: 'running',
+              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+              detail: { profileId: sid, status: svc.status, container: svc.containerName },
+              timestamp: new Date().toISOString(),
+            });
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId, branchId: entry.id, profileId: sid,
+                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+                operationGeneration: branchOperationLease?.generation,
+                assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+                onProgress: createCleanupProgressReporter(deploymentRun, branchOperationLease, entry, sid, logEvent),
+                actor: oActor, trigger: oTrigger,
+                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
+                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+              });
+            } catch (err) {
+              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            }
+            assertBranchOperationCurrent(branchOperationLease, `admitted-remove-orphan after ${sid}`);
+            delete entry.services[sid];
+            stateService.save();
+            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
+          }
+        }
+      }
+
       if (!perBranchInfra) {
         logEvent({
           step: 'infra-shared',
@@ -12524,7 +14259,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         let startedInfra = infra;
         try {
-          startedInfra = await startInfraWithPortRetry(infra, entry.projectId || 'default');
+          startedInfra = await startInfraWithPortRetry(acceptedInfra.get(infraId)!, entry.projectId || 'default');
         } catch (err) {
           const message = (err as Error).message;
           stateService.updateInfraService(infra.id, { status: 'error', errorMessage: message }, entry.projectId || 'default');
@@ -12601,36 +14336,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
-      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
-      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
-        const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
-        deploymentConfigHash = deploymentVersionService.computeConfigHash(
-          refreshedEffectiveProfiles,
-          getMergedEnv(entry.projectId || 'default', entry.id),
-        );
-        const reusable = deploymentVersionService.findReusable({
-          projectId: entry.projectId || 'default',
-          branchId: entry.id,
-          commitSha: deployedCommitSha,
-          configHash: deploymentConfigHash,
-        });
-        if (reusable) {
-          selectedDeploymentVersion = reusable;
-          profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
-          logEvent({
-            step: 'version-reuse',
-            status: 'done',
-            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
-            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
-      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
-        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
-      }
-
       if (selectedDeploymentVersion) {
         logEvent({
           step: 'database-init',
@@ -12639,10 +14344,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           detail: { versionId: selectedDeploymentVersion.id },
           timestamp: new Date().toISOString(),
         });
+      } else if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)) {
+        logEvent({ step: 'database-init', status: 'done', title: '目标提交无数据库初始化文件，跳过宿主源码扫描',
+          timestamp: new Date().toISOString() });
       } else {
         await runDatabaseInitializationForDeploy({
-          entry,
-          profiles,
+          entry: deploymentSourceEntry,
+          profiles: storageAccepted,
+          customEnv: getDeploymentEnv(deploymentInput, entry.projectId),
           requestId,
           operationId: branchOperationLease?.operationId || undefined,
           actor: resolveActorFromRequest(req),
@@ -12651,16 +14360,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logEvent,
         });
       }
-
-      // ── Compute startup layers (topological sort by dependsOn) ──
-      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
-      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
-      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
-      const deployProjectId = entry.projectId || 'default';
-      const deployProfileSuffix = deployProjectId === 'default'
-        ? ''
-        : `-${deployProject?.slug || deployProjectId}`;
-      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
 
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
@@ -12699,8 +14398,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ── Pre-allocate ports (before parallel execution) ──
       const liveUsedPorts = await collectListeningPorts(shell);
+      const firstStartProfileIds = new Set<string>();
       for (const profile of profiles) {
         if (!entry.services[profile.id]) {
+          firstStartProfileIds.add(profile.id);
           const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
           liveUsedPorts.add(hostPort);
           entry.services[profile.id] = {
@@ -12713,6 +14414,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), staticProfileIds: profiles.filter(profile => acceptedProfiles.get(profile.id)?.staticWeb).map(profile => profile.id), state: stateService,
+        portStart: config.portStart, operationId: branchOperationLease?.operationId });
+      await stateService.flush();
       // ── Execute layer by layer (parallel within each layer) ──
       for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
         const layer = layers[layerIdx];
@@ -12741,13 +14445,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 「脱管闭包 + 同分支重复租约叠加」（2026-07-16 队列堵死复盘）。
         await runLayerWithSharedAbort(layer.items, async (profile, layerSignal) => {
           // Resolve baseline → 项目默认 → 分支 override → mode override
-          const effectiveProfile = selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry);
-          const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
+          // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
+          // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
+          const effectiveProfile = acceptedProfiles.get(profile.id)!;
+          const branchOverride = selectedDeploymentVersion ? undefined : deploymentInput.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
             ? ` [${effectiveProfile.deployModes[activeMode].label}]`
             : '';
-          const overrideLabel = branchOverride ? ' (分支自定义)' : '';
+          const overrideLabel = (branchOverride ? ' (分支自定义)' : '')
+            + (agentPrebuiltGated && effectiveProfile.prebuiltImage ? ' (极速版门禁：镜像缺失不回退源码编译)' : '');
           const serviceStartTime = Date.now();
 
           // ── 全局构建并发闸 ──
@@ -12774,10 +14481,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (layerSignal.aborted) gateAbort.abort();
           else layerSignal.addEventListener('abort', () => gateAbort.abort(), { once: true });
           const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
-          const acquireGateSlot = async (): Promise<BuildSlot> => {
+          const acquireGateSlot = async (acquire: typeof acquireBuildSlot = acquireBuildSlot): Promise<BuildSlot> => {
             try {
-              const slot = await acquireBuildSlot({
+              const slot = await acquire({
                 holder: {
+                  projectId: entry.projectId,
                   branchId: id,
                   profileId: profile.id,
                   runId: deploymentRun?.id,
@@ -12790,10 +14498,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   logEvent({
                     step: `queue-${profile.id}`,
                     status: 'info',
-                    title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                    title: `${effectiveProfile.name} 排队等待构建槽位：另有 ${ahead} 个等待，按项目轮转（${active} 个正在构建，并发上限 ${max}）`,
                     timestamp: new Date().toISOString(),
                   });
-                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 按项目轮转：另有 ${ahead} 个构建等待（${active}/${max} 进行中）...\n` });
                   // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
                   deployQueueTracker.onQueued(profile.id, { ahead, active, max });
                   // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
@@ -12833,9 +14541,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               return slot;
             } catch (err) {
               clearQueueTimer();
+              // 失败也结清等待统计，但不发送成功开始构建的日志。
+              try { deployQueueTracker.onStart(profile.id); } catch { /* 次要保存失败不能覆盖原取消或取代原因。 */ }
               if (err instanceof BuildSlotCancelledError) {
                 // 排队等待被取消：结束排队 episode 清掉分支卡 chip。
-                deployQueueTracker.onStart(profile.id);
                 logEvent({
                   step: `queue-${profile.id}`,
                   status: 'warning',
@@ -12859,9 +14568,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 极速版（prebuilt）：仅拉镜像 + 启动，零编译，不占构建槽。
           const isPrebuiltDeploy = effectiveProfile.prebuiltImage === true;
           let buildSlot: BuildSlot | null = null;
+          let sourceStartAdmission: SourceStartAdmission | undefined;
+          const releaseBuildSlot = () => { sourceStartAdmission?.dispose(); buildSlot?.release(); };
           if (isPrebuiltDeploy) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+          } else if (firstStartProfileIds.has(profile.id) && !effectiveProfile.staticWeb && !effectiveProfile.managedBuild) {
+            sendSSE(res, 'log', { profileId: profile.id, chunk: '首次源码服务按项目轮转等待启动容量与编译槽，等待期间不占任一槽位\n' });
+            buildSlot = await acquireGateSlot(async options => {
+              sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
+                { projectId: entry.projectId, branchId: id, profileId: profile.id,
+                  operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation },
+                entry.services[profile.id].containerName,
+                options || {},
+                { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
+                  check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
+              return sourceStartAdmission.buildSlot;
+            });
           } else {
+            // 既有服务先排编译队列，避免等待期间移除旧容器或执行 stop-first。
             buildSlot = await acquireGateSlot();
           }
 
@@ -12874,12 +14598,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
           const svc = entry.services[profile.id];
           svc.status = 'building';
+          // 每个服务开始构建都推一条：多层依赖部署时，上一层已经把分支广播成 starting，
+          // 下一层开始拉镜像 / 编译时若不推，已打开的列表会一直停在「就绪探测」（Codex P2，PR #1646）。
+          // 事件流会取最新分支下发（分支聚合状态此时仍是 building）。
+          branchEvents.emitEvent({
+            type: 'branch.updated',
+            payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: nowIso() },
+          });
 
           try {
             // 拿到槽位后立即复核租约：排队期间可能已被更高优先级操作取代，
             // 立刻让位（finally 会释放刚拿到的槽），不为已取消的部署跑构建。
             assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
-            const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+            const mergedEnv = getDeploymentEnv(deploymentInput, entry.projectId);
+            maybeWritePreviewMirror(deploymentSourceEntry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
             await archiveBranchContainerLogs({
               stateService,
               containerService,
@@ -12919,7 +14651,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
               containerService,
               serverEventLogStore,
               entry,
+              sourceCheckout: hasDeploymentSource(pullResult) ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
               profile: effectiveProfile,
+              artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha || deploymentInput.targetCommitSha,
               service: svc,
               customEnv: mergedEnv,
               requestId: requestId || null,
@@ -12927,6 +14661,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
               actor: resolveActorFromRequest(req),
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+              operationGeneration: branchOperationLease?.generation,
+              sourceStartAdmission,
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
@@ -12940,7 +14676,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 }
               },
               // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
-              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
+              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id, config.repoRoot,
+                () => assertBranchOperationCurrent(branchOperationLease, 'artifact comparison')),
+              // 方案甲：记下的提交落后于刚 pull 到的代码时，先试最新提交的 CI 镜像。
+              // 显式点名提交（webhook 锚定 / 用户指定）与不可变版本不走这条，按点名的来。
+              latestCommitSha: !requestCommitSha && !(pullResult as { skipped?: boolean }).skipped
+                ? pulledSha || undefined
+                : undefined,
+              // 只改正本次部署的记录；不改 entry.githubCommitSha——同层服务并行在跑，
+              // 中途改它会让后面的服务按新值解析镜像标签，同一次部署里口径不一。
+              onLatestCommitImage: (sha) => {
+                deployedCommitSha = sha;
+                Object.assign(opLog, deriveCommitMeta(entry, sha));
+              },
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -13001,6 +14749,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   if (line.trim()) logDeploy(id, line);
                 }
               });
+              if (ready) releaseBuildSlot();
             }
 
             // Always run the port-level readiness probe (even after a
@@ -13041,6 +14790,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               ready = ready ? probeReady : probeReady;
             }
 
+            assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
             if (ready) {
               svc.status = 'running';
               svc.errorMessage = undefined;
@@ -13059,8 +14809,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
             } else {
+              const errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+              assertBranchOperationCurrent(branchOperationLease, `after-readiness-error-${profile.id}`);
               svc.status = 'error';
-              svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+              svc.errorMessage = errorMessage;
               logDeploy(id, `${profile.name} 就绪探测超时`);
               logEvent({
                 step: `build-${profile.id}`,
@@ -13073,6 +14825,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             stateService.save();
           } catch (err) {
             if (err instanceof BranchOperationSupersededError) throw err;
+            assertBranchOperationCurrent(branchOperationLease, `before-service-error-${profile.id}`);
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
             const elapsed = Date.now() - serviceStartTime;
@@ -13087,7 +14840,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } finally {
             // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
             clearQueueTimer();
-            buildSlot?.release();
+            releaseBuildSlot();
           }
         }, {
           // Superseded 优先（整个 run 收敛为 cancelled）；真实构建错误次之；
@@ -13142,7 +14895,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 让「移除即下掉」成立(分支级额外服务的对称半:加能起、删能下)。此前只对 error 态打 warning、
       // 容器残留(2026-06-29 实测:清掉额外服务后 demo-extra 容器仍在跑)。best-effort:remove 失败也
       // 继续删条目,避免卡住整次部署;profiles 非空已由上方 400 守卫保证,不会误删全部。
-      if (zombieServices.length > 0) {
+      if (zombieServices.length > 0 && activeServices.every(([, service]) => service.status === 'running')) {
         const zActor = resolveActorFromRequest(req);
         const zTrigger = triggerFromRequest(req);
         for (const [sid, svc] of zombieServices) {
@@ -13160,12 +14913,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
             timestamp: new Date().toISOString(),
           });
           try {
-            await containerService.remove(svc.containerName, {
+            await containerService.removeRuntimeGroup(svc, {
               projectId: entry.projectId,
               branchId: entry.id,
               profileId: sid,
               requestId: requestId || null,
               operationId: branchOperationLease?.operationId || null,
+              operationGeneration: branchOperationLease?.generation,
+              assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+              onProgress: createCleanupProgressReporter(deploymentRun, branchOperationLease, entry, sid, logEvent),
               actor: zActor,
               trigger: zTrigger,
               operation: 'deploy-remove-orphan-service',
@@ -13182,6 +14938,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
       }
+      await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+        operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
+        onFailureDiagnostics: snapshots => { opLog.containerLogSnapshots ||= snapshots; },
+        container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
       const hasStarting = activeStatuses.some((s) => s === 'starting');
@@ -13246,7 +15006,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           timestamp: runtimeReadyAt,
         });
       }
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(
         entry,
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
@@ -13263,7 +15023,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ranDeployModes.length > 0
           ? ranDeployModes
           : profiles.filter((p) => activeProfileIds.has(p.id)).map((p) =>
-              selectedDeploymentVersion ? p : resolveEffectiveProfile(p, entry)),
+              selectedDeploymentVersion ? p : resolveEffectiveProfile(p, inputBranch())),
       );
       // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
       // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
@@ -13299,7 +15059,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && stateService.getBranch(entry.id) === entry
       ) {
         if (!selectedDeploymentVersion) {
-          const versionProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+          const versionProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
           selectedDeploymentVersion = deploymentVersionService.create({
             projectId: entry.projectId || 'default',
             branchId: entry.id,
@@ -13422,7 +15182,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
         const failureDetail = finalConclusion === 'failure'
-          ? await buildCheckRunFailurePostmortem(entry, containerService, activeProfileIds)
+          ? await buildCheckRunFailurePostmortem(entry, containerService, activeProfileIds, opLog.containerLogSnapshots)
           : undefined;
         await checkRunRunner.finalize(entry, {
           conclusion: finalConclusion,
@@ -13519,7 +15279,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = errMsg;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error');
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(entry, 'deploy-error');
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${errMsg}`);
@@ -13549,7 +15309,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
         // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
         const failureDetail = await buildCheckRunFailurePostmortem(
-          entry, containerService, new Set(profiles.map((p) => p.id)),
+          entry, containerService, new Set(profiles.map((p) => p.id)), opLog.containerLogSnapshots,
         );
         await checkRunRunner.finalize(entry, {
           conclusion: 'failure',
@@ -13615,45 +15375,78 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
     // profile from a different project.
-    const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    if (!await normalizeArtifactRequestTarget(req, res, entry, stateService.getEffectiveProfilesForBranch(entry), profileId)) return;
+    const profileRequestedSha = typeof req.body?.commitSha === 'string' ? req.body.commitSha : undefined;
+    const replayInput = branchOperationCoordinator?.getDeploymentInputForReplay(buildBranchOperationRequest(req, entry, {
+      kind: 'deploy-profile', profileId, commitSha: profileRequestedSha, commitPinned: Boolean(profileRequestedSha),
+      versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
+      hasOneShotOptions: Boolean(req.query.force || req.query.ignoreRequired || req.body?.targetExecutorId), source: 'api.deploy-profile',
+    }));
+    const deploymentInput = replayInput || captureDeploymentInput(entry, stateService.getEffectiveProfilesForBranch(entry),
+      getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), undefined, profileRequestedSha);
+    if (!replayInput) deploymentInput.environmentAuditIds = freezeEnvironmentAudit(
+      stateService, entry.projectId || 'default', entry.id, deploymentInput.configuredEnv, deploymentInput.profiles, profileId);
+    const profiles = deploymentInput.profiles;
+    const inputBranch = () => deploymentInputBranch(deploymentInput, entry);
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
     }
+    // Agent 极速版门禁：单服务部署与整分支部署同一道闸（Codex PR #1513 P1：此端点绕过了整分支入口）。
+    const singleDeployProject = stateService.getProject(entry.projectId || 'default');
+    deploymentInput.agentRequest ||= isAgentGatedRequest(req);
+    const singleDeployGated = Boolean(deploymentInput.agentPrebuiltGated || (singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && deploymentInput.agentRequest));
+    deploymentInput.agentPrebuiltGated = singleDeployGated;
+    if (singleDeployGated && singleDeployProject) {
+      const violations = findNonPrebuiltProfiles([profile], inputBranch());
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(singleDeployProject, [profile], violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
 
-    const profileRequestCommitSha = typeof req.body?.commitSha === 'string'
+    if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
+      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
+      return;
+    }
+    if (!replayInput && !await resolveUnpinnedArtifactTarget(req, res, entry, deploymentInput, profileId)) return;
+    const profileRequestCommitSha = deploymentInput.targetCommitSha || (typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
-      : undefined;
-    const deploymentRun = await deploymentRunService?.begin({
-      projectId: entry.projectId || 'default',
-      branchId: entry.id,
-      trigger: deploymentRunTriggerFromRequest(req, entry),
-      commitSha: profileRequestCommitSha || entry.githubCommitSha,
-      phase: 'accepted',
-      message: `单服务部署请求已受理: ${profile.name}`,
-    });
-    if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
-
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      : undefined);
+    const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, inputBranch())].map(effective => effective.prebuiltImage ? withoutSourceFallback(effective) : effective), getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
+    deploymentInput.configHash = profileDeploymentConfigHash;
+    const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy-profile',
       profileId,
-      commitSha: entry.githubCommitSha || null,
+      commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
+      commitPinned: Boolean(profileRequestCommitSha),
+      configHash: profileDeploymentConfigHash,
+      hasOneShotOptions: Boolean(req.query.force || req.query.ignoreRequired || req.body?.targetExecutorId),
+      versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
       source: 'api.deploy-profile',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,
-    });
-    if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '单服务部署请求未取得分支操作租约');
-      return;
-    }
+    }, {
+      trigger: deploymentRunTriggerFromRequest(req, entry),
+      commitSha: profileRequestCommitSha || entry.githubCommitSha,
+      configHash: profileDeploymentConfigHash,
+      phase: 'accepted',
+      message: `单服务部署请求已受理: ${profile.name}`,
+    }, deploymentInput);
+    if (!admission.started) return;
+    const deploymentRun = admission.run;
+    const branchOperationLease = admission.lease;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     advanceDeploymentRun(deploymentRun?.id, 'preparing', {
       phase: 'prepare',
       message: `单服务部署上下文已准备完成: ${profile.name}`,
       operationId: branchOperationLease?.operationId,
-      commitSha: entry.githubCommitSha,
+      commitSha: inputBranch().githubCommitSha,
       detail: { profileId },
     });
 
@@ -13673,7 +15466,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2026-06-27 构建历史元数据：单服务部署。触发器 + commit + 该 profile 的部署模式。
       triggerSource: classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount),
       ...deriveCommitMeta(entry),
-      deployMode: deriveDeployMode([resolveEffectiveProfile(profile, entry)]),
+      deployMode: deriveDeployMode([resolveEffectiveProfile(profile, inputBranch())]),
     };
 
     function logEvent(ev: OperationLogEvent) {
@@ -13694,43 +15487,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 本轮（单服务）构建起点锚点 —— 与多服务/远端执行器路径一致，供预览等待页
       // ETA 计"已等待"，避免回退到上一轮历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
       entry.lastDeployStartedAt = new Date().toISOString();
+      // 排队时长按轮重置，与整分支部署一致：分支卡按「开始至今 − 排队时长」计净耗时，
+      // 不清的话会减掉上一次部署的排队时长，计时停在 00:00（Codex P2，PR #1646）
+      entry.lastDeployQueueWaitMs = 0;
       stateService.save();
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
-      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
+      let pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath);
+        : deploymentNeedsSourceCheckout([resolveEffectiveProfile(profile, inputBranch())])
+        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha, deploymentRepoRoot, deploymentSourceRecovery(entry, () => assertBranchOperationCurrent(branchOperationLease, 'deployment source recovery')))
+        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, profileRequestCommitSha, deploymentRepoRoot, deploymentSourceRecovery(entry, () => assertBranchOperationCurrent(branchOperationLease, 'deployment source recovery')));
+      if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)
+        && await worktreeService.needsDatabaseInitializationSource(fs.existsSync(entry.worktreePath) ? entry.worktreePath : deploymentRepoRoot, pullResult.afterFull,
+          [resolveEffectiveProfile(profile, inputBranch()).workDir || '.'])) {
+        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, pullResult.afterFull, deploymentRepoRoot, deploymentSourceRecovery(entry, () => assertBranchOperationCurrent(branchOperationLease, 'deployment source recovery')));
+      }
+      const deploymentSourceEntry = hasDeploymentSource(pullResult)
+        ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
+        : inputBranch();
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
       // SHA after pulling latest code + require CI readiness for the deployed SHA）。
-      // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
+      // 单服务同样区分请求提交与已解析的源码提交;
       // 用本 profile 的 prebuiltImage 判定是否极速版。
       // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
-      let deployedCommitSha: string | undefined = entry.githubCommitSha;
+      let deployedCommitSha: string | undefined = inputBranch().githubCommitSha;
       // pull 到的裸 SHA 也提到块外：极速版回退源码编译时要用它改口径（见下方钩子）。
       let fallbackPulledSha: string | undefined;
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
-        const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
+        const isPrebuiltProfile = resolveEffectiveProfile(profile, inputBranch()).prebuiltImage === true;
         // 同主路径：head 带标题非裸 SHA，用 parsePulledSha 取裸 SHA（优先 after）再比对刷新（Codex P2）。
         const pulledSha = parsePulledSha(pullResult);
         const isSourcePull = !isPrebuiltProfile && !(pullResult as { skipped?: boolean }).skipped && !!pulledSha;
         if (!bodySha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
           entry.githubCommitSha = pulledSha;
         }
-        // opLog.commitSha 记**实际部署**的 SHA = pulledSha，不受 body.commitSha 影响：deploy 总是
-        // reset 到分支 HEAD（下方清 pinnedCommit），冻结在请求 SHA 会指错版本（Codex P2「Do not
-        // freeze webhook history on the requested SHA」）。极速版/skip 除外。
+        // 单服务历史也记实际独立源码提交。
         if (isSourcePull) {
           Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
         // 同主路径：run/version 记实际落地的 SHA，不照抄可能被 body.commitSha 冻住的
         // entry.githubCommitSha（Codex PR #1275 四轮 P2）。
-        deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;
+        deployedCommitSha = isSourcePull ? pulledSha : inputBranch().githubCommitSha;
         if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) fallbackPulledSha = pulledSha;
       }
       // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
@@ -13743,26 +15549,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
         detail: { profileId },
       });
 
-      // Clear pinned commit — deploy always restores to branch HEAD
+      // 清除分支级手工固定；本次独立源码仍遵守请求目标提交。
       if (entry.pinnedCommit) {
         entry.pinnedCommit = undefined;
-        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+        logEvent({ step: 'pull', status: 'done', title: '已取消分支固定提交，本次部署使用已准备的目标源码', timestamp: new Date().toISOString() });
         stateService.save();
       }
 
       // Resolve baseline → branch override → deploy-mode override
-      const effectiveProfile = resolveEffectiveProfile(profile, entry);
-      const branchOverride = entry.profileOverrides?.[profile.id];
+      // 门禁下摘掉源码回退（同整分支部署）。
+      const [effectiveProfile] = await containerService.preflightDeploymentStorage(deploymentSourceEntry,
+        [admittedArtifactProfile(singleDeployGated ? withoutSourceFallback(resolveEffectiveProfile(profile,inputBranch()))
+          : resolveEffectiveProfile(profile,inputBranch()),deploymentInput.artifactAdmission)],
+        {assertCurrent:step=>assertBranchOperationCurrent(branchOperationLease,step),
+          sourceCommitSha:hasDeploymentSource(pullResult)?pullResult.afterFull:deployedCommitSha,
+          customEnv:getDeploymentEnv(deploymentInput,entry.projectId),operationId:branchOperationLease?.operationId,
+          onOutput:(profileId,chunk)=>sendSSE(res,'log',{profileId,chunk})});
+      const branchOverride = deploymentInput.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
         ? ` [${effectiveProfile.deployModes[activeMode].label}]`
         : '';
-      const overrideLabel = branchOverride ? ' (分支自定义)' : '';
+      const overrideLabel = (branchOverride ? ' (分支自定义)' : '')
+        + (singleDeployGated && effectiveProfile.prebuiltImage ? ' (极速版门禁：镜像缺失不回退源码编译)' : '');
 
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
-      if (!entry.services[profile.id]) {
+      const firstServiceStart = !entry.services[profile.id];
+      if (firstServiceStart) {
         const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         entry.services[profile.id] = {
           profileId: profile.id,
@@ -13774,7 +15589,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       const svc = entry.services[profile.id];
+      preserveServingRuntime(svc);
+      reserveServiceReplacements({ entry, profileIds: [profile.id], staticProfileIds: effectiveProfile.staticWeb ? [profile.id] : [], state: stateService,
+        portStart: config.portStart, operationId: branchOperationLease?.operationId });
       svc.status = 'building';
+      // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
+      // 否则卡片只能从服务状态去猜：分支 idle 却有服务在探测、分支 error 却有服务在重建，
+      // 这两种组合和「残留的旧服务状态」分不开（Codex P2 两条，PR #1646）。分支在运行时保持 running 不动。
+      if (entry.status !== 'running') entry.status = 'building';
+      // 单服务部署时分支聚合状态（在运行时）一直是 running，只有这一个服务在 building → starting → 结束之间走；
+      // 每次翻转都推一条 branch.updated（事件流会取最新分支下发），分支卡的阶段条、计时与收尾才跟得上。
+      // 此前这条路径只在排队时推事件，卡片要等下一次刷新才看得到（Codex P2，PR #1646）。
+      const emitServiceTransition = (extra: { stateFlushFailed?: boolean } = {}) => branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ...extra, ts: new Date().toISOString() },
+      });
+      emitServiceTransition();
 
       // ── 全局构建并发闸（2026-07-16 复盘补齐）──
       // 此前单服务重部署完全绕过 build-gate，源码编译不受全局并发控制。
@@ -13802,10 +15632,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           queueRefreshTimer = undefined;
         }
       };
-      const acquireGateSlot = async (): Promise<BuildSlot> => {
+      const acquireGateSlot = async (acquire: typeof acquireBuildSlot = acquireBuildSlot): Promise<BuildSlot> => {
         try {
-          const slot = await acquireBuildSlot({
+          const slot = await acquire({
             holder: {
+              projectId: entry.projectId,
               branchId: id,
               profileId: profile.id,
               runId: deploymentRun?.id,
@@ -13818,10 +15649,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               logEvent({
                 step: `queue-${profile.id}`,
                 status: 'info',
-                title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                title: `${effectiveProfile.name} 排队等待构建槽位：另有 ${ahead} 个等待，按项目轮转（${active} 个正在构建，并发上限 ${max}）`,
                 timestamp: new Date().toISOString(),
               });
-              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 按项目轮转：另有 ${ahead} 个构建等待（${active}/${max} 进行中）...\n` });
               deployQueueTracker.onQueued(profile.id, { ahead, active, max });
               queueRefreshTimer = setInterval(() => {
                 if (leaseCancelled()) {
@@ -13857,8 +15688,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return slot;
         } catch (err) {
           clearQueueTimer();
+          // 单服务在准入前失败时还未进入运行 finally，需在此结清原等待。
+          try { deployQueueTracker.onStart(profile.id); } catch { /* 保留原准入错误及既有取消收尾。 */ }
           if (err instanceof BuildSlotCancelledError) {
-            deployQueueTracker.onStart(profile.id);
             logEvent({
               step: `queue-${profile.id}`,
               status: 'warning',
@@ -13877,15 +15709,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       };
       let buildSlot: BuildSlot | null = null;
+      let sourceStartAdmission: SourceStartAdmission | undefined;
+      const releaseBuildSlot = () => { sourceStartAdmission?.dispose(); buildSlot?.release(); };
       if (effectiveProfile.prebuiltImage === true) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+      } else if (firstServiceStart && !effectiveProfile.staticWeb && !effectiveProfile.managedBuild) {
+        sendSSE(res, 'log', { profileId: profile.id, chunk: '首次源码服务按项目轮转等待启动容量与编译槽，等待期间不占任一槽位\n' });
+        buildSlot = await acquireGateSlot(async options => {
+          sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
+            { projectId: entry.projectId, branchId: id, profileId: profile.id,
+              operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation }, svc.containerName,
+            options || {},
+            { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
+              check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
+          return sourceStartAdmission.buildSlot;
+        });
       } else {
         buildSlot = await acquireGateSlot();
       }
 
       try {
         assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
-        const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+        const mergedEnv = getDeploymentEnv(deploymentInput, entry.projectId);
+        maybeWritePreviewMirror(deploymentSourceEntry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
         await archiveBranchContainerLogs({
           stateService,
           containerService,
@@ -13906,7 +15752,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           containerService,
           serverEventLogStore,
           entry,
+          sourceCheckout: hasDeploymentSource(pullResult) ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
           profile: effectiveProfile,
+          artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha || deploymentInput.targetCommitSha,
           service: svc,
           customEnv: mergedEnv,
           requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
@@ -13914,6 +15762,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+          operationGeneration: branchOperationLease?.generation,
+          sourceStartAdmission,
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
@@ -13924,7 +15774,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           },
           // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
-          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
+          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id, config.repoRoot,
+            () => assertBranchOperationCurrent(branchOperationLease, 'artifact comparison')),
+          // 方案甲（同整分支部署）：没点名提交时，先试刚 pull 到的提交的 CI 镜像。
+          latestCommitSha: profileRequestCommitSha ? undefined : fallbackPulledSha,
+          onLatestCommitImage: (sha) => {
+            deployedCommitSha = sha;
+            Object.assign(opLog, deriveCommitMeta(entry, sha));
+          },
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
@@ -13948,7 +15805,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // probe (TCP+HTTP). Prevents the 502 window between `docker run` exit
         // and the app binding its port. See .claude/rules/cds-auto-deploy.md.
         svc.status = 'starting';
+        if (entry.status === 'building') entry.status = 'starting';
         stateService.save();
+        emitServiceTransition();
         advanceDeploymentRun(deploymentRun?.id, 'starting', {
           phase: 'start',
           message: `${profile.name} 容器已启动`,
@@ -13966,6 +15825,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           });
           ready = signalReady;
+          if (signalReady) releaseBuildSlot();
         }
         if (!profile.startupSignal || ready) {
           advanceDeploymentRun(deploymentRun?.id, 'verifying', {
@@ -13998,6 +15858,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             svc.containerName,
           );
         }
+        assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
         if (ready) {
           svc.status = 'running';
           svc.errorMessage = undefined;
@@ -14008,13 +15869,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.deployedMode = svc.deployedMode || effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 OK`);
         } else {
+          const errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+          assertBranchOperationCurrent(branchOperationLease, `after-readiness-error-${profile.id}`);
           svc.status = 'error';
-          svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+          svc.errorMessage = errorMessage;
           logDeploy(id, `${profile.name} 就绪探测超时`);
         }
         stateService.save();
       } catch (err) {
         if (err instanceof BranchOperationSupersededError) throw err;
+        assertBranchOperationCurrent(branchOperationLease, `before-service-error-${profile.id}`);
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
         logEvent({
@@ -14028,11 +15892,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } finally {
         // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
         clearQueueTimer();
-        buildSlot?.release();
+        releaseBuildSlot();
         // 排队 chip 兜底清理（部署 throw 也不许留下「排队中」残影）。
         deployQueueTracker.dispose();
       }
 
+      await commitServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
+        operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
+        onFailureDiagnostics: snapshots => { opLog.containerLogSnapshots ||= snapshots; },
+        container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       // Update overall status
       assertBranchOperationCurrent(branchOperationLease, 'before-profile-deploy-finalize');
       const statuses = Object.values(entry.services).map(s => s.status);
@@ -14051,7 +15919,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const ranMode = (svc as { deployedMode?: string }).deployedMode;
         opLog.deployMode = (typeof ranMode === 'string' && ranMode.trim() !== '')
           ? ranMode.trim()
-          : deriveDeployMode([resolveEffectiveProfile(profile, entry)]);
+          : deriveDeployMode([resolveEffectiveProfile(profile, inputBranch())]);
       }
       if (svc.status === 'running') {
         const runtimeReadyAt = new Date().toISOString();
@@ -14065,7 +15933,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           timestamp: runtimeReadyAt,
         });
       }
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(
         entry,
         svc.status === 'running' ? 'deploy-finalize' : 'deploy-error',
         new Set([profile.id]),
@@ -14082,10 +15950,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && stateService.getBranch(entry.id) === entry
         && profiles.every((candidate) => entry.services[candidate.id]?.status === 'running')
       ) {
-        const versionProfiles = profiles.map((candidate) => resolveEffectiveProfile(candidate, entry));
+        const versionProfiles = profiles.map((candidate) => resolveEffectiveProfile(candidate, inputBranch()));
         const configHash = deploymentVersionService.computeConfigHash(
           versionProfiles,
-          getMergedEnv(entry.projectId || 'default', entry.id),
+          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
         );
         const version = deploymentVersionService.create({
           projectId: entry.projectId || 'default',
@@ -14123,12 +15991,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationFinalStatus = 'failed';
         const flushMessage = branchStateFlushFailureMessage(flushResult, completeMsg);
         failDeploymentRun(deploymentRun?.id, flushMessage, 'state-flush');
+        // 落盘失败也要推一条结束事件：前面已经推过 starting，不推的话已打开的列表会一直停在「就绪探测」，
+        // 而调用方（如引用面板）并不会回头刷新列表。事件带上 stateFlushFailed，卡片离开部署阶段、显示
+        // 容器的真实状态，但不播「部署成功」——接口这次报的是失败（Codex P2 两条，PR #1646）。
+        emitServiceTransition({ stateFlushFailed: true });
         sendSSE(res, 'error', {
           message: flushMessage,
           stateFlush: flushResult,
         });
         return;
       }
+      // 结束事件放在聚合状态重算与状态落盘之后：从停止状态单独起一个服务时分支此前是 idle，先推会让
+      // 卡片拿到「服务 running、分支 idle」而被放进未运行；落盘失败时接口不报成功，卡片也不该先播
+      // 「部署成功」（Codex P2 两条，PR #1646）。
+      emitServiceTransition();
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
         // 消费方统一读 ok 而非重推导 entry.services。
@@ -14180,9 +16056,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       failDeploymentRun(deploymentRun?.id, entry.errorMessage, 'deploy-profile');
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
       stateService.appendLog(id, opLog);
       stateService.save();
+      // 失败也要推一条：比如排构建槽时被取消，服务停在 building、分支已判 error，
+      // 不推的话已打开的列表一直停在「构建中」直到整页刷新（Codex P2，PR #1646）。
+      branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: new Date().toISOString() },
+      });
       logDeploy(id, `部署失败: ${(err as Error).message}`);
       const flushResult = await flushBranchStateBeforeSuccess({
         source: 'branch-deploy-profile',
@@ -14364,6 +16246,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
     }
+    if (!guardStandbyRuntimeSnapshot(req, res, entry, 'stop')) return;
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'stop',
       source: 'api.stop-branch',
@@ -14372,6 +16255,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
+
+    try {
+      await persistBranchCancellation(entry, branchOperationLease);
+    } catch (err) {
+      const superseded = err instanceof BranchOperationSupersededError;
+      completeBranchOperation(branchOperationLease, superseded ? 'cancelled' : 'failed');
+      res.status(superseded ? 409 : 503).json({ error: superseded
+        ? '停止请求已被更新的操作取代，请查看最新状态'
+        : '原部署取消记录暂未能可靠保存，尚未停止服务，请稍后重试' });
+      return;
+    }
 
     // ── Cluster-aware stop ──
     //
@@ -14414,10 +16308,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           return;
         }
+        assertBranchOperationCurrent(branchOperationLease, 'after-remote-stop');
         // The executor's next heartbeat will reconcile status, but set
         // plausible local state in the meantime.
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
-        entry.status = 'idle';
+        assertBranchOperationCurrent(branchOperationLease, 'after-stop-log-archive');
+      entry.status = 'idle';
         entry.lastStoppedAt = new Date().toISOString();
         entry.lastStopReason = `${stopAttribution.reason}，远端执行器 ${remoteExecutor.id} 已停止`;
         entry.lastStopSource = stopAttribution.source === 'user' ? 'executor' : stopAttribution.source;
@@ -14433,10 +16329,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           note: entry.lastStopReason,
         });
         stateService.save();
+        await stateService.flush();
+        assertBranchOperationCurrent(branchOperationLease, 'remote-stop-confirmation');
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-        res.status(502).json({ error: `无法连接执行器: ${(err as Error).message}` });
+        res.status(err instanceof BranchOperationSupersededError ? 409 : 502).json({ error: err instanceof BranchOperationSupersededError
+          ? '停止请求已被更新的操作取代，请查看最新状态'
+          : `无法确认执行器停止结果: ${(err as Error).message}` });
       } finally {
         completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
@@ -14454,10 +16354,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      const failedServices: string[] = [];
       // Actually stop containers
       for (const svc of Object.values(entry.services)) {
+        assertBranchOperationCurrent(branchOperationLease, `before-stop-${svc.profileId}`);
         try {
-          await containerService.stop(svc.containerName, stopAttribution.reason, {
+          await containerService.stopRuntimeGroup(svc, stopAttribution.reason, {
+            kind: stopIntentKindFrom(stopAttribution.source),
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -14468,8 +16371,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             operation: 'branch-stop',
             source: 'api.stop-branch',
           });
-        } catch { /* ok */ }
+        } catch (err) {
+          assertBranchOperationCurrent(branchOperationLease, `after-failed-stop-${svc.profileId}`);
+          svc.status = err instanceof ContainerStopUnconfirmedError && err.running === true ? 'running' : 'error';
+          svc.errorMessage = '服务停止结果未确认，请查看状态并重试';
+          failedServices.push(svc.profileId);
+          continue;
+        }
+        assertBranchOperationCurrent(branchOperationLease, `after-stop-${svc.profileId}`);
         svc.status = 'stopped';
+        delete svc.errorMessage;
       }
       // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
       // 快照里，必须显式停掉，否则分支停止/睡眠后成员版本继续占资源。
@@ -14479,9 +16390,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 按状态就地放弃。
       for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
         for (const member of replicaSet.members) {
+          assertBranchOperationCurrent(branchOperationLease, `before-stop-member-${member.id}`);
+          let stopFailed = false;
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, stopAttribution.reason, {
+                kind: stopIntentKindFrom(stopAttribution.source),
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,
@@ -14492,7 +16406,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 operation: 'branch-stop-replica-member',
                 source: 'api.stop-branch',
               });
-            } catch { /* 失败与否统一由下面的实测判定，不靠异常 */ }
+            } catch {
+              stopFailed = true;
+            }
+          }
+          assertBranchOperationCurrent(branchOperationLease, `after-stop-member-${member.id}`);
+          if (stopFailed) {
+            member.status = 'error';
+            member.statusMessage = '副本停止结果未确认，请查看状态并重试';
+            failedServices.push(`${replicaSet.profileId}--${member.id}`);
+            continue;
           }
           // 停止必须核实再落状态（Codex 第三十五轮 P1，判定见 services/replica-stop.ts）
           await settleMemberAfterStop(member, {
@@ -14512,6 +16435,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
             },
           });
+          if (member.status === 'error') failedServices.push(`${replicaSet.profileId}--${member.id}`);
         }
       }
       await archiveBranchContainerLogs({
@@ -14526,6 +16450,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: resolveActorFromRequest(req),
         trigger: triggerFromRequest(req),
       });
+      assertBranchOperationCurrent(branchOperationLease, 'after-stop-log-archive');
+      if (failedServices.length > 0) {
+        branchOperationFinalStatus = 'failed';
+        entry.status = 'error';
+        stateService.save();
+        await stateService.flush();
+        assertBranchOperationCurrent(branchOperationLease, 'failed-stop-confirmation');
+        res.status(503).json({ error: '部分服务停止结果未确认，请查看服务状态并重试', failedServices });
+        return;
+      }
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
@@ -14542,10 +16476,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: stopAttribution.reason,
       });
       stateService.save();
+      await stateService.flush();
+      assertBranchOperationCurrent(branchOperationLease, 'local-stop-confirmation');
       res.json({ message: '所有服务已停止' });
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-      res.status(500).json({ error: (err as Error).message });
+      res.status(err instanceof BranchOperationSupersededError ? 409 : 500).json({ error: err instanceof BranchOperationSupersededError
+        ? '停止请求已被更新的操作取代，请查看最新状态'
+        : (err as Error).message });
     } finally {
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
     }
@@ -14557,6 +16495,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 变更时用）；/restart 只对已构建好的容器做 docker restart（没 bug、只是
   // 服务被停了，直接拉起来，秒级，不动代码）。复用 containerService
   // .restartServiceInPlace（docker restart + 存活探测）。
+  router.post('/branches/:id/recover-runtime', async (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) { res.status(404).json({ error: '分支不存在' }); return; }
+    const mismatch = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    if (isRemoteExecutorOwned(entry.executorId)) { res.status(409).json({ error: '远端执行器恢复请在所属执行器执行' }); return; }
+    const { expectedCommitSha, expectedContainers } = req.body || {};
+    if (typeof expectedCommitSha !== 'string' || !expectedContainers || typeof expectedContainers !== 'object' || Array.isArray(expectedContainers)) {
+      res.status(400).json({ error: '必须提供完整提交和逐服务完整容器身份' }); return;
+    }
+    const lease = beginBranchOperation(req, res, entry, { kind: 'restart', source: 'api.recover-runtime', reason: '验证并恢复同批当前容器；保留数据库与历史部署结果' });
+    if (branchOperationCoordinator && !lease) return;
+    let outcome: 'completed' | 'failed' | 'cancelled' = 'failed';
+    initSSE(res);
+    res.flushHeaders();
+    const heartbeat = setInterval(() => {
+      try { if (!res.writableEnded) res.write(': heartbeat\n\n'); } catch { /* client disconnected */ }
+    }, 5000);
+    try {
+      const profiles = stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
+      const result = await recoverBranchRuntime({ entry, profiles, state: stateService, container: containerService,
+        expectedCommitSha, expectedContainers,
+        // 项目声明的应用刷新连接；分支额外数据库/缓存/存储保留进程和数据。
+        restartProfiles: stateService.getBuildProfilesForProject(entry.projectId || 'default').map(p => p.id).filter(id => Boolean(entry.services[id])),
+        assertCurrent: step => assertBranchOperationCurrent(lease, step),
+        onProgress: message => sendSSE(res, 'progress', { message }),
+      });
+      outcome = 'completed';
+      stateService.appendActivityLog(entry.projectId, { type: 'restart', branchId: entry.id, branchName: entry.branch,
+        actor: resolveActorFromRequest(req), note: '当前容器归属、独占网络与逐服务就绪均已验证；恢复入口，不改写旧失败运行' });
+      stateService.save();
+      sendSSE(res, 'complete', { ...result, commitSha: expectedCommitSha, operationId: lease?.operationId });
+    } catch (error) {
+      outcome = error instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+      sendSSE(res, 'error', { message: (error as Error).message, operationStatus: outcome });
+    } finally { clearInterval(heartbeat); completeBranchOperation(lease, outcome); res.end(); }
+  });
+
   router.post('/branches/:id/restart', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -14613,6 +16589,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           operation: 'branch-restart',
           source: 'api.restart-branch',
           reason: '手动重新启动（docker restart，未重建代码）',
+          assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
         });
         assertBranchOperationCurrent(branchOperationLease, `restart after ${svc.profileId}`);
         if (ok) {
@@ -14646,6 +16623,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             operation: 'branch-restart-replica-member',
             source: 'api.restart-branch',
             reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
+            assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
           });
           if (memberOk) {
             // 就绪实证后才恢复分流（Codex P1）：restartServiceInPlace 只确认容器
@@ -14683,6 +16661,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               let stopped = false;
               try {
                 await containerService.stop(member.containerName, 'replica-member-not-ready', {
+                  kind: 'cds-stop-after-failure',
                   branchId: entry.id, projectId: entry.projectId, profileId: replicaSet.profileId,
                   actor: 'branch-restart', trigger: 'replica-readiness-failed',
                 });
@@ -14794,7 +16773,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const logs = matched.slice(0, limit);
     // total 必须是过滤后、截断前的命中总数，否则消费方无法判断"还有没有更多"
     // （截断后 total===logs.length 永远 ≤ limit，分页/加载更多失效）。Cursor Bugbot。
-    res.json({ branchId: id, logs, total: matched.length });
+    res.json(logPayloadForHumanView(req, { branchId: id, logs, total: matched.length }));
   });
 
   // ── Set default branch ──
@@ -14987,6 +16966,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const { isFavorite, notes, tags, isColorMarked } = req.body as { isFavorite?: boolean; notes?: string; tags?: string[]; isColorMarked?: boolean };
+      const access = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (access) { res.status(403).json({ error: access }); return; }
+      const actor = branchPinActor(req);
+      if (typeof isColorMarked === 'boolean' && !mayChangePin(entry.isColorMarked, entry.colorMarkPin, req, actor)) {
+        res.status(403).json({ error: '旧保护或其他操作者的保护须由人类明确处理' }); return;
+      }
+      if (isColorMarked === true && entry.isColorMarked !== true) entry.colorMarkPin = createBranchPin({}, req, actor);
       // PR_C.3: 调试灯泡切换计数 + activity log（仅 isColorMarked 真正变化时）
       const prevColorMark = entry.isColorMarked === true;
       stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
@@ -14996,7 +16982,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           type: isColorMarked ? 'colormark-on' : 'colormark-off',
           branchId: id,
           branchName: entry.branch,
-          actor: resolveActorForActivity(req),
+          actor,
         });
       }
       stateService.save();
@@ -15035,9 +17021,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 原始 env 会泄露分支本地密钥。与 extra-services / 分支序列化的 maskExtraProfilesEnv 口径一致，
     // 仅对额外服务脱敏（项目 profile 的既有行为不动）。
     const extraProfileIds = new Set((entry.extraProfiles || []).map((p) => p.id));
+    const visibleOverrides = branchForHumanView(req, entry).profileOverrides;
     const payload = profiles.map(profile => {
-      const isExtra = extraProfileIds.has(profile.id);
-      const override = entry.profileOverrides?.[profile.id];
+      const isExtra = extraProfileIds.has(profile.id) || isScopedHuman(req);
+      const override = visibleOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
@@ -15049,18 +17036,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return {
         profileId: profile.id,
         profileName: profile.name,
-        baseline: isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile,
+        baseline: profileForHumanView(req, isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile),
         // override 也要对额外服务脱敏（Codex P1「Mask override env in profile-overrides GET」）：PUT 现可给
         // extra profile 存 env 覆盖，GET 若把 override.env 原样回吐就泄露密钥（baseline/effective 已脱敏，
         // 唯独 override 漏）。与 PUT 响应同口径。
         override: isExtra && override?.env ? { ...override, env: maskSecrets(override.env) } : (override || null),
-        effective,
+        effective: profileForHumanView(req, effective),
         cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
       };
     });
     res.json({ branchId: id, profiles: payload });
   });
+
+  function clearSourceModeCiMetadata(id: string): void {
+    const branch = stateService.getBranch(id);
+    if (!branch) return;
+    const profiles = stateService.getEffectiveProfilesForBranch(branch);
+    if (branchUsesPrebuiltMode(profiles, branch)
+      || profiles.some(profile => resolveEffectiveProfile(profile, branch).prebuiltImage === true)) return;
+    stateService.updateBranchGithubMeta(id, {
+      ciImageStatus: undefined, ciTargetSha: undefined,
+      ciWorkflowConclusion: undefined, ciWorkflowRunUrl: undefined,
+      ciWaitingSince: undefined, ciImageError: undefined,
+    });
+  }
 
   router.put('/branches/:id/profile-overrides/:profileId', (req, res) => {
     const { id, profileId } = req.params;
@@ -15072,10 +17072,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 用分支**有效** profiles 解析目标（项目 profiles + 分支额外服务），与 GET /profile-overrides 一致
     // （Bugbot「Extra profile overrides PUT fails」）：原仅用项目级 getBuildProfile，分支级 extra-only 的
     // profileId 永远 404，尽管 GET 面板已把它列为可覆盖。effective 查找也天然项目内聚（更安全）。
-    const profile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
+    const profile = effectiveProfiles.find((p) => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
+    }
+    // Agent 极速版门禁：本 PUT 是**整体替换**（setBranchProfileOverride），所以机器凭据的每一次写入
+    // 都按「替换后的生效模式」判，不只在带 activeDeployMode 时判——只改 containerPort 的请求同样会把
+    // 原有的 express 覆盖抹掉、落回源码基线（Codex 第五轮 P1）。
+    //   - 带 activeDeployMode：显式空串会被原样持久化、解析时 `?? ` 让它胜出 = 不选模式 = 源码基线；
+    //   - 不带：替换后覆盖里没有模式，回到 profile 基线 activeDeployMode。
+    {
+      const overrideBody = (req.body ?? {}) as Record<string, unknown>;
+      const overrideProject = stateService.getProject(entry.projectId || 'default');
+      if (overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)) {
+        const hasModeField = Object.prototype.hasOwnProperty.call(overrideBody, 'activeDeployMode');
+        // 判的必须是**将要落盘的原值**，不能先 trim：路由按原值持久化、运行时按原值精确查模式，
+        // `" express "` 这种值判成 express 放行后存下来查不到、落回源码基线（Codex 第十轮 P1）。
+        const pendingMode = hasModeField
+          ? (typeof overrideBody.activeDeployMode === 'string' && overrideBody.activeDeployMode !== '' ? overrideBody.activeDeployMode : undefined)
+          : (profile.activeDeployMode || undefined);
+        const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {
+            branchId: entry.id,
+            operation: 'branch-override',
+          }));
+          return;
+        }
+      }
     }
     try {
       // Body is the BuildProfileOverride object. Unknown keys are silently
@@ -15141,10 +17167,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // dbScope 透传 + 枚举校验（波1 W1c）：BuildProfileOverride.dbScope 与合并端 applyProfileOverride
       // 早已支持按分支覆盖数据库隔离档位，但此白名单一直漏透传——UI/API 设了也会被静默丢弃，
       // per-branch DB 开关因此永远无法按分支生效。合法值仅 'shared' | 'per-branch'，其余显式 400。
-      if (body.dbScope !== undefined && body.dbScope !== 'shared' && body.dbScope !== 'per-branch') {
+      // Mongo 会把未设置的可选字段读回为 null；GET→PUT 往返应仍表示继承。
+      if (body.dbScope != null && body.dbScope !== 'shared' && body.dbScope !== 'per-branch') {
         res.status(400).json({ error: `dbScope 非法（仅允许 'shared' 或 'per-branch'）` });
         return;
       }
+      if (body.dbInit != null && body.dbInit !== 'empty' && body.dbInit !== 'clone') {
+        res.status(400).json({ error: `dbInit 非法（仅允许 'empty' 或 'clone'）` });
+        return;
+      }
+      if (body.dependsOn != null && (!Array.isArray(body.dependsOn)
+        || body.dependsOn.some(value => typeof value !== 'string' || !value.trim()))) {
+        res.status(400).json({ error: 'dependsOn 必须是非空服务标识的数组' });
+        return;
+      }
+
+      // 分支隔离配置会连同 context path 更新 HTTP 就绪路径。运行时早已支持
+      // readinessProbe 覆盖；在这里丢弃它会让已就绪的服务持续被旧路径误判。
+      const readinessProbe = ((): ReadinessProbe | undefined => {
+        const rp = body.readinessProbe;
+        if (!rp || typeof rp !== 'object' || Array.isArray(rp)) return undefined;
+        const o = rp as Record<string, unknown>;
+        const out: ReadinessProbe = {};
+        if (typeof o.path === 'string' && o.path.trim() !== '') out.path = o.path.trim();
+        if (typeof o.intervalSeconds === 'number' && o.intervalSeconds > 0) out.intervalSeconds = o.intervalSeconds;
+        if (typeof o.timeoutSeconds === 'number' && o.timeoutSeconds > 0) out.timeoutSeconds = o.timeoutSeconds;
+        if (typeof o.noHttp === 'boolean') out.noHttp = o.noHttp;
+        return Object.keys(out).length > 0 ? out : undefined;
+      })();
 
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
@@ -15153,13 +17203,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
         containerPort: typeof body.containerPort === 'number' ? body.containerPort : undefined,
         env: envOverride,
         pathPrefixes: Array.isArray(body.pathPrefixes) ? body.pathPrefixes as string[] : undefined,
+        dependsOn: Array.isArray(body.dependsOn) ? body.dependsOn.map(value => (value as string).trim()) : undefined,
         resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
-        dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
+        readinessProbe,
+        dbScope: (body.dbScope ?? undefined) as 'shared' | 'per-branch' | undefined,
+        dbInit: (body.dbInit ?? undefined) as 'empty' | 'clone' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
       };
-      stateService.setBranchProfileOverride(id, profileId, override);
+      // `setBranchProfileOverride` 是**整体替换**，而这份白名单只认它自己管的字段。
+      // 手动入口配置（PUT /web-entry-config）把 subdomain / webEntry 也存进同一个
+      // override 对象，调用方（本 PUT 的 UI）根本不知道这两个字段的存在、请求体里
+      // 自然没有 —— 于是「改一下部署模式 / 端口 / 环境变量」就会顺手把这条命名入口
+      // 抹掉，下一次 forwarder 刷新时路由消失（Codex review 第七轮 P1）。
+      // 这两个字段没有任何客户端用「省略」表达清空（要清由 web-entry-config 显式写），
+      // 所以请求体没提就从已存的覆盖里原样带过来，不管它的人不许毁它。
+      const prevOverride = stateService.getBranchProfileOverride(id, profileId);
+      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry' | 'dependsOn'> = {
+        ...(body.dependsOn === undefined && prevOverride?.dependsOn != null
+          ? { dependsOn: prevOverride.dependsOn } : {}),
+        ...(body.subdomain === undefined && prevOverride?.subdomain !== undefined
+          ? { subdomain: prevOverride.subdomain } : {}),
+        ...(body.webEntry === undefined && prevOverride?.webEntry !== undefined
+          ? { webEntry: prevOverride.webEntry } : {}),
+      };
+      stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
+      appendEnvironmentAudit(stateService, req, id, 'bulk-replace', prevOverride?.env ?? {}, envOverride ?? {}, undefined, { profileId });
+      clearSourceModeCiMetadata(id);
       stateService.save();
 
       // Return the new effective profile so the UI can show the merged result
@@ -15203,103 +17274,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     'cds', 'master', 'dashboard',
   ]);
 
-  // Named gateway entries: build profiles that declare a `cds.subdomain` label get a standalone host
-  // `<previewSlug>-<subdomain>.<root>` routing all paths to that container (e.g. LLM gateway →
-  // <slug>-llmgw.<root>), distinct from the main app domain. Mirror the forwarder-route-publisher
-  // same-origin rules so the panel shows exactly the URLs the forwarder actually publishes: run each
-  // profile through resolveEffectiveProfile (so branch-level readinessProbe / subdomain overrides are
-  // honored, matching the published route — Bugbot "Gateway URLs skip profile resolve"), filter by
-  // routable status, dedupe first-wins on subdomain, and drop labels whose first DNS octet exceeds
-  // 63 chars (unresolvable + not covered by the wildcard cert). See forwarder-route-publisher.ts:159-315.
+  // User-facing Web entries. `cds.subdomain` only publishes a route; the route appears here only when
+  // the same profile declares `cds.web-entry-name` (and optional path/primary metadata). This keeps
+  // readiness endpoints and API-only services out of the browser entry list.
   //
-  // SSOT for BOTH the GET and PUT /subdomain-aliases responses — gatewayUrls are branch-derived (not
-  // alias-derived), so PUT must return them too or the panel drops the 网关入口 block after saving
-  // aliases until a full reload (Bugbot "Alias save clears gateway URLs").
-  function computeBranchGatewayUrls(
-    entry: BranchEntry,
-    primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> {
-    const project = stateService.getProject(entry.projectId);
-    const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    const gatewayUrls: Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> = [];
-    if (!gwPreviewSlug) return gatewayUrls;
-    // 被已保存别名**或自定义域名**占走的 host，发布器不会写（那条路由指向别人的应用），
-    // 面板与 GET /api/branches 也就不能把它当自己的入口列出来 —— 否则用户点开打开的是
-    // 另一个分支的应用（Codex P1）。判据与发布器 / 入口表同用 occupiedHostOwners 一份，
-    // 按**完整 host** 比（自定义域名存的是整条 host，只按标签判会漏）。
-    const gwOccupied = occupiedHostOwners(stateService.getAllBranches(), [primaryRoot]);
-    const profileById = new Map<string, BuildProfile>();
-    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
-      // resolveEffectiveProfile applies branch profileOverrides (subdomain / readinessProbe / …),
-      // exactly like the publisher; without it override-driven landing paths would drift from the
-      // route the forwarder actually serves.
-      profileById.set(bp.id, resolveEffectiveProfile(bp, entry));
-    }
-    // Collect routable services, sorted by profileId so first-wins dedup is deterministic across
-    // object-key ordering changes (mirrors publisher's subdomainCandidates sort).
-    const routable = Object.entries(entry.services ?? {})
-      .filter(([, svc]) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)))
-      .map(([profileId]) => profileId)
-      .sort((a, b) => a.localeCompare(b));
-    const seenSubdomains = new Set<string>();
-    for (const profileId of routable) {
-      const profile = profileById.get(profileId);
-      const sub = profile?.subdomain;
-      if (!sub) continue;
-      if (seenSubdomains.has(sub)) continue;
-      const namedLabel = namedServiceLabel(gwPreviewSlug, sub);
-      // RFC 1035 single-label limit + wildcard cert coverage — shared predicate with the publisher
-      // and the env-injected entrypoint table (preview-entrypoints.ts), so the three never drift.
-      if (!isPublishableNamedLabel(namedLabel)) continue;
-      if (gwOccupied.has(`${namedLabel}.${primaryRoot}`.toLowerCase())) continue;
-      seenSubdomains.add(sub);
-      // Landing path — pick the path most likely to return a live 200 when the entry is clicked
-      // (Codex P2: don't force every named service onto the LLM gateway health path):
-      //   1) Known LLM gateway subdomains mount their API under /gw/* (console) or /gw/v1/* (serving)
-      //      and 404 at the bare root, so land on their health endpoint explicitly.
-      //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
-      //      the container root, so honor the profile's readiness path when set, else land at '/'.
-      const landingPath = resolveServiceLandingPath(sub, profile?.readinessProbe?.path);
-      gatewayUrls.push({
-        subdomain: sub,
-        name: profileId,
-        // 双出口契约（.claude/rules/cds-dual-exit-topology.md）：命名子域走 HTTPS，与主应用一致。
-        // nginx `*.<root>` server 块已在 443 用同一份通配证书服务命名子域，此前误印成 http:// 才导致
-        // 「1 HTTPS + 3 HTTP」。命名子域是单标签（连字符不产生新点），落在 *.<root> 通配证书覆盖内。
-        url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
-        // 「这是不是可登录的控制台」由平台判定后下发。面板此前自己按子域名字判，
-        // 改名当天那 4 处判定整块失效（Codex P2）；命名约定的解释权归这一侧。
-        // 判据与落点同源：叫 llmgw 但声明了 /gw/healthz 的存量 API profile 不算控制台，
-        // 否则面板把它排最前、标成「网关控制台」，点开是一串 JSON（Codex P2）。
-        isConsole: isGatewayConsoleEntry(sub, profile?.readinessProbe?.path),
+  // SSOT for GET /api/branches and the subdomain-alias responses.
+  /**
+   * 部署 CDS 预览实例分支时，把本实例的脱敏镜像写进它的 worktree（CDS 托管 CDS，2026-09-16）。
+   * 判据与镜像导出侧的 isHostingProject 同一个谓词（profileHostsPreviewInstance）：构建档 env 优先、
+   * 项目 / 分支 env 兜底。selfhost compose 把 CDS_PREVIEW_INSTANCE 写在构建档 env 里，而 getMergedEnv
+   * 只合 CDS 派生值与项目 / 分支自定义 env，不含构建档 env——只看 mergedEnv 标准配置下一次都不会写（Codex P1）。
+   * 只写文件、不改本实例任何状态；失败只记一行日志，不让部署因此失败。
+   * 子实例自己（isPreviewInstance()）不导出——它手里的本来就是镜像，再导一层只会套娃。
+   */
+  function maybeWritePreviewMirror(entry: BranchEntry, profile: { env?: Record<string, string> } | null | undefined, mergedEnv: Record<string, string>, emitToStream: (line: string) => void): void {
+    if (isPreviewInstance()) return;
+    if (!profileHostsPreviewInstance(profile, mergedEnv)) return;
+    // 写没写、为什么没写，除了推给部署流，也记到父实例的部署控制台：cdscli 走的是触发 + 轮询，
+    // 收不到流里的 log 事件，出问题时只有这里能查（2026-09-20 实机排障时就是缺这一行）
+    const emit = (line: string): void => { emitToStream(line); logDeploy(entry.id, line.trim()); };
+    try {
+      if (!entry.worktreePath || !fs.existsSync(entry.worktreePath)) {
+        emit('── 预览实例镜像：worktree 不在本机（远程执行器），本次不写 ──\n');
+        return;
+      }
+      const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')
+        .replace(/^https?:\/\//, '')
+        .replace(/\/+$/, '')
+        .trim();
+      const mirror = buildPreviewMirror(stateService, {
+        previewFor: (b) => {
+          const entries = previewHost ? computeBranchWebEntries(b, previewHost) : [];
+          const urls = Array.from(new Set(entries.map((e) => e.url)));
+          return { url: urls[0] || '', urls };
+        },
+        sourceLabel: previewHost ? `CDS（${previewHost}）` : '父实例',
       });
+      const leaks = findMirrorLeaks(mirror);
+      if (leaks.length > 0) {
+        emit(`── 预览实例镜像自检发现 ${leaks.join('、')}，本次不写（子实例退回演示快照）──\n`);
+        return;
+      }
+      const file = writePreviewMirror(entry.worktreePath, mirror);
+      emit(`── 预览实例镜像已写入 ${file}：${mirror.projects.length} 个项目 / ${mirror.branches.length} 条分支 / ${Object.keys(mirror.metrics).length} 个容器的近 30 分钟指标（采集于 ${mirror.capturedAt}）──\n`);
+    } catch (err) {
+      emit(`── 预览实例镜像写入失败（不影响部署）：${(err as Error).message} ──\n`);
     }
-    return gatewayUrls;
+  }
+
+  function computeBranchWebEntries(entry: BranchEntry, primaryRoot: string) {
+    return computePublishedBranchWebEntries(stateService, entry, primaryRoot);
   }
 
   /**
    * 该分支**实际被发布出去的全部命名 host**（含历史别名），用于跨分支撞名判定。
    *
-   * 与 computeBranchGatewayUrls 的区别：那个是给面板看的「入口清单」，刻意只列规范名，
+   * 与 computeBranchWebEntries 的区别：那个是给面板看的「入口清单」，刻意只列规范名，
    * 免得同一个服务出现两行。撞名判定要的是「谁已经占了哪些 host」，别名同样占着，
    * 漏算就会放行一个与别的分支重复的别名（Codex P1）。两者共用 publishedServiceLabels
    * 作为发布口径，不各自拼。
    */
   function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
     const project = stateService.getProject(entry.projectId);
-    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    if (!slug) return [];
-    const hosts: string[] = [];
-    const seen = new Set<string>();
-    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
-      const sub = resolveEffectiveProfile(bp, entry).subdomain;
-      if (!sub || seen.has(sub)) continue;
-      seen.add(sub);
-      for (const label of publishedServiceLabels(slug, sub)) {
-        hosts.push(`${label}.${root}`.toLowerCase());
-      }
-    }
-    return hosts;
+    return projectBranchPublishedServiceHosts(entry, project, stateService.getEffectiveProfilesForBranch(entry), [root]);
   }
 
   const findPreviewHostCollisions = (
@@ -15315,12 +17352,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const other of stateService.getAllBranches()) {
       const projectId = other.projectId || 'default';
       const project = stateService.getProject(projectId);
-      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      const previewSlugs = projectBranchPreviewSlugs(other, project);
       for (const rawRoot of rootDomains) {
         const root = rawRoot.toLowerCase();
-        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
-        if (previewHost && candidates.has(previewHost)) {
-          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        for (const previewSlug of previewSlugs) {
+          const previewHost = `${previewSlug}.${root}`;
+          if (candidates.has(previewHost)) conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
         }
 
         for (const alias of stateService.getBranchSubdomainAliases(other.id)) {
@@ -15403,6 +17440,78 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return conflicts;
   };
 
+  /**
+   * POST /preview-dispatch —— 「这次提交该给哪些预览地址」。
+   *
+   * 客户端只交事实（仓库、分支、可选的改动清单），项目归属与作用域判定全在这里，
+   * 与 push 分发**共用同一份作用域判据**。命令行因此不再需要在本地推断「我这条分支
+   * 属于哪个项目」—— 一个仓库喂多个项目时，那个推断必然要么猜错要么硬失败。
+   *
+   * 可见性：项目级凭据只看得到自己那个项目，全局凭据看得到该仓库下全部项目。
+   * 下拉别人的项目名与地址属于越权，判据直接复用 assertProjectAccess，不另写一份。
+   *
+   * 入口 URL 一律取 computeBranchWebEntries —— 与 GET /api/branches 同一个来源，
+   * 绝不在这里另拼一次域名。
+   */
+  router.post('/preview-dispatch', (req, res) => {
+    const body = (req.body || {}) as { repo?: string; branch?: string; changedPaths?: unknown };
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+    if (!repo || !branch) {
+      res.status(400).json({ error: 'bad_request', message: 'repo 与 branch 均为必填' });
+      return;
+    }
+    const changedPaths = Array.isArray(body.changedPaths)
+      ? body.changedPaths.filter((p): p is string => typeof p === 'string')
+      : [];
+
+    const candidates = stateService.findProjectsByRepoFullName(repo);
+    // 可见性过滤在**判定之前**：不可见的项目连「未波及」都不该出现在结果里，
+    // 否则等于把别人的项目名泄露出去。
+    const visible = candidates.filter((project) => assertProjectAccess(req as never, project.id) === null);
+    if (visible.length === 0) {
+      res.json({
+        ok: true,
+        repo,
+        branch,
+        projects: [],
+        lines: [],
+        message: candidates.length > 0
+          ? '该仓库下有项目，但当前凭据都无权查看'
+          : `没有任何项目绑定到仓库 ${repo}`,
+      });
+      return;
+    }
+
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || '';
+    const facts: PreviewProjectFacts[] = visible.map((project) => {
+      const entry = stateService.findBranchByProjectAndName(project.id, branch);
+      // 光有分支不等于有能打开的地址：computeBranchWebEntries 只要配了预览域名就
+      // 无条件造一条默认入口（那条默认入口是面板的正常行为，绝大多数项目并不显式
+      // 声明 web-entry，所以不能去动它），于是「分支在、但还没跑起来」这一档永远
+      // 走不到，命令行会打印一个打不开的 URL。
+      //
+      // 判据要的是「这个地址背后真有东西在接」，光看分支总状态不够（Codex 两轮）：
+      // 只跑后台 worker 的分支同样是 running，却没有任何可路由服务。所以用与转发器
+      // 发布路由**同一条**判据 —— 有 hostPort 且状态可路由的服务至少一个。
+      const routableUp = Object.values(entry?.services ?? {}).some(
+        (svc) => svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status)),
+      );
+      const webEntries = entry && routableUp && primaryRoot ? computeBranchWebEntries(entry, primaryRoot) : [];
+      return {
+        projectId: project.id,
+        projectSlug: project.slug,
+        projectName: project.aliasName || project.name,
+        scope: resolveProjectScope(stateService.getBuildProfilesForProject(project.id)),
+        ...(entry ? { branchId: entry.id } : {}),
+        entries: webEntries.map((webEntry) => ({ name: webEntry.name, url: webEntry.url })),
+      };
+    });
+
+    const dispatch = resolvePreviewDispatch(branch, facts, changedPaths);
+    res.json({ ok: true, repo, ...dispatch });
+  });
+
   router.get('/branches/:id/subdomain-aliases', (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -15413,20 +17522,446 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const aliases = stateService.getBranchSubdomainAliases(id);
     // Compute the full preview URLs so the UI can show them without
     // re-reading CDS config separately.
-    const rootDomains = config.rootDomains?.length
-      ? config.rootDomains
-      : (config.previewDomain ? [config.previewDomain] : []);
-    const primaryRoot = rootDomains[0] || 'example.com';
-    const previewUrls = aliases.map(a => `https://${a}.${primaryRoot}`);
-    const defaultUrl = `https://${id}.${primaryRoot}`;
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    let previewUrls = aliases.map(a => `https://${a}.${primaryRoot}`);
+    let defaultUrl = `https://${id}.${primaryRoot}`;
+    let webEntries = computeBranchWebEntries(entry, primaryRoot);
+    // 父实例镜像来的分支：入口地址一律用父实例算好的那份，本实例的域名推不出它（与 GET /api/branches 同口径）
+    if (entry.mirror?.previewUrl) {
+      const urls = entry.mirror.previewUrls?.length ? [...entry.mirror.previewUrls] : [entry.mirror.previewUrl];
+      defaultUrl = urls[0];
+      previewUrls = urls.slice(1);
+      webEntries = urls.map((url, i) => ({ name: webEntries[i]?.name || (i === 0 ? '主应用入口' : `入口 ${i + 1}`), url, serviceId: webEntries[i]?.serviceId, subdomain: webEntries[i]?.subdomain, primary: i === 0 }));
+    }
 
     res.json({
       branchId: id,
       aliases,
       defaultUrl,
       previewUrls,
-      gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
+      primaryEntry: webEntries[0],
+      webEntries: webEntries.slice(1),
+      // Compatibility for one release; the payload now carries user-defined Web entries,
+      // not inferred gateway health links.
+      gatewayUrls: webEntries.slice(1),
       rootDomain: primaryRoot,
+    });
+  });
+
+  // ── 手动多出口配置（2026-08-31）──
+  //
+  // 多出口此前只有一条路：Agent 改 cds-compose.yml 的 `cds.subdomain` / `cds.web-entry-*`
+  // 标签，再重新导入项目。用户想自己加一个「左边域名 → 右边端口」的入口就必须找 Agent。
+  // 这两个端点把同一份配置（BuildProfile.subdomain + webEntry）开成可读可写：
+  //
+  //   GET  扫描本分支所有服务（含端口 / 运行状态 / 当前入口 / 值来自项目还是分支）
+  //   PUT  按 scope 写回：'project' 落 BuildProfile（该项目所有分支），'branch' 落
+  //        BranchEntry.profileOverrides（只影响本分支）
+  //
+  // 生效不需要重新部署：forwarder-route-publisher 每 2s 从 state 重算路由表，
+  // 命名子域路由随之出现/消失；webEntry 只影响面板入口清单，即时可见。
+  type WebEntryConfigRow = {
+    serviceId: string;
+    serviceName: string;
+    /** 'project' = 项目底座服务（可存项目档）；'branch' = 分支临时服务（只能存分支档） */
+    origin: 'project' | 'branch';
+    containerPort: number | null;
+    hostPort: number | null;
+    status: string;
+    /** 承载主域名根路径的服务：它的入口就是主域名，不需要命名子域 */
+    handlesRoot: boolean;
+    pathPrefixes: string[];
+    project: { subdomain: string; name: string; path: string };
+    branchOverride: { subdomain: string; name: string; path: string } | null;
+    /** `primary` 由 compose 的 cds.web-entry-primary 声明，本表单不编辑，只透出让用户知道谁是主入口 */
+    effective: { subdomain: string; name: string; path: string; primary: boolean };
+    /** 当前这条配置算出来的落地 URL；配不出入口时为空串 */
+    url: string;
+  };
+
+  /**
+   * 托管交付（deliveryMode='managed'）项目的服务清单来自 `Project.managedProfiles`，
+   * 由 ManagedProjectService 按 managedSpec **每次重新生成并覆盖**，而且这些 profile
+   * 不在全局 `state.buildProfiles` 里。所以对这类项目：
+   *   - 往「项目档」写没有意义（下次生成即被抹掉）；
+   *   - 用 id 去全局表找更危险：托管 profile 的 id（web / api 这类常见名）与别的
+   *     compose 项目的 profile id 可能重名，找到的是**别的项目**那条，鉴权已经过了
+   *     却写坏了邻居（Codex review P1 + cross-project-isolation）。
+   * 因此托管项目只允许存分支档（profileOverrides 按 profile id 生效，且不受重新生成影响）。
+   */
+  const supportsProjectScopedProfiles = (projectId: string): boolean =>
+    stateService.getProject(projectId)?.deliveryMode !== 'managed';
+
+  const readWebEntryConfig = (entry: BranchEntry, primaryRoot: string): {
+    previewSlug: string;
+    services: WebEntryConfigRow[];
+  } => {
+    const project = stateService.getProject(entry.projectId);
+    const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug || '';
+    const projectProfileIds = new Set(
+      stateService.getBuildProfilesForProject(entry.projectId || 'default').map((p) => p.id),
+    );
+    const services = stateService.getEffectiveProfilesForBranch(entry).map((baseline): WebEntryConfigRow => {
+      const override = entry.profileOverrides?.[baseline.id];
+      const effective = resolveEffectiveProfile(baseline, entry);
+      const svc = entry.services?.[baseline.id];
+      const effectiveEntry = resolveWebEntry(effective);
+      const sub = effective.subdomain || '';
+      const handlesRoot = handlesRootPath(effective);
+      // URL 口径与 computeBranchWebEntries 同源：命名子域走命名 host（整条路由直达容器），
+      // 否则挂在主域名的该服务前缀下。这里只算「这条配置指向哪」，可达性由部署状态决定。
+      let url = '';
+      if (effectiveEntry && previewSlug) {
+        const label = sub ? namedServiceLabel(previewSlug, sub) : '';
+        const useNamedHost = !handlesRoot && Boolean(label) && isPublishableNamedLabel(label);
+        const host = useNamedHost ? `${label}.${primaryRoot}` : `${previewSlug}.${primaryRoot}`;
+        const hostPath = useNamedHost ? effectiveEntry.path : mainDomainEntryPath(effective, effectiveEntry.path);
+        url = `https://${host}${hostPath === '/' ? '' : hostPath}`;
+      }
+      return {
+        serviceId: baseline.id,
+        serviceName: baseline.name || baseline.id,
+        origin: projectProfileIds.has(baseline.id) ? 'project' : 'branch',
+        containerPort: effective.containerPort ?? null,
+        hostPort: svc?.hostPort ?? null,
+        status: String(svc?.status || 'stopped'),
+        handlesRoot,
+        pathPrefixes: effective.pathPrefixes || [],
+        project: {
+          subdomain: baseline.subdomain || '',
+          name: baseline.webEntry?.name || '',
+          path: baseline.webEntry?.path || '/',
+        },
+        branchOverride: override && (override.subdomain !== undefined || override.webEntry !== undefined)
+          ? {
+              subdomain: override.subdomain || '',
+              name: override.webEntry?.name || '',
+              path: override.webEntry?.path || '/',
+            }
+          : null,
+        effective: {
+          subdomain: sub,
+          name: effectiveEntry?.name || '',
+          path: effectiveEntry?.path || '/',
+          primary: Boolean(effectiveEntry?.primary),
+        },
+        url,
+      };
+    });
+    return { previewSlug, services };
+  };
+
+  /**
+   * 这条命名子域在**某一条分支上**会不会撞车，返回人类可读的冲突原因。
+   *
+   * 为什么要按分支逐条算：命名 host 是 `<该分支的 previewSlug>-<subdomain>`，
+   * 存到项目档时**该项目的每条分支**都会各自拼出一个 host，只验请求这条分支
+   * 等于放过其它分支的撞车——那边发布器只会静默跳过路由，用户看到的是
+   * 「保存成功但地址打不开」（Codex review P1）。
+   *
+   * 三类占位都要查，缺一类就会存下一条永远发不出去的入口：
+   *   1. 同分支另一个服务已经占了同一组 host（发布器只保留首个）；
+   *   2. 别的分支的 preview host / 已发布命名服务 host；
+   *   3. 子域别名与完整自定义域名——**含本分支自己的**：发布器的 occupiedHosts
+   *      不跳过自己，本分支别名占走的 host 同样会让这条服务路由被跳过
+   *      （Codex review P2），所以这里也不能因为「是自己」就放行。
+   * 唯一豁免的是「这个服务自己当前已发布的那些 host」，否则原样再存一次都会 409。
+   *
+   * **枚举口径必须是 `publishedServiceLabels`（规范名 + 历史别名）而不是单个
+   * `namedServiceLabel`**：一个子域会展开出多条 host（`llmgw` 也发 `llmgw-web`）。
+   * 只比规范名时，服务 A 用 `llmgw`、服务 B 用 `llmgw-web` 这种组合按原始字符串
+   * 不相等就放行了，而两者展开后的 host 完全重合——发布器于是跳过或改指其中一条，
+   * 一条对外承诺过的兼容地址会开始指向错的容器（Codex review 第三轮 P1）。
+   * `preview-entrypoints.ts` 里那句「凡是要跟发布结果对齐的地方都必须走它」正是这个意思，
+   * 判据分裂（predicate-and-wiring-discipline 形状 3）在这里复发了一次。
+   */
+  const namedHostConflictsOnBranch = (
+    branch: BranchEntry,
+    serviceId: string,
+    subdomain: string,
+    roots: string[],
+    /**
+     * 本次请求里各服务**将要**变成的子域（serviceId → subdomain，空串表示要清掉）。
+     * 判定必须按结果态做：只跟保存前的状态比，同一次请求里两个服务分别填
+     * `llmgw` / `llmgw-web` 会双双放行（Codex review 第四轮 P1）。
+     */
+    pendingSubdomains: ReadonlyMap<string, string> = new Map(),
+  ): string[] => {
+    const project = stateService.getProject(branch.projectId);
+    const slug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
+    if (!slug) return [];
+    const hostsFor = (sub: string): string[] => publishedServiceLabels(slug, sub)
+      .flatMap((label) => roots.map((root) => `${label}.${root}`.toLowerCase()));
+    const hosts = hostsFor(subdomain);
+    // 一条都发不出去（首标签超限）：那是「这条分支享受不到」而不是「撞了别人」，不在这里拦。
+    if (hosts.length === 0) return [];
+    const conflicts: string[] = [];
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(branch)
+      .map((bp) => ({ id: bp.id, resolved: resolveEffectiveProfile(bp, branch) }));
+    for (const { id, resolved } of effectiveProfiles) {
+      if (id === serviceId) continue;
+      // 结果态优先：本次请求给它改成什么，就按什么判（没提到的服务沿用现值）。
+      const otherSub = pendingSubdomains.get(id) ?? resolved.subdomain ?? '';
+      if (!otherSub) continue;
+      const otherHosts = new Set(hostsFor(otherSub));
+      const overlap = hosts.filter((host) => otherHosts.has(host));
+      if (overlap.length > 0) {
+        conflicts.push(
+          `分支 "${branch.id}" 的服务 "${id}"（子域 "${otherSub}"）已经占用 ${overlap.join('、')}（含历史别名）`,
+        );
+      }
+    }
+    for (const collision of findPreviewHostCollisions(hosts)) {
+      // 同分支的「命名服务 host」一律交给上面那段判：它按**结果态**比对（含本次请求
+      // 里别的服务要改成什么），比这里基于保存前状态的枚举更准。留在这里判反而会把
+      // 「把同一个子域从服务 A 挪到服务 B」这种合法搬迁误判成撞车。
+      // 别名 / 自定义域名占位（reason 'alias' / 'custom-domain'）不在此列，照常报。
+      if (collision.conflictWith === branch.id && collision.reason === 'service-subdomain') continue;
+      conflicts.push(`"${collision.domain}" 已被分支 "${collision.conflictWith}" 占用`);
+    }
+    const owners = occupiedHostOwners(stateService.getAllBranches(), roots);
+    for (const host of hosts) {
+      const owner = owners.get(host);
+      if (owner) conflicts.push(`"${host}" 已被分支 "${owner}" 的子域别名或自定义域名占用`);
+    }
+    return conflicts;
+  };
+
+  /** 存项目档时会跟着变的分支：同项目、且没有用分支档把这个服务的子域钉死的。 */
+  const branchesInheritingProfile = (
+    projectId: string,
+    serviceId: string,
+    requestingBranchId: string,
+  ): BranchEntry[] => stateService.getAllBranches().filter((b) => {
+    if ((b.projectId || 'default') !== projectId) return false;
+    // 请求这条分支的覆盖会被本次保存清掉，所以它一定继承项目值。
+    if (b.id === requestingBranchId) return true;
+    return b.profileOverrides?.[serviceId]?.subdomain === undefined;
+  });
+
+  router.use(createPreviewAddressRouter({ stateService, config, serverEventLogStore, getEntries: computeBranchWebEntries }));
+
+  router.get('/branches/:id/web-entry-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
+    res.json({
+      branchId: id,
+      rootDomain: primaryRoot,
+      previewSlug,
+      services,
+      // 托管交付项目没有「项目档」可写，前端据此只留「仅本分支」
+      supportsProjectScope: supportsProjectScopedProfiles(entry.projectId || 'default'),
+    });
+  });
+
+  router.put('/branches/:id/web-entry-config', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+
+    const body = (req.body ?? {}) as { scope?: unknown; entries?: unknown };
+    const scope = body.scope === 'branch' ? 'branch' : body.scope === 'project' ? 'project' : null;
+    if (!scope) {
+      res.status(400).json({ error: '请求体需要 { scope: "project" | "branch", entries: [...] }' });
+      return;
+    }
+    if (!Array.isArray(body.entries)) {
+      res.status(400).json({ error: 'entries 必须是数组（每项 { serviceId, name, subdomain, path }）' });
+      return;
+    }
+
+    const projectId = entry.projectId || 'default';
+    if (scope === 'project' && !supportsProjectScopedProfiles(projectId)) {
+      res.status(400).json({
+        error: '该项目是托管交付模式，服务清单由 CDS 按方案自动生成，写项目档会在下次生成时被覆盖；请选择「仅本分支」保存。',
+      });
+      return;
+    }
+
+    const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+    const { previewSlug, services } = readWebEntryConfig(entry, primaryRoot);
+    if (!previewSlug) {
+      res.status(409).json({ error: '该分支还没有预览 slug（尚未部署过），暂时无法配置入口' });
+      return;
+    }
+    const rowById = new Map(services.map((row) => [row.serviceId, row]));
+
+    type NormalizedEntry = { serviceId: string; name: string; subdomain: string; path: string };
+    const normalized: NormalizedEntry[] = [];
+    const seenServiceIds = new Set<string>();
+    const subdomainOwner = new Map<string, string>();
+    for (const raw of body.entries as Array<Record<string, unknown>>) {
+      const serviceId = String(raw?.serviceId || '').trim();
+      const row = rowById.get(serviceId);
+      if (!row) {
+        res.status(400).json({ error: `未知服务 "${serviceId}"：它不在本分支生效的服务列表里` });
+        return;
+      }
+      if (seenServiceIds.has(serviceId)) {
+        res.status(400).json({ error: `服务 "${serviceId}" 在请求里出现了多次` });
+        return;
+      }
+      seenServiceIds.add(serviceId);
+      if (scope === 'project' && row.origin !== 'project') {
+        res.status(400).json({ error: `"${serviceId}" 是分支临时服务，只能保存到当前分支` });
+        return;
+      }
+      const name = String(raw?.name ?? '').trim();
+      const subdomain = String(raw?.subdomain ?? '').trim().toLowerCase();
+      const path = String(raw?.path ?? '/').trim() || '/';
+      if (subdomain && !isValidServiceSubdomain(subdomain)) {
+        res.status(400).json({
+          error: `子域 "${subdomain}" 非法：须为单个 DNS 标签（小写字母/数字/连字符，不以连字符开头结尾，长度 1..40），且不能用保留名`,
+        });
+        return;
+      }
+      // 「有子域没名称」是**合法且常见**的形态：API-only 服务（如网关 serving）
+      // 靠 cds.subdomain 拿一条可被调用的命名 URL，本来就不该出现在用户入口清单里。
+      // 早先在这里 400 会把这类服务逼进死角：要么编一个入口名，要么把行删掉，
+      // 而删行等于把它已有的命名 API 路由清掉（Codex review P1）。
+      if (name && normalizeWebEntryPath(path) === null) {
+        res.status(400).json({ error: `入口路径 "${path}" 非法：必须是以 / 开头的同源路径，且不能是健康探针路径` });
+        return;
+      }
+      if (subdomain) {
+        const owner = subdomainOwner.get(subdomain);
+        if (owner) {
+          res.status(400).json({ error: `子域 "${subdomain}" 被 "${owner}" 和 "${serviceId}" 同时使用；同一分支内子域必须唯一` });
+          return;
+        }
+        subdomainOwner.set(subdomain, serviceId);
+        const label = namedServiceLabel(previewSlug, subdomain);
+        if (!isPublishableNamedLabel(label)) {
+          res.status(400).json({
+            error: `子域 "${subdomain}" 与分支名拼出的 host 首标签 "${label}" 超过 63 字符上限，无法解析且通配证书不覆盖；请换个更短的子域`,
+          });
+          return;
+        }
+      }
+      normalized.push({ serviceId, name, subdomain, path });
+    }
+
+    // ── 撞车校验：必须在**整份请求解析完之后**做，且按「这次保存之后的结果」判 ──
+    //
+    // 逐条边解析边判会漏掉同一次请求内部的撞车：两个当前都没配子域的服务，一个填
+    // `llmgw`、一个填 `llmgw-web`，各自跟**保存前**的状态比都干净，原始名字符串又不相等，
+    // 于是双双放行；可它们展开后的 host 完全重合，发布器只会把兼容 host 给其中一个
+    // （Codex review 第四轮 P1）。所以把本次请求的赋值先合进「结果态」，再拿结果去判。
+    const pendingSubdomains = new Map(normalized.map((item) => [item.serviceId, item.subdomain]));
+    const roots = config.rootDomains?.length ? config.rootDomains : [primaryRoot];
+    for (const item of normalized) {
+      if (!item.subdomain) continue;
+      // 存分支档只影响本分支；存项目档要把**每条会继承这个值的分支**都验一遍。
+      const affected = scope === 'branch'
+        ? [entry]
+        : branchesInheritingProfile(projectId, item.serviceId, id);
+      const collisions = affected.flatMap((b) =>
+        namedHostConflictsOnBranch(b, item.serviceId, item.subdomain, roots, pendingSubdomains)
+          .map((message) => ({ branchId: b.id, message })),
+      );
+      if (collisions.length > 0) {
+        res.status(409).json({
+          error: `子域 "${item.subdomain}" 无法使用：${collisions.map((c) => c.message).join('; ')}`,
+          collisions,
+        });
+        return;
+      }
+    }
+
+    try {
+      for (const item of normalized) {
+        const row = rowById.get(item.serviceId)!;
+        // `primary`（cds.web-entry-primary）不是这个表单编辑的字段，但它决定了
+        // selectPrimaryWebEntry 挑谁当主入口。整对象替换会把它顺手丢掉，于是
+        // 一次改名就能把主入口挪到别的服务上、连主域名 URL 一起变（Codex review P2）。
+        // 所以按档位把现有的 primary 原样带过去。
+        // baseline 同样只能从**本分支生效的** profile 里取（托管 profile 与分支临时
+        // 服务都不在全局表里，裸 id 全局查会拿到别的项目那条）。
+        const baselineEntry = stateService.getEffectiveProfilesForBranch(entry)
+          .find((p) => p.id === item.serviceId)?.webEntry;
+        // primary 是项目档（compose 的 cds.web-entry-primary）声明的元数据，分支档从不
+        // 编辑它——所以两个档位都只从 baseline 继承，**不看**分支现有覆盖。此前分支档
+        // 从自己的覆盖里取：隐藏占位（空名 webEntry）不带 primary，「隐藏 → 重新启用」
+        // 就把它冲掉，主入口被静默换成别的服务（issue #1463）；而修复上线前已经走过这条
+        // 路径的分支，覆盖里留着「有名字、没 primary」的坏数据，只挑占位回落救不了它
+        // （Codex review P1）。一律回 baseline 取，每次保存都顺手把存量坏覆盖修回来。
+        const effectiveEntry = baselineEntry;
+        const buildEntry = (primary?: boolean) => (
+          item.name ? { name: item.name, path: item.path, ...(primary ? { primary: true } : {}) } : undefined
+        );
+        const webEntry = buildEntry(effectiveEntry?.primary);
+        if (scope === 'project') {
+          // 必须从**目标项目**的 profile 表里取，不能拿裸 id 去全局表找：那样
+          // 同名 id（web / api）会命中别的项目那条，鉴权过了却写坏邻居（Codex review P1）。
+          const profile = stateService.getBuildProfilesForProject(projectId)
+            .find((p) => p.id === item.serviceId && (p.projectId || 'default') === projectId);
+          if (!profile) {
+            res.status(404).json({ error: `项目 "${projectId}" 下不存在构建配置 "${item.serviceId}"` });
+            return;
+          }
+          stateService.updateBuildProfile(item.serviceId, {
+            subdomain: item.subdomain || undefined,
+            webEntry,
+          });
+          // 项目档写完必须把**本分支**这两个字段的覆盖清掉：否则分支覆盖继续赢，
+          // 用户在自己面前这条分支上看不到刚保存的值，会以为没生效。
+          const prev = entry.profileOverrides?.[item.serviceId];
+          if (prev && (prev.subdomain !== undefined || prev.webEntry !== undefined)) {
+            const next: BuildProfileOverride = { ...prev };
+            delete next.subdomain;
+            delete next.webEntry;
+            delete next.updatedAt;
+            if (Object.keys(next).length === 0) stateService.clearBranchProfileOverride(id, item.serviceId);
+            else stateService.setBranchProfileOverride(id, item.serviceId, next);
+          }
+        } else {
+          const prev = entry.profileOverrides?.[item.serviceId];
+          const next: BuildProfileOverride = { ...(prev || {}) };
+          delete next.updatedAt;
+          // 与项目底座一致的值不写覆盖（回到继承），避免分支上堆一层永远与项目相同的影子配置。
+          if (item.subdomain === row.project.subdomain) delete next.subdomain;
+          else next.subdomain = item.subdomain;
+          const sameEntry = item.name === row.project.name
+            && (item.name === '' || item.path === row.project.path);
+          if (sameEntry) delete next.webEntry;
+          // 空名 = 本分支隐藏这个入口（resolveWebEntry 判空名即无入口），
+          // 用空名对象而不是删字段，才能压过项目底座声明的入口。
+          else next.webEntry = webEntry ?? { name: '', path: '/' };
+          if (Object.keys(next).length === 0) stateService.clearBranchProfileOverride(id, item.serviceId);
+          else stateService.setBranchProfileOverride(id, item.serviceId, next);
+        }
+      }
+      stateService.save();
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+      return;
+    }
+
+    const refreshed = stateService.getBranch(id) || entry;
+    const after = readWebEntryConfig(refreshed, primaryRoot);
+    res.json({
+      message: scope === 'project' ? '已保存到项目（该项目所有分支生效）' : '已保存到当前分支',
+      branchId: id,
+      scope,
+      rootDomain: primaryRoot,
+      previewSlug: after.previewSlug,
+      services: after.services,
+      webEntries: computeBranchWebEntries(refreshed, primaryRoot),
+      // 路由表由 forwarder 每 2s 从 state 重算，命名子域几秒内自动出现，无需重新部署。
+      needsRedeploy: false,
     });
   });
 
@@ -15601,20 +18136,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.setBranchSubdomainAliases(id, normalized);
       stateService.save();
       // Return the new aliases + preview URLs so the UI can update instantly
-      const rootDomains = config.rootDomains?.length
-        ? config.rootDomains
-        : (config.previewDomain ? [config.previewDomain] : []);
-      const primaryRoot = rootDomains[0] || 'example.com';
+      const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
+      const webEntries = computeBranchWebEntries(entry, primaryRoot);
       res.json({
         message: '已保存子域名别名',
         branchId: id,
         aliases: normalized,
         previewUrls: normalized.map(a => `https://${a}.${primaryRoot}`),
         defaultUrl: `https://${id}.${primaryRoot}`,
-        // gatewayUrls are branch-derived (not alias-derived); return them so the panel keeps the
-        // 网关入口 block + 预览下拉 after saving aliases, instead of dropping them until a full
-        // reload (Bugbot "Alias save clears gateway URLs"). Same SSOT helper as the GET response.
-        gatewayUrls: computeBranchGatewayUrls(entry, primaryRoot),
+        primaryEntry: webEntries[0],
+        webEntries: webEntries.slice(1),
+        // Compatibility for one release. These are Web entries, not health URLs.
+        gatewayUrls: webEntries.slice(1),
         rootDomain: primaryRoot,
         needsRedeploy: false, // aliases are proxy-level, no container restart needed
       });
@@ -15630,8 +18163,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    // Agent 极速版门禁：清掉覆盖等于回退到 profile 基线；基线不是极速版就不许 Agent 清。
+    {
+      const gateProject = stateService.getProject(entry.projectId || 'default');
+      const gateProfile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+      if (gateProfile && gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+        const violations = findNonPrebuiltProfiles([gateProfile], entry, {
+          profileId, modeId: gateProfile.activeDeployMode || undefined,
+        });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(gateProject, [gateProfile], violations, {
+            branchId: entry.id,
+            operation: 'branch-override',
+          }));
+          return;
+        }
+      }
+    }
     try {
-      stateService.clearBranchProfileOverride(id, profileId);
+      // 「恢复为公共配置」指的是构建/运行那套覆盖，不包括手动入口配置——后者只是恰好
+      // 存在同一个 override 对象里（subdomain / webEntry）。分支覆盖 UI 在字段被清空时
+      // 走这条 DELETE，若整份清掉就等于「把端口删了顺手撤掉命名路由」（与 PUT 同一族，
+      // Codex review 第七轮 P1）。这两个字段的清除入口是 web-entry-config，不在这里。
+      const prev = stateService.getBranchProfileOverride(id, profileId);
+      const keep: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
+        ...(prev?.subdomain !== undefined ? { subdomain: prev.subdomain } : {}),
+        ...(prev?.webEntry !== undefined ? { webEntry: prev.webEntry } : {}),
+      };
+      if (Object.keys(keep).length > 0) {
+        stateService.setBranchProfileOverride(id, profileId, keep);
+      } else {
+        stateService.clearBranchProfileOverride(id, profileId);
+      }
+      appendEnvironmentAudit(stateService, req, id, 'delete', prev?.env ?? {}, {}, undefined, { profileId });
+      clearSourceModeCiMetadata(id);
       stateService.save();
       res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {
@@ -15716,7 +18281,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }]
       : [];
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       logs: logs.length > 0 ? logs : fallbackLogs,
       logsAreSynthetic: (isErrorFallback || hasRecoveredRuntime) || undefined,
       branchStatus: branch?.status,
@@ -15733,7 +18298,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ],
         note: '在部署进行中时,本端点的 logs 数组可能仍为空。要看实时进度请订阅 liveStreamHint.url。',
       },
-    });
+    }));
   });
 
   router.post('/branches/:id/container-logs', async (req, res) => {
@@ -15847,7 +18412,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         details: { masked: mask, hostPort: svc.hostPort },
       });
       stateService.save();
-      res.json({ logs: masked });
+      res.json(logPayloadForHumanView(req, { logs: masked }));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -15891,48 +18456,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     initSSE(res);
 
-    const chunks: string[] = [];
-    const ac = containerService.streamLogs(
-      svc.containerName,
-      (chunk) => {
-        chunks.push(chunk);
-        sendSSE(res, 'log', { chunk });
-      },
-      () => {
-        if (chunks.length > 0) {
-          const logs = maskSecretsText(chunks.join(''), { mask: shouldMask(req) });
-          stateService.appendContainerLogArchive(id, {
-            projectId: entry.projectId,
-            profileId: svc.profileId,
-            containerName: svc.containerName,
-            hostPort: svc.hostPort,
-            status: svc.status,
-            source: 'container-logs-stream',
-            masked: shouldMask(req),
-            logs,
-          });
-          serverEventLogStore?.record({
-            category: 'container',
-            severity: 'info',
-            source: 'container-logs-stream',
-            action: 'container.logs.stream-closed',
-            message: `container log stream closed for ${svc.containerName}`,
-            projectId: entry.projectId,
-            branchId: id,
-            profileId: svc.profileId,
-            containerName: svc.containerName,
-            status: svc.status,
-            logs: normalizeLogText(logs, 200),
-            details: { masked: shouldMask(req), hostPort: svc.hostPort },
-          });
-          stateService.save();
-        }
-        try { res.end(); } catch { /* already closed */ }
-      },
-    );
-
-    // Client disconnect → stop docker logs -f
-    req.on('close', () => ac.abort());
+    serveContainerLogStream(req, res, {
+      containerService, stateService, branch: entry, service: svc, mask: shouldMask(req), serverEventLogStore,
+    });
   });
 
   // ── Container env ──
@@ -15992,7 +18518,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(mGet.status).json(mGet.body);
       return;
     }
-    res.json({ extraProfiles: maskExtraProfilesEnv(entry.extraProfiles || []) || [] });
+    res.json({ extraProfiles: (maskExtraProfilesEnv(entry.extraProfiles || []) || []).map(profile => profileForHumanView(req, profile)) });
   });
 
   router.put('/branches/:id/extra-services', async (req, res) => {
@@ -16024,6 +18550,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     //  2. **剥离掩码哨兵**：入参值命中 `***` / `***[masked]***` 等 → 保留旧值（基底里已有）；旧值不存在
     //     则不写入（绝不持久化字面哨兵）。
     const MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+    const prevExtraUpdateOrderById = new Map((entry.extraProfiles || []).map(profile => [profile.id, profile.updateOrder]));
     const prevExtraEnvById = new Map<string, Record<string, string>>(
       (entry.extraProfiles || []).map((p) => [p.id, (p.env || {}) as Record<string, string>]),
     );
@@ -16125,6 +18652,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       };
       const pathPrefixes = strArray(raw?.pathPrefixes);
       const dependsOn = strArray(raw?.dependsOn);
+      if (raw.updateOrder !== undefined && raw.updateOrder !== 'start-first' && raw.updateOrder !== 'stop-first') {
+        res.status(400).json({ error: `额外服务 "${id}" 的 updateOrder 非法（仅允许 start-first 或 stop-first）` });
+        return;
+      }
+      const updateOrder = raw.updateOrder ?? prevExtraUpdateOrderById.get(id);
       const startupSignal = typeof raw?.startupSignal === 'string' && raw.startupSignal.trim() !== ''
         ? raw.startupSignal : undefined;
       const readinessProbe = ((): ReadinessProbe | undefined => {
@@ -16205,6 +18737,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })()),
         ...(pathPrefixes ? { pathPrefixes } : {}),
         ...(dependsOn ? { dependsOn } : {}),
+        ...(updateOrder !== undefined ? { updateOrder } : {}),
         ...(readinessProbe ? { readinessProbe } : {}),
         ...(startupSignal ? { startupSignal } : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
@@ -16223,7 +18756,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .map((p) => p.id)
       .filter((id) => !sanitizedIds.has(id) && entry.services[id] != null);
     const hasDestructiveRemoval = destructivelyDroppedIds.length > 0;
-    stateService.setBranchExtraProfiles(entry.id, sanitized);
+    try { stateService.setBranchExtraProfiles(entry.id, sanitized); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     let updated = stateService.getBranch(entry.id)!;
     // 一步到位:声明/改额外服务是纯配置变更,不会自动重建已在运行的分支(用户实测痛点)。
     // 带 ?redeploy=1 时,持久化后触发一次真正的分支重部署(走和 webhook 自调相同的 localhost 自 POST
@@ -16319,10 +18853,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-exec', async (req, res) => {
     const { id } = req.params;
-    const { profileId, command } = req.body as { profileId?: string; command?: string };
+    const { profileId, command, stdin, expectedContainerId } = req.body as {
+      profileId?: string; command?: string; stdin?: string; expectedContainerId?: string;
+    };
     if (!command || typeof command !== 'string' || !command.trim()) {
       res.status(400).json({ error: '请输入命令' });
       return;
+    }
+    if (stdin !== undefined && (typeof stdin !== 'string' || Buffer.byteLength(stdin) > 1024 * 1024)) {
+      res.status(400).json({ error: '标准输入必须是最多 1 MiB 的字符串' }); return;
+    }
+    if (expectedContainerId !== undefined && (typeof expectedContainerId !== 'string' || !/^[a-f0-9]{64}$/.test(expectedContainerId))) {
+      res.status(400).json({ error: '必须提供完整容器身份' }); return;
     }
 
     const entry = stateService.getBranch(id);
@@ -16331,16 +18873,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+
     const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
     if (!svc) {
       res.status(404).json({ error: '未找到运行中的服务' });
       return;
     }
+    if (expectedContainerId !== undefined && svc.containerId !== expectedContainerId) {
+      res.status(409).json({ error: '当前容器身份已变化，拒绝执行' }); return;
+    }
+    if (svc.staticWeb || svc.runtimeKind === 'static') {
+      res.status(409).json({ error: '该前端由静态文件托管，无可执行命令的容器；请通过预览入口检查页面或重新部署产物' }); return;
+    }
 
     try {
+      const recordedId = svc.containerId, containerName = svc.containerName;
+      let containerId = expectedContainerId || recordedId;
+      if (!containerId || !/^[a-f0-9]{64}$/.test(containerId)) {
+        const identity = await shell.exec(`docker inspect --format '{{.Id}}' ${shellQuote(containerName)}`, { timeout: 5000 });
+        containerId = identity.exitCode === 0 ? identity.stdout.trim() : '';
+      }
+      if (!/^[a-f0-9]{64}$/.test(containerId)) {
+        res.status(409).json({ error: '无法确认当前容器身份，请刷新后重试' }); return;
+      }
+      // #1448: the command string must reach the container's `sh` untouched.
+      // JSON.stringify produced a double-quoted shell word, so the CDS host
+      // shell expanded `$VAR` / `$(...)` BEFORE docker exec — `printenv`-style
+      // commands returned the cds-master process environment (GitHub App
+      // private key included), and `$(cmd)` ran as the CDS main process.
+      // Single-quote it; the container shell does the expansion.
       const result = await shell.exec(
-        `docker exec ${svc.containerName} sh -c ${JSON.stringify(command)}`,
-        { timeout: 30_000 },
+        `docker exec ${stdin !== undefined ? '-i ' : ''}${containerId} sh -c ${shellQuote(command)}`,
+        { timeout: 30_000, ...(stdin !== undefined ? { stdin } : {}), beforeStart: () => {
+          const current = stateService.getBranch(id)?.services[svc.profileId];
+          if (!current || current.containerName !== containerName || current.containerId !== recordedId)
+            throw new Error('当前容器身份已变化，拒绝执行');
+        } },
       );
       // F15 (HIGH severity, 2026-05-02): docker exec output is the #1 leak
       // vector — `env` / `printenv` / `cat .env` / app debug commands all
@@ -16404,7 +18974,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         masked: mask,
       });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message === '当前容器身份已变化，拒绝执行' ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -16417,14 +18987,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
     const count = Math.min(parseInt(req.query.count as string) || 20, 50);
     try {
+      const metadataRepo = metadataOnlyGitRepository(entry);
+      const target = metadataRepo
+        ? await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, entry.pinnedCommit, metadataRepo) : undefined;
       const SEP = '<SEP>';
       const format = ['%h', '%s', '%an', '%ar'].join(SEP);
       const result = await shell.exec(
-        `git log -${count} --format="${format}"`,
-        { cwd: entry.worktreePath, timeout: 10_000 },
+        `git log -${count} --format="${format}"${target ? ` ${shellQuote(target.afterFull)}` : ''}`,
+        { cwd: metadataRepo || entry.worktreePath, timeout: 10_000 },
       );
+      if (metadataRepo && result.exitCode !== 0) throw new Error('提交历史读取失败');
       const commits = result.stdout
         .trim()
         .split('\n')
@@ -16448,15 +19026,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
+    if (!isCommitShaLike(hash)) {
+      res.status(400).json({ error: '提交标识无效，请从提交历史选择要切换的提交。' });
+      return;
+    }
     if (entry.status === 'building' || entry.status === 'starting') {
       res.status(409).json({ error: '分支正在构建/启动中，无法切换提交' });
       return;
     }
 
     try {
+      const metadataRepo = metadataOnlyGitRepository(entry);
+      if (metadataRepo) {
+        const exact = await shell.exec(`git rev-parse --verify ${shellQuote(`${hash}^{commit}`)}`, { cwd: metadataRepo, timeout: 5_000 });
+        const sha = exact.stdout.trim().toLowerCase();
+        if (exact.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(sha)) {
+          res.status(400).json({error: `无效的提交: ${hash}`}); return;
+        }
+        const subject = await shell.exec(`git log --format=%s -1 ${shellQuote(sha)}`, {cwd:metadataRepo,timeout:5_000});
+        if (subject.exitCode !== 0) throw new Error('提交信息读取失败');
+        entry.pinnedCommit = sha;
+        stateService.save();
+        res.json({message:`已切换到提交 ${sha.slice(0,7)}`,pinnedCommit:sha,subject:subject.stdout.trim()});
+        return;
+      }
       // Validate the commit hash exists
       const verify = await shell.exec(
-        `git cat-file -t ${hash}`,
+        `git cat-file -t ${shellQuote(hash)}`,
         { cwd: entry.worktreePath, timeout: 5_000 },
       );
       if (verify.exitCode !== 0 || verify.stdout.trim() !== 'commit') {
@@ -16466,7 +19066,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Checkout the specific commit (detached HEAD)
       const result = await shell.exec(
-        `git checkout ${hash}`,
+        `git checkout --detach ${shellQuote(hash)}`,
         { cwd: entry.worktreePath, timeout: 10_000 },
       );
       if (result.exitCode !== 0) {
@@ -16480,8 +19080,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       const [pinnedHash, ...subjectParts] = logResult.stdout.trim().split(' ');
       const pinnedSubject = subjectParts.join(' ');
-
-      entry.pinnedCommit = pinnedHash || hash;
+      const fullHead = await shell.exec('git rev-parse --verify HEAD', { cwd: entry.worktreePath, timeout: 5_000 });
+      const exactPinned = fullHead.stdout.trim().toLowerCase();
+      if (fullHead.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(exactPinned)) throw new Error('固定版本的完整身份尚未确认，请刷新分支后重试');
+      entry.pinnedCommit = exactPinned;
       stateService.save();
 
       res.json({
@@ -16503,8 +19105,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
 
     try {
+      const metadataRepo = metadataOnlyGitRepository(entry);
+      if (metadataRepo) {
+        await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, undefined, metadataRepo);
+        entry.pinnedCommit = undefined;
+        stateService.save();
+        res.json({message:'已恢复到分支最新提交'});
+        return;
+      }
       const result = await shell.exec(
         `git checkout ${entry.branch}`,
         { cwd: entry.worktreePath, timeout: 10_000 },
@@ -16528,7 +19142,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Reset branch status ──
 
-  router.post('/branches/:id/reset', (req, res) => {
+  router.post('/branches/:id/reset', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
@@ -16542,6 +19156,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (!branchOperationLease) return;
     try {
+      await persistBranchCancellation(entry, branchOperationLease);
       assertBranchOperationCurrent(branchOperationLease, 'reset before state write');
       entry.status = 'idle';
       entry.errorMessage = undefined;
@@ -16553,6 +19168,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       assertBranchOperationCurrent(branchOperationLease, 'reset before state save');
       stateService.save();
+      await stateService.flush();
       completeBranchOperation(branchOperationLease, 'completed');
       res.json({ message: '分支状态已重置', operationId: branchOperationLease.operationId });
     } catch (err) {
@@ -16659,7 +19275,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const source = projectFilter
       ? stateService.getBuildProfilesForProject(projectFilter)
       : stateService.getBuildProfiles();
-    const profiles = source.map(p => ({
+    const profiles = source.filter(p => canHumanAccessProject(req, stateService, p.projectId || 'default')).map(p => profileForHumanView(req, {
       ...p,
       env: p.env ? maskSecrets(p.env) : p.env,
     }));
@@ -16697,7 +19313,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, profile.projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
+      // Agent 极速版门禁：新建配置原样落盘请求体，机器凭据带 managedBuild 建一份配置，直接部署会被拦，
+      // 但随后 push 走豁免的 webhook 派发就在宿主上跑 install / build（Codex 第九轮 P1）。与通用 PUT 同一
+      // 口径只拦 managedBuild：prebuilt 标记本身不挂载源码、不编译（台账 G3），新建时不拦。
+      {
+        const gateProject = stateService.getProject(profile.projectId);
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req) && profile.managedBuild) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：managedBuild 会让 CDS 宿主编译源码，Agent 不得新建带它的构建配置，请由真人在项目设置页调整。`,
+            projectId: gateProject.id,
+            violations: [],
+            hint: '极速版配置只需 deployModes 里带 prebuilt: true 的模式或 prebuiltImage: true 的镜像站点，不需要 managedBuild。',
+          });
+          return;
+        }
+      }
       stateService.addBuildProfile(profile);
+      appendEnvironmentAudit(stateService, req, profile.projectId, 'set', {}, profile.env ?? {}, undefined, { profileId: profile.id });
       stateService.save();
       res.status(201).json({ profile });
     } catch (err) {
@@ -16773,11 +19406,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
           delete incomingBody.environment;
         }
       }
+      // Agent 极速版门禁：通用 PUT 也能改 activeDeployMode / deployModes / prebuiltImage，
+      // 不拦就绕过了 /deploy-mode 那道闸（Codex PR #1513 P1）。模式定义字段 Agent 一律不得动
+      // （改了就能把源码模式标成 prebuilt）；activeDeployMode 按合并后的结果判是否极速版。
+      {
+        const gateProject = stateService.getProject(existing.projectId || 'default');
+        const patch = incomingBody && typeof incomingBody === 'object' ? incomingBody as Record<string, unknown> : {};
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+          const touchedDefinition = PREBUILT_DEFINITION_FIELDS.filter((f) => f in patch);
+          if (touchedDefinition.length > 0) {
+            res.status(409).json({
+              error: 'agent_prebuilt_only',
+              message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：构建配置的 ${touchedDefinition.join(' / ')} 定义了什么算极速版，Agent 不得修改，请由真人在项目设置页调整。`,
+              projectId: gateProject.id,
+              violations: [],
+              hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+            });
+            return;
+          }
+          if ('activeDeployMode' in patch) {
+            // 判将要落盘的原值，不 trim（同分支覆盖处的理由，Codex 第十轮 P1）
+            const nextMode = typeof patch.activeDeployMode === 'string' && patch.activeDeployMode !== ''
+              ? patch.activeDeployMode
+              : undefined;
+            if (!isPrebuiltMode(existing, nextMode)) {
+              const modeLabel = nextMode ? (existing.deployModes?.[nextMode]?.label || nextMode) : '源码构建（无部署模式）';
+              res.status(409).json(buildPrebuiltGateRejection(gateProject, [existing], [{
+                profileId: existing.id, profileName: existing.name || existing.id, modeId: nextMode || '', modeLabel,
+              }], { operation: 'profile-default' }));
+              return;
+            }
+          }
+        }
+      }
+      const previousEnv = { ...existing.env };
+      const envKeys = Object.keys(req.body?.environment ?? req.body?.env ?? {});
       stateService.updateBuildProfile(req.params.id, incomingBody);
+      if (envKeys.length) appendEnvironmentAudit(stateService, req, existing.projectId || 'default', 'set', previousEnv,
+        stateService.getBuildProfile(req.params.id)?.env ?? {}, envKeys, { profileId: existing.id });
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message.startsWith('storage_retained_') ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -16788,6 +19458,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, existing.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeBuildProfile(req.params.id);
+      appendEnvironmentAudit(stateService, req, existing.projectId || 'default', 'delete', existing.env ?? {}, {}, undefined, { profileId: existing.id });
       // Bug F (MED, 2026-05-10): when a build-profile is deleted, its
       // entries inside branch.services[<profileId>] are left behind as
       // ghost rows showing status='error' forever. Mirror the behaviour
@@ -16861,10 +19532,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
           let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
           try {
+            await persistBranchCancellation(entry, branchOperationLease);
             assertBranchOperationCurrent(branchOperationLease, `delete build profile before ${entry.id}/${removedProfileId}`);
             if (svc?.containerName) {
               try {
-                await containerService.remove(svc.containerName, {
+                await containerService.removeRuntimeGroup(svc, {
                   projectId: entry.projectId,
                   branchId: entry.id,
                   profileId: removedProfileId,
@@ -16917,7 +19589,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       res.json({ message: '已删除', skippedBusyCount: skippedBusy.length, skippedBusy });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message.startsWith('storage_retained_') ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -16984,6 +19656,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // Agent 极速版门禁：本端点整体替换 / 合并 deployModes（模式定义），机器凭据在开了门禁的
+      // 项目里一律不得动（改了就能抹掉 prebuilt 标记，Codex 第二轮 P1）。按**实际命中的 targets**
+      // 判（Codex 第五轮 P2：按全量 profile 判会让只改未门禁项目的批量请求被无关项目拦下）。
+      if (isAgentGatedRequest(req)) {
+        const gatedProjectIds = new Set(
+          targets
+            .map((p) => p.projectId || 'default')
+            .filter((pid) => isAgentPrebuiltOnly(stateService.getProject(pid))),
+        );
+        if (gatedProjectIds.size > 0) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目 ${[...gatedProjectIds].join('、')} 要求 Agent 只使用极速版（CI 预构建）部署：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
+            projectId: [...gatedProjectIds][0],
+            violations: [],
+            hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+          });
+          return;
+        }
+      }
+
+
       // 自动快照（这是批量破坏性写入）
       const snapshot = stateService.createConfigSnapshot({
         trigger: 'pre-destructive',
@@ -17034,6 +19728,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const available = profile.deployModes ? Object.keys(profile.deployModes).join(', ') : '无';
         res.status(400).json({ error: `部署模式 "${mode}" 不存在，可用: ${available}` });
         return;
+      }
+      // Agent 极速版门禁：项目默认是同项目全部分支共用的一份值（cross-project-isolation 通道 9
+      // 同款风险），Agent 不得把它写成非 prebuilt 模式，也不得清空回源码基线。
+      {
+        const gateProject = stateService.getProject(profile.projectId || 'default');
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+          const violations = findNonPrebuiltProfiles([profile], undefined, { profileId: id, modeId: mode || undefined });
+          if (violations.length > 0) {
+            res.status(409).json(buildPrebuiltGateRejection(gateProject, [profile], violations, {
+              operation: 'profile-default',
+            }));
+            return;
+          }
+        }
       }
       stateService.updateBuildProfile(id, { activeDeployMode: mode || undefined });
       stateService.save();
@@ -17296,7 +20004,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       warnings.push('OK 未检测到明显不一致。如仍看不到预期日志，排查：日志级别过滤、LogError 是否真走到那个代码路径、Infrastructure.dll 是不是被引用/注入。');
     }
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       branch: branchSlug,
       profile: profileId,
       container: containerName,
@@ -17305,7 +20013,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       latestSource: topSrc,
       recentLogs: logs.split('\n').slice(-30).join('\n'),
       warnings,
-    });
+    }));
   });
 
   // ── Docker images (for dropdown selection) ──
@@ -17355,19 +20063,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' }],
+          cacheMounts: [],
         };
       case 'yarn':
         return {
           installPrefix: 'corepack enable && yarn install --frozen-lockfile && ',
           runPrefix: 'corepack enable && yarn exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/yarn`, containerPath: '/usr/local/share/.cache/yarn' }],
+          cacheMounts: [],
         };
       default:
         return {
           installPrefix: 'npm install && ',
           runPrefix: 'npx ',
-          cacheMounts: [{ hostPath: `${cacheBase}/npm`, containerPath: '/root/.npm' }],
+          cacheMounts: [],
         };
     }
   }
@@ -17472,6 +20180,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (composeYaml) {
       const parsed = parseCdsCompose(composeYaml);
       if (parsed && parsed.buildProfiles.length > 0) {
+        try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(projectId).map(s=>s.id)));}
+        catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
         const scopedProfiles = parsed.buildProfiles.map((bp): BuildProfile => ({
           ...bp,
           id: `${bp.id}${idSuffix}`,
@@ -17531,9 +20241,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         workDir: 'prd-api',
         command: 'dotnet restore && dotnet build --no-restore && dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
-        cacheMounts: [
-          { hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' },
-        ],
+        cacheMounts: [],
       },
       {
         id: 'admin',
@@ -17612,14 +20320,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // gets `***[masked]***` — UI keeps rendering "X env vars configured" but
     // no machine credential walks away with the secret material.
     const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
-    const cookieAuth = (req as any)._cdsCookieAuth === true;
+    const humanOwner = isHumanSystemOwner(req);
     const maskValues = (env: Record<string, string>): Record<string, string> => {
       const out: Record<string, string> = {};
       for (const k of Object.keys(env || {})) out[k] = '***[masked]***';
       return out;
     };
     const ownerOkFor = (s: string): boolean => {
-      if (cookieAuth) return true;
+      if (humanOwner) return true;
       if (projKey && projKey.projectId === s) return true;
       return false;
     };
@@ -17630,7 +20338,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const raw = stateService.getCustomEnvRaw();
       // _all spans every scope incl. _global; only cookie auth (admin UI)
       // may see plaintext. Any token-based caller gets full mask.
-      if (cookieAuth) {
+      if (humanOwner) {
         res.json({ env: raw, scope: '_all' });
         return;
       }
@@ -17674,7 +20382,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // typeof req.body === 'object' 检查会让 fromBody 走假分支,scope 兜底 _global)。
   router.get('/env/audit', (req, res) => {
     const scope = resolveScope(req);
-    if (scope === '_global' || scope === '_all') {
+    if (scope === '_global') {
+      if (!isHumanSystemOwner(req)) { res.sendStatus(404); return; }
+      const archive = req.query.archive === '1';
+      const entries = stateService.getEnvChangeLog(scope, archive);
+      if (archive) res.attachment('cds-global-config-changes.json');
+      res.json({ scope, entries });
+      return;
+    }
+    if (scope === '_all') {
       res.status(400).json({ error: '审计日志只对项目级 scope 可用' });
       return;
     }
@@ -17682,6 +20398,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `项目 '${scope}' 不存在` });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
     res.json({ scope, entries: stateService.getEnvChangeLog(scope) });
   });
 
@@ -17709,12 +20426,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (env.CDS_WORKTREE_BASE) config.worktreeBase = env.CDS_WORKTREE_BASE;
   }
 
+  function allowEnvironmentScope(req: Request, res: Response, scope: string) {
+    const stamped = req as Request & Parameters<typeof assertProjectAccess>[0];
+    if (scope === '_global') {
+      if (stamped.cdsProjectKey || (stamped.cdsAccess && stamped.cdsAccess.access.projects !== 'all')) {
+        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据无权修改全局配置' });
+        return false;
+      }
+      return true;
+    }
+    const project = stateService.getProject(scope);
+    const branch = project ? undefined : stateService.getBranch(scope);
+    const projectId = project?.id ?? (branch ? branch.projectId || 'default' : undefined);
+    if (!projectId || !stateService.getProject(projectId) || project?.mirror || branch?.mirror) {
+      res.status(404).json({ error: 'env_scope_not_found', message: '没有可操作的配置范围' });
+      return false;
+    }
+    const mismatch = assertProjectAccess(stamped, projectId);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return false; }
+    return true;
+  }
+
   router.put('/env', (req, res) => {
     const { scope, fromBody } = resolveScopeAndSource(req);
     if (scope === '_all') {
       res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
     const rawBody = req.body as Record<string, string>;
     if (!rawBody || typeof rawBody !== 'object') {
       res.status(400).json({ error: '请求体必须是键值对对象' });
@@ -17734,6 +20473,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (k === 'scope' && fromBody) continue;
       env[k] = v;
     }
+    const previous = stateService.getCustomEnvScope(scope);
     stateService.setCustomEnv(env, scope);
     // Phase 8 — 项目级 env 修改时同步 defaultEnv,作为新分支创建时的继承模板。
     //
@@ -17745,13 +20485,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (scope !== '_global' && stateService.getProject(scope)) {
       stateService.setDefaultEnv(scope, env);
       // Phase 9.5 — 审计日志:记录 bulk-replace 操作 + 涉及的 keys
-      stateService.appendEnvChangeLog(scope, {
-        op: 'bulk-replace',
-        keys: Object.keys(env),
-        actor: resolveActorFromRequest(req),
-        source: 'api',
-      });
     }
+    appendEnvironmentAudit(stateService, req, scope, 'bulk-replace', previous, env);
     stateService.save();
     syncCdsConfig();
     res.json({ message: '环境变量已更新', env, scope });
@@ -17769,6 +20504,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '_all 仅用于读取' });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
+    const previous = stateService.getCustomEnvScope(scope);
     stateService.setCustomEnvVar(key, value, scope);
     // Phase 8 — 项目级单 key 修改时同步 defaultEnv(新分支继承)
     if (scope !== '_global' && stateService.getProject(scope)) {
@@ -17776,13 +20513,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       current[key] = value;
       stateService.setDefaultEnv(scope, current);
       // Phase 9.5 — 审计:single key set
-      stateService.appendEnvChangeLog(scope, {
-        op: 'set',
-        keys: [key],
-        actor: resolveActorFromRequest(req),
-        source: 'api',
-      });
     }
+    appendEnvironmentAudit(stateService, req, scope, 'set', previous, stateService.getCustomEnvScope(scope), [key]);
     stateService.save();
     syncCdsConfig();
     res.json({ message: `Set ${key}`, scope });
@@ -17795,6 +20527,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '_all 仅用于读取' });
       return;
     }
+    if (!allowEnvironmentScope(req, res, scope)) return;
+    const previous = stateService.getCustomEnvScope(scope);
     stateService.removeCustomEnvVar(key, scope);
     // Bugbot fix(PR #521)+ Codex P2:同步从 defaultEnv 删,否则 PUT /env*
     // 已删的 key 还在 defaultEnv 模板里,新分支创建时会被 inheritDefaultEnv 复活
@@ -17806,13 +20540,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.setDefaultEnv(scope, current);
       }
       // Phase 9.5 — 审计:delete
-      stateService.appendEnvChangeLog(scope, {
-        op: 'delete',
-        keys: [key],
-        actor: resolveActorFromRequest(req),
-        source: 'api',
-      });
     }
+    appendEnvironmentAudit(stateService, req, scope, 'delete', previous, stateService.getCustomEnvScope(scope), [key]);
     stateService.save();
     res.json({ message: `Deleted ${key}`, scope });
   });
@@ -17884,6 +20613,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     if (!dryRun) {
+      if (!allowEnvironmentScope(req, res, '_global') || !allowEnvironmentScope(req, res, targetProject.id)) return;
       for (const entry of plan) {
         if (entry.flow === 'duplicate') {
           // 两边都写：全局原本就有，项目复制
@@ -17898,6 +20628,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         // global-only / duplicate-skip：什么都不做
       }
+      appendEnvironmentAudit(stateService, req, targetProjectId, 'set', projectEnv, stateService.getCustomEnvScope(targetProjectId),
+        plan.filter(entry => entry.flow === 'duplicate' || entry.flow === 'move').map(entry => entry.key));
+      appendEnvironmentAudit(stateService, req, '_global', 'delete', globalEnv, stateService.getCustomEnvScope('_global'),
+        plan.filter(entry => entry.flow === 'move' || entry.flow === 'move-skip').map(entry => entry.key));
       stateService.save();
     }
 
@@ -17996,8 +20730,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Config (read-only) ──
 
-  router.get('/config', async (_req, res) => {
+  router.get('/config', async (req, res) => {
+    if (isScopedHuman(req)) {
+      res.json({ workerPort: config.workerPort, mainDomain: config.mainDomain,
+        previewDomain: config.previewDomain || config.rootDomains?.[0] });
+      return;
+    }
     const customEnv = stateService.getCustomEnv();
+    const prdAgentBaseUrl = stateService.getActiveCdsConnections()
+      .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
+      ?.partnerBaseUrl?.trim()
+      || customEnv.CDS_MAP_BASE?.trim()
+      || process.env.CDS_MAP_BASE?.trim()
+      || '';
 
     // GitHub repo URL: prefer explicit config from UI env vars, fallback to git remote auto-detection
     let githubRepoUrl = customEnv.GITHUB_REPO_URL || '';
@@ -18027,6 +20772,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...config,
       githubRepoUrl,
       cdsCommitHash,
+      prdAgentBaseUrl,
       jwt: { ...config.jwt, secret: '***' },
       executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(
@@ -18180,6 +20926,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
             let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
             try {
+              await persistBranchCancellation(entry, branchOperationLease);
               assertBranchOperationCurrent(branchOperationLease, `cleanup cross-project before ${profileId}`);
               // Best-effort stop the orphan container.
               if (svc?.containerName) {
@@ -18254,6 +21001,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let removedCount = 0;
       const skippedBusy: Array<{ branchId: string; reason: string }> = [];
       for (const entry of toRemove) {
+        try { stateService.assertBranchStorageRemovalAllowed(entry.id); }
+        catch (error) {
+          skippedBusy.push({branchId:entry.id,reason:(error as Error).message});
+          sendSSE(res,'step',{step:'cleanup',status:'warning',title:`保留 ${entry.id}：${(error as Error).message}`});
+          continue;
+        }
         const branchOperationLease = beginSilentBranchOperation(req, entry, {
           kind: 'cleanup-orphans',
           source: 'api.cleanup',
@@ -18266,6 +21019,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
+          await persistBranchCancellation(entry, branchOperationLease);
           sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
           await archiveBranchContainerLogs({
             stateService,
@@ -18303,7 +21057,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'cleanup before state delete');
           // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
+          await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           removedCount += 1;
@@ -18438,6 +21192,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Step 3: stop containers + remove worktrees in parallel, then update state
       await Promise.all(orphans.map(async (entry) => {
+        try { stateService.assertBranchStorageRemovalAllowed(entry.id); }
+        catch (error) {
+          skippedBusy.push({branchId:entry.id,reason:(error as Error).message});
+          sendSSE(res,'step',{step:`cleanup-${entry.id}`,status:'warning',title:`保留 ${entry.branch}：${(error as Error).message}`});
+          return;
+        }
         const branchOperationLease = beginSilentBranchOperation(req, entry, {
           kind: 'cleanup-orphans',
           source: 'api.cleanup-orphans',
@@ -18450,6 +21210,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
+          await persistBranchCancellation(entry, branchOperationLease);
           sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
           await archiveBranchContainerLogs({
             stateService,
@@ -18489,6 +21250,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
 
+          // Keep the original branch lease through the final metadata removal;
+          // a new P cannot begin between runtime cleanup and dropping its owner.
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup orphan before state delete');
+          stateService.assertBranchStorageRemovalAllowed(entry.id);
+          await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup orphan before metadata delete');
+          stateService.assertBranchStorageRemovalAllowed(entry.id);
+          stateService.removeLogs(entry.id);
+          stateService.removeBranch(entry.id);
           cleanedOrphans.push(entry);
           sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
         } catch (err) {
@@ -18500,13 +21270,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }));
 
-      // State mutations are serial (state is in-memory, no async needed)
-      for (const entry of cleanedOrphans) {
-        // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-        await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
-        stateService.removeLogs(entry.id);
-        stateService.removeBranch(entry.id);
-      }
       const cleaned = cleanedOrphans.length;
 
       stateService.save();
@@ -18607,6 +21370,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Factory reset: stop all containers, clear all config, keep Docker volumes ──
 
   router.post('/factory-reset', async (req, res) => {
+    const storageProjectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    try {
+      for (const branch of stateService.getAllBranches())
+        if (!storageProjectFilter || (branch.projectId || 'default') === storageProjectFilter)
+          stateService.assertBranchStorageRemovalAllowed(branch.id);
+      for (const projectId of storageProjectFilter ? [storageProjectFilter] : stateService.getProjects().map(p => p.id))
+        stateService.assertProjectStorageRemovalAllowed(projectId);
+    } catch (error) {
+      res.status(409).json({error:(error as Error).message.split(':')[0],message:(error as Error).message});
+      return;
+    }
     initSSE(res);
     try {
       // Optional ?project=<id> scopes the reset to that project only:
@@ -18680,6 +21454,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
           let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
           try {
+          await persistBranchCancellation(entry, branchOperationLease);
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
             assertBranchOperationCurrent(branchOperationLease, `factory reset before ${svc.profileId}`);
@@ -18705,7 +21480,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'factory reset before state delete');
           // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
+          await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           } catch (err) {
@@ -18827,6 +21602,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
+        await persistBranchCancellation(entry, branchOperationLease);
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
           assertBranchOperationCurrent(branchOperationLease, `factory reset before ${svc.profileId}`);
@@ -18945,6 +21721,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Infrastructure services CRUD ──
 
+  function infraServiceView(service: InfraService | null | undefined): InfraService | null | undefined {
+    if (!service) return service;
+    const { credentialRotationVault: _credentialRotationVault, ...publicService } = service;
+    return {
+      ...publicService,
+      env: maskEnvRecord(service.env || {}),
+      command: maskCommandSecrets(service.command),
+      entrypoint: maskCommandSecrets(service.entrypoint),
+    };
+  }
+
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
@@ -18966,7 +21753,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
     }
 
-    res.json({ services });
+    res.json({ services: services.map((service) => infraServiceView(service)) });
   });
 
   // Infra catalog (SSOT: services/infra-catalog.ts) — secret-free preset list for the
@@ -19023,7 +21810,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Bug I (LOW, 2026-05-10): when ?project= is missing AND the id exists
     // in multiple projects, try to disambiguate from the Referer header so
     // that POST /api/infra/mysql/restart issued from
-    //   https://cds.miduo.org/projects/<projId>/...
+    //   https://cds.example.com/projects/<projId>/...
     // resolves to the project the user is currently viewing instead of
     // unconditionally erroring with "exists in multiple projects".
     const referer = (req.headers.referer || (req.headers as any).referrer) as string | undefined;
@@ -19064,6 +21851,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * surface the data-loss risk.
    */
   function recommendedVolumePathsForImage(image: string): string[] | null {
+    const catalog = recommendedVolumePathsFromCatalog(image);
+    if (catalog) return catalog;
     const lower = (image || '').toLowerCase();
     const baseRaw = lower.split('/').pop() || lower;
     const base = baseRaw.split(':')[0];
@@ -19088,9 +21877,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }));
   }
 
+router.post('/branches/:id/storage/provision',async(req,res)=>{
+ let lease:BranchOperationLease|null=null;
+ let finalStatus:'completed'|'failed'='failed';
+ try{
+  const entry=stateService.getBranch(req.params.id),body=structuredClone(req.body||{});
+  if(!entry){res.status(404).json({error:'branch_not_found'});return;}
+  const projectId=entry.projectId||'default',denied=assertProjectAccess(req as any,projectId);
+  if(denied){res.status(denied.status).json(denied.body);return;}
+  if(body.initializeStorage!=='new-only'||typeof body.profileId!=='string'||!Array.isArray(body.freshMounts)){res.status(400).json({error:'storage_provision_input_invalid'});return;}
+  // Read the original declaration; ordinary metadata getters must remain usable while P is held.
+  const raw=mergeBranchProfiles(stateService.getBuildProfilesForProject(projectId),entry).find(p=>p.id===body.profileId);
+  if(!raw){res.status(404).json({error:'profile_not_found'});return;}
+  const profile=resolveEffectiveProfile(raw,entry);
+  const acceptedExecutor=entry.executorId;
+  if(isRemoteExecutorOwned(acceptedExecutor)||(!acceptedExecutor&&registry?.getOnline().some(node=>node.role!=='embedded'))){res.status(409).json({error:'storage_provision_target_daemon_unconfirmed'});return;}
+  lease=beginSilentBranchOperation(req,entry,{profileId:profile.id,kind:'deploy-profile',source:'storage-provision'});
+  if(!lease){res.status(409).json({error:'storage_provision_busy'});return;}
+  const acceptedLease=lease,originalBranchIdentity=profileStorageBranchIdentity(entry);
+  const assertCurrent=()=>{assertBranchOperationCurrent(acceptedLease,'profile first-allocation');if(req.aborted||res.destroyed||stateService.getBranch(entry.id)!==entry||entry.executorId!==acceptedExecutor||profileStorageBranchIdentity(entry)!==originalBranchIdentity||stateService.getProject(projectId)?.paused||assertProjectAccess(req as any,projectId))throw new Error('storage_provision_unconfirmed');};
+  assertCurrent();
+  const binding=await new ProfileStorageProvisionService(stateService,shell,config).provisionNewProfile(entry,profile,body.freshMounts,acceptedLease.operationId,assertCurrent);
+  assertCurrent();stateService.resolvePublishedProfileStorage(entry,profile);
+  finalStatus='completed';res.status(201).json({storageMode:'allocated',profileId:profile.id,mounts:binding.mounts.map(m=>({containerPath:m.containerPath,name:m.hostPath,purpose:m.storage?.purpose}))});
+ }catch{if(!res.destroyed&&!res.headersSent)res.status(409).json({error:'storage_provision_unconfirmed',recoveryRequired:true});}
+ finally{completeBranchOperation(lease,finalStatus);}
+});
+
+
   router.post('/infra', async (req, res) => {
     try {
-      const body = req.body as Partial<InfraService>;
+      const body = structuredClone(req.body) as Partial<InfraService> & { initializeStorage?: 'new-only' };
+      if (body.initializeStorage !== undefined && body.initializeStorage !== 'new-only') { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
 
       if (!body.id || !body.dockerImage || !body.containerPort) {
         res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
@@ -19107,14 +21925,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
+      const newStorage = body.initializeStorage === 'new-only';
+      const originalInstance = config.storageInstanceId, originalRoot = config.repoRoot;
+      const originalProjectIdentity = JSON.stringify([targetProject.id, targetProject.slug, targetProject.legacyFlag]);
+      const assertNewStorageCurrent = () => {
+        if (assertProjectAccess(req as any,projectId) || stateService.getProject(projectId) !== targetProject
+          || targetProject.paused || JSON.stringify([targetProject.id,targetProject.slug,targetProject.legacyFlag]) !== originalProjectIdentity
+          || config.storageInstanceId !== originalInstance || config.repoRoot !== originalRoot
+          || stateService.getInfraServiceForProjectAndId(projectId,body.id!)) throw new Error('storage_provision_unconfirmed');
+      };
+      if (newStorage) {
+        try { assertNewStorageCurrent(); if (!originalInstance || projectId === '__system__') throw new Error(); }
+        catch { res.status(409).json({error:'storage_provision_unconfirmed'}); return; }
+      }
+      // Auto-filled or unowned named storage requires explicit allocation. Refuse the
+      // old metadata-then-start flow before even allocating a port, rather than
+      // publishing an unstartable service or adopting a possibly historical volume.
+      if (!newStorage && ((recommendedVolumePathsForImage(body.dockerImage)?.length && (body.volumes === undefined || body.volumes === null))
+        || (Array.isArray(body.volumes) && body.volumes.some(v => !v?.storage)))) {
+        res.status(409).json({error:'storage_provision_required', message:'自定义持久卷尚未确认归属，未创建服务。请先使用明确的新存储分配流程；现有数据卷不能自动接管。'}); return;
+      }
       const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
+      if (newStorage) assertNewStorageCurrent();
       // Container name must be globally unique in Docker. Legacy project
       // keeps the bare `cds-infra-<id>` format for back-compat (existing
       // running containers match). Non-legacy projects get the project
       // slug head prefixed so two projects can each own `mongodb`.
       const containerName = targetProject.legacyFlag
         ? `cds-infra-${body.id}`
-        : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
+        : `cds-infra-${projectResourceNamespace(targetProject).slice(0, 12)}-${body.id}`;
 
       // Bug Q: when caller omits `volumes`, auto-fill recommended data
       // dirs for known stateful images. Empty array passed explicitly is
@@ -19132,9 +21971,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         volumes = body.volumes;
       }
 
+      if (newStorage && (body.volumes === undefined || body.volumes === null)) {
+        volumes = (recommendedPaths || []).map((containerPath,index) => {
+          const storage = {version:1 as const,instanceId:originalInstance!,projectId,scope:'project-shared' as const,
+            serviceId:body.id!,mountKey:index ? `data-${index+1}` : 'data',purpose:'persistent' as const};
+          return {type:'volume' as const,name:stableStorageVolumeName(storage),containerPath,storage};
+        });
+      }
       const service: InfraService = {
         id: body.id,
         projectId,
+        ...(newStorage ? {scope:'project' as const} : {}),
         name: body.name || body.id,
         dockerImage: body.dockerImage,
         containerPort: body.containerPort,
@@ -19157,12 +22004,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
         createdAt: new Date().toISOString(),
       };
 
-      stateService.addInfraService(service);
-      stateService.save();
+      // 手工创建也必须在持久化前验证真实展开后的启动配置。否则 legacy UI 会先写入
+      // 一条永远无法启动的无认证数据库，再把 start 失败吞掉，形成“已创建”的假成功。
+      const customEnv = stateService.getCustomEnv(projectId);
+      try {
+        assertInfraAuthenticationConfigured({
+          ...service,
+          env: resolveEnvTemplates(service.env, customEnv),
+          command: resolveCommandTemplate(service.command, customEnv),
+          entrypoint: resolveCommandTemplate(service.entrypoint, customEnv),
+        });
+      } catch (authError) {
+        res.status(400).json({ error: (authError as Error).message });
+        return;
+      }
 
-      res.status(201).json(volumeWarning ? { service, warning: volumeWarning } : { service });
+      if (newStorage) {
+        const plan = infraStoragePlan(service,config);
+        await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewStorageCurrent);
+      } else {
+        // Inspect actual image VOLUME declarations before reporting creation success.
+        // This is observation/pull only; native container and storage creation stay separate.
+        assertNewStorageCurrent();
+        await containerService.preflightInfraStorage(service,{assertCurrent:assertNewStorageCurrent});
+        assertNewStorageCurrent();
+        stateService.addInfraService(service);
+        stateService.save();
+      }
+
+      const view = infraServiceView(service);
+      res.status(201).json(volumeWarning ? { service: view, warning: volumeWarning } : { service: view });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      if ((req.body as any)?.initializeStorage === 'new-only') { res.status(409).json({error:'storage_provision_unconfirmed'}); return; }
+      res.status(err instanceof UnsafeDeploymentStorageError ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -19183,7 +22057,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message.startsWith('storage_retained_') ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -19200,11 +22074,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
+      stateService.assertInfraRemovalAllowed(id, resolved.projectId);
+      // 删除路径：容器与登记一起删，下一步是「重新添加」而不是「重新启动」。
+      await containerService.stopInfraService(service.containerName, 'cds-infra-remove');
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
     } catch (err) {
+      if ((err as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (err as Error).message }); return; }
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -19225,7 +22102,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const started = await startInfraWithPortRetry(service, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
+      res.json({
+        message: `基础设施服务 "${id}" 已启动`,
+        service: infraServiceView(stateService.getInfraServiceForProjectAndId(resolved.projectId, id)),
+      });
     } catch (err) {
       stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
@@ -19246,7 +22126,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      await containerService.stopInfraService(service.containerName);
+      // 停止路径：同上，停了就停了，不重建。
+      await containerService.stopInfraService(service.containerName, 'cds-infra-stop');
       stateService.updateInfraService(id, { status: 'stopped' }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已停止` });
@@ -19267,12 +22148,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (m) { res.status(m.status).json(m.body); return; }
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    let accepted: InfraService;
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
-      const started = await startInfraWithPortRetry(service, resolved.projectId);
+      accepted = await containerService.preflightInfraStorage(service);
+    } catch (err) {
+      // Rejected replacement must leave the running historical service and its state intact.
+      res.status(err instanceof UnsafeDeploymentStorageError ? 409 : 500).json({error: (err as Error).message});
+      return;
+    }
+    try {
+      await containerService.stopInfraService(accepted.containerName);
+      const started = await startInfraWithPortRetry(accepted, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
+      res.json({
+        message: `基础设施服务 "${id}" 已重启`,
+        service: infraServiceView(stateService.getInfraServiceForProjectAndId(resolved.projectId, id)),
+      });
     } catch (err) {
       stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
@@ -19315,7 +22207,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // Quick setup: discover infra from compose files and start them
   router.post('/infra/quickstart', async (req, res) => {
-    const { compose: composeYaml, serviceIds } = req.body as { compose?: string; serviceIds?: string[] };
+    const { compose: composeYaml, serviceIds, initializeStorage } = req.body as { compose?: string; serviceIds?: string[]; initializeStorage?: 'new-only' };
+    if (initializeStorage !== undefined && initializeStorage !== 'new-only') { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
+    const newStorage=initializeStorage==='new-only';
+    if (newStorage && serviceIds !== undefined && (!Array.isArray(serviceIds) || serviceIds.some(id=>typeof id!=='string' || !id))) { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
     const results: { id: string; status: string; error?: string }[] = [];
 
     // PR_B.1：projectId 提到外层使 composeDefToInfraService(def, effectiveProjectId)
@@ -19324,11 +22219,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
     const effectiveProjectId =
       queryProject || bodyProject || stateService.getLegacyProject()?.id || 'default';
+    {
+      const denied = assertProjectAccess(req as any,effectiveProjectId);
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
 
     // Resolve service definitions: from inline compose YAML, or auto-discover from repo
     let defs: ComposeServiceDef[] = [];
     if (composeYaml) {
-      defs = parseComposeString(composeYaml);
+      try { defs = parseComposeString(composeYaml,newStorage ? {preserveVolumeDeclaration:true} : undefined); }
+      catch (error) { if (newStorage) {res.status(400).json({error:'storage_provision_input_invalid'});return;} throw error; }
     } else {
       // Scope discovery to the current project's repo root only.
       // Using config.repoRoot (the shared CDS host dir) would expose compose
@@ -19338,13 +22238,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const seenIds = new Set<string>();
       for (const file of composeFiles) {
         try {
-          for (const def of parseComposeFile(file)) {
+          for (const def of parseComposeFile(file,newStorage ? {preserveVolumeDeclaration:true} : undefined)) {
             if (!seenIds.has(def.id)) {
               seenIds.add(def.id);
               defs.push(def);
             }
           }
-        } catch { /* skip */ }
+        } catch { if (newStorage) {res.status(400).json({error:'storage_provision_input_invalid'});return;} /* ordinary discovery skips unreadable definitions */ }
       }
     }
 
@@ -19353,28 +22253,105 @@ export function createBranchRouter(deps: RouterDeps): Router {
       defs = defs.filter(d => serviceIds.includes(d.id));
     }
 
+    if (newStorage) {
+      const allocated:string[]=[];
+      const reject=()=>new Error('storage_provision_unconfirmed');
+      try {
+        const project=stateService.getProject(effectiveProjectId);
+        const instance=config.storageInstanceId,repoRoot=config.repoRoot;
+        const identity=JSON.stringify([project?.id,project?.slug,project?.legacyFlag]);
+        const configuredEnv=structuredClone(stateService.getCustomEnv(effectiveProjectId));
+        const selectedExisting=new Map(defs.flatMap(def=>{const service=stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id);return service?[[def.id,{service,digest:storageProvisionDigest(service)}] as const]:[]}));
+        const assertProjectCurrent=()=>{
+          if (!project || effectiveProjectId==='__system__' || !instance || project.paused
+            || stateService.getProject(effectiveProjectId)!==project || assertProjectAccess(req as any,effectiveProjectId)
+            || JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity
+            || config.storageInstanceId!==instance || config.repoRoot!==repoRoot
+            || JSON.stringify(stateService.getCustomEnv(effectiveProjectId))!==JSON.stringify(configuredEnv)
+            || [...selectedExisting].some(([id,row])=>stateService.getInfraServiceForProjectAndId(effectiveProjectId,id)!==row.service||storageProvisionDigest(row.service)!==row.digest)) throw reject();
+        };
+        assertProjectCurrent();
+        if (!defs.length || new Set(defs.map(d=>d.id)).size!==defs.length
+          || serviceIds?.some(id=>!defs.some(def=>def.id===id))) throw reject();
+        // Freeze and validate the entire group before the first native allocation.
+        for (const def of defs) {
+          const births=stateService.getStorageBirthsForService(effectiveProjectId,def.id);
+          if(selectedExisting.has(def.id)){
+            if(births.some(row=>row.stage!=='published'))throw reject();
+            results.push({id:def.id,status:'exists'});continue;
+          }
+          if(births.length)throw reject();
+        }
+        const reservedPorts=new Set<number>();
+        const plans=defs.filter(def=>!selectedExisting.has(def.id)).map(def=>{
+          const service=composeDefToInfraService(def,effectiveProjectId);
+          service.hostPort=stateService.allocatePort(config.portStart,reservedPorts);reservedPorts.add(service.hostPort);
+          service.containerName=project!.legacyFlag ? `cds-infra-${def.id}` : `cds-infra-${projectResourceNamespace(project!).slice(0,12)}-${def.id}`;
+          const planned=planFreshCatalogInfra(service,config,true);
+          assertInfraAuthenticationConfigured({...planned.service,env:resolveEnvTemplates(planned.service.env,configuredEnv),command:resolveCommandTemplate(planned.service.command,configuredEnv),entrypoint:resolveCommandTemplate(planned.service.entrypoint,configuredEnv)});
+          return planned;
+        });
+        // All ordinary-image admission and every old-name absence completes
+        // before any fresh birth, service metadata or runtime mutation.
+        for(const planned of plans)if(!planned.provision){planned.service=await containerService.preflightInfraStorage(planned.service,{assertCurrent:assertProjectCurrent});assertProjectCurrent();}
+        await assertFreshLegacyVolumesAbsent(plans,shell,assertProjectCurrent);
+        for (const {service,plan,provision} of plans) {
+          const assertNewCurrent=()=>{assertProjectCurrent();if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id))throw reject();};
+          if(provision)await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewCurrent);
+          else {assertNewCurrent();stateService.addInfraService(service);}
+          if(provision)allocated.push(service.id);assertProjectCurrent();
+          const published=stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id);
+          const frozenDigest=storageProvisionDigest(service);
+          if (!published || storageProvisionDigest(published)!==frozenDigest) throw reject();
+          await containerService.startInfraService(structuredClone(service),configuredEnv);
+          assertProjectCurrent();if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id)!==published || storageProvisionDigest(published)!==frozenDigest)throw reject();
+          stateService.updateInfraService(service.id,{status:'running'},effectiveProjectId);
+          stateService.save([{kind:'global'}]);
+          await stateService.flush();assertProjectCurrent();
+          if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id)!==published || storageProvisionDigest(published)!==storageProvisionDigest({...service,status:'running'}))throw reject();
+          results.push({id:service.id,status:'started'});
+        }
+        res.json({results,allocated,storageMode:allocated.length?'allocated':'not-required'});
+      } catch {
+        // Confirmed P volumes and held original intents survive; R failure never creates again.
+        res.status(409).json({error:'storage_provision_unconfirmed',results,allocated,recoveryRequired:true});
+      }
+      return;
+    }
+
     if (defs.length === 0) {
       res.json({ results: [], message: '未找到基础设施服务定义。请在项目中添加 docker-compose.yml 或 cds-compose.yml 文件。' });
       return;
     }
 
+    const preparedLegacy=new Map<string,InfraService>();
+    try{
+      const reserved=new Set<number>();
+      const plans=defs.filter(def=>!stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)).map(def=>{
+        if(stateService.getStorageBirthsForService(effectiveProjectId,def.id).length)throw new Error('storage_provision_unconfirmed');
+        const service=composeDefToInfraService(def,effectiveProjectId);service.hostPort=stateService.allocatePort(config.portStart,reserved);reserved.add(service.hostPort);
+        return planFreshCatalogInfra(service,config,false);
+      });
+      for(const planned of plans)preparedLegacy.set(planned.service.id,await containerService.preflightInfraStorage(planned.service));
+    }catch{res.status(409).json({error:'storage_provision_confirmation_required',results:[],recoveryRequired:false});return;}
+
     for (const def of defs) {
       // Skip if already exists
-      if (stateService.getInfraService(def.id)) {
+      if (stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)) {
         results.push({ id: def.id, status: 'exists' });
         continue;
       }
 
-      const service = composeDefToInfraService(def, effectiveProjectId);
+      const service = preparedLegacy.get(def.id)!;
 
       try {
         stateService.addInfraService(service);
         // Phase 1: 传项目 customEnv 让 ${VAR} 展开
         await containerService.startInfraService(service, stateService.getCustomEnv(effectiveProjectId));
-        stateService.updateInfraService(service.id, { status: 'running' });
+        stateService.updateInfraService(service.id, { status: 'running' }, effectiveProjectId);
         results.push({ id: service.id, status: 'started' });
       } catch (err) {
-        stateService.updateInfraService(service.id, { status: 'error', errorMessage: (err as Error).message });
+        stateService.updateInfraService(service.id, { status: 'error', errorMessage: (err as Error).message }, effectiveProjectId);
         results.push({ id: service.id, status: 'error', error: (err as Error).message });
       }
     }
@@ -19482,11 +22459,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   /** Resolve infraServices from config — supports array of full defs or compose YAML string */
-  function resolveInfraDefs(cfg: Record<string, unknown>): ComposeServiceDef[] {
+  function resolveInfraDefs(cfg: Record<string, unknown>, strictStorageDeclarations = false): ComposeServiceDef[] {
     if (!cfg.infraServices) return [];
 
     if (typeof cfg.infraServices === 'string') {
-      return parseComposeString(cfg.infraServices as string);
+      return parseComposeString(cfg.infraServices as string, strictStorageDeclarations ? {preserveVolumeDeclaration:true} : undefined);
     }
 
     if (Array.isArray(cfg.infraServices)) {
@@ -19495,7 +22472,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         name: (s.name as string) || (s.id as string) || '',
         dockerImage: (s.dockerImage as string) || (s.image as string) || '',
         containerPort: (s.containerPort as number) || 0,
-        volumes: (s.volumes as Array<{ name: string; containerPath: string }>) || [],
+        volumes: s.volumes === undefined ? [] : s.volumes as ComposeServiceDef['volumes'],
         env: (s.env as Record<string, string>) || {},
         healthCheck: s.healthCheck as ComposeServiceDef['healthCheck'],
       }));
@@ -19651,6 +22628,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // Whole replacement must be rejected before profiles/env/snapshot changes.
+      if (cleanMode === 'replace-all') {
+        try { for (const project of stateService.getProjects()) stateService.assertProjectStorageRemovalAllowed(project.id); }
+        catch (error) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (error as Error).message }); return; }
+      }
+      try { stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []); }
+      catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
+      try {assertConfigOnlyInfraStorage(resolveInfraDefs(cfg,true),new Set(cleanMode==='replace-all'?[]:stateService.getInfraServicesForProject(stateService.getLegacyProject()?.id ?? 'default').map(s=>s.id)));}
+      catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
       // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
       const snapshotLabel = cleanMode === 'replace-all'
         ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`
@@ -19709,7 +22695,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const infraResults: { id: string; status: string }[] = [];
       const infraDefs = resolveInfraDefs(cfg);
       for (const def of infraDefs) {
-        if (stateService.getInfraService(def.id)) {
+        if (stateService.getInfraServiceForProjectAndId(importInfraProjectId,def.id)) {
           infraResults.push({ id: def.id, status: 'exists' });
           continue;
         }
@@ -19855,7 +22841,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!fs.existsSync(skillDir)) continue;
         const targetSkillDir = path.join(packDir, 'skills', skillName);
         await fs.promises.mkdir(targetSkillDir, { recursive: true });
-        await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
+        await copyCdsSkillSource(skillDir, targetSkillDir);
         copiedCount++;
       }
 
@@ -19883,7 +22869,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
 | Agent | 项目级目录 |
 |------|-----------|
 | Codex / 通用 Agent Skills | \`.agents/skills\` |
-| Cursor | \`.cursor/skills\` |
 | Claude Code | \`.claude/skills\` |
 
 不要写入用户主目录，不要修改 PATH、\`.bashrc\`、\`.zshrc\` 或系统环境变量。
@@ -19939,12 +22924,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
       await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
-      const skillManifest = {
+      let skillManifest: object = {
         format: 'agent-skills',
         version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
         skills: skillsToCopy,
         generatedAt: new Date().toISOString(),
       };
+      if (!useLegacy) {
+        try { skillManifest = await buildCdsSkillManifest(path.join(packDir, 'skills')); }
+        catch (error) {
+          await fs.promises.rm(packDir, { recursive: true, force: true });
+          throw error;
+        }
+      }
       const skillManifestJson = JSON.stringify(skillManifest, null, 2) + '\n';
       await fs.promises.writeFile(path.join(packDir, 'manifest.json'), skillManifestJson, 'utf-8');
       if (!useLegacy) {
@@ -19993,11 +22985,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   2. Creates a main branch worktree (if not exists)
   //   3. Deploys the main branch (build + run all profiles)
   router.post('/import-and-init', async (req, res) => {
-    const { config: configBlob } = req.body as { config: unknown };
+    const { config: configBlob,initializeStorage } = req.body as { config: unknown;initializeStorage?:unknown };
+    if(initializeStorage!==undefined&&initializeStorage!=='new-only'){res.status(400).json({error:'storage_provision_input_invalid'});return;}
 
     // ── Parse config (same logic as import-config) ──
     let cfg: Record<string, unknown>;
     if (typeof configBlob === 'string') {
+      if (initializeStorage === 'new-only') {
+        try { parseComposeString(configBlob, {preserveVolumeDeclaration:true}); }
+        catch { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
+      }
       const cdsConfig = parseCdsCompose(configBlob);
       if (cdsConfig) {
         cfg = {
@@ -20026,6 +23023,27 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
 
+    // Validate the future configuration before either metadata writes or physical first allocation.
+    try {
+      const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+      const incoming = Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : [];
+      const importedIds = new Set(incoming.map(profile => profile.id));
+      const affectedProjects = new Set(owner ? [owner.id] : []);
+      for (const profile of [...stateService.getBuildProfiles(), ...stateService.previewImportedProfiles(incoming)]) {
+        if (importedIds.has(profile.id)) affectedProjects.add(profile.projectId || 'default');
+      }
+      for (const projectId of affectedProjects) {
+        assertValidDefaultDeployModes(stateService.getProject(projectId)?.defaultDeployModes,
+          stateService.previewImportedProfilesForProject(projectId, incoming));
+      }
+    } catch (error) {
+      res.status(400).json({error: (error as Error).message,
+        code: error instanceof InvalidDefaultDeployModeError ? error.code : 'invalid_import_defaults'});
+      return;
+    }
+    try { stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
+
     // ── Start SSE stream ──
     initSSE(res);
     const send = (step: string, status: string, title: string) => {
@@ -20035,6 +23053,37 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     try {
       // ── Phase 1: Apply config ──
       send('config', 'running', '正在写入配置...');
+
+      // Atomic storage planning before any profile/env/routing publication.
+      const initInfraProjectId=stateService.getLegacyProject()?.id ?? 'default';
+      const initProject=stateService.getProject(initInfraProjectId),initInstance=config.storageInstanceId,initRoot=config.repoRoot;
+      const originalEnv=storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId)),initProjectDigest=storageProvisionDigest(initProject);
+      const expectedInfra=new Map(stateService.getInfraServicesForProject(initInfraProjectId).map(service=>[service.id,{service,digest:storageProvisionDigest(service)}]));
+      const assertInitCurrent=()=>{stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []);const rows=stateService.getInfraServicesForProject(initInfraProjectId);if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||storageProvisionDigest(initProject)!==initProjectDigest||assertProjectAccess(req as any,initInfraProjectId)||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot||storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId))!==originalEnv||rows.length!==expectedInfra.size||rows.some(service=>expectedInfra.get(service.id)?.service!==service||expectedInfra.get(service.id)?.digest!==storageProvisionDigest(service)))throw new Error('storage_provision_unconfirmed');};
+      assertInitCurrent();
+      const initEnv={...stateService.getCustomEnv(initInfraProjectId),...(cfg.envVars as Record<string,string>||{})};
+      const infraDefs=resolveInfraDefs(cfg,initializeStorage==='new-only'),reservedInfraPorts=new Set<number>();
+      if(new Set(infraDefs.map(def=>def.id)).size!==infraDefs.length)throw new Error('storage_provision_unconfirmed');
+      const plannedInfra=infraDefs.filter(def=>!stateService.getInfraServiceForProjectAndId(initInfraProjectId,def.id)).map(def=>{
+        if(!def.id||!def.dockerImage||!def.containerPort||stateService.getStorageBirthsForService(initInfraProjectId,def.id).length)throw new Error('storage_provision_unconfirmed');
+        const service=composeDefToInfraService(def,initInfraProjectId);service.hostPort=stateService.allocatePort(config.portStart,reservedInfraPorts);reservedInfraPorts.add(service.hostPort);
+        const planned=planFreshCatalogInfra(service,config,initializeStorage==='new-only');
+        assertInfraAuthenticationConfigured({...planned.service,env:resolveEnvTemplates(planned.service.env,initEnv),command:resolveCommandTemplate(planned.service.command,initEnv),entrypoint:resolveCommandTemplate(planned.service.entrypoint,initEnv)});
+        return planned;
+      });
+      for(const planned of plannedInfra)if(!planned.provision){planned.service=await containerService.preflightInfraStorage(planned.service,{assertCurrent:assertInitCurrent});assertInitCurrent();}
+      await assertFreshLegacyVolumesAbsent(plannedInfra,shell,assertInitCurrent);
+      for(const {service,plan,provision}of plannedInfra){
+        if(provision){
+          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertInitCurrent);
+          const published=stateService.getInfraServiceForProjectAndId(initInfraProjectId,service.id);
+          if(!published||storageProvisionDigest(published)!==storageProvisionDigest(service))throw new Error('storage_provision_unconfirmed');
+          expectedInfra.set(service.id,{service:published,digest:storageProvisionDigest(published)});
+        }assertInitCurrent();
+      }
+      for(const planned of plannedInfra.filter(row=>!row.provision))if(stateService.getInfraServiceForProjectAndId(initInfraProjectId,planned.service.id)||stateService.getStorageBirthsForService(initInfraProjectId,planned.service.id).length)throw new Error('storage_provision_unconfirmed');
+      const newInfraServices:InfraService[]=[];
+      for(const {service,provision}of plannedInfra){if(!provision)stateService.addInfraService(service);newInfraServices.push(service);}
 
       // Apply build profiles
       if (Array.isArray(cfg.buildProfiles)) {
@@ -20071,47 +23120,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         }
       }
 
-      // Apply infra service definitions (don't start yet)
-      // PR_B.1: /import-and-init 历史全局端点没带 projectId — 兜底 legacy。
-      const initInfraProjectId =
-        stateService.getLegacyProject()?.id ?? 'default';
-      const infraDefs = resolveInfraDefs(cfg);
-      const newInfraServices: InfraService[] = [];
-      for (const def of infraDefs) {
-        if (stateService.getInfraService(def.id)) continue;
-        if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def, initInfraProjectId);
-          stateService.addInfraService(service);
-          newInfraServices.push(service);
-        }
-      }
 
       syncCdsConfig();
       stateService.save();
       send('config', 'done', `配置已写入 (${stateService.getBuildProfiles().length} 个构建配置, ${newInfraServices.length} 个基础设施)`);
-
-      // ── Phase 2: Start infra services ──
-      const allInfra = stateService.getInfraServices();
-      const infraToStart = allInfra.filter(s => s.status !== 'running');
-      if (infraToStart.length > 0) {
-        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
-        for (const svc of infraToStart) {
-          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
-          try {
-            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
-            await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
-            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
-            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
-          } catch (err) {
-            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
-            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
-          }
-        }
-        stateService.save();
-        send('infra', 'done', '基础设施服务就绪');
-      } else {
-        send('infra', 'done', '基础设施服务已在运行中');
-      }
 
       // ── Phase 3: Create main branch worktree ──
       // Detect default branch name
@@ -20134,7 +23146,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // previously used the bare slugified branch as the entry id (and
       // looked up by it), which contradicts every other code path
       // (POST /api/branches, auto-build in index.ts, webhook dispatcher)
-      // that uses `${owner.slug}-${slugified}` for non-legacy projects.
+      // that keeps the original resource namespace for non-legacy projects.
       // After rename-default a re-run of init would miss the existing
       // `prd-agent-main` entry and try to create a duplicate `main`.
       //
@@ -20148,7 +23160,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         res.end();
         return;
       }
-      const mainBranchId = owner.legacyFlag ? mainSlug : `${owner.slug}-${mainSlug}`;
+      const mainBranchId = owner.legacyFlag ? mainSlug : `${projectResourceNamespace(owner)}-${mainSlug}`;
       let entry =
         stateService.getBranch(mainBranchId) ??
         stateService.findBranchByProjectAndName(owner.id, mainBranch);
@@ -20156,8 +23168,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
         const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainBranchId);
-        await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-        await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
           id: mainBranchId,
@@ -20173,7 +23183,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           owner.defaultDeployModes,
           stateService.getBuildProfilesForProject(owner.id),
         );
-        stateService.addBranch(entry);
+        const importCreationProfiles = mergeBranchProfiles(stateService.getBuildProfilesForProject(owner.id),entry)
+          .map(profile=>resolveEffectiveProfile(profile,entry!));
+        for (const profile of importCreationProfiles) assertProfileStorageBoundary(profile, entry.worktreePath);
+        const needsSource = deploymentNeedsSourceCheckout(importCreationProfiles);
+        if (needsSource) {
+          await worktreePathActivity.withClaim([worktreePath,WorktreeService.deploymentSourceRootFor(worktreePath)],async()=>{
+            await worktreeService.create(config.repoRoot,mainBranch,worktreePath);stateService.addBranch(entry!);
+          });
+        } else stateService.addBranch(entry);
         // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
         // 2026-04-27 (Codex P2): 不再 AND state.defaultBranch — 多项目环境下
         // state.defaultBranch 经常已经被另一个项目设过，这种检查会让新项目
@@ -20199,9 +23217,55 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stateService.getBuildProfilesForProject(entry.projectId || owner.id),
         entry,
       );
+      const importEffective = profiles.map(profile => resolveEffectiveProfile(profile, entry!));
+      for (const profile of importEffective) assertProfileStorageBoundary(profile, entry.worktreePath);
+      const importNeedsSource = deploymentNeedsSourceCheckout(importEffective);
+      const importTarget = await worktreeService.resolveDeploymentCommit(entry.branch,
+        entry.worktreePath,undefined,config.repoRoot);
+      const importNeedsInitializationSource = importNeedsSource || await worktreeService.needsDatabaseInitializationSource(
+        fs.existsSync(entry.worktreePath) ? entry.worktreePath : config.repoRoot, importTarget.afterFull,
+        importEffective.map(profile=>profile.workDir||'.'));
+      const importSource = importNeedsInitializationSource
+        ? await worktreeService.prepareDeploymentSource(entry.branch,entry.worktreePath,importTarget.afterFull,config.repoRoot) : undefined;
+      const importStorageEntry = importSource ? {...entry,worktreePath:importSource.sourcePath,githubCommitSha:importSource.afterFull} : entry;
+      const importAdmission = await containerService.inspectDeploymentArtifacts(importEffective,
+        importTarget.afterFull, () => {});
+      if (importAdmission.state !== 'ready') throw new Error('导入部署产物未通过完整核验，保留原服务与数据');
+      const importedStorage = await containerService.preflightDeploymentStorage(importStorageEntry,
+        importEffective.map(profile=>admittedArtifactProfile(profile,importAdmission)),
+        {sourceCommitSha:importAdmission.targetCommitSha,customEnv:getMergedEnv(entry.projectId,entry.id),
+          onOutput:(profileId,chunk)=>sendSSE(res,'log',{profileId,chunk})});
+      const importProfiles = new Map(importedStorage.map(profile=>[profile.id,profile]));
+      const importInfra = new Map<string, InfraService>();
+      for (const svc of stateService.getInfraServicesForProject(owner.id).filter(s => s.status !== 'running'))
+        importInfra.set(svc.id, await containerService.preflightInfraStorage(svc, {allowOriginalRuntime: true}));
+      // ── Phase 2: Start infra services ──
+      const allInfra = stateService.getInfraServicesForProject(owner.id);
+      const infraToStart = allInfra.filter(s => s.status !== 'running');
+      if (infraToStart.length > 0) {
+        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
+        for (const svc of infraToStart) {
+          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
+          try {
+            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
+            await containerService.startInfraService(importInfra.get(svc.id)!, stateService.getCustomEnv(svc.projectId));
+            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
+            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
+          } catch (err) {
+            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
+            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
+          }
+        }
+        stateService.save();
+        send('infra', 'done', '基础设施服务就绪');
+      } else {
+        send('infra', 'done', '基础设施服务已在运行中');
+      }
+
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
+        for (const service of Object.values(entry.services)) preserveServingRuntime(service);
         entry.status = 'building';
         // 本轮（首次 clone 后）构建起点锚点，供预览等待页 ETA（见 BranchEntry.lastDeployStartedAt）。
         entry.lastDeployStartedAt = new Date().toISOString();
@@ -20217,7 +23281,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               profileId: profile.id,
               // PR #498 round-3 review (Bugbot): container name must
               // track entry.id. After round-2 made mainBranchId
-              // `${owner.slug}-${mainSlug}` for non-legacy projects,
+              // `${projectResourceNamespace(owner)}-${mainSlug}` for non-legacy projects,
               // the hardcoded `cds-${mainSlug}-…` here became a
               // mismatch — same pattern index.ts:1105 already follows.
               containerName: `cds-${entry.id}-${profile.id}`,
@@ -20228,6 +23292,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         }
         stateService.save();
 
+        reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), staticProfileIds: profiles.filter(profile => importProfiles.get(profile.id)?.staticWeb).map(profile => profile.id), state: stateService,
+          portStart: config.portStart });
+        await stateService.flush();
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
 
         for (const profile of profiles) {
@@ -20255,8 +23322,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               containerService,
               serverEventLogStore,
               entry,
-              profile,
+              profile: importProfiles.get(profile.id)!,
               service: svc,
+              artifactCommitSha: importAdmission.targetCommitSha,
+              sourceCheckout: importSource ? {path:importSource.sourcePath,commitSha:importSource.afterFull} : undefined,
               customEnv: mergedEnv,
               onPortChanged: ({ oldPort, newPort }) => {
                 send(`port-${profile.id}`, 'warning', `${profile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`);
@@ -20270,7 +23339,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
             svc.errorMessage = undefined;
             // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
             // （runService 直接吃 profile.*），钉住其 activeDeployMode。
-            svc.deployedMode = profile.activeDeployMode || '';
+            svc.deployedMode = importProfiles.get(profile.id)!.activeDeployMode || '';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
           } catch (err) {
             svc.status = 'error';
@@ -20279,6 +23348,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           }
         }
 
+        await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService, container: containerService });
         const hasError = Object.values(entry.services).some(s => s.status === 'error');
         entry.status = hasError ? 'error' : 'running';
         stateService.save();
@@ -20302,23 +23372,80 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // ── Data Migration ──
 
   /** Resolve 'local' MongoDB connection to actual host:port from infra */
-  function resolveMongoConn(conn: MongoConnectionConfig): MongoConnectionConfig {
+  function resolveMongoConn(conn: MongoConnectionConfig, migrationProjectId?: string): MongoConnectionConfig {
     if (conn.type === 'local') {
-      const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
-      if (!mongoInfra) throw new Error('本机 MongoDB 未在 CDS 基础设施中注册');
-      const dockerHost = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
-      return { ...conn, host: dockerHost, port: mongoInfra.hostPort };
+      const projectId = String(conn.projectId || migrationProjectId || '').trim();
+      const serviceId = String(conn.serviceId || '').trim();
+      let candidates = stateService.getInfraServices()
+        .filter((service) => (
+          resourceRuntimeKey(`${service.id} ${service.basePresetId || ''} ${service.dockerImage}`) === 'mongodb'
+          && (service.scope || 'project') === 'project'
+        ));
+      if (projectId) candidates = candidates.filter((service) => service.projectId === projectId);
+      if (serviceId) candidates = candidates.filter((service) => service.id === serviceId);
+      if (candidates.length !== 1) {
+        throw new Error(projectId || serviceId
+          ? `无法唯一解析本机 MongoDB（project=${projectId || '未指定'}, service=${serviceId || '未指定'}）`
+          : '本机 MongoDB 不唯一，数据迁移必须指定 projectId 与 serviceId');
+      }
+      const authoritative = peerLocalMongoConnection(candidates[0], conn.database);
+      return {
+        ...conn,
+        ...authoritative,
+        projectId: candidates[0].projectId,
+        serviceId: candidates[0].id,
+        database: conn.database,
+      };
     }
     return conn;
   }
 
-  /** Build mongosh auth args */
-  function mongoAuthArgs(conn: MongoConnectionConfig): string {
-    let args = '';
-    if (conn.username) args += ` -u ${conn.username}`;
-    if (conn.password) args += ` -p ${conn.password}`;
-    if (conn.authDatabase) args += ` --authenticationDatabase ${conn.authDatabase}`;
-    return args;
+  function resolvePeerLocalMongo(
+    req: import('express').Request,
+    explicitProjectId?: string,
+    explicitServiceId?: string,
+  ): InfraService {
+    const keyProjectId = (req as unknown as { cdsProjectKey?: { projectId?: string } }).cdsProjectKey?.projectId;
+    const projectId = String(explicitProjectId || keyProjectId || '').trim();
+    const mismatch = assertProjectAccess(req as any, projectId || 'default');
+    if (mismatch) throw Object.assign(new Error('迁移数据面不能跨越项目授权范围。'), { status: mismatch.status });
+    const serviceId = String(explicitServiceId || '').trim();
+    const candidates = stateService.getInfraServices()
+      .filter((service) => (
+        resourceRuntimeKey(`${service.id} ${service.basePresetId || ''} ${service.dockerImage}`) === 'mongodb'
+        && (service.scope || 'project') === 'project'
+        && (!serviceId || service.id === serviceId)
+      ));
+    if (projectId) {
+      const exact = candidates.find((service) => service.projectId === projectId);
+      if (!exact) throw new Error(`项目 ${projectId} 没有可供迁移的本机 MongoDB`);
+      return exact;
+    }
+    if (candidates.length !== 1) {
+      throw new Error('本机存在多个 MongoDB 项目资源，peer 调用必须带 projectId 或使用项目级凭据');
+    }
+    return candidates[0];
+  }
+
+  function peerLocalMongoConnection(service: InfraService, database?: string): MongoConnectionConfig {
+    const env = resolvedInfraEnv(service);
+    const username = env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
+      || '';
+    const password = env.MONGO_INITDB_ROOT_PASSWORD
+      || env.MONGO_PASSWORD
+      || env.MONGODB_PASSWORD
+      || '';
+    return {
+      type: 'local',
+      host: stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1',
+      port: service.hostPort,
+      database,
+      username: username || undefined,
+      password: password || undefined,
+      authDatabase: username ? 'admin' : undefined,
+    };
   }
 
   /** Get this CDS's own AI access key (used to display to the user for copy/paste).
@@ -20390,31 +23517,57 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     try { return JSON.parse(text) as T; } catch { return text as unknown as T; }
   }
 
+  // 全局迁移任务/远端连接含跨项目能力，必须由所有者操作；peer 数据面沿用明确项目资源绑定。
+  router.use('/data-migrations', (req, res, next) => {
+    if (req.path === '/local-restore' && !isHumanSystemOwner(req)) {
+      res.status(403).json({ error: 'migration_restore_approval_required', message: '数据库覆盖恢复需要目标系统所有者授权。请由目标所有者发起拉取迁移；常规机器 Key（含 peer 标记）不能直接上传覆盖。' });
+      return;
+    }
+    if (req.path === '/local-dump' || isHumanSystemOwner(req)) { next(); return; }
+    res.status(403).json({ error: 'migration_owner_required', message: '迁移管理仅系统所有者可用；Agent 请先通过数据库具体操作审批入口。' });
+  });
+
+  const peerPushRestoreMessage = '跨 CDS 覆盖恢复需要目标系统所有者发起拉取。请登录目标 CDS，将来源设为原 CDS、目标设为本机数据库，再执行迁移；当前端不能通过机器 Key 推送覆盖。';
+  function rejectPeerPushRestore(res: Response): void {
+    res.status(409).json({ code: 'migration_peer_push_requires_target_pull', error: peerPushRestoreMessage });
+  }
+
   // GET /api/data-migrations — list all migration tasks
   router.get('/data-migrations', (_req, res) => {
-    res.json(stateService.getDataMigrations());
+    res.json(stateService.getDataMigrations().map(publicDataMigration));
   });
 
   // POST /api/data-migrations — create a new migration task
   router.post('/data-migrations', (req, res) => {
-    const { name, dbType, source, target, collections } = req.body as {
+    const { name, dbType, source, target, collections, projectId } = req.body as {
       name: string;
       dbType: 'mongodb';
       source: MongoConnectionConfig;
       target: MongoConnectionConfig;
       collections?: string[];
+      projectId?: string;
     };
     if (!name || !dbType || !source || !target) {
       res.status(400).json({ error: '缺少必填字段: name, dbType, source, target' });
       return;
     }
+    if (target.type === 'cds') { rejectPeerPushRestore(res); return; }
     const id = `mig-${Date.now().toString(36)}`;
+    let sealedConnections: ReturnType<typeof sealMigrationConnections>;
+    try {
+      sealedConnections = sealMigrationConnections(source, target);
+    } catch (error) {
+      res.status(503).json({ error: (error as Error).message });
+      return;
+    }
     const migration: DataMigration = {
       id,
+      projectId: String(projectId || source.projectId || target.projectId || '').trim() || undefined,
       name,
       dbType,
-      source,
-      target,
+      source: sealedConnections.source,
+      target: sealedConnections.target,
+      credentialsEncrypted: sealedConnections.credentialsEncrypted,
       collections: collections?.length ? collections : undefined,
       status: 'pending',
       progress: 0,
@@ -20422,7 +23575,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
     stateService.addDataMigration(migration);
     stateService.save();
-    res.json(migration);
+    res.json(publicDataMigration(migration));
   });
 
   // DELETE /api/data-migrations/:id — delete a migration task
@@ -20519,16 +23672,33 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (!existing) { res.status(404).json({ error: '迁移任务不存在' }); return; }
     if (existing.status === 'running') { res.status(400).json({ error: '任务正在运行中，无法编辑' }); return; }
     const { name, source, target, collections } = req.body as Partial<DataMigration>;
+    if (target?.type === 'cds') { rejectPeerPushRestore(res); return; }
     const updates: Partial<DataMigration> = {};
     if (name !== undefined) updates.name = name;
-    if (source !== undefined) updates.source = source;
-    if (target !== undefined) updates.target = target;
+    if (source !== undefined || target !== undefined) {
+      try {
+        const current = unsealMigrationConnections(existing);
+        const nextSource = source !== undefined
+          ? { ...current.source, ...source, sshTunnel: source.sshTunnel ? { ...current.source.sshTunnel, ...source.sshTunnel } : current.source.sshTunnel }
+          : current.source;
+        const nextTarget = target !== undefined
+          ? { ...current.target, ...target, sshTunnel: target.sshTunnel ? { ...current.target.sshTunnel, ...target.sshTunnel } : current.target.sshTunnel }
+          : current.target;
+        const sealed = sealMigrationConnections(nextSource, nextTarget);
+        updates.source = sealed.source;
+        updates.target = sealed.target;
+        updates.credentialsEncrypted = sealed.credentialsEncrypted;
+      } catch (error) {
+        res.status(503).json({ error: (error as Error).message });
+        return;
+      }
+    }
     // collections === [] means "all collections" (undefined), non-empty = subset
     if (collections !== undefined) updates.collections = (collections && collections.length) ? collections : undefined;
     updates.updatedAt = new Date().toISOString();
     stateService.updateDataMigration(id, updates);
     stateService.save();
-    res.json(stateService.getDataMigration(id));
+    res.json(publicDataMigration(stateService.getDataMigration(id)!));
   });
 
   // POST /api/data-migrations/:id/execute — execute a migration task (SSE stream, streaming pipeline)
@@ -20544,7 +23714,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // Consumers (by target.type):
   //   - local  : spawn mongorestore against CDS infra MongoDB, write to stdin
   //   - remote : spawn mongorestore; or ssh jump → remote mongorestore (stdin pipe)
-  //   - cds    : HTTP POST to peer's /local-restore endpoint, request body is the stream
+  //   - cds    : rejected before pipeline setup; target owner must initiate a pull
   //
   // Zero temp files. Archive+gzip throughout. SSH keepalive so long dumps don't drop.
   router.post('/data-migrations/:id/execute', async (req, res) => {
@@ -20552,11 +23722,27 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const migration = stateService.getDataMigration(id);
     if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
     if (migration.status === 'running') { res.status(400).json({ error: '任务已在运行中' }); return; }
+    // Reject unsupported legacy push tasks before unsealing, marking running,
+    // spawning a dump, opening a tunnel, or contacting either CDS peer.
+    if (migration.target.type === 'cds') { rejectPeerPushRestore(res); return; }
+
+    let executionConnections: ReturnType<typeof unsealMigrationConnections>;
+    try {
+      executionConnections = unsealMigrationConnections(migration);
+    } catch (error) {
+      res.status(409).json({ error: (error as Error).message });
+      return;
+    }
+    if (stateService.hasActiveCredentialRotation('mongodb')) {
+      res.status(409).json({ error: 'MongoDB 正在轮换凭据，暂不能启动数据迁移。' });
+      return;
+    }
 
     initSSE(res);
     const send = (progress: number, message: string) => {
-      sendSSE(res, 'progress', { progress, message });
-      stateService.updateDataMigration(id, { progress, progressMessage: message });
+      const safeMessage = redactSecretValues(message, executionConnections.secretValues);
+      sendSSE(res, 'progress', { progress, message: safeMessage });
+      stateService.updateDataMigration(id, { progress, progressMessage: safeMessage });
     };
 
     // SSE keepalive — prevents proxies from closing the connection on long dumps
@@ -20565,12 +23751,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // Mark as running
     stateService.updateDataMigration(id, { status: 'running', startedAt: new Date().toISOString(), progress: 0, errorMessage: undefined, log: '' });
     stateService.save();
+    await stateService.flush();
 
     let logOutput = '';
     const MAX_LOG = 64 * 1024;
     const appendLog = (line: string) => {
-      logOutput += line;
-      if (!line.endsWith('\n')) logOutput += '\n';
+      const safeLine = redactSecretValues(line, executionConnections.secretValues);
+      logOutput += safeLine;
+      if (!safeLine.endsWith('\n')) logOutput += '\n';
       if (logOutput.length > MAX_LOG) logOutput = '...(truncated)...\n' + logOutput.slice(-MAX_LOG);
     };
 
@@ -20610,17 +23798,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // ── Build producer ──
       const producer = await buildSourceProducer(
-        migration.source,
+        executionConnections.source,
         cols,
+        migration.projectId,
         { appendLog, onProgressLine: updateProgressFromLine, send },
       );
       children.push(producer);
 
       // ── Build consumer ──
       const consumer = await buildTargetConsumer(
-        migration.target,
-        migration.source,
+        executionConnections.target,
+        executionConnections.source,
         cols,
+        migration.projectId,
         { appendLog, onProgressLine: updateProgressFromLine, send },
       );
       children.push(consumer);
@@ -20647,12 +23837,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         finishedAt: new Date().toISOString(),
         log: logOutput,
       });
+      clearMigrationCredentials(migration);
       stateService.save();
+      await stateService.flush();
       sendSSE(res, 'done', { message: '迁移完成' });
       cleanup();
       res.end();
     } catch (e) {
-      const errMsg = (e as Error).message || String(e);
+      const errMsg = redactSecretValues((e as Error).message || String(e), executionConnections.secretValues);
       appendLog(`ERROR: ${errMsg}`);
       stateService.updateDataMigration(id, {
         status: 'failed',
@@ -20661,6 +23853,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         log: logOutput,
       });
       stateService.save();
+      await stateService.flush();
       sendSSE(res, 'error', { message: errMsg });
       cleanup();
       res.end();
@@ -20674,6 +23867,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   async function buildSourceProducer(
     source: MongoConnectionConfig,
     cols: string[] | undefined,
+    migrationProjectId: string | undefined,
     cb: {
       appendLog: (s: string) => void;
       onProgressLine: (line: string) => void;
@@ -20688,6 +23882,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const peerRes = await peerRequest(peer, '/api/data-migrations/local-dump', 'POST', {
         database: source.database,
         collections: cols,
+        projectId: source.projectId,
+        serviceId: source.serviceId,
       });
       if ((peerRes.statusCode || 500) >= 400) {
         const chunks: Buffer[] = [];
@@ -20707,7 +23903,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
 
     // ── Local / remote via mongodump ──
-    const eff = source.type === 'local' ? resolveMongoConn(source) : source;
+    const eff = source.type === 'local' ? resolveMongoConn(source, migrationProjectId) : source;
     const dumpArgs = buildMongodumpArgs(
       eff.host, eff.port,
       { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
@@ -20716,20 +23912,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     let cmd: string;
     let argv: string[];
+    let stdinPrefix: string;
     if (source.sshTunnel?.enabled) {
       cb.send(8, `通过 SSH 连接 ${source.sshTunnel.host}...`);
       const sshBase = buildSshBase(source.sshTunnel);
-      const remoteCmd = buildRemoteMongoCmd('mongodump', dumpArgs, source.sshTunnel.dockerContainer);
-      cb.appendLog(`[source] ssh ${source.sshTunnel.username}@${source.sshTunnel.host}: ${remoteCmd}`);
+      const remoteCmd = buildRemoteMongoCmd('mongodump', dumpArgs, source.sshTunnel.dockerContainer, eff.password || '');
+      cb.appendLog(`[source] ssh ${source.sshTunnel.username}@${source.sshTunnel.host}: mongodump（凭据通过标准输入）`);
       cmd = 'ssh';
       argv = [...sshBase, remoteCmd];
+      stdinPrefix = buildSecureMongoHostInvocation('mongodump', [], eff.password || '').stdinPrefix;
     } else {
-      cb.appendLog(`[source] mongodump ${dumpArgs.join(' ')}`);
-      cmd = 'mongodump';
-      argv = dumpArgs;
+      const invocation = buildSecureMongoHostInvocation('mongodump', dumpArgs, eff.password || '');
+      cb.appendLog(`[source] ${describeSecureInvocation(invocation)}（凭据通过标准输入）`);
+      cmd = invocation.command;
+      argv = invocation.argv;
+      stdinPrefix = invocation.stdinPrefix;
     }
 
-    const child = spawn(cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin!.end(stdinPrefix);
     let stderrTail = '';
     child.stderr!.on('data', (d: Buffer) => {
       const s = d.toString();
@@ -20760,79 +23961,24 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     target: MongoConnectionConfig,
     source: MongoConnectionConfig,
     cols: string[] | undefined,
+    migrationProjectId: string | undefined,
     cb: {
       appendLog: (s: string) => void;
       onProgressLine: (line: string) => void;
       send: (progress: number, message: string) => void;
     },
   ): Promise<{ stdin: NodeJS.WritableStream; done: Promise<void>; kill: () => void }> {
-    // ── CDS peer target ──
-    if (target.type === 'cds') {
-      const peer = stateService.getCdsPeer(target.cdsPeerId || '');
-      if (!peer) throw new Error(`目标 CDS 密钥不存在: ${target.cdsPeerId}`);
-      cb.send(12, `连接目标 CDS 「${peer.name}」...`);
-      // Build URL with query params for target rename + collection filter
-      const qs = new URLSearchParams();
-      if (source.database) qs.set('sourceDb', source.database);
-      if (target.database) qs.set('targetDb', target.database);
-      if (cols && cols.length) qs.set('collections', cols.join(','));
-      const apiPath = '/api/data-migrations/local-restore' + (qs.toString() ? '?' + qs.toString() : '');
-      const url = new URL(peer.baseUrl.replace(/\/$/, '') + apiPath);
-      const lib = url.protocol === 'https:' ? https : http;
-      const httpReq = lib.request({
-        method: 'POST',
-        protocol: url.protocol,
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname + url.search,
-        headers: {
-          'X-AI-Access-Key': peer.accessKey,
-          'X-CDS-Peer-Call': '1',
-          'Content-Type': 'application/octet-stream',
-          // Chunked transfer (no Content-Length, just stream)
-          'Transfer-Encoding': 'chunked',
-        },
-        timeout: 0,
-      });
-      httpReq.setTimeout(0);
-      cb.appendLog(`[target] CDS peer ${peer.name} → ${apiPath}`);
-
-      const done = new Promise<void>((resolve, reject) => {
-        httpReq.on('response', (peerRes) => {
-          const chunks: Buffer[] = [];
-          peerRes.on('data', (d) => chunks.push(d as Buffer));
-          peerRes.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf-8');
-            try {
-              const j = JSON.parse(text);
-              if (j && j.log) for (const line of String(j.log).split('\n')) if (line) { cb.appendLog(`[restore] ${line}`); cb.onProgressLine(line); }
-            } catch { cb.appendLog(`[target] ${text.slice(0, 500)}`); }
-            if ((peerRes.statusCode || 500) >= 400) {
-              reject(new Error(`目标 CDS 返回 ${peerRes.statusCode}: ${text.slice(0, 400)}`));
-            } else {
-              resolve();
-            }
-          });
-          peerRes.on('error', reject);
-        });
-        httpReq.on('error', (err) => reject(new Error(`连接目标 CDS 失败: ${err.message}`)));
-      });
-
-      return {
-        stdin: httpReq,
-        done,
-        kill: () => { try { httpReq.destroy(); } catch { /* */ } },
-      };
-    }
+    // Defense in depth: never forward ordinary peer keys to a restore endpoint.
+    if (target.type === 'cds') throw new Error(peerPushRestoreMessage);
 
     // ── Local / remote via mongorestore ──
-    const eff = target.type === 'local' ? resolveMongoConn(target) : target;
+    const eff = target.type === 'local' ? resolveMongoConn(target, migrationProjectId) : target;
     const restoreArgs = buildMongorestoreArgs(
       eff.host, eff.port,
       { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
       {
         drop: true,
-        sourceDb: source.type !== 'cds' ? source.database : undefined,
+        sourceDb: source.database,
         targetDb: eff.database,
         collections: cols,
       },
@@ -20840,20 +23986,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     let cmd: string;
     let argv: string[];
+    let stdinPrefix: string;
     if (target.sshTunnel?.enabled) {
       cb.send(12, `通过 SSH 连接 ${target.sshTunnel.host}...`);
       const sshBase = buildSshBase(target.sshTunnel);
-      const remoteCmd = buildRemoteMongoCmd('mongorestore', restoreArgs, target.sshTunnel.dockerContainer);
-      cb.appendLog(`[target] ssh ${target.sshTunnel.username}@${target.sshTunnel.host}: ${remoteCmd}`);
+      const remoteCmd = buildRemoteMongoCmd('mongorestore', restoreArgs, target.sshTunnel.dockerContainer, eff.password || '');
+      cb.appendLog(`[target] ssh ${target.sshTunnel.username}@${target.sshTunnel.host}: mongorestore（凭据通过标准输入）`);
       cmd = 'ssh';
       argv = [...sshBase, remoteCmd];
+      stdinPrefix = buildSecureMongoHostInvocation('mongorestore', [], eff.password || '').stdinPrefix;
     } else {
-      cb.appendLog(`[target] mongorestore ${restoreArgs.join(' ')}`);
-      cmd = 'mongorestore';
-      argv = restoreArgs;
+      const invocation = buildSecureMongoHostInvocation('mongorestore', restoreArgs, eff.password || '');
+      cb.appendLog(`[target] ${describeSecureInvocation(invocation)}（凭据通过标准输入）`);
+      cmd = invocation.command;
+      argv = invocation.argv;
+      stdinPrefix = invocation.stdinPrefix;
     }
 
     const child = spawn(cmd, argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin!.write(stdinPrefix);
     let stderrTail = '';
     const mirror = (prefix: string) => (d: Buffer) => {
       const s = d.toString();
@@ -20884,28 +24035,40 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (!connection) { res.status(400).json({ error: '缺少 connection 参数' }); return; }
 
     try {
-      let host = connection.host;
-      let port = connection.port;
+      const effective = connection.type === 'local'
+        ? resolveMongoConn(connection, connection.projectId)
+        : connection;
+      const host = effective.host;
+      const port = effective.port;
 
-      // Resolve local
-      if (connection.type === 'local') {
-        const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
-        if (!mongoInfra) { res.json({ success: false, error: '本机 MongoDB 未注册' }); return; }
-        host = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
-        port = mongoInfra.hostPort;
-      }
-
-      // Build mongosh/mongo test command
-      let testCmd = `mongosh --host ${host} --port ${port} --eval "db.adminCommand({ping:1})" --quiet`;
-      if (connection.username) testCmd = `mongosh --host ${host} --port ${port} -u ${connection.username} -p ${connection.password || ''} --authenticationDatabase ${connection.authDatabase || 'admin'} --eval "db.adminCommand({ping:1})" --quiet`;
-
-      const result = await shell.exec(testCmd, { timeout: 10000 });
+      const testInvocation = buildSecureMongoHostInvocation(
+        'mongosh',
+        [
+          '--host', host, '--port', String(port), '--eval', 'db.adminCommand({ping:1})', '--quiet',
+          ...(effective.username ? ['--username', effective.username, '--authenticationDatabase', effective.authDatabase || 'admin'] : []),
+        ],
+        effective.password || '',
+      );
+      const result = await shell.exec(
+        invocationShellCommand(testInvocation),
+        { timeout: 10_000, stdin: testInvocation.stdinPrefix },
+      );
       if (result.exitCode === 0) {
         // Get database list
-        let listCmd = `mongosh --host ${host} --port ${port} --eval "JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))" --quiet`;
-        if (connection.username) listCmd = `mongosh --host ${host} --port ${port} -u ${connection.username} -p ${connection.password || ''} --authenticationDatabase ${connection.authDatabase || 'admin'} --eval "JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))" --quiet`;
-
-        const listResult = await shell.exec(listCmd, { timeout: 10000 });
+        const listInvocation = buildSecureMongoHostInvocation(
+          'mongosh',
+          [
+            '--host', host, '--port', String(port),
+            '--eval', 'JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))',
+            '--quiet',
+            ...(effective.username ? ['--username', effective.username, '--authenticationDatabase', effective.authDatabase || 'admin'] : []),
+          ],
+          effective.password || '',
+        );
+        const listResult = await shell.exec(
+          invocationShellCommand(listInvocation),
+          { timeout: 10_000, stdin: listInvocation.stdinPrefix },
+        );
         let databases: unknown[] = [];
         try { databases = JSON.parse(listResult.stdout.trim()); } catch { /* ok */ }
         res.json({ success: true, databases });
@@ -20915,7 +24078,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         if (tcpResult.stdout.includes('TCP_FAILED')) {
           res.json({ success: false, error: `无法连接到 ${host}:${port}` });
         } else {
-          res.json({ success: false, error: `连接成功但认证失败: ${result.stderr || result.stdout}` });
+          res.json({ success: false, error: `连接成功但认证失败: ${maskTextSecrets(result.stderr || result.stdout, [effective.password || ''])}` });
         }
       }
     } catch (e) {
@@ -20930,8 +24093,18 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     try {
       const conn = resolveMongoConn(connection);
       const evalScript = `JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))`;
-      const cmd = `mongosh --host ${conn.host} --port ${conn.port}${mongoAuthArgs(conn)} --eval "${evalScript}" --quiet 2>/dev/null`;
-      const result = await shell.exec(cmd, { timeout: 15000 });
+      const invocation = buildSecureMongoHostInvocation(
+        'mongosh',
+        [
+          '--host', conn.host, '--port', String(conn.port), '--eval', evalScript, '--quiet',
+          ...(conn.username ? ['--username', conn.username, '--authenticationDatabase', conn.authDatabase || 'admin'] : []),
+        ],
+        conn.password || '',
+      );
+      const result = await shell.exec(
+        invocationShellCommand(invocation),
+        { timeout: 15_000, stdin: invocation.stdinPrefix },
+      );
       let databases: Array<{ name: string; sizeOnDisk: number }> = [];
       if (result.exitCode === 0) {
         const lines = result.stdout.trim().split('\n');
@@ -20959,9 +24132,18 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const conn = resolveMongoConn(connection);
       const db = conn.database!;
       const evalScript = `JSON.stringify(db.getSiblingDB('${db}').getCollectionInfos({type:'collection'}).map(c=>({name:c.name,count:db.getSiblingDB('${db}').getCollection(c.name).estimatedDocumentCount()})))`;
-      let cmd = `mongosh --host ${conn.host} --port ${conn.port}${mongoAuthArgs(conn)} --eval "${evalScript}" --quiet 2>/dev/null`;
-
-      const result = await shell.exec(cmd, { timeout: 15000 });
+      const invocation = buildSecureMongoHostInvocation(
+        'mongosh',
+        [
+          '--host', conn.host, '--port', String(conn.port), '--eval', evalScript, '--quiet',
+          ...(conn.username ? ['--username', conn.username, '--authenticationDatabase', conn.authDatabase || 'admin'] : []),
+        ],
+        conn.password || '',
+      );
+      const result = await shell.exec(
+        invocationShellCommand(invocation),
+        { timeout: 15_000, stdin: invocation.stdinPrefix },
+      );
       if (result.exitCode !== 0) {
         res.json({ collections: [], error: result.stderr || 'mongosh 执行失败' });
         return;
@@ -21190,17 +24372,38 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //
   // Body: { database?: string, collections?: string[] }
   router.post('/data-migrations/local-dump', async (req, res) => {
-    const body = (req.body || {}) as { database?: string; collections?: string[] };
+    const body = (req.body || {}) as { projectId?: string; serviceId?: string; database?: string; collections?: string[] };
     let eff: MongoConnectionConfig;
+    let mongoInfra: InfraService;
     try {
-      eff = resolveMongoConn({ type: 'local', host: '', port: 0, database: body.database });
+      mongoInfra = resolvePeerLocalMongo(req, body.projectId, body.serviceId);
+      eff = peerLocalMongoConnection(mongoInfra, body.database);
     } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
+      res.status((e as { status?: number }).status || 409).json({ error: (e as Error).message });
       return;
     }
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: mongoInfra.projectId,
+        serviceId: mongoInfra.id,
+        runtime: 'mongodb',
+        kind: 'peer-dump',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({ error: rotating ? 'MongoDB 正在轮换凭据，暂不能导出迁移数据。' : '无法登记迁移导出作业。' });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = (status: 'completed' | 'failed'): void => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      void stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
     const dumpArgs = buildMongodumpArgs(
       eff.host, eff.port,
-      {},
+      { username: eff.username, authDatabase: eff.authDatabase },
       body.database,
       body.collections,
     );
@@ -21209,20 +24412,24 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       'Cache-Control': 'no-cache',
       'X-Accel-Buffering': 'no',
     });
-    const child = spawn('mongodump', dumpArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const invocation = buildSecureMongoHostInvocation('mongodump', dumpArgs, eff.password || '');
+    const child = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.end(invocation.stdinPrefix);
     let stderrTail = '';
     child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
     child.stdout.pipe(res);
     child.on('close', (code) => {
+      settleMaintenance(code === 0 ? 'completed' : 'failed');
       if (code !== 0) {
         // We may already have sent headers — append a trailer-like marker
-        try { res.write(`\n__CDS_DUMP_ERROR__:${stderrTail.slice(-400)}`); } catch { /* */ }
+        try { res.write(`\n__CDS_DUMP_ERROR__:${redactSecretValues(stderrTail.slice(-400), [eff.password || ''])}`); } catch { /* */ }
       }
       try { res.end(); } catch { /* */ }
     });
     child.on('error', (err) => {
+      settleMaintenance('failed');
       try {
-        if (!res.headersSent) res.status(500).json({ error: err.message });
+        if (!res.headersSent) res.status(500).json({ error: redactSecretValues(err.message, [eff.password || '']) });
         else res.end();
       } catch { /* */ }
     });
@@ -21241,45 +24448,74 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //
   // Query params: sourceDb, targetDb, collections (comma-separated)
   router.post('/data-migrations/local-restore', async (req, res) => {
+    const explicitProjectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    const explicitServiceId = typeof req.query.serviceId === 'string' ? req.query.serviceId : undefined;
     const sourceDb = (req.query.sourceDb as string | undefined) || undefined;
     const targetDb = (req.query.targetDb as string | undefined) || undefined;
     const colsParam = req.query.collections as string | undefined;
     const collections = colsParam ? colsParam.split(',').filter(Boolean) : undefined;
 
     let eff: MongoConnectionConfig;
+    let mongoInfra: InfraService;
     try {
-      eff = resolveMongoConn({ type: 'local', host: '', port: 0, database: targetDb });
+      mongoInfra = resolvePeerLocalMongo(req, explicitProjectId, explicitServiceId);
+      eff = peerLocalMongoConnection(mongoInfra, targetDb);
     } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
+      res.status((e as { status?: number }).status || 409).json({ error: (e as Error).message });
       return;
     }
+    // HTTP 日志中间件已经挂了 data listener；下一行开始会跨 await。
+    // 先暂停原始上传流，等 mongorestore stdin 接好后由 req.pipe() 自动恢复，
+    // 否则等待维护作业登记期间 body 会被日志监听器单独读完。
+    req.pause();
+    let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      maintenanceJob = await stateService.beginInfraMaintenanceJob({
+        projectId: mongoInfra.projectId,
+        serviceId: mongoInfra.id,
+        runtime: 'mongodb',
+        kind: 'peer-restore',
+      });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      req.resume();
+      res.status(rotating ? 409 : 500).json({ error: rotating ? 'MongoDB 正在轮换凭据，暂不能接收迁移恢复。' : '无法登记迁移恢复作业。' });
+      return;
+    }
+    let maintenanceSettled = false;
+    const settleMaintenance = (status: 'completed' | 'failed'): void => {
+      if (maintenanceSettled) return;
+      maintenanceSettled = true;
+      void stateService.finishInfraMaintenanceJob(maintenanceJob.id, status);
+    };
     const restoreArgs = buildMongorestoreArgs(
       eff.host, eff.port,
-      {},
+      { username: eff.username, authDatabase: eff.authDatabase },
       { drop: true, sourceDb, targetDb, collections },
     );
-    const child = spawn('mongorestore', restoreArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const invocation = buildSecureMongoHostInvocation('mongorestore', restoreArgs, eff.password || '');
+    const child = spawn(invocation.command, invocation.argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.write(invocation.stdinPrefix);
     let stderrTail = '';
     const logLines: string[] = [];
     const mirror = (d: Buffer) => {
       const s = d.toString();
-      stderrTail = (stderrTail + s).slice(-4000);
-      for (const line of s.split('\n')) if (line) logLines.push(line);
+      const safe = redactSecretValues(s, [eff.password || '']);
+      stderrTail = (stderrTail + safe).slice(-4000);
+      for (const line of safe.split('\n')) if (line) logLines.push(line);
     };
     child.stderr.on('data', mirror);
     child.stdout.on('data', mirror);
 
-    // Pipe request body into mongorestore stdin
+    // The authentication config prefix must be written before archive bytes.
     req.pipe(child.stdin);
 
     // If the client aborts upload, kill the restore process
     req.on('error', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
-    req.on('close', () => {
-      // End of request body — close stdin so mongorestore can finish
-      try { child.stdin.end(); } catch { /* */ }
-    });
+    req.on('aborted', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
 
     child.on('close', (code) => {
+      settleMaintenance(code === 0 ? 'completed' : 'failed');
       if (code === 0) {
         res.json({ success: true, log: logLines.join('\n') });
       } else {
@@ -21287,7 +24523,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
     });
     child.on('error', (err) => {
-      if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+      settleMaintenance('failed');
+      if (!res.headersSent) res.status(500).json({ success: false, error: redactSecretValues(err.message, [eff.password || '']) });
     });
   });
 
@@ -21572,6 +24809,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         ? { degraded: true, reason: payload.degraded.reason, message: payload.degraded.message, reasons: [payload.degraded.message] }
         : null,
       lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
+      selfMaintenance: selfMaintenance.observe(),
     });
   });
 
@@ -21731,20 +24969,23 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       resolveActorFromRequest(req) ||
       'unknown';
     const existingActive = stateService.getActiveSelfUpdate();
-    if (isSelfUpdateBusy(existingActive)) {
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-restart', actor, existingActive);
+    if (!maintenanceOwner) {
       sendSSE(res, 'error', {
         code: 'self_update_busy',
         message: '已有 CDS 更新或重启正在进行，本次精确版本重启已拒绝。',
         activeSelfUpdate: existingActive,
+        selfMaintenance: selfMaintenance.observe(),
       });
       res.end();
       return;
     }
 
+    const shell = selfMaintenanceShell(maintenanceOwner);
     const startedAt = Date.now();
     let branch = '';
     let fullSha = '';
-    let terminalStateCommitted = false;
+    let rollbackRestartSuccess: (() => void) | undefined;
     const commitSelfRestartState = (terminal = false): void => {
       const history = stateService.getSelfUpdateHistory(20);
       selfStatusCache.commitSelfUpdateState(
@@ -21755,7 +24996,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         },
         { terminal },
       );
-      if (terminal) terminalStateCommitted = true;
     };
     try {
       branch = resolveSelfUpdateTargetBranch(
@@ -21776,34 +25016,40 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         logText: `[restart] 仅重启当前精确版本 ${fullSha.slice(0, 8)}，不拉取或切换代码`,
       });
       commitSelfRestartState();
-      const drainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
-      if (drainTimeoutMs > 0) {
-        sendSSE(res, 'step', {
-          step: 'drain',
-          status: 'running',
-          title: `等待分支操作排空，最多 ${Math.floor(drainTimeoutMs / 1000)} 秒`,
-        });
-        await waitForRestartSafeBranchOperationsForRoute('api.self-restart', drainTimeoutMs);
-      }
-      stateService.recordSelfUpdate({
-        ts: new Date().toISOString(),
-        branch,
-        fromSha: fullSha.slice(0, 8),
-        toSha: fullSha.slice(0, 8),
-        trigger: 'manual',
-        status: 'success',
-        durationMs: Date.now() - startedAt,
-        actor,
-        updateMode: 'restart-only',
+      selfMaintenance.setPhase(maintenanceOwner, 'drain');
+      await drainDeploysBeforeSelfUpdateRestart({
+        trigger: 'manual', branch, source: 'api.self-restart',
+        timeoutMs: resolveSelfUpdateDrainTimeoutMs(req.body),
+        ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+        isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
+        onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
       });
-      commitSelfRestartState(true);
-      await flushSelfUpdateStateBeforeRestart({
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'manual',
         branch,
         fromSha: fullSha.slice(0, 8),
         toSha: fullSha.slice(0, 8),
         actor,
-      });
+        timeoutMs: resolveSelfUpdateDrainTimeoutMs(req.body),
+        source: 'api.self-restart',
+        onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
+        onSafeToRestart: () => {
+          rollbackRestartSuccess = stateService.recordProvisionalSelfUpdateSuccess({
+            ts: new Date().toISOString(),
+            branch,
+            fromSha: fullSha.slice(0, 8),
+            toSha: fullSha.slice(0, 8),
+            trigger: 'manual',
+            status: 'success',
+            durationMs: Date.now() - startedAt,
+            actor,
+            updateMode: 'restart-only',
+          });
+          commitSelfRestartState(true);
+        },
+      }, maintenanceOwner);
+      await scheduleDetachedCdsRestart({ branchLabel: branch, source: 'api.self-restart', delayMs: 500,
+        maintenanceOwner, preserveQueued: restartFlush === 'flushed' });
       sendSSE(res, 'step', {
         step: 'restart',
         status: 'running',
@@ -21816,20 +25062,28 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         mode: 'restart-only',
       });
       res.end();
-      scheduleDetachedCdsRestart({
-        branchLabel: branch,
-        source: 'api.self-restart',
-        delayMs: 500,
-        exitOnFailure: true,
-      });
     } catch (err) {
+      rollbackRestartSuccess?.();
+      if (err instanceof SelfUpdateRestartBlockedError) {
+        stateService.recordSelfUpdate({ ts: new Date().toISOString(), branch,
+          fromSha: fullSha.slice(0, 8), toSha: fullSha.slice(0, 8), trigger: 'manual',
+          status: 'aborted', durationMs: Date.now() - startedAt, actor, error: err.message,
+          failure: { stage: 'restart-drain', cause: err.message,
+            nextAction: '等其他项目操作结束后重试重启。', raw: err.remaining.join(', ') } });
+      } else {
+        stateService.recordSelfUpdate({ ts: new Date().toISOString(), branch, fromSha: fullSha.slice(0, 8),
+          toSha: fullSha.slice(0, 8), trigger: 'manual', status: 'failed', durationMs: Date.now() - startedAt,
+          actor, updateMode: 'restart-only', error: (err as Error).message });
+      }
       stateService.clearSelfUpdateActive();
-      if (!terminalStateCommitted) commitSelfRestartState(true);
+      commitSelfRestartState(true);
       sendSSE(res, 'error', {
-        code: 'self_restart_failed',
+        code: err instanceof SelfUpdateRestartBlockedError ? err.code : 'self_restart_failed',
         message: (err as Error).message,
       });
       res.end();
+    } finally {
+      finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -21853,7 +25107,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       transitionReason?: string;
     };
     const forceMode = force === true;
-    const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
+    const restartDrainTimeoutMs = resolveSelfUpdateDrainTimeoutMs(req.body);
 
     initSSE(res);
     // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
@@ -21883,6 +25137,29 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (terminal) terminalStateCommitted = true;
     };
 
+    const existingActive = stateService.getActiveSelfUpdate();
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-update', actor, existingActive);
+    if (!maintenanceOwner) {
+      const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
+      stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      commitSelfUpdateState();
+      const concurrencyDiagnosis = diagnoseSelfUpdateFailure({ stage: 'concurrency', message });
+      sendSSE(res, 'error', {
+        message: formatSelfUpdateFailureMessage(concurrencyDiagnosis),
+        cause: concurrencyDiagnosis.cause,
+        nextAction: concurrencyDiagnosis.nextAction,
+        raw: concurrencyDiagnosis.raw,
+        stage: concurrencyDiagnosis.stage,
+        activeSelfUpdate: existingActive,
+        selfMaintenance: selfMaintenance.observe(),
+      });
+      res.end();
+      return;
+    }
+    const shell = selfMaintenanceShell(maintenanceOwner);
+    let maintenanceComplete = true;
+    // 外层finally同时覆盖首次分支/SHA await和原流程的全部失败出口。
+    try {
     branch = resolveSelfUpdateTargetBranch(typeof branch === 'string' ? branch : '');
     if (!branch) {
       try {
@@ -21900,24 +25177,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         branch = 'main';
       }
     }
-
-    const existingActive = stateService.getActiveSelfUpdate();
-    if (isSelfUpdateBusy(existingActive)) {
-      const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
-      stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
-      commitSelfUpdateState();
-      const concurrencyDiagnosis = diagnoseSelfUpdateFailure({ stage: 'concurrency', message });
-      sendSSE(res, 'error', {
-        message: formatSelfUpdateFailureMessage(concurrencyDiagnosis),
-        cause: concurrencyDiagnosis.cause,
-        nextAction: concurrencyDiagnosis.nextAction,
-        raw: concurrencyDiagnosis.raw,
-        stage: concurrencyDiagnosis.stage,
-        activeSelfUpdate: existingActive,
-      });
-      res.end();
-      return;
-    }
     if (existingActive) stateService.clearSelfUpdateActive();
 
     // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
@@ -21925,6 +25184,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
     let transitionMode: string | undefined;
     let acceptedTransitionReason: string | undefined;
+    let checkpoint: Awaited<ReturnType<typeof createSelfUpdateCheckpoint>> | undefined, keepUpdate = false;
+    const rollbackCheckpoint = async (): Promise<void> => {
+      maintenanceComplete = false;
+      selfMaintenance.requestStop(maintenanceOwner);
+      await checkpoint?.rollback();
+      maintenanceComplete = true;
+    };
 
     // 2026-05-07 状态落盘(用户反馈"卡 web-build 看不见状态"):
     // markSelfUpdateActive 现在写 .cds/active-update.json(SSOT),包含
@@ -21938,6 +25204,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     });
     commitSelfUpdateState();
     const send = (step: string, status: string, title: string) => {
+      selfMaintenance.step(maintenanceOwner, step);
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
       // 同步 step + 顺手写一条 logTail,让前端面板看到具体阶段。
@@ -21957,24 +25224,29 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
         .stdout.trim();
     } catch { /* tolerated — 极少数情况下 fromSha=''仍可继续 */ }
+    let rollbackRestartSuccess: (() => void) | undefined;
     const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
-      stateService.recordSelfUpdate({
+      if (record.status === 'success' && ['noOp', 'web-only', 'doc-only'].includes(record.updateMode || '')) keepUpdate = true;
+      const stored = {
         ...record,
         timings: timingRecorder.snapshot(),
-      });
+      };
+      if (record.status === 'success' && !keepUpdate) rollbackRestartSuccess = stateService.recordProvisionalSelfUpdateSuccess(stored);
+      else stateService.recordSelfUpdate(stored);
       commitSelfUpdateState(true);
     };
     const recordFailure = (
       errMsg: string,
       failure?: import('../types.js').SelfUpdateRecord['failure'],
     ): void => {
+      rollbackRestartSuccess?.(); rollbackRestartSuccess = undefined;
       recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
         fromSha,
         toSha: fromSha,                    // failed → no shift
         trigger: 'manual',
-        status: 'failed',
+        status: failure?.stage === 'restart-drain' ? 'aborted' : 'failed',
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
@@ -22020,6 +25292,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
 
     try {
+      const drainStartedAt = Date.now();
+      selfMaintenance.setPhase(maintenanceOwner, 'drain');
+      await drainDeploysBeforeSelfUpdateRestart({
+        trigger: 'manual', branch: branch || '', source: 'api.self-update', timeoutMs: restartDrainTimeoutMs,
+        ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+        isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
+        onProgress: (status, title) => send('drain-deploys', status, title),
+      });
+      timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
       const repoRoot = config.repoRoot;
 
       // Step 1: fetch latest
@@ -22095,7 +25376,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               currentSha: currentFullSha,
               targetSha: targetFullSha,
               targetBranch: branch,
-              hint: '新版 cdscli 可传 --transition-intent、--expected-from-sha 和 --reason；普通重启不要切分支。',
+              hint: '发布先合入当前完整提交并验证；明确回滚才传 --transition-intent rollback、--expected-from-sha 和 --reason。普通重启不要切分支。',
             },
           });
           return;
@@ -22115,6 +25396,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched).
         // main 可能已被应用 worktree 占用；共享 helper 会改用控制面专属 runtime 分支，
         // 不移动应用工作树使用的本地分支引用。
+        checkpoint = await createSelfUpdateCheckpoint(selfMaintenance, maintenanceOwner, repoRoot, { deferArtifacts: true });
         const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, branch);
         if (!checkoutResult.ok) {
           const errMsg = checkoutResult.error || '未知错误';
@@ -22223,7 +25505,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         const shortHead = headFullSha.slice(0, 8);
         send('pull', 'done', `HEAD 已是 origin/${targetBranch} (${shortHead})`);
         send('no-op', 'done', `检测到 no-op:HEAD/web bundle 都已是最新,跳过 validate/restart`);
-        sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启` });
+        // mode 写进 done：cdscli 据此当场收工，不去等一次不会发生的重启（Codex #1543 P1）
+        sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启`, mode: 'noOp' });
         res.end();
         // 流水里也记一条,用 trigger='manual' status='success' duration=极短
         recordSelfUpdate({
@@ -22235,10 +25518,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
+          // updateMode 是 restartStatus 判定认的那个字段：不标，这条 success 记录会被当成
+          // 「该重启却没换进程」→ incomplete → cdscli 白等 9 分钟报假失败
+          ...({ updateMode: 'noOp', noOp: true } as Record<string, unknown>),
         });
         return;
       }
 
+      // noOp已排除；源码身份在首次改源码前保存，五目录在首次产物/依赖写入前保存。
+      checkpoint ??= await createSelfUpdateCheckpoint(selfMaintenance, maintenanceOwner, repoRoot, { deferArtifacts: true });
+      await checkpoint.captureArtifacts();
       const resetResult = await shell.exec(
         `git reset --hard origin/${targetBranch}`,
         { cwd: repoRoot },
@@ -22301,7 +25590,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!forceMode && suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
         send('analyze', 'done', `本次改动 ${suChangedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径(跳过 validate / 后端 build / systemd 重启)`);
         try {
-          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
         } catch (webBuildErr) {
           recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
           return;
@@ -22342,6 +25631,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           repoRoot,
           targetFullSha: newFullHead,
           send,
+          createCleanup: stagingRoot => maintenanceArtifactCleanup(maintenanceOwner, 'prebuilt', stagingRoot),
         });
         timingRecorder.merge({ prebuiltMs: Date.now() - prebuiltStart });
         if (prebuilt.applied) {
@@ -22394,6 +25684,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       try {
         validation = await validateBuildReadiness(shell, cdsDirForCheck, {
+          onFirstFailure: () => selfMaintenance.requestStop(maintenanceOwner),
           onProgress: (event) => {
             validateHeartbeatLabel = event.message;
             sendSSE(res, 'validate-progress', {
@@ -22480,15 +25771,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 不并行跑 tsc --noEmit:validate 阶段已经跑过(line 8856),不重复。
       send('build-backend', 'running', '正在重编后端 dist.next/(esbuild)...');
       const cdsBackendStart = Date.now();
+      const backendCleanup = maintenanceArtifactCleanup(maintenanceOwner, 'backend');
       const backendHeartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - cdsBackendStart) / 1000);
         sendSSE(res, 'backend-build-tick', { elapsed, message: `后端编译进行中 ${elapsed}s` });
         stateService.tickSelfUpdate();
       }, 5_000);
       // 清掉上一次失败留下的 dist.next 残留(若有)
-      try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
       let esbuildRes: Awaited<ReturnType<typeof shell.exec>>;
       try {
+        await backendCleanup.remove(path.join(cdsDirForCheck, 'dist.next'));
         esbuildRes = await shell.exec(
           'node scripts/build-dist-esbuild.mjs',
           { cwd: cdsDirForCheck, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
@@ -22498,7 +25790,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
       if (esbuildRes.exitCode !== 0) {
         const errMsg = (combinedOutput(esbuildRes) || '').slice(0, 800);
-        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDirForCheck, 'dist.next'));
         send('build-backend', 'error', `后端 esbuild 失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
         failWith('build', { raw: errMsg });
         return;
@@ -22506,7 +25798,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 验证 dist.next/index.js 真的写出来
       const distNextEntry = path.join(cdsDirForCheck, 'dist.next', 'index.js');
       if (!fs.existsSync(distNextEntry)) {
-        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDirForCheck, 'dist.next'));
         send('build-backend', 'error', 'esbuild 报成功但 dist.next/index.js 不存在(旧 dist 保留)');
         failWith('build', {
           message: '编译报告成功但没有产出可执行文件(dist.next/index.js 缺失)，已中止重启避免 CDS 起不来。',
@@ -22519,6 +25811,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const distOldPath = path.join(cdsDirForCheck, `dist.old.${swapTs}`);
       const distNextPath = path.join(cdsDirForCheck, 'dist.next');
       try {
+        backendCleanup.assertActive();
         if (fs.existsSync(distPath)) fs.renameSync(distPath, distOldPath);
         try {
           fs.renameSync(distNextPath, distPath);
@@ -22532,7 +25825,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // 写 .build-sha 让 master-run sentinel 不会跑冗余 tsc
         try { fs.writeFileSync(path.join(distPath, '.build-sha'), newHead + '\n'); } catch { /* ignore */ }
         // 删旧 dist.old(成功才删,失败保留以便人工回滚)
-        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(distOldPath);
       } catch (swapErr) {
         send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
         failWith('swap', { raw: (swapErr as Error).message });
@@ -22562,61 +25855,43 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
-      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
-      }
-
-      // 2026-06-14:默认不等排空。master work / branch operation coordinator
-      // 已负责 interruptAll + 重启后 reconcile。只有请求显式 drain=true 或
-      // drainTimeoutMs>0 时才等待,避免日常更新被旧 180s 窗口拖成数分钟。
-      const drainStartedAt = Date.now();
-      const restartDrain = restartDrainTimeoutMs > 0
-        ? await (async () => {
-            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
-            return waitForRestartSafeBranchOperationsForRoute('api.self-update', restartDrainTimeoutMs);
-          })()
-        : { ok: true, active: [] };
-      // 把排空等待计入 timings(可达 180s)。此前不记导致进度条各 step 之和远小于
-      // totalMs,UI 大片留白且"总计"对不上。
-      const drainMs = Date.now() - drainStartedAt;
-      timingRecorder.merge({ drainMs });
-      if (restartDrainTimeoutMs <= 0) {
-        send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
-      } else if (!restartDrain.ok) {
-        send(
-          'drain',
-          'warning',
-          `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
-        );
-      } else {
-        send('drain', 'done', `分支操作已排空 (${Math.floor(drainMs / 1000)}s)`);
+      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
       }
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
-      recordSelfUpdate({
-        ts: new Date().toISOString(),
-        branch: branch || '',
-        fromSha,
-        toSha: newHead || fromSha,
-        trigger: 'manual',
-        status: 'success',
-        durationMs: Date.now() - startedAt,
-        actor,
-        ...({
-          updateMode,
-          transitionMode,
-          transitionReason: acceptedTransitionReason,
-        } as Record<string, unknown>),
-      });
       // Mongo-backed state is write-behind. This path exits the process about
-      // one second after sending the restart event. A stuck Mongo write must
-      // not keep the old daemon alive after dist/ has already been swapped.
-      await flushSelfUpdateStateBeforeRestart({
+      // one second after handoff. Failed persistence cancels the handoff and
+      // restores the original source and exact dist/web bytes.
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'manual',
         branch: branch || '',
         fromSha,
         toSha: newHead || fromSha,
         actor,
-      });
+        timeoutMs: restartDrainTimeoutMs,
+        source: 'api.self-update',
+        onProgress: (status, title) => send('drain-deploys', status, title),
+        onSafeToRestart: () => {
+          recordSelfUpdate({
+            ts: new Date().toISOString(),
+            branch: branch || '',
+            fromSha,
+            toSha: newHead || fromSha,
+            trigger: 'manual',
+            status: 'success',
+            durationMs: Date.now() - startedAt,
+            actor,
+            ...({
+              updateMode,
+              transitionMode,
+              transitionReason: acceptedTransitionReason,
+            } as Record<string, unknown>),
+          });
+        },
+      }, maintenanceOwner);
+      await scheduleDetachedCdsRestart({ branchLabel: branch || '', source: 'api.self-update', delayMs: 500,
+        maintenanceOwner, preserveQueued: restartFlush === 'flushed', rollback: rollbackCheckpoint });
+      keepUpdate = true;
 
       // Step 4: restart CDS via detached process
       // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
@@ -22643,13 +25918,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // so that silent spawn failures (e.g., exec_cds.sh not understanding an
       // argument) leave a forensic trail. Without this, the whole CDS cluster
       // goes dark with no clue why.
-      scheduleDetachedCdsRestart({
-        branchLabel: branch || '',
-        source: 'api.self-update',
-        delayMs: 500,
-        exitOnFailure: true,
-      });
     } catch (err) {
+      if (err instanceof SelfUpdateRestartBlockedError) {
+        failWith('restart-drain', { code: err.code, message: err.message,
+          raw: err.remaining.join(', '), extra: { pendingRuns: err.remaining, waitedMs: err.waitedMs } });
+        return;
+      }
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       if (!res.writableEnded) {
         failWith('unknown', { raw: (err as Error).message });
@@ -22663,6 +25937,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         });
       }
     } finally {
+      try {
+        if (keepUpdate) {
+          if (maintenanceOwner.restartScheduled) checkpoint?.retainForRestart();
+          else {
+            try { await checkpoint?.commit(); }
+            catch (error) { console.warn('[self-update] 更新已保留，但恢复副本清理未确认', error); }
+          }
+        } else await rollbackCheckpoint();
+      }
+      catch (error) { recordFailure((error as Error).message); console.error('[self-update] rollback failed', error); }
       // Bugbot 31da8d97 (HIGH):兜底清 in-progress 标记。
       // recordSelfUpdate 已经在 success/aborted/failed 三种正常路径上清掉,
       // 但若 catch handler 自身抛(send / sendSSE / res.end 在异常态下),
@@ -22672,6 +25956,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!terminalStateCommitted) {
         commitSelfUpdateState(true);
       }
+    }
+    } finally {
+      if (maintenanceComplete) finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -22685,14 +25972,26 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   { ok: false, stage, error }        — blocking issue
   //
   // Use case: operators (and CI) who want to verify a branch can
-  // be self-updated before actually hitting the red button. No
-  // side effects — if you see { ok: true } you can confidently
-  // call /api/self-update next.
-  router.post('/self-update-dry-run', async (_req, res) => {
+  // be self-updated before actually hitting the red button. Validation
+  // writes dependencies/install/type-check stamps, so it shares maintenance admission.
+  router.post('/self-update-dry-run', async (req, res) => {
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor = cdsUser?.githubLogin || cdsUser?.login || cdsUser?.username || resolveActorFromRequest(req) || 'unknown';
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-update-dry-run', actor, stateService.getActiveSelfUpdate());
+    if (!maintenanceOwner) {
+      res.status(409).json({ ok: false, error: 'self_update_busy',
+        message: '已有 CDS 维护请求正在进行，本次预检尚未开始；请待其结束后重试。',
+        selfMaintenance: selfMaintenance.observe() });
+      return;
+    }
     const cdsDir = path.join(config.repoRoot, 'cds');
+    const shell = selfMaintenanceShell(maintenanceOwner);
     try {
       const started = Date.now();
-      const result = await validateBuildReadiness(shell, cdsDir);
+      selfMaintenance.setPhase(maintenanceOwner, 'validate');
+      const result = await validateBuildReadiness(shell, cdsDir, {
+        onFirstFailure: () => selfMaintenance.requestStop(maintenanceOwner),
+      });
       const durationMs = Date.now() - started;
       if (result.ok) {
         // 2026-05-04 v2:webWarning(前端 tsc 失败)是 warning,不阻断,加到响应里。
@@ -22731,6 +26030,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stage: 'unknown',
         error: (err as Error).message,
       });
+    } finally {
+      finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -22768,7 +26069,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       transitionReason?: string;
     };
     const forceMode = force === true;
-    const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
+    const restartDrainTimeoutMs = resolveSelfUpdateDrainTimeoutMs(req.body);
 
     initSSE(res);
     // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
@@ -22793,7 +26094,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (terminal) terminalStateCommitted = true;
     };
     const existingActive = stateService.getActiveSelfUpdate();
-    if (isSelfUpdateBusy(existingActive)) {
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-force-sync', actor, existingActive);
+    if (!maintenanceOwner) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
       commitSelfUpdateState();
@@ -22805,17 +26107,29 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         raw: concurrencyDiagnosis.raw,
         stage: concurrencyDiagnosis.stage,
         activeSelfUpdate: existingActive,
+        selfMaintenance: selfMaintenance.observe(),
       });
       res.end();
       return;
     }
+    const shell = selfMaintenanceShell(maintenanceOwner);
+    let maintenanceComplete = true;
+    try {
     if (existingActive) stateService.clearSelfUpdateActive();
     // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
     const startedAt = Date.now();
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
     let forceSyncTransitionMode: string | undefined;
     let forceSyncTransitionReason: string | undefined;
+    let checkpoint: Awaited<ReturnType<typeof createSelfUpdateCheckpoint>> | undefined, keepUpdate = false;
+    const rollbackCheckpoint = async (): Promise<void> => {
+      maintenanceComplete = false;
+      selfMaintenance.requestStop(maintenanceOwner);
+      await checkpoint?.rollback();
+      maintenanceComplete = true;
+    };
 
+    // 首次await前取得占用，所有准备期异常也必须可靠释放。
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
@@ -22824,6 +26138,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     });
     commitSelfUpdateState();
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
+      selfMaintenance.step(maintenanceOwner, step);
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
       const level: 'info' | 'warning' | 'error' =
@@ -22839,24 +26154,29 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
         .stdout.trim();
     } catch { /* tolerated */ }
+    let rollbackRestartSuccess: (() => void) | undefined;
     const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
-      stateService.recordSelfUpdate({
+      if (record.status === 'success' && ['noOp', 'web-only', 'doc-only'].includes(record.updateMode || '')) keepUpdate = true;
+      const stored = {
         ...record,
         timings: timingRecorder.snapshot(),
-      });
+      };
+      if (record.status === 'success' && !keepUpdate) rollbackRestartSuccess = stateService.recordProvisionalSelfUpdateSuccess(stored);
+      else stateService.recordSelfUpdate(stored);
       commitSelfUpdateState(true);
     };
     const recordFailure = (
       errMsg: string,
       failure?: import('../types.js').SelfUpdateRecord['failure'],
     ): void => {
+      rollbackRestartSuccess?.(); rollbackRestartSuccess = undefined;
       recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
         fromSha,
         toSha: fromSha,
         trigger: 'force-sync',
-        status: 'failed',
+        status: failure?.stage === 'restart-drain' ? 'aborted' : 'failed',
         durationMs: Date.now() - startedAt,
         error: errMsg.slice(0, 300),
         actor,
@@ -22895,6 +26215,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
 
     try {
+      const drainStartedAt = Date.now();
+      selfMaintenance.setPhase(maintenanceOwner, 'drain');
+      await drainDeploysBeforeSelfUpdateRestart({
+        trigger: 'force-sync', branch: branch || '', source: 'api.self-force-sync', timeoutMs: restartDrainTimeoutMs,
+        ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+        isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
+        onProgress: (status, title) => send('drain-deploys', status, title),
+      });
+      timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
       const repoRoot = config.repoRoot;
       const cdsDir = path.join(repoRoot, 'cds');
 
@@ -22992,6 +26321,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // tracking. self-update does this right; we were missing it.
       // Caught by Cursor Bugbot #450 round 7 (HIGH).
       send('checkout', 'running', `切换到 ${target} 分支...`);
+      checkpoint = await createSelfUpdateCheckpoint(selfMaintenance, maintenanceOwner, repoRoot, { deferArtifacts: true });
       const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, target);
       if (!checkoutResult.ok) {
         const errMsg = checkoutResult.error || '未知错误';
@@ -23064,7 +26394,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const noBuildErrors = !fs.existsSync(distErrFile) && !fs.existsSync(webErrFile);
       if (distMatches && webMatches && noBuildErrors && !forceMode) {
         send('no-op', 'done', `dist + web bundle 都已是 ${newHead} — 跳过 validate / 重 build / 重启`);
-        sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)` });
+        sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)`, mode: 'noOp' });
         res.end();
         recordSelfUpdate({
           ts: new Date().toISOString(),
@@ -23075,15 +26405,20 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
-          // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"
+          // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"；
+          // updateMode 同时标上——restartStatus 判定认的是它（Codex #1543 P1）
           ...({
             noOp: true,
+            updateMode: 'noOp',
             transitionMode: forceSyncTransitionMode,
             transitionReason: forceSyncTransitionReason,
           } as Record<string, unknown>),
         });
         return;
       }
+
+      // checkout/reset的源码恢复身份已保存；noOp不创建或复制五目录恢复点。
+      await checkpoint.captureArtifacts();
 
       // * 2026-05-06 新增 — 改动影响分析,决定走"热重载"还是"完整重启"。
       // 用户反馈:让两种模式同时生效,自动判断。RESTART_PATTERNS(依赖/Docker/
@@ -23121,7 +26456,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // 失败时 runInProcessWebBuild 会 sendSSE error + res.end + throw,
         // 我们用 try/catch 捕获,记录失败流水,直接 return(daemon 不重启)。
         try {
-          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
         } catch (webBuildErr) {
           // runInProcessWebBuild 内部已经 send error + res.end,这里只补记流水。
           recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
@@ -23242,6 +26577,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         try {
           return await validateBuildReadiness(shell, cdsDir, {
             ...options,
+            onFirstFailure: () => selfMaintenance.requestStop(maintenanceOwner),
             onProgress: (event) => {
               validateHeartbeatLabel = event.message;
               sendSSE(res, 'validate-progress', {
@@ -23369,12 +26705,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 主动清等于自废武功。**不**清 .tsbuildinfo,只清 dist.next/(上一次失败
       // 的孤儿)+ dist.old.*(rmSync 失败的孤儿)。
       send('cache', 'running', '清理孤儿目录(保留 .tsbuildinfo 让 tsc 走增量)…');
+      const backendCleanup = maintenanceArtifactCleanup(maintenanceOwner, 'backend');
       const removed: string[] = [];
+      const staleDirectories: string[] = [];
       // dist.next 残留(上次失败留下的)
       try {
         const next = path.join(cdsDir, 'dist.next');
         if (fs.existsSync(next)) {
-          fs.rmSync(next, { recursive: true, force: true });
+          staleDirectories.push(next);
           removed.push('dist.next/ (stale)');
         }
       } catch { /* tolerate */ }
@@ -23387,13 +26725,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         for (const name of entries) {
           if (name.startsWith('dist.old.')) {
             try {
-              fs.rmSync(path.join(cdsDir, name), { recursive: true, force: true });
+              staleDirectories.push(path.join(cdsDir, name));
               removed.push(`${name} (orphan)`);
             } catch { /* tolerate */ }
           }
         }
       } catch { /* tolerate */ }
-      send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
+      const staleRemoved = await backendCleanup.removeMany(staleDirectories);
+      send('cache', 'done', staleRemoved && removed.length > 0 ? `已清: ${removed.join(', ')}`
+        : staleDirectories.length > 0 ? '孤儿清理未完成，已保留原目录' : '无缓存可清');
 
       // 编译到 dist.next/,旧 dist/ 全程不动。
       // 用户反馈 2026-05-06:tsc 30-50s 太慢,改 esbuild + 按需并行 tsc --noEmit:
@@ -23424,21 +26764,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
         );
       }
-      const buildResults = await Promise.all(tasks);
+      const buildResults = await Promise.all(tasks).catch(async (error) => {
+        selfMaintenance.requestStop(maintenanceOwner);
+        await Promise.allSettled(tasks);
+        throw error;
+      });
       const esbuildRes = buildResults[0];
       const tscCheckRes = skipTscInBuild ? null : buildResults[1];
       const buildElapsed = ((Date.now() - buildStartedAt) / 1000).toFixed(1);
       timingRecorder.merge({ buildBackendMs: Date.now() - buildStartedAt });
       if (esbuildRes.exitCode !== 0) {
         const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
-        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDir, 'dist.next'));
         send('build-backend', 'error', `esbuild 编译失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
         failWith('build', { raw: errMsg });
         return;
       }
       if (tscCheckRes && tscCheckRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscCheckRes).slice(0, 1500);
-        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDir, 'dist.next'));
         send('build-backend', 'error', `tsc 类型检查失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
         failWith('typecheck', { raw: errMsg });
         return;
@@ -23452,7 +26796,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       );
       const nextEntry = path.join(cdsDir, 'dist.next', 'index.js');
       if (!fs.existsSync(nextEntry)) {
-        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDir, 'dist.next'));
         send('build-backend', 'error', 'tsc 报成功但 dist.next/index.js 不存在（旧 dist 保留）');
         failWith('build', {
           message: '编译报告成功但没有产出可执行文件(dist.next/index.js 缺失)，已中止重启避免 CDS 起不来。',
@@ -23466,6 +26810,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const distOldPath = path.join(cdsDir, `dist.old.${swapTs}`);
       const distNextPath = path.join(cdsDir, 'dist.next');
       try {
+        backendCleanup.assertActive();
         if (fs.existsSync(distPath)) {
           fs.renameSync(distPath, distOldPath);
         }
@@ -23479,7 +26824,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           throw renameErr;
         }
         // 清理备份（保不保都不影响 cds 运行，rmSync 失败也忽略）
-        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(distOldPath);
         // 警告 Bugbot 2026-05-06 0c17e470:之前没人写 dist/.build-sha,
         // self-force-sync 顶部的 fast-path no-op 检测永远 false → 死代码。
         // swap 成功后**显式写**当前 commit 的 full SHA,下次同 commit 触发
@@ -23498,57 +26843,43 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
       // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
       // helper 保证两端口行为一致。
-      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
-
-      // 同 self-update:默认不等排空;显式 drain=true 或 drainTimeoutMs>0 才等待。
-      const drainStartedAt = Date.now();
-      const restartDrain = restartDrainTimeoutMs > 0
-        ? await (async () => {
-            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
-            return waitForRestartSafeBranchOperationsForRoute('api.self-force-sync', restartDrainTimeoutMs);
-          })()
-        : { ok: true, active: [] };
-      const drainMs = Date.now() - drainStartedAt;
-      timingRecorder.merge({ drainMs });
-      if (restartDrainTimeoutMs <= 0) {
-        send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
-      } else if (!restartDrain.ok) {
-        send(
-          'drain',
-          'warning',
-          `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
-        );
-      } else {
-        send('drain', 'done', `分支操作已排空 (${Math.floor(drainMs / 1000)}s)`);
-      }
+      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
-      recordSelfUpdate({
-        ts: new Date().toISOString(),
-        branch: branch || target || '',
-        fromSha,
-        toSha: newHead || fromSha,
-        trigger: 'force-sync',
-        status: 'success',
-        durationMs: Date.now() - startedAt,
-        actor,
-        // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
-        ...({
-          updateMode: hotEligible ? 'hot-reload' : 'restart',
-          transitionMode: forceSyncTransitionMode,
-          transitionReason: forceSyncTransitionReason,
-        } as Record<string, unknown>),
-      });
       // Same durability requirement as /api/self-update: this code path
       // intentionally exits the daemon. Bound this flush so a stuck write-behind
-      // queue cannot leave old code running after dist/ has already been swapped.
-      await flushSelfUpdateStateBeforeRestart({
+      // queue cancels the handoff and restores the exact original artifacts.
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'force-sync',
         branch: branch || target || '',
         fromSha,
         toSha: newHead || fromSha,
         actor,
-      });
+        timeoutMs: restartDrainTimeoutMs,
+        source: 'api.self-force-sync',
+        onProgress: (status, title) => send('drain-deploys', status, title),
+        onSafeToRestart: () => {
+          recordSelfUpdate({
+            ts: new Date().toISOString(),
+            branch: branch || target || '',
+            fromSha,
+            toSha: newHead || fromSha,
+            trigger: 'force-sync',
+            status: 'success',
+            durationMs: Date.now() - startedAt,
+            actor,
+            // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
+            ...({
+              updateMode: hotEligible ? 'hot-reload' : 'restart',
+              transitionMode: forceSyncTransitionMode,
+              transitionReason: forceSyncTransitionReason,
+            } as Record<string, unknown>),
+          });
+        },
+      }, maintenanceOwner);
+      await scheduleDetachedCdsRestart({ branchLabel: target, source: 'api.self-force-sync',
+        maintenanceOwner, preserveQueued: restartFlush === 'flushed', rollback: rollbackCheckpoint });
+      keepUpdate = true;
 
       // * 2026-05-06 双模式 self-update 出口:
       // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
@@ -23573,11 +26904,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       res.end();
 
-      scheduleDetachedCdsRestart({
-        branchLabel: target,
-        source: 'api.self-force-sync',
-      });
     } catch (err) {
+      if (err instanceof SelfUpdateRestartBlockedError) {
+        failWith('restart-drain', { code: err.code, message: err.message,
+          raw: err.remaining.join(', '), extra: { pendingRuns: err.remaining, waitedMs: err.waitedMs } });
+        return;
+      }
       const catchDiagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
       if (!res.writableEnded) {
         sendSSE(res, 'error', {
@@ -23596,11 +26928,24 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         raw: catchDiagnosis.raw,
       });
     } finally {
+      try {
+        if (keepUpdate) {
+          if (maintenanceOwner.restartScheduled) checkpoint?.retainForRestart();
+          else {
+            try { await checkpoint?.commit(); }
+            catch (error) { console.warn('[self-force-sync] 更新已保留，但恢复副本清理未确认', error); }
+          }
+        } else await rollbackCheckpoint();
+      }
+      catch (error) { recordFailure((error as Error).message); console.error('[self-force-sync] rollback failed', error); }
       // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
       stateService.clearSelfUpdateActive();
       if (!terminalStateCommitted) {
         commitSelfUpdateState(true);
       }
+    }
+    } finally {
+      if (maintenanceComplete) finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -23611,7 +26956,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // consistent "disabled" payload so Dashboard UIs can degrade gracefully.
   // ─────────────────────────────────────────────────────────────────────
 
-  router.get('/scheduler/state', (_req, res) => {
+  router.get('/scheduler/state', async (_req, res) => {
     if (!schedulerService) {
       res.json({
         enabled: false,
@@ -23622,6 +26967,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       return;
     }
+    await schedulerService.refreshMemoryCapacity();
     res.json(schedulerService.getSnapshot());
   });
 
@@ -23677,8 +27023,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
     if (body.maxHotBranches !== undefined) {
       const v = body.maxHotBranches;
-      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100) {
-        res.status(400).json({ error: 'maxHotBranches 必须是 0 到 100 之间的整数（0=不限）' });
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 25) {
+        res.status(400).json({ error: 'maxHotBranches 必须是 1 到 25 之间的整数' });
         return;
       }
     }
@@ -23706,10 +27052,32 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
     try {
-      schedulerService.pin(req.params.slug);
-      res.json({ ok: true, slug: req.params.slug, pinned: true });
+      const branch = stateService.getBranch(req.params.slug);
+      if (!branch) { res.status(404).json({ error: '分支不存在' }); return; }
+      const access = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (access) { res.status(403).json({ error: access }); return; }
+      const actor = branchPinActor(req);
+      const source = req.body?.source ?? 'user';
+      if (!['user', 'config'].includes(source)) { res.status(400).json({ error: 'source 必须为 user 或 config' }); return; }
+      if (source === 'config' && !isHumanSystemOwner(req)) { res.status(403).json({ error: '配置保护复核须由已登录的系统所有者明确授权' }); return; }
+      if (source === 'user' && !mayChangePin(branch.pinnedByUser, branch.userPin, req, actor)) {
+        res.status(403).json({ error: '旧保护或其他操作者的保护须由人类明确处理' }); return;
+      }
+      const pin = createBranchPin(req.body || {}, req, actor);
+      if (source === 'config') {
+        const ref = req.body?.authorizationRef;
+        if (typeof ref !== 'string' || !ref.trim() || ref.length > 500 || !req.body?.reason?.trim()) {
+          res.status(400).json({ error: '复核配置保护必须提供原因和授权依据' }); return;
+        }
+        pin.authorizationRef = ref.trim();
+        schedulerService.reviewConfigPin(req.params.slug, pin);
+      } else schedulerService.pin(req.params.slug, pin);
+      stateService.appendActivityLog(branch.projectId, { type: 'scheduler-pin', branchId: branch.id, branchName: branch.branch, actor,
+        pin, pinSource: source, note: pin.reason.slice(0, 200) });
+      stateService.save();
+      res.json({ ok: true, slug: req.params.slug, pinned: true, pin });
     } catch (err) {
-      res.status(404).json({ error: (err as Error).message });
+      res.status(400).json({ error: (err as Error).message });
     }
   });
 
@@ -23719,7 +27087,17 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
     try {
+      const branch = stateService.getBranch(req.params.slug);
+      if (!branch) { res.status(404).json({ error: '分支不存在' }); return; }
+      const access = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (access) { res.status(403).json({ error: access }); return; }
+      const actor = branchPinActor(req);
+      if (!mayChangePin(branch.pinnedByUser, branch.userPin, req, actor)) {
+        res.status(403).json({ error: '旧保护或其他操作者的保护须由人类明确处理' }); return;
+      }
       schedulerService.unpin(req.params.slug);
+      stateService.appendActivityLog(branch.projectId, { type: 'scheduler-unpin', branchId: branch.id, branchName: branch.branch, actor });
+      stateService.save();
       res.json({ ok: true, slug: req.params.slug, pinned: false });
     } catch (err) {
       res.status(404).json({ error: (err as Error).message });
@@ -23772,7 +27150,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // 预览调度器被禁用 → 空闲分支永不回收 → 容器无限堆积 → 18 核主机 load 28 →
   // 构建越来越慢/失败。这一切此前在面板上完全不可见。本端点把它显性化，监控弹窗
   // 据此红黄告警，让「调度器禁用/主机过载/容器堆积/构建变慢」一眼可见、不再静默复发。
-  router.get('/cds-system/perf-health', (_req, res) => {
+  router.get('/cds-system/perf-health', async (_req, res) => {
     const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
     const load = os.loadavg();
     const loadAvg1 = Number((load[0] || 0).toFixed(2));
@@ -23785,9 +27163,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const nodes = registry?.getAll() || [];
     const runningContainers = nodes.reduce((sum, n) => sum + (n.runningContainers ?? n.branches.length), 0);
 
+    await schedulerService?.refreshMemoryCapacity();
     const snap = schedulerService?.getSnapshot();
     const scheduler = snap
-      ? { wired: true, enabled: snap.enabled, maxHotBranches: snap.config.maxHotBranches, idleTTLSeconds: snap.config.idleTTLSeconds, hotCount: snap.hot.length }
+      ? { wired: true, enabled: snap.enabled, maxHotBranches: snap.config.maxHotBranches, idleTTLSeconds: snap.config.idleTTLSeconds,
+        hotCount: snap.hot.length, memoryCapacity: snap.memoryCapacity }
       : { wired: false, enabled: false, maxHotBranches: 0, idleTTLSeconds: 0, hotCount: 0 };
 
     const projects = stateService.getState().projects || [];
@@ -23805,8 +27185,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     const warnings: Array<{ level: 'critical' | 'warning'; code: string; message: string }> = [];
     if (scheduler.wired && !scheduler.enabled) {
-      warnings.push({ level: 'critical', code: 'scheduler-disabled', message: '预览调度器已禁用：空闲分支不会自动回收，运行容器会无限堆积拖垮主机（本次性能问题根因）。请到调度器设置启用并设 maxHotBranches。' });
-    } else if (scheduler.enabled && scheduler.maxHotBranches === 0) {
+      warnings.push({ level: 'critical', code: 'scheduler-disabled', message: '预览自动冷却已停用。请在调度器设置中启用空闲预览的自动冷却。' });
+    } else if (snap?.memoryCapacity === null) {
+      warnings.push({ level: 'warning', code: 'scheduler-memory-unavailable', message: '暂时无法确认预览内存容量，请稍后重新读取。' });
+    } else if (snap?.memoryCapacity && snap.memoryCapacity.usedMB >= snap.memoryCapacity.limitMB) {
+      warnings.push({ level: 'warning', code: 'scheduler-memory-limit', message: '预览内存已达到容量上限，新启动会等待资源释放。' });
+    } else if (scheduler.enabled && snap?.memoryCapacity === undefined && scheduler.maxHotBranches === 0) {
       warnings.push({ level: 'warning', code: 'scheduler-unlimited', message: '调度器已启用但 maxHotBranches=0（不限）：高峰期热分支数无上限，建议设一个上限防止容器堆积。' });
     }
     if (loadPercent >= 100) {
@@ -23815,7 +27199,20 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       warnings.push({ level: 'warning', code: 'load-high', message: `主机负载偏高（loadPercent ${loadPercent}%），临近过载。` });
     }
     if (runningContainers > cores * 2) {
-      warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
+      warnings.push({ level: 'warning', code: 'too-many-containers', message: `已登记执行器报告的运行容器较多（${runningContainers} 个）；请结合各节点 CPU、内存与启动队列判断容量。` });
+    }
+    // 2026-09-08 宿主过载复盘：master 自己有没有被饿、构建准入有没有被负载收紧，
+    // 与 /healthz pressure 同口径（判据常量同源）。
+    const eventLoop = getEventLoopLag();
+    const lagP99 = Math.max(eventLoop.current.p99Ms, eventLoop.previous?.p99Ms || 0);
+    if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_CRITICAL_MS) {
+      warnings.push({ level: 'critical', code: 'event-loop-stalled', message: `master 事件循环 p99 延迟 ${lagP99}ms：所有请求一起变慢，先看宿主负载与同步阻塞。` });
+    } else if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_WARN_MS) {
+      warnings.push({ level: 'warning', code: 'event-loop-lagging', message: `master 事件循环 p99 延迟 ${lagP99}ms，临近卡顿。` });
+    }
+    const gate = buildGateStatus();
+    if (gate.load.saturated) {
+      warnings.push({ level: 'warning', code: 'build-throttled-by-load', message: `宿主过载（load ${gate.load.load1} / ${gate.load.cores} 核），构建准入已收紧为 1 并发：${gate.active} 在跑 / ${gate.queued} 排队。` });
     }
     for (const b of build) {
       const m = Math.max(b.sourceMedianMs || 0, b.releaseMedianMs || 0);
@@ -23829,6 +27226,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       containers: { running: runningContainers },
       scheduler,
       build,
+      eventLoop,
+      buildGate: { active: gate.active, queued: gate.queued, max: gate.max, load: gate.load },
+      deploymentPhases: deploymentPhaseBudget.snapshot(),
+      deploymentMemoryReservations: deploymentPhaseBudget.memorySnapshot(),
       warnings,
       generatedAt: new Date().toISOString(),
     });

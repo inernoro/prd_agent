@@ -118,7 +118,7 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // 火山引擎 - 橙红色
     case 'volcano':
-      return { background: 'rgba(249, 115, 22, 0.12)', border: '1px solid rgba(249, 115, 22, 0.28)', color: 'rgba(249, 115, 22, 0.95)' };
+      return { background: 'rgba(249, 115, 22, 0.12)', border: '1px solid rgba(249, 115, 22, 0.28)', color: 'var(--accent-fg-warning)' };
     
     // 薇薇安 - 粉色
     case 'weiwei':
@@ -126,23 +126,23 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // DeepSeek - 蓝紫色
     case 'deepseek':
-      return { background: 'rgba(99, 102, 241, 0.12)', border: '1px solid rgba(99, 102, 241, 0.28)', color: 'rgba(99, 102, 241, 0.95)' };
+      return { background: 'rgba(99, 102, 241, 0.12)', border: '1px solid rgba(99, 102, 241, 0.28)', color: 'var(--accent-fg-violet)' };
     
     // OpenAI - 绿色
     case 'openai':
-      return { background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.28)', color: 'rgba(16, 185, 129, 0.95)' };
+      return { background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.28)', color: 'var(--accent-fg-success)' };
     
     // Anthropic/Claude - 橙色
     case 'anthropic':
-      return { background: 'rgba(251, 146, 60, 0.12)', border: '1px solid rgba(251, 146, 60, 0.28)', color: 'rgba(251, 146, 60, 0.95)' };
+      return { background: 'rgba(251, 146, 60, 0.12)', border: '1px solid rgba(251, 146, 60, 0.28)', color: 'var(--accent-fg-warning)' };
     
     // Google/Gemini - 蓝色
     case 'google':
-      return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'rgba(59, 130, 246, 0.95)' };
+      return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'var(--accent-fg-blue)' };
     
     // Qwen/阿里 - 橙黄色
     case 'qwen':
-      return { background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.28)', color: 'rgba(245, 158, 11, 0.95)' };
+      return { background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.28)', color: 'var(--accent-fg-amber)' };
     
     // 智谱/GLM - 蓝绿色
     case 'zhipu':
@@ -150,7 +150,7 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // 百度/文心 - 红色
     case 'baidu':
-      return { background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.28)', color: 'rgba(239, 68, 68, 0.95)' };
+      return { background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.28)', color: 'var(--accent-fg-danger)' };
     
     // 月之暗面/Kimi - 深蓝色
     case 'moonshot':
@@ -158,7 +158,7 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // MiniMax - 紫色
     case 'minimax':
-      return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
+      return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'var(--accent-fg-violet)' };
     
     // 零一万物/Yi - 靛蓝色
     case 'yi':
@@ -166,15 +166,15 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // 阶跃星辰 - 青绿色
     case 'stepfun':
-      return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' };
+      return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'var(--accent-fg-success)' };
     
     // Groq - 橙色
     case 'groq':
-      return { background: 'rgba(234, 88, 12, 0.12)', border: '1px solid rgba(234, 88, 12, 0.28)', color: 'rgba(234, 88, 12, 0.95)' };
+      return { background: 'rgba(234, 88, 12, 0.12)', border: '1px solid rgba(234, 88, 12, 0.28)', color: 'var(--accent-fg-warning)' };
     
     // Mistral - 蓝色
     case 'mistral':
-      return { background: 'rgba(37, 99, 235, 0.12)', border: '1px solid rgba(37, 99, 235, 0.28)', color: 'rgba(37, 99, 235, 0.95)' };
+      return { background: 'rgba(37, 99, 235, 0.12)', border: '1px solid rgba(37, 99, 235, 0.28)', color: 'var(--accent-fg-blue)' };
     
     // Cohere - 紫红色
     case 'cohere':
@@ -182,11 +182,11 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // Together AI - 绿色
     case 'together':
-      return { background: 'rgba(22, 163, 74, 0.12)', border: '1px solid rgba(22, 163, 74, 0.28)', color: 'rgba(22, 163, 74, 0.95)' };
+      return { background: 'rgba(22, 163, 74, 0.12)', border: '1px solid rgba(22, 163, 74, 0.28)', color: 'var(--accent-fg-success)' };
     
     // Fireworks - 红橙色
     case 'fireworks':
-      return { background: 'rgba(220, 38, 38, 0.12)', border: '1px solid rgba(220, 38, 38, 0.28)', color: 'rgba(220, 38, 38, 0.95)' };
+      return { background: 'rgba(220, 38, 38, 0.12)', border: '1px solid rgba(220, 38, 38, 0.28)', color: 'var(--accent-fg-danger)' };
     
     // Replicate - 紫色
     case 'replicate':
@@ -194,7 +194,7 @@ export function platformChipStyle(tone: PlatformTone): React.CSSProperties {
     
     // HuggingFace - 黄色
     case 'huggingface':
-      return { background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.28)', color: 'rgba(234, 179, 8, 0.95)' };
+      return { background: 'rgba(234, 179, 8, 0.12)', border: '1px solid rgba(234, 179, 8, 0.28)', color: 'var(--accent-fg-amber)' };
     
     // Azure OpenAI - 蓝色
     case 'azure':

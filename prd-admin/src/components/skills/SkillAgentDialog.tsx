@@ -238,8 +238,8 @@ export function SkillAgentDialog({ open, onOpenChange, onSkillCreated }: SkillAg
                   <div
                     className="flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium transition-all"
                     style={{
-                      background: i <= currentStageIndex ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                      color: i <= currentStageIndex ? 'white' : 'var(--text-tertiary)',
+                      background: i <= currentStageIndex ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
+                      color: i <= currentStageIndex ? 'var(--button-primary-fg)' : 'var(--text-tertiary)',
                     }}
                   >
                     {i + 1}
@@ -283,8 +283,8 @@ export function SkillAgentDialog({ open, onOpenChange, onSkillCreated }: SkillAg
                   style={
                     msg.role === 'user'
                       ? {
-                          background: 'var(--accent-primary)',
-                          color: 'white',
+                          background: 'var(--button-primary-bg)',
+                          color: 'var(--button-primary-fg)',
                           borderBottomRightRadius: '6px',
                         }
                       : msg.role === 'system'
@@ -330,7 +330,7 @@ export function SkillAgentDialog({ open, onOpenChange, onSkillCreated }: SkillAg
                 onClick={handleSave}
                 disabled={saving}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                style={{ background: 'var(--accent-primary)', color: 'white' }}
+                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
               >
                 <Save size={14} />
                 {saving ? '保存中…' : '保存为个人技能'}
@@ -384,8 +384,8 @@ export function SkillAgentDialog({ open, onOpenChange, onSkillCreated }: SkillAg
               disabled={!input.trim() || isStreaming}
               className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors"
               style={{
-                background: input.trim() && !isStreaming ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                color: input.trim() && !isStreaming ? 'white' : 'var(--text-tertiary)',
+                background: input.trim() && !isStreaming ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
+                color: input.trim() && !isStreaming ? 'var(--button-primary-fg)' : 'var(--text-tertiary)',
               }}
             >
               <Send size={18} />

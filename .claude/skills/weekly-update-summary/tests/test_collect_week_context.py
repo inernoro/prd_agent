@@ -207,3 +207,88 @@ def test_unresolved_identity_but_matched_history_trusts_zero_week(m, monkeypatch
     out = m.collect_releases("prd-agent", "2026-07-20", "2026-07-26")
     assert out["available"] is True, "历史匹配到了就说明标识有效，本周的 0 可信"
     assert out["attempts"] == 0
+
+
+# --- 来源 5/6：团队与用量 + 上线→采用 ---------------------------------------
+
+def test_team_insights_uses_exact_range_not_rolling_days(m, monkeypatch):
+    """周一跑上周的周报时，滚动窗（days=N）会把本周数据一起卷进去，直接违反纪律 1。
+    删掉 from/to 改回 days，这条会红。"""
+    seen = {}
+
+    def fake_curl(args, retries=3):
+        seen["url"] = args[-1]
+        return {"success": True, "data": {"meta": {"costAvailable": False}}}
+
+    monkeypatch.setattr(m, "_curl", fake_curl)
+    m.collect_team_insights("https://x", [], "2026-07-27", "2026-08-02")
+    assert "from=2026-07-27" in seen["url"] and "to=2026-08-02" in seen["url"]
+    assert "days=" not in seen["url"]
+
+
+def test_team_insights_cost_unavailable_is_not_zero(m, monkeypatch):
+    """成本算不出来必须表达成「不可用」。写成 0 元是用一句确定的假话替换诚实的空白。"""
+    monkeypatch.setattr(m, "_curl", lambda a, retries=3: {
+        "success": True, "data": {"meta": {"costAvailable": False}}})
+    out = m.collect_team_insights("https://x", [], "2026-07-27", "2026-08-02")
+    assert out["available"] is True
+    assert out["costAvailable"] is False
+
+
+def test_team_insights_endpoint_failure_degrades_only_itself(m, monkeypatch):
+    monkeypatch.setattr(m, "_curl", lambda a, retries=3: {
+        "success": False, "error": {"message": "403 无 executive.read 权限"}})
+    out = m.collect_team_insights("https://x", [], "2026-07-27", "2026-08-02")
+    assert out["available"] is False and "403" in out["reason"]
+
+
+def test_parse_capability_tokens_reads_labelled_entries(m, tmp_path):
+    p = tmp_path / "report.2026-W31.md"
+    p.write_text(
+        "## 二、本周做成了什么\n"
+        "### 1. 视觉创作支持多图\n"
+        "**谁受益**：设计\n"
+        "**关联 PR**：#1261\n"
+        "**用量口径**：`llm:visual-agent` `route:/visual-agent`\n"
+        "### 2. 部署平台发布中心改版\n"
+        "**用量口径**：`none:平台能力`\n",
+        encoding="utf-8")
+    caps = m._parse_capability_tokens(str(p))
+    assert [c["title"] for c in caps] == ["视觉创作支持多图", "部署平台发布中心改版"]
+    assert caps[0]["tokens"] == ["llm:visual-agent", "route:/visual-agent"]
+    assert caps[1]["tokens"] == ["none:平台能力"]
+
+
+def test_parse_capability_tokens_returns_empty_for_unlabelled_report(m, tmp_path):
+    """存量周报没有标签。抽不到必须返回空，让上层报「无标签」——
+    返回个空壳让上层以为测过了，就会把「没测」讲成「没人用」。"""
+    p = tmp_path / "report.2026-W29.md"
+    p.write_text("## 一、本周完成\n### 1. 网关运营化\n**关联 PR**：#1131\n", encoding="utf-8")
+    assert m._parse_capability_tokens(str(p)) == []
+
+
+def test_week_label_walks_back_iso_weeks(m):
+    assert m._week_label("2026-08-03", 1) == "2026-W31"
+    assert m._week_label("2026-08-03", 2) == "2026-W30"
+
+
+def test_adoption_unlabelled_weeks_are_reported_not_counted_as_zero(m, tmp_path, monkeypatch):
+    """回溯窗口里全是无标签周次时，必须 available=false + 列出周次，
+    绝不能返回一份「采用率 0%」的报告。"""
+    (tmp_path / "report.2026-W31.md").write_text("### 1. 旧格式\n**关联 PR**：#1\n", encoding="utf-8")
+    monkeypatch.setattr(m, "_curl", lambda a, retries=3: pytest.fail("不该发请求"))
+    out = m.collect_adoption("https://x", [], "2026-08-03", "2026-08-09", str(tmp_path), 1)
+    assert out["available"] is False
+    assert out["unlabeledWeeks"] == ["2026-W31"]
+
+
+def test_adoption_joins_measurements_back_to_entries(m, tmp_path, monkeypatch):
+    (tmp_path / "report.2026-W31.md").write_text(
+        "### 1. 视觉创作支持多图\n**用量口径**：`llm:visual-agent`\n", encoding="utf-8")
+    monkeypatch.setattr(m, "_curl", lambda a, retries=3: {
+        "success": True,
+        "data": {"items": [{"token": "llm:visual-agent", "status": "zero", "value": 0}],
+                 "summary": {"zero": 1}, "behaviorCollectedFrom": None}})
+    out = m.collect_adoption("https://x", [], "2026-08-03", "2026-08-09", str(tmp_path), 1)
+    assert out["available"] is True
+    assert out["entries"][0]["measurements"][0]["status"] == "zero"

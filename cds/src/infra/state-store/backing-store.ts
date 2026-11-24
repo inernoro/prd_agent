@@ -76,6 +76,9 @@ export interface StateBackingStore {
    */
   save(state: CdsState, hints?: StateSaveHint[]): void;
 
+  /** 可选的部署实体凭据：只在该任务及私有输入被可靠保存后确认。 */
+  flushDeploymentRun?(id: string): Promise<void>;
+
   /**
    * Human-readable tag used by CDS startup logs so admins can tell at a
    * glance which storage backend is active. Keep it stable across

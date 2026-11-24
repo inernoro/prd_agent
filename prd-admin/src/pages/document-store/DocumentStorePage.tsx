@@ -1,4 +1,8 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { PersonAvatar } from '@/components/workspace/Workspace';
+import { loadDocumentEntries } from '@/services/real/documentStore';
+import { recordDocumentEntryChanges, reconcileDocumentEntries } from '@/services/real/documentEntryPages';
+import { WritingPublicationActions } from './writing/WritingPublicationActions';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type RefObject, type SetStateAction } from 'react';
 import {
   Library,
   Orbit,
@@ -25,6 +29,7 @@ import {
   Pencil,
   Heart,
   Bookmark,
+  Clock,
   Users,
   ArrowUpRight,
   Wand2,
@@ -57,6 +62,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { Button } from '@/components/design/Button';
@@ -64,8 +70,12 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
+import { DocumentTrashButton } from './DocumentTrashButton';
+import { RecentEntriesList } from './RecentEntriesList';
+import { KnowledgeIndexStatus } from './KnowledgeIndexStatus';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
+import { GitHubSyncWizard } from './GitHubSyncWizard';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
@@ -74,20 +84,22 @@ import { ShareLinkPanel } from './ShareLinkPanel';
 import {
   DOC_DOWNLOAD_FORMATS,
   resolveInitialDownloadScope,
-  resolveTextExtension,
-  shouldFetchOriginalFile,
-  toPlainText,
   type DocDownloadFormat,
   type DocDownloadScope,
 } from './downloadFormats';
+import { buildEntryDownload, ORIGINAL_DOWNLOAD_FAILURE_MESSAGE } from './entryDownload';
 import {
   hasQuickRecordRequest,
+  hasRecordInStoreRequest,
+  withoutRecordInStoreRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
   withoutDocumentStoreTabRequest,
   withoutOrphanedDocumentStoreEntry,
   withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
+import { GenerateFromContentDialog } from '@/components/design-launch/GenerateFromContentDialog';
+import { contentSourceEntryId } from '@/components/design-launch/designLaunchAgents';
 import {
   consumeDetailInitialAction,
   detailInitialActionForStore,
@@ -95,9 +107,14 @@ import {
   type DocumentStoreDetailAction,
 } from './detailInitialAction';
 import { useTeamStore } from '@/stores/teamStore';
+import {
+  advanceDocumentUploadProgress,
+  beginDocumentUploadProgress,
+  describeDocumentUploadProgress,
+  type DocumentUploadProgressState,
+} from './documentUploadProgress';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
-import CountUp from '@/components/reactbits/CountUp';
 import { StoreSizeBadge } from './StoreSizeBadge';
 import {
   listDocumentStoresWithPreview,
@@ -122,7 +139,6 @@ import {
   getEntryVersion,
   restoreEntryVersion,
   setFolderPrimaryChild,
-  rebuildContentIndex,
   addDocumentEntry,
   updateDocumentEntry,
   updateDocumentStore,
@@ -132,6 +148,7 @@ import {
   ensureDocStoreShareLinkShortSeq,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  listRecentDocumentEntries,
   setStoreTeams,
   getStoresAnalyticsSummary,
   getUserPreferences,
@@ -163,10 +180,12 @@ import type {
   DocumentEntry,
   DocumentStoreShareLink,
   InteractionStoreCard,
+  RecentDocumentEntry,
+  DocumentStoreAgentRun,
   DocumentStoreAccountSummary,
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
-import type { DocBrowserEntry, EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
+import type { EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
 import { resolveDocBrowserSortMode } from '@/components/doc-browser/docBrowserSort';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
 import { toast } from '@/lib/toast';
@@ -177,10 +196,21 @@ import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
 import {
   decideUploadedRecordingFollowUp,
+  decideBackgroundRunLookup,
+  bindBackgroundTranscriptionSource,
+  describeBackgroundTranscriptionBanner,
+  stalledTranscriptionNotice,
+  countTranscriptSentences,
+  splitPartialTranscript,
+  type FailedTranscriptionNotice,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
+  recoverableBackgroundTranscriptionRunId,
+  isStalledBackgroundTranscriptionRun,
+  describeFailedTranscription,
   shouldRetryVaultServerCompletion,
+  startSerialBackgroundPoller,
   vaultClearServerCompletion,
   vaultDeleteSession,
   vaultListSessions,
@@ -193,6 +223,7 @@ import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocess
 import { parseCdsReportImportDeepLink, withoutCdsReportImportDeepLink } from './cdsReportImportDeepLink';
 import { TutorialLinkGraphDrawer, TutorialLinkedPages } from './TutorialLinkGraphDrawer';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
+import { getSharedQuickCaptureRequest, type QuickCaptureRequestHolder } from './quickCaptureRequest';
 
 // 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
 // 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
@@ -922,45 +953,6 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
 
 // ── 下载：范围 + 格式 ──
 // 范围/格式判定是纯函数，抽到 downloadFormats.ts 供测试（见 __tests__/downloadFormats.test.ts）
-/**
- * 按所选格式把一条文档导出成一个可写盘的文件。
- * 返回 null = 这条确实没有可导出的内容（正文为空且原始文件也取不到），由调用方计入失败数。
- */
-async function buildEntryDownload(
-  entry: { id: string; title: string },
-  format: DocDownloadFormat,
-  makeName: (title: string, ext: string) => string,
-): Promise<{ name: string; data: Blob | string } | null> {
-  const res = await getDocumentContent(entry.id);
-  if (!res.success || !res.data) return null;
-  const { content, fileUrl, contentType } = res.data;
-  const hasText = content != null && content !== '';
-
-  // 「原始文件」且是二进制条目（pdf/docx/图片…）：先试原文件。fileUrl 多为对象存储/CDN 绝对
-  // 地址（TencentCosStorage 返回公网 URL），不带 Access-Control-Allow-Origin，浏览器端 fetch
-  // 会被 CORS 拦掉；取不到就降级为抽取正文，至少不整条丢失（真·原文件需后端同源代理）。
-  if (shouldFetchOriginalFile(format, contentType, fileUrl)) {
-    try {
-      const resp = await fetch(fileUrl!);
-      if (resp.ok) {
-        const blob = await resp.blob();
-        const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl!);
-        return {
-          name: makeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), m ? `.${m[1]}` : ''),
-          data: blob,
-        };
-      }
-    } catch {
-      // CORS / 网络失败 → 落到下面的正文降级
-    }
-  }
-  if (!hasText) return null;
-  // 纯文本格式要真的去掉标记，不能只换后缀（否则 .txt 里全是 # / [](), 与文案不符）
-  const data = format === 'text' ? toPlainText(content!, contentType) : content!;
-  if (data === '') return null;
-  return { name: makeName(entry.title, resolveTextExtension(format, contentType)), data };
-}
-
 // 下载对话框：范围默认「当前这篇」，没有打开文档时自动落到整库并禁用单篇选项。
 // export 供 __tests__/DownloadDialog.test.tsx 直接渲染断言默认范围（用户明确要求默认当前文章）。
 export function DownloadDialog({ storeName, entryTitle, busy, onDownload, onClose }: {
@@ -1069,15 +1061,33 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
+  // 移动端沉浸阅读：DocBrowser 接管了 AppShell 顶栏（文档标题 + 返回），
+  // 本页店头行（库名 · 文档数 · 同步 · 分享）整行让位给正文（2026-08-10 用户确认交互）
+  const readerImmersive = useReaderChromeStore((s) => !!s.override);
   const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
+  const currentUserId = useAuthStore(state => state.user?.userId ?? null);
+  const hasWritingPermission = useAuthStore(state => state.isRoot || state.permissions.includes('super') || state.permissions.includes('document-store.write'));
+  const [canWriteEntries, setCanWriteEntries] = useState(false);
   const [store, setStore] = useState<DocumentStore | null>(null);
-  const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  const [storeLoadError, setStoreLoadError] = useState('');
+  const [entriesLoadError, setEntriesLoadError] = useState('');
+  const [entries, setEntriesState] = useState<DocumentEntry[]>([]);
+  const entryChangesRef = useRef<Map<string, DocumentEntry | null> | null>(null);
+  const setEntries = useCallback((update: SetStateAction<DocumentEntry[]>) => {
+    const changes = entryChangesRef.current;
+    setEntriesState(previous => {
+      const next = typeof update === 'function' ? update(previous) : update;
+      if (changes) recordDocumentEntryChanges(changes, previous, next);
+      return next;
+    });
+  }, []);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
+  const [knowledgeIndexCheck, setKnowledgeIndexCheck] = useState<{ entryId: string; version: number }>();
   const [tutorialGraph, setTutorialGraph] = useState<TutorialLinkGraphSnapshot | null>(null);
   const [showTutorialGraph, setShowTutorialGraph] = useState(false);
   const isTutorialGraphStore = tutorialGraph?.exists === true;
@@ -1087,9 +1097,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   })), [entries]);
   // 当前正在阅读的那一篇（目录不算）。分享与下载都以它作为「当前文章」范围的锚点，
   // 免得用户读着一篇却只能对整库操作。
-  // entries 只是首页 200 条：大库里「后端搜索命中」的条目不在其中，只能靠 DocBrowser 回传的
+  // entries 增量加载期间，后端搜索命中的条目可能尚不在其中，只能靠 DocBrowser 回传的
   // 解析结果兜底，否则读着搜索结果点分享会静默回落到整库范围（Codex P1）。
-  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean } | undefined>();
+  const [browserSelectedEntry, setBrowserSelectedEntry] = useState<{ id: string; title: string; isFolder?: boolean; hasWritingPublication?: boolean; metadata?: Record<string, string> } | undefined>();
   const selectedDocEntry = useMemo(() => {
     const local = entries.find(e => e.id === selectedEntryId && !e.isFolder);
     if (local) return local;
@@ -1154,7 +1164,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     navigate({ pathname: location.pathname, search: nextSearch, hash: location.hash }, { replace: true });
   }, [location.hash, location.pathname, location.search, navigate, selectedEntryId, storeId]);
   const [showSubscribe, setShowSubscribe] = useState(false);
+  /** GitHub 同步向导（连接账号 → 选仓库 → 勾目录 → 开启同步） */
+  const [showGitHubWizard, setShowGitHubWizard] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showDesignLauncher, setShowDesignLauncher] = useState(false);
   /** 桌面端分享面板的锚点：就地悬浮在「分享」按钮下方 */
   const shareAnchorRef = useRef<HTMLSpanElement>(null);
   const [showViewers, setShowViewers] = useState(false);
@@ -1191,8 +1204,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
-  // 上传进度（浮动进度卡：文件名 + 百分比 + 第 n / 共 m）
-  const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; index: number; total: number } | null>(null);
+  // 只观察传输阶段，不把字节完成百分比当作正文解析进度。
+  const [uploadProgress, setUploadProgress] = useState<DocumentUploadProgressState | null>(null);
+  const [uploadProgressNow, setUploadProgressNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (uploadProgress?.phase !== 'parsing') return;
+    setUploadProgressNow(Date.now());
+    const timer = window.setInterval(() => setUploadProgressNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [uploadProgress?.phase, uploadProgress?.parsingStartedAt]);
   // 「后台运行」看护的 SSOT。保险箱恢复与当前录音上传必须接入同一观察器，
   // 否则归档中的延迟转写会在抽屉外静默完成或失败。
   const transcribeRunRef = useRef<string | null>(null);
@@ -1200,7 +1220,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [bgTranscribeRunIds, setBgTranscribeRunIds] = useState<string[]>([]);
   const revealCompletedTranscribeRunsRef = useRef(new Set<string>());
   const recordingVaultByEntryIdRef = useRef(new Map<string, string>());
-  const recordingRunSourceRef = useRef(new Map<string, { entryId: string; vaultSessionId: string }>());
+  const recordingRunSourceRef = useRef(new Map<string, { entryId: string; vaultSessionId?: string }>());
+  // 抽屉回调存在 entry 先创建、runId 后返回的合法时序；不能只在两个值同时存在时建映射。
+  const latestTranscribeSourceRef = useRef<{ entryId: string; vaultSessionId?: string } | null>(null);
+  useEffect(() => {
+    latestTranscribeSourceRef.current = transcribeFlow?.entryId
+      ? {
+          entryId: transcribeFlow.entryId,
+          ...(transcribeFlow.vaultSessionId ? { vaultSessionId: transcribeFlow.vaultSessionId } : {}),
+        }
+      : null;
+  }, [transcribeFlow?.entryId, transcribeFlow?.vaultSessionId]);
   const localRecordingPlaybackUrlsRef = useRef(new Map<string, string>());
   const localRecordingPlaybackLoadsRef = useRef(new Map<string, Promise<string | null>>());
   const resolveLocalRecordingPlaybackUrl = useCallback(async (
@@ -1243,6 +1273,60 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     transcribeRunRef.current = normalized;
     setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
   }, []);
+
+  // 最近一次转录失败的说明（按当前选中条目）。null = 没失败过或已被新一轮覆盖。
+  const [transcribeFailure, setTranscribeFailure] = useState<FailedTranscriptionNotice | null>(null);
+  /**
+   * 当前选中条目那条**在途**转录 run。轮询本来就把完整 run 拿到了手里，
+   * 却在非终局时直接丢掉——于是「正在做什么、到哪一步了、还要多久」全屏无处可看，
+   * 只剩一句没有进度的横幅。这里接住它，交给结果区渲染三阶段（设计稿 R4）。
+   */
+  const [activeTranscribeRun, setActiveTranscribeRun] = useState<DocumentStoreAgentRun | null>(null);
+  // 在途轮询的 effect 只依赖 runId 列表（不能把选中项塞进 deps，否则每次切条目都重建定时器），
+  // 所以「这条失败 run 是不是当前这篇的」得靠 ref 取当下值，闭包里的旧值会张冠李戴。
+  const selectedEntryIdRef = useRef<string | undefined>(selectedEntryId);
+  useEffect(() => { selectedEntryIdRef.current = selectedEntryId; }, [selectedEntryId]);
+
+  // 刷新不能抹掉服务端正在执行的转录/整理任务。选中文档恢复后，从服务端权威 run
+  // 重新接回轮询；再补一次短延迟确认，覆盖首屏请求与 worker 认领并发的窗口。
+  useEffect(() => {
+    const entryId = selectedEntryId?.trim();
+    // 换条目先清空，否则上一条的失败说明会挂在下一条头上
+    setTranscribeFailure(null);
+    if (!entryId) return;
+    let cancelled = false;
+    let recovered = false;
+    const recover = async () => {
+      if (cancelled || recovered) return;
+      const res = await getLatestAgentRun(entryId, 'transcribe', { ownUserOnly: true });
+      if (cancelled || !res.success) return;
+      // getAgentRun 只允许读取自己发起的任务；团队库里若最近一次在途 run 属于
+      // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
+      if (!currentUserId || res.data?.userId !== currentUserId) return;
+      if (isStalledBackgroundTranscriptionRun(res.data)) {
+        setTranscribeFailure(stalledTranscriptionNotice(
+          res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
+          // 排队久了不等于什么都没产出：已经生成的那几句现在就能读，稿面 cap-S10 的核心承诺
+          splitPartialTranscript(res.data.transcriptText),
+        ));
+        return;
+      }
+      // 失败态在这里落地：在途 run 有下面的看护、成功 run 会长出笔记，
+      // 只有失败 run 两头不沾，不接住就等于「跑过但界面装作没跑过」。
+      setTranscribeFailure(describeFailedTranscription(res.data));
+      const runId = recoverableBackgroundTranscriptionRunId(res.data);
+      if (!runId) return;
+      recovered = true;
+      recordingRunSourceRef.current.set(runId, { entryId });
+      watchBackgroundTranscription(runId);
+    };
+    void recover();
+    const retryTimer = window.setTimeout(() => { void recover(); }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+    };
+  }, [currentUserId, selectedEntryId, watchBackgroundTranscription]);
   // 保险箱恢复只在进页时检查一次
   const vaultCheckedRef = useRef(false);
 
@@ -1376,18 +1460,65 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
+    setStoreLoadError('');
     const res = await getDocumentStore(storeId);
     if (res.success) setStore(res.data);
+    else setStoreLoadError(res.error?.message || '知识库加载失败，请稍后重试');
   }, [storeId]);
 
-  const loadEntries = useCallback(async () => {
-    setLoading(true);
-    const res = await listDocumentEntries(storeId, 1, 200);
-    if (res.success) {
-      setEntries(res.data.items);
-      setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+  const entriesRequestRef = useRef<Promise<void> | null>(null);
+  const entriesReloadRequestedRef = useRef(false);
+  const [entriesLoadingMore, setEntriesLoadingMore] = useState(false);
+  const loadEntries = useCallback(() => {
+    if (entriesRequestRef.current) {
+      entriesReloadRequestedRef.current = true;
+      return entriesRequestRef.current;
     }
-    setLoading(false);
+    setLoading(true);
+    setEntriesLoadError('');
+    setCanWriteEntries(false);
+    const request = (async () => {
+      try {
+        do {
+          entriesReloadRequestedRef.current = false;
+          const changes = new Map<string, DocumentEntry | null>();
+          entryChangesRef.current = changes;
+          const res = await loadDocumentEntries(storeId, undefined, false, page => {
+            setEntriesState(() => reconcileDocumentEntries(page.items, changes));
+            setCanWriteEntries(page.canWrite === true);
+            setSharedEntryIds(new Set(page.sharedEntryIds ?? []));
+            setLoading(false);
+            setEntriesLoadingMore(!!page.nextCursor);
+          });
+          if (res.success) {
+            setEntriesState(() => reconcileDocumentEntries(res.data.items, changes));
+            setCanWriteEntries(res.data.canWrite === true);
+            setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+          } else {
+            setEntriesLoadError(res.error?.message || '文档列表尚未加载完整，请重试');
+            setCanWriteEntries(false);
+            if (['UNAUTHORIZED', 'PERMISSION_DENIED', 'NOT_FOUND'].includes(res.error.code)) {
+              setEntriesState([]);
+              setSelectedEntryId(undefined);
+              setSharedEntryIds(new Set());
+            }
+            break;
+          }
+          // 删除、恢复等回调要求重新读库；不能把它们合并成正在完成的旧快照。
+        } while (entriesReloadRequestedRef.current);
+      } catch {
+        setEntriesLoadError('文档列表尚未加载完整，请重试');
+        setCanWriteEntries(false);
+      }
+      finally {
+        setLoading(false);
+        setEntriesLoadingMore(false);
+        entriesRequestRef.current = null;
+        entryChangesRef.current = null;
+      }
+    })();
+    entriesRequestRef.current = request;
+    return request;
   }, [storeId]);
 
   const pendingRecordingArchiveSignature = useMemo(
@@ -1403,19 +1534,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   const applyPolledEntries = useCallback((nextEntries: DocumentEntry[]) => {
     setEntries(previous => {
-      if (previous.length !== nextEntries.length) return nextEntries;
-      const unchanged = previous.every((entry, index) => {
-        const next = nextEntries[index];
-        return entry.id === next?.id
-          && entry.updatedAt === next.updatedAt
+      const byId = new Map(previous.map(entry => [entry.id, entry]));
+      const unchanged = nextEntries.every(next => {
+        const entry = byId.get(next.id);
+        return !!entry && entry.updatedAt === next.updatedAt
           && entry.title === next.title
+          // 同步状态也要比：GitHub 目录同步时条目数可能不变、只有状态从 syncing 翻成 idle/error，
+          // 漏掉这两个字段轮询就白跑（拉回来了却判「没变化」不应用）
+          && entry.syncStatus === next.syncStatus
+          && entry.isPaused === next.isPaused
           && entry.metadata?.audioArchiveStatus === next.metadata?.audioArchiveStatus
           && entry.metadata?.audioArchiveNeedsRetry === next.metadata?.audioArchiveNeedsRetry
           && entry.metadata?.liveTranscript === next.metadata?.liveTranscript;
       });
-      return unchanged ? previous : nextEntries;
+      // 录音状态轮询只取一页，不能把未出现在这一页的目录条目视为删除。
+      return unchanged ? previous : reconcileDocumentEntries(previous, new Map(nextEntries.map(entry => [entry.id, entry])));
     });
-  }, []);
+  }, [setEntries]);
 
   // 待归档录音不能只留一张静态“后台处理中”卡片。只要本库仍有 pending 录音，
   // 就静默刷新条目；归档完成后 updatedAt 改变会驱动 DocBrowser 重拉正式音频，
@@ -1563,7 +1698,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       });
     })();
     return () => { alive = false; };
-  }, [canManageTutorialGraph, isTutorialGraphStore, storeId]);
+  }, [canManageTutorialGraph, isTutorialGraphStore, setEntries, storeId]);
 
   useEffect(() => {
     if (!canManageTutorialGraph || !isTutorialGraphStore || new URLSearchParams(location.search).get('tutorialLinks') !== '1') return;
@@ -1634,52 +1769,153 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [loadEntries]);
 
   // 「后台运行」看护：轮询在途转录 run 到终态 → 刷新列表 + toast 告知结果
+  const backgroundRunPollFailuresRef = useRef(new Map<string, number>());
   useEffect(() => {
     if (bgTranscribeRunIds.length === 0) return;
     let cancelled = false;
-    const timer = window.setInterval(async () => {
+    const handledRunIds = new Set<string>();
+    const poll = async () => {
       for (const runId of bgTranscribeRunIds) {
+        if (handledRunIds.has(runId)) continue;
         const res = await getAgentRun(runId);
-        if (cancelled || !res.success) continue;
-        const st = res.data.status;
-        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') continue;
+        if (cancelled) continue;
+        let latestRun: Awaited<ReturnType<typeof getLatestAgentRun>>['data'] = null;
+        let latestLookupSucceeded = false;
+        // 直接按 runId 读取可能因团队库发起人不同或短暂路由错误失败；不能因此让
+        // “后台处理中”永久留在页面。用源 entry 的服务端最新 run 做同 ID 交叉确认。
+        const source = recordingRunSourceRef.current.get(runId);
+        // 即使旧 run 仍可直查到 running，也要对照同条目的最新 own run；共享 Mongo
+        // 允许不同部署各建任务，旧 owner 下线后旧 run 可能永远不变终态。
+        if (source) {
+          const latest = await getLatestAgentRun(
+            source.entryId,
+            'transcribe',
+            { ownUserOnly: true },
+          );
+          latestLookupSucceeded = latest.success;
+          latestRun = latest.success ? latest.data : null;
+        }
+        const failureCount = res.success
+          ? 0
+          : (backgroundRunPollFailuresRef.current.get(runId) ?? 0) + 1;
+        const decision = decideBackgroundRunLookup({
+          runId,
+          directRun: res.success ? res.data : null,
+          directErrorCode: res.success ? null : res.error.code,
+          latestEntryRun: latestRun,
+          latestLookupSucceeded,
+          consecutiveFailures: failureCount,
+        });
+        if (decision.kind === 'keep-watching') {
+          backgroundRunPollFailuresRef.current.set(runId, failureCount);
+          continue;
+        }
+        backgroundRunPollFailuresRef.current.delete(runId);
+        if (decision.kind === 'retire-watcher') {
+          handledRunIds.add(runId);
+          const recordingSource = recordingRunSourceRef.current.get(runId);
+          recordingRunSourceRef.current.delete(runId);
+          revealCompletedTranscribeRunsRef.current.delete(runId);
+          setBgTranscribeRunIds(current => current.filter(id => id !== runId));
+          if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
+          /*
+           * 停止看护也要把这条 run 从进度位上摘掉。留着的话状态卡照旧按「处理中」渲染，
+           * 进度条冻在最后一个百分比，而下面刚刚 setTranscribeFailure 出来的失败卡与重试
+           * 按钮被它压住不显示——界面上是一条永远走不完的进度，用户连重试的入口都看不见
+           * （终态那一路早就摘了，退役这一路漏了，Codex 第十九轮 P1）。
+           */
+          setActiveTranscribeRun(current => (current?.id === runId ? null : current));
+
+          const replacementRunId = recoverableBackgroundTranscriptionRunId(decision.replacementRun);
+          if (replacementRunId && recordingSource) {
+            recordingRunSourceRef.current.set(replacementRunId, recordingSource);
+            watchBackgroundTranscription(replacementRunId);
+          } else if (decision.replacementRun?.status === 'failed'
+              && recordingSource?.entryId === selectedEntryIdRef.current) {
+            setTranscribeFailure(describeFailedTranscription(decision.replacementRun));
+          }
+
+          if (decision.reason === 'access-lost') {
+            toast.error('录音状态看护已停止', '登录状态或访问权限已变化，请刷新页面后重试');
+          } else if (decision.reason === 'lookup-unavailable') {
+            toast.error('暂时无法确认录音状态', '已停止持续等待；录音仍保留，请刷新页面或点击重试');
+          } else if (decision.reason === 'stalled-run') {
+            if (recordingSource?.entryId === selectedEntryIdRef.current) {
+              const staleRun = decision.replacementRun ?? (res.success ? res.data : latestRun);
+              setTranscribeFailure(stalledTranscriptionNotice(
+                staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
+                splitPartialTranscript(staleRun?.transcriptText),
+              ));
+            }
+            toast.error('录音任务超过一小时未报告状态', '已停止等待旧任务；录音仍保留，可以点击重试');
+          }
+          void loadEntries();
+          continue;
+        }
+        const observedRun = decision.run;
+        const st = observedRun.status;
+        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') {
+          // 在途：只有「这条 run 正是当前这一屏的录音」才往界面上放，
+          // 否则会把别的录音的进度画到用户正看着的这条上（同屏多录音时的串台）。
+          if (observedRun.sourceEntryId === selectedEntryIdRef.current) {
+            setActiveTranscribeRun(observedRun);
+          }
+          continue;
+        }
+        // 走到终局：这条 run 不该再占着进度条
+        setActiveTranscribeRun(current => (current?.id === runId ? null : current));
+        handledRunIds.add(runId);
         const recordingSource = recordingRunSourceRef.current.get(runId);
         recordingRunSourceRef.current.delete(runId);
         // 只有转录真正完成才证明云端归档已经可供后续消费。失败或取消时继续保留
         // 本地保险音频，避免后台任务失败反而让用户失去唯一可播放副本。
         if (recordingSource && st === 'done') {
           recordingVaultByEntryIdRef.current.delete(recordingSource.entryId);
-          void vaultDeleteSession(recordingSource.vaultSessionId);
+          if (recordingSource.vaultSessionId) void vaultDeleteSession(recordingSource.vaultSessionId);
         }
         setBgTranscribeRunIds(current => current.filter(id => id !== runId));
         if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
         void loadEntries();
         if (st === 'done') {
           const shouldReveal = revealCompletedTranscribeRunsRef.current.delete(runId);
-          if (shouldReveal && res.data.outputEntryId) {
-            setSelectedEntryId(res.data.outputEntryId);
+          if (shouldReveal && observedRun.outputEntryId) {
+            setSelectedEntryId(observedRun.outputEntryId);
             toast.success('录音转录完成', '已打开录音原文');
           } else {
             toast.success('录音转录完成', '录音原文已保存');
           }
         } else if (st === 'failed') {
           revealCompletedTranscribeRunsRef.current.delete(runId);
-          toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+          toast.error('录音转录失败', (observedRun.errorMessage ?? '').split('\n')[0] || '请重试');
+          // 失败说明也要落到常驻的失败卡上，不能只弹一条会自己消失的 toast。
+          // 只有 toast 的话，它消失之后页面又变回「跑过但装作没跑过」——正是这张卡要治的病；
+          // 原先只有「重新选中条目 / 刷新页面」那条恢复路径才会填这个 state。
+          if (observedRun.sourceEntryId && observedRun.sourceEntryId === selectedEntryIdRef.current) {
+            setTranscribeFailure(describeFailedTranscription(observedRun));
+          }
         }
       }
-    }, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    };
+    const stopPolling = startSerialBackgroundPoller(poll, 5000);
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgTranscribeRunIds]);
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
+    const empty = files.filter(f => f.size === 0);
+    for (const f of empty) {
+      toast.error(`文件为空: ${f.name}`, '请选择非空文件后重新上传');
+    }
     // 前端预检 20MB 上限：超限文件即时报错，不进入上传白等
     const oversized = files.filter(f => f.size > MAX_UPLOAD_BYTES);
     for (const f of oversized) {
       toast.error(`文件过大: ${f.name}`, `单文件上限 20MB（该文件 ${(f.size / 1024 / 1024).toFixed(1)}MB）`);
     }
-    const accepted = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const accepted = files.filter(f => f.size > 0 && f.size <= MAX_UPLOAD_BYTES);
     if (accepted.length === 0) return;
 
     setUploading(true);
@@ -1687,16 +1923,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     let firstUploadedId: string | null = null;
     for (let i = 0; i < accepted.length; i++) {
       const file = accepted[i];
-      setUploadProgress({ name: file.name, percent: 0, index: i + 1, total: accepted.length });
-      const res = await uploadDocumentFileWithProgress(storeId, file, (percent) => {
-        setUploadProgress({ name: file.name, percent, index: i + 1, total: accepted.length });
+      setUploadProgress(beginDocumentUploadProgress(file.name, i + 1, accepted.length));
+      const res = await uploadDocumentFileWithProgress(storeId, file, (percent, phase) => {
+        setUploadProgress(current => advanceDocumentUploadProgress(current, {
+          name: file.name, percent, phase, index: i + 1, total: accepted.length,
+        }));
       });
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
         firstUploadedId ??= res.data.entry.id;
         successCount++;
       } else {
-        toast.error(`上传失败: ${file.name}`, res.error?.message);
+        toast.error(`上传失败: ${file.name}`, res.error?.message, 20_000);
       }
     }
     setUploadProgress(null);
@@ -1706,7 +1944,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       if (firstUploadedId) setSelectedEntryId(firstUploadedId);
     }
     setUploading(false);
-  }, [storeId]);
+  }, [setEntries, storeId]);
 
   // 替换文件：右键菜单触发 → 打开文件选择器，记录目标 entryId
   const handleReplaceFile = useCallback((entryId: string) => {
@@ -1730,7 +1968,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       toast.error('替换失败', res.error?.message);
     }
     setUploading(false);
-  }, []);
+  }, [setEntries]);
 
   // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
   const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
@@ -1786,7 +2024,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         toast.success('已设为主文档');
       }
     }
-  }, [storeId, entries]);
+  }, [entries, setEntries, storeId]);
 
   const handleTogglePin = useCallback(async (entryId: string, pin: boolean) => {
     const res = await togglePinnedEntry(storeId, entryId, pin);
@@ -1799,13 +2037,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const handleDeleteEntry = useCallback(async (entryId: string) => {
     const res = await deleteDocumentEntry(entryId);
     if (res.success) {
-      setEntries(prev => prev.filter(e => e.id !== entryId));
-      if (selectedEntryId === entryId) setSelectedEntryId(undefined);
-      toast.success('已删除');
+      await loadEntries();
+      setSelectedEntryId(undefined);
+      toast.success('已移入回收站', '30 天内可在回收站恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
-  }, [selectedEntryId]);
+  }, [loadEntries]);
 
   const handleUpdateEntryTags = useCallback(async (entryId: string, tags: string[]) => {
     const res = await updateDocumentEntry(entryId, { tags });
@@ -1816,7 +2054,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
     toast.error('标签更新失败', res.error?.message);
     throw new Error(res.error?.message ?? '标签更新失败');
-  }, []);
+  }, [setEntries]);
 
   const handleRenameEntry = useCallback(async (entryId: string, newTitle: string) => {
     const res = await updateDocumentEntry(entryId, { title: newTitle });
@@ -1829,7 +2067,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     }
     toast.error('重命名失败', res.error?.message);
     throw new Error(res.error?.message ?? '重命名失败');
-  }, []);
+  }, [setEntries]);
 
   const handleMoveEntry = useCallback(async (entryId: string, targetFolderId: string | null) => {
     const res = await moveDocumentEntry(entryId, targetFolderId);
@@ -1840,7 +2078,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     } else {
       toast.error('移动失败', res.error?.message);
     }
-  }, []);
+  }, [setEntries]);
 
   // 拖拽自定义排序：乐观更新本地 SortOrder（行立即移动到新位置，变化可感知），
   // 逐条 PUT 落库（后端纯排序写入不 bump UpdatedAt，不会误点亮 NEW / 打乱「最近更新」）。
@@ -1856,7 +2094,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       toast.error('保存自定义顺序失败', '已恢复为服务器上的顺序');
       void loadEntries();
     }
-  }, [loadEntries]);
+  }, [loadEntries, setEntries]);
 
   const handleSaveContent = useCallback(async (entryId: string, newContent: string) => {
     const res = await updateDocumentContent(entryId, newContent);
@@ -1871,14 +2109,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           updatedBy: res.data.updatedBy ?? e.updatedBy,
           updatedByName: res.data.updatedByName ?? e.updatedByName,
         } : e));
-      toast.success('已保存');
+      // 搜索命中的条目可能不在 entries 的第一页；保存后同样重新观察服务端索引状态。
+      setKnowledgeIndexCheck(previous => ({ entryId, version: previous?.entryId === entryId ? previous.version + 1 : 1 }));
+      if (res.data.knowledgeIndex?.status === 'failed') {
+        toast.error('正文已保存，问答索引刷新未确认', res.data.knowledgeIndex.displayMessage);
+      } else {
+        toast.success('已保存');
+      }
       // 返回服务端最新 updatedAt：DocBrowser 用它推进 loadedContentKey，短路掉保存后的内容重拉
       return { updatedAt: res.data.updatedAt };
     } else {
       toast.error('保存失败', res.error?.message);
       throw new Error(res.error?.message ?? '保存失败');
     }
-  }, []);
+  }, [setEntries]);
 
   // 版本控制接口：透传给 DocBrowser → VersionHistoryModal
   const versionApi = useMemo(() => ({
@@ -1918,7 +2162,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     } else {
       toast.error('创建失败', res.error?.message);
     }
-  }, [storeId]);
+  }, [setEntries, storeId]);
 
   const handleCreateDocument = useCallback(async () => {
     // 直接创建一个空白文档，后续支持在 Edit 模式中填充
@@ -1937,7 +2181,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     } else {
       toast.error('创建失败', res.error?.message);
     }
-  }, [storeId]);
+  }, [setEntries, storeId]);
 
   const handleOpenVideoParser = useCallback(() => {
     setReprocessTarget({
@@ -1958,14 +2202,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     else if (initialAction.action === 'video') handleOpenVideoParser();
   }, [initialAction, store, loading, handleCreateDocument, handleOpenVideoParser, onInitialActionConsumed]);
 
-  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
-    // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
-    if (contentSearch) {
-      await rebuildContentIndex(storeId);
-    }
-    const res = await searchDocumentEntries(storeId, keyword, contentSearch);
-    if (res.success) return res.data.items;
-    return null;
+  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean, cursor?: string) => {
+    const res = await searchDocumentEntries(storeId, keyword, contentSearch, cursor);
+    if (res.success) return res.data;
+    throw new Error(res.error?.message ?? '搜索失败，请重试');
   }, [storeId]);
 
   // 切换发布到智识殿堂
@@ -2022,7 +2262,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         const file = await buildEntryDownload(target, format, safeName);
         if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
         if (!file) {
-          toast.error('下载失败', '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
+          toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
           return;
         }
         saveFile(
@@ -2079,26 +2319,39 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
       }
       if (ok === 0) {
-        toast.error('下载失败', '所有文档均未能导出（可能正文为空或网络受限）');
+        toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '所有文档均未能导出（可能正文为空或网络受限）');
         return;
       }
       const out = await zip.generateAsync({ type: 'blob' });
       if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
       saveFile(out, `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`);
-      toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+      if (format === 'original' && fail > 0) {
+        toast.warning('部分原件未下载', `已打包 ${ok} 篇，${fail} 篇原件未取得。请稍后重试，或另选正文格式导出。`);
+      } else {
+        toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+      }
     } catch (err) {
       console.error('[DocumentStore] download failed:', err);
-      if (downloadAliveRef.current) toast.error('下载失败', '导出文档时出错，请重试');
+      if (downloadAliveRef.current) toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '导出文档时出错，请重试');
     } finally {
       downloadInFlightRef.current = false;
       if (downloadAliveRef.current) setDownloading(false);
     }
   }, [store, storeId, selectedDocEntry]);
 
-  if (!store) {
+  if (!store || (entriesLoadError && entries.length === 0)) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
-        <MapSpinner size={16} />
+        {storeLoadError || entriesLoadError ? <div role="alert" className="flex flex-col items-center gap-3 px-5 text-center">
+          <AlertCircle size={24} style={{ color: 'var(--text-muted)' }} />
+          {store && <p className="font-semibold" style={{ color: 'var(--text-primary)' }}>{store.name}</p>}
+          <p style={{ color: 'var(--text-primary)' }}>知识库暂时无法加载</p>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{storeLoadError || entriesLoadError}</p>
+          <div className="flex items-center gap-2">
+            <Button variant="primary" onClick={() => { void loadStore(); void loadEntries(); }}>重试</Button>
+            <Button onClick={onBack}>返回知识库</Button>
+          </div>
+        </div> : <MapSpinner size={16} />}
       </div>
     );
   }
@@ -2119,6 +2372,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const syncButtonTitle = syncEstablished
     ? `同步面板：与「${store.peerSyncNodeName ?? '对端'}」的同步关系、立即同步、自动同步与记录`
     : '同步面板：选择方向（发送 / 拉回 / 双向）建立与对端节点的同步关系';
+  const backgroundTranscriptionBanner = describeBackgroundTranscriptionBanner({
+    selectedEntryId,
+    selectedHasFailure: Boolean(transcribeFailure),
+    /*
+     * 判据必须和下面真正渲染那张内嵌卡时用的是同一条：`activeTranscribeRun` 可能还挂着
+     * 上一条录音的 run（sourceEntryId 不等于当前这条），渲染那边会拒掉它，而这里若只判
+     * 「有没有」，就会告诉横幅「这条录音已经有内嵌进度卡了」——于是横幅把它过滤掉，
+     * 内嵌卡也不显示：这条录音的在途状态两处都看不到，直到下一次成功轮询才恢复
+     * （Codex 第三十一轮 P2；同 rule.prd-admin.recording-entry-scope 第 1 条）。
+     */
+    currentRunHasInlineCard: Boolean(activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId),
+    runs: bgTranscribeRunIds.map((runId) => {
+      const source = recordingRunSourceRef.current.get(runId);
+      return {
+        entryId: source?.entryId,
+        title: source ? entries.find((entry) => entry.id === source.entryId)?.title : null,
+      };
+    }),
+  });
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
@@ -2138,21 +2410,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           e.target.value = '';
         }} />
 
+      {!(isMobile && readerImmersive) && (
       <TabBar
         title={
           <div className="flex items-center gap-2">
-            <button onClick={onBack}
+            <button onClick={onBack} aria-label="返回知识库列表"
               className="hover-bg-soft cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200">
               <ArrowLeft size={14} />
             </button>
             {!isMobile && <Library size={14} className="text-token-muted" />}
             <span className="text-[13px] font-semibold text-token-primary">{store.name}</span>
             <span className="text-[11px] text-token-muted tabular-nums">
-              <CountUp to={entries.filter(e => e.sourceType !== 'github_directory').length} from={0} duration={0.8} /> 个文档
+              {entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length} 个文档
             </span>
             {/* refreshKey 含各 entry 的 updatedAt：编辑/恢复/替换会 bump updatedAt 但条目数不变，
                 只用 length 会让大小数字停留在旧值；带上 updatedAt 串内容变化即刷新（Codex P2）。 */}
-            {!isMobile && <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />}
+            {!isMobile && !entriesLoadingMore && <StoreSizeBadge storeId={store.id} refreshKey={`${entries.length}:${entries.map(e => e.updatedAt ?? '').join('|')}`} />}
           </div>
         }
         actions={
@@ -2165,9 +2438,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               style={syncBusy
                 ? { color: 'rgba(252,211,77,0.98)', background: 'rgba(245,158,11,0.14)', boxShadow: 'inset 0 0 0 1px rgba(245,158,11,0.42)' }
                 : store.peerSyncStatus === 'error'
-                  ? { color: 'rgba(252,165,165,0.96)', background: 'rgba(239,68,68,0.10)', boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.30)' }
+                  ? { color: 'var(--accent-fg-danger)', background: 'rgba(239,68,68,0.10)', boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.30)' }
                   : syncEstablished
-                    ? { color: 'rgba(94,234,212,0.96)', background: 'rgba(20,184,166,0.10)', boxShadow: 'inset 0 0 0 1px rgba(45,212,191,0.30)' }
+                    ? { color: 'var(--accent-fg-blue)', background: 'rgba(20,184,166,0.10)', boxShadow: 'inset 0 0 0 1px rgba(45,212,191,0.30)' }
                     : undefined}
               title={syncButtonTitle}
             >
@@ -2194,11 +2467,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 <Share2 size={13} /> 分享
               </Button>
             </span>
+            <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="surface-action inline-flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-primary" />
+            {canWriteEntries && hasWritingPermission && <Button variant="secondary" size="xs" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry?.id}` : ''}`)}><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry?.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</Button>}
+            {selectedDocEntry && (
+              <Button
+                variant="primary"
+                size="xs"
+                onClick={() => setShowDesignLauncher(true)}
+                title="用当前文档生成网页或 HTML PPT"
+              >
+                <Wand2 size={13} /> 智能生成
+              </Button>
+            )}
             {/* 顶栏「上传文档」按钮已下线：库内「新增」收敛为右下角调色盘 FAB（唯一入口）。
                 上传中的状态提示保留在此处，避免用户点完 FAB 上传后失去反馈。 */}
             {uploading && (
               <span className="flex h-7 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold"
-                style={{ color: 'rgba(147,197,253,0.95)', background: 'rgba(59,130,246,0.12)' }}>
+                style={{ color: 'var(--accent-fg-blue)', background: 'rgba(59,130,246,0.12)' }}>
                 <MapSpinner size={12} /> 上传中
               </span>
             )}
@@ -2347,6 +2632,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 }
               `}</style>
             </button>}
+            <DocumentTrashButton storeId={storeId} onRestored={async () => { await loadEntries(); await loadStore(); }} />
             {/* 更多：收纳低频管理动作（发布 / 关系图谱 / 统计 / 订阅），折叠屏只占一个位 */}
             <div className="relative" ref={moreRef}>
               <Button variant="secondary" size="xs" onClick={toggleMore} title="更多操作">
@@ -2373,6 +2659,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           </div>
         }
       />
+      )}
 
       {/* 全局拖拽遮罩 */}
       {dragging && (
@@ -2380,7 +2667,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           style={{ background: 'rgba(59,130,246,0.05)', border: '3px dashed rgba(59,130,246,0.3)' }}>
           <div className="text-center">
             <Upload size={32} style={{ color: 'rgba(59,130,246,0.6)', margin: '0 auto 8px' }} />
-            <p className="text-[14px] font-semibold" style={{ color: 'rgba(59,130,246,0.8)' }}>释放文件到此处上传</p>
+            <p className="text-[14px] font-semibold" style={{ color: 'var(--accent-fg-blue)' }}>释放文件到此处上传</p>
           </div>
         </div>
       )}
@@ -2388,8 +2675,77 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
           消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
       <div className="flex-1 min-h-0 flex flex-col pt-3">
+        {selectedDocEntry && !(isMobile && readerImmersive) && <div className="workspace-context mb-2" aria-label="当前文档上下文">
+          <strong className="truncate max-w-[45%]">{selectedDocEntry.title}</strong>
+          {(() => { const entry = entries.find(item => item.id === selectedDocEntry.id); return entry ? <>
+            <span className="ws-badge">{entry.sourceType === 'github_directory' || Object.keys(entry.metadata ?? {}).some(key => key.startsWith('github_')) ? 'GitHub 同步' : ({ upload: '上传文件', manual: '手动创建', github: 'GitHub', url: '网页来源', recording: '录音', subscription: '订阅来源', reference: '引用文档', generated: '生成内容', text: '文本内容' } as Record<string,string>)[entry.sourceType] || '其他来源'}</span>
+            {entry.updatedByName && <span className="ws-person"><PersonAvatar person={{displayName:entry.updatedByName}} size={22}/>{entry.updatedByName}</span>}
+            <span>更新于 {new Date(entry.updatedAt).toLocaleDateString('zh-CN')}</span>
+          </> : <span>文档详情按当前选择加载</span>; })()}
+        </div>}
+
+        <KnowledgeIndexStatus
+          entryId={selectedDocEntry?.id}
+          revision={`${entries.find(entry => entry.id === selectedDocEntry?.id)?.updatedAt ?? ''}:${knowledgeIndexCheck?.entryId === selectedDocEntry?.id ? knowledgeIndexCheck?.version : ''}`}
+        />
+        {backgroundTranscriptionBanner && !transcribeFlow && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mx-3 mb-3 flex shrink-0 items-start gap-3 rounded-[14px] px-4 py-3"
+            style={{ background: 'var(--semantic-info-bg)', border: '1px solid var(--semantic-info-border)' }}>
+            <div className="mt-0.5 shrink-0"><MapSpinner size={16} /></div>
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-token-primary">
+                {backgroundTranscriptionBanner.title}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+                {backgroundTranscriptionBanner.detail}
+              </p>
+            </div>
+          </div>
+        )}
+        {(entriesLoadingMore || entriesLoadError) && <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-token-muted" role="status">
+          {entriesLoadingMore ? <><MapSpinner size={12} /> 已加载 {entries.length} 条，正在补齐目录…</> : <>
+            文档列表尚未加载完整
+            <button type="button" className="underline" onClick={() => void loadEntries()}>重新加载</button>
+          </>}
+        </div>}
         <DocBrowser
           entries={entries}
+          immersiveOnMobile
+          // 移动端沉浸阅读时店头行隐藏——空间信息与「分享」收进阅读区「更多」菜单（2026-08-10 demo 确认）
+          readerMenuExtra={isMobile ? (
+            <>
+              <div
+                className="px-2.5 pt-1 pb-2 mb-1 text-[11px] truncate"
+                style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-faint)' }}
+                title={store.name}
+              >
+                {store.name} · {entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length} 个文档
+              </div>
+              <WritingPublicationActions storeId={storeId} entryId={selectedDocEntry?.id} hasPublication={selectedDocEntry?.hasWritingPublication} className="hover-bg-soft flex w-full items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary" />
+              {canWriteEntries && hasWritingPermission && selectedDocEntry && <button type="button" onClick={() => navigate(`/document-store/${storeId}/write${entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? `/${selectedDocEntry.id}` : ''}`)} className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary"><FilePlus size={13} />{entries.find(e => e.id === selectedDocEntry.id)?.metadata?.['writing_template'] ? '继续成文' : '按模版成文'}</button>}
+              <button
+                type="button"
+                onClick={() => setShowShareDialog(true)}
+                className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+              >
+                <Share2 size={13} className="flex-shrink-0 text-token-muted" />
+                <span className="truncate">分享</span>
+              </button>
+              {selectedDocEntry && (
+                <button
+                  type="button"
+                  onClick={() => setShowDesignLauncher(true)}
+                  className="hover-bg-soft flex w-full cursor-pointer items-center gap-2 rounded-[7px] px-2.5 py-1.5 text-left text-[12px] text-token-secondary transition-colors"
+                >
+                  <Wand2 size={13} className="flex-shrink-0 text-token-muted" />
+                  <span className="truncate">智能生成</span>
+                </button>
+              )}
+            </>
+          ) : undefined}
           tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
           onTagColorsChange={(next) => {
             // 乐观更新本地立刻反映；服务器保存走 single-flight 队列。
@@ -2451,6 +2807,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
           onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
           onUploadFile={() => fileInputRef.current?.click()}
           onOpenVideoParser={handleOpenVideoParser}
           onSearch={handleSearch}
@@ -2459,12 +2816,56 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
+          transcribeFailure={transcribeFailure}
+          /*
+           * 「别把 A 的进度画到 B 头上」这件事在**渲染期**判，不在 state 里清
+           * （Codex P1 给的两条修法里的第二条）。清 state 那条走不通：换条目时先清、
+           * 再由 recover 异步接回来，中间这张卡会卸载一次又挂回来——录音刚结束那一屏
+           * 因此闪一下，发布门禁抓到的正是这一下（元素 detach + 首个可用结果超时）。
+           * 判据只认「这条 run 的源条目就是选中的这条」，不满足就不画，state 留着无害。
+           */
+          transcribeRun={activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId ? {
+            ...activeTranscribeRun,
+            // 后端在写入阶段才把原文落到 transcriptText；有几句给几句，
+            // 一句都没有时状态卡自己渲染骨架，不在这里造句
+            transcriptPreview: (activeTranscribeRun.transcriptText ?? '')
+              .split('\n')
+              .map(line => line.trim())
+              .filter(Boolean)
+              .slice(0, 3),
+            // 「原文 N 句」数整篇，不数上面这三句预览
+            transcriptSentenceCount: countTranscriptSentences(activeTranscribeRun.transcriptText),
+          } : null}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
+              // 重试即当作新一轮，先撤掉上一轮的失败说明，别让旧原因压在新进度上
+              setTranscribeFailure(null);
               setTranscribeFlow({ entryId: id, title: entry.title, style: styleKey ? { styleKey } : undefined });
               transcribeFlowOpenRef.current = true;
             }
+          }}
+          onOpenRecordingResult={(audioEntryId) => {
+            /*
+             * 原文还在跑的时候，这一下该去的是**处理页**，不是结果页：稿面 v2-R4 /
+             * cap-A4/A5 画的就是那一屏（三阶段 + 音频卡 + 屏底「进入结果页并开始播放」），
+             * 而结果页在这一刻只有一份空原文。此前这条路由建好、登记好、却没有任何地方
+             * 走进去——用户只能靠手敲 URL 到达（predicate-and-wiring-discipline 形状 2：
+             * 建了一半的接线，删掉也不会红）。
+             */
+            const inflight = activeTranscribeRun
+              && activeTranscribeRun.sourceEntryId === audioEntryId
+              && activeTranscribeRun.status !== 'done'
+              && activeTranscribeRun.status !== 'failed'
+              && activeTranscribeRun.status !== 'cancelled';
+            if (inflight) {
+              navigate(`/document-store/${storeId}/recording/${audioEntryId}/processing`);
+              return;
+            }
+            // 设计稿这一下是「进入结果页并开始播放」：跳转与起播是同一个动作。
+            // play=1 交给结果页在挂载后发一次播放请求——起播必须发生在那一屏，
+            // 在这里先播会造成「声音已经在响、画面还在旧页」。
+            navigate(`/document-store/${storeId}/recording/${audioEntryId}?play=1`);
           }}
           onRestyleTranscribe={(id) => {
             const entry = entries.find(e => e.id === id);
@@ -2491,6 +2892,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
+          onAskRecording={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (!entry) return;
+            setReprocessTarget({
+              id,
+              title: entry.title,
+              initialInput: '请基于整场录音回答我的问题。先给简明结论，再引用支持结论的原文时间段；有多处依据时分别列出，不要编造录音中没有的信息。我的问题是：',
+            });
+          }}
           onShareEntry={(id) => {
             const entry = entries.find(e => e.id === id);
             if (entry) setDocShareTarget({ id, title: entry.title });
@@ -2505,6 +2915,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <div className="flex-1 flex items-center justify-center">
               <DocEmptyState
                 onCreateDocument={handleCreateDocument}
+          onCreateWriting={() => navigate(`/document-store/${storeId}/write`)}
                 onUploadFile={() => fileInputRef.current?.click()}
                 onAddSubscription={() => setShowSubscribe(true)}
               />
@@ -2539,6 +2950,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           onAfterSync={() => { void loadStore(); void loadEntries(); }}
         />
       )}
+
+      <GenerateFromContentDialog
+        open={showDesignLauncher}
+        onOpenChange={setShowDesignLauncher}
+        source={selectedDocEntry
+          ? { storeId: store.id, entryId: contentSourceEntryId(selectedDocEntry), title: selectedDocEntry.title, storeName: store.name }
+          : null}
+      />
       {canManageTutorialGraph && showTutorialGraph && tutorialGraph && (
         <TutorialLinkGraphDrawer
           storeId={storeId}
@@ -2551,12 +2970,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         />
       )}
 
-      {/* 添加订阅对话框 */}
+      {/* 添加订阅对话框（URL 订阅走表单，GitHub 走登录 + 勾目录的向导） */}
       {showSubscribe && (
         <SubscribeDialog
           storeId={storeId}
           onClose={() => setShowSubscribe(false)}
           onCreated={(entry) => { setShowSubscribe(false); setEntries(prev => [entry, ...prev]); }}
+          onOpenGitHubWizard={() => { setShowSubscribe(false); setShowGitHubWizard(true); }}
+        />
+      )}
+
+      {/* GitHub 同步向导：连接账号 → 选仓库 → 勾目录（doc/docs 默认已勾）→ 开启同步 */}
+      {showGitHubWizard && (
+        <GitHubSyncWizard
+          storeId={storeId}
+          onClose={() => setShowGitHubWizard(false)}
+          onFinished={() => { void loadEntries(); void loadStore(); }}
         />
       )}
 
@@ -2667,9 +3096,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 );
               }
               if (followUp.kind === 'watch-deferred-run') {
-                if (archivePending) {
-                  recordingRunSourceRef.current.set(followUp.runId, { entryId: entry.id, vaultSessionId });
-                }
+                recordingRunSourceRef.current.set(followUp.runId, { entryId: entry.id, vaultSessionId });
                 if (!archivePending) {
                   toast.info(
                     '录音已安全保存',
@@ -2732,10 +3159,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTranscribeFlow(null);
               transcribeFlowOpenRef.current = false;
               // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
-              if (transcribeRunRef.current) watchBackgroundTranscription(transcribeRunRef.current);
+              if (transcribeRunRef.current) {
+                const runId = transcribeRunRef.current;
+                const source = latestTranscribeSourceRef.current;
+                bindBackgroundTranscriptionSource(recordingRunSourceRef.current, runId, source);
+                watchBackgroundTranscription(runId);
+              }
             }}
             onEntryCreated={(entry) => {
               if ((transcribeFlow.storeId || storeId) === storeId) setEntries(prev => [entry, ...prev]);
+              const source = {
+                entryId: entry.id,
+                ...(transcribeFlow?.vaultSessionId ? { vaultSessionId: transcribeFlow.vaultSessionId } : {}),
+              };
+              latestTranscribeSourceRef.current = source;
+              if (transcribeRunRef.current) {
+                bindBackgroundTranscriptionSource(
+                  recordingRunSourceRef.current,
+                  transcribeRunRef.current,
+                  source,
+                );
+              }
               // 录音已成功上传到服务端 → 本机保险箱使命完成，清除该会话
               if (transcribeFlow?.vaultSessionId) void vaultDeleteSession(transcribeFlow.vaultSessionId);
             }}
@@ -2757,6 +3201,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             onOpenEntry={(id) => setSelectedEntryId(id)}
             onRunTracking={(rid) => {
               transcribeRunRef.current = rid;
+              const source = latestTranscribeSourceRef.current;
+              bindBackgroundTranscriptionSource(recordingRunSourceRef.current, rid, source);
               // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
               if (rid && !transcribeFlowOpenRef.current) watchBackgroundTranscription(rid);
             }}
@@ -2772,30 +3218,37 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
       </AnimatePresence>
 
-      {/* 上传进度卡：大文件不再"卡住没反馈"——文件名 + 实时百分比 + 第 n/共 m */}
-      {uploadProgress && (
+      {/* 解析不伪造百分比；请求体传完后展示阶段与持续等待时间。 */}
+      {uploadProgress && (() => {
+        const view = describeDocumentUploadProgress(uploadProgress, uploadProgressNow);
+        return createPortal(
         <div
-          className="fixed left-1/2 z-[70] w-[min(360px,88vw)] -translate-x-1/2 rounded-[14px] px-4 py-3"
+          data-testid="document-upload-progress"
+          data-phase={uploadProgress.phase}
+          className="fixed left-1/2 z-[70] -translate-x-1/2 rounded-[14px] px-4 py-3"
           style={{
-            bottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + 20px)',
+            width: 'min(360px,88vw)',
+            bottom: `calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + ${isMobile ? 88 : 20}px)`,
             background: 'var(--bg-card, rgba(20,20,24,0.95))',
             border: '1px solid var(--border-faint)',
             boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
           }}>
           <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
-            <span className="truncate font-semibold text-token-primary">正在上传 {uploadProgress.name}</span>
-            <span className="shrink-0 tabular-nums text-token-muted">
-              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}{uploadProgress.percent}%
+            <span role="status" aria-live="polite" className="truncate font-semibold text-token-primary" title={uploadProgress.name}>{view.title}</span>
+            <span data-testid="document-upload-status" className="flex shrink-0 items-center gap-1.5 tabular-nums text-token-muted">
+              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}
+              {uploadProgress.phase === 'parsing' ? <MapSpinner size={12} /> : null}
+              {view.status}
             </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
             <div
-              className="h-full rounded-full transition-all duration-200"
-              style={{ width: `${uploadProgress.percent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
+              className={`h-full rounded-full transition-all duration-200 ${uploadProgress.phase === 'parsing' ? 'animate-pulse' : ''}`}
+              style={{ width: `${view.barPercent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
             />
           </div>
-        </div>
-      )}
+        </div>, document.body);
+      })()}
 
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
           bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}
@@ -2910,10 +3363,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 }
 
 // ── 订阅源对话框（支持 URL 订阅 + GitHub 目录同步）──
-function SubscribeDialog({ storeId, onClose, onCreated }: {
+function SubscribeDialog({ storeId, onClose, onCreated, onOpenGitHubWizard }: {
   storeId: string;
   onClose: () => void;
   onCreated: (entry: DocumentEntry) => void;
+  /** 切到 GitHub 同步向导（登录 GitHub → 勾目录），推荐路径 */
+  onOpenGitHubWizard: () => void;
 }) {
   const [mode, setMode] = useState<'url' | 'github'>('url');
   const [title, setTitle] = useState('');
@@ -2998,6 +3453,27 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
         <div className="space-y-4 mb-4">
           {mode === 'github' ? (
             <>
+              {/* 推荐路径：不用让用户去 GitHub 抄地址，登录后系统把目录列出来给他勾 */}
+              <div className="rounded-[12px] p-3.5"
+                style={{ background: 'rgba(130,80,223,0.06)', border: '1px solid rgba(130,80,223,0.14)' }}>
+                <div className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                  用 GitHub 账号登录后勾选目录
+                </div>
+                <p className="text-[11.5px] leading-[1.7] mb-2.5" style={{ color: 'var(--text-muted)' }}>
+                  登录你自己的 GitHub，系统会列出你有权限的仓库并扫出全部目录，
+                  所有 doc / docs 目录默认已勾好；私有仓也能同步。
+                </p>
+                <Button variant="primary" size="xs" onClick={onOpenGitHubWizard}>
+                  <Github size={12} /> 连接 GitHub 并勾选目录
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>或手动粘贴公开仓库目录地址</span>
+                <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+              </div>
+
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>GitHub 目录地址</label>
                 <input value={githubUrl} onChange={e => setGithubUrl(e.target.value)}
@@ -3074,7 +3550,14 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
+type StoreTab = 'mine' | 'team' | 'recent' | 'favorites' | 'likes' | 'sync';
+
+/**
+ * 「最近」等不走库列表管线的 tab 的占位空列表。
+ * 必须是模块级常量：写成行内 `[]` 每次渲染都是新引用，
+ * 会让下游 useMemo 的依赖每帧都变（eslint react-hooks/exhaustive-deps 会直接报出来）。
+ */
+const EMPTY_STORE_LIST: DocumentStoreWithPreview[] = [];
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -3099,11 +3582,12 @@ export function DocumentStorePage() {
   );
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
+    return saved === 'team' || saved === 'recent' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
   const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
+  const [recentEntries, setRecentEntries] = useState<RecentDocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   // 我的 / 团队 作用域（默认我的；仅 mine 标签生效）
   const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
@@ -3137,9 +3621,34 @@ export function DocumentStorePage() {
   const [quickCaptureResolving, setQuickCaptureResolving] = useState(
     () => hasQuickRecordRequest(location.search),
   );
-  const quickCaptureRequestInFlightRef = useRef(false);
+  type QuickCaptureResponse = Awaited<ReturnType<typeof getOrCreateQuickCaptureStore>>;
+  const quickCaptureRequestRef = useRef<QuickCaptureRequestHolder<QuickCaptureResponse>>({ current: null });
   const cdsImportRequestRef = useRef<string | null>(null);
   const tutorialRouteRequestRef = useRef<string | null>(null);
+
+  /*
+   * `?store=X&record=1`：直接在 X 库里开录音（结果页左栏那颗「新录音」走这条）。
+   * 与 quickRecord 不同，它不去创建快捷库——用户是在某个库里点的，就录进那个库。
+   * 消费一次就把参数抹掉，否则返回这一页会再弹一次录音面板。
+   */
+  const recordInStoreConsumedRef = useRef(false);
+  useEffect(() => {
+    if (recordInStoreConsumedRef.current) return;
+    if (!hasRecordInStoreRequest(location.search)) return;
+    const target = initialDeepLinkRef.current.storeId ?? selectedStoreId;
+    if (!target) return;
+    recordInStoreConsumedRef.current = true;
+    setDetailInitialAction({
+      id: ++detailInitialActionSequenceRef.current,
+      storeId: target,
+      action: 'record',
+    });
+    navigate({
+      pathname: location.pathname,
+      search: withoutRecordInStoreRequest(location.search),
+      hash: location.hash,
+    }, { replace: true });
+  }, [location.search, location.pathname, location.hash, navigate, selectedStoreId]);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -3195,7 +3704,7 @@ export function DocumentStorePage() {
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('tab');
-    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
+    const valid: StoreTab[] = ['mine', 'team', 'recent', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {
       setTab(t as StoreTab);
       const deepLink = parseDocumentStoreDeepLink(location.search);
@@ -3221,16 +3730,17 @@ export function DocumentStorePage() {
       setQuickCaptureResolving(false);
       return;
     }
-    if (quickCaptureRequestInFlightRef.current) return;
-    quickCaptureRequestInFlightRef.current = true;
     setQuickCaptureResolving(true);
     let alive = true;
 
-    void getOrCreateQuickCaptureStore()
+    // StrictMode 会先清理再重跑 effect；两个 effect 共享同一个请求，但各自订阅结果。
+    // 这样第一次订阅失效后，第二次仍能消费服务端已经返回的快捷知识库。
+    void getSharedQuickCaptureRequest(quickCaptureRequestRef.current, getOrCreateQuickCaptureStore)
       .then((res) => {
         if (!alive) return;
         if (!res.success) {
           toast.error('快捷录音启动失败', res.error?.message ?? '无法准备快捷知识库');
+          setQuickCaptureResolving(false);
           navigate({
             pathname: location.pathname,
             search: withoutQuickRecordRequest(location.search),
@@ -3246,15 +3756,26 @@ export function DocumentStorePage() {
           action: 'record',
         });
         setSelectedStoreId(res.data.id);
+        // navigate 会先触发本 effect 的 cleanup；若只依赖 finally，alive 已变为 false，
+        // 页面会永久停在“正在打开快捷录音”。在改变 URL 前先结束准备态。
+        setQuickCaptureResolving(false);
         navigate({
           pathname: location.pathname,
           search: withDocumentStoreEntry(withoutQuickRecordRequest(location.search), res.data.id, null),
           hash: location.hash,
         }, { replace: true });
       })
+      .catch(() => {
+        if (!alive) return;
+        toast.error('快捷录音启动失败', '无法准备快捷知识库，请稍后重试');
+        navigate({
+          pathname: location.pathname,
+          search: withoutQuickRecordRequest(location.search),
+          hash: location.hash,
+        }, { replace: true });
+      })
       .finally(() => {
         if (alive) setQuickCaptureResolving(false);
-        quickCaptureRequestInFlightRef.current = false;
       });
 
     return () => { alive = false; };
@@ -3364,16 +3885,16 @@ export function DocumentStorePage() {
     const entryCount = s.documentCount ?? 0;
     const confirmed = await systemDialog.confirm({
       title: '确认删除知识库',
-      message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+      message: `将「${s.name}」及 ${entryCount} 个条目移入回收站。正文、附件和历史记录保留，创建者可在 30 天内恢复。`,
       tone: 'danger',
-      confirmText: '永久删除',
+      confirmText: '移入回收站',
       cancelText: '取消',
     });
     if (!confirmed) return;
     const res = await deleteDocumentStore(s.id);
     if (res.success) {
       setStores(prev => prev.filter(x => x.id !== s.id));
-      toast.success('知识库已删除', '关联数据已全部清理');
+      toast.success('已移入回收站', '创建者可在 30 天内恢复');
     } else {
       toast.error('删除失败', res.error?.message);
     }
@@ -3464,6 +3985,21 @@ export function DocumentStorePage() {
     setLoading(false);
   }, []);
 
+  const loadRecent = useCallback(async () => {
+    const mySeq = ++listFetchSeq.current;
+    setLoading(true);
+    const res = await listRecentDocumentEntries(50);
+    if (listFetchSeq.current !== mySeq) return;
+    if (res.success) {
+      setRecentEntries(res.data.items);
+    } else {
+      // 与其他 loader 同口径：失败必须清空，否则上一个 tab 的数据卡在屏上让人误判
+      setRecentEntries([]);
+      toast.error('加载最近内容失败', res.error?.message);
+    }
+    setLoading(false);
+  }, []);
+
   const loadLikes = useCallback(async () => {
     const mySeq = ++listFetchSeq.current;
     setLoading(true);
@@ -3546,6 +4082,8 @@ export function DocumentStorePage() {
       const effectiveTeamId = teamScope.teamId
         ?? (remembered.scope === 'team' ? remembered.teamId : null);
       loadStores('team', effectiveTeamId);
+    } else if (tab === 'recent') {
+      loadRecent();
     } else if (tab === 'favorites') {
       loadFavorites();
     } else if (tab === 'likes') {
@@ -3554,7 +4092,7 @@ export function DocumentStorePage() {
       ++listFetchSeq.current;
       setLoading(false);
     }
-  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
+  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes, loadRecent]);
 
   // 持久化选中的 storeId / tab 到 sessionStorage
   useEffect(() => {
@@ -3594,17 +4132,29 @@ export function DocumentStorePage() {
     setPendingEntryId(null);
     setSelectedStoreId(sid);
   }, []);
+  /**
+   * 「最近」点一条直接落到那篇内容本身：storeId 决定进哪个库，entryId 决定打开哪篇。
+   * 与 openStore 同一条路径（StoreDetailView 的 initialEntryId），不另建第二套打开逻辑。
+   */
+  const openRecentEntry = useCallback((entry: RecentDocumentEntry) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(entry.id);
+    setSelectedStoreId(entry.storeId);
+  }, []);
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library; dataTourId?: string }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
+    // 「最近」在收藏左侧：用户找的是「我刚存进来的那篇」，按库分组的卡片答不了这个问题
+    { key: 'recent', label: '最近', icon: Clock },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
+  // 「最近」渲染的是文档条目而不是库卡片，走独立分支，不进这条库列表管线
   const rawList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
-    isStoreTab ? stores : tab === 'favorites' ? favorites : likes;
+    isStoreTab ? stores : tab === 'favorites' ? favorites : tab === 'likes' ? likes : EMPTY_STORE_LIST;
 
   // 搜索 + 标签 + 排序（仅 store tab 生效；收藏/点赞页签不参与本页 toolbar 状态以避免混淆）
   const currentList = useMemo(() => {
@@ -3691,6 +4241,7 @@ export function DocumentStorePage() {
           if (teamScope.teamId) loadStores('team', teamScope.teamId);
           else { ++listFetchSeq.current; setStores([]); setLoading(false); }
         }
+        else if (tab === 'recent') loadRecent();
         else if (tab === 'favorites') loadFavorites();
         else if (tab === 'likes') loadLikes();
         else setLoading(false);
@@ -3811,6 +4362,7 @@ export function DocumentStorePage() {
               hideScopeToggle
             />
           )}
+          <DocumentTrashButton onRestored={() => loadStores(tab === 'team' ? 'team' : 'mine', teamScope.teamId)} />
           {/* 统计概览 */}
           {/* 功能区：库数 / 文章数（左侧） */}
           <span data-tour-id="library-stats" className={isMobile ? 'hidden' : 'text-[12px] tabular-nums whitespace-nowrap flex-none'} style={{ color: 'var(--text-muted)' }}>
@@ -4204,6 +4756,9 @@ export function DocumentStorePage() {
           <SyncManagerPanel />
         ) : loading ? (
           <MapSectionLoader text="加载中..." />
+        ) : tab === 'recent' ? (
+          /* 「最近」：跨库的内容时间线（自带空态引导，不落到下面的库列表管线） */
+          <RecentEntriesList items={recentEntries} onOpen={openRecentEntry} />
         ) : isFilteredOut ? (
           /* 筛选无结果 */
           <div className="flex flex-col items-center justify-center py-16">
@@ -4472,7 +5027,7 @@ export function DocumentStorePage() {
                                   {entry.tags!.slice(0, 2).map(t => (
                                     <span key={t}
                                       className="inline-flex items-center h-[15px] px-1.5 rounded-[4px] text-[9px] font-medium max-w-[68px] truncate"
-                                      style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(59,130,246,0.85)' }}>
+                                      style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--accent-fg-blue)' }}>
                                       {t}
                                     </span>
                                   ))}

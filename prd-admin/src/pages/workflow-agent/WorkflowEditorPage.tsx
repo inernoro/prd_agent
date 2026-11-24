@@ -1,4 +1,6 @@
+import { apiDownload } from '@/services/real/apiClient';
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { connectSse } from '@/lib/useSseStream';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -100,22 +102,28 @@ function ensureExtension(name: string, mimeType?: string): string {
 
 /** 通用产物操作按钮：预览 + 下载 */
 function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
-  artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
+  artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; designDelivery?: ExecutionArtifact['designDelivery'] };
   onPreview?: (art: ExecutionArtifact) => void;
   size?: 'sm' | 'md';
 }) {
   const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
   const padding = size === 'sm' ? 'p-1' : 'p-1.5';
   const downloadName = ensureExtension(artifact.name, artifact.mimeType);
+  const [downloadError, setDownloadError] = useState('');
   const hasContent = !!(artifact.inlineContent || artifact.cosUrl);
 
   /** 下载：inlineContent 直接 blob，COS URL fetch 后转 blob（跨域 <a download> 不生效） */
   async function handleDownload(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    setDownloadError('');
     try {
       let blob: Blob;
-      if (artifact.inlineContent) {
+      let fileName = downloadName;
+      if (artifact.designDelivery?.downloadPath) {
+        const file = await apiDownload(artifact.designDelivery.downloadPath, `${downloadName.replace(/\.[^.]+$/, '')}.zip`);
+        blob = file.blob; fileName = file.fileName;
+      } else if (artifact.inlineContent) {
         blob = new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' });
       } else if (artifact.cosUrl) {
         const resp = await fetch(artifact.cosUrl);
@@ -124,16 +132,18 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.download = downloadName;
+      link.download = fileName;
       link.click();
       URL.revokeObjectURL(blobUrl);
     } catch {
-      if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
+      if (artifact.designDelivery) setDownloadError('下载未完成，原报告仍可预览。');
+      else if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
     }
   }
 
   return (
     <>
+      {downloadError && <span role="alert" className="text-xs text-token-error">{downloadError}</span>}
       {hasContent && onPreview && (
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
@@ -716,6 +726,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
           sizeBytes: a.sizeBytes,
           inlineContent: a.inlineContent,
           cosUrl: a.cosUrl,
+          designDelivery: a.designDelivery,
           artifactId: a.artifactId,
         })),
         errorMessage: nodeExec.errorMessage,
@@ -1185,7 +1196,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
     status: string;
     durationMs?: number;
     logs?: string;
-    artifacts?: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; artifactId?: string }[];
+    artifacts?: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; designDelivery?: ExecutionArtifact['designDelivery']; artifactId?: string }[];
     errorMessage?: string;
   };
   source: 'test' | 'exec';
@@ -1535,61 +1546,34 @@ export function WorkflowEditorPage() {
     sseAbortRef.current = abort;
     setStreamingTexts({});
 
-    const token = useAuthStore.getState().token;
     const baseUrl = (import.meta.env.VITE_API_BASE_URL as string || '').replace(/\/+$/, '');
     const url = `${baseUrl}/api/workflow-agent/executions/${execId}/stream`;
-
     (async () => {
-      try {
-        const headers: Record<string, string> = { Accept: 'text/event-stream' };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        const resp = await fetch(url, { headers, signal: abort.signal });
-        if (!resp.ok || !resp.body) {
-          console.warn('[SSE] Stream failed:', resp.status, resp.statusText);
-          return;
-        }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-
-          // 解析 SSE：按 \n\n 分割事件
-          const parts = buf.split('\n\n');
-          buf = parts.pop() || '';
-
-          for (const part of parts) {
-            if (!part.trim()) continue;
-            let eventName = '';
-            let data = '';
-            for (const line of part.split('\n')) {
-              if (line.startsWith('event: ')) eventName = line.slice(7);
-              else if (line.startsWith('data: ')) data = line.slice(6);
-            }
-            if (!eventName || !data) continue;
-
+      let afterSeq = 0;
+      let terminal = false;
+      while (!abort.signal.aborted && !terminal) {
+        const result = await connectSse({
+          url: `${url}?afterSeq=${afterSeq}`, signal: abort.signal,
+          onEvent: (event) => {
+            if (!event.data) return;
             try {
-              const payload = JSON.parse(data);
-              if (eventName === 'llm-chunk' && payload.nodeId && payload.content) {
-                setStreamingTexts(prev => ({
-                  ...prev,
-                  [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content,
-                }));
-              } else if (eventName === 'llm-stream-start' && payload.nodeId) {
-                console.log('[SSE] llm-stream-start:', payload.nodeId, payload.nodeName);
+              const payload = JSON.parse(event.data);
+              const seq = Number(event.id);
+              if (Number.isSafeInteger(seq) && seq > afterSeq) afterSeq = seq;
+              if (event.event === 'node-design-progress' && payload.nodeId) {
+                const text = `${payload.phase || '正在准备设计'} · ${payload.progress || 0}% · 已用 ${payload.elapsedSeconds || 0} 秒`
+                  + (payload.model ? ` · ${payload.model}` : '');
+                setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: text }));
+              } else if (event.event === 'llm-chunk' && payload.nodeId && payload.content) {
+                setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content }));
+              } else if (event.event === 'llm-stream-start' && payload.nodeId) {
                 setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: '' }));
-              } else if (eventName === 'llm-stream-end' && payload.nodeId) {
-                console.log('[SSE] llm-stream-end:', payload.nodeId, 'totalLength:', payload.totalLength);
-                // 流结束，保留文本直到轮询获取最终结果后自然被替代
-              }
-            } catch { /* ignore parse errors */ }
-          }
-        }
-      } catch {
-        // fetch aborted or network error — ignore
+              } else if (event.event === 'execution-completed') terminal = true;
+            } catch { /* ignore invalid event */ }
+          },
+        });
+        if (!result.success && !['NETWORK_ERROR', 'SERVER_UNAVAILABLE'].includes(result.errorCode || '')) return;
+        if (!abort.signal.aborted && !terminal) await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     })();
   }

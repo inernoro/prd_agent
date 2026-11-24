@@ -89,13 +89,32 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var key = BuildObjectKey(d, t, sha, ext);
 
         // 去重
-        if (!await ExistsAsync(key, ct).ConfigureAwait(false))
+        var existed = await ExistsAsync(key, ct).ConfigureAwait(false);
+        if (!existed)
         {
             await UploadBytesInternalAsync(key, bytes, safeMime, ct).ConfigureAwait(false);
         }
 
         var url = BuildPublicUrl(key);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key) { CreatedNew = !existed };
+    }
+
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null)
+    {
+        ThrowIfDisposed();
+        if (bytes == null || bytes.Length == 0) return null;
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
+        var sha = Sha256Hex(bytes);
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
+        return BuildObjectKey(d, t, sha, ext);
     }
 
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
@@ -107,7 +126,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             if (!string.IsNullOrWhiteSpace(d) && !string.IsNullOrWhiteSpace(t))
@@ -129,7 +148,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
+        var exts = CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             try
@@ -142,6 +161,12 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             }
             catch (Exception ex)
             {
+                if (ext == "mp4"
+                    && string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+                    && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+                {
+                    throw;
+                }
                 _logger.LogWarning(ex, "R2 deleteBySha failed. sha={Sha}", sha);
             }
         }
@@ -158,6 +183,17 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var ext = MimeToExt(mime);
         var key = BuildObjectKey(d, t, sha, ext);
         return BuildPublicUrl(key);
+    }
+
+    private static string[] CandidateExtensions(string? domain, string? type)
+    {
+        if (string.Equals(domain, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeVideo, StringComparison.Ordinal))
+            return ["mp4"];
+        if (string.Equals(domain, AppDomainPaths.DomainVisualAgent, StringComparison.Ordinal)
+            && string.Equals(type, AppDomainPaths.TypeImg, StringComparison.Ordinal))
+            return ["png", "jpg", "jpeg", "webp", "gif"];
+        return ["png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt"];
     }
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
@@ -204,6 +240,16 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         return BuildPublicUrl(NormalizeKey(key));
     }
 
+    /// <summary>
+    /// 逻辑 key 套上**本桶**的前缀再拼地址。跨站搬来的 key 带的是源站前缀，
+    /// 调用方已经剥掉，这里补本站那一份（DS31）。
+    /// </summary>
+    public string BuildUrlForLogicalKey(string logicalKey)
+    {
+        var k = NormalizeKey(logicalKey);
+        return BuildPublicUrl(string.IsNullOrWhiteSpace(_prefix) ? k : $"{_prefix}/{k}");
+    }
+
     public async Task DeleteByKeyAsync(string key, CancellationToken ct)
     {
         ThrowIfDisposed();
@@ -212,7 +258,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (!IsSafeDeleteAllowed(k, out var reason))
         {
             _logger.LogWarning("R2 delete blocked. bucket={Bucket} key={Key} reason={Reason}", _bucket, k, reason);
-            throw new InvalidOperationException("R2 删除被安全策略拦截：仅允许删除 _it 测试目录下对象，或启用受控删除并命中白名单前缀");
+            throw new InvalidOperationException("R2 删除被安全策略拦截：仅允许受保护的单对象键，或启用受控删除并命中白名单前缀");
         }
 
         try
@@ -279,7 +325,10 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             BucketName = bucket,
             Key = key,
             InputStream = new MemoryStream(bytes, writable: false),
-            ContentType = (contentType ?? string.Empty).Trim(),
+            // MediaRecorder 会产出 audio/mp4;codecs=mp4a.40.2。R2 的 S3 兼容端点
+            // 会重写这类带参数的 Content-Type，导致服务端验签所见 header 与 SDK
+            // 签名输入不一致。对象类型只需要规范 media type；编码信息由容器自身携带。
+            ContentType = NormalizeSignedContentType(contentType),
             // R2 的 S3 兼容端点对真实录音大小的 UNSIGNED-PAYLOAD 请求会偶发返回
             // SignatureDoesNotMatch。固定使用带 Content-Length 的完整 SigV4 payload
             // 签名，并禁用 aws-chunked，避免小探针成功而实际音频归档失败。
@@ -291,6 +340,15 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var cc = (cacheControl ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(cc)) request.Headers.CacheControl = cc;
         return request;
+    }
+
+    internal static string NormalizeSignedContentType(string? contentType)
+    {
+        var trimmed = (contentType ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return "application/octet-stream";
+        var parameterIndex = trimmed.IndexOf(';');
+        return (parameterIndex >= 0 ? trimmed[..parameterIndex] : trimmed).Trim().ToLowerInvariant();
     }
 
     private string BuildPublicUrl(string key)
@@ -443,6 +501,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             "audio/webm" => "weba",
             // 视频
             "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
             "video/webm" => "webm",
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
@@ -480,6 +539,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             "flac" => "audio/flac",
             "weba" => "audio/webm",
             "mp4" => "video/mp4",
+            "m4v" => "video/x-m4v",
             "webm" => "video/webm",
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",
@@ -499,6 +559,37 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
     private bool IsSafeDeleteAllowed(string normalizedKey, out string reason)
     {
         if (IsItTestKey(normalizedKey)) { reason = "_it"; return true; }
+        if (AssetStorageDeletePolicy.IsVersionedUserAvatarKey(normalizedKey, _prefix))
+        {
+            reason = "superseded_avatar";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedVideoKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_video";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsContentAddressedGeneratedImageKey(normalizedKey, _prefix))
+        {
+            reason = "owned_generated_image";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
+        {
+            reason = "owned_design_workspace_metadata";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_file";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsHostedSiteOptimizationTemporaryKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_optimization_temp";
+            return true;
+        }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }
         if (_safeDeleteAllowPrefixes.Length == 0) { reason = "empty_allowlist"; return false; }
 

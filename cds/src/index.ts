@@ -1,33 +1,105 @@
+import { notificationFunction } from './shared/notification-templates.js';
+import { NotificationReportRecorder, systemForProject } from './services/notification-report.js';
+import type { AlarmEvent } from './services/alarm-route.js';
+import { BranchLifecycleService, stopBranchForLifecycle } from './services/branch-lifecycle.js';
+import { inspectionHealthDocument } from './services/project-inspections.js';
+import { createProjectInspectionsRouter } from './routes/project-inspections.js';
+import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
+import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
+import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
+import { identityForAlarm } from './services/alarm-identity.js';
+import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
+import { isSelfUpdateDraining } from './services/deploy-drain.js';
+import { defaultLocalhostDeploy } from './routes/github-webhook.js';
 import http from 'node:http';
+import { redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import os from 'node:os';
 import * as v8 from 'node:v8';
+import tls from 'node:tls';
 import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { discoverComposeFiles, parseCdsCompose } from './services/compose-parser.js';
+import {
+  discoverComposeFiles,
+  parseCdsCompose,
+  resolveEnvTemplates,
+  resolveCommandTemplate,
+} from './services/compose-parser.js';
 import fs from 'node:fs';
-import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
+import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, type ServerDeps } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
+import { IsolatedShellExecutor } from './services/isolated-shell-executor.js';
+import { confirmMaintenanceBoot } from './services/self-maintenance-retention.js';
+import { ContainerLogStreamHub } from './services/container-log-stream-hub.js';
+import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
+import { DeploymentRunService } from './services/deployment-run.js';
+import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
-import { ContainerService } from './services/container.js';
-import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
-import { ProxyService } from './services/proxy.js';
+import { ContainerService, resolveEffectiveProfile, computeProfileAliases } from './services/container.js';
+import { deploymentInputBranch } from './services/deployment-input.js';
+import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv, resolveBranchPublishedEntrypoints } from './services/preview-entrypoints.js';
+import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
+import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
+import {
+  auditInfraExposure, detectInfraKind, renderExposureReport, resolveRuntimeFirewallGuard,
+  type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
+} from './services/infra-exposure-audit.js';
+import {
+  evaluateDailyHealth,
+  type BackupTargetRef,
+  type HealthInfraFact,
+  type HealthPlatformStoreFact,
+  type InfraExemptionFact,
+  platformStoreFacts,
+} from './services/platform-daily-health.js';
+import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
+import {
+  backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
+  buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
+  buildRedisBackupProbeScript,
+  buildRedisSnapshotCopyArgv,
+  redisAuthFromServiceDefinition,
+  redisUsernameFromServiceDefinition,
+  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
+  backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
+  shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
+  type BackupOutcome,
+} from './services/infra-backup-schedule.js';
+import { BackupRetentionService } from './services/backup-retention.js';
+import { OwnedResourceLifecycle } from './services/owned-resource-task.js';
+import { ImageCacheGovernance, collectImageCacheReferences, configureImageCacheGovernance } from './services/image-cache-governance.js';
+import { startReclaimSchedule } from './services/reclaim-lock.js';
+import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
+import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
+import {
+  externalPortAuditConfigFromEnv,
+  runExternalPortAudit,
+  type ExternalPortAuditFamily,
+} from './services/external-port-audit.js';
+import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
-import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { readForwarderPreviewActivity } from './forwarder/preview-activity.js';
+import { isTrustedProbeFingerprint } from './services/probe-marker.js';
+import { JanitorService, defaultDiskUsage, createJanitorDockerAdapters } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
+import { schedulerResourcePressure } from './services/scheduler-pressure.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
+import { BackupRetentionOperationError } from './services/backup-retention.js';
+import { runBackupTargetWithLease } from './services/infra-backup-target.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
+import { isPublicPreviewDiscoveryEnabled } from './services/public-exposure-policy.js';
 import crypto from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
@@ -35,10 +107,18 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
-import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
+import { createMonitorOnboardingRouter } from './routes/monitor-onboarding.js';
+import { MonitorOnboardingService } from './services/monitor-onboarding.js';
+import { matchPreviewHost } from './services/uptime-custom-monitor.js';
+import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
+import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
+import { customProbeTargetId } from './services/uptime-custom-monitor.js';
+import { observeScheduledJobs } from './services/scheduled-job-health.js';
+import { UptimeMonitorService, uptimeConfigFromEnv, type UptimeAlertEventType, type UptimeAlertEventData } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
 import { availabilityOverRange } from './services/uptime-metrics.js';
+import { monitorIncidentPath, monitorReportUrl } from './services/monitor-incident-link.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -47,23 +127,39 @@ import { createGracefulShutdownController } from './services/graceful-shutdown.j
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
+import { resolveWorkloadCgroup } from './services/workload-cgroup.js';
+import { startEventLoopLagMonitor } from './services/event-loop-lag.js';
+import { startMainThreadDiagnostics } from './services/main-thread-diagnostics.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
 import { settleMemberAfterStop } from './services/replica-stop.js';
-import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
-import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
+import { hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
+import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconciler.js';
+import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
-import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
+import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
+import { serviceRuntimeRefs, servingRuntime } from './services/service-runtime.js';
+import { stopServiceForCooling } from './services/scheduler-service-stop.js';
+import { deploymentPhaseBudget, deploymentPreviewMemoryCapacity, restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
+import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
+import { installProcessFuse } from './services/process-fuse.js';
+import { AuditLiveness, recordAuditFailure } from './services/audit-liveness.js';
+import { reconcileSelfUpdateOutcome } from './services/self-update-outcome.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
-import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
+import { AutoWakeAdmission } from './services/auto-wake-admission.js';
+import { reconcileHostRebootBranch, shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
-import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
+import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
+import { readPreviewMirror, registerLoadedPreviewMirror } from './services/preview-mirror.js';
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { diagnoseCiImage, ciDiagnosisSnapshot } from './services/ci-image-diagnosis.js';
+import { startRotationRecoveryArtifactCleanup } from './services/infra-local-recovery-drill.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -77,6 +173,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from './services/branch-operation-coordinator.js';
+import { pendingDeployRoute, pendingDeployBody } from './services/branch-operation-coordinator.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -84,6 +181,21 @@ import {
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
+import { combinedOutput } from './types.js';
+import { backfillReportReadScope } from './services/connection/pairing-service.js';
+import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
+import { MapNotifier, readMapNotifierSettings, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
+import { isSealedSecret } from './infra/secret-seal.js';
+import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
+import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected, renderAlarmMessage } from './services/alarm-route.js';
+import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
+import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
+import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
+import { buildSelfCheck, readHttpSelfCheckStats, readSelfCheckRuntimeStatus, wireSchedulerPreviewActivitySelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
+import { selfStatusCache } from './services/self-status-cache.js';
+import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
+
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -107,9 +219,38 @@ function diagnoseBootDisks(): string | null {
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
+const operationShell = new IsolatedShellExecutor(new ShellExecutor(), {
+  isolatedLane: 'operation', concurrency: 9, reservedCleanup: 1, maxQueued: 64, defaultTimeoutMs: 15 * 60_000,
+});
+const localShell = new IsolatedShellExecutor(operationShell);
+const startupStreams = new ObservationStreamExecutor();
+const eventStreams = new ObservationStreamExecutor(2);
+const userLogStreams = new ObservationStreamExecutor(2);
+const journalStreams = new ObservationStreamExecutor(1);
+const userLogHub = new ContainerLogStreamHub(userLogStreams);
 const shell = isPreviewInstance()
-  ? new PreviewInstanceShellExecutor(new ShellExecutor())
-  : new ShellExecutor();
+  ? new PreviewInstanceShellExecutor(localShell)
+  : localShell;
+// 操作池只预热自有IPC进程；预览实例的宿主命令仍由外层守卫拒绝，Git也不延后从大Master建进程。
+async function startExecutionPool(name: string, pool: IsolatedShellExecutor | ObservationStreamExecutor, warning: string): Promise<void> {
+  try {
+    await pool.start();
+    console.log(`[execution-pool] ${JSON.stringify({ name, outcome: 'ready', ...pool.getLifecycle(), stats: pool.getStats() })}`);
+  } catch {
+    console.warn(warning);
+    console.warn(`[execution-pool] ${JSON.stringify({ name, outcome: 'unavailable', ...pool.getLifecycle() })}`);
+  }
+}
+await startExecutionPool('operation', operationShell, '[execution] 操作执行器暂不可用；明确拒绝任务，不从Master启动命令。');
+if (!isPreviewInstance()) {
+  await Promise.all([
+    startExecutionPool('observation', localShell, '[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。'),
+    startExecutionPool('startup-log', startupStreams, '[observation] 启动日志执行器暂不可用；启动信号不报告就绪。'),
+    startExecutionPool('journal', journalStreams, '[observation] 系统日志执行器暂不可用；保留明确失败诊断。'),
+    startExecutionPool('user-log', userLogStreams, '[observation] 用户日志执行器暂不可用；保留明确失败和重试入口。'),
+    startExecutionPool('container-event', eventStreams, '[observation] 容器事件执行器暂不可用；保留未知状态。'),
+  ]);
+}
 if (isPreviewInstance()) {
   console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
   console.log('[preview-instance] 后台服务(janitor/auto-lifecycle/docker-events/self-update)将跳过启动。');
@@ -232,6 +373,31 @@ const ENTRYPOINT_SELF_CHECK_INTERVAL_MS = 30 * 60_000;
 // 启动后延迟首检：等 CDS 自己起来并且 nginx reload 完，否则首检必然误报。
 const ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS = 90_000;
 
+// 启动后延迟首备：等 infra 起齐，也避开自更新重启时的资源尖峰。
+const INFRA_BACKUP_STARTUP_DELAY_MS = 10 * 60_000;
+// 单个库的导出超时。大库慢，但卡住不放会拖住后面所有目标。
+const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
+const INFRA_HEALTH_INTERVAL_MS = 15 * 60_000;
+const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
+const EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS = 30_000;
+
+/**
+ * 每日安全体检的节奏。一天一次：它回答的是「今天这台机器健康吗」，
+ * 不是实时监控——那一层由暴露面自检（每小时）和基础设施看门狗（每 15 分钟）承担。
+ */
+const PLATFORM_DAILY_HEALTH_INTERVAL_MS = 24 * 60 * 60_000;
+/** 启动后延迟首检：要等暴露面自检先跑出一份运行态真值，否则第一份体检是空的。 */
+const PLATFORM_DAILY_HEALTH_STARTUP_DELAY_MS = 5 * 60_000;
+
+let lastInfraExposureReport: InfraExposureReport | null = null;
+
+// 基础设施暴露面自检间隔。判据取 `docker ps` 的运行态真值，不读台账——
+// 台账里的 hostPort 只是个数字，说明不了绑在哪个地址上。存量容器的绑定地址
+// 在创建时就固化了，代码改动追不上它们，只能靠这一层持续盯。
+const INFRA_EXPOSURE_AUDIT_INTERVAL_MS = 60 * 60_000;
+// 启动后延迟首检：等 infra 容器都拉起来，否则首检看到的是半截状态。
+const INFRA_EXPOSURE_AUDIT_STARTUP_DELAY_MS = 120_000;
+
 const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
 
 /**
@@ -253,6 +419,8 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
     return null;
   }
 
+  // 失败也要落事件，理由同暴露面自检（E36）：不落事件的失败等于没发生过。
+  const entrypointLiveness = new AuditLiveness(ENTRYPOINT_SELF_CHECK_INTERVAL_MS);
   let lastBlockedSignature = '';
   const run = async () => {
     try {
@@ -280,6 +448,10 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
       });
     } catch (err) {
       console.warn(`[entrypoint-check] 自检失败: ${(err as Error).message}`);
+      recordAuditFailure({
+        store, liveness: entrypointLiveness, source: 'entrypoint-check',
+        reason: (err as Error).message, what: '入口可达性自检',
+      });
     }
   };
 
@@ -289,19 +461,1100 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
   return timer;
 }
 
+/**
+ * 基础设施暴露面自检。
+ *
+ * 回答的问题是：**我这台机器上，有没有哪个数据库正对着公网、还不要密码？**
+ *
+ * 判据只认 `docker ps` 的运行态真值。不读 CDS 自己的台账有两个原因：台账里的
+ * hostPort 只是个数字（说明不了绑在哪个地址上），而且手工起的、别的来路起的容器
+ * 根本不在台账里——恰恰是这些最容易被忘掉。
+ */
+function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor') return null;
+  if (isPreviewInstance()) return null;
+
+  let lastSignature = '';
+  // 活性账本：这项自检「多久没成功过」必须能看见。失败只打 console 的话，
+  // 面板上「没跑成」和「跑了没问题」长得一模一样（E36，2026-08-18）。
+  const liveness = new AuditLiveness(INFRA_EXPOSURE_AUDIT_INTERVAL_MS);
+  const fail = (reason: string): void => {
+    recordAuditFailure({
+      store, liveness, source: 'infra-exposure', reason,
+      what: '基础设施暴露面自检',
+    });
+  };
+  const run = async () => {
+    try {
+      // 一次 docker ps 拿到全部容器的名字、镜像、端口与状态；再按容器名去台账里
+      // 补 env（台账有 env 的才判得了认证，没有的按「未知」从严报）。
+      const ps = await shell.exec(
+        `docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.State}}'`,
+        { timeout: 30_000 },
+      );
+      if (ps.exitCode !== 0) {
+        console.warn('[infra-exposure] 读不到容器列表，跳过本轮');
+        fail(`读不到容器列表：${(ps.stderr || ps.stdout || '').trim().slice(0, 200) || `docker ps 退出码 ${ps.exitCode}`}`);
+        return;
+      }
+      const byContainer = new Map<string, { id: string; projectId: string }>();
+      for (const svc of stateService.getInfraServices() || []) {
+        byContainer.set(svc.containerName, { id: svc.id, projectId: svc.projectId });
+      }
+
+      // 先挑出数据面容器。应用容器对外发布是它们的本职（nginx 在前面挡着），
+      // 混进来只会把告警淹掉。
+      const rows: Array<{ name: string; image: string; ports: string; running: boolean }> = [];
+      for (const line of (ps.stdout || '').split('\n')) {
+        const [name, image, ports, state] = line.split('\t');
+        if (!name || !image) continue;
+        if (detectInfraKind(image, { containerName: name, runtimePorts: ports }) === 'other') continue;
+        rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
+      }
+      // 一个数据面容器都没认出来，**也是一份检查完了的结果**，不是「还没检查」。
+      // 这里早退过：于是 lastInfraExposureReport 永远停在 null，而每日体检正是
+      // 靠它判断「首检跑没跑过」——json 状态后端、全用外部库的部署因此天天跳过
+      // 体检，连备份新鲜度、恢复演练这些跟容器毫无关系的项也一起被跳掉，
+      // 而且因为空容器集每轮都一样，这类部署永远等不到第一次结论
+      //（Codex review P2）。
+      //
+      // 所以不早退：只跳过「为判定这些容器才需要做的 inspect 与防火墙探测」，
+      // 报告照出，出的是一份如实的空报告。
+      //
+      // 认证判据必须取**容器自己的**配置，不是 CDS 台账里那份：台账记的是
+      // 「建它时用了什么」，compose 导入的、手工起的、密码写在启动参数里的
+      // （redis 的 --requirepass）台账里都看不到，照台账判会把有密码的库
+      // 误报成裸奔——一条假警报会让人开始怀疑整张表。
+      const authByContainer = new Map<string, { env: Record<string, string>; args: string[] }>();
+      if (rows.length > 0) {
+        // Entrypoint 必须和 Cmd 一起取。
+        //
+        // 认证判据看的是「启动时到底跑了什么」，而这句话有两半：memcached / nats
+        // 这类预设把 entrypoint 覆盖成 `sh`、真正的认证参数在 `-c '...'` 那段里，
+        // 只读 Cmd 等于只看到半条命令。之前靠「env 里有口令也算认证」把这半条
+        // 盖住了；判据收敛到只认启动参数（台账 E81）之后，缺的这半条会直接变成
+        // 假警报——判据必须读真正生效的那个东西（形状 6）。
+        const inspect = await shell.exec(
+          `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}\t{{json .Config.Entrypoint}}' `
+          + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
+          { timeout: 30_000 },
+        );
+        for (const line of (inspect.stdout || '').split('\n')) {
+          const [rawName, envJson, cmdJson, entrypointJson] = line.split('\t');
+          if (!rawName) continue;
+          const name = rawName.replace(/^\//, '').trim();
+          const env: Record<string, string> = {};
+          try {
+            for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
+              const i = kv.indexOf('=');
+              if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
+            }
+          } catch { /* 解析不了就当没有，下游按未知从严 */ }
+          let args: string[] = [];
+          try {
+            const cmd = (JSON.parse(cmdJson || '[]') as string[]) || [];
+            const entrypoint = (JSON.parse(entrypointJson || '[]') as string[]) || [];
+            args = [...entrypoint, ...cmd];
+          } catch { args = []; }
+          authByContainer.set(name, { env, args });
+        }
+      }
+
+      const inputs: InfraExposureInput[] = rows.map((r) => {
+        const known = byContainer.get(r.name);
+        const conf = authByContainer.get(r.name);
+        return {
+          id: known?.id || r.name,
+          projectId: known?.projectId || '(未登记)',
+          containerName: r.name,
+          dockerImage: r.image,
+          env: conf?.env,
+          args: conf?.args,
+          runtimePorts: r.ports,
+          running: r.running,
+        };
+      });
+
+      // 把宿主防火墙纳入判据。两个方向都要：绑在全网卡但被挡住的不该报成 critical
+      // （报多了没人看），而**规则一旦丢失（重启即丢）就要立刻升回 critical**——
+      // 只看容器绑定的自检对「防火墙没了」这件事完全无感。
+      //
+      // 没有容器要判的时候整段跳过：探防火墙是为了给某个端口定性，没有端口就
+      // 没有要定的性，跑一遍只是白花十几秒。
+      let firewall: ReturnType<typeof resolveRuntimeFirewallGuard> | null = null;
+      if (rows.length > 0) {
+        const pubIf = (await shell.exec(
+          `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
+          { timeout: 15_000 },
+        )).stdout.trim();
+        const firewallBackends: FirewallBackendSnapshot[] = [];
+        for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
+          const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
+          if (present.exitCode !== 0) {
+            firewallBackends.push({
+              name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+            });
+            continue;
+          }
+          const [nat, filter] = await Promise.all([
+            shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
+            shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
+          ]);
+          firewallBackends.push({
+            name: tool,
+            available: true,
+            dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
+            rulesReadable: filter.exitCode === 0,
+            rules: filter.stdout || '',
+          });
+        }
+        firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
+      }
+
+      const report = auditInfraExposure(inputs, { firewall });
+      lastInfraExposureReport = report;
+      // 走到这里就是**真的跑完了一轮**。成功要打点，否则「多久没成功过」永远算不出来
+      // ——去重的 early return 就在下一行，放在它之后会漏掉「状态没变」的那些轮次。
+      liveness.markSuccess();
+      if (report.signature === lastSignature) return;   // 状态没变就不刷屏
+      lastSignature = report.signature;
+
+      if (report.criticalCount === 0 && report.warnCount === 0) {
+        console.log(`[infra-exposure] ${report.summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'infra-exposure',
+          action: 'infra.exposure.clean', message: report.summary, status: 'info',
+          details: { checked: report.findings.length },
+        });
+        return;
+      }
+      const body = renderExposureReport(report);
+      const severity: ServerEventSeverity = report.criticalCount > 0 ? 'error' : 'warn';
+      console.warn(`[infra-exposure] ${report.summary}`);
+      store?.record({
+        category: 'system', severity, source: 'infra-exposure',
+        action: 'infra.exposure.detected', message: body,
+        status: report.criticalCount > 0 ? 'error' : 'warn',
+        details: {
+          criticalCount: report.criticalCount,
+          warnCount: report.warnCount,
+          findings: report.findings.filter((f) => f.severity !== 'ok'),
+        },
+      });
+    } catch (err) {
+      console.warn(`[infra-exposure] 自检失败: ${(err as Error).message}`);
+      fail((err as Error).message);
+    }
+  };
+
+  setTimeout(() => { void run(); }, INFRA_EXPOSURE_AUDIT_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_EXPOSURE_AUDIT_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+/**
+ * 基础设施自动备份。
+ *
+ * 落盘目录沿用手工备份那一份（`/data/cds/<slug>/backups`），所以「备份历史」
+ * 接口不用改就能看到自动备份。文件名带 `-auto-` 段，与 restore 前的
+ * `pre-restore` 快照区分开——后者是救命用的，不参与周期清理。
+ *
+ * 磁盘闸在最前面：宿主根盘写满会同时打死所有预览、构建和 CDS 自己，那比这一轮
+ * 没有新备份糟得多。读不到可用空间也按「不够」处理。
+ */
+function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  // 「定时备份实际停摆」是这件事最糟的失败方式，整轮炸掉必须留痕（E36 同族）。
+  const backupLiveness = new AuditLiveness(INFRA_BACKUP_INTERVAL_MS);
+  if (config.mode === 'executor') return null;
+  if (isPreviewInstance()) return null;
+
+  const shq = (s: string): string => `'${String(s).replace(/'/g, `'"'"'`)}'`;
+
+  /**
+   * 单飞闸。一轮里每个库串行导出、单库超时 20 分钟，目标一多就可能跑过六小时的
+   * 间隔——那时 setInterval 会把下一轮叠上来，两轮共用同一个 `.tmp`：后进门的
+   * 那轮先 `rm -rf` 再重建，把前一轮正在写的文件删掉，双双记失败。
+   *
+   * 闸上带**持有者身份**，不只是一个布尔。只有布尔的话，堵住时能看到的全部信息
+   * 就是一行「上一轮还没跑完」——分不清「这轮库大、正常慢」和「卡死了永远不放」，
+   * 也没人知道已经错过几次。所以记下这一轮的 id 与起始时间，跳过时把「持有者是谁、
+   * 占了多久、连续跳过第几次」写进事件流（不是只 console.warn，那在面板上看不见），
+   * 并在明显超时的情况下升级成 error，让「定时备份实际上停摆」这件事有人看得见。
+   */
+  let holder: { roundId: string; startedAt: number } | null = null;
+  let consecutiveSkips = 0;
+  /** 超过这个时长仍未放闸，基本可以认定不是「跑得慢」而是「卡住了」。 */
+  const STUCK_AFTER_MS = INFRA_BACKUP_INTERVAL_MS;
+
+  const run = async () => {
+    if (holder) {
+      consecutiveSkips += 1;
+      const ageMs = Date.now() - holder.startedAt;
+      const ageMin = Math.round(ageMs / 60_000);
+      const stuck = ageMs > STUCK_AFTER_MS;
+      const msg = `上一轮 ${holder.roundId} 已跑 ${ageMin} 分钟仍未结束，跳过本次触发`
+        + `（连续第 ${consecutiveSkips} 次）${stuck ? '；已超过一个完整间隔，疑似卡死' : ''}`;
+      console.warn(`[infra-backup] ${msg}`);
+      store?.record({
+        category: 'system',
+        severity: stuck ? 'error' : 'warn',
+        source: 'infra-backup',
+        action: 'infra.backup.skipped.inflight',
+        message: msg,
+        status: stuck ? 'error' : 'warn',
+        details: { roundId: holder.roundId, ageMs, consecutiveSkips, stuck },
+      });
+      return;
+    }
+    consecutiveSkips = 0;
+    holder = { roundId: `bk-${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}`, startedAt: Date.now() };
+    try {
+      // 逐个候选试写，用第一个真能写的。写死单一路径的代价已经付过：那个路径在
+      // 这台宿主上不存在，而手工备份的 ls 带着 2>/dev/null，把「目录不存在」显示
+      // 成「没有备份」——于是零备份这件事可以一直不被发现。
+      const candidates = backupDirCandidates({
+        slug: stateService.projectSlug,
+        repoRoot: config.repoRoot,
+      });
+      let dir = '';
+      const dirErrors: string[] = [];
+      for (const c of candidates) {
+        const probe = await shell.exec(
+          `mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`,
+          { timeout: 15_000 },
+        );
+        if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) { dir = c; break; }
+        dirErrors.push(`${c}: ${(combinedOutput(probe) || `exit=${probe.exitCode}`).trim().slice(0, 160)}`);
+      }
+      if (!dir) {
+        const msg = `没有可写的备份目录，本轮跳过。试过：\n${dirErrors.join('\n')}\n`
+          + '可用 CDS_BACKUP_DIR 显式指定一个可写目录。';
+        console.warn(`[infra-backup] ${msg}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.skipped.nodir', message: msg, status: 'warn',
+          details: { candidates, errors: dirErrors },
+        });
+        return;
+      }
+
+      // 临时目录：所有导出先写这里，校验通过才改名进正式目录。
+      // 好处不只是「失败时清理」——**正式文件名从头到尾只属于校验过的产物**，
+      // 进程被杀、超时、容器消失都不会在正式目录留下半截文件。
+      // 半截文件的危害是具体的：保留策略按 `<key>-auto-` 前缀认它是一份备份，
+      // 可能把真正可用的旧副本挤掉；备份历史也会把它列出来供人恢复。
+      // 放子目录而不是加后缀，这样上层 ls 既看不到它，也不会把它算进份数。
+      const tmpDir = `${dir}/.tmp/${holder.roundId}-${crypto.randomBytes(8).toString('hex')}`;
+      await shell.exec(`mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
+
+      /**
+       * 磁盘闸。**每个目标之前都要重跑一次**，不是每轮开头查一次就完事——
+       * 一轮里的每一份导出都在消耗同一块盘，前面那个大库写完之后，后面那个的
+       * 前提早就不成立了。宿主根盘写满会同时打死所有预览、构建和 CDS 自己，
+       * 那比这一轮少几份备份糟得多。读不到可用空间同样按「不够」处理。
+       */
+      let lastFreeBytes = 0;
+      const diskGate = async (): Promise<string | null> => {
+        const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
+        const free = parseDfAvailableBytes(df.stdout || '');
+        lastFreeBytes = free ?? 0;
+        if (!shouldSkipForDiskPressure(free)) return null;
+        // 「读不到」必须说清读不到什么、命令怎么失败的。只说一句「读不到」，
+        // 下一个人除了重跑一遍没有别的办法。
+        const msg = free == null
+          ? `读不到备份目录 ${dir} 的可用空间（不确定就不写盘）。`
+            + `df exit=${df.exitCode}${df.stderr ? ` stderr=${df.stderr.trim().slice(0, 200)}` : ''}`
+          : `备份目录 ${dir} 可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB）`;
+        console.warn(`[infra-backup] ${msg}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.skipped.disk', message: `${msg}，跳过剩余目标`, status: 'warn',
+          details: {
+            freeBytes: free ?? null, directory: dir,
+            dfExitCode: df.exitCode, dfStdout: (df.stdout || '').slice(0, 400), dfStderr: (df.stderr || '').slice(0, 400),
+          },
+        });
+        return msg;
+      };
+      if (await diskGate()) return;
+
+      // 台账里表示存活的字段是 `status`，不是 `running`。直接把台账对象丢进来，
+      // `running === false` 这一档永远不成立——首轮实跑就撞上了：一个已停止的
+      // mongo 被当成目标，`docker exec` 报 No such container。字段名对不上是
+      // 编译器发现不了的那种错（可选字段缺省即 undefined），只能靠真跑一轮。
+      const plan = planInfraBackups(
+        (stateService.getInfraServices() || []).map((s) => ({ ...s, running: s.status === 'running' })),
+        { now: new Date() },
+      );
+      const coverageGaps = backupCoverageGaps(plan);
+      if (plan.targets.length === 0 && coverageGaps.length === 0) return;
+
+      const outcomes: BackupOutcome[] = [];
+      // 本轮离机连续失败计数。离机整体挂掉时用它止损，别对每个目标都重试一次
+      // 注定失败的大文件上传；成功一次即归零，避免个别超时误伤整轮。
+      let offsiteConsecutiveFailures = 0;
+      for (const t of plan.targets) {
+        // 前一个目标可能刚写掉几个 GiB，这个目标的前提要重新确认一次。
+        const pressure = await diskGate();
+        if (pressure) {
+          const remaining = plan.targets.slice(plan.targets.indexOf(t));
+          for (const r of remaining) {
+            outcomes.push({ id: r.id, projectId: r.projectId, ok: false, error: `磁盘不足，未执行：${pressure}` });
+          }
+          break;
+        }
+        const out = `${tmpDir}/${t.fileName}`;
+        const finalOut = `${dir}/${t.fileName}`;
+        let maintenanceJobId: string | null = null;
+        let maintenanceCompleted = false;
+        await runBackupTargetWithLease({ retention: backupRetentionService, directory: dir, projectId: t.projectId, serviceId: t.id, outcomes,
+        onUnconfirmed: error => store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup', action: 'infra.backup.target-unconfirmed',
+          projectId: t.projectId, serviceId: t.id, message: backupFailureReason(error instanceof Error ? error.message : String(error)),
+          details: error instanceof BackupRetentionOperationError ? error.diagnostic : { stage: 'target-lease' },
+        }), operation: async () => {
+        try {
+          const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
+          if (t.kind === 'mongo' || t.kind === 'redis') {
+            try {
+              const maintenanceJob = await stateService.beginInfraMaintenanceJob({
+                projectId: t.projectId,
+                serviceId: t.id,
+                runtime: t.kind === 'mongo' ? 'mongodb' : 'redis',
+                kind: 'automatic-backup',
+              });
+              maintenanceJobId = maintenanceJob.id;
+            } catch (error) {
+              if ((error as Error).message === 'infra_maintenance.credential_rotation_in_progress') {
+                throw new Error('凭据轮换进行中，本轮自动备份已跳过且未连接数据服务');
+              }
+              throw error;
+            }
+          }
+          let cmd: string;
+          let commandStdin: string | undefined;
+          if (t.kind === 'mongo') {
+            // 轮换后数据库容器本身不会重建，启动时 env 仍是旧账号。备份必须读取
+            // state 当前权威值并把口令经 stdin 交给 mongodump config；否则旧用户撤销
+            // 后所有自动备份都会失败。口令不进入宿主或容器 argv。
+            const current = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
+            if (!current) throw new Error('轮换后的 Mongo 权威服务记录不存在');
+            const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
+            const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
+            const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
+            if (user) {
+              if (!password) throw new Error('Mongo 权威账号存在但口令为空');
+              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
+              commandStdin = `password: ${JSON.stringify(password)}\n`;
+            } else {
+              cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
+            }
+          } else if (t.kind === 'mysql') {
+            // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
+            // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。
+            //
+            // 容器里**不摆管道**。`mysqldump | gzip` 的退出码默认是 gzip 的：
+            // 判据与脚本都在 buildMysqlDumpScript()：容器内流式压缩、零中转文件，
+            // 同时用 fd 腾挪保住 mysqldump 自己的退出码（管道默认只给最后一环的，
+            // 而 dash 没有 pipefail）。三次踩坑的经过写在那个函数的注释里。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildMysqlDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'postgres') {
+            // postgres 此前完全不在备份范围里——不是失败，是压根没被当成目标（判据只认
+            // mongo/redis/mysql）。它一直被记进覆盖缺口让整轮健康红着，但红着不等于有备份。
+            // 脚本与判据在 buildPostgresDumpScript()：容器内认证 + 流式压缩 + 两端退出码，
+            // 并把「同实例还有哪些库没被带走」写到 stderr（见下面的 scopeNote）。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildPostgresDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'rabbitmq') {
+            // RabbitMQ 导的是 definitions（拓扑），不是消息——它没有一致性消息快照命令。
+            // 这个取舍不藏着：脚本每轮往 stderr 写一行「当前积压 N 条不在这份备份里」，
+            // 由下面的 scopeNote 接进本轮结论。判据在 buildRabbitmqDumpScript()。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildRabbitmqDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'nacos') {
+            // nacos 此前连「这是什么服务」都认不出来，两台在跑的实例一直归在
+            // 「认不出的类型」里，零备份。它的配置可能落 Derby 也可能落外部 MySQL，
+            // 容器外看不出是哪种——所以走它自己的配置导出接口，两种形态同一份产物。
+            // 判据在 buildNacosDumpScript()：逐命名空间导出，打包压缩，两端退出码都保住。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildNacosDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'redis') {
+            // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
+            //
+            // 1. **要能连上**。配了 requirepass 的实例（密码常写在 --requirepass
+            //    启动参数里，env 里看不到）会让裸 redis-cli 返回 NOAUTH。原来忽略
+            //    返回值，于是 docker cp 拷走一个**旧的** dump.rdb，还报成功——
+            //    「以为有、其实是几天前的」，比没有备份更危险。
+            // 2. **BGSAVE 要真的完成**。异步落盘，拷到半截就是坏文件。
+            // 3. **要能证明是新的**。用 INFO persistence 的官方判据确认这次
+            //    BGSAVE 真的完成，再用 dump.rdb 的 mtime 证明文件确实被它写过。
+            //
+            // 两个判据都换过一轮：
+            //
+            // - 凭据原来只读 env。`redis-server --requirepass secret` 这种把密码
+            //   写在启动参数里、env 里一个字都没有的配法（compose 导入最常见）
+            //   会拿到空密码 → NOAUTH → 每一轮备份都失败。现在 env 取不到就从
+            //   容器内进程的命令行里取，**全程在容器里展开**，不进宿主命令行、
+            //   不进 CDS 日志。（暴露面自检读的是宿主侧 inspect 的 Config.Cmd，
+            //   只判「有没有密码」；这里要的是密码本身，所以走容器内 /proc。）
+            // - 完成判据原来比 LASTSAVE 前后是否变化。LASTSAVE 的粒度是**秒**，
+            //   小库的 BGSAVE 常在同一秒内跑完，时间戳不动——于是白等 90 秒再把
+            //   一份完全有效的备份判成失败。改用 rdb_bgsave_in_progress +
+            //   rdb_last_bgsave_status，那才是 redis 文档给的完成判据。
+            // 脚本走 stdin（`sh -s`）而不是 `sh -c <脚本>`：这样 CDS 自己存的那份
+            // 口令能一起送进去，而宿主命令行上只剩 `sh -s`，`ps` 看不到任何明文。
+            const redisScript = buildRedisBackupProbeScript();
+            const redisProbe = await shell.exec(
+              `docker exec -i ${shq(t.containerName)} sh -s`,
+              {
+                timeout: 120_000,
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t), redisUsernameFromServiceDefinition(t, stateService.getCustomEnv(t.projectId))),
+              },
+            );
+            if (redisProbe.exitCode !== 0) {
+              throw new Error(`BGSAVE 未确认完成，拒绝拷贝可能过期的 dump.rdb：${combinedOutput(redisProbe).trim().slice(0, 300)}`);
+            }
+            // 拷哪个文件由**容器里的 redis 自己**说了算（探测脚本最后一行就是它
+            // CONFIG GET 出来的绝对路径）。宿主这边不许再拼一次 /data/dump.rdb：
+            // 配了 dir / dbfilename 的实例会写到别处，拼默认路径就是拷错文件。
+            const rdbPath = (redisProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
+            if (!rdbPath.startsWith('/')) {
+              throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
+            }
+            cmd = buildRedisSnapshotCopyArgv(t.containerName, rdbPath, out).map(shq).join(' ');
+          } else {
+            /**
+             * 这里原来是 redis 的 `else`——**新增一种备份类型而忘了在这里加分支时，
+             * 它会掉进 redis 那一条，对着一台 postgres 跑 BGSAVE**，然后拷一个
+             * 根本不存在的 dump.rdb。判定层认得它、执行层没接线，正是
+             * predicate-and-wiring-discipline 形状 2（建了一半，删掉不会红）。
+             *
+             * 改成穷尽分支之后，`never` 这一行让**编译器**替我们守着：
+             * BackupKind 多一个成员而这里没加分支，`tsc` 当场报错。
+             */
+            const unreachable: never = t.kind;
+            throw new Error(`备份类型 ${String(unreachable)} 没有对应的导出实现`);
+          }
+          // 前置闸只证明「此刻还有空间」，这次写入本身是无界的——一个大库照样能把
+          // 最后一个字节吃掉，而根盘写满会同时打死所有预览、构建和 CDS 自己。给这次
+          // 导出套一个硬上限（见 buildSizeCappedCommand），超限即失败，残骸走既有的
+          // 失败路径删掉。
+          const capped = buildSizeCappedCommand(cmd, lastFreeBytes);
+          if (!capped) {
+            throw new Error(`可用空间 ${(lastFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GiB 不足以在保留安全余量后写入，跳过`);
+          }
+          const r = await shell.exec(capped.command, { timeout: INFRA_BACKUP_TIMEOUT_MS, stdin: commandStdin });
+          if (r.exitCode !== 0) {
+            const capGiB = (capped.capBytes / 1024 / 1024 / 1024).toFixed(1);
+            // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
+            throw new Error(`${combinedOutput(r).slice(0, 400)}（本次写入上限 ${capGiB} GiB，超限会被内核中断）`);
+          }
+
+          // 成功路径上的 stderr 也要读。导出脚本用它报「这份备份覆盖到哪」——
+          // 只在失败时看 stderr 的话，一次成功但只覆盖了一个库的备份，
+          // 会以「成功 1 个」的形态被读成全量。
+          const scopeNote = extractBackupScopeNote(r.stderr || '');
+          // 「机制本来就不含」与「这轮真的少备了」分两个字段接：混成一个的话，
+          // rabbitmq / nacos 每轮无条件报的那行说明会把健康位永远钉死（Codex review P1）。
+          const gapNote = extractBackupGapNote(r.stderr || '');
+
+          const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
+          const bytes = Number((stat.stdout || '0').trim()) || 0;
+          // 零字节文件是失败伪装成成功的经典形态：文件在、内容没有。
+          if (bytes <= 0) {
+            throw new Error('导出产物为空');
+          }
+
+          // 非空不等于完整。gzip 在写到一半时因磁盘满 / I/O 错误退出，留下的就是一份
+          // 「非空但解不开」的截断档案；转正之后保留策略还会按份数删掉一份真正可用的
+          // 旧备份——用一份坏的换掉一份好的，比这一轮没备份糟得多。
+          // `gzip -t` 是唯一能证明「这份压缩档能解开」的判据，它对 mongodump --gzip
+          // 产出的 .archive.gz 同样成立。
+          if (t.fileName.endsWith('.gz')) {
+            const integrity = await shell.exec(`gzip -t ${shq(out)}`, { timeout: 300_000 });
+            if (integrity.exitCode !== 0) {
+              throw new Error(`产物未通过 gzip 完整性校验（${bytes} 字节，可能被截断）：${combinedOutput(integrity).trim().slice(0, 200)}`);
+            }
+          }
+
+          // 完整性校验通过之后才上传离机副本：顺序反过来的话，会把一份截断档案
+          // 原样传到 R2，离机端拿到的是一份「校验和对得上、但解不开」的坏备份。
+          //
+          // 离机失败**不再连累本地副本**（用户 2026-08-19 决定）。此前的做法是任何失败
+          // 都把临时文件删掉，于是 R2 一挂，本地周期备份跟着整体停摆——实测停了半天，
+          // 而本地那份其实已经过 gzip -t、完全能用。「不记为成功」和「把好东西删掉」
+          // 是两回事，同机副本远胜于没有副本。
+          //
+          // 代价是多出一个风险：离机长期挂掉时，每一轮都会对每个目标重试一次注定失败的
+          // 上传。所以同一轮里连续失败到阈值就判定这条路当前不通，本轮剩下的直接跳过
+          // 上传、只留本地；跨轮不惩罚，下一轮照常再试，离机恢复时能自愈。
+          let remote: Awaited<ReturnType<typeof uploadAndVerifyR2Backup>> | null = null;
+          let offsiteError: string | null = null;
+          const r2 = r2BackupConfigFromEnv();
+          if (!r2) {
+            offsiteError = '缺少完整 R2 配置';
+          } else if (shouldSkipOffsiteThisRound(offsiteConsecutiveFailures)) {
+            offsiteError = `本轮离机已连续失败 ${offsiteConsecutiveFailures} 次，跳过后续上传（下一轮会重试）`;
+          } else {
+            try {
+              remote = await uploadAndVerifyR2Backup({ config: r2, filePath: out, fileName: t.fileName });
+              offsiteConsecutiveFailures = 0;
+            } catch (err) {
+              offsiteConsecutiveFailures += 1;
+              offsiteError = (err as Error).message;
+            }
+          }
+
+          // 本地这份已经过 gzip -t，无论离机成不成都转正并纳入保留策略——
+          // 保留策略是它的上界（份数 + 天数），不会因为离机长期挂掉就无限堆积把盘写满。
+          await backupRetentionService.promoteOutput(out, finalOut);
+          maintenanceCompleted = true;
+
+          // Completed outputs enter the shared catalog; the independent reconciler owns retirement.
+          const finalSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          await backupRetentionService.register(finalOut, t.projectId, t.id, 'automatic', {
+            sourceFingerprint: backupSourceFingerprint,
+            sourceComplete: Boolean(backupSourceFingerprint && backupSourceFingerprint === finalSourceFingerprint && !gapNote),
+          });
+          if (!backupSourceFingerprint || backupSourceFingerprint !== finalSourceFingerprint) store?.record({
+            category: 'system', severity: 'warn', source: 'infra-backup', action: 'infra.backup.recovery-point.unconfirmed',
+            projectId: t.projectId, serviceId: t.id, message: '导出已保留，但备份源身份未确认或已变化，不能替代旧恢复点。',
+          });
+          outcomes.push({
+            id: t.id,
+            projectId: t.projectId,
+            // 离机没上去就不算成功：健康状态、coverageComplete 一概不刷新。
+            ok: offsiteError === null,
+            localOnly: offsiteError !== null,
+            error: offsiteError === null
+              ? undefined
+              : `离机副本缺失：${offsiteError}（本地副本已保留：${t.fileName}）`,
+            fileName: t.fileName,
+            bytes,
+            pruned: [],
+            remoteObjectKey: remote?.objectKey,
+            sha256: remote?.sha256,
+            note: scopeNote ?? undefined,
+            gapNote: gapNote ?? undefined,
+          });
+        } catch (err) {
+          // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
+          // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
+          // Retire only the registered native output identity; unknown replacements remain protected.
+          outcomes.push({ id: t.id, projectId: t.projectId, ok: false, error: (err as Error).message });
+        } finally {
+          await backupRetentionService.closeOutput(out).catch(() => undefined);
+          if (maintenanceJobId) {
+            await stateService.finishInfraMaintenanceJob(
+              maintenanceJobId,
+              maintenanceCompleted ? 'completed' : 'failed',
+            );
+          }
+        }
+        } });
+      }
+
+      await shell.exec(`rmdir ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
+
+      const summary = summarizeBackupRound(outcomes, plan.skipped.length);
+      const failed = outcomes.filter((o) => !o.ok);
+      const coverageComplete = isBackupRoundHealthy(plan, outcomes);
+      // 缺口有两种来源，落盘时必须合起来：计划阶段就知道备不了的（按服务类型判），
+      // 和**跑完才知道只备到一部分**的（导出脚本自己报的范围限制，如 postgres 只导了
+      // POSTGRES_DB 那一个库）。后者原来只挂在 outcome.note 上、没有任何判据读它，
+      // 于是那几个没备份的库既不拉低健康位、也不出现在每日体检的缺口里——灯是绿的，
+      // 备份是缺的（Codex review P1）。
+      const allCoverageGaps = [...coverageGaps, ...backupScopeGaps(outcomes)];
+      if (outcomes.length > 0 || allCoverageGaps.length > 0) {
+        const completedAt = new Date().toISOString();
+        // 「这一轮什么时候跑完的」和「这一轮备全了没有」是**两个事实**，必须分开存。
+        //
+        // 原来两个时间戳都写成 `coverageComplete ? completedAt : null`，于是只要有一个
+        // 目标没成，完成时间就被抹成空。真机上恰好长期有两个目标失败，每一轮都把时间
+        // 抹掉，读它的两处判据只能说「读不到上一轮周期备份的结果」——**备份明明每 6 小时
+        // 跑一轮、还留着完整的成败清单**（形状 1：判据把两件事混成一件）。
+        //
+        // 更糟的是它把这盏灯烧了：备份哪天真的整个停掉，报出来的还是同一句话。一条
+        // 既不能证明有问题、也不能证明没问题的 critical，就是常亮的灯，而常亮的灯没人看
+        // ——这正是这套体检当初要治的病。
+        //
+        // 所以要**三个**时间戳，各回答一个问题，谁也别替谁回答：
+        //
+        //   completedAt      这一轮什么时候跑完的      → 每日体检的「备份还在跑吗」
+        //   localVerifiedAt  本地副本最近一次全都成    → 基础设施看门狗的「本地备份」
+        //   remoteVerifiedAt 离机副本最近一次全都成    → 基础设施看门狗的「离机备份」
+        //
+        // **第二个是补上来的，补的是我自己刚捅的窟窿**（Codex review P1）：上一版只拆出
+        // completedAt 一个，而看门狗那条「本地备份」读的就是它。于是一个本地导出连续
+        // 失败几天的目标（真机上那个 redis 拿不到认证凭据），会因为同一轮里别的目标成功、
+        // 时间戳照常前进，把看门狗刷成绿的——比原来的假「未知」更糟：假未知至少还亮着。
+        // 治好一个消费者的假警报，同时给另一个消费者造了假绿灯，那不叫修好。
+        //
+        // 三个都遵守同一条：本轮没资格前进就**保留上一轮的值**，不抹成 null。
+        // 「本地备份是 3 天前」可行动，「本地备份时间未知」只会让人怀疑监控本身。
+        const previous = readPreviousBackupStamps(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`);
+        // 本地这一份成没成，只看它是不是「本地就没导出来」。离机没上去（localOnly）
+        // 不算本地失败——那份本地副本已经过 gzip 校验并转正，就在盘上。
+        const localFailures = failed.filter((outcome) => !outcome.localOnly);
+        const offsiteOnlyFailures = failed.filter((outcome) => outcome.localOnly);
+        const health = {
+          coverageComplete,
+          completedAt,
+          localVerifiedAt: localFailures.length === 0 ? completedAt : previous.localVerifiedAt,
+          remoteVerifiedAt: failed.length === 0 ? completedAt : previous.remoteVerifiedAt,
+          coverageGaps: allCoverageGaps,
+          // 失败目标要留名字，而且要**分成两类**、**带上项目**。
+          //
+          // 分两类：`localOnly` 的那批手上有一份验过的本地副本，只是离机没上去。
+          // 和「什么都没备成」混在一起报「没有它们的新副本」，会把运维支去找一份
+          // 其实存在的本地备份，而真正该修的离机通道没人管——BackupOutcome.localOnly
+          // 的注释早就写明这两者不能混，我上一版自己违反了它（Codex review P2）。
+          //
+          // 带项目：真机一轮里有六个叫 redis 的目标，裸 id 的告警谁也路由不到。
+          //
+          // 带 reason：项目设置里的「周期备份」面板要能让人点开看「为什么没备成」。
+          // 只留一个 id 的话，面板只能说「它失败了」，看的人还得自己去翻容器日志——
+          // 那等于把诊断又推回给用户。原文过一遍脱敏再截尾：失败原因在输出末尾，
+          // 取头只会拿到一堆启动噪音。
+          failedTargets: localFailures.map((outcome) => ({
+            id: outcome.id,
+            projectId: outcome.projectId,
+            reason: backupFailureReason(outcome.error),
+          })),
+          offsiteOnlyTargets: offsiteOnlyFailures.map((outcome) => ({
+            id: outcome.id,
+            projectId: outcome.projectId,
+            reason: backupFailureReason(outcome.error),
+          })),
+          // objects 是「这一轮尝试过的全部目标」，面板靠它算出「哪些是正常的」。
+          // 同样要带 projectId，否则按项目筛不出来。
+          objects: outcomes.map((outcome) => ({
+            id: outcome.id,
+            projectId: outcome.projectId,
+            fileName: outcome.fileName,
+            remoteObjectKey: outcome.remoteObjectKey,
+            sha256: outcome.sha256,
+            bytes: outcome.bytes,
+          })),
+        };
+        const target = `${dir}/${INFRA_BACKUP_HEALTH_FILE}`;
+        const tmp = `${target}.tmp`;
+        fs.writeFileSync(tmp, `${JSON.stringify(health)}\n`, { mode: 0o600 });
+        fs.renameSync(tmp, target);
+      }
+      // 活性打点在分岔之前：「这一轮跑完了」和「每个目标都成功了」是两件事。
+      // 放进 else 分支的话，像某个库口令不对这种长期部分失败，会被误报成
+      // 「周期备份已经哑了」——那是假警报，比不报还糟。
+      backupLiveness.markSuccess();
+      if (failed.length > 0 || allCoverageGaps.length > 0) {
+        console.warn(`[infra-backup] ${summary}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.partial-failure', message: summary, status: 'warn',
+          details: { outcomes, skipped: plan.skipped, coverageGaps: allCoverageGaps, directory: dir },
+        });
+      } else {
+        console.log(`[infra-backup] ${summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'infra-backup',
+          action: 'infra.backup.completed', message: summary, status: 'info',
+          details: { outcomes, skipped: plan.skipped, directory: dir },
+        });
+      }
+    } catch (err) {
+      console.warn(`[infra-backup] 本轮失败: ${(err as Error).message}`);
+      // 整轮炸掉必须留痕：只打 console 的话，「定时备份实际停摆」可以一直没人发现，
+      // 而那正是备份这件事最糟的失败方式（E36 同族）。
+      recordAuditFailure({
+        store, liveness: backupLiveness, source: 'infra-backup',
+        reason: (err as Error).message, what: '基础设施周期备份',
+      });
+    } finally {
+      // 必须在 finally 里放闸：任何一条 return / throw 忘了放，往后每一轮都被
+      // 自己挡在门外，而日志只会说「上一轮还没跑完」——一个永远不会自愈的静默停摆。
+      holder = null;
+    }
+  };
+
+  setTimeout(() => { void run(); }, INFRA_BACKUP_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_BACKUP_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+async function certificateStatus(host: string): Promise<{ host: string; expiresAt?: Date | null; error?: string }> {
+  return new Promise((resolve) => {
+    const socket = tls.connect({ host, port: 443, servername: host, timeout: 10_000, rejectUnauthorized: true });
+    const finish = (value: { host: string; expiresAt?: Date | null; error?: string }): void => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.once('secureConnect', () => {
+      const cert = socket.getPeerCertificate();
+      const expiresAt = cert.valid_to ? new Date(cert.valid_to) : null;
+      finish({ host, expiresAt });
+    });
+    socket.once('timeout', () => finish({ host, expiresAt: null, error: '连接超时' }));
+    socket.once('error', (err) => finish({ host, expiresAt: null, error: err.message }));
+  });
+}
+
+const lastExternalPortAudits = new Map<ExternalPortAuditFamily, {
+  family: ExternalPortAuditFamily;
+  checkedAt: Date;
+  passed: boolean;
+  unexpectedOpenPorts: number[];
+  missingRequiredPorts: number[];
+  error?: string;
+}>();
+
+function startExternalPortAuditWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+  const auditConfig = externalPortAuditConfigFromEnv();
+  if (!auditConfig) {
+    store?.record({
+      category: 'system', severity: 'warn', source: 'external-port-audit',
+      action: 'external.port.audit.disabled', message: '公网端口外部扫描未配置', status: 'warn',
+    });
+    return null;
+  }
+  let running = false;
+  const run = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      for (const family of ['ipv4', 'ipv6'] as const) {
+        try {
+          const result = await runExternalPortAudit({ config: auditConfig, family });
+          lastExternalPortAudits.set(family, { ...result, checkedAt: new Date(result.checkedAt) });
+          store?.record({
+            category: 'system', severity: result.passed ? 'info' : 'error', source: 'external-port-audit',
+            action: result.passed ? 'external.port.audit.passed' : 'external.port.audit.failed',
+            message: result.passed
+              ? `${family.toUpperCase()} 公网端口仅开放 22、80、443`
+              : `${family.toUpperCase()} 公网端口不符合固定白名单`,
+            status: result.passed ? 'info' : 'error',
+            details: {
+              family, checkedAt: result.checkedAt, openPorts: result.openPorts,
+              unexpectedOpenPorts: result.unexpectedOpenPorts,
+              missingRequiredPorts: result.missingRequiredPorts,
+              durationMs: result.durationMs,
+            },
+          });
+        } catch (err) {
+          const message = (err as Error).message;
+          lastExternalPortAudits.set(family, {
+            family, checkedAt: new Date(), passed: false,
+            unexpectedOpenPorts: [], missingRequiredPorts: [], error: message,
+          });
+          store?.record({
+            category: 'system', severity: 'error', source: 'external-port-audit',
+            action: 'external.port.audit.error',
+            message: `${family.toUpperCase()} 公网端口外部扫描失败`, status: 'error',
+            error: { message }, details: { family },
+          });
+        }
+      }
+    } finally {
+      running = false;
+    }
+  };
+  setTimeout(() => { void run(); }, EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, auditConfig.intervalMs);
+  timer.unref?.();
+  return timer;
+}
+
+/**
+ * 上一轮记下的「本地全成」与「离机全成」时刻。本轮没资格前进时用它们续上，
+ * 好让「本地备份是 N 小时前」这个已知事实不至于退化成「时间未知」。
+ * 读不出来（首轮 / 文件损坏）才是真的 null。
+ *
+ * `localVerifiedAt` 对**旧格式文件**退回读 `completedAt`：老版本只在整轮都健康时
+ * 才写 completedAt，所以旧文件里 completedAt 非空就等价于本地全成，语义对得上。
+ */
+/** 落盘的失败目标读回来。空 id 丢掉，projectId 缺失保留 null（旧格式文件就是这样）。 */
+function toBackupTargetRefs(list?: Array<{ id?: string; projectId?: string | null }>): BackupTargetRef[] {
+  return (list || [])
+    .map((t) => ({ id: String(t?.id || ''), projectId: t?.projectId ?? null }))
+    .filter((t) => Boolean(t.id));
+}
+
+function readPreviousBackupStamps(healthFilePath: string): {
+  localVerifiedAt: string | null;
+  remoteVerifiedAt: string | null;
+} {
+  try {
+    const value = JSON.parse(fs.readFileSync(healthFilePath, 'utf8')) as {
+      localVerifiedAt?: string | null; remoteVerifiedAt?: string | null; completedAt?: string | null;
+    };
+    return {
+      localVerifiedAt: value.localVerifiedAt || value.completedAt || null,
+      remoteVerifiedAt: value.remoteVerifiedAt || null,
+    };
+  } catch {
+    return { localVerifiedAt: null, remoteVerifiedAt: null };
+  }
+}
+
+function readBackupHealth(): { localVerifiedAt?: Date | null; remoteVerifiedAt?: Date | null } {
+  const candidates = backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot });
+  for (const dir of candidates) {
+    try {
+      const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
+        coverageComplete?: boolean; completedAt?: string; localVerifiedAt?: string; remoteVerifiedAt?: string;
+      };
+      // **这里曾经还有一次抹空**：`coverageComplete === false` 就把两个时间戳一起归零。
+      // 同一个「把跑没跑和备没备全混成一件事」的判据被抄了两份（形状 3：判据分裂后各自
+      // 漂移），只修落盘那一处不够——基础设施健康那两条仍会报「本地/离机备份时间未知，
+      // 可能没有可恢复副本」，而备份每 6 小时就在跑。
+      //
+      // 覆盖是否齐全由 coverageComplete / coverageGaps 自己回答，时间戳只回答新鲜度。
+      //
+      // **这个消费者要的是 `localVerifiedAt`，不是 `completedAt`**：它把这个值渲染成
+      // 看门狗上的「本地备份最近一次成功」。喂 completedAt 进去，一个本地导出连续
+      // 失败几天的目标会被同轮其它目标的成功刷成绿灯（Codex review P1）。
+      // 旧格式文件没有这个字段，退回 completedAt——老版本只在整轮健康时才写它，
+      // 语义正好等价。
+      return {
+        localVerifiedAt: value.localVerifiedAt
+          ? new Date(value.localVerifiedAt)
+          : value.completedAt ? new Date(value.completedAt) : null,
+        remoteVerifiedAt: value.remoteVerifiedAt ? new Date(value.remoteVerifiedAt) : null,
+      };
+    } catch { /* 继续检查下一个实际落盘目录 */ }
+  }
+  return { localVerifiedAt: null, remoteVerifiedAt: null };
+}
+
+/**
+ * 每日安全体检：把散落各处的事实合成一句「今天这台机器健康吗」。
+ *
+ * 2026-08-23 一次人工安全审计查出来的东西，本来每一项都该由系统自己每天说出来
+ * （公网端口、无口令的库、备份新鲜度、恢复演练）。这些事实各自都有人算，
+ * 但**没有任何一处把它们合起来**——于是要等人想起来查一次才发现。
+ *
+ * 判定全在 platform-daily-health（纯函数、可回归），这里只负责取事实和落事件。
+ */
+function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+
+  const run = (): void => {
+    try {
+      // 事实一：运行态的库。直接用暴露面自检刚算完的那一份，不再自己 inspect 一遍
+      // ——两处各算一次必然漂移，而这里要的正是它已经算好的东西。
+      const exposure = lastInfraExposureReport;
+      if (!exposure) {
+        // 首检还没跑完就不出结论：拿一份空事实去体检，会得出「一切正常」这种
+        // 最糟糕的假绿灯。
+        console.log('[daily-health] 暴露面自检还没跑过，本轮跳过（下一轮再来）');
+        return;
+      }
+      // 事实一 b：存量豁免台账。**从配置层取，不从运行态取**——豁免是「这台服务
+      // 靠一条到期日在跑」，跟它此刻有没有对外端口、甚至跑没跑都没关系。挂在运行态
+      // 事实上的话，覆盖面会被暴露面那层筛子卡住，一台纯内网或当前停着的老库到期前
+      // 不会有任何提示，到期后直接起不来（Codex review P1）。
+      const exemptions: InfraExemptionFact[] = [];
+      for (const service of stateService.getInfraServices() || []) {
+        // 判据必须读**容器真正会拿到的那个值**，不是它在台账里的样子。
+        //
+        // `InfraService.env` / `command` 存的是未展开的模板：compose 导入和手工建的
+        // 服务里，值经常就是字面的 `${CDS_MYSQL_PASSWORD}`，到启动容器那一刻才解析
+        // （线上现在就有四个项目这样存着）。直接拿生值来判，认证判据看到的是
+        // 一串 `${...}`——它当然「有值」，于是每一台模板式配置的库都被判成
+        // 「配了认证」，而它到底配没配，这条体检从来没真的看过（形状 6，台账 E75）。
+        const projectEnv = stateService.getCustomEnv(service.projectId || 'default');
+        const decision = evaluateInfraAuthentication(
+          {
+            dockerImage: service.dockerImage,
+            id: service.id,
+            name: service.name,
+            basePresetId: service.basePresetId,
+            containerName: service.containerName,
+            containerPort: service.containerPort,
+            env: resolveEnvTemplates(service.env || {}, projectEnv),
+            command: resolveCommandTemplate(service.command, projectEnv),
+            entrypoint: resolveCommandTemplate(service.entrypoint, projectEnv),
+            createdAt: service.createdAt,
+          },
+          { graceUntil: process.env.CDS_INFRA_AUTH_GRACE_UNTIL || null },
+        );
+        // 只有「靠豁免才放行」的才记倒计时：本来就配了认证的不该被算进去。
+        //
+        // 带项目：**infra id 只在项目内唯一**，这台机器上六个项目各有一个叫 `redis`
+        // 的服务，结论的 id 与话术只用 id 会把两个项目的问题说成同一条
+        //（cross-project-isolation：标识要带作用域，形状 1）。
+        if (decision.exemption) {
+          exemptions.push({
+            id: service.id,
+            projectId: service.projectId,
+            expiresAt: decision.exemption.expiresAt,
+          });
+        }
+      }
+      const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
+        id: f.id,
+        // 结论的 id 与话术都要带项目：infra id 只在项目内唯一，两个项目各有一个 redis 时，
+        // 只用 id 会生成两条一模一样的 finding id——去重一合并就少一条，运维也看不出
+        // 该修哪个项目的那台（Codex review P2）。
+        projectId: f.projectId,
+        publiclyPublished: f.publiclyPublished,
+        // 防火墙状态必须一起带过去。只传原始绑定的话，一台「绑在全网卡但被宿主
+        // 防火墙挡住」的库——暴露面自检特意把它降到 warn 的那一类——会在体检这边
+        // 被重新判成 critical，并且说出「任何人扫到就能直接读写」这种**当场可以
+        // 验伪**的话（Codex review P2）。
+        firewallBlocked: f.firewallBlocked,
+        authenticated: f.authenticated,
+      }));
+      // **再把「跑着但一个端口都没发布」的那批接上。** findings 是按暴露面筛过的清单，
+      // 不是完整台账；只喂它进去，「内网但无口令」那一整档就永远不会响——一台纯内网的
+      // 老库可以一直无声地没有口令（Codex review P1）。
+      for (const svc of exposure.internalOnly) {
+        infra.push({
+          id: svc.id,
+          projectId: svc.projectId,
+          publiclyPublished: false,
+          firewallBlocked: false,
+          authenticated: svc.authenticated,
+        });
+      }
+
+      // 事实二：平台自身的存储。认证门禁只管「项目基础设施容器」，CDS 自己这几个
+      // 库从来不在它的管辖范围内，也就永远不会有人被提醒——这一条只有本体检会说。
+      //
+      // **只在真的用 Mongo 时才报**：CDS 支持 json 状态后端，那种部署压根没有 Mongo，
+      // 无条件塞一条 `connectionUri: null` 会被判成「没有凭据」，于是天天为一个
+      // 不存在的库报警。一盏永远亮着的灯没人会看——那正是这个体检要治的病，
+      // 不能自己先犯（Codex review P2）。
+      const platformStores: HealthPlatformStoreFact[] = platformStoreFacts(process.env);
+
+      // 事实三：备份。这里自己读一遍而不复用 readBackupHealth()——那个函数把
+      // 「覆盖不全」压成了「完全没备份过」，两件事在体检里要分开报。
+      let lastCompletedAt: string | null = null;
+      let coverageGaps: string[] = [];
+      let failedTargets: BackupTargetRef[] = [];
+      let offsiteOnlyTargets: BackupTargetRef[] = [];
+      for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
+        try {
+          const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
+            completedAt?: string | null;
+            coverageGaps?: Array<{ id?: string }>;
+            failedTargets?: Array<{ id?: string; projectId?: string | null }>;
+            offsiteOnlyTargets?: Array<{ id?: string; projectId?: string | null }>;
+          };
+          // completedAt **只**回答「跑没跑」。不要在这里按 coverageComplete 再抹一次空——
+          // 那正是这条链路上被抄了两份、又各自漂移的那个判据（见落盘处与 readBackupHealth
+          // 的注释）。备没备全走 coverageGaps，谁没备成走 failedTargets。
+          lastCompletedAt = value.completedAt ?? null;
+          coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
+          // 两类各自读。**不许合并**：它们要的运维动作不同，合起来那条告警就没法照做。
+          failedTargets = toBackupTargetRefs(value.failedTargets);
+          offsiteOnlyTargets = toBackupTargetRefs(value.offsiteOnlyTargets);
+          break;
+        } catch { /* 换下一个候选目录 */ }
+      }
+
+      // 事实四：恢复演练。**目前没有任何地方记录它**，所以恒为 null——
+      // 体检会如实报「从来没演练过」。这不是占位符：在补上记录之前，
+      // 「能不能真的恢复」的答案就是「不知道」，报成不知道才是对的。
+      const verdict = evaluateDailyHealth({
+        now: new Date(),
+        infra,
+        infraExemptions: exemptions,
+        platformStores,
+        backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets },
+        lastRestoreDrillAt: null,
+      });
+
+      const body = [verdict.headline, '', ...verdict.findings.map((f) => `- [${f.severity}] ${f.message}`)]
+        .join('\n');
+      if (verdict.severity === 'ok') {
+        console.log(`[daily-health] ${verdict.headline}`);
+      } else {
+        console.warn(`[daily-health] ${verdict.headline}`);
+      }
+      store?.record({
+        category: 'system',
+        severity: verdict.severity === 'critical' ? 'error' : verdict.severity === 'warn' ? 'warn' : 'info',
+        source: 'daily-health',
+        action: 'platform.daily-health',
+        message: body,
+        status: verdict.severity === 'critical' ? 'error' : verdict.severity === 'warn' ? 'warn' : 'info',
+        details: { severity: verdict.severity, findings: verdict.findings },
+      });
+    } catch (err) {
+      // 体检自己挂了同样要出声：一个静默失败的体检和一个说「没问题」的体检，
+      // 在日志里长得一模一样。
+      console.warn(`[daily-health] 体检失败: ${(err as Error).message}`);
+      store?.record({
+        category: 'system', severity: 'warn', source: 'daily-health',
+        action: 'platform.daily-health.failed',
+        message: `每日安全体检没能跑完：${(err as Error).message}。本轮结论不可信。`,
+        status: 'warn',
+      });
+    }
+  };
+
+  setTimeout(run, PLATFORM_DAILY_HEALTH_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(run, PLATFORM_DAILY_HEALTH_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+  let lastSignature = '';
+  const run = async (): Promise<void> => {
+    const backup = readBackupHealth();
+    const certificates = await Promise.all((config.rootDomains || []).map((host) => certificateStatus(host)));
+    const runningNames = await containerService.getRunningContainerNamesSnapshot();
+    const expectedContainers = stateService.getInfraServices()
+      .filter((service) => service.status === 'running' || service.status === 'error')
+      .map((service) => ({ name: service.containerName }));
+    const report = evaluateInfrastructureHealth({
+      now: new Date(),
+      backupCompletedAt: backup.localVerifiedAt,
+      remoteBackupVerifiedAt: backup.remoteVerifiedAt,
+      disk: defaultDiskUsage(config.repoRoot),
+      certificates,
+      containers: infrastructureContainerHealth(expectedContainers, runningNames),
+      exposureCriticalCount: lastInfraExposureReport?.criticalCount ?? null,
+      exposureWarnCount: lastInfraExposureReport?.warnCount ?? null,
+      externalPortAudits: [...lastExternalPortAudits.values()],
+    });
+    if (report.signature === lastSignature) return;
+    lastSignature = report.signature;
+    store?.record({
+      category: 'system',
+      severity: report.level === 'critical' ? 'error' : report.level === 'warn' ? 'warn' : 'info',
+      source: 'infrastructure-health',
+      action: 'infrastructure.health.checked',
+      message: report.summary,
+      status: report.level,
+      details: { items: report.items },
+    });
+  };
+  setTimeout(() => { void run(); }, INFRA_HEALTH_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_HEALTH_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
 function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
-  if (!store) return null;
   let lastSeverity: ServerEventSeverity | null = null;
   let lastRecordedAt = 0;
 
   const sample = () => {
     try {
+      if (config.mode !== 'executor' && !isSelfUpdateDraining(Date.now())) {
+        void requestArtifactWaitRefresh(branchOperationCoordinator);
+        for (const pending of branchOperationCoordinator.drainReady()) dispatchBackgroundPendingWebhookDeploy(pending);
+      }
       const health = evaluateBuildGateHealth(buildGateStatus(), state.getDeploymentRuns(), new Date());
       const now = Date.now();
       if (health.ok) {
         if (lastSeverity) {
           // 从退化恢复：记一条 info 让事件流有始有终。
-          store.record({
+          store?.record({
             category: 'system',
             severity: 'info',
             source: 'build-gate-watchdog',
@@ -319,7 +1572,7 @@ function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateSe
       lastSeverity = severity;
       lastRecordedAt = now;
       const message = `构建队列健康退化：${health.reasons.map((r) => r.message).join('；')}`;
-      store.record({
+      store?.record({
         category: 'system',
         severity,
         source: 'build-gate-watchdog',
@@ -352,14 +1605,50 @@ function startStaleDeployDispatchReconciler(
   // stuck reconciler on executors too）。故不再对 executor 提前返回；webhook 派发部分用 mode 守卫。
   const isMaster = config.mode !== 'executor';
   let running = false;
-  // diffRuntimePaths 结果记忆化：ciTargetSha..githubCommitSha 是不可变提交对，
-  // 同一对的 git diff 结果永不变化。旧写法每个 5 分钟 tick 对每条分歧分支重跑
-  // execSync(git diff)（同步阻塞整个事件循环），多条 stale 分支叠加即一次冻结
-  // 数十秒的悬崖（2026-07-21 性能事故：/api/projects 排队 40s+）。命中缓存零成本；
-  // 只缓存成功计算的结果，git 失败（保守返回 false）不缓存以便下轮重试。
-  const runtimeDiffCache = new Map<string, boolean>();
-  const RUNTIME_DIFF_CACHE_MAX = 512;
-  const run = () => {
+  const stuckReconciler = new AsyncStuckDeployReconciler({
+    getBranches: () => state.getAllBranches(),
+    getOptions: () => ({
+      source: 'deploy-stuck-reconciler.interval',
+      serverEventLogStore: store,
+      // projectId 缺省回退 'default'（与全仓其它 getBuildProfilesForProject 调用一致）。
+      // 否则无 projectId 的分支拿到空 profile 列表 → branchUsesPrebuiltMode 恒 false →
+      // TYPE1 极速版落后告警对这些分支永不触发（Bugbot Low）。
+      getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId || 'default'),
+      // 有在途操作（部署/重启/降温…）的分支整条跳过：那个操作拥有该分支，合法的长任务
+      // （>45min 编译/迁移/冷启）不该被硬超时误判失败（Bugbot Medium）。与 index.ts 别处
+      // 「recovery skips operation lease」判活同源。
+      hasActiveOperation: (b) =>
+        // 只护「年轻」的在途操作（>2× 硬超时=90min 的挂死租约、坏/缺起始戳的租约一律放行给收敛）。
+        // 判活逻辑抽到 deploy-stuck-reconciler.hasYoungActiveLease 纯函数，可单测（见同名 test 套件）。
+        hasYoungActiveLease(branchOperationCoordinator.getActiveOperations(b.id), Date.now()),
+      // 硬超时只在 master 启用：master 的本地/远端代理部署都持 BranchOperationCoordinator 租约，
+      // hasActiveOperation 判活准。executor 节点的 /exec/deploy 不持该租约（判活恒 false），
+      // 开硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack lease
+      // skip」）。executor 只做时间戳证据收敛 + 告警。
+      allowHardTimeout: isMaster,
+      // 僵尸 profile 过滤同样只在 master 安全：executor 本地 profile 注册表不权威（/exec/deploy
+      // 用 master 传来的 profilesData、不写本地注册表），过滤会把真实 executor 服务全当僵尸、
+      // 把在跑分支误判 idle（Codex P2「Do not filter executor services with local profiles」）。
+      filterZombieProfiles: isMaster,
+      appendLog: (branchId, log) => state.appendLog(branchId, log),
+      emitBranchUpdated: (b) => branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: {
+          branchId: b.id,
+          projectId: b.projectId,
+          patch: { status: b.status, services: b.services, errorMessage: b.errorMessage, ciImageError: b.ciImageError },
+          ts: nowIso(),
+        },
+    }),
+
+    }),
+    git: createReleaseGitRunner(shell),
+    onReconciled: stuck => {
+      console.warn(`[deploy-stuck] reconciled ${stuck.length} stuck deploy/lifecycle state(s)`);
+      state.save();
+    },
+  });
+  const run = async () => {
     if (running) return;
     running = true;
     try {
@@ -367,6 +1656,11 @@ function startStaleDeployDispatchReconciler(
       // action/source，否则卡死收敛的异常被误记成 `branch.deploy-dispatch.reconcile.failed`
       // +「stale webhook dispatch」文案，排障时张冠李戴（Bugbot Low）。
       if (isMaster) {
+        void resumeMaintenanceDeploys(state, {
+          draining: () => isSelfUpdateDraining(Date.now()), dispatch: defaultLocalhostDeploy(config, state),
+          record: (branchId, message) => store?.record({ category: 'system', severity: 'info', source: 'webhook-maintenance-retry',
+            action: 'webhook.maintenance-retry', branchId, message }),
+        }).catch(() => console.warn('[webhook] 自更新补发记录持久化失败，停止本轮补发'));
         try {
           const reconciled = reconcileStaleDeployDispatches(state, {
             source: 'deploy-dispatch-reconciler.interval',
@@ -392,74 +1686,7 @@ function startStaleDeployDispatchReconciler(
       // master + executor 都跑（见函数顶部说明）。
       // 纯函数 reconcileStuckDeployStates 经回调注入所有 I/O，这里只负责接线。
       try {
-      const stuck = reconcileStuckDeployStates(state.getAllBranches(), {
-        source: 'deploy-stuck-reconciler.interval',
-        serverEventLogStore: store,
-        // projectId 缺省回退 'default'（与全仓其它 getBuildProfilesForProject 调用一致）。
-        // 否则无 projectId 的分支拿到空 profile 列表 → branchUsesPrebuiltMode 恒 false →
-        // TYPE1 极速版落后告警对这些分支永不触发（Bugbot Low）。
-        getBuildProfiles: (b) => state.getBuildProfilesForProject(b.projectId || 'default'),
-        // 有在途操作（部署/重启/降温…）的分支整条跳过：那个操作拥有该分支，合法的长任务
-        // （>45min 编译/迁移/冷启）不该被硬超时误判失败（Bugbot Medium）。与 index.ts 别处
-        // 「recovery skips operation lease」判活同源。
-        hasActiveOperation: (b) =>
-          // 只护「年轻」的在途操作（>2× 硬超时=90min 的挂死租约、坏/缺起始戳的租约一律放行给收敛）。
-          // 判活逻辑抽到 deploy-stuck-reconciler.hasYoungActiveLease 纯函数，可单测（见同名 test 套件）。
-          hasYoungActiveLease(branchOperationCoordinator.getActiveOperations(b.id), Date.now()),
-        // 硬超时只在 master 启用：master 的本地/远端代理部署都持 BranchOperationCoordinator 租约，
-        // hasActiveOperation 判活准。executor 节点的 /exec/deploy 不持该租约（判活恒 false），
-        // 开硬超时会把合法的 >45min 远端构建误判 error（Bugbot High「Executor deploys lack lease
-        // skip」）。executor 只做时间戳证据收敛 + 告警。
-        allowHardTimeout: isMaster,
-        // 僵尸 profile 过滤同样只在 master 安全：executor 本地 profile 注册表不权威（/exec/deploy
-        // 用 master 传来的 profilesData、不写本地注册表），过滤会把真实 executor 服务全当僵尸、
-        // 把在跑分支误判 idle（Codex P2「Do not filter executor services with local profiles」）。
-        filterZombieProfiles: isMaster,
-        diffRuntimePaths: (b) => {
-          // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
-          const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
-          const cacheKey = `${b.worktreePath}:${range}`;
-          const cached = runtimeDiffCache.get(cacheKey);
-          if (cached !== undefined) return cached;
-          try {
-            // 不加 `|| true`:worktree 暂缺 / sha 未 fetch 等 git 失败必须以非零退出
-            // 抛进 catch 走「不缓存」路径。旧写法 `|| true` 会把失败洗成空输出成功,
-            // 被下面缓存成 false 后告警永久压制到进程重启(Codex P2, PR #1213)。
-            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
-              encoding: 'utf-8',
-            }).trim();
-            const result = out
-              ? (() => {
-                  const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
-                  return impact.needsRestart || impact.hotReloadablePaths.length > 0;
-                })()
-              : false;
-            if (runtimeDiffCache.size >= RUNTIME_DIFF_CACHE_MAX) {
-              const oldest = runtimeDiffCache.keys().next().value;
-              if (oldest !== undefined) runtimeDiffCache.delete(oldest);
-            }
-            runtimeDiffCache.set(cacheKey, result);
-            return result;
-          } catch {
-            // 取不到 diff 证据 → 保守不告警（无根不喊）。不缓存，等下轮重试。
-            return false;
-          }
-        },
-        appendLog: (branchId, log) => state.appendLog(branchId, log),
-        emitBranchUpdated: (b) => branchEvents.emitEvent({
-          type: 'branch.updated',
-          payload: {
-            branchId: b.id,
-            projectId: b.projectId,
-            patch: { status: b.status, services: b.services, errorMessage: b.errorMessage, ciImageError: b.ciImageError },
-            ts: nowIso(),
-          },
-        }),
-      });
-      if (stuck.length > 0) {
-        console.warn(`[deploy-stuck] reconciled ${stuck.length} stuck deploy/lifecycle state(s)`);
-        state.save();
-      }
+        await stuckReconciler.run();
       } catch (err) {
         store?.record({
           category: 'system',
@@ -739,6 +1966,7 @@ async function initStateService(): Promise<void> {
   if (rawStorageMode === 'json') {
     stateService = new StateService(stateFile, config.repoRoot);
     stateService.load();
+    await stateService.flush();
     storageModeResolved = 'json';
     return;
   }
@@ -760,6 +1988,7 @@ async function initStateService(): Promise<void> {
     console.log('  [storage] CDS_STORAGE_MODE=auto + no CDS_MONGO_URI → using JSON backend');
     stateService = new StateService(stateFile, config.repoRoot);
     stateService.load();
+    await stateService.flush();
     storageModeResolved = 'auto-fallback-json';
     return;
   }
@@ -819,6 +2048,7 @@ async function initStateService(): Promise<void> {
     }
     stateService = new StateService(stateFile, config.repoRoot, splitStore);
     stateService.load();
+    await stateService.flush();
     storageModeResolved = 'mongo-split';
     activeMongoHandle = splitHandle;
     console.log(
@@ -885,12 +2115,19 @@ async function initStateService(): Promise<void> {
 
   stateService = new StateService(stateFile, config.repoRoot, mongoStore);
   stateService.load();
+  await stateService.flush();
   storageModeResolved = 'mongo';
   activeMongoHandle = handle;
   console.log(`  [storage] mongo backend active (uri=${uri.replace(/\/\/[^@]*@/, '//***:***@')}, db=${dbName})`);
 }
 
 await initStateService();
+config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
+const backupRetentionService = new BackupRetentionService({ shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId });
+const acceptanceResourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
+const ownedResourceLifecycle = new OwnedResourceLifecycle({ shell, instanceId: config.storageInstanceId,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'tasks'),
+  workspaceBase: path.join(acceptanceResourceRoot, 'workspaces'), catalog: path.join(acceptanceResourceRoot, 'catalog') });
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -919,28 +2156,120 @@ try {
 // See doc/guide.cds.env.md §3 and doc/design.cds.fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
 const activeHttpLogStore = httpLogStoreFromEnv();
+let activeHttpLogStoreReady = false;
 if (activeHttpLogStore) {
   try {
     await activeHttpLogStore.init();
+    activeHttpLogStoreReady = true;
     console.log('  [http-log] persistent request logging enabled (collection=cds_http_logs)');
   } catch (err) {
     console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
   }
 }
-const activeServerEventLogStore = serverEventLogStoreFromEnv();
-if (activeServerEventLogStore) {
+const localServerEventLogStore = serverEventLogStoreFromEnv();
+let localServerEventLogReady = false;
+if (localServerEventLogStore) {
   try {
-    await activeServerEventLogStore.init();
+    await localServerEventLogStore.init();
+    localServerEventLogReady = true;
     console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
   } catch (err) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
   }
 }
+const offHostAuditConfig = offHostAuditConfigFromEnv();
+const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
+  ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
+  : localServerEventLogStore;
+// 总保险丝：后台小事失败不许弄死整台 CDS（2026-08-18 事故，见 process-fuse.ts）。
+// 装在事件汇建好之后、任何后台任务启动之前——晚一步就兜不住启动期的失败，
+// 而今天崩的恰恰就是启动期。
+installProcessFuse({ store: activeServerEventLogStore, processName: 'cds-master' });
+
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);
+// 存量暴露面看门狗：单测只管得住「新建时怎么拼参数」，管不了已经在跑的容器，
+// 也管不了不经 CDS 起的容器。这一层按运行态真值持续盯。
+const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
+// 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
+// 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
+const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+// Independent of backup creation/success; restart resumes the same durable catalog.
+const reconcileBackups = async () => {
+  try {
+    const report = await backupRetentionService.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'backup-retention', action: 'backup.retention.reconciled', message: '全局备份保留对账（最多15天，冲突与未知保持保护）', details: { report } });
+  } catch (error) {
+    activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
+  }
+};
+const backupRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileBackups(), 60 * 60_000) : null;
+const backupRetentionStartup = backupRetentionTimer ? setTimeout(() => void reconcileBackups(), 60_000) : null;
+backupRetentionTimer?.unref(); backupRetentionStartup?.unref();
+// Independent host keeper: a crashed producer is not responsible for its own retirement.
+const reconcileAcceptanceResources = async () => {
+  try {
+    const report = await ownedResourceLifecycle.inspect(false);
+    activeServerEventLogStore?.record({ category: 'system', severity: report.scanStatus === 'complete' ? 'info' : 'warn', source: 'acceptance-retention', action: 'acceptance.retention.reconciled', message: '验收资源租约与退役对账', details: { report } });
+  } catch { activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' }); }
+};
+const acceptanceRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileAcceptanceResources(), 60_000) : null;
+acceptanceRetentionTimer?.unref();
+const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
+  recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
+  onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
+});
+const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
+const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
+// 每日安全体检：把公网端口、无口令的库、备份新鲜度、恢复演练合成一句结论。
+// 这些事实各自都有人算，但此前没有任何一处把它们合起来——于是要等人想起来查才发现。
+const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
+
+// 存量系统互联连接补 report:read —— **默认不做**，要管理员显式开开关。
+//
+// 自动补等于在用户没重新看过授权页的情况下扩大一张已签发的长期令牌，那是替他做了同意。
+// 不补的话存量连接的报告同步会 401，正路是让用户重新走一次授权（授权页已列出该 scope）；
+// 赶时间可以设 CDS_GRANT_REPORT_READ_TO_EXISTING=1 重启一次，那是个需要动手的决定。
+try {
+  const grantEnabled = ['1', 'true', 'yes']
+    .includes(String(process.env.CDS_GRANT_REPORT_READ_TO_EXISTING || '').trim().toLowerCase());
+  const patchedConnections = backfillReportReadScope(stateService, { enabled: grantEnabled });
+  for (const id of patchedConnections) {
+    // 逐条留痕：一个没人看得见的授权变更，和把门禁删掉没有区别。
+    console.log(`[connection-scope] 按 CDS_GRANT_REPORT_READ_TO_EXISTING 给存量连接 ${id} 补上 report:read`);
+  }
+} catch (err) {
+  // 补不上不该拦住启动：报告同步会继续 401，但那是可见的失败，比 CDS 起不来好。
+  console.error('[connection-scope] 补 report:read 失败', err);
+}
+
+/**
+ * 重启之后回头看一眼：上一次自更新声称更到的 sha，和现在真实的 HEAD 对得上吗？
+ *
+ * 对不上就说明中途被退回了。这条必须落一条 error 事件——回滚是全站级别的事实，
+ * 却曾经只能靠「我怎么觉得改动没生效」去发现（E37）。
+ */
+async function reconcileSelfUpdateAfterRestart(): Promise<void> {
+  try {
+    const last = stateService.getSelfUpdateHistory(1)[0];
+    if (!last) return;
+    const head = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot, timeout: 15_000 });
+    const outcome = reconcileSelfUpdateOutcome(last, head.exitCode === 0 ? head.stdout.trim() : '');
+    if (!outcome.rolledBack) return;
+    console.error(`[self-update] ${outcome.message}`);
+    activeServerEventLogStore?.record({
+      category: 'system', severity: 'error', source: 'self-update',
+      action: 'self-update.rolled-back',
+      message: outcome.message, status: 'error',
+      details: { claimedSha: outcome.claimedSha, actualSha: outcome.actualSha, recordedAt: last.ts },
+    });
+  } catch (err) {
+    console.warn(`[self-update] 结果对账失败: ${(err as Error).message}`);
+  }
+}
 
 function beginBackgroundBranchOperation(input: {
   branchId: string;
@@ -974,6 +2303,8 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
   if (!pending) return;
   const branch = stateService.getBranch(pending.branchId);
   if (!branch) {
+    branchOperationCoordinator.cancelBranch(pending.branchId, 'branch removed before dispatch');
+    branchOperationCoordinator.releasePendingReplay(pending, 'branch removed before dispatch');
     activeServerEventLogStore?.record({
       category: 'system',
       severity: 'warn',
@@ -999,20 +2330,11 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     });
     return;
   }
-  void fetch(`http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`, {
+  void Promise.resolve().then(() => fetch(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CDS-Internal': '1',
-      // 透传原始 trigger：manual deploy 合并进 pending 后重发仍以 manual 身份
-      // 进入（优先级/账本归因不漂移），webhook 照旧（同 branches.ts 派发器）。
-      'X-CDS-Trigger': pending.request.trigger,
-      'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
-      ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
-      'X-CDS-Source-Branch-Id': pending.branchId,
-    },
-    body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
-  }).then(async (response) => {
+    headers: internalPendingReplayAuth.headersFor(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, pending, branch.projectId || 'default'),
+    body: JSON.stringify(pendingDeployBody(pending)),
+  })).then(async (response) => {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
     }
@@ -1023,6 +2345,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       if (done) break;
     }
   }).catch((err) => {
+    for (const ready of branchOperationCoordinator.releasePendingReplay(pending, 'pending dispatch failed')) dispatchBackgroundPendingWebhookDeploy(ready);
     activeServerEventLogStore?.record({
       category: 'system',
       severity: 'error',
@@ -1080,7 +2403,9 @@ function completeBackgroundBranchOperation(
   error?: string,
 ): void {
   if (!lease) return;
-  dispatchBackgroundPendingWebhookDeploy(branchOperationCoordinator.complete(lease, status, error));
+  for (const pending of branchOperationCoordinator.completeAll(lease, status, error)) {
+    dispatchBackgroundPendingWebhookDeploy(pending);
+  }
 }
 
 async function initAuthStore(): Promise<void> {
@@ -1242,8 +2567,24 @@ if (isPreviewInstance()) {
 // 预览实例首启 seed 演示数据（空库才 seed，幂等），保证 dashboard 各页有内容可验收。
 if (isPreviewInstance()) {
   try {
-    const seeded = seedPreviewInstanceDemoData(stateService);
-    if (seeded) console.log('  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
+    // 父实例部署本实例时写进 worktree 的脱敏镜像（.cds/preview-mirror.json）；有它就按它播，
+    // 静态形状快照退役。读不到 / 版本不认识都只记日志，退回快照——不让一份坏文件把实例起不来。
+    let mirror = null as ReturnType<typeof readPreviewMirror>;
+    try {
+      mirror = readPreviewMirror(config.repoRoot);
+    } catch (err) {
+      console.warn(`  [preview-instance] 父实例镜像读取失败，退回演示快照: ${(err as Error).message}`);
+    }
+    const seeded = seedPreviewInstanceDemoData(stateService, mirror);
+    if (seeded) console.log(mirror ? '  [preview-instance] 已按父实例镜像播种（只读，本实例无容器）' : '  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
+    // 摘要与指标回放只在镜像真的被播种策略接纳之后登记（Codex P2）：库里挂着真实项目时镜像一条不播，
+    // 这时再登记会让实例模式端点谎报「已镜像」、同名容器回放一份没落库的指标
+    if (mirror && previewMirrorBlockedByRealData(stateService)) {
+      console.warn('  [preview-instance] 库里有非演示、非镜像的真实项目，父实例镜像未播种、也不登记摘要与指标');
+    } else if (mirror) {
+      const summary = registerLoadedPreviewMirror(mirror);
+      console.log(`  [preview-instance] 已装入父实例镜像：采集于 ${summary.capturedAt}，${summary.projects} 个项目 / ${summary.branches} 条分支（${summary.runningBranches} 条采集时在运行）/ ${summary.containersWithMetrics} 个容器有指标`);
+    }
   } catch (err) {
     console.warn(`  [preview-instance] 演示数据 seed 失败: ${(err as Error).message}`);
   }
@@ -1277,6 +2618,17 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  getServiceRuntime: (branchId, profileId) => {
+    const branch = stateService.getBranch(branchId);
+    if (!branch) return undefined;
+    const project = branch.projectId ? stateService.getProject(branch.projectId) : undefined;
+    const markers = [branch.projectId, project?.slug].filter((value): value is string => Boolean(value));
+    const ids = Object.keys(branch.services).filter(id => id === profileId || computeProfileAliases(id, markers).includes(profileId));
+    return ids.length === 1 ? servingRuntime(branch.services[ids[0]]) || undefined : undefined;
+  },
+  storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
+  resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
+  getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
   // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,
@@ -1293,7 +2645,41 @@ const containerService = new ContainerService(shell, config, {
     entry,
     branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
   ),
-}, activeServerEventLogStore);
+  // 跨项目引用（plan.cds.service-relations 第三批）：`${CDS_REF:项目/服务[@分支]}` → 目标公网入口
+  resolveCdsRef: (_entry, raw) => {
+    const [ref] = parseCdsRefs(raw);
+    if (!ref) return null;
+    return resolveCdsRef(cdsRefResolverDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]), ref).url;
+  },
+  // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
+  // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
+  getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
+}, activeServerEventLogStore, startupStreams, userLogHub);
+
+await containerService.restoreStaticWebRuntimes(stateService.getAllBranches());
+// 对外受理部署前恢复并核对历史预约；只读 Docker 实况，未知结果保留，绝不停止或删除容器。
+const localMemoryBranches = stateService.getAllBranches().filter(branch =>
+  config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+await restoreDeploymentMemoryReservations(localMemoryBranches, branch => stateService.getEffectiveProfilesForBranch(branch));
+const memoryRecovery = await containerService.reconcileDeploymentMemoryReservations(localMemoryBranches, {
+  recoveredOnly: true,
+  // 旧CLI结束不等于daemon创建结束；无不可变CID时不能凭一次缺席释放未知创建责任。
+  creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+});
+if (memoryRecovery.released.length || memoryRecovery.retained.length) console.log(
+  `  [deployment-memory] 已核实释放 ${memoryRecovery.released.length} 项历史预约，保留 ${memoryRecovery.retained.length} 项待确认预约`,
+);
+
+
+// 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
+// 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
+// 探测失败安全退化为不追加，只打日志。
+//
+// executor 节点同样要跑：它用的是同一个 ContainerService 在**自己那台宿主**上构建和
+// 起容器，那些负载照样会和 executor API 抢 CPU（Codex 八轮 P2）。跳过的只有预览实例
+// ——它跑在容器里，不接管宿主 cgroup，这个判断在 resolveWorkloadCgroup 内部做。
+const cg = await resolveWorkloadCgroup(shell);
+console.log(`  [workload-cgroup] ${cg.enabled ? `启用 --cgroup-parent ${cg.parent}` : '未启用'}（driver=${cg.driver}，权重${cg.weightManaged ? '由 systemd 接管' : '未接管'}）：${cg.reason}`);
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
 // docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。
@@ -1323,7 +2709,9 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   const previousStatus = svc.status;
   if (!['running', 'starting', 'building', 'restarting'].includes(String(previousStatus || ''))) return;
 
-  const classified = classifyDockerLifecycleEvent(event);
+  // 分支名只有 state 这边有（docker label 只带 cds.branch.id），传进去让停止原因
+  // 能说「分支 xxx」而不是一串容器名 —— 外因要说给人听（external-cause-first）。
+  const classified = classifyDockerLifecycleEvent({ ...event, branchName: branch.branch });
   svc.status = classified.nextServiceStatus;
   svc.errorMessage = classified.reason;
   if (allBranchServicesInactive(branch)) {
@@ -1407,8 +2795,8 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
       reason: 'sync-cds-state-after-docker-lifecycle-event',
     },
   });
-});
-const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore);
+}, eventStreams);
+const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore, undefined, journalStreams);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 proxyService.setHttpLogStore(activeHttpLogStore);
@@ -1521,9 +2909,29 @@ if (config.mode !== 'executor' && !isPreviewInstance()) {
 // ── Graceful shutdown controller ──
 // SIGTERM/self-update 触发 master 退出前,drain SSE / abort worker run / flush mongo。
 const gracefulShutdownController = createGracefulShutdownController();
+const resourceShutdownTasks = new Set<() => Promise<void>>();
+resourceShutdownTasks.add(() => containerService.closeStaticWebRuntimes());
 let dashboardHttpServer: http.Server | null = null;
 let workerHttpServer: http.Server | null = null;
 let shutdownInProgress = false;
+// 首轮盘点有读取上限。后台仅续扫原冷恢复预约，不把新操作的额度当历史尾项释放。
+let memoryReconciliationRunning = false;
+const deploymentMemoryReconciler = setInterval(() => {
+  if (shutdownInProgress || memoryReconciliationRunning) return;
+  memoryReconciliationRunning = true;
+  const localBranches = stateService.getAllBranches().filter(branch =>
+    config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+  void containerService.reconcileDeploymentMemoryReservations(localBranches, {
+    recoveredOnly: true,
+    creationSettled: (_owner, runtime) => !shutdownInProgress && Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+  }).then(result => {
+    if (result.released.length) console.log(`[deployment-memory] 后台已核实释放 ${result.released.length} 项历史预约`);
+  }).catch(() => console.warn('[deployment-memory] 后台盘点未确认，保留历史预约'))
+    .finally(() => { memoryReconciliationRunning = false; });
+}, 60_000);
+deploymentMemoryReconciler.unref?.();
+
+
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
@@ -1565,6 +2973,18 @@ let shutdownInProgress = false;
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
+schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
+schedulerService.setResourcePressureProvider(schedulerResourcePressure);
+schedulerService.setMemoryCapacityProvider(deploymentPreviewMemoryCapacity,
+  (limitMB, requestedWakeMB) => deploymentPhaseBudget.hasStartupMemoryPressure(limitMB, requestedWakeMB));
+schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
+  .some(operation => operation.request.kind !== 'scheduler-cooling'));
+let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
+if (process.env.CDS_USE_FORWARDER === '1') {
+  const diagnosticsPort = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
+  schedulerService.setPreviewActivitySource(() => readForwarderPreviewActivity(diagnosticsPort), isTrustedProbeFingerprint);
+  previewActivitySelfCheck = wireSchedulerPreviewActivitySelfCheck(schedulerService, activeServerEventLogStore, () => localServerEventLogReady);
+}
 // coolFn: stop all containers of a branch but keep the branch entry in state.
 // A later explicit deploy/webhook/cdscli action can bring it back to HOT;
 // passive preview requests must only show state and must not start containers.
@@ -1585,14 +3005,15 @@ schedulerService.setCoolFn(async (slug: string) => {
   stateService.save();
   for (const svc of Object.values(branch.services)) {
     branchOperationLease?.assertCurrent(`scheduler cooling before ${svc.profileId}`);
-    if (svc.status === 'running' || svc.status === 'starting') {
-      // 先把 svc.status 翻成 stopping 再 await stop()。stop() 重构后容器
-      // 停止仍保留(exited)，若此处仍是 running，30s auto-restart tick 命中
-      // 这段 await 窗口会把"正在主动降温"的容器误判为 crash、bump stopCount、
-      // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
-      svc.status = 'stopping';
+    const observed = getObservedRunningContainerNames();
+    const resident = serviceRuntimeRefs(svc).some(runtime => observed?.has(runtime.containerName));
+    if (resident || ['running', 'starting', 'restarting'].includes(svc.status)) {
       try {
-        await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+        await stopServiceForCooling({ service: svc, container: containerService,
+          assertCurrent: () => branchOperationLease?.assertCurrent(`scheduler cooling after ${svc.profileId}`),
+          confirmedStopped: forgetConfirmedStoppedContainers,
+          context: {
+          kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
           profileId: svc.profileId,
@@ -1601,11 +3022,14 @@ schedulerService.setCoolFn(async (slug: string) => {
           trigger: 'scheduler',
           operation: 'scheduler-cooling',
           source: 'schedulerService.setCoolFn',
+          },
         });
       } catch (err) {
-        console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+        branchOperationLease?.assertCurrent('scheduler cooling failure persistence');
+        branch.status = 'error';
+        stateService.save([{ kind: 'branches', id: branch.id }]);
+        throw err;
       }
-      svc.status = 'stopped';
     }
   }
   // 复制集成员级联降温（Codex P1 连带修复，2026-07-26）：成员容器不在
@@ -1619,6 +3043,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       if (member.containerName) {
         try {
           await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            kind: 'cds-stop-idle',
             projectId: branch.projectId,
             branchId: branch.id,
             profileId: `${replicaSet.profileId}--${member.id}`,
@@ -1629,13 +3054,16 @@ schedulerService.setCoolFn(async (slug: string) => {
             source: 'schedulerService.setCoolFn',
           });
         } catch (err) {
-          console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+          branchOperationLease?.assertCurrent('scheduler replica cooling failure persistence');
+          branch.status = 'error';
+          stateService.save([{ kind: 'branches', id: branch.id }]);
+          throw err;
         }
       }
       // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，
       // 判定见 services/replica-stop.ts）。无容器的 provisioning 成员照旧标 stopped，
       // 物化栅栏按状态放弃，防止降温后后台任务把副本容器起出来。
-      await settleMemberAfterStop(member, {
+      const settled = await settleMemberAfterStop(member, {
         isRunning: (name) => containerService.isRunning(name),
         interruptedMessage: '物化被调度器降温中断，可在画布删除后重建',
         onStillRunning: (containerName) => {
@@ -1651,6 +3079,13 @@ schedulerService.setCoolFn(async (slug: string) => {
           });
         },
       });
+      branchOperationLease?.assertCurrent('scheduler cooling after replica confirmation');
+      if (settled !== 'stopped') {
+        branch.status = 'error';
+        stateService.save([{ kind: 'branches', id: branch.id }]);
+        throw new Error('副本停止未确认，分支保持驻留并等待降温重试');
+      }
+      if (member.containerName) forgetConfirmedStoppedContainers([member.containerName]);
     }
   }
   await archiveBranchContainerLogs({
@@ -1710,6 +3145,7 @@ proxyService.setScheduler(schedulerService);
 // scheduler-cooled branches; this callback double-guards the same. Errored /
 // crashed / user-stopped branches are never revived here. Kill-switch:
 // CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
+const autoWakeAdmission = new AutoWakeAdmission();
 if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   // #1 重启中断分支按需自愈：访问到一个被 CDS self-update/崩溃重启打断的 error 分支时，
   // 走一次完整重部署（中断分支容器可能没建好，docker restart 不够）。demand-driven + 代理侧
@@ -1816,26 +3252,34 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;
-    // Re-check eligibility on this side: only scheduler-cooled, still idle, with
-    // preserved containers. Guards against a status change between the proxy's
-    // check and this async entry.
-    if (branch.lastStopSource !== 'scheduler') return;
-    if (branch.status !== 'idle') return;
+    // Re-check eligibility on this side against the SAME single predicate the
+    // proxy used — guards against a status change between the proxy's check and
+    // this async entry. 曾经这里另写一份 lastStopSource 判断，两份都只认
+    // 'scheduler'，改一处忘一处的风险白送（判据纪律形状 3）。
+    //
+    // 项目暂停是**项目级**意图，停机来源那一档答不了它，必须把项目状态一起递进去。
+    // 上一版给 proxy 侧的 shouldAutoWakeCooled 加了这个参数，却没给这里加——
+    // 判据是一份了，喂给它的料却只喂了一处，等于这条复检对暂停完全不设防
+    // （判据纪律形状 2：接线只建一半，删掉不会红）。
+    const isProjectPaused = () =>
+      stateService.getProjects?.().find((p) => p.id === branch.projectId)?.paused === true;
+    if (!isAutoWakeEligible(branch, { projectPaused: isProjectPaused() })) return;
+    const releaseAdmission = autoWakeAdmission.tryAcquire(slug);
+    if (!releaseAdmission) {
+      activeServerEventLogStore?.record({
+        category: 'system', severity: 'warn', source: 'proxy.preview-auto-wake',
+        action: 'branch.auto-wake.deferred', projectId: branch.projectId, branchId: slug,
+        message: 'CDS 暂缓自动唤醒：其他分支正在恢复或宿主资源不足，容器已保留，稍后访问可重试',
+        details: { holder: autoWakeAdmission.snapshot() },
+      });
+      return;
+    }
     const services = Object.values(branch.services);
-    if (services.length === 0) return;
 
-    // Executor-owned branches can't be revived by a LOCAL docker restart. A
-    // resolved deploy clears executorId to undefined for embedded/local runs
-    // (branches.ts: `stillRemote?.role==='embedded' || !stillRemote` → undefined),
-    // so a truthy executorId always means a REMOTE executor — whether currently
-    // registered OR temporarily absent from the registry (coordinator restart /
-    // missed heartbeat). In both cases the container runs off-master and the
-    // local `restartServiceInPlace` is a doomed no-op that would flip the branch
-    // to `error` and stop future retries. Skip without touching state so the
-    // diagnostic page stays and a later visit retries once the executor
-    // re-registers. Mirrors the auto-lifecycle stop path's
-    // `if (branch.executorId && !remoteExecutor)` remote-unavailable handling.
-    if (branch.executorId) return;
+    // executorId（远端执行器）那一条已经在 isAutoWakeEligible 里了，不在这里重复判——
+    // 理由是本机 restartServiceInPlace 对跑在别处的容器是注定失败的空操作，失败还会把
+    // 分支翻成 error、断掉后续重试；跳过时不碰状态，等执行器重新注册后下次访问再试。
+    // 一份判据一处定义，见 services/branch-wake-eligibility.ts。
 
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort
@@ -1848,15 +3292,23 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // so the wake preempts scheduler-cooling (30) while still deferring to real
     // operations: auto-lifecycle (40), webhook deploy (50), manual restart/
     // deploy (80). Semantically accurate too — this is an automatic restart.
-    const lease = beginBackgroundBranchOperation({
-      branchId: slug,
-      kind: 'auto-restart',
-      trigger: 'scheduler',
-      actor: 'scheduler',
-      source: 'proxy.preview-auto-wake',
-      reason: '预览访问自动唤醒（调度器降温分支，docker restart 未重建代码）',
-    });
+    let lease: BranchOperationLease | null;
+    try {
+      lease = beginBackgroundBranchOperation({
+        branchId: slug,
+        kind: 'auto-restart',
+        trigger: 'scheduler',
+        actor: 'scheduler',
+        source: 'proxy.preview-auto-wake',
+        reason: '预览访问自动唤醒（CDS 停机或宿主重启后恢复，docker restart 未重建代码）',
+      });
+    } catch (err) {
+      releaseAdmission();
+      throw err;
+    }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const previousWake = { status: branch.status, lastDeployStartedAt: branch.lastDeployStartedAt,
+      services: services.map(svc => ({ svc, status: svc.status })) };
 
     try {
       // Synchronous prefix (runs before the first await): flip to a loading
@@ -1874,30 +3326,37 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       }
       stateService.save();
 
-      // Enforce the scheduler's hot-pool budget the same way scheduler.wake()
-      // does — evict the LRU branch before bringing this one up. Otherwise
-      // opening several cooled preview URLs would markHot() them all past
-      // maxHotBranches until the next scheduler tick, blowing the configured
-      // hot-container budget. No-op when the scheduler is disabled or
-      // maxHotBranches is unset.
-      //
-      // Best-effort: eviction can throw when the chosen LRU victim has an active
-      // higher-priority operation (its cool path rethrows the lease rejection).
-      // That's unrelated to THIS branch — letting it fall into the catch below
-      // would poison the requested branch into `error` and stop future preview
-      // retries over a mere capacity hiccup. Swallow it; the next scheduler tick
-      // re-enforces capacity. (A superseding op on THIS branch still surfaces via
-      // the assertCurrent checks in the restart loop, not here.)
+      // Check the full branch before restarting any service. Insufficient
+      // headroom is a retryable deferral that preserves the prior state.
+      const profiles = stateService.getBuildProfilesForProject(branch.projectId);
+      const startupMB = services.reduce((total, svc) =>
+        total + Math.max(1, profiles.find(profile => profile.id === svc.profileId)?.resources?.memoryMB || 512), 0);
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
-      } catch (evictErr) {
-        console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
+        lease?.assertCurrent('auto-wake memory preflight');
+        if (!deploymentPhaseBudget.hasStartupMemoryHeadroom(startupMB)) {
+          schedulerService.noteDeferredWakeMemory(slug, startupMB);
+          throw new Error('当前内存余量无法启动完整预览，请等资源释放后重试。');
+        }
+      } catch {
+        { // Capacity/protection uncertainty is a deferral, never permission to exceed the pool.
+          lease?.assertCurrent('auto-wake capacity deferred');
+          branchOperationFinalStatus = 'cancelled';
+          branch.status = previousWake.status;
+          branch.lastDeployStartedAt = previousWake.lastDeployStartedAt;
+          for (const entry of previousWake.services) entry.svc.status = entry.status;
+          stateService.save();
+          return;
+        }
       }
 
-      const profiles = stateService.getBuildProfilesForProject(branch.projectId);
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
+        const profile = profiles.find(candidate => candidate.id === svc.profileId);
+        if (!autoWakeAdmission.hasHeadroom()) {
+          throw new Error('宿主资源不足，已停止继续唤醒；请稍后重新启动分支');
+        }
         const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
           projectId: branch.projectId,
           branchId: branch.id,
@@ -1908,6 +3367,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           operation: 'branch-auto-wake',
           source: 'proxy.preview-auto-wake',
           reason: '预览访问自动唤醒（docker restart，未重建代码）',
+          assertCurrent: step => lease?.assertCurrent(step),
         });
         lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
         if (!ok) {
@@ -1924,7 +3384,6 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
         // deploy path: optional startup-signal, then TCP/HTTP probe. The branch
         // stays 'restarting' meanwhile, so the waiting page keeps showing
         // progress until the upstream truly serves.
-        const profile = profiles.find((p) => p.id === svc.profileId);
         let ready = false;
         if (profile?.startupSignal) {
           // 唤醒是 docker restart 级操作：启动信号等待收紧到 120s（默认 300s 是给
@@ -1944,6 +3403,104 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           svc.errorMessage = `容器 ${svc.containerName} 就绪探测超时，请改用「重新部署」`;
           failed.push(svc.containerName);
         }
+      }
+
+      // 唤醒跑到一半，项目被暂停了——这条路租约拦不住，必须自己问一次。
+      //
+      // 暂停路由（PUT /api/projects/:id/paused）会给每个在跑的分支发一次
+      // POST /stop，带 X-CDS-Trigger: system。那次 stop 的优先级是 10，而我们此刻
+      // 正握着 'auto-restart' 租约（35），协调器只在**严格更高**优先级时才抢占，
+      // 于是它被拒了；而暂停路由发的是 void fetch(...).catch(...)，只看得到网络异常，
+      // 非 2xx 响应它根本不读。两边都「没报错」，结果是项目显示已暂停、容器却在跑，
+      // 而且是我们自己把它标成 running 的（Codex PR #1476 P1）。
+      //
+      // 所以落 running 之前再问一次项目状态：暂停了就把刚拉起来的容器停回去，
+      // 按 system 来源记账（与暂停路由那次 stop 同一档），本次操作记 cancelled。
+      // 这里只负责「不要由我们制造出一个跑着的暂停项目」；至于让低优先级的暂停 stop
+      // 反过来抢占高优先级操作，那是操作优先级仲裁的语义，不在本次改动范围内。
+      if (isProjectPaused()) {
+        // 先确认租约还是我们的：被更高优先级操作接管时，状态机已经不归我们管，
+        // 这里再去 stop 就是和新主人对打。assertCurrent 抛出后由下面的 catch
+        // 按 superseded 处理（不碰状态）。
+        lease?.assertCurrent('auto-wake project-paused recheck');
+        branchOperationFinalStatus = 'cancelled';
+        /** 停完复核仍在跑的容器。非空 = 这次回滚没做干净，不能记成「已停」。 */
+        const stillRunning: string[] = [];
+        for (const svc of services) {
+          // 每个 await 前后都要重新确认租约还在我们手上。
+          //
+          // 入口判一次不够：stop 与随后的存活复核都是 await，中间项目可能被恢复、
+          // 又被一次手动部署接管（优先级 80，抢得动我们的 35）。那之后这个循环再往下走，
+          // 停的就是**新主人刚拉起来的容器**，最后还会拿 idle / error 覆盖掉它的分支状态
+          //（Codex PR #1476 P1）。上面那条重启循环每个服务前后都 assertCurrent，
+          // 这段回滚是后加的，漏了同一道。
+          lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
+          try {
+            await containerService.stopRuntimeGroup(svc, '项目已暂停，撤销本次自动唤醒', {
+              kind: 'cds-stop-idle',
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId: svc.profileId,
+              operationId: lease?.operationId || null,
+              actor: 'scheduler',
+              trigger: 'scheduler',
+              operation: 'branch-auto-wake-revert',
+              source: 'proxy.preview-auto-wake',
+            });
+          } catch (stopErr) {
+            console.warn(`[auto-wake] revert stop failed for "${svc.containerName}": ${(stopErr as Error).message}`);
+          }
+          // **停完必须核实再落状态**。`containerService.stop` 在 `docker stop`
+          // 非零退出时只记一条 error 事件、**不抛异常**，所以上面那个 catch 一次都不会进；
+          // 无条件写 'stopped' 就是「账上停了、进程还在跑」——而这正是这段回滚要防的
+          // 资源泄漏，等于用一条假记录把它藏起来（Codex PR #1476 P1）。
+          //
+          // 判定复用 services/replica-stop 那一份：同样的坑在副本停止链路上已经踩过
+          // （Codex 第三十五轮 P1），那份的注释就写着「以后新增停止路径也只调它」——
+          // 这里就是新增的那条路径。用 shim 适配是因为分支服务把提示写在 errorMessage，
+          // 而那个接口用的是 statusMessage；判定逻辑一份，落盘字段各自负责。
+          const shim = { containerName: svc.containerName, status: String(svc.status) };
+          const settled = await settleMemberAfterStop(shim, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '项目已暂停，自动唤醒已撤销',
+            onStillRunning: (name, message) => {
+              svc.errorMessage = message;
+              stillRunning.push(name);
+            },
+          });
+          lease?.assertCurrent(`auto-wake revert after ${svc.profileId}`);
+          svc.status = settled === 'error' ? 'error' : 'stopped';
+        }
+        // 落盘之前再确认一次：最后一个 await 到 save 之间同样可能被接管，
+        // 那时这几行就是拿我们的结论覆盖新主人的状态。
+        lease?.assertCurrent('auto-wake revert before save');
+        branch.lastStoppedAt = new Date().toISOString();
+        branch.lastStopReason = '项目已暂停，自动唤醒已撤销';
+        branch.lastStopSource = 'system';
+        if (stillRunning.length > 0) {
+          // 有容器没停下来：分支不能记成 idle（那会让它从「需要处理」的视野里消失），
+          // 事件也不能说「已停回容器」——那句话此刻是假的。
+          branchOperationFinalStatus = 'failed';
+          branch.status = 'error';
+          branch.errorMessage = `项目已暂停，但 ${stillRunning.length} 个容器未能停止：${stillRunning.join(', ')}，请手动检查 docker`;
+        } else {
+          branch.status = 'idle';
+        }
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: stillRunning.length > 0 ? 'error' : 'warn',
+          source: 'proxy.preview-auto-wake',
+          action: stillRunning.length > 0
+            ? 'branch.auto-wake.revert-stop-failed'
+            : 'branch.auto-wake.reverted-project-paused',
+          message: stillRunning.length > 0
+            ? `项目暂停，撤销 ${slug} 的自动唤醒时有容器未停止：${stillRunning.join(', ')}`
+            : `项目暂停，已撤销 ${slug} 的自动唤醒并停回容器`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+        });
+        return;
       }
 
       if (failed.length === 0) {
@@ -2014,7 +3571,8 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // superseded: leave state to the new owner; swallow so the proxy doesn't
       // log a misleading "auto-wake failed".
     } finally {
-      completeBackgroundBranchOperation(lease, branchOperationFinalStatus);
+      try { completeBackgroundBranchOperation(lease, branchOperationFinalStatus); }
+      finally { releaseAdmission(); }
     }
   });
 }
@@ -2050,6 +3608,32 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     console.log(`  [janitor] applying UI override: worktreeTTLDays=${config.janitor.worktreeTTLDays}`);
   }
 }
+const janitorDocker = createJanitorDockerAdapters(shell);
+const configuredImageCacheBudgetGiB = Number(process.env.CDS_IMAGE_CACHE_BUDGET_GIB || 0);
+if (!Number.isFinite(configuredImageCacheBudgetGiB) || configuredImageCacheBudgetGiB < 0 || configuredImageCacheBudgetGiB > 4096) throw new Error('镜像缓存总量预算必须在0至4096 GiB之间；0表示尚未启用。');
+const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.join(acceptanceResourceRoot, 'image-cache'),
+  audit: activeServerEventLogStore,
+  journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'images'),
+  instanceId: computeCdsInstanceId(config.repoRoot), budgetBytes: configuredImageCacheBudgetGiB * 1024 ** 3,
+  protectedReferences: () => collectImageCacheReferences(stateService, config.scheduler?.pinnedBranches || [], 5,
+    7, Date.now(), (profile, branch) => resolveEffectiveProfile(profile, branch).dockerImage) });
+if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
+// The hourly general Janitor cannot drain a two-image batch at deployment speed.
+// Share its global reclaim lock and native cross-process catalog lock.
+const stopImageCacheRetention = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
+  ? startReclaimSchedule({
+    intervalMs: 60_000,
+    run: async () => {
+      await imageCacheGovernance.settlePulls();
+      const report = await imageCacheGovernance.inspect(false);
+      imageCacheGovernance.observePullBudget(report.pullBudget);
+      activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'image-cache-retention', action: 'image.cache.reconciled', message: '宿主镜像总量与引用对账', details: { report } });
+      return report;
+    },
+    onError: () => {
+      activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'image-cache-retention', action: 'image.cache.failed', message: '镜像引用、registry 或审计未确认，相关镜像保持保护。' });
+    },
+  }) : null;
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -2057,7 +3641,18 @@ const janitorService = new JanitorService(
   // 被 janitor 删掉，两套保护看起来统一实则漏一半（Codex PR #1273 P1）。
   { ...config.janitor, pinnedBranches: config.scheduler?.pinnedBranches ?? [] },
   config.worktreeBase,
+  undefined, undefined, janitorDocker.dockerPrune, janitorDocker.imageDocker, janitorDocker.orphanWorktreeFs,
+  () => branchOperationCoordinator.getDeploymentImageReferences((request, input) => {
+    const branch = stateService.getBranch(request.branchId);
+    if (!branch) throw new Error('在途部署归属尚未确认，暂停本轮镜像回收');
+    const captured = deploymentInputBranch(input, branch);
+    return [...input.profiles.filter(profile => !request.profileId || profile.id === request.profileId)
+      .map(profile => resolveEffectiveProfile(profile, captured).dockerImage),
+      ...(input.artifactAdmission?.artifacts || []).flatMap(artifact => [artifact.selectedImage || artifact.requestedImage, artifact.image])]
+      .filter((image): image is string => Boolean(image));
+  }),
 );
+if (configuredImageCacheBudgetGiB > 0) janitorService.setImageCacheGovernance(imageCacheGovernance);
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
 // 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
@@ -2066,16 +3661,16 @@ const janitorService = new JanitorService(
 diskGuard.setProbe(() => {
   const readings = [defaultDiskUsage(config.worktreeBase)];
   const dockerRoot = resolveDockerDataRoot();
-  if (dockerRoot) readings.push(defaultDiskUsage(dockerRoot));
-  return readings.filter((r): r is { totalBytes: number; freeBytes: number } => !!r);
+  readings.push(dockerRoot ? defaultDiskUsage(dockerRoot) : null);
+  return readings;
 });
 diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
-// infra 生命周期取证器（doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：常驻 docker events 监听，
+// infra 生命周期取证器（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：常驻 docker events 监听，
 // 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
-const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
+const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore, streams: eventStreams });
 
 const infraFlapWatchdog = new InfraFlapWatchdog(
   {
@@ -2197,7 +3792,8 @@ const autoLifecycleService = new AutoLifecycleService(
           // （Cursor Bugbot High）。
           svc.status = 'stopping';
           try {
-            await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+            await containerService.stopRuntimeGroup(svc, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+              kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
               profileId: svc.profileId,
@@ -2224,6 +3820,7 @@ const autoLifecycleService = new AutoLifecycleService(
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                kind: 'cds-stop-idle',
                 projectId: branch.projectId,
                 branchId: branch.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,
@@ -2446,63 +4043,62 @@ janitorService.setOrphanInfraScan(async () => {
   return orphans;
 });
 
-janitorService.setRemoveFn(async (slug: string) => {
-  // Reuse the existing removal path: stop containers → git worktree remove → drop state.
-  const branch = stateService.getBranch(slug);
-  if (!branch) return;
-  const branchOperationLease = beginBackgroundBranchOperation({
-    branchId: slug,
-    kind: 'janitor-remove',
-    trigger: 'janitor',
-    actor: 'janitor',
-    source: 'janitorService.setRemoveFn',
-    reason: 'Janitor 自动回收：超过保留期或磁盘清理',
-  });
-  let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+const removeExpiredLifecycleBranch = async (id: string): Promise<void> => {
+  const branch = stateService.getBranch(id);
+  if (!branch?.archive || Date.now() < Date.parse(branch.archive.retireAt)) return;
+  if (isRemoteExecutorOwned(branch.executorId)) throw new Error('远端分支归档仍保留，需要在所属执行器确认回收，未删除本地记录');
+  stateService.assertBranchStorageRemovalAllowed(id);
+  const lease = beginBackgroundBranchOperation({ branchId: id, kind: 'janitor-remove', trigger: 'janitor',
+    actor: 'janitor', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' });
+  let finalStatus: 'completed' | 'failed' = 'completed';
   try {
-  // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
-  try {
-    stateService.appendActivityLog(branch.projectId, {
-      type: 'branch-deleted',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor: 'janitor',
-      note: 'Janitor 自动回收：停止容器并移除 worktree（超过保留期 / 磁盘清理）',
-    });
-  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
-  for (const svc of Object.values(branch.services)) {
-    branchOperationLease?.assertCurrent(`janitor remove before ${svc.profileId}`);
-    try {
-      await containerService.remove(svc.containerName, {
-        projectId: branch.projectId,
-        branchId: branch.id,
-        profileId: svc.profileId,
-        operationId: branchOperationLease?.operationId || null,
-        actor: 'janitor',
-        trigger: 'janitor',
-        operation: 'janitor-remove',
-        source: 'janitorService.setRemoveFn',
-        reason: 'Janitor 自动回收：超过保留期或磁盘清理',
-      });
-    } catch { /* best effort */ }
-  }
-  try {
-    const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
-    await worktreeService.remove(repoRoot, branch.worktreePath);
-  } catch { /* best effort */ }
-  // 分支专属网络（cds-br-*）随分支回收：不清会缓慢堆积空网络
-  //（debt.cds.branch-isolation BNI-cleanup，2026-07-09 接线）。内部已容错
-  // not-found/仍被占用，失败不阻断删除主流程。
-  await containerService.removeBranchNetwork(slug).catch(() => { /* best-effort */ });
-  branchOperationLease?.assertCurrent('janitor remove before state delete');
-  stateService.removeBranch(slug);
-  stateService.save();
-  } catch (err) {
-    branchOperationFinalStatus = 'failed';
-    throw err;
-  } finally {
-    completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
-  }
+    await new DeploymentRunService(stateService).persistBranchCancellation(branch.projectId || 'default', id, lease);
+    const context = { projectId: branch.projectId, branchId: id, operationId: lease?.operationId || null,
+      actor: 'janitor', trigger: 'janitor', operation: 'archive-retirement', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' };
+    for (const service of Object.values(branch.services)) {
+      lease?.assertCurrent('archive retirement before service removal');
+      await containerService.removeRuntimeGroup(service, { ...context, profileId: service.profileId });
+    }
+    for (const set of Object.values(branch.replicaSets || {})) for (const member of set.members) {
+      if (!member.containerName) continue;
+      lease?.assertCurrent('archive retirement before replica removal');
+      await containerService.remove(member.containerName, { ...context, profileId: `${set.profileId}--${member.id}` });
+    }
+    lease?.assertCurrent('archive retirement before workspace removal');
+    if (fs.existsSync(branch.worktreePath)) await worktreeService.remove(stateService.getProjectRepoRoot(branch.projectId, config.repoRoot), branch.worktreePath);
+    await containerService.removeBranchNetwork(id, branch.replacementNetworks);
+    lease?.assertCurrent('archive retirement before state removal');
+    stateService.appendActivityLog(branch.projectId, { type: 'branch-deleted', branchId: id, branchName: branch.branch,
+      actor: 'janitor', note: '归档保留30天到期，已回收本分支容器及工作区；未触碰共享基础设施' });
+    stateService.removeBranch(id); stateService.save(); await stateService.flush();
+  } catch (error) { finalStatus = 'failed'; throw error; }
+  finally { completeBackgroundBranchOperation(lease, finalStatus); }
+};
+
+const branchLifecycleService = new BranchLifecycleService({
+  state: stateService,
+  observed: getObservedRunningContainerNames,
+  active: id => branchOperationCoordinator.getActiveOperations(id).length > 0,
+  canInterruptStartup: id => branchOperationCoordinator.getActiveOperations(id).every(operation =>
+    ['deploy', 'deploy-profile', 'restart', 'force-rebuild', 'auto-lifecycle-redeploy', 'auto-restart'].includes(operation.request.kind)),
+  expectedProfiles: branch => stateService.getEffectiveProfilesForBranch(branch).map(profile => profile.id),
+  pinnedBranches: config.scheduler?.pinnedBranches,
+  audit: activeServerEventLogStore,
+  flush: () => stateService.flush(),
+  paused: () => isSelfUpdateDraining(Date.now()),
+  lock: branch => {
+    const lease = beginBackgroundBranchOperation({ branchId: branch.id, kind: 'stop', trigger: 'auto-lifecycle',
+      actor: 'system:lifecycle', source: 'branch-lifecycle', reason: '保存分支归档状态' });
+    return { assertCurrent: () => lease?.assertCurrent('branch archive state write'),
+      release: failed => completeBackgroundBranchOperation(lease, failed ? 'failed' : 'completed') };
+  },
+  stop: (branch, reason) => stopBranchForLifecycle(`http://127.0.0.1:${config.masterPort}`, branch, reason),
+  remove: removeExpiredLifecycleBranch,
+});
+// 旧 TTL 回收也先归档，统一遵守30天恢复窗口；到期删除只由生命周期服务派发。
+janitorService.setRemoveFn(async id => {
+  if (stateService.getBranch(id)?.archive) return;
+  await branchLifecycleService.archive(id, '闲置超过项目回收期，先归档保留30天', 'janitor');
 });
 
 // The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
@@ -2562,9 +4158,25 @@ janitorService.setRemoveFn(async (slug: string) => {
     const appContainers = appDiscovery.containers;
     const branches = stateService.getAllBranches();
     let appReconciled = 0;
+    const hostBootedAtMs = Date.now() - os.uptime() * 1000;
 
     for (const branch of branches) {
+      if (appDiscovery.ok && reconcileHostRebootBranch(branch, appContainers, hostBootedAtMs,
+        stateService.getProjects().find((p) => p.id === branch.projectId)?.paused === true)) {
+        appReconciled++;
+        activeServerEventLogStore?.record({
+          category: 'container', severity: 'warn', source: 'startup-reconcile',
+          action: 'branch.reconcile.host-reboot', projectId: branch.projectId, branchId: branch.id,
+          message: branch.lastStopReason!,
+          details: { hostBootedAt: new Date(hostBootedAtMs).toISOString(), services: Object.keys(branch.services) },
+        });
+      }
       if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        try { stateService.assertBranchStorageRemovalAllowed(branch.id); }
+        catch (error) {
+          console.warn(`[startup-reconcile] retaining private-storage branch ${branch.id}: ${(error as Error).message}`);
+          continue;
+        }
         activeServerEventLogStore?.record({
           category: 'container',
           severity: 'warn',
@@ -2586,7 +4198,7 @@ janitorService.setRemoveFn(async (slug: string) => {
           stateService.removeLogs(branch.id);
         } catch { /* best-effort */ }
         // 启动残留 prune 同样带走分支专属网络（BNI-cleanup，2026-07-09 接线）
-        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
+        await containerService.removeBranchNetwork(branch.id, branch.replacementNetworks).catch(() => { /* best-effort */ });
         try {
           stateService.removeBranch(branch.id);
           appReconciled++;
@@ -2594,6 +4206,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         continue;
       }
       for (const [profileId, svc] of Object.entries(branch.services)) {
+        // 静态监听器已由 restoreStaticWebRuntimes 恢复；没有 Docker 容器不代表产物丢失。
+        if (servingRuntime(svc)?.staticWeb) continue;
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
         if (found) {
@@ -2881,7 +4495,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (found && found.running) continue;
         if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)
 
-        const attemptKey = `app:${key}`;
+        // 重试预算属于精确运行身份；重新部署不继承旧容器的失败计数。
+        if (found.containerName !== svc.containerName) continue;
+        if (!found.containerId) continue; // 身份未知时不把预算或命令绑定到可复用名称。
+        const attemptKey = `app:${key}:${found.containerId}`;
+        for (const oldKey of restartAttempts.keys()) if (oldKey.startsWith(`app:${key}:`) && oldKey !== attemptKey) restartAttempts.delete(oldKey);
         const isNewCrash = !restartAttempts.has(attemptKey);
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
         // 容器自行退出（崩溃 / OOM / docker kill）首次被巡检发现：留痕，
@@ -2964,7 +4582,9 @@ janitorService.setRemoveFn(async (slug: string) => {
         }
         try {
           branchOperationLease?.assertCurrent(`auto-restart before docker start ${profileId}`);
-          const startRes = await shell.exec(`docker start ${found.containerName}`);
+          const startRes = await shell.exec(`docker start ${found.containerId}`, {
+            beforeStart: () => branchOperationLease?.assertCurrent(`auto-restart execution ${profileId}`),
+          });
           branchOperationLease?.assertCurrent(`auto-restart after docker start ${profileId}`);
           activeServerEventLogStore?.record({
             category: 'container',
@@ -3234,14 +4854,14 @@ janitorService.setRemoveFn(async (slug: string) => {
   }
   function stopBackgroundServices(): void {
     for (const t of orphanReaperTimers.splice(0)) clearTimeout(t as NodeJS.Timeout);
-    dockerEventMonitor.stop();
-    systemLogMonitor.stop();
+    void dockerEventMonitor.stop().catch(() => console.warn('[observation] 容器事件清理未确认。'));
+    void systemLogMonitor.stop().catch(() => console.warn('[observation] 系统日志清理未确认。'));
     schedulerService.stop();
     janitorService.stop();
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
-    infraLifecycleWatcher.stop();
+    void infraLifecycleWatcher.stop().catch(() => console.warn('[observation] 基础设施事件清理未确认。'));
     forwarderRoutePublisher?.stop();
     previewCanaryService?.stop();
   }
@@ -3275,12 +4895,34 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
-  branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
+  app.locals.stopAcceptanceLeaseReaper?.();
+  branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown', { normalShutdown: true });
+  // 已禁止新部署。尽早释放长日志/事件的空闲进程与内存，实际资源确认
+  // 继续使用保留的operation/observation执行器及原来的清理期限。
+  const logReadersShutdown = Promise.all([
+    userLogHub.close().catch(() => console.warn('[shutdown] 用户日志清理未确认；继续关键状态保存。'))
+      .then(() => userLogStreams.close()).catch(() => console.warn('[shutdown] 用户日志执行槽清理未确认；继续关键状态保存。')),
+    eventStreams.close().catch(() => console.warn('[shutdown] 事件执行槽清理未确认；继续关键状态保存。')),
+    startupStreams.close().catch(() => console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。')),
+  ]);
+  // Stop capability producers immediately, while observation and reserved cleanup
+  // slots remain available; cancelling a CLI alone cannot revoke daemon creation.
+  const resourceShutdown = Promise.allSettled([...resourceShutdownTasks].map(close => close()));
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
-  dockerEventMonitor.stop();
-  systemLogMonitor.stop();
+  if (infraExposureAudit) clearInterval(infraExposureAudit);
+  if (infraAutoBackup) clearInterval(infraAutoBackup);
+  if (backupRetentionTimer) clearInterval(backupRetentionTimer);
+  if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
+  if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
+  stopImageCacheRetention?.();
+  clearInterval(deploymentMemoryReconciler);
+  clearInterval(rotationRecoveryCleanup);
+  if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
+  if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
+  await Promise.all([dockerEventMonitor.stop(), infraLifecycleWatcher.stop()]).catch(() => console.warn('[shutdown] 容器事件清理未确认；继续关键状态保存。'));
+  await systemLogMonitor.stop().catch(() => console.warn('[shutdown] 系统日志清理未确认；继续关键状态保存。'));
   schedulerService.stop();
   janitorService.stop();
   forwarderRoutePublisher?.stop();
@@ -3305,6 +4947,17 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
+  await logReadersShutdown;
+  await journalStreams.close().catch(() => console.warn('[shutdown] 系统日志执行槽清理未确认；继续关键状态保存。'));
+  const resourceShutdownResults = await resourceShutdown;
+  const resourceCleanupUnconfirmed = resourceShutdownResults.some(result => result.status === 'rejected');
+  if (resourceCleanupUnconfirmed) console.warn('[shutdown] 能力探针资源收尾未确认；本次退出不会报告成功。');
+  await localShell.close().catch(() => {
+    console.warn('[shutdown] 观测进程清理尚未确认；继续保存关键状态。');
+  });
+  await operationShell.close().catch(() => {
+    console.warn('[shutdown] 操作执行进程清理尚未确认；继续保存关键状态。');
+  });
   // JSON 存储模式的 save() 是去抖异步落盘（2026-07-09），退出前必须 flush，
   // 否则最后一个 tick 的改动会丢。mongo 系 store 在下方 activeMongoHandle
   // 分支里 flush，这里只兜 json（duck-typing，不依赖具体类）。
@@ -3350,32 +5003,21 @@ async function shutdown(signal: string): Promise<void> {
   }
   if (activeServerEventLogStore) {
     try {
-      await activeServerEventLogStore.close();
+      await activeServerEventLogStore.flush?.();
+      await localServerEventLogStore?.close();
       console.log('[shutdown] server event log store flushed + closed');
     } catch (err) {
       console.warn(`[shutdown] server event log store teardown failed: ${(err as Error).message}`);
     }
   }
-  process.exit(signal === 'SIGINT' ? 130 : 0);
+  process.exit(signal === 'SIGINT' ? 130 : resourceCleanupUnconfirmed ? 1 : 0);
 }
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
-  const branch = stateService.getBranch(branchId);
-  if (!branch) return null;
-
-  if (profileId && branch.services[profileId]) {
-    const svc = branch.services[profileId];
-    if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
-  }
-
-  // Fallback: find first running service
-  for (const svc of Object.values(branch.services)) {
-    if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
-  }
-  return null;
+  return resolveBranchUpstream(stateService.getBranch(branchId), profileId);
 });
 
 // ── Web access tracking (throttled: max 1 event per branch per 2s) ──
@@ -3391,7 +5033,7 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
     id: nextActivitySeq(),
     ts: new Date().toISOString(),
     method,
-    path: reqPath,
+    path: redactHostedSitePreviewLog(reqPath),
     status,
     duration,
     type: 'web',
@@ -3640,11 +5282,11 @@ function buildBranchAbandonedPageHtml(opts: {
 
 // buildTransitPageHtml（未构建分支的全屏过渡页）已于 2026-07-09 删除：全仓零调用点的
 // 死代码（已被 React PreviewPreparingPage / preview-canary 流程取代）。历史实现见 git
-// 记录；等待页 SSOT 见 src/loading-pages/index.ts（doc/debt.cds.md「CDS Loading Pages」 D2）。
+// 记录；等待页 SSOT 见 src/loading-pages/index.ts（https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md「CDS Loading Pages」 D2）。
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
-// Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
+// Derive the preview host ("foo.example.com" → "example.com") so links work
 // under any configured root domain without hardcoding.
 function derivePreviewHost(host: string): string | null {
   const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);
@@ -3741,7 +5383,9 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
     return;
   }
 
-  const live = liveBranchesForGonePage(host, slug);
+  const live = isPublicPreviewDiscoveryEnabled()
+    ? liveBranchesForGonePage(host, slug)
+    : [];
   const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
   res.writeHead(404, noCache);
   res.end(html);
@@ -3842,10 +5486,9 @@ startPerfHealthMonitor();
 // 前端旧逻辑还把它误渲染成「容器停止 · 无记录 · 时间未知」（用户 2026-06-24 反馈
 // 「莫名其妙停止 / 可观测性有问题」的真因）。
 //
-// 看门狗：waiting 超过阈值（默认 15 分钟，无匹配 workflow_run）即翻 'failed' +
-// 写人类可读 ciImageError 归因 + server-event + branch.updated 事件，让分支卡显示
-// 「CI 镜像未就绪（原因）」而非假的「停止」。翻 failed 不阻断恢复：真 CI 完成事件
-// 晚到时 handleWorkflowRun 的 waiting||failed matcher 仍可 failed → ready。
+// 先对账 GitHub，再分类原因。排队/构建超过15分钟不等于失败；查询不可用仅标状态未知。
+// 已失败的历史分支也低频复核；对账结果只补原因，不绕过镜像准入自动部署。
+// 真 CI 完成事件晚到时，原 waiting||failed matcher 仍可恢复 ready。
 const CI_WAIT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
@@ -3855,24 +5498,30 @@ const CI_WAIT_TIMEOUT_MS = (() => {
 // 的 ciImageError——GitHub 上该 commit 连 "CDS Deploy" 条目都没有，用户在 PR 上
 // 看到的是彻底静默。这里独立构造一个 CheckRunRunner（与 server.ts 内部实例互不
 // 干扰，GitHubAppClient 仅是 token 缓存的无状态封装），超时时补一个红灯。
-const ciWaitCheckRunRunner = config.githubApp
+const ciWaitGithubApp = config.githubApp ? new GitHubAppClient({
+  appId: config.githubApp.appId, privateKey: config.githubApp.privateKey, appSlug: config.githubApp.appSlug,
+}) : undefined;
+const ciWaitCheckRunRunner = ciWaitGithubApp
   ? new CheckRunRunner({
       stateService,
-      githubApp: new GitHubAppClient({
-        appId: config.githubApp.appId,
-        privateKey: config.githubApp.privateKey,
-        appSlug: config.githubApp.appSlug,
-      }),
+      githubApp: ciWaitGithubApp,
       config,
     })
   : undefined;
 function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
-  const check = (): void => {
+  let checking = false;
+  const lastAttempt = new Map<string, number>();
+  const check = async (): Promise<void> => {
+    if (checking) return;
+    checking = true;
     try {
       const state = stateService.getState();
       const now = Date.now();
-      for (const b of Object.values(state.branches || {})) {
-        if (b.ciImageStatus !== 'waiting') continue;
+      let queried = 0;
+      const branches = Object.values(state.branches || {}).sort((a, b) => (lastAttempt.get(a.id) || 0) - (lastAttempt.get(b.id) || 0));
+      for (const id of lastAttempt.keys()) if (!state.branches[id]) lastAttempt.delete(id);
+      for (const b of branches) {
+        if (b.archive || (b.ciImageStatus !== 'waiting' && b.ciImageStatus !== 'failed')) continue;
         // 校验分支**当前**仍是极速版：用户若把部署 override 从 express 切回 dev/static，
         // profile 路由只存 override、不清旧的 ciImageStatus='waiting'，看门狗不该据此把一个
         // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
@@ -3887,22 +5536,58 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;
         const waitedMs = now - sinceMs;
+        const project = stateService.getProject(b.projectId);
+        const repository = project?.githubRepoFullName;
+        const installationId = project?.githubInstallationId;
+        if (ciWaitGithubApp && repository && installationId && activeServerEventLogStore) {
+          const cooldown = b.ciImageStatus === 'waiting' ? 60_000 : 10 * 60_000;
+          if (queried >= 6 || now - (lastAttempt.get(b.id) || 0) < cooldown) continue;
+          queried++;
+          lastAttempt.set(b.id, now);
+          const targetSha = b.ciTargetSha;
+          const previousStatus = b.ciImageStatus;
+          const snapshot = ciDiagnosisSnapshot(b);
+          try {
+            const patch = await diagnoseCiImage({ repository, branch: b.branch, targetSha: targetSha || '',
+              projectId: b.projectId, branchId: b.id,
+              authorization: async () => `Bearer ${await ciWaitGithubApp.getInstallationToken(installationId)}`, waitedMs,
+              timeoutMs: CI_WAIT_TIMEOUT_MS, audit: activeServerEventLogStore });
+            // 网络等待期间可能又 push、切模式、删除，或真正 completion 已到达；绝不覆盖新状态。
+            const fresh = stateService.getBranch(b.id);
+            const freshProject = fresh && stateService.getProject(fresh.projectId);
+            if (!fresh || ciDiagnosisSnapshot(fresh) !== snapshot
+              || freshProject?.githubRepoFullName !== repository || freshProject?.githubInstallationId !== installationId
+              || !branchUsesPrebuiltMode(stateService.getBuildProfilesForProject(fresh.projectId), fresh)) continue;
+            if (patch.ciDiagnosis?.code === 'unknown' && previousStatus === 'failed' && fresh.ciDiagnosis?.code !== 'unknown'
+              && fresh.ciWorkflowConclusion !== 'timed_out_no_run' && fresh.ciWorkflowConclusion !== 'status_unknown') continue;
+            stateService.updateBranchGithubMeta(b.id, patch);
+            stateService.save();
+            branchEvents.emitEvent({ type: 'branch.updated', payload: { branchId: b.id, projectId: b.projectId, patch, ts: nowIso() } });
+            if (previousStatus === 'waiting' && patch.ciImageStatus === 'failed') {
+              void ciWaitCheckRunRunner?.concludeWithoutDeploy(fresh, { conclusion: 'failure',
+                title: patch.ciDiagnosis?.title || 'CI image unavailable', summary: patch.ciImageError || '' }).catch(() => {});
+            }
+          } catch (error) {
+            console.warn('[ci-image-diagnosis] GitHub 对账暂不可用:', error instanceof Error ? error.name : 'unknown');
+          }
+          continue;
+        }
+        if (b.ciImageStatus !== 'waiting') continue;
         if (waitedMs < CI_WAIT_TIMEOUT_MS) continue;
         const waitedMin = Math.round(waitedMs / 60000);
         const shortSha = (b.ciTargetSha || b.githubCommitSha || '').slice(0, 7);
-        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。可在分支详情切回源码编译重试。`;
+        const reason = `CI 镜像${shortSha ? ` ${shortSha}` : ''}状态未确认（${waitedMin} 分钟未收到匹配完成回执）。当前无法主动核对 GitHub，请打开 Actions 查看实际状态。`;
         stateService.updateBranchGithubMeta(b.id, {
           ciImageStatus: 'failed',
-          ciWorkflowConclusion: 'timed_out_no_run',
+          ciWorkflowConclusion: 'status_unknown',
           // 清空字段一律用 '' 而非 undefined：/api/branches/stream 的 branch.updated 会
           // 从 state 重新序列化**整个 branch** 下发，BranchList 按 data.branch merge 覆盖旧项；
           // JSON.stringify 丢 undefined 字段 → 客户端 merge 时保留旧值（旧「查看构建」链接/
           // 旧等待时间）。空串可序列化 + falsy，真正清空（Bugbot/Codex P2）。
           ciWaitingSince: '',
           ciImageError: reason,
-          // 超时原因是「无匹配构建完成」，任何旧 run 链接都与本次失败无关，清掉避免
-          // 卡片「查看构建」指向一个误导性的历史 Actions run。
-          ciWorkflowRunUrl: '',
+          // 没有主动查询权限时，保留当前目标已有入口；新 push 已在 dispatcher 清理旧入口。
+          ciWorkflowRunUrl: b.ciWorkflowRunUrl || '',
         });
         stateService.save();
         activeServerEventLogStore?.record({
@@ -3921,7 +5606,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
             branchId: b.id,
             projectId: b.projectId,
             // patch 仅作语义「本次变了什么」；真正驱动 UI 的是 SSE 层补的整 branch（见上）。
-            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: '' },
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'status_unknown', ciImageError: reason, ciWorkflowRunUrl: b.ciWorkflowRunUrl || '' },
             ts: nowIso(),
           },
         });
@@ -3947,6 +5632,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         }).catch(() => { /* best-effort */ });
       }
     } catch { /* 自检不致命 */ }
+    finally { checking = false; }
   };
   const timer = setInterval(check, 60 * 1000);
   timer.unref?.();
@@ -3984,8 +5670,16 @@ function stateStorageLabel(): string {
   return `state.json (${stateFile})`;
 }
 
+// 事件循环延迟采样（2026-09-08）：/healthz 的 pressure.eventLoop 数据源。
+startEventLoopLagMonitor();
+// 主线程诊断（2026-10-08）：卡顿归因、分段计时、GC。只读，见 routes/cds-system-diagnostics.ts。
+startMainThreadDiagnostics();
+
 // ── Master server (dashboard + API on masterPort) ──
-const app = createServer({
+// serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。
+const serverDeps: ServerDeps = {
+  branchLifecycleService,
+  getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,
   containerService,
@@ -3995,16 +5689,26 @@ const app = createServer({
   config,
   schedulerService,
   janitorService,
+  backupRetentionService,
+  ownedResourceLifecycle,
+  imageCacheGovernance,
   registry,
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,
   stateFile,
   authStore: activeAuthStore,
   gracefulShutdown: gracefulShutdownController,
+  registerResourceShutdown: close => resourceShutdownTasks.add(close),
   httpLogStore: activeHttpLogStore,
   serverEventLogStore: activeServerEventLogStore,
   branchOperationCoordinator,
-});
+  offhostAudit: activeServerEventLogStore instanceof OffHostAuditLogSink ? activeServerEventLogStore : null,
+};
+const app = createServer(serverDeps);
+if (config.mode !== 'executor' && !isPreviewInstance()) {
+  branchLifecycleService.start();
+  resourceShutdownTasks.add(() => branchLifecycleService.close());
+}
 
 // ── Helper: kill process on port so CDS can bind ──
 // force=true → kill any process (used for masterPort which belongs exclusively to CDS)
@@ -4042,6 +5746,42 @@ function tryKillOnPort(port: number, force: boolean): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * 已注册的**远端** executor 数量。本机自己那条不算——它不构成「别的机器要连过来」
+ * 的理由，把它算进去会让单机部署永远退不回回环。
+ */
+function countRemoteExecutors(): number {
+  try {
+    return Object.values(stateService.getExecutors() || {})
+      .filter((e) => e && e.host && e.host !== 'localhost' && e.host !== '127.0.0.1')
+      .length;
+  } catch {
+    // 状态库还没就绪时按 0 处理：此时集群成员也连不上来，绑回环不会误伤。
+    return 0;
+  }
+}
+
+function countCdsPeers(): number {
+  try {
+    return (stateService.getCdsPeers() || []).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 本机监听决策的**唯一**求值口径。listenWithRetry 与 cluster 路由都从这里取——
+ * 各自再调一次 resolveListenHost 就会出现两份判据，改一处忘一处（判据分裂）。
+ * 每次现算而不是缓存：集群成员数会在运行中变化。
+ */
+function currentListenDecision(): ListenHostDecision {
+  return resolveListenHost({
+    mode: config.mode,
+    remoteExecutorCount: countRemoteExecutors(),
+    peerCount: countCdsPeers(),
+  });
 }
 
 // force: force-kill any process on the port (for masterPort)
@@ -4083,13 +5823,23 @@ function listenWithRetry(
   // conditions produced multiple concurrent retries while the first one
   // eventually succeeded.
   let listening = false;
+  // 监听地址（见 services/listen-host.ts）：单机部署只绑回环，对外走前置 nginx；
+  // 集群角色（executor / 已注册远端成员）自动放开——那种部署里别的机器确实要连过来。
+  // 不给 host 参数时 Node 绑全部网卡，等于把控制面裸端口挂公网、绕过 nginx。
+  const bind = currentListenDecision();
   const doListen = (attempt: number) => {
     if (listening) return; // retry scheduled before success became visible
-    const s = server.listen(port, () => {
+    const s = server.listen(port, bind.host, () => {
       listening = true;
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
       // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
+      // 自更新结果对账（E37）：**更新成没成，以重启之后的 HEAD 为准**。
+      // 上一版把「构建成功」当成了「更新成功」——2026-08-18 一次崩溃回滚之后，
+      // 历史里仍然写着 success 与新 sha，而机器上是旧版，回滚在任何地方都查不到。
+      void reconcileSelfUpdateAfterRestart();
+      // 监听地址永远不该靠猜：直连裸端口失败时，这一行就是答案。
+      console.log(`  ${label}: ${describeListenDecision(bind)}`);
       onSuccess();
     });
     // 2026-05-28: 给所有 listenWithRetry 的 server 统一应用 keepalive 超时,
@@ -4255,6 +6005,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
+    confirmMaintenanceBoot(config.repoRoot);
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
     console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);
@@ -4434,6 +6185,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     // so both the branch router and the cluster router see the same value.
     getStrategy: () => clusterStrategy,
     setStrategy: (s) => { clusterStrategy = s; },
+    getListenDecision: currentListenDecision,
   }));
   console.log(`  Cluster: one-click bootstrap API mounted at /api/cluster`);
 
@@ -4441,6 +6193,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     console.log(`  Scheduler: dispatcher enabled, cluster-aware routing active`);
   } else {
     console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
+    // 绑回环时首个 executor 只能经前置 nginx 打进来。这句写在这里，是因为
+    // 「注册端口连不上」的排障总是从这一行开始找。
+    const listen = currentListenDecision();
+    if (!listen.exposed) {
+      console.log(`  Scheduler: 主节点监听 ${listen.host}，首个 executor 需经前置 nginx 注册（直连裸端口请设 CDS_BIND_HOST=0.0.0.0）`);
+    }
   }
 
   // ── 自建存活监控（Uptime Kuma 风格状态页的数据源） ──
@@ -4449,7 +6207,131 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // proxy / forwarder —— 后者每转发一次就会 scheduler.touch()，会把 idleTTL
   // 降温彻底废掉。详见 services/uptime-monitor.ts 顶部纪律 1。
   // CDS_UPTIME_ENABLED=0 可一刀关停（start() 变 no-op）。
+  // 告警的第二个出口：MAP 站内通知。
+  //
+  // 只 publish 到 cdsEventsBus 等于「告警躺在 CDS 自己的台账里」，没人打开状态页
+  // 就等于没发生——而本仓库刚因为「后台在炸、前台看着正常」吃过一次亏
+  // （规则 degradation-must-alarm）。铃要响在人会看的地方。
+  //
+  // 没配齐凭据时**必须把这件事印出来**：静默禁用就是装了个永远不会响的铃，
+  // 那正是这条链路要治的病。
+  /**
+   * 每次用的时候现解析：**设置优先、env 兜底**。
+   *
+   * 不在启动时定死一个实例的原因很实在：凭据配好之后不该还要重启一次 CDS 才生效——
+   * 那等于把「接上铃」这件事又变回一件需要运维在场的事。
+   */
+  const readMapSettings = () => readMapNotifierSettings(() => stateService.getAlarmNotify());
+  const resolveMapNotifier = (): MapNotifier | null => {
+    const { config: cfg, unavailable } = readMapSettings();
+    if (unavailable) console.warn('[map-notifier] 已保存的签名凭据无法读取，未使用备用身份发送');
+    return cfg ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) }) : null;
+  };
+  const mapNotifier = resolveMapNotifier();
+  if (mapNotifier) {
+    console.log('  [map-notifier] 存活告警将投递到 MAP 站内通知（source=uptime-alert）');
+  } else {
+    console.log('  [map-notifier] 未配置，存活告警只进 CDS 事件总线，不会有人被通知'
+      + '（需要 CDS_MAP_NOTIFY_ENDPOINT / _KEY_ID / _USERNAME / _PRIVATE_KEY）');
+  }
+  // 光打一行启动日志不够：没有任何一条验收会去读 CDS 的 stdout。
+  // 通道自身的状态必须跟着 uptime 摘要一起下发，让面板能说出「出事了有没有人被通知」。
+  // configured 传 getter 而不是布尔快照：配置是随时可改的，
+  // 定死一个启动时的布尔值会让「刚配好」和「压根没配」在面板上长得一模一样。
+  const alarmChannel = new AlarmChannel(
+    () => Boolean(readMapSettings().config),
+    'MAP 站内通知',
+    () => readMapSettings().unavailable ? ['CDS_SECRET_KEY（已存凭据无法解密，请恢复原密封密钥）'] : readMapSettings().config ? [] : missingAlarmEnvKeys(),
+  );
+  /**
+   * 多通道的投递记账本（2026-09-15）。
+   *
+   * 上面那条 alarmChannel 是单一 MAP 通道，先于本表存在且仍在工作；它接不上的原因
+   * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
+   * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
+   */
+  const alarmRelay = new AlarmRelay(path.join(config.repoRoot, '.cds', 'alarm-relay.json'));
+  const alarmLedger = new AlarmLedger({
+    // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
+    persist: (channelId, last) => {
+      const channel = stateService.listAlarmChannels().find((c) => c.id === channelId);
+      if (channel) stateService.upsertAlarmChannel({ ...channel, lastDelivery: last });
+    },
+  });
+  const sendLegacyAlarm = (alert: MapNotifierAlert, kind: 'alert' | 'drill') => {
+    alert = { ...alert, identity: identityForAlarm(stateService.getAlarmIdentity(), alert.targetId) };
+    const notifier = resolveMapNotifier();
+    if (!notifier) return undefined;
+    const payload = buildNotificationPayload(alert);
+    return withAlarmDeliveryHistory(activeServerEventLogStore, {
+      channelId: 'legacy-map', channelName: 'MAP 站内通知（存量通道）', channelKind: 'map', kind,
+      eventKind: alert.type, projectId: alert.projectId ?? '', targetId: alert.targetId,
+      targetName: alert.targetName, detectedAt: alert.detectedAt, title: payload.title, body: payload.message,
+    }, () => notifier.send(alert));
+  };
+  const alarmBoardUrl = (targetId?: string, incidentId?: string, detectedAt?: string): string | undefined => {
+    const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
+    // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
+    return base ? `${base}${monitorIncidentPath(targetId, incidentId, detectedAt)}` : undefined;
+  };
+
+  /**
+   * 项目级地址台账：某个项目名下所有分支预览的主机名。
+   *
+   * 走 resolveBranchPublishedEntrypoints —— 与容器注入 CDS_SERVICE_URLS、
+   * /api/branches 下发 previewUrls 是同一份组装。自己按「slug + 子域」拼一份
+   * 会立刻变成第二个判定源：命名子域规则一改，合法地址被判非法（或反过来），
+   * 而两边都「看着对」。
+   *
+   * 三个消费方共用这一份：写入门（地址必须属于本项目，堵 SSRF）、
+   * 分支绑定（分支删除时随之清理，不留死地址）、环境判定（地址指着分支预览的
+   * 监控一律算分支预览，不管它自称什么）。
+   */
+  const listProjectPreviewHosts = (projectId: string): Array<{ branchId: string; host: string }> => {
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) return [];
+    const entrypointDeps = branchEntrypointDepsFromState(stateService, previewHost);
+    const hosts: Array<{ branchId: string; host: string }> = [];
+    for (const branch of stateService.getAllBranches()) {
+      if (branch.projectId !== projectId) continue;
+      const published = resolveBranchPublishedEntrypoints(branch, entrypointDeps);
+      for (const url of [published.previewUrl, ...Object.values(published.serviceUrls)]) {
+        if (!url) continue;
+        try {
+          hosts.push({ branchId: branch.id, host: new URL(url).host.toLowerCase() });
+        } catch {
+          // 拼不出合法 URL 的入口直接跳过：宁可少列一个，也不要把一个畸形 host
+          // 放进白名单当成「本项目的地址」。
+        }
+      }
+    }
+    return hosts;
+  };
+
+  const alarmEventFor = (type: UptimeAlertEventType, data: UptimeAlertEventData): AlarmEvent => {
+    return {
+        notificationFacts: { environment: data.notificationEnvironment || 'unknown', system: systemForProject(data.projectId === '__self__' ? 'cds' : stateService.getProject(data.projectId)?.slug),
+          function: notificationFunction(data.targetName) },
+        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
+        incidentId: data.incidentId,
+        targetId: data.targetId,
+        urgency: data.urgency,
+        kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
+        projectId: data.projectId,
+        targetName: data.targetName,
+        message: data.message,
+        detectedAt: data.detectedAt,
+        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
+        consecutiveFailures: data.consecutiveFailures,
+      };
+  };
+  const notificationReports = new NotificationReportRecorder(stateService);
   const uptimeMonitor = new UptimeMonitorService({
+    observeScheduledJobs: () => observeScheduledJobs(stateService, (type, data) => { cdsEventsBus.publish(type, data); }),
     state: {
       getAllBranches: () => stateService.getAllBranches(),
       getProject: (projectId: string) => stateService.getProject(projectId),
@@ -4459,15 +6341,403 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 故障归因到发布。少了这一行，生产站点宕机时状态页只会说「宕了」，
       // 答不出「是哪次发布引入的」——而这是排障时第一个要问的问题。
       getReleaseRuns: (targetId: string) => stateService.getReleaseRuns({ targetId }),
+      // 监控中心手动添加的目标。少了这一行，「添加监控」保存成功但永远不会被探——
+      // 守卫测试 uptime-custom-monitors 盯着它。
+      getUptimeMonitors: () => stateService.listUptimeMonitors(),
+      // 功能监控每次观测留下的证据（产物地址、判据逐条、本次请求体）。
+      // 少了这一行，探测照跑、判定照常，但详情页永远没有画廊——
+      // 而「这次生成出来长什么样」正是这类监控存在的理由。
+      recordMonitorObservation: (monitorId, observation) =>
+        stateService.recordMonitorObservation(monitorId, observation),
+      // 用户视角探测的地址：与预览入口探测、PR 评论里的预览链接同一个拼法。
+      // 少了这一行，分支目标只有进程视角，「用户视角 ●」永远不会出现。
+      getPreviewUrl: (branch) => {
+        const previewHost = config.previewDomain || config.rootDomains?.[0];
+        if (!previewHost || !branch.branch) return '';
+        return buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(branch.projectId), branch.projectId).url;
+      },
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    // 环境判定的结构性证据来源：地址指着一条分支预览的监控一律算分支预览，
+    // 不管它自称什么。少了这一行，一条临时分支的监控只要 environment 填成
+    // production 就能混进项目负责人的第一屏。
+    listProjectPreviewHosts,
     // 掉线/恢复上总线。少了这一行，生产健康掉线只会躺在 incidents 台账里，
     // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
     // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
-    onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
+    onAlarmSuppressed: (data) => activeServerEventLogStore?.record({
+      category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
+      operationId: crypto.randomUUID(), projectId: data.projectId, message: `${data.targetName}：通知已合并（${data.reason}）`,
+      details: { kind: 'policy', targetId: data.targetId, targetName: data.targetName, reason: data.reason, detectedAt: new Date(data.at).toISOString() },
+    }),
+    onReportEvent: (type, data) => {
+      void notificationReports.record(alarmEventFor(type, data))
+        .catch(() => console.warn('[alarm] 未发送通知的状态事实归档失败，请检查报告存储。'));
+    },
+    onAlert: async (type, data) => {
+      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
+      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
+      // 上游已去抖，重试会把一次翻转变成多条通知）。
+      const event = alarmEventFor(type, data);
+      let boardUrl = alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt);
+      try {
+        const record = await notificationReports.record(event);
+        event.reportId = record.reportId;
+        event.eventId = record.eventId;
+        event.firstOccurredAt = record.firstOccurredAt;
+        event.lastOccurredAt = record.lastOccurredAt;
+        event.occurrenceCount = record.occurrenceCount;
+        // 已有更晚的失败事实时，保留迟到恢复记录，但不把它外发成当前恢复。
+        if (type === 'uptime.target.recovered' && Date.parse(record.lastOccurredAt) > Date.parse(data.detectedAt)) return;
+        if (boardUrl) { boardUrl = monitorReportUrl(boardUrl, record.reportId); }
+      } catch { console.warn('[alarm] 监控事件报告归档失败，通知继续发送，详情保留监控入口。'); }
+      cdsEventsBus.publish(type, data);
+      // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
+      // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
+      // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
+      if (notificationChannelSelected(stateService.getMonitorNotifications(), data.targetId, 'legacy-map') && (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map'))) void sendLegacyAlarm({
+        type,
+        urgency: data.urgency,
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
+        targetId: data.targetId,
+        targetName: data.targetName,
+        projectId: data.projectId,
+        branchId: data.branchId,
+        probeUrl: data.probeUrl,
+        boardUrl,
+        notificationFacts: event.notificationFacts,
+        eventId: event.eventId, firstOccurredAt: event.firstOccurredAt, lastOccurredAt: event.lastOccurredAt, occurrenceCount: event.occurrenceCount,
+        message: data.message,
+        consecutiveFailures: data.consecutiveFailures,
+        detectedAt: data.detectedAt,
+      }, 'alert')
+        // 每一次投递都记账：面板上「铃通不通」这句话的唯一数据源。
+        ?.then((r) => {
+          alarmChannel.record(r, 'alert', Date.now());
+          if (r.ok && type === 'uptime.target.down') return uptimeMonitor.markAlarmDelivered(data.targetId, 'legacy-map', data.detectedAt)
+            .catch(() => console.warn('[uptime] 已投递通知的历史回执保存未确认。'));
+        })
+        .catch((err) => {
+          const reason = `未捕获的投递异常: ${(err as Error).message}`;
+          alarmChannel.record({ ok: false, reason }, 'alert', Date.now());
+          console.warn(`[map-notifier] ${reason}`);
+        });
+
+      for (const channel of routeAlarm(stateService.listAlarmChannels(), event, stateService.getMonitorNotifications())) {
+        if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
+        if (alarmRelay.owns(channel.id)) {
+          alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
+          continue;
+        }
+        void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })
+          .then((r) => {
+            alarmLedger.record(channel.id, r, 'alert', Date.now());
+            if (!r.ok) console.warn(`[alarm] 通道「${channel.name}」投递失败: ${r.reason ?? '原因不明'}`);
+            if (r.ok && type === 'uptime.target.down') return uptimeMonitor.markAlarmDelivered(data.targetId, channel.id, data.detectedAt)
+              .catch(() => console.warn('[uptime] 已投递通知的历史回执保存未确认。'));
+          })
+          .catch((err) => {
+            const reason = `未捕获的投递异常: ${(err as Error).message}`;
+            alarmLedger.record(channel.id, { ok: false, reason }, 'alert', Date.now());
+            console.warn(`[alarm] 通道「${channel.name}」${reason}`);
+          });
+      }
+    },
   });
-  app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  configurePhoneDispatch(path.join(config.repoRoot, '.cds', 'phone-dispatch.json'), activeServerEventLogStore, async (item, result) => {
+    alarmLedger.record(item.channel.id, result, item.event.drill ? 'drill' : 'alert', Date.now());
+    if (result.ok && !item.event.drill && item.event.targetId && !item.event.kind.endsWith('-recovered')) {
+      await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channel.id, item.event.detectedAt);
+    }
+  });
+  // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
+  // 不让状态页把已删的目标和它的故障再挂一个探测间隔（Codex PR #1517 P2）。
+  stateService.onProjectRemoved((summary) => {
+    uptimeMonitor.forgetTargets(summary.uptimeMonitors.map((id) => customProbeTargetId({ id })));
+  });
+  // 分支删除的同款级联：Agent 自助登记的监控绑在某条分支上，分支没了监控也得走，
+  // 否则留下一条永远红着的死地址，把真告警淹掉。
+  stateService.onUptimeMonitorsOrphaned((monitorIds) => {
+    uptimeMonitor.forgetTargets(monitorIds.map((id) => customProbeTargetId({ id })));
+    console.log(`  [uptime] 分支删除，级联清理 ${monitorIds.length} 条绑定监控`);
+  });
+  // 公开状态页。两条路分开注册：读取那条匿名（token 自鉴权，已在
+  // github-auth PUBLIC_PATHS / isPublicAccessRequestRoute 双白名单里），
+  // 开关那条走登录网关。合成一个 router 挂同一个前缀，等于把开关也放出去了。
+  const publicStatusDeps = {
+    state: {
+      getProjectByStatusPageToken: (token: string) => stateService.getProjectByStatusPageToken(token),
+      getProject: (id: string) => stateService.getProject(id),
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      openProjectStatusPage: (projectId: string) => stateService.openProjectStatusPage(projectId),
+      closeProjectStatusPage: (projectId: string) => stateService.closeProjectStatusPage(projectId),
+    },
+    monitor: {
+      getSummary: (barSegments?: number) => uptimeMonitor.getSummary(barSegments),
+      getHistory: (targetId: string, rangeMs: number, bucketCount: number) =>
+        uptimeMonitor.getHistory(targetId, rangeMs, bucketCount),
+    },
+    refreshHintSeconds: uptimeMonitor.config.intervalMs
+      ? Math.round(uptimeMonitor.config.intervalMs / 1000)
+      : 60,
+  };
+  app.use('/api', createPublicStatusRouter(publicStatusDeps));
+  app.use('/api', createStatusPageAdminRouter(publicStatusDeps));
+
+  /*
+   * 监控自发现（2026-09-11）。
+   *
+   * 声明不再放在仓库里等人导入——实现了协议的自检端点自己说「该怎么监控我」，
+   * CDS 插上一个地址就行（心智是 USB 描述符）。这里只管「什么时候跑」：
+   * 插上 / 拔掉时当场跑一轮，之后跟着探测轮次的节奏定时跑。
+   */
+  let lastDiscoveryRun: DiscoveryRunSummary | null = null;
+  let discoveryInFlight: Promise<DiscoveryRunSummary> | null = null;
+  const runDiscovery = async (): Promise<DiscoveryRunSummary> => {
+    // 并发合流：插上端点会立刻触发一轮，而定时那一轮可能正跑着。
+    // 两轮同时对账会互相覆盖写入，还会把「新增」重复记两次。
+    if (discoveryInFlight) return discoveryInFlight;
+    discoveryInFlight = runMonitorDiscovery({
+      listProjects: () => stateService.getProjects(),
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
+      removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    }).then((summary) => {
+      lastDiscoveryRun = summary;
+      return summary;
+    }).finally(() => { discoveryInFlight = null; });
+    return discoveryInFlight;
+  };
+  /**
+   * CDS 自检端点 —— CDS 用同一套协议监控自己（2026-09-16）。
+   *
+   * 用户：「先加上自己的吧，以代码初始化的方式来驱动，方便 CDS 迁移部署在其他服务器上。」
+   * 所以这里两件事都在代码里：① 挂一个自带 `cds:monitor` 声明的 health+json 端点；
+   * ② 启动时把它插进内置项目「CDS 自身」。搬到哪台机器，这套监控都跟着起来，
+   * 不用任何人手配，删掉了下次启动也会回来。
+   *
+   * 端点不走登录门（server.ts 的公开路由白名单 + github-auth 的 PUBLIC_PATHS 都放行了它），
+   * 但**不是公开的**：只认本机回环 + 本进程内存里的一次性令牌（self-check-auth.ts）。
+   * 探测器与发现器在同一个进程里，打它时自动带令牌；从外面打，回环不满足或令牌不对，
+   * 一律 401，文档一个字都不吐。用户 2026-09-16：「免登录不行，泄漏数据。」
+   */
+  const selfCheckDeps: SelfCheckDeps = {
+    now: () => Date.now(),
+    ...(previewActivitySelfCheck ? { previewActivity: previewActivitySelfCheck } : {}),
+    deploymentRuns: () => stateService.getDeploymentRuns(),
+    unresolvedWebhookDispatches: () => unresolvedWebhookDispatches(stateService.getAllBranches()),
+    webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),
+    buildGate: () => buildGateStatus(),
+    cycleHealth: () => {
+      const c = uptimeMonitor.getCycleHealth();
+      return { sinceLastCycleMs: c.sinceLastCycleMs, stale: c.stale, running: c.running, watchdogResets: c.watchdogResets };
+    },
+    processStartedAt: () => {
+      const iso = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT;
+      const ms = iso ? Date.parse(iso) : Number.NaN;
+      return Number.isFinite(ms) ? ms : null;
+    },
+    diskUsage: () => defaultDiskUsage(config.repoRoot),
+    dockerPing: async () => {
+      const startedAt = Date.now();
+      try {
+        const result = await shell.exec('docker version --format "{{.Server.Version}}"', { timeout: 3000 });
+        return {
+          ok: result.exitCode === 0,
+          ms: Date.now() - startedAt,
+          // 超时被杀时 stderr 是空的——空原因等于没说，补上退出码与「3 秒内没回」。
+          detail: result.exitCode === 0
+            ? result.stdout.trim()
+            : (result.stderr.trim() || `退出码 ${result.exitCode}，3 秒内没有回应`),
+        };
+      } catch (err) {
+        return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
+      }
+    },
+    httpStats: (sinceMs) => readHttpSelfCheckStats(activeHttpLogStore, activeHttpLogStoreReady, sinceMs),
+    // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
+    liveAlarmChannels: () => countLiveAlarmChannels(
+      stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
+      alarmChannel.snapshot(),
+    ),
+    selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache),
+    storeBackend: () => stateService.getBackingStore().kind,
+  };
+  // 多条监控各自打一次这个端点；同轮共享结果，避免重复 Docker 和 Mongo 查询。
+  // 短缓存让同一轮里的探测共用一份文档：15 秒内的重复请求拿同一个 promise。
+  const SELF_CHECK_CACHE_MS = 15_000;
+  let selfCheckCache: { at: number; doc: Promise<Awaited<ReturnType<typeof buildSelfCheck>>> } | null = null;
+  const cachedSelfCheck = () => {
+    const at = Date.now();
+    if (selfCheckCache && at - selfCheckCache.at < SELF_CHECK_CACHE_MS) return selfCheckCache.doc;
+    const doc = buildSelfCheck(selfCheckDeps);
+    selfCheckCache = { at, doc };
+    doc.catch(() => { selfCheckCache = null; });
+    return doc;
+  };
+  app.get(SELF_CHECK_PATH, async (req, res) => {
+    // 鉴权在任何计算之前：不给未授权请求消耗 docker / Mongo 的机会，也不泄漏一个字。
+    if (!selfCheckAuth.verify({ remoteAddress: req.socket.remoteAddress, header: req.get(SELF_CHECK_HEADER) })) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    try {
+      if (req.query.projectInspection !== undefined) {
+        if (typeof req.query.projectInspection !== 'string') { res.status(400).json({ error: 'invalid_project' }); return; }
+        const project = stateService.getProject(req.query.projectInspection);
+        if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+        res.setHeader('content-type', 'application/health+json; charset=utf-8');
+        res.status(200).json(inspectionHealthDocument(project.monitoringInspections || []));
+        return;
+      }
+      const doc = await cachedSelfCheck();
+      res.setHeader('content-type', 'application/health+json; charset=utf-8');
+      res.status(200).json(doc);
+    } catch (err) {
+      // 自检本身炸了（比如 Mongo 抖一下）回 503，让发现器按「端点打不通」处理——已登记的
+      // 原监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
+      // 一条声明都没有」，把全部自监控当场下线（Codex #1543 P1）。
+      res.setHeader('content-type', 'application/health+json; charset=utf-8');
+      res.status(503).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message });
+    }
+  });
+  try {
+    const outcome = ensureSelfMonitoring(stateService, config.masterPort, Date.now());
+    console.log(`  [self-monitor] CDS 自身监控已就位：${outcome.url}`
+      + `${outcome.createdProject ? '（内置项目刚建立）' : ''}${outcome.addedEndpoint ? '（端点刚插上）' : ''}`
+      + `${outcome.retiredEndpoints.length > 0 ? `（退掉旧端口的端点：${outcome.retiredEndpoints.join('、')}）` : ''}`);
+  } catch (err) {
+    console.warn(`  [self-monitor] CDS 自身监控引导失败：${(err as Error).message}`);
+  }
+  const discoveryIntervalMs = Math.max(60_000, uptimeMonitor.config.intervalMs || 60_000);
+  setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
+  void runDiscovery().catch(() => undefined);
+
+  app.use('/api', createProjectInspectionsRouter({
+    getProject: (id) => stateService.getProject(id),
+    save: (id, monitoringInspections) => { stateService.updateProject(id, { monitoringInspections }); },
+  }));
+  app.use('/api', createMonitorOnboardingRouter(new MonitorOnboardingService({
+    store: stateService,
+    refreshTarget: targetId => uptimeMonitor.refreshTarget(targetId),
+    forgetTarget: targetId => uptimeMonitor.forgetTarget(targetId),
+    getNotifications: () => stateService.getMonitorNotifications(),
+    setNotifications: settings => stateService.setMonitorNotifications(settings),
+    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(readMapSettings().config ? ['legacy-map'] : [])],
+    stampPreviewBranch: monitor => {
+      const hit = monitor.projectId && monitor.url ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId)) : undefined;
+      monitor.previewBranchId = hit ? hit.branchId : undefined;
+    },
+  })));
+  app.use('/api', createUptimeRouter({
+    monitor: uptimeMonitor,
+    getNotifications: () => stateService.getMonitorNotifications(),
+    setNotifications: (settings) => stateService.setMonitorNotifications(settings),
+    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(readMapSettings().config ? ['legacy-map'] : [])],
+    recordMcpAudit: (evidence) => stateService.recordMcpMonitorAudit(evidence),
+    listMcpAudits: () => stateService.listMcpMonitorAudits(),
+    listProjectPreviewHosts,
+    listMonitorEndpoints: (projectId: string) => stateService.listMonitorEndpoints(projectId),
+    addMonitorEndpoint: (projectId: string, url: string) => stateService.addMonitorEndpoint(projectId, url),
+    removeMonitorEndpoint: (projectId: string, url: string) => stateService.removeMonitorEndpoint(projectId, url),
+    runDiscovery,
+    lastDiscoveryRun: () => lastDiscoveryRun,
+    alarmChannel: () => alarmChannel.snapshot(),
+    alarmIdentity: () => stateService.getAlarmIdentity(),
+    alarmChannels: () => stateService.listAlarmChannels()
+      .map((c) => alarmLedger.view(c, channelConfigured(c))),
+    readAlarmNotify: () => {
+      const { config: cfg, source, unavailable } = readMapSettings();
+      if (unavailable) return { configured: false, unavailable: true, source,
+        reason: '已保存的 MAP 凭据无法解密，请恢复原密封存储密钥后重试；未使用其他身份发送' };
+      if (!cfg) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
+      return {
+        configured: true, source, endpoint: cfg.endpoint, keyId: cfg.keyId, username: cfg.username,
+        targetUsername: cfg.targetUsername || cfg.username,
+        secretStorage: source === 'settings' ? isSealedSecret(stateService.getState().alarmNotify?.privateKey) ? 'encrypted' : 'legacy' : 'env',
+        privateKeyFingerprint: createHash('sha256').update(cfg.privateKeyPem).digest('hex').slice(0, 16),
+      };
+    },
+    writeAlarmNotify: (next) => {
+      stateService.setAlarmNotify(next);
+      // 换了凭据（或清掉）就是换了目的地：旧的投递证明作废，回到「没发过」，演练成功一次再算通
+      alarmChannel.reset();
+      return stateService.flush();
+    },
+    // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
+    // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。
+    runAlarmDrill: async (note: string) => {
+      const notifier = resolveMapNotifier();
+      if (!notifier) {
+        const reason = '通知通道没配齐，演练发不出去（这本身就是结论：现在出问题不会有人被通知）';
+        alarmChannel.record({ ok: false, reason }, 'drill', Date.now());
+        return { ok: false, reason };
+      }
+      const result = await sendLegacyAlarm({
+        type: 'uptime.target.recovered',
+        targetId: 'drill',
+        targetName: '通知通道演练',
+        message: note || '这是一次人工演练，用来确认「出问题时铃会响」。看到它说明通道是通的。',
+        consecutiveFailures: 0,
+        detectedAt: new Date().toISOString(),
+      }, 'drill') ?? { ok: false, reason: '通知通道配置已变化，请重试。' };
+      alarmChannel.record(result, 'drill', Date.now());
+      return result;
+    },
+    store: {
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
+      upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
+      removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      getMonitorSubscriptions: () => stateService.getMonitorSubscriptions(),
+      setMonitorSubscription: (targetId, subscribed, actor) => stateService.setMonitorSubscription(targetId, subscribed, actor),
+      flush: () => stateService.flush(),
+      getProject: (projectId: string) => stateService.getProject(projectId),
+    },
+  }));
+  // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
+  app.use('/api', (() => {
+    const r = express.Router();
+    registerAlarmRelayRoutes(r, alarmRelay, {
+      channels: () => stateService.listAlarmChannels(),
+      getNotifications: () => stateService.getMonitorNotifications(),
+      acknowledged: async (item, result) => {
+        if (result.merged) activeServerEventLogStore?.record({
+          category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
+          operationId: item.id, projectId: item.event.projectId, message: '同源检查已归入已有事故',
+          details: { kind: 'policy', targetId: item.event.targetId, targetName: item.event.targetName, reason: 'shared-incident' },
+        });
+        else if (!result.cancelled) alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
+        const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
+        if (!result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
+          channelId: item.channelId, channelName: channel?.name ?? '已删除的通知通道', channelKind: channel?.kind ?? 'bark',
+          kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
+          targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
+          reportId: item.event.reportId, eventId: item.event.eventId,
+          title: renderAlarmMessage(item.event).title, body: renderAlarmMessage(item.event).body,
+        }, async () => result);
+        if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
+          await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
+      },
+    });
+    registerAlarmChannelRoutes(r, {
+      recordEvent: (event) => notificationReports.record(event),
+      relay: alarmRelay,
+      getIdentity: () => stateService.getAlarmIdentity(),
+      setIdentity: (identity) => stateService.setAlarmIdentity(identity),
+      list: () => stateService.listAlarmChannels(),
+      upsert: (channel) => stateService.upsertAlarmChannel(channel),
+      remove: (id: string) => stateService.removeAlarmChannel(id),
+      ledger: alarmLedger,
+      history: activeServerEventLogStore,
+      boardUrl: alarmBoardUrl,
+    });
+    return r;
+  })());
+  // 回填给 /healthz：探活循环停摆必须在健康端点上可见（2026-09-08）。
+  serverDeps.uptimeMonitor = uptimeMonitor;
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
   // 在模块顶层就跑完了，而 uptimeMonitor 到这一行才存在——闭包捕获不到。
   // 没接上这一行不会报错，只会让发布中心的健康列恒为「存活监控未启用」：
@@ -4504,6 +6774,15 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       };
     });
   }
+  // 停止新增探测、等在途结果，再确认历史写链；不延长既有关键保存的3秒预算。
+  resourceShutdownTasks.add(async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([uptimeMonitor.stop(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('uptime history flush timeout')), 3000);
+      })]);
+    } finally { if (timer) clearTimeout(timer); }
+  });
   uptimeMonitor.start();
   console.log(
     uptimeMonitor.config.enabled

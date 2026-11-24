@@ -27,7 +27,11 @@ import {
   sortByRecency,
   type LabelMeta,
   type Bucket,
+  newsTint,
 } from './aiNewsShared';
+
+/** 本页的「实时 / 精选」强调色：与「产品更新」分类同一档青色，随主题变化（浅色下压到 800 档） */
+const NEWS_CYAN = 'var(--news-label-cyan)';
 import './aiNews.css';
 
 /**
@@ -67,7 +71,7 @@ function SourceAvatar({ url, meta, size = 40 }: { url: string; meta: LabelMeta; 
     return (
       <div
         className="shrink-0 inline-flex items-center justify-center rounded-lg"
-        style={{ width: size, height: size, background: `${meta.color}24`, border: `1px solid ${meta.color}40` }}
+        style={{ width: size, height: size, background: newsTint(meta.color, 14), border: `1px solid ${newsTint(meta.color, 25)}` }}
       >
         <Icon size={Math.round(size * 0.46)} style={{ color: meta.color }} />
       </div>
@@ -300,7 +304,7 @@ export function AiNewsTimeline() {
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         <span
           className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-          style={{ background: `${meta.color}1f`, color: meta.color }}
+          style={{ background: newsTint(meta.color, 12), color: meta.color }}
         >
           <Icon size={10} />
           {meta.label}
@@ -308,7 +312,7 @@ export function AiNewsTimeline() {
         {featured && (
           <span
             className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-            style={{ background: 'rgba(34,211,238,0.14)', color: '#67e8f9' }}
+            style={{ background: newsTint(NEWS_CYAN, 14), color: NEWS_CYAN }}
           >
             <Sparkles size={9} /> 精选
           </span>
@@ -375,9 +379,9 @@ export function AiNewsTimeline() {
         title={label}
         className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors"
         style={{
-          background: on ? 'rgba(34,211,238,0.14)' : 'transparent',
-          border: `1px solid ${on ? 'rgba(34,211,238,0.34)' : 'var(--border-subtle)'}`,
-          color: on ? '#67e8f9' : 'var(--text-muted)',
+          background: on ? newsTint(NEWS_CYAN, 14) : 'transparent',
+          border: `1px solid ${on ? newsTint(NEWS_CYAN, 34) : 'var(--border-subtle)'}`,
+          color: on ? NEWS_CYAN : 'var(--text-muted)',
         }}
       >
         <Icon size={15} />
@@ -391,11 +395,11 @@ export function AiNewsTimeline() {
       <header style={glassPanel} className="rounded-2xl px-5 py-4 flex items-center gap-3 shrink-0 flex-wrap">
         <span
           className="ainews-live-dot inline-flex shrink-0"
-          style={{ width: 10, height: 10, borderRadius: '50%', background: '#22d3ee', boxShadow: '0 0 10px #22d3ee' }}
+          style={{ width: 10, height: 10, borderRadius: '50%', background: NEWS_CYAN, boxShadow: `0 0 10px ${NEWS_CYAN}` }}
         >
-          <span className="ainews-live-core" style={{ width: 10, height: 10, borderRadius: '50%', background: '#22d3ee' }} />
+          <span className="ainews-live-core" style={{ width: 10, height: 10, borderRadius: '50%', background: NEWS_CYAN }} />
         </span>
-        <Radio size={17} style={{ color: '#22d3ee' }} />
+        <Radio size={17} style={{ color: NEWS_CYAN }} />
         <div className="flex flex-col min-w-0">
           <h2 className="text-[15px] font-semibold leading-tight" style={{ color: 'var(--text-primary)' }}>
             AI 大事 · 实时资讯
@@ -409,7 +413,7 @@ export function AiNewsTimeline() {
                 {feed.stale && (
                   <>
                     <span style={{ opacity: 0.5 }}>·</span>
-                    <span style={{ color: '#fbbf24' }}>暂用缓存</span>
+                    <span style={{ color: 'var(--accent-fg-amber)' }}>暂用缓存</span>
                   </>
                 )}
               </>
@@ -444,12 +448,12 @@ export function AiNewsTimeline() {
         {(() => {
           const chips: Array<{ key: string; label: string; count: number; color?: string; icon?: LucideIcon }> = [
             { key: 'all', label: '全部', count: feed?.items.length ?? 0 },
-            { key: 'featured', label: '精选', count: featuredCount, color: '#22d3ee' },
+            { key: 'featured', label: '精选', count: featuredCount, color: NEWS_CYAN },
             ...categories.map((c) => ({ key: c.key, label: c.meta.label, count: c.count, color: c.meta.color, icon: c.meta.icon })),
           ];
           return chips.map((chip) => {
             const on = tab === chip.key;
-            const accent = chip.color ?? '#22d3ee';
+            const accent = chip.color ?? NEWS_CYAN;
             const Icon = chip.icon;
             return (
               <button
@@ -459,8 +463,8 @@ export function AiNewsTimeline() {
                 className="shrink-0 inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors"
                 style={{
                   color: on ? (chip.color ?? 'var(--text-primary)') : 'var(--text-muted)',
-                  background: on ? `${accent}1f` : 'transparent',
-                  border: `1px solid ${on ? `${accent}59` : 'var(--border-subtle)'}`,
+                  background: on ? newsTint(accent, 12) : 'transparent',
+                  border: `1px solid ${on ? newsTint(accent, 35) : 'var(--border-subtle)'}`,
                 }}
               >
                 {Icon && <Icon size={12} style={{ color: on ? accent : 'var(--text-muted)' }} />}
@@ -477,7 +481,7 @@ export function AiNewsTimeline() {
         <div className="flex-1 min-w-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
         {loading ? (
           <div className="flex items-center justify-center py-24">
-            <MapSpinner size={26} color="#22d3ee" />
+            <MapSpinner size={26} color={NEWS_CYAN} />
           </div>
         ) : error || (feed?.degraded ?? false) ? (
           <div style={glassPanel} className="rounded-2xl flex flex-col items-center justify-center text-center gap-2 py-20">
@@ -490,7 +494,7 @@ export function AiNewsTimeline() {
               type="button"
               onClick={() => void load(true)}
               className="mt-1 text-[13px] px-4 py-1.5 rounded-lg inline-flex items-center gap-1.5"
-              style={{ background: 'rgba(34,211,238,0.14)', color: '#67e8f9', border: '1px solid rgba(34,211,238,0.34)' }}
+              style={{ background: newsTint(NEWS_CYAN, 14), color: NEWS_CYAN, border: `1px solid ${newsTint(NEWS_CYAN, 34)}` }}
             >
               <RefreshCw size={13} /> 重试
             </button>
@@ -588,7 +592,7 @@ export function AiNewsTimeline() {
                           <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: meta.color }} />
                           <span
                             className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                            style={{ boxShadow: `inset 0 0 0 1px ${meta.color}55, 0 0 22px ${meta.color}1a` }}
+                            style={{ boxShadow: `inset 0 0 0 1px ${newsTint(meta.color, 33)}, 0 0 22px ${newsTint(meta.color, 10)}` }}
                           />
                           {sourceHeader(it, meta)}
                           <div
@@ -613,7 +617,7 @@ export function AiNewsTimeline() {
                 type="button"
                 onClick={() => setVisible((v) => v + PAGE)}
                 className="self-center mt-1 mb-2 text-[13px] px-5 py-2 rounded-full inline-flex items-center gap-1.5 transition-colors"
-                style={{ background: 'rgba(34,211,238,0.12)', color: '#67e8f9', border: '1px solid rgba(34,211,238,0.3)' }}
+                style={{ background: newsTint(NEWS_CYAN, 12), color: NEWS_CYAN, border: `1px solid ${newsTint(NEWS_CYAN, 30)}` }}
               >
                 <ChevronDown size={14} /> 加载更多 · 还有 {allItems.length - visible} 条
               </button>
@@ -637,7 +641,7 @@ export function AiNewsTimeline() {
             {/* 今日概览 + 分类分布（点分类条可筛选） */}
             <section style={glassPanel} className="rounded-2xl p-4 shrink-0">
               <div className="flex items-center gap-2 mb-3">
-                <BarChart3 size={15} style={{ color: '#22d3ee' }} />
+                <BarChart3 size={15} style={{ color: NEWS_CYAN }} />
                 <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>今日概览</h3>
                 <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>监测 {feed?.total ?? 0} 条</span>
               </div>
@@ -652,7 +656,7 @@ export function AiNewsTimeline() {
                       type="button"
                       onClick={() => setTab(on ? 'all' : c.key)}
                       className="group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-[rgba(255,255,255,0.04)]"
-                      style={{ background: on ? `${c.meta.color}14` : 'transparent' }}
+                      style={{ background: on ? newsTint(c.meta.color, 8) : 'transparent' }}
                     >
                       <Icon size={13} style={{ color: c.meta.color }} className="shrink-0" />
                       <span className="text-[12px] shrink-0 w-16 text-left truncate" style={{ color: on ? c.meta.color : 'var(--text-secondary, var(--text-primary))' }}>
@@ -672,7 +676,7 @@ export function AiNewsTimeline() {
             {featuredItems.length > 0 && (
               <section style={glassPanel} className="rounded-2xl p-4 flex flex-col min-h-0">
                 <div className="flex items-center gap-2 mb-3 shrink-0">
-                  <Sparkles size={15} style={{ color: '#67e8f9' }} />
+                  <Sparkles size={15} style={{ color: NEWS_CYAN }} />
                   <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>精选速览</h3>
                   <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>{featuredItems.length} 条高信号</span>
                 </div>

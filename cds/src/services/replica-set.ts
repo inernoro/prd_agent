@@ -28,7 +28,7 @@ import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { DeploymentVersionService } from './deployment-version.js';
-import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, envOverrideFromSnapshot, dedicatedAuthFromContainer } from './replica-db-clone.js';
+import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, resolveInfraForDb, envOverrideFromSnapshot, dedicatedAuthFromContainer } from './replica-db-clone.js';
 
 /** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
 export const REPLICA_MEMBER_LIMIT = 3;
@@ -40,6 +40,7 @@ export const REPLICA_MEMBER_LIMIT = 3;
  * 的同名常量做提交前预检，两边由 replica-plan-limit-contract 测试防漂移。
  */
 export const REPLICA_PLAN_MAX_STEPS = 60;
+const ARCHIVED_REPLICA_START_REASON = '分支已归档，请先恢复后再启动副本或数据库切换';
 
 /** 成员短 id：`rs` + 6 位 hex。同时用作粘性 cookie 值与直达子域后缀。 */
 export function newReplicaMemberId(rand: () => number = Math.random): string {
@@ -116,14 +117,18 @@ export class ReplicaSetService {
   /**
    * 专用隔离实例的端口发布地址（Codex 第三十八轮 P1）：取 `CDS_HOST`，也就是副本
    * 容器连接串里实际用的那个 docker 网桥地址。只发布在这一个地址上，宿主之外
-   * 够不着这份生产派生克隆。取不到时返回 undefined，退回旧的全网卡行为（宁可
-   * 保持功能可用，也不猜一个地址把隔离打死）。
+   * 够不着这份生产派生克隆。取不到或拿到全网卡地址时直接拒绝创建，不能以功能
+   * 可用为由把数据端口降级发布到公网。
    */
-  private dockerBridgeHost(): string | undefined {
+  private dockerBridgeHost(): string {
     try {
-      return this.opts.state.getCdsEnvVars()['CDS_HOST'] || undefined;
+      const host = this.opts.state.getCdsEnvVars()['CDS_HOST']?.trim() ?? '';
+      if (!host || ['0.0.0.0', '*', '::'].includes(host)) {
+        throw new Error('CDS_HOST 必须是容器可达的私网地址，禁止缺省或使用全网卡地址');
+      }
+      return host;
     } catch {
-      return undefined;
+      throw new Error('无法取得安全的 CDS_HOST，拒绝创建数据库隔离实例');
     }
   }
 
@@ -220,7 +225,7 @@ export class ReplicaSetService {
    * 启动进展通过 member.status 轮询可见（禁止空白等待由 UI 轮询承担）。
    */
   addMember(branchId: string, profileId: string, input: AddMemberInput): ReplicaMember {
-    const branch = this.requireBranch(branchId);
+    const branch = this.requireStartableBranch(branchId);
     const profile = this.requireProfile(branch, profileId);
     if (this.opts.isRemoteBranch?.(branch)) {
       throw new ReplicaSetError(409, '该分支部署在远端执行器上，复制集暂只支持本机（embedded）分支');
@@ -254,6 +259,10 @@ export class ReplicaSetService {
       // 先做可行性预检，把「没有库可隔离 / infra 没在跑」这类失败在同步阶段就讲清楚
       const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, profile);
       if (!target) throw new ReplicaSetError(409, `无法隔离数据库：${reason}`);
+      if (target.engine === 'mongo'
+        && !this.opts.state.canStartInfraMaintenance(branch.projectId || 'default', target.infra.id)) {
+        throw new ReplicaSetError(409, 'MongoDB 正在轮换凭据，暂不能创建隔离副本');
+      }
     }
     // 「一个 + 号」路径：不传 versionId 就复制当前版本（同版本水平副本）
     const isQuickReplica = !input.versionId;
@@ -446,6 +455,10 @@ export class ReplicaSetService {
     }
     const target = guardHits[0].target;
     const profileId = guardHits[0].profileId;
+    if (target.engine === 'mongo'
+      && !this.opts.state.canStartInfraMaintenance(branch.projectId || 'default', target.infra.id)) {
+      return { accepted: false, reason: 'MongoDB 正在轮换凭据，暂不能启动数据库保护罩克隆' };
+    }
     const inflightKey = this.isolationKey(branchId, target);
     if (this.isolationInFlight.has(inflightKey)) {
       return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
@@ -454,7 +467,7 @@ export class ReplicaSetService {
       .map((s) => /^guard-(\d+)$/.exec(s.memberId)?.[1]).filter(Boolean).map(Number);
     const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
     this.isolationInFlight.set(inflightKey, guardId);
-    void cloneReplicaDb({
+    void this.cloneReplicaDbWithMaintenance(branch, target, {
       target,
       memberId: guardId,
       profileId,
@@ -486,6 +499,28 @@ export class ReplicaSetService {
     return { accepted: true };
   }
 
+  private async cloneReplicaDbWithMaintenance(
+    branch: BranchEntry,
+    target: NonNullable<ReturnType<typeof resolveReplicaDbTarget>['target']>,
+    input: Parameters<typeof cloneReplicaDb>[0],
+  ): Promise<Awaited<ReturnType<typeof cloneReplicaDb>>> {
+    if (target.engine !== 'mongo') return await cloneReplicaDb(input);
+    const job = await this.opts.state.beginInfraMaintenanceJob({
+      projectId: branch.projectId || 'default',
+      serviceId: target.infra.id,
+      runtime: 'mongodb',
+      kind: 'replica-isolation',
+    });
+    let completed = false;
+    try {
+      const cloned = await cloneReplicaDb(input);
+      completed = true;
+      return cloned;
+    } finally {
+      await this.opts.state.finishInfraMaintenanceJob(job.id, completed ? 'completed' : 'failed');
+    }
+  }
+
   /**
    * profile 级「复制隔离」（用户拍板的三步心智）：
    *   第1步 复制：整库克隆一次成隔离库（主库不动）；
@@ -495,6 +530,7 @@ export class ReplicaSetService {
    */
   isolateProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
     const branch = this.requireBranch(branchId);
+    if (branch.archive) return { accepted: false, reason: ARCHIVED_REPLICA_START_REASON };
     // 2026-07-25 用户拍板：隔离不再强制「先有副本」——零副本也可隔离（先建好隔离库并
     // 钉住隔离态，之后加的副本自动连隔离库）。enable 幂等，无 rs 条目时就地建。
     const rs = this.enable(branchId, profileId);
@@ -582,6 +618,10 @@ export class ReplicaSetService {
       return { accepted: true };
     }
     const inflightKey = this.isolationKey(branchId, target);
+    if (target.engine === 'mongo'
+      && !this.opts.state.canStartInfraMaintenance(branch.projectId || 'default', target.infra.id)) {
+      return { accepted: false, reason: 'MongoDB 正在轮换凭据，暂不能启动复制隔离克隆' };
+    }
     if (this.isolationInFlight.has(inflightKey)) {
       return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
     }
@@ -601,7 +641,7 @@ export class ReplicaSetService {
     const releaseIsoOps = this.trackMemberOps(branchId, profileId, members.map((m) => m.id));
     void (async () => {
       try {
-        const cloned = await cloneReplicaDb({
+        const cloned = await this.cloneReplicaDbWithMaintenance(branch, target, {
           target, memberId: guardId, profileId, branchId, now: this.opts.now,
           instanceId: this.opts.instanceId,
           publishHost: this.dockerBridgeHost(),
@@ -689,6 +729,7 @@ export class ReplicaSetService {
   /** 回切主库：副本重物化回共享库；隔离库不删，作为快照留在台账。 */
   revertProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
     const branch = this.requireBranch(branchId);
+    if (branch.archive) return { accepted: false, reason: ARCHIVED_REPLICA_START_REASON };
     const rs = branch.replicaSets?.[profileId];
     if (!rs?.isolated) return { accepted: false, reason: '当前不在隔离状态' };
     const baseProfile = this.requireProfile(branch, profileId);
@@ -811,7 +852,7 @@ export class ReplicaSetService {
     baseProfile: BuildProfile,
     dbOverride?: { envOverride: Record<string, string>; dbName: string },
   ): Promise<void> {
-    const branch = this.requireBranch(branchId);
+    const branch = this.requireStartableBranch(branchId);
     const snapshot = version.profiles.find((p) => p.profileId === profileId)!;
     const memberProfileId = `${profileId}--${memberId}`;
     const memberProfile: BuildProfile = {
@@ -902,7 +943,7 @@ export class ReplicaSetService {
         return;
       }
       try {
-        const cloned = await cloneReplicaDb({
+        const cloned = await this.cloneReplicaDbWithMaintenance(branch, target, {
           target,
           memberId,
           profileId,
@@ -916,8 +957,9 @@ export class ReplicaSetService {
         // 移除/复制集解散——记录没了还往台账追加快照会留下无主隔离库。确认成员
         // 仍在册才入账；不在就顺手把刚克隆出来的库清掉（best-effort）。
         if (!this.memberStillTracked(branchId, profileId, memberId)) {
-          const infraEnv = this.opts.state.getInfraServicesForProject(branch.projectId)
-            .find((s) => s.containerName === cloned.snapshot.infraContainer)?.env || {};
+          const fencedInfra = this.opts.state.getInfraServicesForProject(branch.projectId)
+            .find((s) => s.containerName === cloned.snapshot.infraContainer);
+          const infraEnv = fencedInfra ? resolveInfraForDb(this.opts.state, fencedInfra).env || {} : {};
           // 清理失败不静默（Codex 第十七轮 P1）：drop 失败会入台账/写墓碑/留日志
           await this.dropFencedClone(cloned.snapshot, infraEnv, branchId, branch.projectId, '成员物化栅栏');
           this.opts.logger?.warn?.(
@@ -953,6 +995,7 @@ export class ReplicaSetService {
       return;
     }
     try {
+      this.requireStartableBranch(branchId);
       await this.opts.container.runService(
         branch,
         memberProfile,
@@ -987,6 +1030,7 @@ export class ReplicaSetService {
         // 报成「已停止」，而这条文案正是用户判断「它还在不在写主库」的唯一依据。
         try {
           await this.opts.container.stop(containerName, 'replica-member-not-ready', {
+            kind: 'cds-stop-after-failure',
             branchId, profileId, actor: 'replica-set', trigger: 'replica-set-readiness-failed',
           });
         } catch (err) {
@@ -1368,6 +1412,9 @@ export class ReplicaSetService {
     mode?: 'container' | 'project';
   }): ReplicaPlan {
     const branch = this.requireBranch(branchId);
+    if (input.steps.some(step => ['add-replica', 'isolate-db', 'revert-db'].includes(step.kind))) {
+      this.requireStartableBranch(branchId);
+    }
     if ((branch.replicaPlans || []).some((p) => p.status === 'running')) {
       throw new ReplicaSetError(409, '已有执行中的变更计划，请等它结束或取消后再保存新计划');
     }
@@ -1894,6 +1941,12 @@ export class ReplicaSetService {
   private requireBranch(branchId: string): BranchEntry {
     const branch = this.opts.state.getBranch(branchId);
     if (!branch) throw new ReplicaSetError(404, `分支不存在: ${branchId}`);
+    return branch;
+  }
+
+  private requireStartableBranch(branchId: string): BranchEntry {
+    const branch = this.requireBranch(branchId);
+    if (branch.archive) throw new ReplicaSetError(409, ARCHIVED_REPLICA_START_REASON);
     return branch;
   }
 

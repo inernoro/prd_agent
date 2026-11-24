@@ -48,6 +48,7 @@ export interface ShortVideoMaterialRun {
   sourceEntryId?: string;
   transcriptEntryId?: string;
   timelineEntryId?: string;
+  errorCode?: string;
   errorMessage?: string;
   createdAt: string;
   updatedAt: string;

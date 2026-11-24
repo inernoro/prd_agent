@@ -30,6 +30,11 @@ function injectKeyframes() {
   100% { -webkit-mask-position: -120% 0; mask-position: -120% 0; }
 }
 @keyframes map-glow { 0%,100% { opacity: 0.3; transform: scale(0.92); } 50% { opacity: 0.6; transform: scale(1.04); } }
+@keyframes map-signal-orbit { to { transform: rotate(360deg); } }
+@keyframes map-signal-breathe { 0%,100% { opacity: .35; } 50% { opacity: .8; } }
+@media (prefers-reduced-motion: reduce) {
+  .map-loader-signal *, .map-loader-signal { animation: none !important; }
+}
   `;
   document.head.appendChild(style);
 }
@@ -136,10 +141,12 @@ export function MapSectionLoader({
   text,
   className,
   style,
+  variant = 'brand',
 }: {
   text?: string;
   className?: string;
   style?: React.CSSProperties;
+  variant?: 'brand' | 'signal';
 }) {
   useEffect(() => { injectKeyframes(); }, []);
 
@@ -153,13 +160,31 @@ export function MapSectionLoader({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 14,
-        padding: '48px 0',
+        gap: variant === 'signal' ? 10 : 14,
+        padding: variant === 'signal' ? '0' : '48px 0',
         userSelect: 'none',
         ...style,
       }}
     >
-      <CleanWordmark size={26} />
+      {variant === 'signal' ? (
+        <div className="map-loader-signal" aria-hidden style={{ position: 'relative', width: 78, height: 78, color: 'var(--text-secondary)' }}>
+          <svg width="78" height="78" viewBox="0 0 112 112" fill="none" style={{ display: 'block' }}>
+            <circle cx="56" cy="56" r="49" stroke="currentColor" strokeWidth="1" opacity=".12" strokeDasharray="1 7" strokeLinecap="round" />
+            <circle cx="56" cy="56" r="41" stroke="currentColor" strokeWidth=".7" opacity=".1" />
+            <g style={{ transformOrigin: '56px 56px', animation: 'map-signal-orbit 7s linear infinite' }}>
+              <circle cx="56" cy="56" r="41" stroke="currentColor" strokeWidth="1.3" strokeDasharray="66 192" strokeLinecap="round" opacity=".65" />
+              <circle cx="56" cy="15" r="2.2" fill="currentColor" />
+            </g>
+            <g style={{ transformOrigin: '56px 56px', animation: 'map-signal-orbit 10s linear infinite reverse' }}>
+              <circle cx="56" cy="56" r="29" stroke="currentColor" strokeWidth="1" strokeDasharray="40 142" strokeLinecap="round" opacity=".35" />
+              <circle cx="56" cy="85" r="1.5" fill="currentColor" opacity=".6" />
+            </g>
+          </svg>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'map-signal-breathe 3.6s ease-in-out infinite' }}>
+            <CleanWordmark size={12} />
+          </div>
+        </div>
+      ) : <CleanWordmark size={26} />}
       {text && (
         <span style={{ fontSize: 13, color: 'var(--text-muted, #666)', marginTop: 2 }}>
           {text}

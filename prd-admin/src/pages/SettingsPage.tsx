@@ -11,8 +11,11 @@ import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationS
 import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
+import { UserNavOverview } from '@/pages/settings/UserNavOverview';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
+import SystemImagerySettings from '@/pages/settings/SystemImagerySettings';
+import { WebPagePreferencesSettings } from '@/pages/settings/WebPagePreferencesSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,6 +26,7 @@ import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
 import {
   Palette,
   Image,
+  ImagePlus,
   UserCog,
   UserCircle2,
   Database,
@@ -34,6 +38,7 @@ import {
   Link2,
   Server,
   Globe,
+  MessageCircleQuestion,
 } from 'lucide-react';
 
 function SkinSettings() {
@@ -61,7 +66,7 @@ function NavOrderSettings() {
   const isRoot = useAuthStore((s) => s.isRoot);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const canManageDefaultNav = isRoot || perms.includes('super') || perms.includes('settings.write');
-  const [activeScope, setActiveScope] = useState<'mine' | 'all'>('mine');
+  const [activeScope, setActiveScope] = useState<'mine' | 'all' | 'users'>('mine');
   const [defaultSaving, setDefaultSaving] = useState(false);
   const [defaultDraftOrder, setDefaultDraftOrder] = useState<string[]>([]);
   const [defaultDraftHidden, setDefaultDraftHidden] = useState<string[]>([]);
@@ -86,7 +91,7 @@ function NavOrderSettings() {
         border: '1px solid var(--nested-block-border)',
       }}
     >
-      {(['mine', 'all'] as const).map((key) => (
+      {(['mine', 'all', 'users'] as const).map((key) => (
         <button
           key={key}
           type="button"
@@ -103,7 +108,7 @@ function NavOrderSettings() {
             transition: 'background 120ms, color 120ms',
           }}
         >
-          {key === 'mine' ? '我的' : '所有人的'}
+          {key === 'mine' ? '我的' : key === 'all' ? '所有人的' : '全部用户'}
         </button>
       ))}
     </div>
@@ -280,9 +285,30 @@ function NavOrderSettings() {
           }
         />
       )}
+
+      {activeScope === 'users' && canManageDefaultNav && (
+        <UserNavOverview
+          titleNode={scopeSwitcher}
+          defaultNavOrder={defaultNavOrder}
+          defaultNavHidden={defaultNavHidden}
+          onDefaultNavChanged={setDefaultNavLayoutLocal}
+        />
+      )}
     </div>
   );
 }
+
+/**
+ * 改过名的 tab 在这里留一条别名。
+ *
+ * 「首页预览图」并进「系统配图」之后，老书签与老文档里的 `?tab=landing-preview`
+ * 会认不出来，被 visibleTab 那道兜底退回第一屏——人点开自己存的链接，落到一个不相干的屏，
+ * 而且没有任何提示说它搬到哪去了。一行映射就能免掉这件事。
+ *
+ * 放在模块顶层而不是组件里：组件内的对象字面量每次渲染都是新的，进 useEffect 依赖
+ * 就是一次无意义的重跑。
+ */
+const TAB_ALIASES: Record<string, string> = { 'landing-preview': 'system-imagery' };
 
 export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -295,10 +321,17 @@ export default function SettingsPage() {
       { key: 'account', label: '账户管理', icon: <UserCircle2 size={14} /> },
       { key: 'skin', label: '皮肤设置', icon: <Palette size={14} /> },
       { key: 'nav-order', label: '导航顺序', icon: <ListOrdered size={14} /> },
+      { key: 'web-pages', label: '网页托管', icon: <MessageCircleQuestion size={14} /> },
     ];
 
     const hasPerm = (perm: string) => isRoot || perms.includes(perm) || perms.includes('super');
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
+    // 这一屏要三样权限齐了才成立：读 slot 列表（assets.read）、写 slot（assets.write）、
+    // 调生图（visual-agent.use，ImageGenController 就是这个门）。只给写权限的话，
+    // 入口露出来了、列表拉不到、模型也拉不到，用户看到的是「没配模型」+ 一点就失败。
+    if (hasPerm('assets.read') && hasPerm('assets.write') && hasPerm('visual-agent.use')) {
+      list.push({ key: 'system-imagery', label: '系统配图', icon: <ImagePlus size={14} /> });
+    }
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
     list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
@@ -308,15 +341,30 @@ export default function SettingsPage() {
     return list;
   }, [isRoot, perms]);
 
-  const tabFromUrl = searchParams.get('tab') || 'user-space';
+  const rawTabFromUrl = searchParams.get('tab') || 'user-space';
+  const tabFromUrl = TAB_ALIASES[rawTabFromUrl] ?? rawTabFromUrl;
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   useEffect(() => {
-    const currentTab = searchParams.get('tab');
+    const raw = searchParams.get('tab');
+    const currentTab = raw ? (TAB_ALIASES[raw] ?? raw) : raw;
     if (currentTab && currentTab !== activeTab) {
       setActiveTab(currentTab);
     }
   }, [activeTab, searchParams]);
+
+  /*
+   * 渲染的那一屏必须也在**这个人能看的清单**里。
+   *
+   * 上面按权限筛的是 tab 条，地址栏没经过这道筛：`?tab=system-imagery` 直接打开，
+   * 组件照样挂。系统配图那一屏尤其亏——生图只要 visual-agent.use，
+   * 于是没有 assets 权限的人也能按下「全部重新生成」，七次计费的生图跑起来，
+   * 最后卡在挂槽位那一步全部失败。
+   *
+   * 兜底就落在这里：认不出的 / 没权限的 tab 一律退回第一屏。
+   * 后端每个端点自己也有权限门，这一层是省掉「点了才发现不行」和那七次白花的钱。
+   */
+  const visibleTab = tabs.some((t) => t.key === activeTab) ? activeTab : tabs[0].key;
 
   const handleTabChange = (key: string) => {
     setActiveTab(key);
@@ -329,17 +377,19 @@ export default function SettingsPage() {
       <TabBar items={tabs} activeKey={activeTab} onChange={handleTabChange} />
 
       <div className="flex-1 min-h-0">
-        {activeTab === 'user-space' && <UserSpaceSettings />}
-        {activeTab === 'account' && <AccountSettings />}
-        {activeTab === 'skin' && <SkinSettings />}
-        {activeTab === 'nav-order' && <NavOrderSettings />}
-        {activeTab === 'assets' && <AssetsManagePage />}
-        {activeTab === 'authz' && <AuthzPage />}
-        {activeTab === 'data' && <DataManagePage />}
-        {activeTab === 'infra-services' && <InfraServicesPage />}
-        {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
-        {activeTab === 'short-links' && <ShortLinksAdminSettings />}
-        {activeTab === 'peer-sync' && <PeerNodesSettings />}
+        {visibleTab === 'user-space' && <UserSpaceSettings />}
+        {visibleTab === 'account' && <AccountSettings />}
+        {visibleTab === 'skin' && <SkinSettings />}
+        {visibleTab === 'nav-order' && <NavOrderSettings />}
+        {visibleTab === 'web-pages' && <WebPagePreferencesSettings />}
+        {visibleTab === 'assets' && <AssetsManagePage />}
+        {visibleTab === 'system-imagery' && <SystemImagerySettings />}
+        {visibleTab === 'authz' && <AuthzPage />}
+        {visibleTab === 'data' && <DataManagePage />}
+        {visibleTab === 'infra-services' && <InfraServicesPage />}
+        {visibleTab === 'update-accel' && <UpdateAccelerationSettings />}
+        {visibleTab === 'short-links' && <ShortLinksAdminSettings />}
+        {visibleTab === 'peer-sync' && <PeerNodesSettings />}
       </div>
     </div>
   );

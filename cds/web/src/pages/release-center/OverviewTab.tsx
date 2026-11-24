@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { describeCommitPosition, formatAgo } from '@/lib/releaseRail';
 import { formatDoraDuration } from '@/lib/releaseDora';
 import { releaseEtaText } from '@/lib/releaseEta';
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { ReleaseTimeline } from './ReleaseTimeline';
 import {
   Chip,
@@ -66,9 +67,9 @@ export function OverviewTab({
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {row.promotion ? (
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/12 px-4 py-3">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-warn-soft px-4 py-3">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-300">
+            <div className="text-[0.8125rem] font-semibold text-warn">
               {row.promotion.fromTargetName} 上跑着更新的一版
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
@@ -82,7 +83,7 @@ export function OverviewTab({
             </div>
             {/* 已知发不出去时先说清楚，别等用户点了才吃一句「已拒绝发布」。 */}
             {row.promotion.executable === false && row.promotion.blockedReason ? (
-              <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              <div className="mt-1 text-xs text-warn">
                 {row.promotion.blockedReason}
               </div>
             ) : null}
@@ -103,15 +104,15 @@ export function OverviewTab({
           <div className="font-mono text-lg font-semibold tabular-nums">
             {row.currentCommit ? row.currentCommit.slice(0, 7) : '未发布'}
           </div>
-          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+          <p className="text-[0.7812rem] leading-relaxed text-muted-foreground">
             {currentMeta?.subject || (row.currentCommit ? '台账里没有这个提交的说明' : '这个环境还没有成功发布过')}
           </p>
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[0.75rem] text-muted-foreground">
             {row.currentVersion ? `${row.currentVersion} · ` : ''}
             {formatDateTime(row.lastReleasedAt)}
-            {row.lastOperator ? ` · ${row.lastOperator}` : ''}
+            {` · ${releaseActorLabel(row.lastOperator)}`}
           </p>
-          <p className={`text-[12px] ${position.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+          <p className={`text-[0.75rem] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
             {position.text}
           </p>
         </StatCard>
@@ -121,14 +122,14 @@ export function OverviewTab({
             <span className="text-lg font-semibold">{formatResponseTime(row.health?.responseTimeMs)}</span>
             <Chip tone={healthTone(row.healthStatus)}>{healthLabel(row.healthStatus)}</Chip>
           </div>
-          <p className="break-all text-[12.5px] text-muted-foreground">
+          <p className="break-all text-[0.7812rem] text-muted-foreground">
             {row.health?.url || '未配置健康检查地址'}
           </p>
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[0.75rem] text-muted-foreground">
             最近检查 {formatAgo(row.health?.checkedAt, nowMs) || '-'}
             {row.health?.checkedAt ? '' : '（未监测）'}
           </p>
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[0.75rem] text-muted-foreground">
             近 24 小时可用率 {formatAvailability(row.health?.availability24h)}
             {typeof row.health?.sampleCount24h === 'number' && row.health.sampleCount24h > 0
               ? `（${row.health.upCount24h ?? 0}/${row.health.sampleCount24h} 次探测通过）`
@@ -142,7 +143,7 @@ export function OverviewTab({
               <div className="text-lg font-semibold">
                 {row.dora.changeFailure.total} 次 · 失败 {row.dora.changeFailure.failed}
               </div>
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-[0.7812rem] text-muted-foreground">
                 变更失败率{' '}
                 {row.dora.changeFailure.ratio === null
                   ? '样本不足'
@@ -150,12 +151,12 @@ export function OverviewTab({
                 {' · '}
                 恢复中位 {row.dora.recovery.p50Ms === null ? '样本不足' : formatDoraDuration(row.dora.recovery.p50Ms)}
               </p>
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[0.75rem] text-muted-foreground">
                 成功 {row.dora.frequency.successCount} 次 · 前置时间中位{' '}
                 {row.dora.leadTime.p50Ms === null ? '样本不足' : formatDoraDuration(row.dora.leadTime.p50Ms)}
               </p>
               {row.dora.recovery.ongoingCount > 0 ? (
-                <p className="text-[12px] text-amber-600 dark:text-amber-400">
+                <p className="text-[0.75rem] text-warn">
                   有 {row.dora.recovery.ongoingCount} 次失败尚未恢复
                 </p>
               ) : null}
@@ -163,7 +164,7 @@ export function OverviewTab({
           ) : (
             <>
               <div className="text-lg font-medium text-muted-foreground">样本不足</div>
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-[0.7812rem] text-muted-foreground">
                 这个 CDS 还没有下发本目标的发布统计，或统计窗口内一次发布都没有。
               </p>
             </>
@@ -200,7 +201,7 @@ export function OverviewTab({
             去配置页看完整脚本
           </button>
         </div>
-        <p className="mt-2 break-words text-[12.5px] text-muted-foreground">
+        <p className="mt-2 break-words text-[0.7812rem] text-muted-foreground">
           {releaseMethodSummary(row)}
         </p>
       </section>
@@ -224,6 +225,8 @@ function StatCard({ label, children }: { label: string; children: React.ReactNod
 export function releaseMethodSummary(row: CenterRow): string {
   const strategy = row.target.strategy;
   const health = row.target.ssh?.healthcheckUrl ? ` · 健康检查 ${row.target.ssh.healthcheckUrl}` : '';
+  if (strategy?.mode === 'project-script') return `项目发布脚本（默认） · ${strategy.scriptFile || 'cds-release.sh'} · 同提交 CI 与正文哈希${health}`;
+  if (strategy?.mode === 'managed-script') return `CDS 独立脚本（备选） · 正文哈希固定${health}`;
   if (strategy?.mode === 'generated-compose') {
     return `CDS 动态 Compose 发布 · ${strategy.composeFile || 'compose.yml'} · 保留上一版本可回滚${health}`;
   }

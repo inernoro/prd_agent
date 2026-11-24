@@ -126,7 +126,7 @@ export function CapacityFullDialog({
           </ul>
         )}
 
-        <div className={`text-sm ${enough ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-300'}`}>
+        <div className={`text-sm ${enough ? 'text-ok' : 'text-warn'}`}>
           已选 {selected.size} 项,腾出 {willFreeSlots} 个容器 / 需要 {needSlots} 个
           {enough ? ' — 够用' : ' — 还差 ' + (needSlots - willFreeSlots) + ' 个'}
         </div>
@@ -136,7 +136,7 @@ export function CapacityFullDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={submitting}>取消</Button>
           <Button onClick={() => void handleConfirm()} disabled={!enough || submitting}>
-            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {submitting ? <Loader2 className="mr-2 animate-spin" /> : null}
             停止 {selected.size} 个并重试部署
           </Button>
         </DialogFooter>

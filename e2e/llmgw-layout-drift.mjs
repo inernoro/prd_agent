@@ -37,11 +37,25 @@ const PLATFORMS = [
 const MODELS = [
   row({ id: 'm1', name: 'demo-chat', modelName: 'demo/chat-1', protocol: 'openai', platformId: 'p1', platformName: '教程假上游', group: 'chat', timeout: 60, maxRetries: 2, maxConcurrency: 10, maxTokens: 8192, priority: 10, isMain: true, hasKey: true, capabilities: [] }),
 ];
-const LOGS = [{
-  id: 'l1', requestId: 'req-demo-0001', provider: 'demo', model: 'demo/chat-1', status: 'succeeded',
-  startedAt: nowIso, durationMs: 1234, inputTokens: 100, outputTokens: 200, totalTokens: 300,
-  appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
-}];
+/* 必须同时有成功行与异常行。
+   成功状态从 2026-08-14 起渲染成普通小字而不是 chip（只有异常才配拥有视觉噪音），
+   桩里若只剩成功行，基准页就一个 chip 都不出——`chip规格种类` 的上限被人为收窄到 0，
+   其余 8 条路由会集体"漂移"，而真实页面上从来都有失败行。
+   同一个道理已经在上面的 timeseries 注释里写过一次：桩不代表真实版面，基准就是假的。 */
+/* 行数要够撑出纵向滚动：下面的「滚动位置不丢」断言必须真的滚得动，
+   两行的表体 scrollHeight == clientHeight，怎么滚都是 0，那条断言会变成永远绿的空跑。 */
+const LOGS = Array.from({ length: 40 }, (_, i) => (i === 1
+  ? {
+      id: 'l2', requestId: 'req-demo-0002', provider: 'demo', model: 'demo/chat-1', status: 'failed',
+      statusCode: 502, startedAt: nowIso, durationMs: 880, inputTokens: 100, outputTokens: null,
+      totalTokens: 100, appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+    }
+  : {
+      id: `l${i + 1}`, requestId: `req-demo-${String(i + 1).padStart(4, '0')}`, provider: 'demo',
+      model: 'demo/chat-1', status: 'succeeded', startedAt: nowIso, durationMs: 1234,
+      inputTokens: 100, outputTokens: 200, totalTokens: 300,
+      appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+    }));
 /* 模型池的卡片、成员行、操作区才是这个检测器要盯的规格来源；
    空列表只会渲染空状态，改坏了内边距/间距也照样"与基准一致"。 */
 const poolMember = (over) => ({
@@ -120,26 +134,82 @@ const LOGICAL_MODELS = [
   row({
     id: 'lm1', publicId: 'gw-chat-standard', name: '标准对话', modelType: 'chat',
     capabilities: ['tools', 'streaming'], allowedAppCallerCodes: ['demo.chat::chat'],
-    routingStrategy: 'priority', displayOrder: 1, description: '对外暴露的标准对话模型',
+    routingStrategy: 'priority', isDefaultForType: true, defaultForAppCallerCodes: ['demo.chat::chat'],
+    displayOrder: 1, description: '对外暴露的标准对话模型',
     offerings: [offering({}), offering({ id: 'of2', targetKind: 'exchange', targetId: 'ex1', targetName: '教程转换器', priority: 20, healthStatus: 1 })],
   }),
   row({
     id: 'lm2', publicId: 'gw-vision-standard', name: '标准视觉', modelType: 'vision',
     capabilities: ['vision'], allowedAppCallerCodes: [], routingStrategy: 'weighted',
-    displayOrder: 2, description: null, offerings: [offering({ id: 'of3', logicalModelId: 'lm2', targetId: 'm3', targetName: 'demo-vision' })],
+    isDefaultForType: false, defaultForAppCallerCodes: [], displayOrder: 2, description: null,
+    offerings: [offering({ id: 'of3', logicalModelId: 'lm2', targetId: 'm3', targetName: 'demo-vision' })],
   }),
+  ...Array.from({ length: 24 }, (_, index) => row({
+    id: `lm-${index + 3}`,
+    publicId: `gw-image-${index + 3}`,
+    name: `图片模型 ${index + 3}`,
+    modelType: 'generation',
+    capabilities: ['image_generation'],
+    allowedAppCallerCodes: [],
+    routingStrategy: 'priority',
+    isDefaultForType: false,
+    defaultForAppCallerCodes: [],
+    displayOrder: index + 3,
+    description: null,
+    offerings: [offering({
+      id: `of-${index + 4}`,
+      logicalModelId: `lm-${index + 3}`,
+      targetId: 'm1',
+      targetName: 'demo-image',
+    })],
+  })),
 ];
+const CATALOG_ENTRIES = Array.from({ length: 44 }, (_, index) => ({
+  id: `catalog-${index + 1}`,
+  canonicalId: `demo-model-${index + 1}`,
+  displayName: `演示模型 ${index + 1}`,
+  vendor: 'demo',
+  capabilities: index % 2 === 0 ? ['chat', 'reasoning'] : ['vision'],
+  acceptsImageInput: index % 2 === 1,
+  requiresImageInput: false,
+  aliases: [],
+  enabled: true,
+}));
+const IMAGEGEN_CONFIGS = Array.from({ length: 44 }, (_, index) => ({
+  id: `imagegen-${index + 1}`,
+  modelIdPattern: `demo-image-${index + 1}`,
+  matchOrder: index + 1,
+  enabled: true,
+  displayName: `演示生图 ${index + 1}`,
+  provider: 'demo',
+  platformType: 'openai',
+  sizeConstraintType: 'whitelist',
+  sizeConstraintDescription: '',
+  sizesByResolution: { '1k': ['1024x1024'] },
+  sizesNotApplicable: false,
+  sizeParamFormat: 'WxH',
+  injectSizePrompt: false,
+  paramRenames: {},
+  requiresResolutionParam: false,
+  supportsImageToImage: true,
+  supportsInpainting: false,
+  supportsResponseFormat: true,
+  notes: [],
+}));
 const LIST = { items: [], total: 2, page: 1, pageSize: 20 };
 const STUBS = {
   '/auth/tenants': [],
   '/platforms': { ...LIST, items: PLATFORMS, platforms: PLATFORMS },
   '/models': { ...LIST, items: MODELS, models: MODELS },
-  '/logs': { ...LIST, total: 1, items: LOGS },
+  // total 刻意大于返回条数：只有 hasMore 为真时瀑布加载才会挂出哨兵，
+  // 下面「空闲时只发一次列表请求」的断言才有东西可测；相等的话它是空跑的绿灯。
+  '/logs': { ...LIST, total: 200, items: LOGS },
   '/logs/meta': { models: [], providers: [], statuses: [], appCallerCodes: [], sessions: [], teams: [], serviceKeys: [], clientCodes: [], environments: [] },
-  '/logs/summary': { total: 1, succeeded: 1, failed: 0, totalTokens: 300, estimatedCostUsd: 0.01 },
+  '/logs/summary': { total: LOGS.length, succeeded: LOGS.length - 1, failed: 1, totalTokens: 400, estimatedCostUsd: 0.01 },
   // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
   '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
+  '/organization': { tenant: { id: 't1', name: '演示租户', slug: 'demo', status: 'active', isInternal: true }, teams: [], members: [] },
   '/audits': { ...LIST, items: [row({ id: 'a1', action: 'pool.update', targetType: 'pool', targetId: 'pool-1', actorUsername: 'demo', success: true, summary: '更新模型池优先级', detail: null })] },
   '/app-callers': { ...LIST, items: APP_CALLERS, statuses: ['active', 'pending'], sourceSystems: ['map', 'external'], ingressProtocols: ['openai', 'anthropic'], requestTypes: ['chat', 'vision'] },
   '/pools': { ...LIST, items: POOLS, pools: POOLS },
@@ -151,8 +221,40 @@ const STUBS = {
     total: 2, ready: 1, waiting: 1,
   },
   '/parameter-capabilities/meta': { items: [], templates: [] },
+  '/imagegen-configs': {
+    items: IMAGEGEN_CONFIGS, total: IMAGEGEN_CONFIGS.length,
+    builtinCount: 1, builtin: [IMAGEGEN_CONFIGS[0]], refreshSeconds: 60,
+    staleAfterSeconds: 180, syncedAt: nowIso,
+    syncedPatterns: IMAGEGEN_CONFIGS.map((item) => item.modelIdPattern), syncHosts: [],
+  },
+  '/catalog-entries': {
+    items: CATALOG_ENTRIES, total: CATALOG_ENTRIES.length,
+    builtinCount: 1, builtin: [CATALOG_ENTRIES[0]],
+    knownCapabilities: ['chat', 'reasoning', 'vision', 'image_generation'],
+  },
   '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
+  // 白名单列表那条趋势线的数据源。桩里必须给真值：给空会让页面走「暂无用量」分支，
+  // 于是量到的版式是降级态的，而不是用户真正看到的那一屏（判据对着错的东西跑）。
+  '/logical-models/usage': {
+    days: 30,
+    from: nowIso,
+    to: nowIso,
+    items: LOGICAL_MODELS.map((model, modelIndex) => ({
+      publicId: model.publicId,
+      days: Array.from({ length: 30 }, (_, day) => `2026-09-${String(day + 1).padStart(2, '0')}`),
+      dailyCalls: Array.from({ length: 30 }, (_, day) => Math.round(18 + day * 1.6 + Math.sin(day / 2.4 + modelIndex) * 7)),
+      totalCalls: 812 + modelIndex * 96,
+      totalTokens: 813_000 + modelIndex * 41_000,
+      totalCostUsd: 41.2 - modelIndex * 6.4,
+      unpricedCalls: modelIndex === 0 ? 0 : 68,
+    })),
+  },
   '/exchanges': { ...LIST, items: EXCHANGES, exchanges: EXCHANGES },
+  '/capabilities/image-layering': {
+    capabilityId: 'image-layering', state: 'installed', installed: true, verified: false, hasKey: true,
+    exchangeId: 'ex2', logicalModelId: 'lm-image-layering', offeringId: 'of-image-layering',
+    modelId: 'fal-qwen-image-layered', publicId: 'image-layering', lastVerifiedAt: null,
+  },
   // 形状必须对齐 ExchangeMetaData —— 旧桩写的是 protocols/targetKinds/models，
   // 因为 exchanges 恒空、渲染分支从没走到，这个错形状一直没暴露。
   '/exchanges/meta': {
@@ -203,6 +305,7 @@ const measure = () => {
   const h1 = document.querySelector('h1');
   const main = document.querySelector('.lg-console-content');
   const vh = window.innerHeight;
+  if (!main) return { 页面骨架存在: false };
 
   // 页头是否被塞进一个带边框/底色的卡片里（请求记录页的标题是裸露在页面上的）
   let headingBoxed = false;
@@ -274,6 +377,7 @@ const measure = () => {
   const controls = [...document.querySelectorAll('select, input:not([type=checkbox]):not([type=radio])')]
     .filter((el) => el.offsetParent !== null && el.getBoundingClientRect().height > 0);
   return {
+    页面骨架存在: true,
     标题字号: h1 ? num(getComputedStyle(h1).fontSize) : null,
     标题被卡片包住: headingBoxed,
     内容底部空隙: bottomGap,
@@ -303,6 +407,13 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
 }
 const browser = await chromium.launch(CHROMIUM_PATH ? { executablePath: CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+let activeProbe = '登录';
+const runtimeErrors = [];
+page.on('pageerror', (error) => {
+  const detail = `${activeProbe}: ${error.stack || error.message}`;
+  runtimeErrors.push(detail);
+  console.error(`页面运行错误：${detail}`);
+});
 const base = `http://localhost:${PORT}/llmgw`;
 await page.goto(`${base}/logs`);
 await page.waitForSelector('#llmgw-username');
@@ -311,12 +422,408 @@ await page.fill('#llmgw-password', 'demo');
 await page.click('button[type=submit]');
 await page.waitForURL('**/llmgw/logs');
 
+// 只用本机假数据验证模型页合同；不创建真实模型、授权或计费记录。
+if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
+  try {
+    const allowedBefore = ['demo.web-create::chat', 'demo.web-edit::chat', 'demo.ppt-plan::chat', 'demo.ppt-create::chat', 'demo.ppt-edit::chat'];
+    const fixtures = LOGICAL_MODELS.slice(0, 3).map((model, index) => index === 0
+      ? { ...model, allowedAppCallerCodes: allowedBefore, defaultForAppCallerCodes: allowedBefore.slice(2) } : model);
+    const originalModel = structuredClone(fixtures[0]);
+    let allowlistSubmitted = null;
+    let allowlistRequests = 0;
+    const usage = fixtures.map((model, index) => ({
+      publicId: model.publicId, days: ['2026-11-06'], dailyCalls: [736],
+      totalCalls: 736, totalTokens: 1000,
+      totalCostUsd: index === 1 ? 2.5 : 0,
+      unpricedCalls: index === 0 ? 736 : index === 1 ? 20 : 0,
+    }));
+    let submitted = null;
+    await page.route('**/llmgw/gw/logical-models', async (route) => {
+      if (route.request().method() === 'POST') {
+        submitted = route.request().postDataJSON();
+        return route.fulfill({ json: { success: true, error: null,
+          data: { ...submitted, id: 'local-code-only', enabled: true, offerings: [],
+            defaultForAppCallerCodes: [], isDefaultForType: false } } });
+      }
+      return route.fulfill({ json: { success: true, error: null, data: { items: fixtures, total: fixtures.length } } });
+    });
+    await page.route(/\/llmgw\/gw\/logical-models\/usage(?:\?.*)?$/, (route) => route.fulfill({
+      json: { success: true, error: null, data: { days: 30, items: usage } },
+    }));
+    await page.route('**/llmgw/gw/logical-models/lm1', async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      allowlistRequests += 1;
+      allowlistSubmitted = route.request().postDataJSON();
+      fixtures[0] = { ...fixtures[0], ...allowlistSubmitted, updatedAt: new Date().toISOString() };
+      return route.fulfill({ json: { success: true, error: null, data: fixtures[0] } });
+    });
+    activeProbe = '模型Code选择与缺价费用';
+    await page.goto(`${base}/logical-models`);
+    const rows = page.locator('.lg-logical-model-grid').filter({ has: page.locator('code') });
+    await rows.first().waitFor();
+    const costs = await Promise.all(fixtures.map((item) => rows.filter({
+      has: page.locator('code', { hasText: item.publicId }),
+    }).locator('[aria-label="近 30 天用量"]').innerText()));
+    const header = await page.locator('.lg-page-heading .lg-summary-strip').innerText();
+    await page.getByRole('button', { name: '手动新建', exact: true }).click();
+    const type = page.locator('label').filter({ hasText: /^模型类型/ }).locator('select');
+    await type.waitFor({ state: 'visible' });
+    const codeAvailable = await type.locator('option[value="code"]').count() === 1;
+    if (codeAvailable) {
+      await page.getByLabel('公开模型标识', { exact: true }).fill('local-workflow-code');
+      await page.getByLabel('显示名称', { exact: true }).fill('本机Code合同');
+      await type.selectOption('code');
+      await page.locator('label').filter({ hasText: /^能力，逗号分隔/ }).locator('input').fill('code');
+      await page.locator('label').filter({ hasText: /^允许的 appCaller/ }).locator('input').fill('demo.workflow::code');
+      await page.getByRole('button', { name: '保存逻辑模型', exact: true }).click();
+      await page.getByText('逻辑模型「本机Code合同」已创建', { exact: false }).waitFor();
+    }
+    await rows.filter({ has: page.locator('code', { hasText: fixtures[0].publicId }) })
+      .getByRole('button', { name: '查看', exact: true }).click();
+    await page.getByRole('button', { name: '模型配置', exact: true }).click();
+    const allowButton = page.getByRole('button', { name: '允许调用方', exact: true });
+    let allowlistOnlyUpdate = false;
+    if (await allowButton.count() === 1) {
+      await allowButton.click();
+      const editor = page.getByTestId('logical-model-allowlist');
+      const input = editor.getByRole('textbox');
+      const prepopulated = await input.inputValue() === allowedBefore.join(', ');
+      const emptyMeaningVisible = (await editor.innerText()).includes('留空表示当前租户全部调用方可用');
+      const expected = [...allowedBefore, 'workflow-agent.report-generator::chat'];
+      await input.fill(expected.join(', '));
+      await editor.getByRole('button', { name: '保存', exact: true }).click();
+      await page.getByText('允许调用方已更新：限 6 个 appCaller', { exact: false }).waitFor();
+      await allowButton.click();
+      const saved = await page.getByTestId('logical-model-allowlist').getByRole('textbox').inputValue();
+      allowlistOnlyUpdate = prepopulated && emptyMeaningVisible && allowlistRequests === 1
+        && Object.keys(allowlistSubmitted || {}).join(',') === 'allowedAppCallerCodes'
+        && JSON.stringify(allowlistSubmitted.allowedAppCallerCodes) === JSON.stringify(expected)
+        && saved === expected.join(', ')
+        && JSON.stringify({ ...fixtures[0], allowedAppCallerCodes: originalModel.allowedAppCallerCodes,
+          updatedAt: originalModel.updatedAt }) === JSON.stringify(originalModel);
+    }
+    const checks = {
+      codeAvailable,
+      originalCreateContract: submitted?.modelType === 'code'
+        && submitted.capabilities.join(',') === 'code'
+        && submitted.allowedAppCallerCodes.join(',') === 'demo.workflow::code',
+      allUnpricedUnknown: costs[0].includes('费用未知') && !costs[0].includes('$0.00'),
+      partialEstimateExplicit: costs[1].includes('已计价部分') && costs[1].includes('$2.50') && costs[1].includes('20'),
+      genuineZeroRetained: costs[2].includes('$0.00') && !costs[2].includes('费用未知'),
+      headerPartialEstimateExplicit: header.includes('已计价部分') && header.includes('$2.50'),
+      allowlistOnlyUpdate,
+      noRuntimeErrors: runtimeErrors.length === 0,
+    };
+    console.log(JSON.stringify({ checks, costs, header, localFakeDataOnly: true, productionWrites: 0, modelCalls: 0 }));
+    if (Object.values(checks).some((passed) => !passed)) process.exitCode = 1;
+  } catch (error) {
+    console.error(JSON.stringify({ localModelContractFailure: String(error),
+      formCount: await page.locator('form').count(), labels: await page.locator('label').allTextContents(),
+      selects: await page.locator('select').evaluateAll((elements) => elements.map((el) => ({
+        name: Array.from(el.labels ?? []).map((label) => label.textContent),
+        options: Array.from(el.options).map((option) => option.value), height: el.getBoundingClientRect().height,
+      }))), runtimeErrors }));
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exit(process.exitCode || 0);
+}
+
 const ROUTES = ['/logs', '/platforms', '/models', '/service-keys', '/audits', '/app-callers', '/pools', '/logical-models', '/exchanges'];
 const data = {};
+const idleFetches = {};
 for (const route of ROUTES) {
+  activeProbe = route;
   await page.goto(`${base}${route}`);
   await page.waitForTimeout(800);
   data[route] = await page.evaluate(measure);
+  if (!data[route].页面骨架存在) console.error(`${route} 缺少 .lg-console-content，实际地址 ${page.url()}`);
+}
+
+// 模型目录真实会有二十多行。列表卡片若保留 flex 默认 shrink=1，会被 PageBody 压到
+// 视口剩余高度，但自身 overflow:hidden，结果是卡片内容被裁掉且外层也没有可滚动高度。
+// PageBody 滚动，页头固定，末行确实能进入可视区。桌面浅色、桌面深色与手机宽度
+// 用同一条行为断言，主题或断点不能悄悄换掉滚动归属。
+async function probeLogicalModelScroll(label, viewport, theme) {
+  activeProbe = `/logical-models-scroll-${label}`;
+  await page.setViewportSize(viewport);
+  await page.goto(`${base}/logical-models`);
+  await page.waitForSelector('.lg-logical-model-list');
+  await page.evaluate((nextTheme) => document.documentElement.setAttribute('data-theme', nextTheme), theme);
+  await page.waitForTimeout(300);
+  return await page.evaluate(async () => {
+    const body = document.querySelector('.lg-page-body');
+    const list = document.querySelector('.lg-logical-model-list');
+    const header = document.querySelector('.lg-page-heading');
+    if (!body || !list || !header) return { 可验证: false, 原因: '缺少页面骨架或模型列表' };
+
+    const headerTop = Math.round(header.getBoundingClientRect().top);
+    const initialHeight = Math.round(list.getBoundingClientRect().height);
+    // 容器自身不溢出不代表内容可用：旧五列布局把名称压成零宽，操作在卡片外被裁掉。
+    // 此处是布局回归，不替代独立触控浏览器的正式路径验收。
+    const listRect = list.getBoundingClientRect();
+    const modelRows = [...list.children].slice(1).map((item) => item.firstElementChild);
+    const withinList = (element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.left >= listRect.left - 1 && rect.right <= listRect.right + 1;
+    };
+    const initial = {
+      外层可滚动: body.scrollHeight > body.clientHeight + 1,
+      列表未裁切: list.scrollHeight <= list.clientHeight + 1,
+      列表flexShrink: getComputedStyle(list).flexShrink,
+      名称可读: modelRows.every((row) => {
+        const name = row?.querySelector('strong');
+        return name && row.firstElementChild.getBoundingClientRect().width >= 150
+          && name.getBoundingClientRect().width >= Math.min(60, name.scrollWidth) && name.scrollWidth > 0;
+      }),
+      操作未裁切: modelRows.every((row) => [...row.querySelectorAll('button')].every(withinList)),
+      各列未越界: modelRows.every((row) => [...row.children].every(withinList)),
+      用量内容未越界: modelRows.every((row) => {
+        const cell = row.querySelector('[aria-label="近 30 天用量"]');
+        if (!cell) return false;
+        const bounds = cell.getBoundingClientRect();
+        return [...cell.querySelectorAll('span, svg')].every((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+        });
+      }),
+    };
+
+    const expand = [...list.querySelectorAll('button')].find((button) => button.textContent?.trim() === '展开');
+    expand?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const expanded = {
+      高度增长: list.getBoundingClientRect().height > initialHeight,
+      列表未裁切: list.scrollHeight <= list.clientHeight + 1,
+      操作未裁切: [...list.querySelectorAll('button')].every(withinList),
+    };
+
+    const notice = document.createElement('div');
+    notice.textContent = '配置已保存';
+    notice.setAttribute('data-layout-probe', 'notice');
+    Object.assign(notice.style, {
+      minHeight: '44px',
+      flexShrink: '0',
+      border: '1px solid var(--ok)',
+      borderRadius: 'var(--radius-sm)',
+    });
+    body.insertBefore(notice, list);
+
+    const last = list.lastElementChild;
+    last?.scrollIntoView({ block: 'end' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bodyRect = body.getBoundingClientRect();
+    const lastRect = last?.getBoundingClientRect();
+    return {
+      可验证: true,
+      initial,
+      expanded,
+      提示出现后外层滚动: body.scrollTop > 0,
+      末行可见: Boolean(lastRect && lastRect.bottom <= bodyRect.bottom + 1 && lastRect.top >= bodyRect.top - 1),
+      页头固定: Math.round(header.getBoundingClientRect().top) === headerTop,
+      外层scrollTop: Math.round(body.scrollTop),
+      外层clientHeight: Math.round(body.clientHeight),
+      外层scrollHeight: Math.round(body.scrollHeight),
+    };
+  });
+}
+
+const logicalModelScroll = {};
+for (const [label, viewport, theme] of [
+  ['桌面浅色', { width: 1440, height: 900 }, 'light'],
+  ['桌面深色', { width: 1440, height: 900 }, 'dark'],
+  ['手机浅色', { width: 390, height: 844 }, 'light'],
+  ['手机深色', { width: 390, height: 844 }, 'dark'],
+  ['窄屏手机', { width: 320, height: 844 }, 'light'],
+  ['平板浅色', { width: 820, height: 900 }, 'light'],
+]) {
+  logicalModelScroll[label] = await probeLogicalModelScroll(label, viewport, theme);
+}
+
+// 上游配置是同一个入口下的四类列表。任一时刻只能出现当前 Tab 的一张业务表，
+// 长列表的纵向滚动必须归唯一的 PageBody；内置/自定义切换也只能替换列表，不能再叠一张表。
+async function probeUpstreamView(view, expectedTabLabel, tableSelector, toggleLabel) {
+  activeProbe = `/platforms?view=${view}`;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${base}/platforms?view=${view}`);
+  await page.waitForSelector(tableSelector);
+  await page.waitForTimeout(200);
+  const initial = await page.evaluate(async ({ expectedTabLabel }) => {
+    const body = document.querySelector('.lg-page-body');
+    const tablist = document.querySelector('[role="tablist"][aria-label="上游配置分类"]');
+    const active = tablist?.querySelector('[role="tab"][aria-selected="true"]');
+    const tables = body ? [...body.querySelectorAll('table')].filter((table) => table.offsetParent !== null) : [];
+    if (!body || !tablist || !active) return { 可验证: false, 原因: '缺少 Tab 或 PageBody' };
+    const scrollable = body.scrollHeight > body.clientHeight + 1;
+    const last = tables[0]?.querySelector('tbody tr:last-child');
+    last?.scrollIntoView({ block: 'end' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bodyRect = body.getBoundingClientRect();
+    const lastRect = last?.getBoundingClientRect();
+    return {
+      可验证: true,
+      当前Tab: active.textContent?.trim(),
+      预期Tab: expectedTabLabel,
+      PageBody数量: document.querySelectorAll('.lg-page-body').length,
+      可见表格数: tables.length,
+      可滚动: scrollable,
+      已滚动: !scrollable || body.scrollTop > 0,
+      末行可见: Boolean(lastRect && lastRect.bottom <= bodyRect.bottom + 1 && lastRect.top >= bodyRect.top - 1),
+    };
+  }, { expectedTabLabel });
+  if (toggleLabel) {
+    await page.getByRole('button', { name: toggleLabel }).click();
+    await page.waitForTimeout(100);
+    initial.切换后可见表格数 = await page.locator('.lg-page-body table:visible').count();
+  }
+  return initial;
+}
+
+const upstreamViews = {
+  Provider: await probeUpstreamView('provider', 'Provider', '.lg-config-table-shell', null),
+  模型名录: await probeUpstreamView('catalog', '模型名录', '[data-testid="model-catalog-table"]', '查看内置名录（1）'),
+  生图契约: await probeUpstreamView('imagegen', '生图契约', '[data-testid="imagegen-contract-table"]', '查看内置契约（1）'),
+};
+await page.setViewportSize({ width: 1440, height: 900 });
+activeProbe = '/exchanges';
+await page.goto(`${base}/exchanges#image-layering`);
+await page.waitForSelector('[data-testid="exchange-list"]');
+const exchangeLayout = await page.evaluate(() => {
+  const capability = document.querySelector('#image-layering');
+  const cards = [...document.querySelectorAll('[data-testid="exchange-list"] > div')]
+    .map((element) => element.getBoundingClientRect());
+  return {
+    capabilityWidth: capability ? Math.round(capability.getBoundingClientRect().width) : null,
+    cardCount: cards.length,
+    columns: new Set(cards.map((rect) => Math.round(rect.left))).size,
+    equalWidths: new Set(cards.map((rect) => Math.round(rect.width))).size <= 1,
+  };
+});
+// 侧栏页脚（「提交缺陷」的唯一可见入口）必须不滚动就在视口内。
+// 这是运行时判据，源码扫描替代不了：CSS 写法看着对，导航项一多照样把页脚顶出去。
+// 2026-08-14 就是这么翻的车——页脚底边落在 y=933、视口 900，入口等于消失。
+const sidebarFooter = await page.evaluate(() => {
+  const aside = document.querySelector('.lg-console-sidebar');
+  const foot = document.querySelector('.lg-sidebar-footer');
+  if (!aside || !foot) return { 存在: false };
+  const a = aside.getBoundingClientRect();
+  const f = foot.getBoundingClientRect();
+  return {
+    存在: true,
+    需要滚动: aside.scrollHeight > Math.ceil(a.height) + 1,
+    在视口内: f.top >= 0 && f.bottom <= window.innerHeight + 1,
+    页脚底部y: Math.round(f.bottom),
+    视口高: window.innerHeight,
+  };
+});
+
+// 空闲时不许自动续取。
+// 这条针对的是同一族反复出现的缺陷：哨兵一旦落在「不裁剪的 root」里，或者列表被清空
+// 而 total 没跟着清零，它就会一直触发。已经踩过三个变体：
+//   1) ≤680px 断点把表体改成 overflow:visible，哨兵永远在 root 盒子里 —— 开页 6 秒 23 个请求
+//   2) 切筛选只清 rows 不清 total，空表挂着哨兵且首页失败不 pause —— 6 秒 312 个请求
+//   3) 触底失败后页码照常前进，哨兵继续推进 —— 跳过失败那一页
+// 判据统一成一句话：**打开页面什么都不做，列表请求只能发一次**（桌面与移动各测一次）。
+for (const [label, size] of [['桌面', { width: 1440, height: 900 }], ['移动', { width: 390, height: 844 }]]) {
+  await page.setViewportSize(size);
+  let listCalls = 0;
+  const count = (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/gw/logs')) listCalls += 1;
+  };
+  page.on('request', count);
+  await page.goto(`${base}/logs`);
+  await page.waitForSelector('.lg-log-table-body');
+  await page.waitForTimeout(2500); // 不滚动、不点击，纯等
+  idleFetches[label] = listCalls;
+
+  // 再切一次筛选。首屏后什么都不做只能测到「root 是否在裁剪」那一族；
+  // 「清空列表却没清 total」要等到列表被清空、而新首页还没回来的那一瞬间才暴露，
+  // 所以必须真的切一次。切完同样只许再发一次请求。
+  listCalls = 0;
+  await page.evaluate(() => {
+    const select = [...document.querySelectorAll('select')]
+      .find((el) => [...el.options].some((option) => option.textContent.includes('近 7 天')));
+    if (!select) return;
+    const option = [...select.options].find((item) => item.value !== select.value);
+    if (!option) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, option.value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(2500);
+  page.off('request', count);
+  idleFetches[`${label}·切筛选后`] = listCalls;
+}
+await page.setViewportSize({ width: 1440, height: 900 });
+
+// 上面那组用的是「永远成功」的桩，只能测出「root 不裁剪」那一族：
+// 列表清空后哨兵虽然会多打一两次，但首页一旦成功、行填回来，它自己就停了。
+// 「清空列表却没清 total」的真正杀伤力要在**首页持续失败**时才显形——
+// 空表 + hasMore 恒真 + 首页失败不进 paused，哨兵就对着 page=1 无限重打
+// （实测 6 秒 312 个请求，等于自己 DoS 自己）。这里强制让列表接口全失败来测它。
+let failingCalls = 0;
+await page.route('**/gw/logs?*', async (route) => {
+  failingCalls += 1;
+  await route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: false, error: { message: '注入失败（守卫用）' }, data: null }),
+  });
+});
+await page.evaluate(() => {
+  const select = [...document.querySelectorAll('select')]
+    .find((el) => [...el.options].some((option) => option.textContent.includes('近 30 天')));
+  if (!select) return;
+  const option = [...select.options].find((item) => item.value !== select.value);
+  if (!option) return;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+  setter.call(select, option.value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+});
+await page.waitForTimeout(2500);
+await page.unroute('**/gw/logs?*');
+const failStormCalls = failingCalls;
+
+// 1440 视口下请求记录页不得出现横向滚动条。
+// 列宽下限是推算出来的，而推算模型很容易和网格实际对不上（末尾的列设置齿轮是
+// sticky-right，被钉在右缘、不撑开滚动范围，所以它和它前面那个间隙都不该计入下限）。
+// 与其在注释里论证，不如让浏览器直接回答：这是「列宽调整不许把横向滚动条调回来」的
+// 唯一判据。
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto(`${base}/logs`);
+await page.waitForSelector('.lg-log-table-scroll');
+await page.waitForTimeout(900);
+const horizontalScroll = await page.evaluate(() => {
+  const scroll = document.querySelector('.lg-log-table-scroll');
+  if (!scroll) return { 有: false, 原因: '找不到滚动容器' };
+  return { 有: scroll.scrollWidth > scroll.clientWidth + 1, 容器: scroll.clientWidth, 内容: scroll.scrollWidth };
+});
+
+// 表体的滚动位置必须能扛住一次重渲染。
+// 这条判据针对的是真实踩过的形状：LogTable 若定义在 LogsView 函数体里，
+// 组件类型每次渲染都变，React 整棵卸载重挂，.lg-log-table-body 的 DOM 节点被换掉、
+// scrollTop 归零。分页时代这只是「偶尔跳回顶部」，改成瀑布加载后会变成
+// 「越滚越弹回 + 反复触底重取」。源码扫描测不出来，只能真滚一次。
+await page.goto(`${base}/logs`);
+await page.waitForSelector('.lg-log-table-body');
+await page.waitForTimeout(900);
+const scrollKeep = await page.evaluate(async () => {
+  const body = document.querySelector('.lg-log-table-body');
+  if (!body) return { 可滚动: false, 原因: '找不到表体' };
+  if (body.scrollHeight <= body.clientHeight + 1) return { 可滚动: false, 原因: '桩数据撑不出滚动条' };
+  body.scrollTop = 120;
+  const before = body.scrollTop;
+  document.querySelector('.lg-log-trend-toggle')?.click();
+  await new Promise((r) => setTimeout(r, 350));
+  const after = document.querySelector('.lg-log-table-body');
+  return { 可滚动: true, 滚动前: before, 重渲染后: after ? after.scrollTop : -1 };
+});
+
+if (process.env.LLMGW_SCREENSHOT_PATH) {
+  await page.screenshot({ path: process.env.LLMGW_SCREENSHOT_PATH, fullPage: true });
 }
 await browser.close();
 server.close();
@@ -333,6 +840,7 @@ let drift = 0;
 for (const [route, m] of Object.entries(data)) {
   if (route === '/logs') continue;
   const diffs = [];
+  if (!m.页面骨架存在) diffs.push('页面骨架 .lg-console-content 缺失');
   for (const k of KEYS) {
     const a = baseline[k];
     const b = m[k];
@@ -358,6 +866,121 @@ for (const [route, m] of Object.entries(data)) {
   console.log(`${route.padEnd(17)} ${diffs.length ? '漂移: ' + diffs.join('；') : '与基准一致'}`);
   drift += diffs.length;
 }
+console.log('1440 横向滚动:', JSON.stringify(horizontalScroll));
+if (horizontalScroll.有) {
+  console.error(
+    `1440 视口下请求记录页出现了横向滚动条（容器 ${horizontalScroll.容器} / 内容 ${horizontalScroll.内容}）。`
+    + '\n  列宽下限之和超了容器宽：要么某列下限调太大，要么把 sticky 的列设置齿轮也算进了下限。',
+  );
+  drift += 1;
+}
+
+console.log('空闲时列表请求次数:', JSON.stringify(idleFetches));
+for (const [label, calls] of Object.entries(idleFetches)) {
+  if (calls !== 1) {
+    console.error(
+      `${label}视口下打开 Logs 什么都不做，列表请求发了 ${calls} 次（应为 1 次）。`
+      + '\n  哨兵在自动续取：检查 IntersectionObserver 的 root 是不是真的在裁剪，'
+      + '以及清空列表时 total 有没有跟着清零。',
+    );
+    drift += 1;
+  }
+}
+
+console.log('首页持续失败时 2.5s 内的列表请求次数:', failStormCalls);
+if (failStormCalls > 3) {
+  console.error(
+    `首页失败时列表接口被打了 ${failStormCalls} 次（上限 3）。`
+    + '\n  清空累加结果时 total 必须一并清零，否则空表仍然 hasMore 恒真、哨兵不停重打；'
+    + '\n  首页失败走的是 listError 而不是 moreError，不会进 paused，挡不住这个循环。',
+  );
+  drift += 1;
+}
+
+console.log('表体滚动保持:', JSON.stringify(scrollKeep));
+if (!scrollKeep.可滚动) {
+  console.error(`无法验证滚动保持：${scrollKeep.原因}——这条断言正在空跑，请修桩数据。`);
+  drift += 1;
+} else if (scrollKeep.重渲染后 !== scrollKeep.滚动前) {
+  console.error(
+    `一次重渲染就把表体滚动位置冲掉了（${scrollKeep.滚动前} → ${scrollKeep.重渲染后}）。`
+    + '\n  多半是 LogTable 又被挪回 LogsView 函数体内：组件类型每次渲染都变，React 会整棵重挂。',
+  );
+  drift += 1;
+}
+
+console.log('模型目录滚动契约:', JSON.stringify(logicalModelScroll));
+for (const [label, result] of Object.entries(logicalModelScroll)) {
+  if (!result.可验证) {
+    console.error(`${label}无法验证模型目录滚动：${result.原因}`);
+    drift += 1;
+    continue;
+  }
+  const failed = [];
+  if (result.当前Tab !== result.预期Tab) failed.push(`当前 Tab 为「${result.当前Tab}」，预期「${result.预期Tab}」`);
+  if (!result.initial.外层可滚动) failed.push('初始长列表没有让 PageBody 可滚动');
+  if (!result.initial.列表未裁切) failed.push('初始列表内容被自身裁切');
+  if (result.initial.列表flexShrink !== '0') failed.push(`列表 flex-shrink=${result.initial.列表flexShrink}`);
+  if (!result.initial.名称可读) failed.push('名称列被挤压，模型名不可读');
+  if (!result.initial.操作未裁切 || !result.initial.各列未越界 || !result.initial.用量内容未越界) failed.push('列表列、用量内容或操作被水平裁切');
+  if (!result.expanded.操作未裁切) failed.push('展开态操作被水平裁切');
+  if (!result.expanded.高度增长 || !result.expanded.列表未裁切) failed.push('展开后列表没有随内容增高');
+  if (!result.提示出现后外层滚动) failed.push('成功提示出现后 PageBody 仍不能滚动');
+  if (!result.末行可见) failed.push('无法滚到最后一个模型');
+  if (!result.页头固定) failed.push('滚动时页头发生位移');
+  if (failed.length) {
+    console.error(`${label}模型目录滚动契约失败：${failed.join('；')}`);
+    drift += failed.length;
+  }
+}
+
+console.log('上游 Tab 与滚动契约:', JSON.stringify(upstreamViews));
+for (const [label, result] of Object.entries(upstreamViews)) {
+  if (!result.可验证) {
+    console.error(`${label} 无法验证：${result.原因}`);
+    drift += 1;
+    continue;
+  }
+  const failed = [];
+  if (result.当前Tab !== result.预期Tab) failed.push(`当前 Tab 为「${result.当前Tab}」，预期「${result.预期Tab}」`);
+  if (result.PageBody数量 !== 1) failed.push(`PageBody 有 ${result.PageBody数量} 个`);
+  if (result.可见表格数 !== 1) failed.push(`当前 Tab 可见 ${result.可见表格数} 张表`);
+  if ((label === '模型名录' || label === '生图契约') && !result.可滚动) failed.push('长列表没有产生纵向滚动');
+  if (!result.已滚动 || !result.末行可见) failed.push('无法滚到最后一行');
+  if (result.切换后可见表格数 !== undefined && result.切换后可见表格数 !== 1) {
+    failed.push(`切到内置数据后可见 ${result.切换后可见表格数} 张表`);
+  }
+  if (failed.length) {
+    console.error(`${label} 上游列表契约失败：${failed.join('；')}`);
+    drift += failed.length;
+  }
+}
+
+if (runtimeErrors.length > 0) {
+  console.error(`页面运行错误共 ${runtimeErrors.length} 条，不能用残缺页面声明布局通过。`);
+  drift += runtimeErrors.length;
+}
+
+console.log('侧栏页脚:', JSON.stringify(sidebarFooter));
+if (!sidebarFooter.存在) {
+  console.error('侧栏页脚 .lg-sidebar-footer 不存在——「提交缺陷」失去唯一可见入口。');
+  drift += 1;
+} else if (!sidebarFooter.在视口内 || sidebarFooter.需要滚动) {
+  console.error(
+    `侧栏页脚不滚动就够不着（页脚底边 y=${sidebarFooter.页脚底部y}，视口高 ${sidebarFooter.视口高}）。`
+    + '\n  滚动要归 .lg-console-sidebar > nav，侧栏自身 overflow:hidden，页脚 flex:0 0 auto。',
+  );
+  drift += 1;
+}
+
+console.log('Exchange 布局:', JSON.stringify(exchangeLayout));
+if (exchangeLayout.cardCount > 1 && (exchangeLayout.columns !== 1 || !exchangeLayout.equalWidths)) {
+  console.error('Exchange 列表必须保持单列且卡片等宽。');
+  drift += 1;
+}
+// 总数必须打在**所有**断言之后：先打总数再跑断言，日志上会出现「合计漂移项: 0」
+// 紧跟着失败详情，读日志的人被那个 0 骗过去。
 console.log(`\n合计漂移项: ${drift}`);
+
 // 有漂移必须非零退出，否则任何按退出码判定的 CI / 本地校验都会把回归当通过。
 if (drift > 0) process.exitCode = 1;

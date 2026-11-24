@@ -3,9 +3,8 @@ import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { TipCard } from '@/components/daily-tips/TipCard';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
-import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
+import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle, type WatermarkStatus } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
 import { MarketplaceCard } from '@/components/marketplace';
 import {
@@ -28,7 +27,11 @@ import {
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
   getWatermarkByApp,
+  getWatermarks,
+  bindWatermarkApp,
+  unbindWatermarkApp,
   getImageGenRun,
+  getLiteraryAgentRunByRequest,
   listReferenceImageConfigs,
   createReferenceImageConfig,
   updateReferenceImageConfig,
@@ -42,7 +45,7 @@ import {
   getUserPreferences,
   updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
-  getAdapterInfoByModelName,
+  getLiteraryAgentAdapterInfo,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -53,15 +56,30 @@ import {
   getLiteraryAgentWorkspaceDetailReal as getVisualAgentWorkspaceDetail,
   updateLiteraryAgentWorkspaceReal as updateVisualAgentWorkspace,
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
+  setLiteraryIllustrationPrefsReal,
+  type LiteraryIllustrationChoice,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, selectFreshLiteraryModel, type LiteraryModelOption } from './literaryModelOptions';
+import { fitLiteraryImageSize, imageRunFailure } from './literaryImageRunContract';
+import { runLiteraryImageBatch, type LiteraryImageAttempt } from './literaryImageBatch';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
-import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check } from 'lucide-react';
+import { type SizesByResolution } from '@/lib/imageAspectOptions';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, PenLine, SlidersHorizontal, History, AlertTriangle, Layers, Square, ChevronDown } from 'lucide-react';
+import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
+import { ArticleEditorToolbar } from './ArticleEditorToolbar';
+import { LiteraryModelPicker } from './LiteraryModelPicker';
+import {
+  LiteraryPositionIcon, LiterarySettingImage, LiterarySettingsSummary, LiteraryWatermarkOptionPreview, useLiteraryWatermarkPreview,
+} from './LiterarySettingsSummary';
+import { useLiterarySettingSave } from './useLiterarySettingSave';
+import type { LiteraryAgentPreferences } from '@/services/contracts/userPreferences';
+import { LiteraryInlineMenuGroup, LiterarySettingsRow } from './LiteraryInlineMenu';
+import { QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
+import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -74,13 +92,15 @@ import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor
 import { useDebounce } from '@/hooks/useDebounce';
 import { createSubmission, checkSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
+import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader';
+import { recordGenDurationMs } from '@/lib/genTiming';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
+import { mutateReferenceImageScenario } from './referenceImageModelCatalog';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
@@ -93,40 +113,54 @@ type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
 // 用户锚点占位符：匹配 [IMG] / [配图] / 【插图位置】（整行）
 const USER_ANCHOR_LINE_REGEX = /^\s*(?:\[IMG\]|\[配图\]|【插图位置】)\s*$/;
 
-function splitParagraphs(content: string): string[] {
-  const blocks: string[] = [];
-  let current: string[] = [];
-  for (const line of (content ?? '').split('\n')) {
-    if (line.trim() === '') {
-      if (current.length) { blocks.push(current.join('\n')); current = []; }
-    } else {
-      current.push(line);
-    }
+type ParagraphRange = { start: number; end: number; text: string };
+
+function paragraphRanges(content: string): ParagraphRange[] {
+  const blocks: ParagraphRange[] = [];
+  let start: number | undefined;
+  let end = 0;
+  const finish = () => {
+    if (start !== undefined) blocks.push({ start, end, text: content.slice(start, end) });
+    start = undefined;
+  };
+
+  for (const match of content.matchAll(/[^\r\n]+/g)) {
+    const line = match[0];
+    const lineStart = match.index;
+    if (start !== undefined && /\n[^\S\r\n]*\r?\n/.test(content.slice(end, lineStart))) finish();
+    if (!line.trim() || isAnchorParagraph(line)) finish();
+    if (!line.trim()) continue;
+
+    start ??= lineStart;
+    end = lineStart + line.length;
+    if (isAnchorParagraph(line)) finish();
   }
-  if (current.length) blocks.push(current.join('\n'));
+  finish();
   return blocks;
 }
 
-function joinParagraphs(blocks: string[]): string {
-  return blocks.join('\n\n');
+function splitParagraphs(content: string): string[] {
+  return paragraphRanges(content).map(({ text }) => text);
 }
 
 function isAnchorParagraph(text: string): boolean {
-  return USER_ANCHOR_LINE_REGEX.test(text.trim());
+  return USER_ANCHOR_LINE_REGEX.test(text);
 }
 
-function insertAnchorAt(content: string, insertAt: number): string {
-  const blocks = splitParagraphs(content);
-  const clamped = Math.max(0, Math.min(insertAt, blocks.length));
-  blocks.splice(clamped, 0, '[IMG]');
-  return joinParagraphs(blocks);
+function insertAnchorAt(content: string, paragraphIndex: number, side: 'above' | 'below'): string {
+  const target = paragraphRanges(content)[paragraphIndex];
+  if (!target) return content;
+  const separator = content.includes('\r\n') ? '\r\n\r\n' : '\n\n';
+  const offset = side === 'above' ? target.start : target.end;
+  const anchor = side === 'above' ? `[IMG]${separator}` : `${separator}[IMG]`;
+  return content.slice(0, offset) + anchor + content.slice(offset);
 }
 
-function removeParagraphAt(content: string, pIdx: number): string {
-  const blocks = splitParagraphs(content);
-  if (pIdx < 0 || pIdx >= blocks.length) return content;
-  blocks.splice(pIdx, 1);
-  return joinParagraphs(blocks);
+function removeParagraphAt(content: string, paragraphIndex: number): string {
+  const target = paragraphRanges(content)[paragraphIndex];
+  if (!target || !isAnchorParagraph(target.text)) return content;
+  const end = target.end + (content.slice(target.end).match(/^\r?\n/)?.[0].length ?? 0);
+  return content.slice(0, target.start) + content.slice(end);
 }
 
 const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
@@ -144,7 +178,7 @@ const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string;
   {
     value: 'user-anchor',
     label: '尊重用户锚点',
-    hint: '【位置策略】用户已在文章中用 [IMG] / [配图] / 【插图位置】等占位符标记了期望插图的位置。请严格在这些占位符位置插入 [插图] 标记，不要在用户未标记的段落插入；若用户未标记任何占位符，再按你的判断选择 3 个最合适的场景段落插入。',
+    hint: '',
   },
 ];
 
@@ -155,11 +189,26 @@ type MarkerRunItem = {
   planItem?: ImageGenPlanItem | null;
   status: MarkerRunStatus;
   runId?: string | null;
+  generationRequestId?: string | null;
   base64?: string | null;
   url?: string | null;
   assetUrl?: string | null;
   errorMessage?: string | null;
 };
+
+/** "1024x1536" → 宽高比；解析不出按 1:1。 */
+function ratioFromSize(size?: string | null): number {
+  const [w, h] = String(size || '').split(/[xX×]/).map(Number);
+  return w > 0 && h > 0 ? w / h : 1;
+}
+/** "1024x1536" → "1024 × 1536"（生图等待态底边那行的尺寸段） */
+function sizeLabelOf(size?: string | null): string {
+  const [w, h] = String(size || '1024x1024').split(/[xX×]/).map(Number);
+  return w > 0 && h > 0 ? `${w} × ${h}` : '1024 × 1024';
+}
+
+/** 文学创作在水印绑定里的应用标识（与配置页 WatermarkSettingsPanel 的 appKey 一致） */
+const LITERARY_APP_KEY = 'literary-agent';
 
 const PRD_MD_STYLE = `
   .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
@@ -171,8 +220,8 @@ const PRD_MD_STYLE = `
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
   .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
-  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
-  .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: var(--accent-fg-violet); border-radius: 10px; }
+  .prd-md a { color: var(--accent-fg-blue); text-decoration: underline; }
   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
   .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
   .prd-md pre code { background: transparent; border: 0; padding: 0; }
@@ -182,7 +231,7 @@ const PRD_MD_STYLE = `
   .prd-md .prd-md-marker {
     background: rgba(245, 158, 11, 0.22);
     border: 1px solid rgba(245, 158, 11, 0.32);
-    color: rgba(255,255,255,0.92);
+    color: var(--text-primary);
     padding: 0 4px;
     border-radius: 6px;
   }
@@ -194,7 +243,7 @@ const PRD_MD_STYLE = `
   .prd-md .prd-md-marker-new {
     background: rgba(245, 158, 11, 0.55);
     border: 1px solid rgba(245, 158, 11, 0.5);
-    color: rgba(255,255,255,0.95);
+    color: var(--text-primary);
     padding: 0 4px;
     border-radius: 6px;
     animation: marker-insert-glow 1.2s ease-out forwards;
@@ -282,6 +331,53 @@ const PRD_MD_STYLE = `
     }
   }
 
+  /* 配图卡片图片区：暗色沿用深底衬图；浅色改纸面嵌块，避免「白底浮灰卡」 */
+  .marker-card-wrap { background: rgba(0,0,0,0.22); }
+  [data-theme="light"] .marker-card-wrap { background: var(--nested-block-bg); }
+  .marker-card-topbar { background: linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%); }
+  .marker-card-title { color: rgba(255,255,255,0.85); }
+
+  /* 状态标签：无边框，圆点 + 字（与按钮、设置项区分）。浮在图片上，所以垫一层实心面板底保证可读 */
+  .marker-status { display: inline-flex; align-items: center; gap: 5px; background: var(--panel-solid); border: none; color: var(--text-secondary); }
+  .marker-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+  .marker-status--done { color: var(--accent-fg-success); }
+  .marker-status--error { color: var(--accent-fg-error); }
+  .marker-status--busy { color: var(--accent-fg-amber); }
+  .marker-status--busy::before { animation: lit-status-pulse 1.2s ease-in-out infinite; }
+  .marker-status--parsed { color: var(--accent-fg-info); }
+  @keyframes lit-status-pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+  /* 浅色主题 + 还没有图：浮层不再压深色渐变，文字改深色，整张卡保持纸面干净 */
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-topbar { background: transparent; }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-title { color: var(--text-secondary); }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-overlay {
+    background: linear-gradient(to top, var(--panel-solid) 0%, color-mix(in srgb, var(--panel-solid) 80%, transparent) 65%, transparent 100%);
+    opacity: 1;
+  }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-text { color: var(--text-secondary); }
+
+  /* AI 输出面板里识别出的 [插图] 行 */
+  .lit-output-marker {
+    margin: 4px 0; padding: 4px 8px; border-radius: 6px;
+    background: rgba(245, 158, 11, 0.14); border-left: 3px solid rgba(245, 158, 11, 0.7);
+    color: var(--text-primary);
+  }
+
+  /* 忙碌主按钮底边的不定进度条 */
+  .lit-busy-bar--indeterminate { animation: lit-busy-slide 1.4s ease-in-out infinite; }
+  @keyframes lit-busy-slide { 0% { left: -36%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .lit-busy-bar--indeterminate { animation: none; left: 0; width: 100% !important; } }
+
+  /* 正文里的「配图 N 生成中」占位：与正文图片同宽（跟随显示尺寸滑杆） */
+  .prd-md .prd-md-gen-slot {
+    position: relative;
+    overflow: hidden;
+    max-width: var(--img-display-size, 50%);
+    margin: 10px auto;
+    border-radius: 10px;
+    border: 1px solid var(--border-subtle);
+  }
+
   /* 配图卡片：prompt 文字底部浮层（默认半可见，hover 全可见） */
   .marker-card-prompt-overlay {
     position: absolute;
@@ -324,56 +420,6 @@ const PRD_MD_STYLE = `
   }
 `;
 
-/**
- * 前端锚点匹配：在文章中找到锚点文本的位置（模仿后端 4 级模糊匹配）
- * 返回锚点所在行的末尾位置，失败返回 -1
- */
-function findAnchorInsertPos(article: string, anchor: string): number {
-  const normalizeWs = (s: string) => s.replace(/\s+/g, ' ').trim();
-  const normalizeP = (s: string) =>
-    s.replace(/，/g, ',').replace(/。/g, '.').replace(/！/g, '!').replace(/？/g, '?')
-     .replace(/；/g, ';').replace(/：/g, ':').replace(/\u201c/g, '"').replace(/\u201d/g, '"')
-     .replace(/\u2018/g, "'").replace(/\u2019/g, "'");
-
-  // 1. 精确匹配
-  let idx = article.indexOf(anchor);
-  if (idx < 0) {
-    // 2. 忽略大小写
-    idx = article.toLowerCase().indexOf(anchor.toLowerCase());
-  }
-  if (idx < 0) {
-    // 3. 归一化空白
-    const na = normalizeWs(article);
-    const nc = normalizeWs(anchor);
-    const ni = na.indexOf(nc);
-    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
-  }
-  if (idx < 0) {
-    // 4. 归一化标点
-    const na = normalizeP(normalizeWs(article));
-    const nc = normalizeP(normalizeWs(anchor));
-    const ni = na.indexOf(nc);
-    if (ni >= 0) idx = Math.min(Math.round((ni / na.length) * article.length), article.length - 1);
-  }
-  if (idx < 0) return -1;
-  // 找到行尾
-  const lineEnd = article.indexOf('\n', idx);
-  return lineEnd >= 0 ? lineEnd : article.length;
-}
-
-/**
- * 将一个新的 marker 增量插入到当前文章内容中。
- * 按锚点定位，在对应行后插入 [插图]: text。
- */
-function insertMarkerIntoArticle(currentArticle: string, anchor: string, markerText: string): string {
-  const pos = findAnchorInsertPos(currentArticle, anchor);
-  if (pos < 0) {
-    // 未匹配时追加到末尾
-    return currentArticle + `\n\n[插图]: ${markerText}\n`;
-  }
-  return currentArticle.slice(0, pos) + `\n\n[插图]: ${markerText}\n` + currentArticle.slice(pos);
-}
-
 // 用户自定义提示词模板类型（对应后端 LiteraryPrompt）
 type PromptTemplate = {
   id: string;
@@ -411,12 +457,25 @@ const PanelCard = ({ className, children }: { className?: string; children: Reac
   </GlassCard>
 );
 
+function SettingSaveFeedback({ saving, error, retry }: { saving: boolean; error: string | null; retry: () => Promise<boolean> }) {
+  if (saving) return <div role="status" className="flex items-center gap-2 py-2 text-xs" style={{ color: 'var(--text-secondary)' }}><MapSpinner size={14} />正在保存设置…</div>;
+  if (!error) return null;
+  return <div role="alert" className="flex items-center justify-between gap-2 py-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+    <span>{error}，当前设置保持不变。</span>
+    <Button size="xs" variant="secondary" onClick={() => void retry()}>重试</Button>
+  </div>;
+}
+
 export default function ArticleIllustrationEditorPage({ workspaceId }: { workspaceId: string }) {
   // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回文学创作
   const goBack = useSmartBack('/literary-agent');
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
+  const previewParagraphs = useMemo(() => splitParagraphs(articleContent), [articleContent]);
+  const userAnchorCount = previewParagraphs.filter(isAnchorParagraph).length;
+  // 迟到的工作区读取不能覆盖本次读取期间已经成功读入的新文章。
+  const articleMutationVersionRef = useRef(0);
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
@@ -424,11 +483,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
   const autoSubmitEnabledRef = useRef(true);
   useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const [autoSubmitSuppressed, setAutoSubmitSuppressed] = useState(true);
+  const autoSubmitSuppressedRef = useRef(true);
   const [submissionState, setSubmissionState] = useState<{ submitted: boolean; submissionId?: string }>({ submitted: false });
   const submissionStateRef = useRef(submissionState);
   useEffect(() => { submissionStateRef.current = submissionState; }, [submissionState]);
   const hasGeneratedImagesRef = useRef(false); // synced from markerRunItems later
   const [markerStreaming, setMarkerStreaming] = useState(false);
+  const [streamedMarkerCount, setStreamedMarkerCount] = useState(0);
   const [thinkingContent, setThinkingContent] = useState('');
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   // 统一图片灯箱（支持放大/缩小/拖拽预览）：右侧卡片与正文内联图片共用
@@ -436,11 +498,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 刻意不在打开期间实时重算列表：否则更靠前的 marker 后完成插入会让已打开的图悄悄错位（违反"最小惊讶"）。
   // 新完成的配图重新打开灯箱即可看到。
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
-  const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
+  // 历史配图：改稿 / 重新规划 / 重新生成前的旧图都不删，在这里按版本找回
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // 这篇文章自己的风格 / 水印（智能体或网页为它指定过才有）。有它时顶栏改的是这篇文章，不动账号级的「当前启用」
+  const [articleChoice, setArticleChoice] = useState<LiteraryIllustrationChoice | null>(null);
+  const [watermarkStatus, setWatermarkStatus] = useState<WatermarkStatus>({ hasActiveConfig: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
-  const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
-    setWatermarkStatus({ enabled: status.hasActiveConfig, name: status.activeName ?? null });
-  }, []);
   // 检查当前 workspace 是否已投稿
   useEffect(() => {
     checkSubmission({ workspaceId }).then((res) => {
@@ -452,8 +515,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 自动投稿：任意图片生成成功后触发（通过 ref 读取最新值，避免闭包陈旧）
   const tryAutoSubmit = useCallback(() => {
-    if (!autoSubmitEnabledRef.current || submissionStateRef.current.submitted) return;
-    createSubmission({ contentType: 'literary', workspaceId })
+    if (autoSubmitSuppressedRef.current || !autoSubmitEnabledRef.current || submissionStateRef.current.submitted) return;
+    createSubmission({ contentType: 'literary', trigger: 'auto', workspaceId })
       .then((res) => {
         if (res.success) {
           setSubmissionState({ submitted: true, submissionId: res.data.submission?.id });
@@ -481,7 +544,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return;
       }
 
-      const litRes = await createSubmission({ contentType: 'literary', workspaceId });
+      const litRes = await createSubmission({ contentType: 'literary', trigger: 'manual', workspaceId });
       if (litRes.success) {
         setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
         toast.success('已投稿到作品广场');
@@ -512,6 +575,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 风格图/参考图配置（新的多配置模型）
   const [referenceImageConfigs, setReferenceImageConfigs] = useState<ReferenceImageConfig[]>([]);
+  // 列表是否已经是服务端的真实结果。未读到 / 读取失败时空数组不等于「没有风格图」：
+  // 服务端生图时自己查启用中的风格图，界面若在这时显示「不使用」，就是在对用户说谎。
+  const [referenceImageListReady, setReferenceImageListReady] = useState(false);
+  const [referenceImageLoadError, setReferenceImageLoadError] = useState<string | null>(null);
   const [referenceImageLoading, setReferenceImageLoading] = useState(false);
   const [referenceImageSaving, setReferenceImageSaving] = useState(false);
   const referenceImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -546,8 +613,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelsLoading, setModelsLoading] = useState(true);
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
   // 无专属模型池时，通过预解析得到的自动调度模型（仅供显示，生成时由 Worker 自行 resolve）
-  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
-  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
+  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string } | null>(null);
+  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string } | null>(null);
 
   // 模型偏好（按账号持久化到数据库）
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -556,46 +623,49 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [chatModelPrefOpen, setChatModelPrefOpen] = useState(false);
   const [chatModelPrefId, setChatModelPrefId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
+  const literaryPreferencesRef = useRef<LiteraryAgentPreferences>({});
+  const [modelSettingsReload, setModelSettingsReload] = useState(0);
+  const [modelPrefLoadError, setModelPrefLoadError] = useState(false);
 
   // 生图模型池 → 可选择列表
-  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
-  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
-    return pools
-      .filter((g) => g.models && g.models.length > 0)
-      .map((g) => {
-        const first = g.models[0]!;
-        return {
-          poolId: g.id,
-          id: `pool_${g.id}`,
-          name: g.name,
-          modelName: g.code || first.modelId,
-          actualModelId: first.modelId,
-          platformId: first.platformId,
-          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
-          isDedicated: g.isDedicated,
-          isDefault: g.isDefault,
-        };
-      })
-      .filter((m) => m.enabled);
+  type PoolModel = LiteraryModelOption;
+
+  const enabledImageModels = useMemo(() => buildLiteraryModelOptions(imageGenPools), [imageGenPools]);
+  const enabledChatModels = useMemo(() => buildLiteraryModelOptions(chatPools), [chatPools]);
+
+  const reloadImageGenPools = useCallback(async () => {
+    setImageGenModelError(null);
+    setModelsLoading(true);
+    try {
+      const res = await getLiteraryAgentModels();
+      if (res.success && res.data) {
+        setImageGenPools(res.data);
+      } else {
+        setImageGenPools([]);
+        setImageGenModelError('加载模型池失败');
+      }
+    } catch {
+      setImageGenPools([]);
+      setImageGenModelError('加载模型池失败');
+    } finally {
+      setModelsLoading(false);
+    }
   }, []);
 
-  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
-  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
-
-  // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
+  // 有效选中模型（用户偏好优先，其次是网关显式默认；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
-    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
-    const fromPool = byId ?? enabledImageModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledImageModels, imageModelPrefId);
     if (fromPool) return fromPool;
+    if (imageModelPrefId) return null;
     // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
     if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
   }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
 
   const effectiveChatModel = useMemo<PoolModel | null>(() => {
-    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
-    const fromPool = byId ?? enabledChatModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledChatModels, chatModelPrefId);
     if (fromPool) return fromPool;
+    if (chatModelPrefId) return null;
     if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
   }, [enabledChatModels, chatModelPrefId, autoResolvedChatModel]);
@@ -616,16 +686,54 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
+  const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
+  const [imageCapabilitiesModel, setImageCapabilitiesModel] = useState<string | null>(null);
+  const [imageCapabilitiesError, setImageCapabilitiesError] = useState<string | null>(null);
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
+  // 每个配图进入「生成中」的时刻：正文占位与右侧卡片共用，重渲染/重挂载不重置「已等待」计时
+  const runStartedAtRef = useRef(new Map<number, number>());
+  const getRunStartedAt = (markerIndex: number): number => {
+    const map = runStartedAtRef.current;
+    let t = map.get(markerIndex);
+    if (t == null) {
+      t = Date.now();
+      map.set(markerIndex, t);
+    }
+    return t;
+  };
+  // 重新打开工作区时从后端恢复、恢复那一刻就处于「生成中」的配图。它们的真实开始时间
+  // 不在本页，本地计时起点只是「这次渲染的时刻」；若服务端早已出完图，状态查询几秒后
+  // 就会翻成 done，这几秒会被当成出图耗时喂进共享预估，把之后的倒计时拉得离谱地短。
+  const restoredRunningRef = useRef(new Set<number>());
+  // 路由只换 workspaceId 时本组件会被复用，两份计时记录必须跟着清空，
+  // 否则 A 工作区的计时会被记到 B 工作区同编号的配图上，污染共享预估
+  useEffect(() => {
+    runStartedAtRef.current = new Map();
+    restoredRunningRef.current = new Set();
+  }, [workspaceId]);
+  useEffect(() => {
+    const running = new Set(markerRunItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
+    for (const [k, startedAt] of Array.from(runStartedAtRef.current.entries())) {
+      if (running.has(k)) continue;
+      // 真实出图耗时喂给共享的耗时预估（与视觉创作同一份滑动平均），下次「还需约 Ns」更准；
+      // 只采本页亲眼看到开始的那几次，恢复来的不算样本
+      const wasRestored = restoredRunningRef.current.delete(k);
+      if (!wasRestored && markerRunItems.find((x) => x.markerIndex === k)?.status === 'done') {
+        recordGenDurationMs(Date.now() - startedAt);
+      }
+      runStartedAtRef.current.delete(k);
+    }
+  }, [markerRunItems]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
-  const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
+  const generationGateRef = useRef(false);
+  const modelMigrationNoticeRef = useRef<string | null>(null);
+  useEffect(() => () => { genAbortRef.current?.abort(); }, [workspaceId]);
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
-  const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
   const [editingMarkerIdx, setEditingMarkerIdx] = useState<number | null>(null); // 正在弹窗编辑 prompt 的 marker 索引
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
@@ -650,13 +758,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems]);
 
-  // 当配图列表增加时，只在流式输出过程中自动滚动到底部
-  useEffect(() => {
-    if (isStreamingRef.current && markerListRef.current && markerRunItems.length > 0) {
-      markerListRef.current.scrollTop = markerListRef.current.scrollHeight;
-    }
-  }, [markerRunItems.length]);
-
   // 思考/生成面板自动滚动到底部
   useEffect(() => {
     if (thinkingPanelRef.current && (thinkingContent || rawMarkerOutput)) {
@@ -673,10 +774,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
 
-  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
-  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
-  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.visual-agent.manual-image-marking.md
-  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [selectedPositionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  // 自动策略本来就优先使用原文锚点。根据已保存的正文显示实际策略，显式选的标题策略仍优先。
+  const positionStrategy = selectedPositionStrategy === 'auto' && userAnchorCount > 0
+    ? 'user-anchor'
+    : selectedPositionStrategy;
+  const positionStrategyLabel = positionStrategy === 'auto'
+    ? '自动安排'
+    : POSITION_STRATEGY_OPTIONS.find(option => option.value === positionStrategy)?.label ?? '自动安排';
   const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
   useEffect(() => {
     if (!workspaceId) return;
@@ -685,6 +790,126 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setPositionStrategyRaw(saved as PositionStrategy);
     }
   }, [workspaceId]);
+  // ---- 生成设置的就地菜单：风格图 / 水印直接切换，不必打开完整配置页 ----
+  const activeRefConfig = referenceImageConfigs.find((c) => c.isActive) ?? null;
+  const selectedRefConfig = articleChoice
+    ? referenceImageConfigs.find((c) => c.id === articleChoice.style.styleId)
+    : activeRefConfig;
+  // 顶栏「本文风格 / 水印」有三种状态，文案要分开说：这篇记住的 / 这篇没单独指定、跟随账号默认 /
+  // 记住的那套已被删除、正按账号默认出图。最后一种以前也写成「本文自己的设定」，用户带着回退的那套去花额度却不知道。
+  type ArticlePref = { name: string; source: string; missing?: boolean };
+  const articlePrefNote = (kind: string, item: ArticlePref | undefined): React.ReactNode => {
+    if (!item) return undefined;
+    if (item.missing) {
+      return (
+        <span style={{ color: 'var(--accent-fg-amber)' }}>
+          {`这篇文章原先记住的${kind}已被删除，现在按账号默认「${item.name}」出图。重新选一套即可记到本文。`}
+        </span>
+      );
+    }
+    if (item.source !== 'remembered') return `这篇文章没单独指定${kind}，跟随账号默认；在这里选一套会记到本文，智能体和网页重画都按它来`;
+    return `这里选的是这篇文章自己的${kind}，智能体和网页重画都按它来`;
+  };
+  const articlePrefTitle = (kind: string, item: ArticlePref) =>
+    item.missing ? `本文的${kind}：原先记住的已被删除，正按账号默认「${item.name}」出图`
+      : item.source !== 'remembered' ? `本文的${kind}：跟随账号默认「${item.name}」`
+        : `本文的${kind}：${item.name}（这篇文章自己的设定，智能体与网页生图都按它来）`;
+  // 改这篇文章自己的设定（智能体与网页读写同一份）。clear = 回到跟随账号默认
+  const applyArticleChoice = async (input: { style?: string; watermark?: string; clear?: boolean }) => {
+    const res = await setLiteraryIllustrationPrefsReal({ id: workspaceId, ...input });
+    if (!res.success || !res.data) {
+      toast.error('保存本文的配图设定失败', res.error?.message || '未知错误，请稍后重试');
+      return;
+    }
+    setArticleChoice(input.clear ? null : res.data.effective);
+    if (input.clear) toast.success('本文已改为跟随账号默认的风格与水印');
+  };
+  const switchReferenceImage = async (config: ReferenceImageConfig, activate: boolean) => {
+    if (articleChoice) {
+      setReferenceImageSaving(true);
+      try { await applyArticleChoice({ style: activate ? config.id : 'none' }); } finally { setReferenceImageSaving(false); }
+      return;
+    }
+    setReferenceImageSaving(true);
+    try {
+      const res = await mutateReferenceImageScenario(
+        () => (activate ? activateReferenceImageConfig({ id: config.id }) : deactivateReferenceImageConfig({ id: config.id })),
+        loadReferenceImageConfigs,
+        reloadImageGenPools,
+      );
+      // 失败时不重新加载，当前选择保持原样；必须告诉用户没切成功，否则菜单一关就像什么都没发生
+      if (!res.success) toast.error(activate ? '启用风格图失败' : '停用风格图失败', res.error?.message || '未知错误，请稍后重试');
+    } finally {
+      setReferenceImageSaving(false);
+    }
+  };
+  const [watermarkOptions, setWatermarkOptions] = useState<WatermarkConfig[] | null>(null);
+  const [watermarkSaving, setWatermarkSaving] = useState(false);
+  // 列表读取失败必须和「真的没有水印」分开：把失败当成空列表，菜单就会给出「不加水印」，
+  // 选了之后找不到当前绑定、不发解绑请求，界面却显示已关闭，而生成的图照旧带水印。
+  const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
+  const loadWatermarkOptions = useCallback(async () => {
+    setWatermarkLoadError(null);
+    // 重读期间先让旧列表失效：旧列表可能已被管理面板改过（A 换成 B），
+    // 这时若还能点「不加水印」，会按旧的 A 去解绑，B 在服务端仍然生效
+    setWatermarkOptions(null);
+    const res = await getWatermarks();
+    if (res.success && Array.isArray(res.data)) {
+      setWatermarkOptions(res.data);
+      return;
+    }
+    setWatermarkOptions(null);
+    setWatermarkLoadError(res.error?.message || '水印列表读取失败');
+  }, []);
+  const articleWatermarkId = articleChoice?.watermark.watermarkId;
+  const watermarkName = articleChoice
+    ? articleWatermarkId === 'none' ? '不加水印' : articleChoice.watermark.name
+    : watermarkStatus.hasActiveConfig ? watermarkStatus.activeName || '已启用' : '不加水印';
+  const watermarkId = articleWatermarkId === 'none' ? undefined : articleWatermarkId ?? watermarkStatus.activeId;
+  const watermarkUpdatedAt = watermarkId === watermarkStatus.activeId
+    ? watermarkStatus.activeUpdatedAt
+    : watermarkOptions?.find(option => option.id === watermarkId)?.updatedAt;
+  const watermarkPreview = useLiteraryWatermarkPreview(watermarkId, watermarkUpdatedAt);
+  const watermarkImage = <LiterarySettingImage className="lit-settings-watermark-preview" src={watermarkPreview} />;
+  useEffect(() => {
+    if (articleWatermarkId && articleWatermarkId !== 'none' && articleWatermarkId !== watermarkStatus.activeId) {
+      void loadWatermarkOptions();
+    }
+  }, [articleWatermarkId, watermarkStatus.activeId, loadWatermarkOptions]);
+
+  const switchWatermark = async (target: WatermarkConfig | null) => {
+    if (articleChoice) {
+      setWatermarkSaving(true);
+      try { await applyArticleChoice({ watermark: target ? target.id : 'none' }); } finally { setWatermarkSaving(false); }
+      return;
+    }
+    const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
+    if ((target?.id ?? null) === (current?.id ?? null)) return;
+    // 要关水印却找不到当前绑定记录：说明列表与实际状态对不上，不能只改界面状态了事
+    if (!target && !current && watermarkStatus.hasActiveConfig) {
+      toast.error('关闭水印失败', '没有找到当前绑定的水印，请在「管理水印…」里处理');
+      return;
+    }
+    setWatermarkSaving(true);
+    try {
+      const res = target
+        ? await bindWatermarkApp({ id: target.id, appKey: LITERARY_APP_KEY })
+        : current
+          ? await unbindWatermarkApp({ id: current.id, appKey: LITERARY_APP_KEY })
+          : null;
+      if (res && !res.success) {
+        toast.error('切换水印失败', res.error?.message || '未知错误');
+        return;
+      }
+      setWatermarkStatus(target
+        ? { hasActiveConfig: true, activeId: target.id, activeName: target.name || target.text, activeUpdatedAt: target.updatedAt }
+        : { hasActiveConfig: false });
+      await loadWatermarkOptions();
+    } finally {
+      setWatermarkSaving(false);
+    }
+  };
+
   const setPositionStrategy = useCallback((s: PositionStrategy) => {
     setPositionStrategyRaw(s);
     if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
@@ -717,7 +942,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
   // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
-  const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
 
   // Phase 1: 段落右键上下文菜单
   const [paragraphCtxMenu, setParagraphCtxMenu] = useState<{
@@ -734,21 +958,35 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     };
   }, [paragraphCtxMenu.visible]);
 
-  // 选择/取消提示词时同步持久化到后端
-  const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
-    setSelectedPromptRaw(prompt);
-    // 异步持久化，不阻塞 UI
-    void updateVisualAgentWorkspace({
-      id: workspaceId,
-      selectedPromptId: prompt?.id ?? '',
-    }).catch((err) => console.error('Failed to persist selectedPromptId:', err));
-  }, [workspaceId]);
+  const promptSettingSave = useLiterarySettingSave<PromptTemplate | null>({
+    scopeKey: workspaceId,
+    save: (prompt) => updateVisualAgentWorkspace({ id: workspaceId, selectedPromptId: prompt?.id ?? '' }),
+    onSaved: setSelectedPromptRaw,
+    errorMessage: '提示词风格保存失败',
+  });
+  const setSelectedPrompt = promptSettingSave.run;
+
+  const modelSettingSave = useLiterarySettingSave<{ imageModelId: string; chatModelId: string }>({
+    scopeKey: userId,
+    save: (prefs) => updateLiteraryAgentPreferences({
+      ...literaryPreferencesRef.current,
+      imageModelId: prefs.imageModelId || undefined,
+      chatModelId: prefs.chatModelId || undefined,
+    }),
+    onSaved: (prefs) => {
+      literaryPreferencesRef.current = { ...literaryPreferencesRef.current, ...prefs };
+      setImageModelPrefId(prefs.imageModelId);
+      setChatModelPrefId(prefs.chatModelId);
+    },
+    errorMessage: '模型设置保存失败',
+  });
 
   // 所有提示词（只有用户模板）
   const allPrompts = userPrompts;
 
   // 自动保存：3秒防抖（仅在允许编辑时启用；当前页面已移除手动编辑入口，保留逻辑以兼容未来扩展）
   const debouncedArticleContent = useDebounce(articleContent, 3000);
+  const pendingArticleSave = useRef(Promise.resolve());
 
   // 加载工作空间数据
   useEffect(() => {
@@ -762,6 +1000,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     void (async () => {
       setImageGenModelError(null);
       setModelsLoading(true);
+      setModelPrefReady(false);
+      setModelPrefLoadError(false);
 
       const [imgPoolsRes, chatPoolsRes, prefsRes] = await Promise.all([
         getLiteraryAgentModels().catch(() => ({ success: false, data: null as LiteraryAgentModelPool[] | null })),
@@ -781,42 +1021,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
 
       // 恢复用户模型偏好
+      literaryPreferencesRef.current = prefsRes.success ? prefsRes.data?.literaryAgentPreferences ?? {} : {};
       if (prefsRes.success && prefsRes.data?.literaryAgentPreferences) {
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
-        setAnchorTutorialSeen(!!prefs.anchorTutorialSeen);
-      } else {
-        setAnchorTutorialSeen(false);
       }
-      setModelPrefReady(true);
+      setModelPrefReady(prefsRes.success);
+      setModelPrefLoadError(!prefsRes.success);
       setModelsLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // 持久化模型偏好（debounce 500ms）
-  useEffect(() => {
-    if (!modelPrefReady || !userId) return;
-    const timeout = setTimeout(() => {
-      void updateLiteraryAgentPreferences({
-        imageModelId: imageModelPrefId || undefined,
-        chatModelId: chatModelPrefId || undefined,
-      }).catch(() => {});
-    }, 500);
-    return () => clearTimeout(timeout);
-  }, [imageModelPrefId, chatModelPrefId, modelPrefReady, userId]);
+  }, [modelSettingsReload, userId]);
 
   // 验证用户选择的模型是否仍在可用列表中
   useEffect(() => {
     if (modelsLoading) return;
-    if (imageModelPrefId && !enabledImageModels.some((m) => m.id === imageModelPrefId)) {
-      setImageModelPrefId('');
-    }
-    if (chatModelPrefId && !enabledChatModels.some((m) => m.id === chatModelPrefId)) {
-      setChatModelPrefId('');
+    if (imageModelPrefId && !selectLiteraryModelOption(enabledImageModels, imageModelPrefId)) {
+      setImageGenModelError('原配图模型已变更或暂不可用，请从模型菜单重新选择。');
     }
   }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
 
@@ -835,10 +1059,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedModel({
               id: 'auto-resolved',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
+              actualPlatformId: res.platform || '',
             });
           } else {
             setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
@@ -866,10 +1091,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedChatModel({
               id: 'auto-resolved-chat',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
+              actualPlatformId: res.platform || '',
             });
           } else {
             setAutoResolvedChatModel(null);
@@ -882,44 +1108,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     return () => { cancelled = true; };
   }, [enabledChatModels.length, modelsLoading]);
 
-  // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
-  const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
-    '1k': ASPECT_OPTIONS.map(opt => ({ size: opt.size1k, aspectRatio: opt.id })),
-    '2k': ASPECT_OPTIONS.map(opt => ({ size: opt.size2k, aspectRatio: opt.id })),
-    '4k': ASPECT_OPTIONS.map(opt => ({ size: opt.size4k, aspectRatio: opt.id })),
-  }), []);
-
-  // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
+  // 能力读取失败时禁止生成，不能用另一模型的默认尺寸冒充当前能力。
   useEffect(() => {
-    const modelName = effectiveModel?.actualModelId || imageGenModel?.modelName;
-    if (!modelName) {
-      setSizesByResolutionForPicker(defaultSizesByResolution);
-      return;
-    }
+    const modelName = effectiveModel?.modelName || imageGenModel?.modelName;
+    setImageCapabilitiesModel(null);
+    setImageCapabilitiesError(null);
+    setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+    setCurrentModelSizesNotApplicable(false);
+    if (!modelName) return;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await getAdapterInfoByModelName(modelName);
+        const res = await getLiteraryAgentAdapterInfo(modelName);
         if (cancelled) return;
-        if (res.success && res.data?.matched && res.data.sizesByResolution) {
-          const data = res.data.sizesByResolution;
-          const resolved: SizesByResolution = {
-            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
-            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
-            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
-          };
-          // 适配器返回了有效尺寸则使用，否则 fallback 到默认
-          const hasAny = resolved['1k'].length > 0 || resolved['2k'].length > 0 || resolved['4k'].length > 0;
-          setSizesByResolutionForPicker(hasAny ? resolved : defaultSizesByResolution);
-        } else {
-          setSizesByResolutionForPicker(defaultSizesByResolution);
+        if (!res.success || !res.data?.matched || !res.data.sizesByResolution) {
+          setImageCapabilitiesError(res.error?.message || '无法读取当前模型的图片能力，请刷新后重新选择模型。');
+          return;
         }
+        const data = res.data.sizesByResolution;
+        setSizesByResolutionForPicker({
+          '1k': Array.isArray(data['1k']) ? data['1k'] : [],
+          '2k': Array.isArray(data['2k']) ? data['2k'] : [],
+          '4k': Array.isArray(data['4k']) ? data['4k'] : [],
+        });
+        setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);
+        setImageCapabilitiesModel(modelName);
       } catch {
-        if (!cancelled) setSizesByResolutionForPicker(defaultSizesByResolution);
+        if (!cancelled) setImageCapabilitiesError('无法读取当前模型的图片能力，请刷新后重新选择模型。');
       }
     })();
     return () => { cancelled = true; };
-  }, [effectiveModel?.actualModelId, imageGenModel?.modelName, defaultSizesByResolution]);
+  }, [effectiveModel?.modelName, imageGenModel?.modelName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -929,11 +1148,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (res?.success && res.data) {
         const config = res.data;
         setWatermarkStatus({
-          enabled: true,
-          name: config.name || config.text || null,
+          hasActiveConfig: true,
+          activeId: config.id,
+          activeName: config.name || config.text,
+          activeUpdatedAt: config.updatedAt,
         });
       } else {
-        setWatermarkStatus({ enabled: false, name: null });
+        setWatermarkStatus({ hasActiveConfig: false });
       }
     })();
     return () => {
@@ -950,6 +1171,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         const sorted = [...res.data.items].sort((a, b) => a.id.localeCompare(b.id));
         setReferenceImageConfigs(sorted);
+        setReferenceImageListReady(true);
+        setReferenceImageLoadError(null);
+      } else {
+        setReferenceImageLoadError(res?.error?.message || '风格图列表读取失败');
       }
     } finally {
       setReferenceImageLoading(false);
@@ -1029,10 +1254,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
+    const articleVersionAtStart = articleMutationVersionRef.current;
     try {
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
+        setArticleChoice(res.data.illustrationChoice ?? null);
+        const suppressAutoSubmit = ws.suppressAutoSubmit === true;
+        autoSubmitSuppressedRef.current = suppressAutoSubmit;
+        setAutoSubmitSuppressed(suppressAutoSubmit);
+        setAutoSubmitEnabled(!suppressAutoSubmit);
+        if (articleMutationVersionRef.current !== articleVersionAtStart) {
+          pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
+          await loadLiteraryPrompts();
+          return;
+        }
         const content = ws.articleContent || '';
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
@@ -1076,23 +1312,33 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               size: m.planItem.size || undefined,
             } : null,
             runId: m.runId || null,
+            generationRequestId: m.generationRequestId || null,
             // 恢复图片数据（只使用 URL，不使用 base64 以减少存储压力）
             base64: null, // 前端不从后端恢复 base64
             url: m.url || null,
             assetUrl: m.assetId ? (res.data.assets?.find((a: any) => a.id === m.assetId)?.url || null) : null,
             errorMessage: m.errorMessage || null,
           }));
+          restoredRunningRef.current = new Set(restoredItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
           setMarkerRunItems(restoredItems);
           setMarkerRunItemsRestored(true); // 标记已恢复
 
           // 对于 status === 'running' 且有 runId 的 marker，查询后端 Run 的真实状态
           // 后端是状态的唯一来源，前端只是观察者
-          const runningItems = restoredItems.filter(item => item.status === 'running' && item.runId);
+          const runningItems = restoredItems.filter(item => item.status === 'running' && (item.runId || item.generationRequestId));
           if (runningItems.length > 0) {
             // 异步查询每个 run 的真实状态（不阻塞 UI）
             Promise.all(runningItems.map(async (item) => {
               try {
-                const runRes = await getImageGenRun({ runId: item.runId!, includeItems: true });
+                let recoveredRunId = item.runId;
+                if (!recoveredRunId && item.generationRequestId) {
+                  const found = await getLiteraryAgentRunByRequest(item.generationRequestId);
+                  recoveredRunId = found.success ? found.data?.runId : null;
+                  if (!recoveredRunId) return;
+                  setMarkerRunItems(prev => prev.map(x => x.markerIndex === item.markerIndex ? { ...x, runId: recoveredRunId } : x));
+                  await updateMarkerStatus(item.markerIndex, { status: 'running', runId: recoveredRunId });
+                }
+                const runRes = await getImageGenRun({ runId: recoveredRunId!, includeItems: true });
                 if (runRes.success && runRes.data) {
                   const runStatus = runRes.data.run.status;
                   // 根据后端 Run 状态更新前端显示
@@ -1208,23 +1454,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isBusy = generating || markerStreaming;
 
   useEffect(() => {
-    if (debouncedArticleContent && workspaceId && phase === 1 && !isBusy) { // Editing
-      void saveArticleContent();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedArticleContent, isBusy]);
-
-  async function saveArticleContent() {
-    try {
-      await updateVisualAgentWorkspace({
-        id: workspaceId,
-        articleContent: debouncedArticleContent,
-        idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
-      });
-    } catch (error) {
-      console.error('自动保存失败:', error);
-    }
-  }
+    if (!debouncedArticleContent || debouncedArticleContent !== articleContent || !workspaceId || phase !== 1 || isBusy) return;
+    pendingArticleSave.current = pendingArticleSave.current.then(async () => {
+      try {
+        await updateVisualAgentWorkspace({
+          id: workspaceId,
+          articleContent: debouncedArticleContent,
+          idempotencyKey: `save-article-${workspaceId}-${Date.now()}`,
+        });
+      } catch (error) {
+        console.error('自动保存失败:', error);
+      }
+    });
+  }, [articleContent, debouncedArticleContent, isBusy, phase, workspaceId]);
 
   // 文件上传处理
   const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1235,6 +1477,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(fileName);
 
@@ -1292,6 +1535,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(file.name);
 
@@ -1314,26 +1558,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase(1); // Editing
   }, []);
 
-  // Phase 1: 关闭锚点教程气泡（点"知道啦"后不再弹出）
-  const dismissAnchorTutorial = useCallback(() => {
-    setAnchorTutorialSeen(true);
-    void updateLiteraryAgentPreferences({
-      imageModelId: imageModelPrefId || undefined,
-      chatModelId: chatModelPrefId || undefined,
-      anchorTutorialSeen: true,
-    }).catch(() => {});
-  }, [imageModelPrefId, chatModelPrefId]);
 
   // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
   const addAnchorAbove = useCallback((pIdx: number) => {
-    setArticleContent(prev => insertAnchorAt(prev, pIdx));
+    articleMutationVersionRef.current += 1;
+    setArticleContent(prev => insertAnchorAt(prev, pIdx, 'above'));
     setPositionStrategy('user-anchor');
   }, [setPositionStrategy]);
   const addAnchorBelow = useCallback((pIdx: number) => {
-    setArticleContent(prev => insertAnchorAt(prev, pIdx + 1));
+    articleMutationVersionRef.current += 1;
+    setArticleContent(prev => insertAnchorAt(prev, pIdx, 'below'));
     setPositionStrategy('user-anchor');
   }, [setPositionStrategy]);
   const removeAnchorParagraph = useCallback((pIdx: number) => {
+    articleMutationVersionRef.current += 1;
     setArticleContent(prev => removeParagraphAt(prev, pIdx));
   }, []);
 
@@ -1343,8 +1581,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
+    if (chatModelPrefId && !effectiveChatModel) {
+      toast.warning('写作模型不可用，请在模型设置中重新选择。');
+      return;
+    }
+
     // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
-    // Phase 1: 位置策略以文本提示形式拼到 userInstruction 前部，后端无需改动
     const strategyHint = POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.hint ?? '';
     const basePrompt = selectedPrompt?.content ?? '';
     const systemPrompt = strategyHint
@@ -1353,20 +1595,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     setMarkerStreaming(true);
     setThinkingContent('');
-    setRawMarkerOutput(''); // 重置原始输出
+    setRawMarkerOutput('');
+    setStreamedMarkerCount(0);
     setGlowingMarkers(new Set()); // 重置入场动画追踪
     knownMarkerIndicesRef.current.clear();
-    isStreamingRef.current = true; // 标记开始流式输出
 
     // 保存当前滚动位置，phase 切换导致 DOM 重建会丢失 scrollTop
     const savedScrollTop = articlePreviewRef.current?.scrollTop ?? 0;
 
     // 3 状态模式：生成标记时直接跳到 MarkersGenerated，流式更新内容
     setPhase(2); // MarkersGenerated
-    setMarkers([]);
-
-    // 锚点模式：预先显示原文（LLM 不会流式返回文章内容）
-    setArticleWithMarkers(articleContent);
 
     // 恢复滚动位置（等 React 完成渲染后）
     requestAnimationFrame(() => {
@@ -1376,121 +1614,61 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
 
     try {
-      // 使用 SSE 流式接口
+      // 等已发出的草稿保存完成，避免它在新方案落库后清空生成结果。
+      await pendingArticleSave.current;
       const stream = generateArticleMarkers({
         id: workspaceId,
         articleContent,
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
-        modelId: effectiveChatModel?.actualModelId,
+        positionStrategy,
+        modelId: chatModelPrefId ? effectiveChatModel?.modelName : undefined,
       });
 
-      let fullText = '';
-
-      const extractedMarkers: ArticleMarker[] = []; // 已提取的标记
-      let runningArticle = articleContent; // 锚点模式：跟踪增量插入后的文章
-      const newMarkerIndices = new Set<number>(); // 跟踪新插入的 marker 索引（用于动画）
-
-      // 直接设置 marker 为已解析（跳过意图模型，尺寸由 LLM 直接提供）
-      const setMarkerDirectParsed = (markerIndex: number, markerText: string, size: string) => {
-        const planItem = { prompt: markerText, count: 1, size };
-        setMarkerRunItems((prev) => {
-          if (prev.some((x) => x.markerIndex === markerIndex)) return prev;
-          return [
-            ...prev,
-            { markerIndex, markerText, draftText: markerText, status: 'parsed' as MarkerRunStatus, planItem },
-          ];
-        });
-
-        void updateMarkerStatus(markerIndex, {
-          status: 'parsed',
-          draftText: markerText,
-          planItem: { prompt: markerText, count: 1, size },
-        });
-      };
-
       for await (const chunk of stream) {
+        // 服务端在模型首 token 前推送阶段消息，立即替换静止等待态。
+        if (chunk.type === 'progress' && chunk.message) {
+          setRawMarkerOutput(chunk.message);
+          continue;
+        }
+
         // ====== 思考过程：实时追加显示 ======
         if (chunk.type === 'thinking' && chunk.text) {
           setThinkingContent((prev) => prev + chunk.text);
           continue;
         }
 
-        // ====== Anchor 模式：处理 marker 事件 ======
-        if (chunk.type === 'marker' && chunk.text && chunk.index != null) {
-          const markerIndex = chunk.index;
-          const markerText = chunk.text;
-          extractedMarkers.push({
-            index: markerIndex,
-            text: markerText,
-            startPos: -1,
-            endPos: -1,
-          });
-          setMarkers([...extractedMarkers]);
-
-          // 增量插入 marker 到文章中（实时反馈）
-          if (chunk.anchor) {
-            runningArticle = insertMarkerIntoArticle(runningArticle, chunk.anchor, markerText);
-            newMarkerIndices.add(markerIndex);
-            setArticleWithMarkers(runningArticle);
-          }
-
-          // Anchor 模式：marker text 即 prompt，无需意图模型解析，统一默认 1:1
-          setMarkerDirectParsed(markerIndex, markerText, '1024x1024');
-        }
-        // ====== Delta 事件：Anchor 模式为原始输出视觉反馈 ======
-        else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
-          // Anchor 模式：LLM 原始输出仅用于视觉反馈，文章由 marker 事件增量更新
-          setRawMarkerOutput((prev) => prev + chunk.text);
-        }
-        // ====== 后处理中事件 ======
-        else if (chunk.type === 'finalizing') {
-          setRawMarkerOutput((prev) => prev + '\n\n✓ 标记生成完成，正在保存…');
-        }
-        // ====== 完成事件 ======
-        else if (chunk.type === 'done' && chunk.fullText) {
-          fullText = chunk.fullText;
-          setArticleWithMarkers(fullText);
-
-          // 提取标记（确保最终状态一致）
-          const extracted = extractMarkers(fullText);
+        if (chunk.type === 'marker') {
+          setStreamedMarkerCount(count => count + 1);
+        } else if ((chunk.type === 'chunk' || chunk.type === 'delta') && chunk.text) {
+          setRawMarkerOutput(prev => prev + chunk.text);
+        } else if (chunk.type === 'finalizing') {
+          setRawMarkerOutput(prev => prev + '\n\n标记生成完成，正在保存…');
+        } else if (chunk.type === 'done' && chunk.fullText) {
+          const extracted = extractMarkers(chunk.fullText);
+          setArticleWithMarkers(chunk.fullText);
           setMarkers(extracted);
-
-          // 对于 done 事件中的标记但尚未处理的，补充直接设为 parsed（无需意图模型）
-          extracted.forEach((marker) => {
-            setMarkerRunItems((prev) => {
-              const existingItem = prev.find((x) => x.markerIndex === marker.index);
-              if (existingItem && existingItem.status !== 'idle') return prev;
-              if (!existingItem) {
-                return [
-                  ...prev,
-                  {
-                    markerIndex: marker.index,
-                    markerText: marker.text,
-                    draftText: marker.text,
-                    status: 'parsed' as MarkerRunStatus,
-                    planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
-                  },
-                ];
-              }
-              return prev;
-            });
-          });
-
-          setPhase(2); // MarkersGenerated
+          setMarkerRunItems(extracted.map(marker => ({
+            markerIndex: marker.index,
+            markerText: marker.text,
+            draftText: marker.text,
+            status: 'parsed',
+            planItem: { prompt: marker.text, count: 1, size: '1024x1024' },
+          })));
+          if (chunk.message) toast.warning('已按原文补齐提示词', chunk.message);
+          return;
         } else if (chunk.type === 'error') {
           throw new Error(chunk.message || '生成失败');
         }
       }
+      throw new Error('生成结果未返回，请刷新查看，或重新生成配图标记。');
     } catch (error) {
       console.error('Generate markers error:', error);
       toast.error('生成失败', error instanceof Error ? error.message : '未知错误');
-      setMarkers([]);
-      setPhase(1); // Editing
+      setPhase(phase);
     } finally {
       setMarkerStreaming(false);
-      isStreamingRef.current = false; // 标记流式输出结束
     }
   };
 
@@ -1546,22 +1724,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
 
         // "立刻插入"：无图时点击生成后，生成中也会在对应 marker 行下方插入占位提示
+        const markerHtml = base.slice(m.startPos, m.endPos)
+          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
         const isGenerating = it?.status === 'running';
         if (isGenerating) {
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n> 配图 ${i + 1} 生成中...`,
+            replacement: `<span data-marker-idx="${i}">${markerHtml}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
           });
           continue;
         }
 
         // 空闲/无运行项 — 包裹 data-marker-idx 用于定位（保留原文供 highlightText 高亮）
-        const originalText = base.slice(m.startPos, m.endPos);
         patches.push({
           start: m.startPos,
           end: m.endPos,
-          replacement: `<span data-marker-idx="${i}">${originalText}</span>`,
+          replacement: `<span data-marker-idx="${i}">${markerHtml}</span>`,
         });
       }
 
@@ -1674,17 +1853,157 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
 
-  const runSingleMarker = async (markerIndex: number) => {
+  const observeMarkerRun = async (markerIndex: number, runId: string, plannedPrompt: string, markerText: string): Promise<LiteraryImageAttempt> => {
+    // 3) 订阅 SSE，拿到 base64/url
+    let gotBase64: string | null = null;
+    let gotUrl: string | null = null;
+    let generationFailure: string | null = null;
+    const ac = genAbortRef.current;
+    const res = await streamLiteraryAgentImageGenRunWithRetry({
+      runId,
+      afterSeq: 0,
+      maxAttempts: 20,
+      signal: ac?.signal ?? new AbortController().signal,
+      onEvent: (evt) => {
+        if (ac?.signal.aborted) return;
+        if (!evt.data) return;
+        const obj = safeJsonParse(String(evt.data));
+        if (!obj || typeof obj !== 'object') return;
+        const o = obj as Record<string, unknown>;
+        const t = String(o.type ?? '');
+        if (t === 'imageDone') {
+          const evtRunId = String(o.runId ?? '').trim();
+          if (evtRunId && evtRunId !== runId) return;
+          const b64 = (o.base64 as string | null | undefined) ?? null;
+          const url = (o.url as string | null | undefined) ?? null;
+          gotBase64 = b64;
+          gotUrl = url;
+          setMarkerRunItems((prev) =>
+            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
+          );
+        }
+        const failure = imageRunFailure(o);
+        if (failure) {
+          generationFailure = failure;
+          const msg = failure;
+          setMarkerRunItems((prev) =>
+            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
+          );
+        }
+      },
+    });
+    if (ac?.signal.aborted) return 'pending';
+    if (!res.success) {
+      // SSE 断开只读核对原任务，不能把“没收到结果”当成可以再次付费生成。
+      const confirmed = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+      const status = confirmed.success ? confirmed.data?.run.status : null;
+      if (status === 'Completed') {
+        gotUrl = confirmed.data?.items?.find(item => item.url)?.url ?? null;
+        gotBase64 = confirmed.data?.items?.find(item => item.base64)?.base64 ?? null;
+      } else if (status === 'Failed' || status === 'Cancelled') {
+        const message = confirmed.data?.items?.[0]?.errorMessage || res.error?.message || '生图失败';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+        await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+        return 'failed';
+      } else {
+        const message = '暂未确认任务结果，已暂停后续配图；请刷新查看原任务，请勿重复生成。';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'running', errorMessage: message } : x));
+        await updateMarkerStatus(markerIndex, { status: 'running', runId, errorMessage: message });
+        return 'pending';
+      }
+    }
+
+    // 4) 将结果转为可插入文章的 url：优先 SSE url；否则上传 base64 得到 asset.url
+    const finalUrl = String(gotUrl || '').trim();
+    const finalB64 = String(gotBase64 || '').trim();
+    if (finalUrl) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
+      );
+      // 保存图片URL到后端
+      await updateMarkerStatus(markerIndex, { status: 'done' });
+      try {
+        await updateArticleMarker({
+          workspaceId,
+          markerIndex,
+          url: finalUrl,
+        });
+      } catch (error) {
+        console.error('Failed to save image url:', error);
+      }
+      return 'completed';
+    }
+    if (!finalB64) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: generationFailure || '图片尚未生成，请稍后重试或选择其他模型。' } : x))
+      );
+      return 'failed';
+    }
+
+    const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
+    const up = await uploadVisualAgentWorkspaceAsset({
+      id: workspaceId,
+      data: dataUrl,
+      prompt: plannedPrompt,
+      articleInsertionIndex: markerIndex,
+      originalMarkerText: markerText
+    });
+    if (!up.success) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
+      );
+      return 'failed';
+    }
+    const assetUrl = String(up.data?.asset?.url || '').trim();
+    if (!assetUrl) {
+      setMarkerRunItems((prev) =>
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '图片持久化失败：未返回 url' } : x))
+      );
+      return 'failed';
+    }
+    setMarkerRunItems((prev) =>
+      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
+    );
+    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
+    // 保存 URL 到后端（刷新后可恢复）
+    await updateMarkerStatus(markerIndex, { status: 'done' });
+    try {
+      await updateArticleMarker({
+        workspaceId,
+        markerIndex,
+        url: assetUrl,
+      });
+    } catch (error) {
+      console.error('Failed to save asset url:', error);
+    }
+    return 'completed';
+  };
+
+  const runSingleMarker = async (markerIndex: number): Promise<LiteraryImageAttempt> => {
+    const current = markerRunItemsRef.current.find((x) => x.markerIndex === markerIndex) ?? null;
+    if (!current) return 'failed';
+    let resumeOriginalRequest = false;
+    if (current.status === 'running') {
+      const found = !current.runId && current.generationRequestId
+        ? await getLiteraryAgentRunByRequest(current.generationRequestId) : null;
+      const previousRunId = current.runId || (found?.success ? found.data?.runId : null);
+      if (previousRunId) return observeMarkerRun(markerIndex, previousRunId, current.planItem?.prompt || current.draftText, current.markerText);
+      // 仅用户点击“恢复原请求”且只读确认尚未入库时，重放同一幂等请求；不会自动重试。
+      if (found?.error?.code === 'IMAGE_GEN_REQUEST_PENDING' && current.generationRequestId) resumeOriginalRequest = true;
+      else { toast.warning('原请求结果尚未确认，请稍后刷新核对，系统不会再次生成。'); return 'pending'; }
+    }
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
-      return;
+      return 'failed';
     }
-    const current = markerRunItems.find((x) => x.markerIndex === markerIndex) ?? null;
-    if (!current) return;
+    if (imageCapabilitiesModel !== (effectiveModel?.modelName || imageGenModel.modelName)) {
+      toast.error(imageCapabilitiesError || '正在读取模型的图片能力，请稍后重试。');
+      return 'failed';
+    }
     const text = String(current.draftText || current.markerText || '').trim();
     if (!text) {
       toast.warning('提示词为空');
-      return;
+      return 'failed';
     }
 
     const cachedPlanItem = current.planItem;
@@ -1693,11 +2012,42 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setMarkerRunItems((prev) =>
       prev.map((x) =>
         x.markerIndex === markerIndex
-          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null, base64: null, url: null, assetUrl: null }
+          ? { ...x, status: 'parsing', errorMessage: null, planItem: null, runId: null }
           : x
       )
     );
     await updateMarkerStatus(markerIndex, { status: 'parsing' }); // 保存到后端
+
+    const freshCatalog = await getLiteraryAgentModels();
+    if (!freshCatalog.success || !freshCatalog.data) {
+      const message = freshCatalog.error?.message || '无法核对最新模型目录，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    const freshModel = selectFreshLiteraryModel(buildLiteraryModelOptions(freshCatalog.data), effectiveModel);
+    setImageGenPools(freshCatalog.data);
+    if (!freshModel) {
+      const message = '原配图模型已退役或暂不可用，请从模型菜单重新选择后继续。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    const freshCapabilities = await getLiteraryAgentAdapterInfo(freshModel.modelName);
+    if (!freshCapabilities.success || !freshCapabilities.data?.matched || !freshCapabilities.data.sizesByResolution) {
+      const message = freshCapabilities.error?.message || '无法核对所选模型的图片能力，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: message });
+      return 'failed';
+    }
+    if (effectiveModel && effectiveModel.modelName !== freshModel.modelName) {
+      const notice = `${effectiveModel.modelName}:${freshModel.modelName}`;
+      if (modelMigrationNoticeRef.current !== notice) {
+        toast.info(`配图模型已升级，本次使用 ${freshModel.actualModelId}。`);
+        modelMigrationNoticeRef.current = notice;
+      }
+      setImageModelPrefId(freshModel.id);
+    }
 
     let plannedPrompt = '';
     let plannedSize = '';
@@ -1717,7 +2067,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
         );
         await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-        return;
+        return 'failed';
       }
       const first = (planRes.data?.items ?? [])[0] ?? null;
       if (!first || !String(first.prompt || '').trim()) {
@@ -1726,7 +2076,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
         );
         await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-        return;
+        return 'failed';
       }
       planItem = first;
       plannedPrompt = String(first.prompt || '').trim();
@@ -1734,6 +2084,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     plannedSize = plannedSize || parseSizeFromText(plannedPrompt) || parseSizeFromText(text) || '1024x1024';
+    const freshSizes = freshCapabilities.data.sizesByResolution;
+    const fittedSize = fitLiteraryImageSize(plannedSize, {
+      '1k': freshSizes['1k'] ?? [], '2k': freshSizes['2k'] ?? [], '4k': freshSizes['4k'] ?? [],
+    }, freshCapabilities.data.sizesNotApplicable === true);
+    if (!fittedSize) {
+      const errorMsg = '当前模型不支持这个配图比例，请从尺寸菜单重新选择。';
+      setMarkerRunItems((prev) => prev.map((x) => x.markerIndex === markerIndex
+        ? { ...x, status: 'error', errorMessage: errorMsg, planItem: cachedPlanItem } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
+      return 'failed';
+    }
+    plannedSize = fittedSize;
+    planItem = { ...(planItem || { prompt: plannedPrompt, count: 1 }), size: plannedSize };
+
 
     setMarkerRunItems((prev) =>
       prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'parsed', planItem } : x))
@@ -1759,7 +2123,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         x.markerIndex === markerIndex ? { ...x, status: 'running' } : x
       )
     );
-    const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const idem = resumeOriginalRequest ? current.generationRequestId! : `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     // 如果用户选择了特定模型池，传入 platformId 和 modelId；自动解析模型（isAutoResolved）不传，Worker 自行 resolve
     const runInput: CreateImageGenRunInput = {
       items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
@@ -1769,136 +2133,48 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       workspaceId,
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
-      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.actualModelId } : {}),
+      platformId: freshModel.platformId, modelId: freshModel.modelName,
     };
-    const created = await createLiteraryAgentImageGenRun({
-      input: runInput,
-      idempotencyKey: idem,
-    });
-    if (!created.success) {
+    const remembered = await updateArticleMarker({ workspaceId, markerIndex, status: 'running', generationRequestId: idem });
+    if (!remembered.success) {
+      const message = remembered.error?.message || '未能保存配图请求标识，本次没有提交生成，请稍后重试。';
+      setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: message } : x));
+      return 'failed';
+    }
+    setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, generationRequestId: idem } : x));
+    const created = await createLiteraryAgentImageGenRun({ input: runInput, idempotencyKey: idem });
+    let recoveredRunId: string | null = null;
+    if (!created.success || !created.data?.runId) {
+      const found = await getLiteraryAgentRunByRequest(idem);
+      recoveredRunId = found.success ? found.data?.runId || null : null;
+      const uncertain = created.success || ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'INTERNAL_ERROR'].includes(created.error?.code || '');
+      if (!recoveredRunId && uncertain) {
+        const message = '创建结果尚未确认，已暂停后续配图；刷新会继续查询原请求，请勿重复生成。';
+        setMarkerRunItems(prev => prev.map(x => x.markerIndex === markerIndex ? { ...x, status: 'running', generationRequestId: idem, errorMessage: message } : x));
+        return 'pending';
+      }
+    }
+    if (!created.success && !recoveredRunId) {
       const errorMsg = created.error?.message || '生图失败';
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
-    const runId = String(created.data?.runId || '').trim();
+    const runId = String(recoveredRunId || created.data?.runId || '').trim();
     if (!runId) {
       const errorMsg = '生图失败：未返回 runId';
       setMarkerRunItems((prev) =>
         prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: errorMsg } : x))
       );
       await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
-      return;
+      return 'failed';
     }
     setMarkerRunItems((prev) => prev.map((x) => (x.markerIndex === markerIndex ? { ...x, runId } : x)));
     await updateMarkerStatus(markerIndex, { status: 'running', runId }); // 保存
 
-    // 3) 订阅 SSE，拿到 base64/url
-    let gotBase64: string | null = null;
-    let gotUrl: string | null = null;
-    const ac = genAbortRef.current;
-    const res = await streamLiteraryAgentImageGenRunWithRetry({
-      runId,
-      afterSeq: 0,
-      maxAttempts: 20,
-      signal: ac?.signal ?? new AbortController().signal,
-      onEvent: (evt) => {
-        if (!evt.data) return;
-        const obj = safeJsonParse(String(evt.data));
-        if (!obj || typeof obj !== 'object') return;
-        const o = obj as Record<string, unknown>;
-        const t = String(o.type ?? '');
-        if (t === 'imageDone') {
-          const evtRunId = String(o.runId ?? '').trim();
-          if (evtRunId && evtRunId !== runId) return;
-          const b64 = (o.base64 as string | null | undefined) ?? null;
-          const url = (o.url as string | null | undefined) ?? null;
-          gotBase64 = b64;
-          gotUrl = url;
-          setMarkerRunItems((prev) =>
-            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
-          );
-        }
-        if (t === 'imageError') {
-          const msg = String(o.errorMessage ?? '生图失败');
-          setMarkerRunItems((prev) =>
-            prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
-          );
-        }
-      },
-    });
-    if (!res.success) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: res.error?.message || '生图失败' } : x))
-      );
-      return;
-    }
-
-    // 4) 将结果转为可插入文章的 url：优先 SSE url；否则上传 base64 得到 asset.url
-    const finalUrl = String(gotUrl || '').trim();
-    const finalB64 = String(gotBase64 || '').trim();
-    if (finalUrl) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl: finalUrl, url: finalUrl, errorMessage: null } : x))
-      );
-      // 保存图片URL到后端
-      await updateMarkerStatus(markerIndex, { status: 'done' });
-      try {
-        await updateArticleMarker({
-          workspaceId,
-          markerIndex,
-          url: finalUrl,
-        });
-      } catch (error) {
-        console.error('Failed to save image url:', error);
-      }
-      return;
-    }
-    if (!finalB64) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '生图失败：未返回图片' } : x))
-      );
-      return;
-    }
-
-    const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({
-      id: workspaceId,
-      data: dataUrl,
-      prompt: plannedPrompt,
-      articleInsertionIndex: markerIndex,
-      originalMarkerText: current.markerText
-    });
-    if (!up.success) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: up.error?.message || '图片持久化失败' } : x))
-      );
-      return;
-    }
-    const assetUrl = String(up.data?.asset?.url || '').trim();
-    if (!assetUrl) {
-      setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '图片持久化失败：未返回 url' } : x))
-      );
-      return;
-    }
-    setMarkerRunItems((prev) =>
-      prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'done', assetUrl, url: assetUrl, errorMessage: null } : x))
-    );
-    // 图片已经通过 uploadVisualAgentWorkspaceAsset 上传到腾讯云 COS，assetUrl 就是 COS 的 URL
-    // 保存 URL 到后端（刷新后可恢复）
-    await updateMarkerStatus(markerIndex, { status: 'done' });
-    try {
-      await updateArticleMarker({
-        workspaceId,
-        markerIndex,
-        url: assetUrl,
-      });
-    } catch (error) {
-      console.error('Failed to save asset url:', error);
-    }
+    return observeMarkerRun(markerIndex, runId, plannedPrompt, current.markerText);
   };
 
   // 新增辅助函数：保存 marker 状态到后端
@@ -1929,6 +2205,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
 
   const handleBatchGenerate = async () => {
+    if (generationGateRef.current) return;
     if (!imageGenModel) {
       toast.error(imageGenModelError || '未选择生图模型');
       return;
@@ -1942,6 +2219,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       return;
     }
 
+    generationGateRef.current = true;
     genAbortRef.current?.abort();
     const ac = new AbortController();
     genAbortRef.current = ac;
@@ -1950,45 +2228,49 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setArticleWithImages('');
 
     try {
-      // 并行发起所有生图任务：仅针对未完成（失败或未开始）的项目
+      // 只生成未完成项；等待前一张确认结果后再发下一张。
       const ordered = [...markerRunItemsRef.current]
         .sort((a, b) => a.markerIndex - b.markerIndex)
         .filter(it => it.status !== 'done' && it.status !== 'running');
 
       if (ordered.length === 0) {
         toast.info('没有需要生成的配图');
-        setGenerating(false);
         return;
       }
 
-      const results = await Promise.allSettled(
-        ordered.map(it => runSingleMarker(it.markerIndex))
-      );
-
-      // 检查是否有失败
-      const anyError = results.some(r => r.status === 'rejected') ||
-                       markerRunItemsRef.current.some(x => x.status === 'error');
+      const result = await runLiteraryImageBatch(ordered, item => runSingleMarker(item.markerIndex), ac.signal);
+      if (ac.signal.aborted) return;
+      const anyError = result.failed > 0;
+      if (result.paused && !ac.signal.aborted) {
+        toast.warning(`配图已暂停，${result.remaining} 张尚未提交；已生成的图片保留，请确认服务恢复后继续。`);
+      }
 
       setGenerating(false);
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
 
-      if (anyError && !ac.signal.aborted) {
+      if (anyError && !result.paused && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
-      tryAutoSubmit();
+      if (!result.paused && !ac.signal.aborted) tryAutoSubmit();
     } catch (error) {
+      toast.warning('配图已暂停，请刷新核对原任务状态后继续。');
       console.error('Batch generate error:', error);
       setGenerating(false);
       setPhase(2); // MarkersGenerated
+    } finally {
+      generationGateRef.current = false;
+      setGenerating(false);
     }
   };
 
   const handleRegenerateOne = async (markerIndex: number) => {
-    // 每个配图独立生成，不检查全局 isBusy
+    if (generationGateRef.current) { toast.info('请等待当前配图任务结束。'); return; }
+    generationGateRef.current = true;
+    genAbortRef.current = new AbortController();
     try {
-      await runSingleMarker(markerIndex);
-      tryAutoSubmit();
+      const result = await runSingleMarker(markerIndex);
+      if (result === 'completed') tryAutoSubmit();
     } catch (error) {
       console.error('Regenerate error:', error);
       // 确保在任何错误情况下都设置状态为 error，使按钮立即可用
@@ -2000,6 +2282,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         )
       );
     } finally {
+      generationGateRef.current = false;
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
     }
@@ -2202,7 +2485,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         setUserPrompts(updated);
 
         if (selectedPrompt?.id === editingPrompt.id) {
-          setSelectedPrompt({ ...selectedPrompt, title: editingPrompt.title, content: editingPrompt.content });
+          setSelectedPromptRaw({ ...selectedPrompt, title: res.data.prompt.title, content: res.data.prompt.content });
         }
 
         setEditingPrompt(null);
@@ -2275,15 +2558,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     try {
+      // 先持久化替代选择；保存失败时保留模板，避免页面继续使用已删除的风格。
+      if (selectedPrompt?.id === prompt.id) {
+        const replacement = userPrompts.find((p) => p.id !== prompt.id) ?? null;
+        if (!await setSelectedPrompt(replacement)) return;
+      }
       const res = await deleteLiteraryPrompt({ id: prompt.id });
 
       if (res.success) {
         const updated = userPrompts.filter((p) => p.id !== prompt.id);
         setUserPrompts(updated);
-
-        if (selectedPrompt?.id === prompt.id) {
-          setSelectedPrompt(updated.length > 0 ? updated[0] : null);
-        }
       } else {
         toast.error('删除失败', res.error?.message || '未知错误');
       }
@@ -2414,6 +2698,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const activeButton = buttonConfig.find((btn) => btn.show);
 
+  // 忙碌主按钮的进度文案：标记流式中报「已识别 N 处」（不定进度），批量生图报「已完成 X/Y」（确定进度）
+  const busyProgress: { text: string; ratio: number | null } = (() => {
+    if (markerStreaming) return { text: `正在生成配图标记 · 已识别 ${streamedMarkerCount} 处`, ratio: null };
+    const total = markerRunItems.length;
+    const done = markerRunItems.filter((x) => x.status === 'done').length;
+    return total > 0
+      ? { text: `正在生图 · 已完成 ${done}/${total}`, ratio: done / total }
+      : { text: '正在生图…', ratio: null };
+  })();
+
   // 左侧统一作为"预览面板"：上传时渲染原文；AI 流式生成时直接渲染带标记版本
   const leftPreviewMarkdown =
     phase === 2 // MarkersGenerated
@@ -2463,9 +2757,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     { key: 2, label: '配图标记' },
   ];
 
-  const configPillBaseClass =
-    'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover-bg-soft min-w-0 flex-1';
-  const configPillTextClass = 'text-[11px] truncate';
 
   const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
@@ -2485,10 +2776,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             className={cn(
               "flex-1 px-4 py-2 text-sm font-medium transition-colors",
               mobileTab === 'article'
-                ? "text-white"
+                ? ""
                 : "text-[var(--text-muted)]"
             )}
-            style={mobileTab === 'article' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            style={mobileTab === 'article'
+              ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
+              : { background: 'var(--panel)' }}
             onClick={() => setMobileTab('article')}
           >
             文章预览
@@ -2497,10 +2790,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             className={cn(
               "flex-1 px-4 py-2 text-sm font-medium transition-colors",
               mobileTab === 'markers'
-                ? "text-white"
+                ? ""
                 : "text-[var(--text-muted)]"
             )}
-            style={mobileTab === 'markers' ? { background: 'var(--accent-primary)' } : { background: 'var(--panel)' }}
+            style={mobileTab === 'markers'
+              ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
+              : { background: 'var(--panel)' }}
             onClick={() => setMobileTab('markers')}
           >
             配图工作台
@@ -2510,241 +2805,84 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       {/* 左侧：文章编辑器 */}
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
-          {/* 精简头部：标题 + 模型信息 */}
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                data-tour-id="literary-editor-back"
-                onClick={goBack}
-                className="p-1.5 rounded-lg hover-bg-soft transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                title="返回"
-              >
-                <ArrowLeft size={16} />
-              </button>
-              <div className="flex items-center gap-2">
-                <FileText size={16} style={{ color: 'var(--text-primary)' }} />
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <ArticleEditorToolbar
+            title={
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-tour-id="literary-editor-back"
+                  onClick={goBack}
+                  className="shrink-0 p-1.5 rounded-lg hover-bg-soft transition-colors"
+                  style={{ color: 'var(--text-muted)' }}
+                  title="返回"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+                <FileText size={16} className="shrink-0" style={{ color: 'var(--text-primary)' }} />
+                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }} title={uploadedFileName || '文章内容'}>
                   {uploadedFileName || '文章内容'}
                 </div>
               </div>
-
-              {/* 模型切换器：提示词模型 + 生图模型 */}
-              <div className="flex items-center gap-1.5">
-                {/* 提示词/标记生成模型切换器 */}
-                {effectiveChatModel?.isAutoResolved ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
-                    style={{
-                      background: 'rgba(99, 102, 241, 0.08)',
-                      border: '1px solid rgba(99, 102, 241, 0.25)',
-                      color: 'rgba(129, 140, 248, 0.75)',
-                    }}
-                    title={`自动调度: ${effectiveChatModel.name}`}
-                  >
-                    <Sparkles size={10} className="shrink-0" />
-                    <span className="truncate">自动: {effectiveChatModel.name}</span>
-                  </span>
-                ) : (
-                <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
-                      style={{
-                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: effectiveChatModel ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-                        color: effectiveChatModel ? 'rgba(129, 140, 248, 0.95)' : 'rgba(248, 113, 113, 0.95)',
-                      }}
-                      title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
-                    >
-                      <Sparkles size={10} className="shrink-0" />
-                      <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
-                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="bottom"
-                      align="start"
-                      sideOffset={6}
-                      className="z-50 rounded-[12px] p-2.5"
-                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
-                    >
-                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        文生提示词模型
-                      </div>
-                      {enabledChatModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {enabledChatModels.map((m) => {
-                            const picked = effectiveChatModel?.id === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                                style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
-                                }}
-                                onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
-                                  </div>
-                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
-                                  }}><Check size={12} /></span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
+            }
+            actions={
+              <>
+                {phase === 0 && uploadedFileName && (
+                  <Button size="sm" variant="primary" onClick={handleEnterPreview}>
+                    <Edit2 size={14} />
+                    进入预览
+                  </Button>
                 )}
-
-                {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
-                {effectiveModel?.isAutoResolved ? (
-                  // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
-                  <div
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
-                    style={{
-                      background: 'rgba(34, 197, 94, 0.08)',
-                      border: '1px solid rgba(34, 197, 94, 0.25)',
-                      color: 'rgba(74, 222, 128, 0.8)',
-                    }}
-                    title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
-                  >
-                    <Sparkles size={10} className="shrink-0" />
-                    <span className="truncate">自动: {effectiveModel.name}</span>
-                  </div>
-                ) : (
-                <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
-                  <DropdownMenu.Trigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
-                      style={{
-                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: effectiveModel ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-                        color: effectiveModel ? 'rgba(74, 222, 128, 0.95)' : 'rgba(248, 113, 113, 0.95)',
-                      }}
-                      title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
-                    >
-                      <Sparkles size={10} className="shrink-0" />
-                      <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
-                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
-                    </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="bottom"
-                      align="start"
-                      sideOffset={6}
-                      className="z-50 rounded-[12px] p-2.5"
-                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
-                    >
-                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        生图模型
-                      </div>
-                      {enabledImageModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {enabledImageModels.map((m) => {
-                            const picked = effectiveModel?.id === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                                style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
-                                }}
-                                onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
-                                  </div>
-                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
-                                  }}><Check size={12} /></span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-                )}
-
-                {/* 生图错误提示（无池且未能预解析时才显示） */}
-                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
-                  <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
-                    生图不可用
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {phase === 0 && uploadedFileName && (
-                <Button size="sm" variant="primary" onClick={handleEnterPreview}>
-                  <Edit2 size={14} />
-                  进入预览
-                </Button>
-              )}
-              <button
-                type="button"
-                onClick={() => setAutoSubmitEnabled((v) => !v)}
-                className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
-                style={{
-                  color: submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.6)' : 'var(--text-muted)',
-                  background: submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
-                  border: submissionState.submitted ? '1px solid rgba(16, 185, 129, 0.2)' : autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
-                }}
-                title={submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
-              >
-                <Send size={13} />
-                <span>{submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
-              </button>
-              {!submissionState.submitted && (
                 <button
                   type="button"
-                  onClick={handleManualSubmit}
-                  disabled={manualSubmitting}
-                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
-                  style={{
-                    color: 'rgba(59, 130, 246, 0.8)',
-                    background: 'rgba(59, 130, 246, 0.08)',
-                    border: '1px solid rgba(59, 130, 246, 0.15)',
-                    opacity: manualSubmitting ? 0.5 : 1,
+                  onClick={() => {
+                    if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
                   }}
-                  title="手动将当前作品投稿到作品广场"
+                  disabled={autoSubmitSuppressed}
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                  style={{
+                    // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
+                    color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                    background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                    cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
+                  }}
+                  title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
                 >
                   <Send size={13} />
-                  <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                  <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
                 </button>
-              )}
-              {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
-              <TipsEntryButton compact />
-            </div>
-          </div>
+                {!submissionState.submitted && (
+                  <button
+                    type="button"
+                    onClick={handleManualSubmit}
+                    disabled={manualSubmitting}
+                    className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                    style={{
+                      color: 'var(--accent-fg-blue)',
+                      background: 'rgba(59, 130, 246, 0.10)',
+                      opacity: manualSubmitting ? 0.5 : 1,
+                    }}
+                    title="手动将当前作品投稿到作品广场"
+                  >
+                    <Send size={13} />
+                    <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen(true)}
+                  data-tour-id="literary-editor-history"
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
+                >
+                  <History size={13} />
+                  <span>历史配图</span>
+                </button>
+                {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
+                <TipsEntryButton compact />
+              </>
+            }
+          />
 
           <div
             ref={articlePreviewRef}
@@ -2767,8 +2905,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
               >
                 <div className="text-center">
-                  <Upload size={64} style={{ color: 'rgba(147, 197, 253, 0.95)' }} className="mx-auto mb-4" />
-                  <div className="text-lg font-semibold mb-2" style={{ color: 'rgba(147, 197, 253, 0.95)' }}>
+                  <Upload size={64} style={{ color: 'var(--accent-fg-blue)' }} className="mx-auto mb-4" />
+                  <div className="text-lg font-semibold mb-2" style={{ color: 'var(--accent-fg-blue)' }}>
                     释放以上传文件
                   </div>
                   <div className="text-sm" style={{ color: 'rgba(147, 197, 253, 0.75)' }}>
@@ -2841,7 +2979,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="p-4 relative">
                 {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
                 {positionStrategy === 'user-anchor' &&
-                  !splitParagraphs(articleContent).some(isAnchorParagraph) &&
+                  userAnchorCount === 0 &&
                   articleContent.trim() && (
                   <div
                     className="mb-3 rounded-xl px-3 py-2.5 flex items-center gap-2"
@@ -2868,7 +3006,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       border: '1px solid rgba(147,197,253,0.2)',
                     }}
                   >
-                    <ImageIcon size={13} style={{ color: 'rgba(147,197,253,0.95)', flexShrink: 0 }} />
+                    <ImageIcon size={13} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />
                     <div className="text-[12px]" style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                       已切到「{POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label}」。
                       下面预览中每个灰色占位框就是生成后配图会插入的位置。
@@ -2878,7 +3016,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                 <div className="prd-md">
                   {(() => {
-                    const paragraphs = splitParagraphs(articleContent);
+                    const paragraphs = previewParagraphs;
                     // Phase 1.6: 基于策略计算哪些段落后方需要渲染"配图占位"ghost
                     const ghostAfter = new Set<number>();
                     if (positionStrategy === 'per-h1') {
@@ -2908,7 +3046,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="flex items-center justify-between px-3 py-1.5"
                               style={{ borderBottom: '1px dashed rgba(52,211,153,0.35)', background: 'rgba(52,211,153,0.08)' }}
                             >
-                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'rgba(52,211,153,0.95)' }}>
+                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'var(--accent-fg-success)' }}>
                                 <MapPin size={11} />
                                 <span>此处将插入配图（1:1）</span>
                               </div>
@@ -2917,7 +3055,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 onClick={() => removeAnchorParagraph(pIdx)}
                                 className="opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px]"
                                 title="移除此锚点"
-                                style={{ color: 'rgba(52, 211, 153, 0.95)' }}
+                                style={{ color: 'var(--accent-fg-success)' }}
                               >
                                 <Trash2 size={11} />
                                 移除
@@ -2931,12 +3069,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 aspectRatio: '1 / 1',
                                 maxWidth: 360,
                                 margin: '12px auto',
-                                background: 'rgba(255,255,255,0.03)',
+                                background: 'var(--nested-block-bg)',
                                 border: '1px dashed rgba(52,211,153,0.3)',
                                 borderRadius: 8,
                               }}
                             >
-                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(52,211,153,0.6)' }}>
+                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'var(--accent-fg-emerald)' }}>
                                 <ImageIcon size={28} />
                                 <span className="text-[11px]">配图占位</span>
                               </div>
@@ -2972,7 +3110,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
                                 style={{
                                   background: 'rgba(52, 211, 153, 0.15)',
-                                  color: 'rgba(52, 211, 153, 0.95)',
+                                  color: 'var(--accent-fg-success)',
                                   border: '1px solid rgba(52, 211, 153, 0.4)',
                                 }}
                               >
@@ -3018,7 +3156,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-medium"
                                 style={{
-                                  color: 'rgba(147,197,253,0.95)',
+                                  color: 'var(--accent-fg-blue)',
                                   borderBottom: '1px dashed rgba(147,197,253,0.3)',
                                   background: 'rgba(147,197,253,0.06)',
                                 }}
@@ -3035,12 +3173,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   aspectRatio: '1 / 1',
                                   maxWidth: 360,
                                   margin: '12px auto',
-                                  background: 'rgba(255,255,255,0.03)',
+                                  background: 'var(--nested-block-bg)',
                                   border: '1px dashed rgba(147,197,253,0.3)',
                                   borderRadius: 8,
                                 }}
                               >
-                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(147,197,253,0.55)' }}>
+                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'var(--accent-fg-blue)' }}>
                                   <ImageIcon size={28} />
                                   <span className="text-[11px]">配图占位（1:1）</span>
                                 </div>
@@ -3053,7 +3191,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   })()}
                 </div>
                 {/* 空态提示 */}
-                {splitParagraphs(articleContent).length === 0 && (
+                {previewParagraphs.length === 0 && (
                   <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                     请先上传文章
                   </div>
@@ -3080,7 +3218,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       />
                       <span
                         className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                        style={{ color: 'var(--accent-fg-violet)' }}
                       >
                         Thinking
                       </span>
@@ -3090,7 +3228,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       style={{
                         background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
                         border: '1px solid rgba(168, 85, 247, 0.15)',
-                        color: 'rgba(255, 255, 255, 0.7)',
+                        color: 'var(--text-secondary)',
                       }}
                     >
                       <StreamingText
@@ -3105,42 +3243,56 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 )}
 
-                {/* Raw LLM 输出区域 */}
-                {rawMarkerOutput && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className="inline-block w-2 h-2 rounded-full"
-                        style={{
-                          background: 'rgba(99, 102, 241, 0.8)',
-                          animation: 'pulse 1.5s ease-in-out infinite',
-                        }}
-                      />
-                      <span
-                        className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-                      >
-                        Output
-                      </span>
-                    </div>
-                    <pre
-                      className="rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)',
-                        border: '1px solid rgba(99, 102, 241, 0.15)',
-                        color: 'rgba(147, 197, 253, 0.75)',
-                        margin: 0,
-                      }}
+                {/* Raw LLM 输出区域：正文走主题正文色，识别出的每条 [插图] 单独高亮 */}
+                {rawMarkerOutput && (() => {
+                  const lines = rawMarkerOutput.split('\n');
+                  const tail = lines.pop() ?? '';
+                  const isMarkerLine = (l: string) => /^\s*\[插图\]/.test(l);
+                  return (
+                    <div
+                      className="rounded-[12px] overflow-hidden"
+                      style={{ border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                      data-testid="literary-ai-output"
                     >
-                      <StreamingText
-                        text={rawMarkerOutput}
-                        streaming={markerStreaming}
-                        mode="blur"
-                        cursorContent={<MapCursor size={12} />}
-                      />
-                    </pre>
-                  </div>
-                )}
+                      <div
+                        className="flex items-center gap-2 px-3 h-8"
+                        style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}
+                      >
+                        <span
+                          className="inline-block w-2 h-2 rounded-full shrink-0"
+                          style={{
+                            background: 'var(--accent-fg-violet)',
+                            animation: markerStreaming ? 'pulse 1.5s ease-in-out infinite' : undefined,
+                          }}
+                        />
+                        <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 输出</span>
+                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          · {markerStreaming ? '正在识别配图位置' : '识别完成'} · 已识别 {streamedMarkerCount} 处
+                        </span>
+                      </div>
+                      <div
+                        className="px-3 py-2 text-[12px] leading-[1.7] whitespace-pre-wrap break-all font-mono"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        {lines.map((l, i) =>
+                          isMarkerLine(l) ? (
+                            <div key={i} className="lit-output-marker">{l}</div>
+                          ) : (
+                            <div key={i}>{l || '\u00a0'}</div>
+                          ),
+                        )}
+                        <div className={isMarkerLine(tail) ? 'lit-output-marker' : undefined}>
+                          <StreamingText
+                            text={tail}
+                            streaming={markerStreaming}
+                            mode="blur"
+                            cursorContent={<MapCursor size={12} />}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 空状态：等待 LLM 响应 */}
                 {!thinkingContent && !rawMarkerOutput && (
@@ -3163,8 +3315,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
                     style={{
                       ...glassFloatingButton,
-                      background: 'rgba(0,0,0,0.55)',
-                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'var(--overlay-panel-solid)',
+                      border: '1px solid var(--border-subtle)',
                     }}
                   >
                     <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
@@ -3176,7 +3328,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
                         style={{
                           background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
-                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
+                          color: imageDisplaySize === size ? 'var(--accent-fg-blue)' : 'var(--text-muted)',
                           border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
                           fontVariantNumeric: 'tabular-nums',
                         }}
@@ -3198,14 +3350,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   >
                     <summary
                       className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-[11px] font-semibold tracking-wide uppercase"
-                      style={{ color: 'rgba(168, 85, 247, 0.7)' }}
+                      style={{ color: 'var(--accent-fg-violet)' }}
                     >
                       Thinking
                     </summary>
                     <div
                       className="px-3 py-2 text-[12px] leading-relaxed prd-md"
                       style={{
-                        color: 'rgba(255, 255, 255, 0.6)',
+                        color: 'var(--text-muted)',
                         maxHeight: 200,
                         overflowY: 'auto',
                         borderTop: '1px solid rgba(168, 85, 247, 0.1)',
@@ -3231,6 +3383,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
                       h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
                       h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                      // 「配图 N 生成中」占位：buildPreviewMarkdownWithImages 输出的 <div data-gen-slot>，渲染成显影画框
+                      div: ({ node, children, ...props }) => {
+                        const slot = node?.properties?.dataGenSlot;
+                        if (slot == null) return <div {...props}>{children}</div>;
+                        const slotIdx = Number(slot);
+                        const genSize = String(node?.properties?.dataGenSize ?? '');
+                        const markerIndex = markers[slotIdx]?.index ?? slotIdx;
+                        return (
+                          <div
+                            className="prd-md-gen-slot"
+                            role="status"
+                            aria-label={`配图 ${slotIdx + 1} 生成中`}
+                            style={{ aspectRatio: String(ratioFromSize(genSize)) }}
+                          >
+                            <GenDevelopLoader
+                              tone="adaptive"
+                              createdAt={getRunStartedAt(markerIndex)}
+                              sizeLabel={`配图 ${slotIdx + 1} · ${sizeLabelOf(genSize)}`}
+                            />
+                          </div>
+                        );
+                      },
                       // 正文配图：点击打开可缩放灯箱（放大/缩小/拖拽预览），不管比例尺多大都可预览
                       img: ({ node: _node, src, alt, style: _style, ...props }) => (
                         <img
@@ -3262,9 +3436,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       </div>
 
       {/* 右侧：工作台 */}
-      <div className={cn("flex flex-col gap-3", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
+      <div className={cn("flex min-w-0 min-h-0 flex-col gap-3 overflow-y-auto", isMobile ? "w-full" : "w-96", isMobile && mobileTab !== 'markers' && "hidden")}>
         {/* 顶部：工作流进度 + 配置折叠区 */}
-        <PanelCard>
+        <PanelCard className="shrink-0">
           <WorkflowProgressBar
             steps={phaseSteps}
             currentStep={phase}
@@ -3276,178 +3450,316 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               markerRunItems.every(x => x.status === 'done')
             }
           />
-          {activeButton && (
+          {activeButton && (isBusy ? (
+            // 生成中：保持实心主色 + 实时进度，不走 disabled 的 50% 透明（那样读不出在干什么）
+            <Button
+              variant="primary"
+              className="w-full relative overflow-hidden"
+              aria-disabled
+              aria-busy
+              data-testid="literary-busy-button"
+              style={{ cursor: 'progress' }}
+              onClick={() => {}}
+            >
+              <MapSpinner size={14} color="currentColor" />
+              {busyProgress.text}
+              <span
+                aria-hidden
+                className={`absolute left-0 bottom-0 h-[3px]${busyProgress.ratio == null ? ' lit-busy-bar--indeterminate' : ''}`}
+                style={{
+                  width: busyProgress.ratio == null ? '36%' : `${Math.max(6, busyProgress.ratio * 100)}%`,
+                  background: 'currentColor',
+                  opacity: 0.55,
+                  transition: 'width 0.6s ease-out',
+                }}
+              />
+            </Button>
+          ) : (
             <Button
               variant="primary"
               className="w-full"
               onClick={() => void activeButton.action()}
-              disabled={isBusy || activeButton.disabled}
+              disabled={activeButton.disabled || promptSettingSave.saving || modelSettingSave.saving}
             >
               <activeButton.icon size={16} />
-              {isBusy ? '生成中...' : activeButton.label}
+              {activeButton.label}
             </Button>
-          )}
+          ))}
 
-          {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
-          <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
-            <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-
-            {/* 三个配置项 */}
-            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-              {/* 提示词 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
-                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)'
-                }}
-                onClick={() => {
-                  if (selectedPrompt) handleEditPrompt(selectedPrompt);
-                  else setPromptPreviewOpen(true);
-                }}
-                title={selectedPrompt?.title || '系统推断风格（点击自定义）'}
-              >
-                <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '自动风格'}
+          {/* 配置与模型共用原位展开区域，同一时间只展开一项。 */}
+          <LiteraryInlineMenuGroup>
+            <details key={phase === 2 ? 'results' : 'preparation'} open={phase !== 2} className="lit-settings" data-testid="literary-generation-settings">
+              <summary className="lit-settings-row lit-settings-disclosure">
+                <span className="lit-settings-label lit-settings-disclosure-label">
+                  <SlidersHorizontal size={16} aria-hidden />
+                  <span>生成设置</span>
                 </span>
-              </div>
-              {/* 风格图 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)'
-                }}
-                onClick={() => {
-                  const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
-                  if (activeRefConfig) {
-                    setEditingRefConfig({ ...activeRefConfig });
-                    setEditingRefConfigOpen(true);
-                  } else {
-                    setPromptPreviewOpen(true);
+                <LiterarySettingsSummary writingModel={effectiveChatModel?.actualModelId} imageModel={effectiveModel?.actualModelId}
+                  watermarkName={watermarkName} watermarkPreview={watermarkPreview}
+                  position={positionStrategy} positionLabel={positionStrategyLabel} />
+                <ChevronDown size={15} className="lit-settings-chevron" aria-hidden />
+              </summary>
+              <section className="lit-settings-section lit-settings-section--rows" aria-label="配图设置">
+                <div className="lit-settings-heading">
+                  <h3>配图设置</h3>
+                  <button type="button" className="lit-settings-manage" onClick={() => setPromptPreviewOpen(true)} title="全部配置" aria-label="全部配置">
+                    <SlidersHorizontal size={15} />
+                  </button>
+                </div>
+                <QuickMenu inline
+                  title="提示词风格"
+                  width={260}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={<PenLine size={16} />}
+                      label="提示词"
+                      value={promptSettingSave.saving ? '正在保存…' : (selectedPrompt?.content?.trim() || selectedPrompt?.title || '自动推断')}
+                      disabled={promptSettingSave.saving}
+                      title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
+                      aria-label="提示词风格"
+                    />
                   }
-                }}
-                title={referenceImageConfigs.find(c => c.isActive)?.name || '未选择风格图'}
-              >
-                <ImageIcon size={12} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {referenceImageConfigs.find(c => c.isActive)?.name || '风格图'}
-                </span>
-              </div>
-              {/* 水印 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)'
-                }}
-                onClick={() => {
-                  setPendingWatermarkEdit(true);
-                  setPromptPreviewOpen(true);
-                }}
-                title={watermarkStatus.enabled ? (watermarkStatus.name || '已启用水印') : '未启用水印'}
-              >
-                <Sparkles size={12} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
-                </span>
-              </div>
-              {/* 位置策略（Phase 1） */}
-              <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
-                <DropdownMenu.Trigger asChild>
-                  <div
-                    className={configPillBaseClass}
-                    style={{
-                      background: positionStrategy !== 'auto' ? 'rgba(52, 211, 153, 0.08)' : 'var(--nested-block-bg)',
-                      border: positionStrategy !== 'auto' ? '1px solid rgba(52, 211, 153, 0.15)' : '1px solid var(--border-subtle)',
-                    }}
-                    title="配图位置策略：控制 AI 在哪些段落插入配图标记"
-                  >
-                    <MapPin size={12} style={{ color: positionStrategy !== 'auto' ? '#34D399' : '#9CA3AF', flexShrink: 0 }} />
-                    <span className={configPillTextClass} style={{ color: positionStrategy !== 'auto' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                      {POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
-                    </span>
-                  </div>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    side="bottom"
-                    align="start"
-                    sideOffset={6}
-                    className="z-50 rounded-[12px] p-2.5"
-                    style={{ width: 260, maxWidth: 'min(92vw, 260px)', ...glassPanel }}
-                  >
-                    <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                      配图位置策略
-                    </div>
-                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
-                    </div>
-                    <div className="space-y-1.5">
-                      {POSITION_STRATEGY_OPTIONS.map((opt) => {
-                        const picked = positionStrategy === opt.value;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                            style={{
-                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                              background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
-                            }}
-                            onClick={() => {
-                              setPositionStrategy(opt.value);
-                              setPositionStrategyOpen(false);
-                              // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
-                              if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
-                                setPhase(1);
-                                toast.info('已切到「预览」页，可以开始打锚点了');
-                              } else if (opt.value !== 'auto' && phase === 1) {
-                                toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
-                              }
-                            }}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>
-                              {picked && (
-                                <Check size={12} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} />
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-            </div>
+                >
+                  <QuickMenuItem
+                    label="自动"
+                    description="由系统按文章内容推断风格"
+                    selected={!selectedPrompt}
+                    disabled={promptSettingSave.saving}
+                    onSelect={() => void setSelectedPrompt(null)}
+                  />
+                  {userPrompts.map((p) => (
+                    <QuickMenuItem
+                      key={p.id}
+                      label={p.title || '未命名'}
+                      description={p.content?.trim() && <span className="lit-settings-value--excerpt" title={p.content}>{p.content}</span>}
+                      selected={selectedPrompt?.id === p.id}
+                      disabled={promptSettingSave.saving}
+                      onSelect={() => void setSelectedPrompt(p)}
+                    />
+                  ))}
+                  <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
+                </QuickMenu>
+                <SettingSaveFeedback {...promptSettingSave} />
 
-            {/* 配置按钮 */}
-            <button
-              type="button"
-              className="text-[11px] px-2.5 py-1 rounded-md hover-bg-soft transition-colors flex-shrink-0 border"
-              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-              onClick={() => setPromptPreviewOpen(true)}
-              title="打开全部配置"
-            >
-              配置
-            </button>
-          </div>
+                <QuickMenu inline
+                  title="风格参考图"
+                  width={260}
+                  note={articlePrefNote('风格', articleChoice?.style)}
+                  // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
+                  onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={articleChoice?.style.missing
+                        ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                        : <ImageIcon size={16} />}
+                      label="参考图"
+                      warning={!!articleChoice?.style.missing}
+                      preview={<LiterarySettingImage className="lit-settings-reference-preview" src={selectedRefConfig?.imageUrl} loading="lazy" />}
+                      value={articleChoice
+                        ? (articleChoice.style.styleId === 'none' ? '无参考图' : articleChoice.style.name)
+                        : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无参考图')}
+                      title={articleChoice
+                        ? articlePrefTitle('风格', articleChoice.style)
+                        : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
+                      aria-label="风格参考图"
+                    />
+                  }
+                >
+                  {!referenceImageListReady ? (
+                    <QuickMenuEmpty>
+                      {referenceImageLoadError && !referenceImageLoading
+                        ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
+                        : '正在读取风格图…'}
+                    </QuickMenuEmpty>
+                  ) : (
+                    <>
+                      <QuickMenuItem
+                        label="不使用"
+                        selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
+                        disabled={referenceImageSaving}
+                        onSelect={() => {
+                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
+                          if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
+                        }}
+                      />
+                      {referenceImageConfigs.map((c) => (
+                        <QuickMenuItem
+                          key={c.id}
+                          label={c.name || '未命名'}
+                          preview={<LiterarySettingImage className="lit-settings-reference-preview" src={c.imageUrl} loading="lazy" />}
+                          selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
+                          disabled={referenceImageSaving}
+                          onSelect={() => {
+                            if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
+                            if (!c.isActive) void switchReferenceImage(c, true);
+                          }}
+                        />
+                      ))}
+                      {articleChoice && (
+                        <QuickMenuItem
+                          label="跟随账号默认（清除本文设定）"
+                          selected={false}
+                          disabled={referenceImageSaving}
+                          onSelect={() => void applyArticleChoice({ clear: true })}
+                        />
+                      )}
+                    </>
+                  )}
+                  <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
+                </QuickMenu>
+
+                <QuickMenu inline
+                  title="水印"
+                  width={240}
+                  note={articlePrefNote('水印', articleChoice?.watermark)}
+                  onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={articleChoice?.watermark.missing
+                        ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                        : <Square size={16} />}
+                      label="水印"
+                      warning={!!articleChoice?.watermark.missing}
+                      value={watermarkName}
+                      preview={watermarkImage}
+                      title={articleChoice
+                        ? articlePrefTitle('水印', articleChoice.watermark)
+                        : `水印：${watermarkName}`}
+                      aria-label="水印"
+                    />
+                  }
+                >
+                  {watermarkLoadError ? (
+                    <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
+                  ) : watermarkOptions === null ? (
+                    <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
+                  ) : (
+                    <>
+                      <QuickMenuItem
+                        label="不加水印"
+                        selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.hasActiveConfig}
+                        disabled={watermarkSaving}
+                        onSelect={() => void switchWatermark(null)}
+                      />
+                      {watermarkOptions.map((w) => (
+                        <QuickMenuItem
+                          key={w.id}
+                          label={w.name || w.text || '未命名'}
+                          preview={w.id === watermarkId ? watermarkImage : <LiteraryWatermarkOptionPreview id={w.id} updatedAt={w.updatedAt} />}
+                          selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
+                          disabled={watermarkSaving}
+                          onSelect={() => void switchWatermark(w)}
+                        />
+                      ))}
+                      {articleChoice && (
+                        <QuickMenuItem
+                          label="跟随账号默认（清除本文设定）"
+                          selected={false}
+                          disabled={watermarkSaving}
+                          onSelect={() => void applyArticleChoice({ clear: true })}
+                        />
+                      )}
+                    </>
+                  )}
+                  <QuickMenuAction
+                    label="管理水印…"
+                    onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
+                  />
+                </QuickMenu>
+
+                <QuickMenu inline
+                  title="配图位置"
+                  width={260}
+                  open={positionStrategyOpen}
+                  onOpenChange={setPositionStrategyOpen}
+                  note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里单独写一行 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。「自动安排」和「尊重用户锚点」都会优先使用这些位置。</>}
+                  trigger={
+                    <LiterarySettingsRow
+                      icon={<Layers size={16} />}
+                      label="插图位置"
+                      value={positionStrategyLabel}
+                      preview={<LiteraryPositionIcon position={positionStrategy} />}
+                      title="配图位置：控制 AI 在哪些段落插入配图标记"
+                      aria-label="配图位置"
+                    />
+                  }
+                >
+                  {POSITION_STRATEGY_OPTIONS.map((opt) => (
+                    <QuickMenuItem
+                      key={opt.value}
+                      label={opt.label}
+                      selected={positionStrategy === opt.value}
+                      onSelect={() => {
+                        setPositionStrategy(opt.value);
+                        // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                        if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                          setPhase(1);
+                          toast.info('已切到「预览」页，可以开始打锚点了');
+                        } else if (opt.value !== 'auto' && phase === 1) {
+                          toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                        }
+                      }}
+                    />
+                  ))}
+                </QuickMenu>
+
+              </section>
+              <section className="lit-model-section" aria-label="模型设置" data-testid="literary-model-settings">
+                <h3 className="lit-settings-heading">模型设置</h3>
+                <LiteraryModelPicker
+                  label="写作"
+                  icon={<PenLine size={16} aria-hidden />}
+                  model={effectiveChatModel}
+                  unavailable={!!chatModelPrefId && !effectiveChatModel}
+                  options={enabledChatModels}
+                  disabled={!modelPrefReady || !userId || modelSettingSave.saving}
+                  open={chatModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setChatModelPrefOpen(open);
+                    if (open) setImageModelPrefOpen(false);
+                  }}
+                  onSelect={(id) => void modelSettingSave.run({ imageModelId: imageModelPrefId, chatModelId: id })}
+                />
+                <LiteraryModelPicker
+                  label="配图"
+                  icon={<ImageIcon size={16} aria-hidden />}
+                  model={effectiveModel}
+                  unavailable={!!imageModelPrefId && !effectiveModel}
+                  options={enabledImageModels}
+                  disabled={!modelPrefReady || !userId || modelSettingSave.saving}
+                  open={imageModelPrefOpen}
+                  onOpenChange={(open) => {
+                    setImageModelPrefOpen(open);
+                    if (open) setChatModelPrefOpen(false);
+                  }}
+                  onSelect={(id) => {
+                    void modelSettingSave.run({ imageModelId: id, chatModelId: chatModelPrefId }).then((saved) => {
+                      if (saved) setImageGenModelError(null);
+                    });
+                  }}
+                />
+                <SettingSaveFeedback {...modelSettingSave} />
+                {modelPrefLoadError && <div role="alert" className="flex items-center justify-between gap-2 py-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+                  <span>模型偏好读取失败，请重试后再切换模型。</span>
+                  <Button size="xs" variant="secondary" onClick={() => setModelSettingsReload((n) => n + 1)}>重新读取</Button>
+                </div>}
+                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
+                  <div className="mt-2 text-xs" style={{ color: 'var(--accent-fg-danger)' }}>
+                    生图不可用
+                  </div>
+                )}
+              </section>
+            </details>
+          </LiteraryInlineMenuGroup>
         </PanelCard>
 
         {/* 配图标记列表 */}
         {phase === 2 && (
           <PanelCard className="flex-1 min-h-0 flex flex-col">
             {/* 紧凑标题栏 */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-                  {markerRunItems.filter(x => x.status === 'done').length}/{markerRunItems.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="shrink-0 text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>配图标记</span>
+              <div className="flex flex-wrap items-center justify-end gap-1 whitespace-nowrap">
                 <Button
                   size="xs"
                   variant="primary"
@@ -3458,26 +3770,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <Sparkles size={12} />
                   生成
                 </Button>
-                <BatchSizePicker
-                  sizesByResolution={sizesByResolutionForPicker}
-                  disabled={isBusy || markerRunItems.length === 0}
-                  onApply={(size) => {
-                    setMarkerRunItems((prev) =>
-                      prev.map((x) => ({
-                        ...x,
-                        planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size },
-                      }))
-                    );
-                    // 持久化所有 marker 的尺寸到后端
-                    for (const item of markerRunItems) {
-                      const planItem = item.planItem || { prompt: item.draftText || item.markerText, count: 1 };
-                      void updateMarkerStatus(item.markerIndex, {
-                        planItem: { prompt: planItem.prompt, count: planItem.count ?? 1, size },
-                      });
-                    }
-                    toast.success('批量修改尺寸', `已将 ${markerRunItems.length} 张配图尺寸统一更新`);
-                  }}
-                />
+                {!currentModelSizesNotApplicable && (
+                  <BatchSizePicker
+                    sizesByResolution={sizesByResolutionForPicker}
+                    disabled={isBusy || markerRunItems.length === 0}
+                    onApply={(size) => {
+                      setMarkerRunItems((prev) =>
+                        prev.map((x) => ({
+                          ...x,
+                          planItem: { ...(x.planItem || { prompt: x.draftText || x.markerText, count: 1 }), size },
+                        }))
+                      );
+                      // 持久化所有 marker 的尺寸到后端
+                      for (const item of markerRunItems) {
+                        const planItem = item.planItem || { prompt: item.draftText || item.markerText, count: 1 };
+                        void updateMarkerStatus(item.markerIndex, {
+                          planItem: { prompt: planItem.prompt, count: planItem.count ?? 1, size },
+                        });
+                      }
+                      toast.success('批量修改尺寸', `已将 ${markerRunItems.length} 张配图尺寸统一更新`);
+                    }}
+                  />
+                )}
                 <Button
                   size="xs"
                   variant="secondary"
@@ -3583,7 +3897,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div ref={markerListRef} className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
+            {!markerStreaming && (
+              <p className="mb-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                {userAnchorCount > 0 && `原文 ${userAnchorCount} 个锚点 · `}{markers.length} 条提示词 · {markerRunItems.filter(x => x.status === 'done' && markerItemImageUrl(x)).length}/{markers.length} 张图片
+              </p>
+            )}
+            <div className="flex-1 min-h-0 overflow-auto space-y-3 pr-0.5">
               {/* 标记生成中的进度提示 */}
               {markerStreaming && (
                 <div
@@ -3591,15 +3910,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   style={{
                     background: 'rgba(245, 158, 11, 0.08)',
                     border: '1px solid rgba(245, 158, 11, 0.2)',
-                    color: 'rgba(245, 158, 11, 0.95)',
+                    color: 'var(--accent-fg-amber)',
                     animation: 'pulse 2s ease-in-out infinite',
                   }}
                 >
                   <MapSpinner size={14} />
-                  <span>AI 正在分析文章并生成配图标记…已识别 {markerRunItems.length} 个位置</span>
+                  <span>AI 正在分析文章并生成配图标记…已识别 {streamedMarkerCount} 个位置</span>
                 </div>
               )}
-              {markerRunItems.map((it, idx) => {
+              {!markerStreaming && markerRunItems.map((it, idx) => {
                 const statusLabel =
                   it.status === 'parsing'
                     ? '解析中'
@@ -3619,7 +3938,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 const showPlaceholder = it.status === 'running' || it.status === 'parsing';
                 const canShow = Boolean(src) && it.status === 'done';
                 const hasImage = Boolean(String(it.assetUrl || it.url || '').trim() || it.base64);
-                const genLabel = hasImage ? '重新生成' : '生成图片';
+                const pendingRecovery = it.status === 'running' && Boolean(it.errorMessage) && Boolean(it.runId || it.generationRequestId);
+                const genLabel = pendingRecovery ? '恢复原请求' : hasImage ? '重新生成' : '生成图片';
                 const genTitle = hasImage ? '重新生成该配图（会替换左侧预览中的对应插图）' : '生成该配图（会插入左侧预览中对应 [插图] 位置）';
 
                 const isGlowing = glowingMarkers.has(it.markerIndex);
@@ -3647,10 +3967,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     {/* ─── 图片区（所有控件 + prompt 文字浮在图片上）─── */}
                     <div
                       className="marker-card-wrap relative group"
+                      data-has-image={canShow ? 'true' : 'false'}
                       style={{
                         aspectRatio: '4 / 3',
                         padding: '6px 6px 0',
-                        background: 'rgba(0,0,0,0.22)',
                         cursor: canShow ? 'pointer' : 'default',
                       }}
                       onClick={() => {
@@ -3672,12 +3992,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           {it.status === 'parsing' ? (
                             <>
-                              <MapSpinner size={28} color="rgba(250, 204, 21, 0.7)" />
-                              <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                              <MapSpinner size={28} />
+                              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>解析尺寸…</span>
                             </>
                           ) : (
-                            <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
-                              <PrdPetalBreathingLoader fill />
+                            <div className="absolute overflow-hidden" style={{ inset: '6px 6px 0', borderRadius: 8 }}>
+                              <GenDevelopLoader
+                                tone="adaptive"
+                                createdAt={getRunStartedAt(it.markerIndex)}
+                                sizeLabel={sizeLabelOf(it.planItem?.size)}
+                              />
                             </div>
                           )}
                         </div>
@@ -3719,60 +4043,46 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                       {/* 浮层：顶部 - 标签 + 尺寸 + 状态 */}
                       <div
-                        className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
-                        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%)' }}
+                        className="marker-card-topbar absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
+                        style={{ zIndex: 3 }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                        <span className="marker-card-title text-[11px] font-medium">
                           配图 {idx + 1}
                         </span>
                         <div className="flex items-center gap-1.5">
-                          <ImageSizePicker
-                            sizesByResolution={sizesByResolutionForPicker}
-                            value={it.planItem?.size || '1024x1024'}
-                            onChange={(s) => {
-                              const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
-                              setMarkerRunItems((prev) =>
-                                prev.map((x) =>
-                                  x.markerIndex === it.markerIndex
-                                    ? { ...x, planItem: updatedPlanItem }
-                                    : x
-                                )
-                              );
-                              void updateMarkerStatus(it.markerIndex, {
-                                planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
-                              });
-                            }}
-                            disabled={it.status === 'running' || it.status === 'parsing'}
-                          />
+                          {!currentModelSizesNotApplicable && (
+                            <ImageSizePicker
+                              sizesByResolution={sizesByResolutionForPicker}
+                              value={it.planItem?.size || '1024x1024'}
+                              onChange={(s) => {
+                                const updatedPlanItem = { ...(it.planItem || { prompt: it.draftText || it.markerText, count: 1 }), size: s };
+                                setMarkerRunItems((prev) =>
+                                  prev.map((x) =>
+                                    x.markerIndex === it.markerIndex
+                                      ? { ...x, planItem: updatedPlanItem }
+                                      : x
+                                  )
+                                );
+                                void updateMarkerStatus(it.markerIndex, {
+                                  planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
+                                });
+                              }}
+                              disabled={it.status === 'running' || it.status === 'parsing'}
+                            />
+                          )}
                           <div
-                            className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                            style={{
-                              background:
-                                it.status === 'done'
-                                  ? 'rgba(34, 197, 94, 0.18)'
-                                  : it.status === 'error'
-                                    ? 'rgba(239, 68, 68, 0.18)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? 'rgba(250, 204, 21, 0.18)'
-                                      : 'rgba(255,255,255,0.1)',
-                              border:
-                                it.status === 'done'
-                                  ? '1px solid rgba(34, 197, 94, 0.35)'
-                                  : it.status === 'error'
-                                    ? '1px solid rgba(239, 68, 68, 0.35)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? '1px solid rgba(250, 204, 21, 0.3)'
-                                      : '1px solid rgba(255,255,255,0.2)',
-                              color:
-                                it.status === 'done'
-                                  ? 'rgba(34, 197, 94, 0.95)'
-                                  : it.status === 'error'
-                                    ? 'rgba(239, 68, 68, 0.95)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? 'rgba(250, 204, 21, 0.95)'
-                                      : 'rgba(255,255,255,0.7)',
-                            }}
+                            className={`marker-status text-[11px] px-2 py-0.5 rounded-full font-semibold marker-status--${
+                              it.status === 'done'
+                                ? 'done'
+                                : it.status === 'error'
+                                  ? 'error'
+                                  : it.status === 'running' || it.status === 'parsing'
+                                    ? 'busy'
+                                    : it.status === 'parsed'
+                                      ? 'parsed'
+                                      : 'idle'
+                            }`}
                             title={it.errorMessage || ''}
                           >
                             {statusLabel}
@@ -3797,27 +4107,31 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       ) : null}
 
-                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑 */}
-                      <div
-                        className="marker-card-prompt-overlay"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingMarkerIdx(it.markerIndex);
-                        }}
-                        title="点击编辑提示词"
-                      >
-                        <div className="marker-card-prompt-text">
-                          {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑。
+                          生成中收起：否则会盖住等待态底边的「阶段 · 还需约 Ns」 */}
+                      {it.status !== 'running' && (
+                        <div
+                          className="marker-card-prompt-overlay"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingMarkerIdx(it.markerIndex);
+                          }}
+                          title="点击编辑提示词"
+                        >
+                          <div className="marker-card-prompt-text">
+                            {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* 操作按钮栏（图片下方独立行） */}
-                    <div className="px-2.5 py-2 flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1">
+                    <div className="px-2 py-1.5 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-0.5">
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="ghost"
+                          className="!px-2"
                           disabled={it.status === 'running' || it.status === 'parsing'}
                           onClick={() => void handleDeleteMarker(it.markerIndex)}
                           title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
@@ -3826,7 +4140,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </Button>
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="ghost"
+                          className="!px-2"
                           onClick={() => locateMarkerInPreview(it.markerIndex)}
                           title="定位到正文中的配图标记位置"
                         >
@@ -3836,7 +4151,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
+                              className="!px-2"
                               onClick={async () => {
                                 try {
                                   await navigator.clipboard.writeText(src);
@@ -3851,7 +4167,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </Button>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
+                              className="!px-2"
                               onClick={async () => {
                                 try {
                                   const response = await fetch(src);
@@ -3881,9 +4198,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                        disabled={(it.status === 'running' && !pendingRecovery) || it.status === 'parsing' || (!imageGenModel && !pendingRecovery)}
                         onClick={() => void handleRegenerateOne(it.markerIndex)}
-                        title={genTitle}
+                        title={pendingRecovery ? '先查询原任务；尚未入库时仅重放同一请求标识，避免重复生成' : genTitle}
                       >
                         <Sparkles size={14} />
                         {genLabel}
@@ -3892,9 +4209,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 );
               })}
-            </div>
-            <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-              点击“一键生图”将按顺序逐条解析 JSON 并生成图片；也可在单条卡片内编辑后重生成
             </div>
           </PanelCard>
         )}
@@ -4192,7 +4506,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }}
         title="配置管理"
         maxWidth={1500}
-        contentClassName="overflow-hidden !p-4"
+        contentClassName="overflow-hidden"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
         titleCenter={
           <div className="flex items-center gap-1 bg-token-nested rounded-lg p-1">
@@ -4248,7 +4562,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               ) : (
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
                   {!selectedPrompt && (
-                    <div className="text-[11px] mb-2 px-2 py-1.5 rounded-md" style={{ background: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.15)', color: 'rgba(34, 197, 94, 0.85)' }}>
+                    <div className="text-[11px] mb-2 px-2 py-1.5 rounded-md" style={{ background: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.15)', color: 'var(--accent-fg-success)' }}>
                       当前使用系统推断风格，可点击下方卡片选择自定义风格
                     </div>
                   )}
@@ -4286,7 +4600,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   {prompt.title}
                                 </div>
                                 {prompt.isSystem && (
-                                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'rgba(251, 191, 36, 0.85)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+                                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'var(--accent-fg-amber)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
                                     系统
                                   </span>
                                 )}
@@ -4366,7 +4680,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: isPromptSelected ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={() => setSelectedPrompt(isPromptSelected ? null : prompt)}
+                                  disabled={promptSettingSave.saving}
+                                  onClick={() => void setSelectedPrompt(isPromptSelected ? null : prompt)}
                                   title={isPromptSelected ? '取消选择（将使用系统推断风格）' : '选择此风格'}
                                 >
                                   <CheckCircle2 size={16} />
@@ -4379,6 +4694,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft"
                                   style={{ color: 'var(--text-muted)' }}
                                   onClick={() => handleEditPrompt(prompt)}
+                                  disabled={promptSettingSave.saving}
                                   title="编辑"
                                 >
                                   <Edit2 size={14} />
@@ -4388,6 +4704,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   className="p-1.5 rounded-md transition-all duration-200 hover:bg-red-500/10"
                                   style={{ color: 'rgba(239, 68, 68, 0.7)' }}
                                   onClick={() => void handleDeletePrompt(prompt)}
+                                  disabled={promptSettingSave.saving}
                                   title="删除"
                                 >
                                   <Trash2 size={14} />
@@ -4569,19 +4886,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={async () => {
-                                    setReferenceImageSaving(true);
-                                    try {
-                                      const res = config.isActive
-                                        ? await deactivateReferenceImageConfig({ id: config.id })
-                                        : await activateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await loadReferenceImageConfigs();
-                                      }
-                                    } finally {
-                                      setReferenceImageSaving(false);
-                                    }
-                                  }}
+                                  onClick={() => void switchReferenceImage(config, !config.isActive)}
                                   disabled={referenceImageSaving}
                                   title={config.isActive ? '取消选择' : '选择'}
                                 >
@@ -4626,9 +4931,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await deleteReferenceImageConfig({ id: config.id });
+                                      const res = config.isActive
+                                        ? await mutateReferenceImageScenario(
+                                          () => deleteReferenceImageConfig({ id: config.id }),
+                                          loadReferenceImageConfigs,
+                                          reloadImageGenPools,
+                                        )
+                                        : await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await loadReferenceImageConfigs();
+                                        if (!config.isActive) {
+                                          await loadReferenceImageConfigs();
+                                        }
                                         toast.success('已删除');
                                       } else {
                                         toast.error('删除失败', res.error?.message || '未知错误');
@@ -4669,7 +4982,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </Button>
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
-                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={handleWatermarkStatusChange} hideAddButton />
+                <WatermarkSettingsPanel ref={watermarkPanelRef} appKey="literary-agent" onStatusChange={setWatermarkStatus} hideAddButton />
               </div>
             </div>
           </div>
@@ -4779,6 +5092,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
         }
       />
+
+      <IllustrationHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} workspaceId={workspaceId} onRestored={() => void loadWorkspace()} />
 
       {/* 图片灯箱（可放大/缩小/拖拽预览）。列表在打开时已快照，避免打开期间靠前 marker 完成插入导致错位 */}
       {lightbox && (
@@ -4999,7 +5314,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
-            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            <MapPin size={12} style={{ color: 'var(--accent-fg-success)' }} />
             在此段上方插入配图
           </button>
           <button
@@ -5011,44 +5326,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
-            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            <MapPin size={12} style={{ color: 'var(--accent-fg-success)' }} />
             在此段下方插入配图
           </button>
         </div>
       )}
 
-      {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
-          抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
-      {anchorTutorialSeen === false && phase !== 0 && (
-        <div
-          className="fixed z-[1000]"
-          style={{ right: 24, bottom: 24, maxWidth: 340 }}
-        >
-          <TipCard
-            icon={<MapPin size={14} />}
-            accent="rgba(52, 211, 153, 0.95)"
-            title="新功能:手动指定配图位置"
-            body={
-              <div>
-                <div style={{ marginBottom: 6 }}>· 右上角「📍 位置策略」可切换 4 种生成策略</div>
-                <div style={{ marginBottom: 6 }}>
-                  · 鼠标悬停段落左侧 → 点{' '}
-                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点
-                </div>
-                <div>
-                  · 段落上
-                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> →
-                  选择"在上方/下方插入配图"
-                </div>
-              </div>
-            }
-            ctaText="知道啦"
-            ack
-            onCta={dismissAnchorTutorial}
-            variant="bubble"
-          />
-        </div>
-      )}
     </div>
   );
 }

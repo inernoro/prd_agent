@@ -10,7 +10,7 @@ const informationCenterSource = fs.readFileSync(
 );
 
 describe('信息中心视口碰撞定位', () => {
-  it('靠左宿主不会再把 520px 面板推到负坐标', () => {
+  it('靠左宿主不会再把 32.5rem 面板推到负坐标', () => {
     const position = floatingPanelPosition(
       { left: 183, bottom: 46 },
       { width: 1104, height: 989 },
@@ -21,7 +21,7 @@ describe('信息中心视口碰撞定位', () => {
     expect(position.left + position.width).toBeLessThanOrEqual(1096);
   });
 
-  it('手机宽度下左右各保留 8px，不依赖铃铛位于哪一侧', () => {
+  it('手机宽度下左右各保留 0.5rem，不依赖铃铛位于哪一侧', () => {
     const position = floatingPanelPosition(
       { left: 300, bottom: 56 },
       { width: 375, height: 667 },

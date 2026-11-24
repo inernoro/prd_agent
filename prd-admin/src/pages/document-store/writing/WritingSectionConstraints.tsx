@@ -1,0 +1,6 @@
+import type { WritingSection } from '@/services/contracts/writing';
+
+/** Both reading and derived teaching show the same published execution constraints. */
+export function WritingSectionConstraints({ section }: { section: Pick<WritingSection, 'condition' | 'detail'> }) {
+  return <>{section.condition && <div className="cond writing-section-condition"><span className="tag t-c">条件</span><span>{section.condition}</span></div>}{section.detail?.rows.length ? <details className="writing-reader-detail"><summary><span><span className="writing-detail-label">{section.detail.label}</span>{section.detail.rows.some(row => row[1] === '必填') && <span className="hint writing-block">必填 {section.detail.rows.filter(row => row[1] === '必填').length} 项：{section.detail.rows.filter(row => row[1] === '必填').map(row => row[0]).join('、')}。缺任何一项都不能提交。</span>}</span><span className="mono writing-expand-label">展开细节</span></summary><table><thead><tr>{section.detail.rows[0].map((_, i) => <th key={i}>{['字段','要求','说明'][i] ?? `内容 ${i + 1}`}</th>)}</tr></thead><tbody>{section.detail.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{j === 1 && ['必填', '选填'].includes(cell) ? <span className={`tag ${cell === '必填' ? 't-m' : 't-l'}`}>{cell}</span> : cell}</td>)}</tr>)}</tbody></table></details> : null}</>;
+}

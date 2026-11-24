@@ -106,9 +106,9 @@ export default function SkillShareViewPage() {
           download={data.skill.originalFileName || `${data.skill.title || 'skill'}.zip`}
           className="shrink-0 inline-flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-[12px] font-semibold transition-colors"
           style={{
-            background: 'var(--accent-primary, rgba(56,189,248,0.16))',
-            border: '1px solid rgba(56,189,248,0.3)',
-            color: '#fff',
+            background: 'var(--button-primary-bg)',
+            border: '1px solid var(--button-primary-bg)',
+            color: 'var(--button-primary-fg)',
           }}
           title="下载技能压缩包"
         >

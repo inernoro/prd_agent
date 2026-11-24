@@ -214,7 +214,7 @@ export function AppStoreAppIcon({
   if (imageUrl) {
     return (
       <div
-        className="shrink-0 overflow-hidden relative"
+        className="surface-tone-dark shrink-0 overflow-hidden relative"
         style={{
           width: size,
           height: size,

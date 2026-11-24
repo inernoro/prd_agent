@@ -289,7 +289,7 @@ export function InlineCommentOverlay({
                         marginLeft: -6,
                         border: `2px solid ${col}`,
                         background: withAlpha(col, 0.95),
-                        color: m.orphaned ? '#e2e8f0' : '#1a1205',
+                        color: m.orphaned ? 'var(--text-secondary)' : 'var(--fg-on-bright-fill)',
                         fontSize: 9,
                         fontWeight: 800,
                         lineHeight: 1,
@@ -317,7 +317,7 @@ export function InlineCommentOverlay({
                   position: 'absolute', top: m.card.top, left: m.card.left, width: 338, maxHeight: 360,
                   overflowY: 'auto', overscrollBehavior: 'contain', pointerEvents: 'auto', zIndex: 8,
                   borderRadius: 12, padding: '12px 13px',
-                  background: 'linear-gradient(180deg, rgba(30,28,46,0.97), rgba(20,19,28,0.98))',
+                  background: 'var(--overlay-panel-bg)',
                   border: `1px solid ${withAlpha(col, 0.45)}`, boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)', backdropFilter: 'blur(40px)',
                 }}
                 onClick={(e) => e.stopPropagation()}

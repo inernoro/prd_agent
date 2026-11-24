@@ -2,7 +2,7 @@
  * CDS Forwarder — 数据面独立进程入口（B'.2-forwarder MVP, 2026-05-08）
  *
  * 与 cds-master 完全解耦的反向代理。监听 CDS_FORWARDER_PORT（默认 9090），
- * 把 nginx 透传过来的 *.miduo.org 流量路由到对应的分支容器端口。
+ * 把 nginx 透传过来的部署根域流量路由到对应的分支容器端口。
  *
  * 设计要点：
  *   - 路由表 SSOT：`<repo>/cds/.cds/forwarder-routes.json`，由 cds-master
@@ -26,6 +26,7 @@
 
 import './load-env.js';
 import http from 'node:http';
+import { isPrivateForwarderDiagnostic } from './forwarder/preview-activity.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -40,6 +41,13 @@ import {
   parseHttpRequestKindValue,
   type HttpActiveRequestFilter,
 } from './services/http-log-store.js';
+import { installProcessFuse } from './services/process-fuse.js';
+
+// 数据面同样要总保险丝：forwarder 挂了所有预览域名直接 502，而它承载的恰恰是
+// 「cds-master 重启时业务零抖动」这个承诺。2026-08-18 那次事故里它和 master 一起
+// 报了 exit-code——一个后台失败不该把转发也带走。
+// 这里不接事件汇：forwarder 刻意与 master 解耦、不连 mongo，落 console 由 journal 收。
+installProcessFuse({ processName: 'cds-forwarder' });
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',
@@ -115,6 +123,7 @@ function loadRoutes(): void {
     const parsed = JSON.parse(txt);
     if (!Array.isArray(parsed)) throw new Error('routes JSON is not an array');
     routes = parsed as RouteRecord[];
+    proxy.reconcilePreviewActivityRoutes(routes);
     routesSource = 'json';
     routesLoadedAt = Date.now();
     routesError = null;
@@ -186,16 +195,13 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
   // 127.0.0.1(nginx)→ 老 isLoopback 检查永远 true → 公网用户能 dump 完整路由
   // 表(branchId/branchName/upstreamPort 全泄露)。新检查:**同时**要求 socket
   // remote 是 loopback **且** Host header 是内部域名(127.0.0.1/localhost),这样
-  // nginx 转过来的 host=*.miduo.org 直接被拒,只允许运维 SSH 后直连 9090 调用。
-  const remoteAddr = (req.socket?.remoteAddress ?? '') as string;
-  const remoteIsLoopback = /^(127\.|::1$|::ffff:127\.)/.test(remoteAddr);
-  const hostHeader = (req.headers.host ?? '').split(':')[0].toLowerCase();
-  const hostIsInternal = hostHeader === '127.0.0.1' || hostHeader === 'localhost' || hostHeader === '::1';
-  const isLoopback = remoteIsLoopback && hostIsInternal;
+  // nginx 转过来的公网 host 直接被拒，只允许运维 SSH 后直连 9090 调用。
+  const isLoopback = isPrivateForwarderDiagnostic(req);
   if (url === '/__forwarder/healthz') {
     const stats = proxy.getStats();
     const body = {
-      status: routesError ? 'degraded' : 'ok',
+      status: routesError || stats.widgetStreams?.recovering ? 'degraded' : 'ok',
+      widgetStreams: stats.widgetStreams,
       uptime: Math.floor((Date.now() - startedAt) / 1000),
       routesCount: routes.length,
       routesSource,
@@ -230,6 +236,11 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
     if (!isLoopback) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'forbidden' }));
+      return true;
+    }
+    if (parsedUrl.searchParams.get('view') === 'preview-activity') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ previewActivity: proxy.getPreviewActivity() }));
       return true;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -134,8 +134,10 @@ function FileRow({
       className="flex w-full items-center gap-1.5 rounded-[6px] px-2 py-1 text-left text-[12px] transition-colors"
       style={{
         paddingLeft: 8 + depth * 14 + 13,
-        background: active ? 'var(--accent-primary, rgba(59,130,246,0.18))' : 'transparent',
-        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+        // 选中行是实心 accent 面：配 --text-primary 只有 2.92:1（浅色 3.13:1）。
+        // 走按钮那对已被对比度守卫钉住的 token，别在这儿另立一套前景色。
+        background: active ? 'var(--button-primary-bg)' : 'transparent',
+        color: active ? 'var(--button-primary-fg)' : 'var(--text-secondary)',
       }}
     >
       <Icon size={13} style={{ color: active ? undefined : cfg.color, flexShrink: 0 }} />
@@ -366,7 +368,7 @@ export function SkillContentBrowser({
               style={{
                 background: 'rgba(59,130,246,0.1)',
                 border: '1px solid rgba(59,130,246,0.2)',
-                color: 'rgba(59,130,246,0.9)',
+                color: 'var(--accent-fg-blue)',
               }}
             >
               <ExternalLink size={13} />

@@ -173,7 +173,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         {/* Return banner */}
         {report.status === WeeklyReportStatus.Returned && report.returnReason && (
           <div className="px-5 py-2.5" style={{ background: 'rgba(239, 68, 68, 0.06)', borderBottom: '1px solid rgba(239, 68, 68, 0.1)' }}>
-            <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
+            <div className="text-[11px]" style={{ color: 'var(--accent-fg-danger)' }}>
               <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
               {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
               <div className="mt-0.5">原因：{report.returnReason}</div>
@@ -217,10 +217,18 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                 return (
                   <div key={idx} className="mb-5">
                     <div className="flex items-center gap-2.5 mb-3">
+                      {/*
+                        序号徽章两个主题都是「亮色实底」，所以字色也两档同值走
+                        --fg-on-bright-fill（深字），不能用会翻的 --text-primary：
+                        原来白字压 500 档实底，浅色实测 2.13~3.70:1、暗色约 3.5，
+                        11px 粗体要 4.5（Codex 在 PR #1374 第三十一轮抓到）。
+                        底统一取 alpha 1，避免暗色档被卡片底稀释后再掉一档。
+                      */}
                       <div
-                        className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-token-primary flex-shrink-0"
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold flex-shrink-0"
                         style={{
-                          background: isLight ? accentColor.replace('0.9', '1') : accentColor,
+                          background: accentColor.replace('0.9', '1'),
+                          color: 'var(--fg-on-bright-fill)',
                           boxShadow: isLight
                             ? `0 2px 6px ${accentColor.replace('0.9', '0.18')}`
                             : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`,
@@ -320,7 +328,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
 
                     {/* Section comments */}
                     {topLevel.length > 0 && (
-                      <div className="mt-2 ml-7 pl-3" style={{ borderLeft: `2px solid ${accentColor}30` }}>
+                      <div className="mt-2 ml-7 pl-3" style={{ borderLeft: `2px solid ${accentColor.replace('0.9', '0.3')}` }}>
                         {topLevel.map((comment) => {
                           const replies = sectionComments.filter((c) => c.parentCommentId === comment.id);
                           return (
@@ -457,7 +465,7 @@ function CommentItem({
           </span>
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-md"
-            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'rgba(99, 102, 241, 0.82)' }}
+            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'var(--accent-fg-violet)' }}
           >
             评论
           </span>

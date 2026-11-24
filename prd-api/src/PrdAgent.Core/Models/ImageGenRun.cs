@@ -10,8 +10,12 @@ namespace PrdAgent.Core.Models;
 [AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 [AppOwnership(AppNames.LiteraryAgent, AppNames.LiteraryAgentDisplay)]
 [AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
-public class ImageGenRun
+public class ImageGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string OwnerAdminId { get; set; } = string.Empty;
@@ -20,7 +24,8 @@ public class ImageGenRun
 
     /// <summary>
     /// 入队时所在部署的作用域（分支预览 = 项目 + 分支 + commit revision，生产 = null；
-    /// 取值链见 DeploymentScope.Current）。worker 只认领同作用域的 run，
+    /// 取值链见 DeploymentScope.Current）。worker 默认只认领同作用域的 run；头像任务
+    /// 可由同项目同分支的新 revision 接管，并在 claim 时改写为当前精确作用域，
     /// 防止共享 Mongo 下兄弟部署或同分支残留旧 revision 抢单并用旧代码执行
     /// （见 DeploymentScope 注释与 cross-project-isolation 规则通道 8）。
     /// 不设默认值：由入队点显式盖戳，避免存量文档反序列化被误染。
@@ -41,6 +46,9 @@ public class ImageGenRun
     /// 平台侧模型 ID（业务语义 modelId）。
     /// </summary>
     public string? ModelId { get; set; }
+
+    /// <summary>MCP 调用方明确提交的公开标识或兼容别名；省略时为空，幂等重放保留原选择。</summary>
+    public string? RequestedModelId { get; set; }
 
     /// <summary>
     /// 用户在视觉创作模型列表中选择的逻辑模型公开 ID。
@@ -65,6 +73,8 @@ public class ImageGenRun
     public string? ModelGroupName { get; set; }
 
     public string Size { get; set; } = "1024x1024";
+    /// <summary>文学任务认领时的模型声明比例，用于幂等重放；旧任务可为空。</summary>
+    public string? LiterarySizeAspectRatio { get; set; }
 
     /// <summary>
     /// b64_json | url
@@ -86,6 +96,22 @@ public class ImageGenRun
     public bool CancelRequested { get; set; }
 
     /// <summary>
+    /// 整条 run 被拒时的错误码（如 VISUAL_MODEL_NOT_ALLOWED / INVALID_FORMAT）。
+    ///
+    /// 逐张失败有 ImageGenRunItem.ErrorCode 兜着，但「入队之后、还没排出任何一张就被驳回」
+    /// 这一类（模型被下架、items 不合法、超出单次上限、服务停机）一张 item 都不会建 ——
+    /// 原来这条信息只发进 Redis 事件流，靠轮询 runs/{runId} 的调用方（智能体走的就是这条）
+    /// 只能看到一个 Failed 加一个空 images 数组，既不知道为什么，也不知道下一步该做什么。
+    /// 落库才补得上这个洞：事件流是给盯着 SSE 的人看的，不是给轮询的人看的。
+    /// </summary>
+    public string? ErrorCode { get; set; }
+
+    /// <summary>
+    /// 整条 run 被拒时的原因。可能来自异常消息，对外必须先过一遍脱敏再回给调用方。
+    /// </summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>
     /// 用于 SSE afterSeq 续传的单调递增序号（由服务端原子递增）。
     /// </summary>
     public long LastSeq { get; set; }
@@ -98,12 +124,6 @@ public class ImageGenRun
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
-
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
 
     // ---------------------------
     // 扩展：与业务场景绑定（可选）
@@ -145,6 +165,12 @@ public class ImageGenRun
     public List<ImageRefInput>? ImageRefs { get; set; }
 
     /// <summary>
+    /// 用户在入口明确选择的参考图数量。Worker 必须确认最终 ImageRefs 数量与它一致；
+    /// 不一致时拒绝执行，禁止静默退化为文生图或少图生成。
+    /// </summary>
+    public int? ExpectedImageRefCount { get; set; }
+
+    /// <summary>
     /// 可选：局部重绘蒙版（base64 data URI）。
     /// 白色区域 = 要重绘的区域，黑色区域 = 保持不变。
     /// 与 InitImageAssetSha256 / ImageRefs[0] 配合使用。
@@ -164,6 +190,15 @@ public class ImageGenRun
     /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
     /// </summary>
     public int? ArticleMarkerIndex { get; set; }
+    /// <summary>指定时仅向同一版配图流程回填，防止旧任务污染已经改稿的新流程。</summary>
+    public int? ArticleWorkflowVersion { get; set; }
+
+    /// <summary>
+    /// 本次生图指定的水印配置 id。null = 沿用账号给该应用绑定的那套（原行为）；
+    /// <see cref="WatermarkSelection.None"/> = 这次明确不打水印。
+    /// 由入队方校验归属，Worker 经 LlmRequestContext 透传给打水印的那一层。
+    /// </summary>
+    public string? WatermarkConfigId { get; set; }
 
     /// <summary>
     /// 可选：周报海报场景下，关联的海报 ID。Worker 完成时会回填对应页面 ImageUrl。

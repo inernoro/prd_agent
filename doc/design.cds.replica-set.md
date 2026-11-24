@@ -8,7 +8,7 @@
 
 ---
 >
-> 关联：[design.cds.control-data-split.md](./design.cds.control-data-split.md)、[design.cds.multi-project.md](./design.cds.multi-project.md)、[guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md)
+> 关联：[design.cds.control-data-split.md](./design.cds.control-data-split.md)、[design.cds.multi-project.md](./design.cds.multi-project.md)、[guide.cds.multi-branch-db.md](./guide.cds.multi-branch-db.md)、[design.cds.database-isolation.md](./design.cds.database-isolation.md)（三档同源与同步策略）
 
 ---
 

@@ -25,16 +25,102 @@
  *   在上调后立即唤醒排队者（旧实现只在 release 时唤醒，上调不生效）。
  *
  * 语义要点：
- * - FIFO：先排队先得槽位，保证「前面还有 N 个」是真实位置、不会饿死。
+ * - 按项目最近准入轮转，同项目合格请求保留先进先出；排队数是等待总数，不是跨项目固定名次。
  * - 槽位转移（slot transfer）：release 时若有等待者，直接把槽位交给它而**不**
  *   先 active--，避免「release 与被唤醒者的 active++ 之间插入一个快路径 acquire」
- *   导致瞬时超额（over-subscription）。active 只在快路径 acquire 与 pumpWaiters
- *   唤醒时 +1，只在 release 且无存活等待者时 -1。
+ *   导致瞬时超额（over-subscription）。联合等待只登记顺序；轮到它时先归还槽位，
+ *   原阶段复查再同步核对两种资源并共同授予，期间不持有半份容量。
  * - 纯内存、单进程：CDS 是单 Node 进程（见根 CLAUDE.md 单线程讨论），无需跨进程
  *   锁；check 与 active++ 之间没有 await，天然原子。
  */
 
+import os from 'node:os';
+import { ProjectAdmissionOrder } from './project-admission-order.js';
+
 const DEFAULT_MAX_CONCURRENT_BUILDS = 3;
+
+/**
+ * 负载自适应准入（2026-09-08 宿主过载复盘）。
+ *
+ * 固定并发 3 在 18 核宿主上不够用：load1 长期 20+ 时，3 个构建 + 几十个容器 +
+ * CDS 自己一起饿。上限本身不动（那是运维的旋钮），只在**宿主已过载**时收紧准入：
+ *   - load1 / 核数 > CDS_BUILD_LOAD_FACTOR（默认 1.2）视为过载；
+ *   - 过载时只保证 1 个构建在跑（队列不会饿死、也不会雪上加霜），其余排队；
+ *   - 每 15s 重新看一次负载，降下来就按 FIFO 放行（pumpWaiters）。
+ * `CDS_BUILD_LOAD_FACTOR=0` / `off` 关闭本机制，退回纯上限准入。
+ */
+const DEFAULT_BUILD_LOAD_FACTOR = 1.2;
+const LOAD_PUMP_INTERVAL_MS = 15_000;
+
+export interface HostLoadSample {
+  load1: number;
+  cores: number;
+}
+
+function defaultHostLoad(): HostLoadSample {
+  const cores = (typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1;
+  return { load1: os.loadavg()[0] || 0, cores };
+}
+
+let hostLoadProvider: () => HostLoadSample = defaultHostLoad;
+
+/** 测试注入负载来源；传 null 恢复 os.loadavg。 */
+export function setBuildGateHostLoadProvider(fn: (() => HostLoadSample) | null): void {
+  hostLoadProvider = fn || defaultHostLoad;
+}
+
+/** 过载系数：env 优先；0 / off / false 关闭。 */
+export function buildLoadFactor(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.CDS_BUILD_LOAD_FACTOR ?? '').trim().toLowerCase();
+  if (raw === '0' || raw === 'off' || raw === 'false') return 0;
+  const n = Number.parseFloat(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return DEFAULT_BUILD_LOAD_FACTOR;
+}
+
+export interface BuildLoadPressure {
+  load1: number;
+  cores: number;
+  /** load1 / cores */
+  ratio: number;
+  factor: number;
+  /** 过载：ratio > factor（factor=0 时恒为 false） */
+  saturated: boolean;
+}
+
+export function buildLoadPressure(): BuildLoadPressure {
+  const factor = buildLoadFactor();
+  const sample = hostLoadProvider();
+  const cores = Math.max(1, sample.cores || 1);
+  const ratio = Number(((sample.load1 || 0) / cores).toFixed(2));
+  return { load1: Number((sample.load1 || 0).toFixed(2)), cores, ratio, factor, saturated: factor > 0 && ratio > factor };
+}
+
+/**
+ * 准入判定：上限之内，且（未过载 或 当前一个都没在跑）。
+ * 「一个都没在跑就放行」保证过载时队列仍以 1 的并发前进，不会饿死。
+ */
+function admissionAllowed(): boolean {
+  if (active >= maxConcurrentBuilds()) return false;
+  if (active === 0) return true;
+  return !buildLoadPressure().saturated;
+}
+
+let loadPumpTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 有人在排队时才开负载复查定时器；队列空了自动停，进程不被它挂住。 */
+function ensureLoadPump(): void {
+  if (loadPumpTimer) return;
+  loadPumpTimer = setInterval(() => {
+    if (waiters.length === 0) {
+      clearInterval(loadPumpTimer!);
+      loadPumpTimer = null;
+      return;
+    }
+    pumpWaiters();
+  }, LOAD_PUMP_INTERVAL_MS);
+  loadPumpTimer.unref?.();
+}
 
 /**
  * 运行时上限供给器（CDS 系统设置注入）。env 变量优先于它——env 是运维的
@@ -59,6 +145,7 @@ export function maxConcurrentBuilds(): number {
 
 /** 槽位持有者/等待者身份，用于运维可观测（「这 3 个槽被谁占着」）。 */
 export interface BuildGateHolder {
+  projectId?: string;
   branchId?: string;
   profileId?: string;
   runId?: string;
@@ -82,10 +169,23 @@ interface Waiter {
   isCancelled?: () => boolean;
   /** 移除 abort listener（防泄漏），出队（无论 resolve/reject）时调用。 */
   cleanup?: () => void;
+  /** 联合请求仅登记公平排队；物理启动资格不全时不阻挡普通编译。 */
+  jointReady?: () => boolean;
 }
 
 let active = 0;
 const waiters: Waiter[] = [];
+const projectOrder = new ProjectAdmissionOrder();
+function nextWaiter(): Waiter | undefined {
+  const eligible = waiters.filter(item => !item.jointReady || item.jointReady());
+  const index = projectOrder.next(eligible, item => item.holder?.projectId);
+  return index < 0 ? undefined : eligible[index];
+}
+function takeNextWaiter(): Waiter | undefined {
+  const next = nextWaiter();
+  if (next && !next.jointReady) waiters.splice(waiters.indexOf(next), 1);
+  return next;
+}
 /** 活跃持有者明细（token → 身份 + 拿到槽的时刻）。 */
 const holders = new Map<symbol, BuildGateHolder & { acquiredAt: string }>();
 
@@ -96,15 +196,15 @@ export interface BuildSlot {
 
 export interface AcquireOptions {
   /**
-   * 仅当调用方需要排队时触发一次，带当前排队位置信息。
-   * @param info.ahead  在我前面、同样在等待的构建数（不含正在构建的）
+   * 仅当调用方需要排队时触发一次，带当前等待总数。
+   * @param info.ahead  当前其他等待构建数（按项目轮转，不是固定排队名次）
    * @param info.active 当前正在构建的数量
    * @param info.max    并发上限
    */
-  onQueued?(info: { ahead: number; active: number; max: number }): void;
+  onQueued?(info: { ahead: number; active: number; max: number; throttledByLoad?: boolean; load?: BuildLoadPressure }): void;
   /** 等待结束、拿到槽位时触发（仅排过队的调用方会收到）。 */
   onStart?(info: { waitedMs: number }): void;
-  /** 持有者身份（观测用，不参与调度决策）。 */
+  /** 持有者身份（projectId参与项目轮转，其他字段用于观测）。 */
   holder?: BuildGateHolder;
   /** 排队中被 abort → 立即从队列摘除并以 BuildSlotCancelledError 拒绝。 */
   signal?: AbortSignal;
@@ -134,17 +234,28 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
         active -= 1;
         return;
       }
+      // 过载时不转移槽位（转移等于维持当前并发）：先缩到 active-1，等待者留在队里，
+      // 由负载复查定时器在负载降下来后按 FIFO 放行；active 归零时下一次 pump 至少放 1 个。
+      if (active > 1 && buildLoadPressure().saturated) {
+        active -= 1;
+        ensureLoadPump();
+        return;
+      }
       // 槽位转移：跳过（并拒绝）已取消的等待者，交给第一个仍存活的。
-      let next = waiters.shift();
+      let next = takeNextWaiter();
       while (next) {
+        if (next.jointReady) {
+          // 仅让出公平顺序，不授予半份编译槽；原阶段复查会同步重新核对两种容量。
+          active -= 1; ensureLoadPump(); return;
+        }
         next.cleanup?.();
         if (next.isCancelled?.()) {
           next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
-          next = waiters.shift();
+          next = takeNextWaiter();
           continue;
         }
         // 槽位直接转移给下一个等待者：不动 active（它继承当前这把槽位）。
-        next.resolve();
+        projectOrder.grant(next.holder?.projectId); next.resolve();
         return;
       }
       active -= 1;
@@ -157,6 +268,36 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
  * 调用方拿到 BuildSlot 后必须在 finally 中 release()。
  * 排队中被 signal abort 或转移时 isCancelled 判真 → 以 BuildSlotCancelledError 拒绝。
  */
+/** 同步配套准入：不插队、不排队，也不持半份槽位等待另一种资源。 */
+export function tryAcquireBuildSlot(opts?: Pick<AcquireOptions, 'holder' | 'signal' | 'isCancelled'>): BuildSlot | undefined {
+  if (opts?.signal?.aborted || opts?.isCancelled?.()) throw new BuildSlotCancelledError('配套准入前操作已取消/失效');
+  if (waiters.length || !admissionAllowed()) return undefined;
+  active += 1;
+  projectOrder.grant(opts?.holder?.projectId);
+  return grantSlot(opts?.holder);
+}
+
+/** 登记联合请求参与同一项目轮转，实际取槽仍须同时满足外部物理资格。 */
+export function registerJointBuildSlot(opts: Pick<AcquireOptions, 'holder' | 'signal' | 'isCancelled'>,
+  ready: () => boolean): { tryAcquire(): BuildSlot | undefined; dispose(): void } {
+  const waiter: Waiter = { enqueuedAt: Date.now(), holder: opts.holder, isCancelled: opts.isCancelled,
+    resolve: () => {}, reject: () => {}, jointReady: ready };
+  waiters.push(waiter); pumpWaiters();
+  return {
+    tryAcquire() {
+      if (opts.signal?.aborted || opts.isCancelled?.()) throw new BuildSlotCancelledError('配套准入前操作已取消/失效');
+      if (!waiters.includes(waiter) || !admissionAllowed() || nextWaiter() !== waiter) return undefined;
+      waiters.splice(waiters.indexOf(waiter), 1);
+      active += 1; projectOrder.grant(opts.holder?.projectId);
+      return grantSlot(opts.holder);
+    },
+    dispose() {
+      const index = waiters.indexOf(waiter);
+      if (index >= 0) { waiters.splice(index, 1); pumpWaiters(); }
+    },
+  };
+}
+
 export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot> {
   if (opts?.signal?.aborted) {
     throw new BuildSlotCancelledError('进入排队前已被取消');
@@ -165,12 +306,21 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
     throw new BuildSlotCancelledError('进入排队前操作已失效');
   }
   const max = maxConcurrentBuilds();
-  if (active < max) {
+  if (waiters.length === 0 && admissionAllowed()) {
     active += 1;
+    projectOrder.grant(opts?.holder?.projectId);
     return grantSlot(opts?.holder);
   }
   const enqueuedAt = Date.now();
-  opts?.onQueued?.({ ahead: waiters.length, active, max });
+  const pressure = buildLoadPressure();
+  const throttledByLoad = active < max && pressure.saturated;
+  // 只有真被负载压住时才附带 throttledByLoad/load，上限排队的旧形态保持不变。
+  opts?.onQueued?.(throttledByLoad
+    ? { ahead: waiters.length, active, max, throttledByLoad: true, load: pressure }
+    : { ahead: waiters.length, active, max });
+  // onQueued is synchronous user code and may cancel before the listener exists.
+  if (opts?.signal?.aborted || opts?.isCancelled?.()) throw new BuildSlotCancelledError('排队通知期间已被取消/取代');
+  if (throttledByLoad) ensureLoadPump();
   await new Promise<void>((resolve, reject) => {
     const waiter: Waiter = {
       resolve,
@@ -190,6 +340,7 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
       waiter.cleanup = () => signal.removeEventListener('abort', onAbort);
     }
     waiters.push(waiter);
+    pumpWaiters();
   });
   // 被唤醒 = 槽位已转移给我（或 pumpWaiters 已 active++），不再重复 ++。
   opts?.onStart?.({ waitedMs: Date.now() - enqueuedAt });
@@ -202,10 +353,10 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
  * 与槽位转移不同，这里是**新增**槽位：每唤醒一个 active += 1。
  */
 export function pumpWaiters(): number {
-  const max = maxConcurrentBuilds();
   let woken = 0;
-  while (active < max && waiters.length > 0) {
-    const next = waiters.shift()!;
+  while (admissionAllowed() && waiters.length > 0) {
+    const next = takeNextWaiter();
+    if (!next || next.jointReady) break;
     next.cleanup?.();
     if (next.isCancelled?.()) {
       next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
@@ -213,8 +364,13 @@ export function pumpWaiters(): number {
     }
     active += 1;
     woken += 1;
-    next.resolve();
+    projectOrder.grant(next.holder?.projectId); next.resolve();
   }
+  // 还有人排着、且这一轮是被负载挡住（不是被上限挡住），就得有定时器在负载回落时
+  // 回来放人。否则出现这条死路：waiter 当初因 active === max 入队（那条路径不开定时器），
+  // 运维随后调高上限并调用本函数，此刻宿主饱和放不出人 —— 队列就只能等下一次
+  // release 才被重新考虑，新腾出来的容量白白空转几分钟（Codex 五轮 P2）。
+  if (waiters.length > 0 && active < maxConcurrentBuilds()) ensureLoadPump();
   return woken;
 }
 
@@ -223,6 +379,8 @@ export function buildGateStatus(): {
   active: number;
   queued: number;
   max: number;
+  /** 宿主负载压力；saturated 为 true 时新构建只在 active=0 时放行 */
+  load: BuildLoadPressure;
   holders: Array<BuildGateHolder & { acquiredAt: string }>;
   waiters: Array<BuildGateHolder & { enqueuedAt: string }>;
 } {
@@ -230,6 +388,7 @@ export function buildGateStatus(): {
     active,
     queued: waiters.length,
     max: maxConcurrentBuilds(),
+    load: buildLoadPressure(),
     holders: [...holders.values()],
     waiters: waiters.map((w) => ({ ...(w.holder || {}), enqueuedAt: new Date(w.enqueuedAt).toISOString() })),
   };
@@ -244,5 +403,11 @@ export function __resetBuildGateForTest(): void {
   }
   waiters.length = 0;
   holders.clear();
+  projectOrder.clear();
   maxProvider = null;
+  hostLoadProvider = defaultHostLoad;
+  if (loadPumpTimer) {
+    clearInterval(loadPumpTimer);
+    loadPumpTimer = null;
+  }
 }

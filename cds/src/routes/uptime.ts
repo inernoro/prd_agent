@@ -1,23 +1,53 @@
+import { identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /**
- * uptime — 自建存活监控的只读 API（状态页数据源）。
+ * uptime — 监控中心的 API（状态页 + 自定义监控管理）。
  *
  * 鉴权：不自造中间件。本路由挂在 `/api` 前缀下，走 server.ts 已有的全局
  * 登录网关（cookie / SSO / agent key），与 docker-network-health 等同款。
  *
- * 三个端点：
- *   GET /api/uptime/summary?segments=90        全量摘要（含柱条，状态页一次拉完）
- *   GET /api/uptime/targets/:id/history?range= 单 target 时序（已降采样）
- *   GET /api/uptime/incidents?limit=50         由连续失败自动合成的故障时间线
+ * 只读（状态页数据源）：
+ *   GET  /api/uptime/summary?segments=90        全量摘要（含柱条，状态页一次拉完）
+ *   GET  /api/uptime/targets/:id/history?range= 单 target 时序（已降采样）
+ *   GET  /api/uptime/incidents?limit=50         由连续失败自动合成的故障时间线
+ *
+ * 写（自定义监控，2026-09-08 监控中心重做；只给管理员身份，项目级 Key 一律 403）：
+ *   GET    /api/uptime/monitors                 列出自定义监控定义
+ *   POST   /api/uptime/monitors                 新增
+ *   PUT    /api/uptime/monitors/:id             修改（含暂停 / 恢复：只传 enabled）
+ *   DELETE /api/uptime/monitors/:id             删除（台账在下一轮清理）
+ *   POST   /api/uptime/monitors/test            按一份定义试探一次，不落库
+ *   POST   /api/uptime/targets/:id/probe        对任一目标立刻探一次并记入台账
  */
 
-import { Router } from 'express';
+import crypto from 'node:crypto';
+import { publicMonitorObservation } from '../services/monitor-evidence.js';
+import { Router, type Request, type Response } from 'express';
+import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
+
+import type { UptimeCustomMonitor } from '../types.js';
 import {
   DEFAULT_BAR_SEGMENTS,
   MAX_HISTORY_POINTS,
   parseRange,
   resolveBucketCount,
 } from '../services/uptime-metrics.js';
-import type { UptimeMonitorService } from '../services/uptime-monitor.js';
+import { tallyTargetSummaries, type UptimeMonitorService } from '../services/uptime-monitor.js';
+import {
+  customProbeTargetId,
+  describeMonitorProbe,
+  evaluateProjectScopedWrite,
+  matchPreviewHost,
+  normalizeUptimeMonitorInput,
+  probeCustomMonitor,
+  type ProjectPreviewHost,
+  type UptimeMonitorInput,
+} from '../services/uptime-custom-monitor.js';
+import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.js';
+import { isSelfCheckEndpoint } from '../services/self-monitoring-bootstrap.js';
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
+import { McpMonitorClient, publicMcpMonitor, validateMcpArguments, validateMcpUrl, type McpCallEvidence } from '../services/mcp-monitor.js';
+import { isSealedSecret, isSealingEnabled, sealToken } from '../infra/secret-seal.js';
+import type { MonitorNotificationSettings } from '../services/alarm-route.js';
 
 /**
  * 取本次请求的项目作用域：项目级 cdsp_ / 单项目 cdsg_ key 会被 server.ts 的
@@ -27,49 +57,349 @@ import type { UptimeMonitorService } from '../services/uptime-monitor.js';
  * 否则一把项目 Key 就能枚举出全实例每个项目的分支名、服务名、故障原因与
  * 时间线（Codex PR #1273 P1）。与 cds-events.ts 的同款守卫口径一致。
  */
-function projectScopeOf(req: unknown): string | null {
+export function projectScopeOf(req: unknown): string | null {
   return (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId ?? null;
 }
 
-export function createUptimeRouter(deps: { monitor: UptimeMonitorService }): Router {
+/**
+ * 项目级 Key 的受限写入闸（2026-09-09）。
+ *
+ * 这里原本是一条对项目级 Key 无差别 403 的闸（Codex PR #1514 P1）。它的理由是两个
+ * 具体风险，不是「项目 Key 一律不可信」：自定义目标的地址由调用方任填、CDS 主机替它
+ * 去连，于是一把项目 Key 就能借主机扫回环、内网、别的项目的内部服务；关键字探测还
+ * 顺带把响应内容当成 oracle 透出来。所以这里开一条同时堵死这两个风险的窄路，
+ * 让 Agent 能用项目 Key 自助登记**自己项目、自己分支**的 health-json 监控：
+ * 判据与地址范围都由服务端决定，调用方报什么都没用。
+ *
+ * 管理员身份（无项目作用域）不走这里，行为完全不变。
+ * 返回 null 表示已经回过响应、调用方直接 return。
+ */
+type WriteScope =
+  | { admin: true }
+  | { admin: false; projectId: string; keyId: string; boundBranchId: string };
+
+function resolveWriteScope(
+  req: unknown,
+  res: { status(code: number): { json(body: unknown): void } },
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'projectId'>,
+  listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[],
+): WriteScope | null {
+  const scope = projectScopeOf(req);
+  if (!scope) return { admin: true };
+
+  if (!listProjectPreviewHosts) {
+    // 没接线就退回原来的 403：宁可拒绝，也不要在拿不到地址台账时放行——
+    // 那等于把「地址必须属于本项目」这条规则悄悄跳过（形状 2：链路只建一半）。
+    res.status(403).json({ error: '本实例未启用项目级自助登记（缺少分支地址台账接线）' });
+    return null;
+  }
+  const verdict = evaluateProjectScopedWrite(monitor, scope, listProjectPreviewHosts(scope));
+  if (!verdict.ok) {
+    res.status(403).json({ error: verdict.error, field: verdict.field });
+    return null;
+  }
+  const keyId = (req as { cdsProjectKey?: { keyId?: string } }).cdsProjectKey?.keyId || '';
+  return { admin: false, projectId: scope, keyId, boundBranchId: verdict.boundBranchId };
+}
+
+/**
+ * 盖「这个地址落在哪条分支的预览域名上」这个**纯事实**。
+ *
+ * 与 boundBranchId 刻意分开，它们是两件事：
+ *   boundBranchId  —— 寿命跟着那条分支走（分支删了监控一起消失）。
+ *                     只有 Agent 自助登记的才有，管理员明确要盯的东西不该被替他删掉。
+ *   previewBranchId —— 地址指着一条分支预览。**任何登记路径都要盖**，
+ *                     因为环境判定只认「地址指着谁」，不认「谁登记的」。
+ *
+ * 少了后者，管理员手动加一条指着临时分支的监控，会被算成生产环境混进项目负责人的
+ * 第一屏——那正是用户担心的「临时分支把自己的错误预览地址加进去」。
+ * 只在 agent-api 那条路上反查，就是把一条只在一条路径上成立的证据当成契约成立
+ * （predicate-and-wiring-discipline 形状 8）。
+ *
+ * 系统级监控（没有 projectId）查不了：那里没有可枚举的分支台账，如实留空。
+ */
+function stampPreviewBranch(
+  monitor: UptimeCustomMonitor,
+  listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[],
+): void {
+  const hit = monitor.projectId && listProjectPreviewHosts
+    ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId))
+    : undefined;
+  // 编辑时把地址从分支预览改成正式地址，这个戳必须跟着消失，不能留着旧结论。
+  monitor.previewBranchId = hit ? hit.branchId : undefined;
+}
+
+/** 按写入主体盖审计字段：监控中心要答得出「谁加的、从哪加的、绑着哪条分支」。 */
+function stampAudit(monitor: UptimeCustomMonitor, req: unknown, scope: WriteScope): void {
+  if (scope.admin) {
+    const username = (req as { cdsUser?: { username?: string } }).cdsUser?.username;
+    if (username) {
+      monitor.createdBy = username;
+      monitor.createdByKind = 'human';
+    } else if (!monitor.createdBy) {
+      monitor.createdBy = 'global-key';
+      monitor.createdByKind = 'global-key';
+    }
+    if (!monitor.origin) monitor.origin = 'manual';
+    return;
+  }
+  monitor.projectId = scope.projectId;
+  monitor.createdBy = scope.keyId ? `key:${scope.keyId}` : `project:${scope.projectId}`;
+  monitor.createdByKind = 'project-key';
+  monitor.origin = 'agent-api';
+  // 寿命跟着分支走：分支删了这条监控一起消失，不留下一条永远红着的死地址。
+  monitor.boundBranchId = scope.boundBranchId;
+}
+
+/**
+ * 项目级凭据访问单个目标：归属从当前目标定义解析（刚保存、还没进过轮次的目标也算），
+ * 找不到或不是本项目的一律 403——不用 404 区分「不存在」与「别人的」，那是枚举 oracle
+ * （Codex PR #1514 P2）。
+ */
+function denyForeignTarget(req: unknown, monitor: UptimeMonitorService, targetId: string, res: { status(code: number): { json(body: unknown): void } }): boolean {
+  const scope = projectScopeOf(req);
+  if (!scope) return false;
+  const owner = monitor.getTargetProjectId(targetId);
+  if (owner === scope) return false;
+  res.status(403).json({ error: '该监控目标不属于当前项目 Key 的作用域' });
+  return true;
+}
+
+/** 写入自定义监控时需要的最小状态面（路由不碰 StateService 其它部分）。 */
+export interface UptimeMonitorStore {
+  listUptimeMonitors(projectId?: string): UptimeCustomMonitor[];
+  getUptimeMonitor(id: string): UptimeCustomMonitor | undefined;
+  upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor;
+  removeUptimeMonitor(id: string): boolean;
+  getMonitorSubscriptions?(): Record<string, { subscribed: boolean; updatedAt: string; updatedBy: string }>;
+  setMonitorSubscription?(targetId: string, subscribed: boolean, updatedBy: string): void;
+  flush?: () => Promise<void>;
+  /** 校验归属项目存在；不接则不校验 */
+  getProject?(projectId: string): unknown;
+}
+
+export function createUptimeRouter(deps: {
+  monitor: UptimeMonitorService;
+  store?: UptimeMonitorStore;
+  getNotifications?: () => MonitorNotificationSettings;
+  setNotifications?: (settings: MonitorNotificationSettings) => void;
+  listNotificationChannelIds?: () => string[];
+  recordMcpAudit?: (evidence: McpCallEvidence) => void | Promise<void>;
+  listMcpAudits?: () => McpCallEvidence[];
+  /**
+   * 某项目名下所有分支的预览主机名。项目级 Key 自助登记时，地址只能落在这份台账里——
+   * 它同时是「不许扫内网」的闸和「这条监控绑哪条分支」的来源。
+   * 不注入则自助登记整体关闭（退回原来的管理员限定）。
+   */
+  listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[];
+  /**
+   * 监控自发现的「插口」管理与执行。不注入则整个自发现关闭，端点相关路由退化成
+   * 空清单——刻意不 500：少接一行不该让监控中心整页打不开。
+   */
+  listMonitorEndpoints?: (projectId: string) => string[];
+  addMonitorEndpoint?: (projectId: string, url: string) => boolean;
+  removeMonitorEndpoint?: (projectId: string, url: string) => boolean;
+  /** 立刻跑一轮对账（插上 / 拔掉之后当场生效，不让人对着空列表等下一轮）。 */
+  runDiscovery?: () => Promise<DiscoveryRunSummary>;
+  /** 最近一轮的结果，含被拒的声明与原因。 */
+  lastDiscoveryRun?: () => DiscoveryRunSummary | null;
+  /**
+   * 通知通道自身的状态。**不接就是不知道**——不接时摘要里不出 alarm 字段，
+   * 前端据此说「通道状态未知」，而不是默认渲染成「通着」。
+   */
+  alarmChannel?: () => AlarmChannelSnapshot;
+  /**
+   * 用户自己配的通知通道的状态。不接就是不知道——不接时摘要里不出这个字段，
+   * 面板据此说「这个实例没接通道配置」，而不是替它说「一条都没有」。
+   */
+  alarmIdentity?: () => AlarmIdentitySettings | undefined;
+  alarmChannels?: () => AlarmChannelStatusView[];
+  /**
+   * 演练：走**真实投递路径**发一条测试通知，返回真实结果。
+   * 不接则演练路由回 501——没有这条，「铃能不能响」永远只能靠等一次真故障。
+   */
+  runAlarmDrill?: (note: string) => Promise<{ ok: boolean; status?: number; reason?: string }>;
+  /** 读通道凭据的**打码视图**：配没配、端点、keyId、账号、私钥指纹。私钥本身不出。 */
+  readAlarmNotify?: () => Record<string, unknown>;
+  /** 写通道凭据；传 null 表示清除。 */
+  writeAlarmNotify?: (next: { endpoint: string; keyId: string; username: string; privateKey: string; targetUsername?: string } | null) => void | Promise<void>;
+}): Router {
   const router = Router();
+
+  /**
+   * 通知通道凭据（旧 MAP 通道）与演练：系统级配置，只许管理员会话或全权全局 Key。
+   * 读接口回 MAP 端点、keyId、用户名与私钥指纹；create-only 的全局 Key 被全局网关放行了 GET，
+   * 光拦项目级 Key 拦不住它（Codex #1543 P1，第二轮）。与 alarm-channels 路由同一份判定。
+   */
+  const denySystemAlarmAccess = (req: Request, res: Response): boolean => {
+    const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]);
+    if (!guard) return false;
+    res.status(guard.status).json({ ...guard.body, hint: '通知通道属于 CDS 系统设置，项目级 / 带作用域的 Key 不可读写' });
+    return true;
+  };
+
+  const withAlarm = <T extends object>(summary: T): T & { alarm?: AlarmChannelSnapshot; alarmChannels?: AlarmChannelStatusView[] } => {
+    const alarm = deps.alarmChannel?.();
+    const channels = deps.alarmChannels?.();
+    return {
+      ...summary,
+      ...('targets' in summary ? { targets: (summary as { targets: Array<{id:string}> }).targets.map(t => ({ ...t, alarmIdentity: identityForAlarm(deps.alarmIdentity?.(), t.id) })) } : {}),
+      ...(alarm ? { alarm } : {}),
+      ...(channels ? { alarmChannels: channels } : {}),
+    };
+  };
 
   router.get('/uptime/summary', (req, res) => {
     const segments = resolveBucketCount(req.query.segments, DEFAULT_BAR_SEGMENTS);
-    const summary = deps.monitor.getSummary(segments);
+    const raw = deps.monitor.getSummary(segments);
+    const subscriptions = deps.store?.getMonitorSubscriptions?.() ?? {};
+    const subscribed = (target: typeof raw.targets[number]): boolean => subscriptions[target.id]?.subscribed
+      ?? !!(target.monitorId && deps.store?.getUptimeMonitor(target.monitorId)?.enabled && !target.excluded && target.status !== 'paused');
+    const eligible = (target: typeof raw.targets[number]): boolean => !target.excluded && target.enabled !== false && target.status !== 'paused';
+    const byId = new Map(raw.targets.map(target => [target.id, target]));
+    const annotated = raw.targets.map(target => {
+      const relation = target.collectionMembers
+        ? target.collectionMembers.some(member => { const entry = byId.get(member.id); return entry && eligible(entry) && subscribed(entry); })
+        : subscribed(target);
+      return { ...target, subscribed: relation, overviewIncluded: relation && eligible(target) };
+    });
+    const selected = req.query.subscribed === 'true' ? annotated.filter(target => target.overviewIncluded) : annotated;
+    const summary = { ...raw, targets: selected, overall: tallyTargetSummaries(selected) };
     const scope = projectScopeOf(req);
     if (!scope) {
-      res.json(summary);
+      res.json(withAlarm(summary));
       return;
     }
-    // 收窄到本项目，并按收窄后的集合重算总览计数，避免「只看得到 1 个目标
-    // 却显示全实例 139 个」这种对不上的数字。
+    // 收窄到本项目，并按收窄后的集合重算总览计数与覆盖面，避免「只看得到 1 个目标
+    // 却显示全实例 139 个」这种对不上的数字；计数口径与全量同一个函数，未实测不会
+    // 被算成正常；覆盖面的未纳入清单同样只给本项目的。
     const targets = summary.targets.filter((t) => t.projectId === scope);
-    const tally = { total: targets.length, up: 0, down: 0, paused: 0, unknown: 0, excluded: 0 };
-    for (const t of targets) {
-      if (t.excluded) tally.excluded += 1;
-      else if (t.status === 'up') tally.up += 1;
-      else if (t.status === 'down') tally.down += 1;
-      else if (t.status === 'paused') tally.paused += 1;
-      else tally.unknown += 1;
-    }
-    res.json({ ...summary, targets, overall: { ...tally, ok: tally.down === 0 }, projectScope: scope });
+    // 项目级 Key 不带通知通道：那是系统级配置，带着别的项目的通道名、项目清单、
+    // 投递计数与最近失败原因（Codex #1543 P1）。它要看「有没有人被通知」得用管理员会话。
+    res.json({
+      ...summary,
+      targets,
+      overall: tallyTargetSummaries(targets),
+      coverage: deps.monitor.getCoverage(scope),
+      projectScope: scope,
+    });
   });
+
+  router.put('/uptime/targets/:id/subscription', async (req, res) => {
+    if (!deps.store?.setMonitorSubscription) { res.status(501).json({ error: '本实例未接入订阅存储' }); return; }
+    if (denyForeignTarget(req, deps.monitor, req.params.id, res)) return;
+    if (projectScopeOf(req)) {
+      const target = deps.monitor.getSummary(1).targets.find(entry => entry.id === req.params.id);
+      const definition = target?.monitorId && deps.store.getUptimeMonitor(target.monitorId);
+      if (!definition || definition.origin !== 'agent-api') { res.status(403).json({ error: '项目级 Key 只能管理自己登记的监控订阅' }); return; }
+    }
+    if (!projectScopeOf(req)) { const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]); if (guard) { res.status(guard.status).json(guard.body); return; } }
+    const requestedTarget = deps.monitor.getSummary(1).targets.find(target => target.id === req.params.id);
+    if (!requestedTarget) {
+      res.status(404).json({ error: '监控目标不存在' }); return;
+    }
+    if (requestedTarget.collectionMembers) { res.status(400).json({ error: '采集通道随其已订阅指标展示，请调整各指标的订阅' }); return; }
+    if (typeof req.body?.subscribed !== 'boolean') { res.status(400).json({ error: 'subscribed 必须为布尔值' }); return; }
+    const username = (req as Request & { cdsUser?: { username?: string } }).cdsUser?.username;
+    deps.store.setMonitorSubscription(req.params.id, req.body.subscribed, username || projectScopeOf(req) || 'global-key');
+    await deps.store.flush?.();
+    res.json({ targetId: req.params.id, subscribed: req.body.subscribed });
+  });
+
+  /**
+   * 通知演练：走真实投递路径发一条测试通知。
+   *
+   * 为什么需要它：这条链上最贵的一件事是「等一次真故障来证明铃会响」。
+   * 没有演练，通知通道只能在真出事那天第一次被检验——而那正是最不该出意外的时刻。
+   * 演练发的是同一个 MapNotifier、同一条签名路径、同一个 source，只是内容标明是演练。
+   */
+  router.post('/uptime/alarm-drill', async (req, res) => {
+    if (!deps.runAlarmDrill) {
+      res.status(501).json({ error: '这个实例没有接通知通道，演练无从谈起' });
+      return;
+    }
+    // 只许非作用域管理员借它往外发通知（和通知通道接口同一道门）。
+    if (denySystemAlarmAccess(req, res)) return;
+    const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 200) : '';
+    const result = await deps.runAlarmDrill(note);
+    // 演练失败不是服务器错误，是**一条有用的结论**：铃现在是哑的。
+    // 回 500 会让前端把它当成接口挂了，而不是当成答案。
+    res.json(result);
+  });
+
+  /**
+   * 通知通道凭据的读接口。
+   *
+   * **私钥永远不回显**：只说配没配、指纹是什么。读接口把密钥吐回去，是最常见的
+   * 一种「看起来只是个设置页」的泄漏面（同 /api/env 2026-05-09 那次 P1.5）。
+   */
+  router.use('/cds-system/alarm-notify', (_req, res, next) => {
+    Object.assign(res.locals, { cdsSuppressRequestBodyLog: true, cdsSuppressRequestDetails: true }); next();
+  });
+  router.get('/cds-system/alarm-notify', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    if (!deps.readAlarmNotify) {
+      res.status(501).json({ error: '这个实例没有接通知通道配置' });
+      return;
+    }
+    res.json(deps.readAlarmNotify());
+  });
+
+  router.put('/cds-system/alarm-notify', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    void saveAlarmNotify(req, res).catch(() => {
+      if (!res.headersSent) res.status(503).json({ error: 'storage_unavailable', message: '通知凭据保存结果未能确认，请检查持久存储后重试' });
+    });
+  });
+  async function saveAlarmNotify(req: Request, res: Response): Promise<void> {
+    if (!deps.writeAlarmNotify) {
+      res.status(501).json({ error: '这个实例没有接通知通道配置' });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    if (body.clear === true) {
+      try { await deps.writeAlarmNotify(null); }
+      catch { res.status(409).json({ error: 'storage_unavailable', message: '通知凭据清除未能确认，请检查持久存储' }); return; }
+      res.json({ ...deps.readAlarmNotify?.(), message: '通知通道凭据已清除 —— 现在出问题不会有人被通知' });
+      return;
+    }
+    const str = (k: string): string => (typeof body[k] === 'string' ? (body[k] as string).trim() : '');
+    const endpoint = str('endpoint');
+    const keyId = str('keyId');
+    const username = str('username');
+    const targetUsername = str('targetUsername') || username;
+    const privateKey = str('privateKey');
+    // 四项缺一即拒。半套凭据存进去只会在真出事那天以 401 的形式暴露，
+    // 而那正是最不该出意外的时刻。
+    const missing = (['endpoint', 'keyId', 'username', 'privateKey'] as const)
+      .filter((k) => !({ endpoint, keyId, username, privateKey })[k]);
+    if (missing.length > 0) {
+      res.status(400).json({ error: 'validation', message: `缺少 ${missing.join('、')}`, missing });
+      return;
+    }
+    if (!/^https:\/\//.test(endpoint)) {
+      res.status(400).json({ error: 'validation', message: '端点必须是 https —— 通知里带着业务名，不能走明文' });
+      return;
+    }
+    if (!/BEGIN [A-Z ]*PRIVATE KEY/.test(privateKey)) {
+      res.status(400).json({ error: 'validation', message: '私钥必须是 PEM 格式（BEGIN PRIVATE KEY）' });
+      return;
+    }
+    try {
+      await deps.writeAlarmNotify({ endpoint, keyId, username, privateKey, targetUsername });
+    } catch {
+      res.status(409).json({ error: 'secret_storage_unavailable', message: 'MAP 凭据保存结果未能确认，请确认密封存储已启用且持久存储可写' }); return;
+    }
+    res.json({ ...deps.readAlarmNotify?.(), message: '通知通道已配置 —— 建议立刻演练一次确认真能送到' });
+  }
 
   router.get('/uptime/targets/:id/history', (req, res) => {
     const range = parseRange(req.query.range);
     // 默认 180 点；上限由 resolveBucketCount 收敛到 MAX_HISTORY_POINTS，
     // 无论客户端传多大都不会一次吐几万点。
     const points = resolveBucketCount(req.query.points ?? 180, 180);
-    const scope = projectScopeOf(req);
-    if (scope) {
-      // 单 target 详情同样要判归属，否则知道 id 就能读别的项目的时序。
-      const owner = deps.monitor.getRecord(req.params.id)?.projectId;
-      if (owner && owner !== scope) {
-        res.status(403).json({ error: '该监控目标不属于当前项目 Key 的作用域' });
-        return;
-      }
-    }
+    // 单 target 详情同样要判归属，否则知道 id 就能读别的项目的时序。
+    if (denyForeignTarget(req, deps.monitor, req.params.id, res)) return;
     const history = deps.monitor.getHistory(req.params.id, range.ms, points);
     if (!history) {
       res.status(404).json({ error: '监控目标不存在或尚未产生采样', targetId: req.params.id });
@@ -78,16 +408,480 @@ export function createUptimeRouter(deps: { monitor: UptimeMonitorService }): Rou
     res.json({ ...history, range: range.key, maxPoints: MAX_HISTORY_POINTS });
   });
 
+  router.post('/uptime/targets/:id/probe', async (req, res) => {
+    if (denyForeignTarget(req, deps.monitor, req.params.id, res)) return;
+    try {
+      const result = await deps.monitor.probeNow(req.params.id);
+      if (!result) {
+        res.status(404).json({ error: '监控目标不存在', targetId: req.params.id });
+        return;
+      }
+      if (!result.ok) {
+        res.status(409).json({ error: `该目标当前不探测：${result.skipped}`, skipped: result.skipped });
+        return;
+      }
+      res.json({ ok: true, targetId: req.params.id, sample: result.sample, status: result.status });
+    } catch (err) {
+      res.status(500).json({ error: `探测失败：${(err as Error).message}` });
+    }
+  });
+
   router.get('/uptime/incidents', (req, res) => {
     const raw = Number(req.query.limit);
     const limit = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 50;
     const scope = projectScopeOf(req);
-    // 先按作用域过滤再截断：反过来会让项目级调用者拿到「前 N 条里恰好属于我的」
-    // 那几条，看起来故障变少了。
-    const incidents = scope
-      ? deps.monitor.getIncidents(Number.MAX_SAFE_INTEGER).filter((i) => i.projectId === scope).slice(0, limit)
-      : deps.monitor.getIncidents(limit);
+    // 作用域过滤在 getIncidents 内部、截断之前：在外面 filter 拿到的已经是全实例
+    // 截过 200 条的结果，别的项目故障多时项目级调用者一条都分不到。
+    const incidents = deps.monitor.getIncidents(limit, scope);
     res.json({ incidents, generatedAt: Date.now() });
+  });
+
+  router.get('/uptime/incidents/:id', (req, res) => {
+    const incident = deps.monitor.getIncident(req.params.id, projectScopeOf(req));
+    if (!incident) {
+      res.status(404).json({ error: '这条故障记录已不存在或当前账号无权查看，请返回监控总览。' });
+      return;
+    }
+    res.json({ incident, generatedAt: Date.now() });
+  });
+
+  // ── 自定义监控（写） ──
+
+  const store = deps.store;
+  const storeUnavailable = (res: { status(code: number): { json(body: unknown): void } }): boolean => {
+    if (store) return false;
+    res.status(503).json({ error: '当前实例未接入自定义监控存储' });
+    return true;
+  };
+
+  router.get('/uptime/monitors', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const scope = projectScopeOf(req);
+    res.json({ monitors: (scope ? store.listUptimeMonitors(scope) : store.listUptimeMonitors()).map(publicMcpMonitor) });
+  });
+
+  const readChannelIds = (raw: unknown): string[] => {
+    if (!Array.isArray(raw) || raw.length > 100 || raw.some(id => typeof id !== 'string')) throw new Error('请选择有效的通知通道');
+    const ids = [...new Set(raw as string[])];
+    const available = new Set(deps.listNotificationChannelIds?.() ?? []);
+    if (ids.some(id => !available.has(id))) throw new Error('所选通知通道已不存在，请刷新后重试');
+    return ids;
+  };
+
+  const notificationView = () => {
+    const legacy = deps.alarmChannel?.();
+    const legacyConfig = legacy && legacy.status !== 'unconfigured' ? deps.readAlarmNotify?.() : undefined;
+    return {
+      settings: deps.getNotifications?.() ?? {},
+      ...(legacy && legacy.status !== 'unconfigured' ? { legacyChannel: {
+        id: 'legacy-map', name: legacy.channel, kind: 'map', enabled: true, status: legacy.status,
+        events: ['business-down', 'business-recovered', 'infra-down', 'infra-recovered'], projects: [],
+        ...(typeof legacyConfig?.username === 'string' ? { map: { username: legacyConfig.username } } : {}),
+      } } : {}),
+    };
+  };
+
+  const denyNotificationAccess = (req: Request, res: Response): boolean => {
+    if (denySystemAlarmAccess(req, res)) return true;
+    const user = (req as Request & { cdsUser?: { isSystemOwner?: boolean } }).cdsUser;
+    if (user && user.isSystemOwner !== true) {
+      res.status(403).json({ error: 'notification_settings_forbidden', message: '通知规则仅限系统管理员查看和调整，请联系管理员。' });
+      return true;
+    }
+    return false;
+  };
+  router.get('/uptime/notifications', (req, res) => {
+    if (denyNotificationAccess(req, res)) return;
+    res.json(notificationView());
+  });
+  let notificationWrite = Promise.resolve();
+  router.put('/uptime/notifications', async (req, res) => {
+    if (denyNotificationAccess(req, res)) return;
+    if (!deps.setNotifications || !deps.getNotifications) { res.status(503).json({ error: '此实例尚未接入通知规则存储' }); return; }
+    const previousWrite = notificationWrite;
+    let releaseWrite!: () => void;
+    notificationWrite = new Promise<void>(resolve => { releaseWrite = resolve; });
+    await previousWrite;
+    const body = req.body ?? {};
+    const before = structuredClone(deps.getNotifications());
+    const settings = structuredClone(before);
+    let saving = false;
+    try {
+      if (body.defaultChannelIds !== undefined) settings.defaultChannelIds = readChannelIds(body.defaultChannelIds);
+      if (body.targetId !== undefined) {
+        if (typeof body.targetId !== 'string' || body.targetId.length > 256) throw new Error('监控目标无效');
+        const targetId = body.targetId as string;
+        if (!deps.monitor.getSummary().targets.some(t => t.id === targetId)) throw new Error('监控目标已不存在，请刷新后重试');
+        if (body.channelIds !== undefined) {
+          settings.overrides ??= {};
+          if (body.channelIds === null) delete settings.overrides[targetId];
+          else settings.overrides[targetId] = readChannelIds(body.channelIds);
+        }
+        if (body.muteUntil !== undefined) {
+          settings.mutedUntil ??= {};
+          if (body.muteUntil === null) delete settings.mutedUntil[targetId];
+          else {
+            if (typeof body.muteUntil !== 'number' || !Number.isFinite(body.muteUntil) || body.muteUntil < Date.now() || body.muteUntil > Date.now() + 7 * 86400000) throw new Error('静默时间须在未来七天内');
+            settings.mutedUntil[targetId] = body.muteUntil;
+          }
+        }
+        if (body.acknowledged !== undefined) {
+          if (typeof body.acknowledged !== 'boolean') throw new Error('确认状态格式不正确');
+          settings.acknowledgedAt ??= {};
+          if (body.acknowledged) settings.acknowledgedAt[targetId] = Date.now();
+          else delete settings.acknowledgedAt[targetId];
+        }
+      } else if (body.channelIds !== undefined || body.muteUntil !== undefined || body.acknowledged !== undefined) throw new Error('请先选择监控目标');
+      saving = true;
+      deps.setNotifications(settings);
+      await store?.flush?.();
+      res.json(notificationView());
+    } catch (err) {
+      if (!saving) { res.status(400).json({ error: (err as Error).message }); return; }
+      // 保存失败不能在刷新后读到假成功；只回滚本次仍拥有的字段，保留并发接入的其它目标。
+      const current = structuredClone(deps.getNotifications());
+      if (body.defaultChannelIds !== undefined && JSON.stringify(current.defaultChannelIds) === JSON.stringify(settings.defaultChannelIds)) {
+        if (before.defaultChannelIds === undefined) delete current.defaultChannelIds;
+        else current.defaultChannelIds = before.defaultChannelIds;
+      }
+      const fields = { channelIds: 'overrides', muteUntil: 'mutedUntil', acknowledged: 'acknowledgedAt' } as const;
+      for (const [input, field] of Object.entries(fields)) {
+        if (body[input] === undefined || typeof body.targetId !== 'string') continue;
+        const id: string = body.targetId;
+        if (JSON.stringify(current[field]?.[id]) !== JSON.stringify(settings[field]?.[id])) continue;
+        const values: Record<string, string[] | number> = { ...current[field] };
+        if (Object.hasOwn(before[field] ?? {}, id)) Object.assign(values, { [id]: before[field]![id] });
+        else delete values[id];
+        if (!Object.keys(values).length && before[field] === undefined) delete current[field];
+        else Object.assign(current, { [field]: values });
+      }
+      try { deps.setNotifications(current); await store?.flush?.(); } catch { /* 本次不能确认持久化；响应明确要求重新读取。 */ }
+      res.status(503).json({ error: '通知设置未能确认保存，请刷新核对后重试。故障状态未因本操作改变。' });
+    } finally { releaseWrite(); }
+  });
+
+  router.get('/uptime/mcp/audit', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    res.json({ calls: deps.listMcpAudits?.() ?? [] });
+  });
+
+  const mcpClient = (body: Record<string, unknown>): McpMonitorClient => {
+    if (!deps.recordMcpAudit) throw new Error('MCP 调用审计尚未配置，暂时无法接入');
+    const url = validateMcpUrl(body.url);
+    const token = typeof body.token === 'string' ? body.token.trim() : undefined;
+    if (token && (token.length > 4096 || !/^[A-Za-z0-9._~+\/-]+=*$/.test(token))) throw new Error('访问令牌格式不正确');
+    return new McpMonitorClient(url, token, 15000, deps.recordMcpAudit);
+  };
+
+  router.post('/uptime/mcp/discover', async (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    try {
+      const client = mcpClient(req.body ?? {});
+      const discovered = await client.discover();
+      res.json({ ...discovered, requestId: client.requestId });
+    } catch (err) { res.status(400).json({ error: (err as Error).message }); }
+  });
+
+  router.post('/uptime/mcp/import', async (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    if (!store || storeUnavailable(res)) return;
+    try {
+      const body = req.body ?? {};
+      if (!Array.isArray(body.tools) || !body.tools.length || body.tools.length > 50) throw new Error('请选择 1 至 50 个只读工具');
+      const channelIds = body.channelIds === undefined ? [] : readChannelIds(body.channelIds);
+      if (body.channelIds !== undefined && (!deps.setNotifications || !deps.getNotifications)) throw new Error('此实例尚未接入通知规则存储');
+      const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : null;
+      if (projectId && store.getProject && !store.getProject(projectId)) throw new Error('归属项目不存在，请重新选择');
+      const token = typeof body.token === 'string' ? body.token.trim() : '';
+      if (token && !isSealingEnabled()) throw new Error('此实例尚未开启凭据加密，请联系管理员配置后再接入需鉴权的服务');
+      const client = mcpClient(body);
+      const { tools, server } = await client.discover();
+      const url = validateMcpUrl(body.url);
+      const sealed = token ? sealToken(token) : undefined;
+      if (sealed && !isSealedSecret(sealed)) throw new Error('访问令牌未能加密，请重试');
+      const seen = new Set<string>();
+      const monitors: UptimeCustomMonitor[] = body.tools.map((selection: Record<string, unknown>) => {
+        const tool = tools.find(t => t.name === selection.name);
+        if (!tool) throw new Error('所选 MCP 工具已不存在，请重新发现');
+        if (seen.has(tool.name)) throw new Error('同一个工具不能重复订阅');
+        seen.add(tool.name);
+        const args = selection.arguments === undefined ? {} : selection.arguments as Record<string, unknown>;
+        validateMcpArguments(tool, args);
+        // Stable identity makes double submissions explicit instead of creating duplicate probes.
+        const id = `mcp_${crypto.createHash('sha256').update(JSON.stringify([projectId, url, tool.name, args])).digest('hex').slice(0, 32)}`;
+        if (store.getUptimeMonitor(id)) throw new Error(`工具 ${tool.name} 已订阅，请在监控列表中管理`);
+        const normalized = normalizeUptimeMonitorInput({ id, name: typeof selection.nameLabel === 'string' && selection.nameLabel.trim() ? selection.nameLabel : `${server.name} · ${tool.title || tool.name}`,
+          kind: 'functional', url, requestMethod: 'POST', requestBody: JSON.stringify({ jsonrpc: '2.0', id: 'monitor', method: 'tools/call', params: { name: tool.name } }),
+          assertions: [{ path: 'result.isError', op: 'ne', value: 'true' }], projectId, tags: ['MCP'], environment: 'production', intervalSeconds: 300 });
+        if (!normalized.ok) throw new Error(normalized.error);
+        const monitor = normalized.monitor;
+        monitor.mcp = { toolName: tool.name, arguments: args, ...(sealed && isSealedSecret(sealed) ? { bearerTokenEncrypted: sealed } : {}) };
+        stampAudit(monitor, req, { admin: true });
+        stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
+        return monitor;
+      });
+      const saved: UptimeCustomMonitor[] = [];
+      const previousSettings = deps.getNotifications?.();
+      try {
+        for (const monitor of monitors) saved.push(store.upsertUptimeMonitor(monitor));
+        if (body.channelIds !== undefined && deps.setNotifications) {
+          // New monitors clear obsolete per-target settings during upsert.
+          // Apply the chosen channels to that current state, not the rollback snapshot.
+          const settings = structuredClone(deps.getNotifications?.() ?? {}); settings.overrides ??= {};
+          for (const monitor of saved) settings.overrides[customProbeTargetId(monitor)] = channelIds;
+          deps.setNotifications(settings);
+        }
+        await store.flush?.();
+      } catch (err) {
+        for (const monitor of saved) store.removeUptimeMonitor(monitor.id);
+        if (previousSettings && deps.setNotifications) deps.setNotifications(previousSettings);
+        await store.flush?.();
+        throw err;
+      }
+      for (const monitor of saved) deps.monitor.refreshTarget?.(customProbeTargetId(monitor));
+      res.status(201).json({ monitors: saved.map(publicMcpMonitor), targetIds: saved.map(customProbeTargetId), requestId: client.requestId });
+    } catch (err) { res.status(400).json({ error: (err as Error).message }); }
+  });
+
+  /**
+   * 一条功能监控的历史观测证据（详情页画廊与判据逐条）。
+   *
+   * 与摘要分开拉：摘要只带最新一条的精简版，完整证据（判据逐条、请求体）在这里。
+   * 一个 20 条证据 × N 个监控的列表接口会被撑得又慢又肥，而列表根本不展示它们。
+   */
+  router.get('/uptime/monitors/:id/observations', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const monitor = store.getUptimeMonitor(req.params.id);
+    if (!monitor) {
+      res.status(404).json({ error: '监控不存在', id: req.params.id });
+      return;
+    }
+    const scope = projectScopeOf(req);
+    // 与 denyForeignTarget 同款：不用 404 区分「不存在」与「别人的」，那是枚举 oracle。
+    if (scope && monitor.projectId !== scope) {
+      res.status(403).json({ error: '该监控不属于当前项目 Key 的作用域' });
+      return;
+    }
+    res.json({
+      monitorId: monitor.id,
+      name: monitor.name,
+      description: describeMonitorProbe(monitor),
+      observations: (monitor.observations || []).map(publicMonitorObservation),
+    });
+  });
+
+  // ── 监控自发现：插上一个自检端点，剩下的它自己说 ──
+
+  router.get('/projects/:id/monitor-endpoints', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const projectId = String(req.params.id);
+    const scope = projectScopeOf(req);
+    if (scope && scope !== projectId) {
+      res.status(403).json({ error: '项目级 Key 只能看自己项目的自检端点' });
+      return;
+    }
+    const endpoints = deps.listMonitorEndpoints?.(projectId) || [];
+    const run = deps.lastDiscoveryRun?.() || null;
+    const mine = new Set(endpoints);
+    res.json({
+      endpoints,
+      // 内置的那条是 CDS 监控自己：由服务端认定，前端只认这份名单，不自己再判一遍地址。
+      builtin: endpoints.filter(isSelfCheckEndpoint),
+      // 上一轮对账是全实例一起跑的；这里只摆本项目端点那几条结果。不然项目 A 的芯片会把
+      // 项目 B 打不通的端点与发现数算进自己头上，健康的项目被显示成警告（Codex #1543 P2）。
+      // 按项目 + 地址一起筛：同一个 URL 被两个项目各登记一次时各有一条结果，只认 URL 会双算。
+      lastRun: run ? { ...run, endpoints: run.endpoints.filter((o) => o.projectId === projectId && mine.has(o.url)) } : null,
+    });
+  });
+
+  router.post('/projects/:id/monitor-endpoints', async (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const projectId = String(req.params.id);
+    const url = String((req.body as { url?: unknown })?.url || '').trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('bad protocol');
+    } catch {
+      res.status(400).json({ error: '端点地址必须是合法的 http:// 或 https:// 网址', field: 'url' });
+      return;
+    }
+    // 与登记监控同一道闸：项目级 Key 只能插自己项目分支预览上的口。
+    // 管理员可以插任意地址（与他本来就能加任意监控一致）。
+    const scope = projectScopeOf(req);
+    if (scope) {
+      if (scope !== projectId) {
+        res.status(403).json({ error: '项目级 Key 只能给自己项目插自检端点' });
+        return;
+      }
+      const hosts = deps.listProjectPreviewHosts?.(projectId) || [];
+      if (!matchPreviewHost(url, hosts)) {
+        res.status(403).json({
+          error: `地址 ${parsed.host} 不属于本项目任何一条分支的预览域名`,
+          field: 'url',
+        });
+        return;
+      }
+    }
+    if (!deps.addMonitorEndpoint?.(projectId, url)) {
+      res.status(404).json({ error: '项目不存在' });
+      return;
+    }
+    // 插上就当场跑一轮：不让用户插完对着一个空列表等下一轮。
+    const run = await deps.runDiscovery?.();
+    res.status(201).json({ endpoints: deps.listMonitorEndpoints?.(projectId) || [], lastRun: run || null });
+  });
+
+  router.delete('/projects/:id/monitor-endpoints', async (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const projectId = String(req.params.id);
+    const scope = projectScopeOf(req);
+    if (scope && scope !== projectId) {
+      res.status(403).json({ error: '项目级 Key 只能拔自己项目的自检端点' });
+      return;
+    }
+    const url = String((req.query.url as string | undefined) || '').trim();
+    // 内置端点拔不掉：它是代码初始化插进来的，拔了下次启动又回来，
+    // 中间那段空窗只会让「CDS 自身」的监控凭空消失一阵——不给这个口子。
+    if (isSelfCheckEndpoint(url)) {
+      res.status(400).json({ error: 'CDS 自身的自检端点是内置的，不能拔掉', field: 'url' });
+      return;
+    }
+    if (!deps.removeMonitorEndpoint?.(projectId, url)) {
+      res.status(404).json({ error: '项目不存在' });
+      return;
+    }
+    // 拔掉之后立刻对账一轮，它名下的监控当场下线。
+    const run = await deps.runDiscovery?.();
+    res.json({ endpoints: deps.listMonitorEndpoints?.(projectId) || [], lastRun: run || null });
+  });
+
+  /** 试探一次：只回结果，不落库。与轮次同一套探测实现，不另写一份判定。 */
+  router.post('/uptime/monitors/test', async (req, res) => {
+    const normalized = normalizeUptimeMonitorInput((req.body || {}) as UptimeMonitorInput);
+    if (!normalized.ok) {
+      res.status(400).json({ error: normalized.error, field: normalized.field });
+      return;
+    }
+    // 试探同样走闸：它真的会让 CDS 主机去连那个地址，不落库不等于没有 SSRF 面。
+    // 少了这一行，项目 Key 可以用「试探」把写路由的地址限制整个绕过去。
+    if (!resolveWriteScope(req, res, normalized.monitor, deps.listProjectPreviewHosts)) return;
+    const timeoutMs = normalized.monitor.timeoutMs || deps.monitor.config.timeoutMs;
+    const outcome = await probeCustomMonitor(normalized.monitor, timeoutMs);
+    res.json({
+      ok: true,
+      up: outcome.up,
+      ms: outcome.ms,
+      code: outcome.code,
+      err: outcome.err,
+      description: describeMonitorProbe(normalized.monitor),
+      name: normalized.monitor.name,
+      checkedAt: Date.now(),
+    });
+  });
+
+  router.post('/uptime/monitors', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const input = { ...((req.body || {}) as UptimeMonitorInput) };
+    const normalized = normalizeUptimeMonitorInput(input);
+    if (!normalized.ok) {
+      res.status(400).json({ error: normalized.error, field: normalized.field });
+      return;
+    }
+    const monitor = normalized.monitor;
+    // 先规范化再判作用域：判据要看规范化后的 kind 与 url，不看调用方原样报的字段。
+    const writeScope = resolveWriteScope(req, res, monitor, deps.listProjectPreviewHosts);
+    if (!writeScope) return;
+    if (monitor.projectId && store.getProject && !store.getProject(monitor.projectId)) {
+      res.status(400).json({ error: `项目 ${monitor.projectId} 不存在`, field: 'projectId' });
+      return;
+    }
+    if (store.getUptimeMonitor(monitor.id)) {
+      res.status(409).json({ error: `监控 id '${monitor.id}' 已存在`, field: 'id' });
+      return;
+    }
+    stampAudit(monitor, req, writeScope);
+    stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
+    try {
+      const saved = store.upsertUptimeMonitor(monitor);
+      res.status(201).json({ monitor: publicMcpMonitor(saved), description: describeMonitorProbe(saved) });
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+    }
+  });
+
+  router.put('/uptime/monitors/:id', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const existing = store.getUptimeMonitor(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: '监控不存在', id: req.params.id });
+      return;
+    }
+    const input = { ...((req.body || {}) as UptimeMonitorInput), id: existing.id };
+    const normalized = normalizeUptimeMonitorInput(input, { existing });
+    if (!normalized.ok) {
+      res.status(400).json({ error: normalized.error, field: normalized.field });
+      return;
+    }
+    const monitor = normalized.monitor;
+    // 改之前先判**改后的样子**是否仍在允许范围内：只判旧值会让人把一条合规监控
+    // 改成打内网的地址（判据必须取变更后的状态，不是变更前的）。
+    const writeScope = resolveWriteScope(req, res, monitor, deps.listProjectPreviewHosts);
+    if (!writeScope) return;
+    // 项目级 Key 还要确认这条**原本**就是自己项目的，否则等于接管别人的监控。
+    if (!writeScope.admin) {
+      if (existing.projectId !== writeScope.projectId) {
+        res.status(403).json({ error: '该监控不属于当前项目 Key 的作用域' });
+        return;
+      }
+      // 与 DELETE 同款：不许改管理员手动加的那些（改判据 = 让它不再报警，
+      // 等于变相删除，所以两条路必须一样严）。
+      if (existing.origin !== 'agent-api') {
+        res.status(403).json({ error: '这条监控由管理员添加，项目级 Key 只能修改自己登记的监控' });
+        return;
+      }
+    }
+    if (monitor.projectId && store.getProject && !store.getProject(monitor.projectId)) {
+      res.status(400).json({ error: `项目 ${monitor.projectId} 不存在`, field: 'projectId' });
+      return;
+    }
+    stampAudit(monitor, req, writeScope);
+    stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
+    try {
+      const saved = store.upsertUptimeMonitor(monitor);
+      // 台账立刻跟上新定义（尤其是归属项目），不等下一轮探测。
+      deps.monitor.refreshTarget(customProbeTargetId(saved));
+      res.json({ monitor: publicMcpMonitor(saved), description: describeMonitorProbe(saved) });
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+    }
+  });
+
+  router.delete('/uptime/monitors/:id', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const existing = store.getUptimeMonitor(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: '监控不存在', id: req.params.id });
+      return;
+    }
+    // 删只需判归属，不必判地址：删掉一条监控没有 SSRF 面。
+    // 但归属不止「同项目」——项目级 Key 只能收回**自己登记的**那些。
+    // 管理员手动加的监控是人明确要盯的东西，一把项目 Key 不该能把它删掉：
+    // 自助登记要的是「Agent 能追加」，不是「Agent 能替管理员做主」。
+    const scope = projectScopeOf(req);
+    if (scope) {
+      if (existing.projectId !== scope) {
+        res.status(403).json({ error: '该监控不属于当前项目 Key 的作用域' });
+        return;
+      }
+      if (existing.origin !== 'agent-api') {
+        res.status(403).json({ error: '这条监控由管理员添加，项目级 Key 只能删除自己登记的监控' });
+        return;
+      }
+    }
+    store.removeUptimeMonitor(existing.id);
+    deps.monitor.forgetTarget(customProbeTargetId(existing));
+    res.json({ ok: true, id: existing.id });
   });
 
   return router;

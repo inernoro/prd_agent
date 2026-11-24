@@ -59,7 +59,7 @@ export default function MobileProfilePage() {
   const permissions = useAuthStore((s) => s.permissions ?? []);
 
   // 平台能力快捷入口（知识库置首）—— 与首页、桌面同一数据源
-  const infra = useMemo(() => buildStaticInfra(deriveLauncherPerms(permissions)), [permissions]);
+  const infra = useMemo(() => buildStaticInfra(deriveLauncherPerms(permissions, isRoot)), [permissions, isRoot]);
 
   const avatarUrl = user ? resolveAvatarUrl(user) : null;
 

@@ -23,15 +23,19 @@ describe('BranchDetailDrawer container log loading contract', () => {
     expect(source).toContain('void loadServiceLogs(deploymentLogProfileId);');
   });
 
-  it('全屏详情和运维面板使用完整可用宽度，不保留桌面端最大宽度上限', () => {
-    expect(source).not.toMatch(/max-w-\[min\(1240px/);
-    expect(source).not.toContain('max-w-[1760px]');
+  it('分支详情在桌面端保持三分之二屏宽，移动端仍使用全屏', () => {
+    expect(source).toContain('w-full flex-col');
+    expect(source).toContain('md:w-2/3 md:border-l');
+  });
+
+  it('资源工作台和运维面板使用完整可用宽度，不保留桌面端最大宽度上限', () => {
+    expect(source).not.toContain('max-w-[110rem]');
     expect(monitoringSource).not.toMatch(/max-w-\[min\(1100px/);
   });
 
-  it('所有日志视图由 flex 分配剩余空间，不再硬编码 424px 高度', () => {
-    expect(source).not.toContain('h-[424px]');
-    expect(deploymentSource).not.toContain('h-[424px]');
+  it('所有日志视图由 flex 分配剩余空间，不再硬编码 26.5rem 高度', () => {
+    expect(source).not.toContain('h-[26.5rem]');
+    expect(deploymentSource).not.toContain('h-[26.5rem]');
     expect(source).toContain("const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto'");
     expect(source).toContain("activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5'");
   });

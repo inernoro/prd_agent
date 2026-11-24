@@ -1,3 +1,4 @@
+import { searchPublicStoreEntries } from '@/services/real/documentStore';
 /**
  * LibraryStoreDetailPage — 公开知识库详情页（claymorphism 风格）
  *
@@ -73,6 +74,12 @@ export function LibraryStoreDetailPage() {
       setLoading(false);
     });
     return () => { mounted = false; };
+  }, [storeId]);
+
+  const searchEntries = useCallback(async (keyword: string, cursor?: string) => {
+    const result = await searchPublicStoreEntries(storeId ?? '', keyword, cursor);
+    if (!result.success) throw new Error(result.error.message);
+    return result.data;
   }, [storeId]);
 
   const loadContent = useCallback(async (entryId: string): Promise<LibraryDocReaderPreview | null> => {
@@ -153,7 +160,7 @@ export function LibraryStoreDetailPage() {
         >
           <BookOpen size={32} style={{ color: '#F59E0B' }} strokeWidth={2.5} />
         </div>
-        <p className="text-[16px] font-semibold" style={{ color: '#64748B' }}>
+        <p className="text-[16px] font-semibold" style={{ color: '#475569' }}>
           这间藏书阁尚未对外开放
         </p>
         <ClayButton size="md" variant="primary" onClick={() => navigate('/library')}>
@@ -211,9 +218,9 @@ export function LibraryStoreDetailPage() {
                   </span>
                   <span
                     className="text-[12px] font-bold"
-                    style={{ color: '#64748B' }}
+                    style={{ color: '#475569' }}
                   >
-                    · {store.documentCount} 篇文档
+                    · {entries.filter(entry => !entry.isFolder && entry.sourceType !== 'github_directory').length} 篇文档
                   </span>
                 </div>
                 <h1
@@ -228,7 +235,7 @@ export function LibraryStoreDetailPage() {
                   </p>
                 )}
                 {/* 作者 + 元数据 */}
-                <div className="flex items-center gap-4 flex-wrap text-[12px] font-semibold" style={{ color: '#64748B' }}>
+                <div className="flex items-center gap-4 flex-wrap text-[12px] font-semibold" style={{ color: '#475569' }}>
                   <span className="flex items-center gap-2">
                     <div
                       className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold"
@@ -299,6 +306,8 @@ export function LibraryStoreDetailPage() {
         <div className="max-w-6xl mx-auto" style={{ height: 'calc(100vh - 320px)', minHeight: 560 }}>
           <LibraryDocReader
             entries={entries}
+            searchEntries={searchEntries}
+            writingStoreId={store.id}
             primaryEntryId={store.primaryEntryId}
             pinnedEntryIds={store.pinnedEntryIds ?? []}
             loadContent={loadContent}
@@ -359,7 +368,7 @@ function DetailNavbar({
 
         <div
           className="flex-1 text-center text-[13px] md:text-[14px] font-bold truncate hidden md:block"
-          style={{ color: '#64748B' }}
+          style={{ color: '#475569' }}
         >
           正在阅读 · <span style={{ color: '#1E1B4B' }}>{storeName}</span>
         </div>

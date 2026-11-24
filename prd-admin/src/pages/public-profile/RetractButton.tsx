@@ -48,7 +48,7 @@ export function RetractButton({ domain, itemKey, label, onRetracted }: RetractBu
 
   if (done) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/30 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-100">
+      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/30 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-[color:var(--accent-fg-success)]">
         <Check size={10} />
         已撤回
       </span>
@@ -64,7 +64,7 @@ export function RetractButton({ domain, itemKey, label, onRetracted }: RetractBu
           e.stopPropagation();
           setConfirmOpen(true);
         }}
-        className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-black/35 px-1.5 py-0.5 text-[10px] text-white/75 backdrop-blur-sm transition-all hover:border-rose-400/40 hover:bg-rose-500/15 hover:text-rose-100"
+        className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-black/35 px-1.5 py-0.5 text-[10px] text-white/75 backdrop-blur-sm transition-all hover:border-rose-400/40 hover:bg-rose-500/15 hover:text-[color:var(--accent-fg-danger)]"
         title="取消公开（变回私有）"
       >
         <EyeOff size={10} />

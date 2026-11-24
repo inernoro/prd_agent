@@ -13,6 +13,9 @@ Write-Host "================================" -ForegroundColor Cyan
 # 切换到桌面客户端目录
 Set-Location "$PSScriptRoot\..\prd-desktop"
 
+# 所有受支持的发布入口共用同一动态 API 地址门禁，避免生成无法连接服务端的安装包。
+node scripts/require-default-api-url.mjs
+
 # 安装依赖
 Write-Host "`n[1/3] Installing dependencies..." -ForegroundColor Yellow
 pnpm install

@@ -7,6 +7,7 @@
  */
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import { DEFAULT_RELEASE_SCRIPT_FILE, DEFAULT_RELEASE_CI_WORKFLOW_FILE } from '../../../../src/domain/release-script-contract';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -54,7 +55,10 @@ export function emptySiteDraft(projectId: string): SiteDraft {
     // 任何别的项目建站点都会被预填一条根本不存在的命令。
     deployCommand: '',
     healthcheckUrl: '',
-    strategyMode: 'existing-script',
+    strategyMode: 'project-script',
+    scriptFile: DEFAULT_RELEASE_SCRIPT_FILE,
+    ciWorkflowFile: DEFAULT_RELEASE_CI_WORKFLOW_FILE,
+    managedScript: '',
     composeFile: 'compose.yml',
     composeProject: `${projectId.replace(/[^a-z0-9_-]+/gi, '-').toLowerCase()}-prod`,
     buildCommand: 'pnpm install --frozen-lockfile && pnpm build',
@@ -113,11 +117,11 @@ export function SiteWizardDialog({
   );
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(896px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(56rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>{draft.id ? '配置环境' : '添加环境'}</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="grid gap-5 lg:grid-cols-[13.75rem_minmax(0,1fr)]">
           <nav className="grid content-start gap-2">
             {wizardSteps.map((item, index) => (
               <button
@@ -135,7 +139,7 @@ export function SiteWizardDialog({
               </button>
             ))}
           </nav>
-          <div className="min-h-[360px] space-y-4">
+          <div className="min-h-[22.5rem] space-y-4">
             {step === 'server' ? (
               <WizardPanel title="选择服务器" description="站点会发布到这台服务器的站点目录。没有现成的就在这里直接加一台，不用离开这个向导。">
                 {hosts.length === 0 ? (
@@ -231,13 +235,14 @@ export function SiteWizardDialog({
             ) : null}
 
             {step === 'scripts' ? (
-              <WizardPanel title="确认发布方式" description="CDS 先扫描项目事实，再推荐发布方式；自动生成脚本会在每次发布时固化哈希，不写回项目仓库。">
+              <WizardPanel title="确认发布方式" description="项目提供并测试发布脚本，CDS 执行对应提交；独立脚本只作为明确选择的备选。">
                 {discovering ? <LoadingBlock label="正在扫描项目发布能力" /> : null}
                 {discovery ? (
                   <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs text-muted-foreground">
                     项目身份：{discovery.projectIdentity.projectSlug}
                     {discovery.projectIdentity.repository ? ` · ${discovery.projectIdentity.repository}` : ''}
                     <br />检测分支：{discovery.branchName}（{discovery.branchId}）
+                    {discovery.warnings.map((warning) => <p key={warning} className="mt-2 text-warn">{warning}</p>)}
                   </div>
                 ) : null}
                 <div className="grid gap-2">
@@ -256,6 +261,24 @@ export function SiteWizardDialog({
                     </button>
                   ))}
                 </div>
+                {draft.strategyMode === 'project-script' ? (
+                  <div className="space-y-2">
+                    <Field label="项目发布脚本文件" value={draft.scriptFile || DEFAULT_RELEASE_SCRIPT_FILE} onChange={(value) => onDraft((c) => ({ ...c, scriptFile: value }))} placeholder={DEFAULT_RELEASE_SCRIPT_FILE} />
+                    <p className="text-xs text-muted-foreground">默认读取仓库中该提交的脚本正文，先执行 check，再执行 deploy。项目 CI 必须测试同一文件；业务发布规则由项目负责。</p>
+                  </div>
+                ) : null}
+                {draft.strategyMode === 'project-script' || draft.strategyMode === 'managed-script' ? (
+                  <div className="space-y-2">
+                    <Field label="项目发布 CI 工作流" value={draft.ciWorkflowFile || DEFAULT_RELEASE_CI_WORKFLOW_FILE} onChange={(value) => onDraft((c) => ({ ...c, ciWorkflowFile: value }))} placeholder={DEFAULT_RELEASE_CI_WORKFLOW_FILE} />
+                    <p className="text-xs text-muted-foreground">.github/workflows 下测试该发布脚本 check 的工作流。CDS 读取该分支、同提交的最新运行结论；镜像构建绿灯不能代替此项。</p>
+                  </div>
+                ) : null}
+                {draft.strategyMode === 'managed-script' ? (
+                  <label className="grid gap-2 text-sm">CDS 独立脚本正文（备选）
+                    <textarea aria-label="CDS 独立脚本正文" className="min-h-48 w-full rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs" value={draft.managedScript || ''} onChange={(event) => onDraft((c) => ({ ...c, managedScript: event.target.value }))} />
+                    <span className="text-xs text-muted-foreground">仅明确选择后生效，不自动兜底。支持 check / deploy；禁止写入密钥。此正文不随项目 Git 更新，修改后须单独审查，项目 CI 绿灯不代表已测试这份独立正文。</span>
+                  </label>
+                ) : null}
                 {draft.strategyMode === 'existing-script' ? (
                   <Field label="项目发布命令" value={draft.deployCommand} onChange={(value) => onDraft((c) => ({ ...c, deployCommand: value }))} placeholder="./deploy.sh" />
                 ) : null}
@@ -280,9 +303,9 @@ export function SiteWizardDialog({
 
             {step === 'health' ? (
               <WizardPanel title="配置上线地址" description="上线地址用于发布后的健康检查，也是左栏那盏健康灯的判据来源。">
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_10rem]">
                   {draft.id ? (
-                    <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://xxx.miduo.org" />
+                    <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://app.example.com" />
                   ) : (
                     <Field label="生产域名" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="www.example.com" />
                   )}
@@ -302,7 +325,7 @@ export function SiteWizardDialog({
                     项目提供独立回滚脚本
                   </label>
                 ) : (
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  <div className="rounded-md border border-ok/30 bg-ok-soft p-3 text-sm text-ok">
                     动态发布会保留上一成功版本；最终入口探测失败时自动恢复，也可从发布记录手动回滚。
                   </div>
                 )}
@@ -359,10 +382,12 @@ export function Field({ label, value, onChange, placeholder }: { label: string; 
 
 export function releaseModeDefinitions(
   discovery: ReleaseStrategyDiscovery | null,
-  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'>,
+  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'> & Partial<Pick<SiteDraft, 'id' | 'strategyMode' | 'originalStrategy' | 'scriptFile' | 'managedScript' | 'ciWorkflowFile'>>,
 ): ReleaseStrategyCandidate[] {
   const detected = new Map((discovery?.candidates || []).map((candidate) => [candidate.mode, candidate]));
   const fallbacks: ReleaseStrategyCandidate[] = [
+    { mode: 'project-script', label: '项目发布脚本（默认）', description: '项目提交、CI 验证，CDS 只执行同提交脚本，不判断业务部署类型。', confidence: 'manual', strategy: { mode: 'project-script', scriptFile: draft.scriptFile || DEFAULT_RELEASE_SCRIPT_FILE, ciWorkflowFile: draft.ciWorkflowFile || DEFAULT_RELEASE_CI_WORKFLOW_FILE }, requirements: ['项目 Git 与 CI'] },
+    { mode: 'managed-script', label: 'CDS 独立脚本（备选）', description: '明确选择后由 CDS 单独保存；不会因项目脚本缺失而自动切换。', confidence: 'manual', strategy: { mode: 'managed-script', script: draft.managedScript ?? '', ciWorkflowFile: draft.ciWorkflowFile || DEFAULT_RELEASE_CI_WORKFLOW_FILE }, requirements: ['单独审查正文'] },
     {
       mode: 'existing-script',
       label: '项目现有脚本',
@@ -393,13 +418,22 @@ export function releaseModeDefinitions(
       requirements: ['远端安装 Git、Bash、Python 3 与项目构建依赖'],
     },
   ];
-  return fallbacks.map((fallback) => detected.get(fallback.mode) || fallback);
+  return fallbacks.filter((item) => item.mode === 'project-script' || item.mode === 'managed-script' || (draft.id && item.mode === (draft.originalStrategy?.mode || draft.strategyMode)))
+    .map((fallback) => fallback.mode === 'project-script' || fallback.mode === 'managed-script'
+      ? { ...(detected.get(fallback.mode) || fallback), strategy: fallback.strategy }
+      : draft.id && draft.originalStrategy?.mode === fallback.mode
+      ? { ...fallback, strategy: draft.originalStrategy }
+      : detected.get(fallback.mode) || fallback);
 }
 
 export function applyDiscoveredStrategy(draft: SiteDraft, strategy: ReleaseStrategy): SiteDraft {
   return {
     ...draft,
+    originalStrategy: draft.originalStrategy || (draft.id ? strategyFromDraft(draft) : undefined),
     strategyMode: strategy.mode,
+    scriptFile: strategy.scriptFile || draft.scriptFile,
+    ciWorkflowFile: strategy.ciWorkflowFile || draft.ciWorkflowFile,
+    managedScript: strategy.script ?? draft.managedScript,
     deployCommand: strategy.command || draft.deployCommand,
     composeFile: strategy.composeFile || draft.composeFile,
     composeProject: strategy.composeProject || draft.composeProject,
@@ -411,6 +445,8 @@ export function applyDiscoveredStrategy(draft: SiteDraft, strategy: ReleaseStrat
 }
 
 export function strategyFromDraft(draft: SiteDraft): ReleaseStrategy {
+  if (draft.strategyMode === 'project-script') return { mode: 'project-script', ciWorkflowFile: draft.ciWorkflowFile?.trim() || DEFAULT_RELEASE_CI_WORKFLOW_FILE, scriptFile: draft.scriptFile?.trim() || DEFAULT_RELEASE_SCRIPT_FILE };
+  if (draft.strategyMode === 'managed-script') return { mode: 'managed-script', ciWorkflowFile: draft.ciWorkflowFile?.trim() || DEFAULT_RELEASE_CI_WORKFLOW_FILE, script: draft.managedScript || '' };
   if (draft.strategyMode === 'existing-script') {
     return { mode: 'existing-script', command: draft.deployCommand.trim(), detectedFrom: draft.detectedFrom };
   }
@@ -432,8 +468,9 @@ export function strategyFromDraft(draft: SiteDraft): ReleaseStrategy {
 }
 
 export function isDraftStrategyComplete(draft: SiteDraft): boolean {
+  if (draft.strategyMode === 'project-script') return Boolean(draft.scriptFile?.trim() || DEFAULT_RELEASE_SCRIPT_FILE);
+  if (draft.strategyMode === 'managed-script') return Boolean(draft.managedScript?.trim());
   if (draft.strategyMode === 'existing-script') return Boolean(draft.deployCommand.trim());
   if (draft.strategyMode === 'generated-compose') return Boolean(draft.composeFile.trim() && draft.composeProject.trim());
   return Boolean(draft.buildCommand.trim() && draft.artifactDirectory.trim() && draft.publicDirectory.startsWith('/'));
 }
-

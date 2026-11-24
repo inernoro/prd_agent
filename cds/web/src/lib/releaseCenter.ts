@@ -1,12 +1,18 @@
-export const DEFAULT_RELEASE_CENTER_PROJECT_ID = 'prd-agent';
+import { DEFAULT_RELEASE_CENTER_PROJECT_ID } from '../../../src/shared/release-center-links';
+export { DEFAULT_RELEASE_CENTER_PROJECT_ID, releaseCenterHref } from '../../../src/shared/release-center-links';
 export const DEFAULT_RELEASE_HEALTH_PATH = '/api/health';
-
 const LAST_RELEASE_CENTER_PROJECT_KEY = 'cds:lastReleaseCenterProjectId';
 
-export function releaseCenterHref(projectId?: string | null): string {
-  const normalized = (projectId || '').trim();
-  if (!normalized || normalized === DEFAULT_RELEASE_CENTER_PROJECT_ID) return '/release-center';
-  return `/release-center?project=${encodeURIComponent(normalized)}`;
+/** 跨实例链接和本地记忆都必须先与当前实例的项目清单核对，不能冒用首项。 */
+export function resolveReleaseProject(projectId: string, projects: readonly { id: string }[]): string {
+  return projects.some((project) => project.id === projectId) ? projectId : '';
+}
+
+export function resolveInitialReleaseProject(searchParams: URLSearchParams, storage: Storage | undefined, projects: readonly { id: string }[]): string {
+  let requested = searchParams.get('project')?.trim();
+  try { requested ||= storage?.getItem(LAST_RELEASE_CENTER_PROJECT_KEY)?.trim(); } catch { /* storage may be unavailable */ }
+  if (requested) return resolveReleaseProject(requested, projects);
+  return resolveReleaseProject(DEFAULT_RELEASE_CENTER_PROJECT_ID, projects) || projects[0]?.id || '';
 }
 
 export function initialReleaseCenterProject(searchParams: URLSearchParams, storage?: Storage): string {
@@ -49,6 +55,22 @@ export function releaseCenterDeepLink(searchParams: URLSearchParams): {
     ...(branchId ? { branchId } : {}),
     ...(commitSha ? { commitSha } : {}),
   };
+}
+
+/** 发布中心的五个分区。顺序即导航顺序，设计稿 §0 点名的那五格。 */
+export const RELEASE_CENTER_SECTIONS = ['fleet', 'config', 'rules', 'health', 'evidence'] as const;
+
+export type ReleaseCenterSection = (typeof RELEASE_CENTER_SECTIONS)[number];
+
+/**
+ * `?section=fleet|config|rules|health|evidence`——让「我看的是这一屏」可以直接发给别人。
+ *
+ * 不认识的值一律退回 fleet：分区是有限枚举，URL 上多打一个字母不该让页面白屏，
+ * 也不该把它当成一个真实分区去渲染空内容。
+ */
+export function releaseCenterSection(searchParams: URLSearchParams): ReleaseCenterSection {
+  const raw = searchParams.get('section')?.trim() as ReleaseCenterSection | undefined;
+  return raw && RELEASE_CENTER_SECTIONS.includes(raw) ? raw : 'fleet';
 }
 
 export function rememberReleaseCenterProject(projectId: string, storage?: Storage): void {

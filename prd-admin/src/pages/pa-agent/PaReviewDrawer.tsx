@@ -137,7 +137,7 @@ export function PaReviewDrawer({ open, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="flex flex-col shadow-2xl border-l border-l-token-subtle"
+        className="surface-tone-dark flex flex-col shadow-2xl border-l border-l-token-subtle"
         style={{ width: 'min(560px, 100vw)', height: '100vh', maxHeight: '100vh', background: '#0f1014' }}
         onClick={e => e.stopPropagation()}
       >

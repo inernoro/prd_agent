@@ -158,6 +158,9 @@ export function AuroraBackground({
     } catch {
       return; // WebGL 不可用：氛围层静默缺席，页面功能不受影响
     }
+    // 只有 WebGL1 时同样缺席：ogl 静默退回 webgl1，而这里的 shader 是 GLSL ES 3，
+    // 编译失败只进 console 不抛异常，不挡就会空转一个不画东西的渲染循环
+    if (!renderer.isWebgl2) return;
     const gl = renderer.gl;
     gl.clearColor(0, 0, 0, 0);
     gl.enable(gl.BLEND);

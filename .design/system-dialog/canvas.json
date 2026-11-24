@@ -1,0 +1,19 @@
+{
+  "artboards": [
+    { "file": "Current.dc.html", "x": 0, "y": 0, "w": 1180, "h": 760, "title": "对照 · 现状" },
+    { "file": "Main.dc.html", "x": 0, "y": 900, "w": 1080, "h": 1200, "title": "A 控制台" },
+    { "file": "DirectionB.dc.html", "x": 1180, "y": 900, "w": 1080, "h": 1200, "title": "B 印样条" },
+    { "file": "DirectionC.dc.html", "x": 2360, "y": 900, "w": 1080, "h": 1200, "title": "C 回执" },
+    { "file": "DirectionD.dc.html", "x": 3540, "y": 900, "w": 1080, "h": 1200, "title": "D 贴边动作条" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 1280,
+      "y": 40,
+      "w": 460,
+      "text": "系统弹窗（alert / confirm / prompt），54 个调用点共用。\n上排是现状对照，下排四个方向。\n\n四个方向差的是「轴」不是圆角：\nA 一致性 · B 身份 · C 可读性 · D 位置"
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

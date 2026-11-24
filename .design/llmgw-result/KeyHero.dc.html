@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14); --warn: #eab308; --ok: #22c55e;
+      --radius: 8px; --radius-sm: 6px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .tag { font-size: 12px; color: var(--accent); letter-spacing: 0.04em; white-space: nowrap; }
+    .rule { border-top: 1px dashed rgba(167,139,250,0.5); flex: 1 1 auto; }
+  </style>
+</helmet>
+
+<div style="padding: 32px; display: flex; flex-direction: column; gap: 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;">密钥主区 · 标注</div>
+    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">这一屏唯一取不回来的东西。改动的核心是把它从「三等分之一」提到「独占一行的重心」，并让它常驻在页签之上。</div>
+  </div>
+
+  <!-- 上标注 -->
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <span class="tag">卡片内边距 24</span><span class="rule"></span><span class="tag">accent 描边 + accent-soft 底，与第 2 步结果块同一语言</span>
+  </div>
+
+  <div style="border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); padding: 24px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap;">
+    <div style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 12px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500;">一次性密钥</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(234,179,8,0.32); background: rgba(234,179,8,0.12); color: var(--warn); font-size: 12px; font-weight: 500;">只显示一次</span>
+      </div>
+      <div class="mono" style="font-size: 17px; font-weight: 650; color: var(--text-primary); line-height: 1.5; word-break: break-all;">gwk_7f2c9a1e4b8d3f6021ca77e5db34QpZm1x9LkNvR2sT</div>
+      <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">离开或刷新即不可再取；不要进仓库、截图或日志。</span>
+    </div>
+    <button type="button" style="flex: none; height: 44px; padding: 0 24px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-1a1.5 1.5 0 0 0-1.5-1.5H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h1"/></svg>
+      复制密钥
+    </button>
+  </div>
+
+  <!-- 下标注 -->
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <span class="tag">眉标 12px · 码 17px mono 650 · 注释 13px</span><span class="rule"></span><span class="tag">主按钮 44px 高（比页面其它按钮高一档）</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px;">
+    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 8px;">
+      <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">为什么它要独占一行</span>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">接入地址、调用用途码、cURL、提示词随时能回来查；密钥刷新即失。三等分是把「不可逆」和「随时可查」摆成了同权。</span>
+    </div>
+    <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 8px;">
+      <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">为什么它要移出页签</span>
+      <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">现在密钥在「接入信息」页签里，切到 cURL 就被切走了——而它只显示一次。移到页签之上常驻，切页签不会让它消失。</span>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 8px; background: rgba(234,179,8,0.12); border: 1px solid rgba(234,179,8,0.32); border-radius: var(--radius-sm); padding: 14px 16px;">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" style="flex: none; margin-top: 3px;"><path d="M8 5v4"/><path d="M8 11.5v.01"/><circle cx="8" cy="8" r="6.25"/></svg>
+    <span style="font-size: 13px; color: var(--text-secondary); line-height: 1.7;">窄屏（≤480）码降到 15px、按钮铺满一行 44px 高。密钥一律 <span class="mono">word-break: break-all</span> 完整可见——不许横向滚动、不许裁切。</span>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

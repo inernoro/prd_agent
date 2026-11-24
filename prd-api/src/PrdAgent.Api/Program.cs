@@ -15,6 +15,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
 using PrdAgent.Api.Middleware;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Diagnostics;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Cache;
@@ -90,6 +91,12 @@ builder.Services.AddControllers(options =>
     {
         // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
         options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+        // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。
+        // 挂在 ActivityLog 之后：被挡下的请求本来就没发生写入，不该留一条动态。
+        options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();
+        // 接入台配额：sk-ak 直连内置工具接口（绕开 /api/mcp）时套同一套闸门，
+        // 否则「每日 50 张」只拦得住走网关的那条路。
+        options.Filters.Add<PrdAgent.Api.Filters.AgentApiKeyUsageFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -128,8 +135,22 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 var llmGatewayDatabaseName = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
-builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
-builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName));
+// 网关库可以单独部署在另一台 Mongo：取值口径与 llmgw serving 的 Program.cs 一致，未配置时回落业务库连接。
+var llmGatewayMongoConnectionString = builder.Configuration["LlmGateway:MongoConnectionString"]
+    ?? builder.Configuration["LLMGW_MONGO_CONNECTION_STRING"];
+if (string.IsNullOrWhiteSpace(llmGatewayMongoConnectionString)) llmGatewayMongoConnectionString = mongoConnectionString;
+// 模型请求日志由网关 serving 写进网关库，MAP 侧日志页 / 成本统计读同一份，不再读业务库里的旧集合。
+// 网关库里还有外部租户的日志：MAP 只看、只改、只删内部租户那一份。
+var llmGatewayInternalTenantId = builder.Configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configuredTenantId
+    ? configuredTenantId
+    : PrdAgent.Core.LlmGateway.GatewayTenantDefaults.InternalTenantId;
+builder.Services.AddSingleton(new MongoDbContext(
+    mongoConnectionString,
+    mongoDatabaseName,
+    llmRequestLogDatabaseName: llmGatewayDatabaseName,
+    llmRequestLogConnectionString: llmGatewayMongoConnectionString,
+    llmRequestLogTenantId: llmGatewayInternalTenantId));
+builder.Services.AddSingleton(new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName, llmGatewayInternalTenantId));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
@@ -141,8 +162,21 @@ builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundWebS
     PrdAgent.Infrastructure.Services.SafeOutboundWebSocketConnector>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IAdminNotificationAudience, PrdAgent.Api.Services.AdminNotificationAudience>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
+// 首页槽位认领时把外部图片复制进我们自己的存储（供应商的临时/签名地址不能原样挂上首页）
+builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
+// 生图模型契约的覆盖表刷新器：让「上游出了新生图模型」不再等于「改代码 + 发一次版」。
+builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
+    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    hostRole: "prd-api",
+    // MAP 这一侧只服务自己那个租户（LlmGateway:InternalTenantId），
+    // 所以它配的契约可以安全地装进进程全局表。
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.SingleTenant,
+    sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
@@ -158,13 +192,28 @@ builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferServi
     PrdAgent.Api.Services.PeerSync.PeerSyncTransferService>();
 // 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
 builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
+// CDS 验收报告每小时自动同步（此前只有手动入口，于是镜像库长期是陈的）。
+// 只在权威部署上跑：同项目所有分支预览共用一个库，多份同时写会互相打架。
+builder.Services.AddHostedService<PrdAgent.Api.Services.CdsReportImportWorker>();
+
+// 跨 MAP 实例数据同步（动态授权，一次授权跑一次；详见 doc/design.platform.cross-instance-data-sync.md）。
+// Vault 必须是单例：导出令牌只活在内存里，换成 Scoped 就等于每个请求一个空保险箱。
+builder.Services.AddSingleton<PrdAgent.Api.Services.DataSync.DataSyncTokenVault>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DataSync.DataSyncRunWorker>();
 
 // 双链 + 反向链接（详见 doc/design.knowledge-base.mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.IDocumentVersionSnapshotWriter>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>());
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>();
+builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Security.TaskContinuationTokens>();
+builder.Services.AddSingleton<ITaskExecutionAuthorizer, PrdAgent.Infrastructure.Security.TaskExecutionAuthorizer>();
+builder.Services.AddMapModelEgressGuard();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
 // BackgroundService 未捕获异常时不要拖垮整个 Host。单个 Worker 崩溃已有
@@ -175,7 +224,8 @@ builder.Services.Configure<HostOptions>(options =>
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
 });
 
-builder.Services.AddHostedService<LlmRequestLogWatchdog>();
+// 模型请求日志由网关 serving 写、归网关库所有，MAP 不再跑 running 超时纠错：
+// 它按 MAP 的超时口径会把网关仍在执行的长请求（ASR 等允许 600-900 秒）误改成失败。
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.AiScoreWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.TranscriptRunWatchdog>();
@@ -198,7 +248,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.I
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
-// 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
+// 业务模型目录适配器：跟随下方唯一的 HTTP ILlmGateway。
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
 // 模型池故障通知与自动探活
@@ -207,91 +257,38 @@ builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHea
 builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWorker>();
 
 // 模型调度执行器
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ModelCatalogContractProbe>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
-// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。生产必须显式配置；
-// 非生产缺省 inproc，便于本地开发。生产回滚必须由 rollback 脚本显式设置 inproc，禁止漏配静默回退。
-// http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
-// HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
-// 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(sp =>
-    new PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter(
-        sp.GetRequiredService<LlmGatewayDataContext>().Context,
-        sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
-
-var configuredGatewayMode = builder.Configuration["LlmGateway:Mode"]?.Trim();
-var gatewayMode = PrdAgent.Infrastructure.LlmGateway.LlmGatewayModePolicy.Resolve(
-    configuredGatewayMode,
-    builder.Environment.IsProduction());
-// 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
-var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] ?? string.Empty)
-    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-    .Where(x => !string.IsNullOrWhiteSpace(x))
-    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
-    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-    .Where(x => !string.IsNullOrWhiteSpace(x))
-    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
-// 逻辑模型属于独立 Gateway 配置域。默认即使 MAP 仍处于 inproc 迁移期，也装配统一路由器，
-// 让显式逻辑模型请求由 ShadowLlmGateway 强制转交 llmgw-serve；普通旧模型仍保持 inproc。
-// 紧急回滚可显式设置 false，但不得用旧模型池静默解释逻辑模型同名 key。
-var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true;
-
-// 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
+// MAP 只有一条模型调用路径：HttpLlmGatewayClient 跨进程调用独立部署的 serving（/gw/v1/*）。
+// 进程内直连与影子比对已删除；出问题靠发布版本回退，不再有运行时开关切回旧路径。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILogicalModelGateway>(sp =>
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>(sp => new(
+    sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
+    sp.GetRequiredService<ILLMRequestContextAccessor>(),
+    sp.GetService<IAssetStorage>(),
+    sp.GetRequiredService<LlmGatewayDataContext>(),
+    sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
+    taskAuthorizer: sp.GetRequiredService<ITaskExecutionAuthorizer>()));
+builder.Services.AddScoped<PrdAgent.Api.Services.IVisualModelPolicyService, PrdAgent.Api.Services.VisualModelPolicyService>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 
-if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
-        sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
-}
-else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
-{
-    // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
-    // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
-    // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
-    var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>(sp =>
-        new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
-            inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
-                sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.IModelResolver>(),
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
-                concurrencyCoordinator: sp.GetService<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>(),
-                configuration: sp.GetRequiredService<IConfiguration>()),
-            http: sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>(),
-            logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
-            writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
-            fullSamplePercent: shadowSamplePercent,
-            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-            httpAllowlist: httpAllowlist,
-            fullSampleAllowlist: shadowFullSampleAllowlist,
-            releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA"),
-            configuration: sp.GetRequiredService<IConfiguration>()));
-}
-else
-{
-    builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
-}
-
-// 注册 Core 层的 ILlmGateway 接口（同一实例）
+// 把同一个实例也暴露成 Core 层那个窄接口。宽接口已继承窄接口，这里是隐式向上转型；
+// 此前写的是强制类型转换，接口一旦漂移只会在运行时炸，现在由编译期兜住。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =>
-    (PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway)sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>());
+    sp.GetRequiredService<PrdAgent.Core.LlmGateway.ILlmGateway>());
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenerationClient>(sp =>
     sp.GetRequiredService<OpenAIImageClient>());
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ImageGen.IImageGenGateway,
     PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
@@ -311,10 +308,38 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.PrdDocumentAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.SpeechAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Speech.SpeechQuotaService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Speech.SpeechGenerationService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.Speech.SpeechRunWorker>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.HostedSiteService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteRevisionService, PrdAgent.Infrastructure.Services.HostedSiteRevisionService>();
+// 离线 HTML 打包（站内资源内嵌成单文件）；权限由 HostedSiteExportController 先过站点 / 分享门禁
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOfflineExportService, PrdAgent.Infrastructure.Services.HostedSiteOfflineExportService>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.HostedSitePreviewAccessService>();
+// 预览 iframe 的可嵌入来源与 CORS 信任来源同源同表（见 HostedSitePreviewEmbedOptions 注释）。
+builder.Services.AddSingleton(
+    PrdAgent.Api.Controllers.Api.HostedSitePreviewEmbedOptions.FromConfiguration(builder.Configuration));
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
+// 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.KnowledgeRetrievalService>();
+
+// 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAskQuotaService, PrdAgent.Infrastructure.Services.AskQuotaService>();
+// 单例：它要在请求结束后继续跑（调用方全在请求路径上，谁都不该为几句开场问题多等一次模型调用），
+// 所以自己持 IServiceScopeFactory 开 scope，而不是蹭调用方那个即将被释放的 scope。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAskOpeningQuestionGenerator, PrdAgent.Infrastructure.Services.AskOpeningQuestionGenerator>();
+// 上传解包进度：Singleton —— 节流用的 _lastWrite 字典必须跨请求存活，
+// Scoped 的话每次请求一个新实例，节流形同虚设（每个文件都写一次 Redis）
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IUploadProgressService, PrdAgent.Infrastructure.Services.UploadProgressService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IActivityActionRecorder, PrdAgent.Api.Services.ActivityActionRecorder>();
 // 网页访客痕迹审计 + 自定义分类自动生成
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteViewEventService, PrdAgent.Infrastructure.Services.SiteViewEventService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebFolderService, PrdAgent.Infrastructure.Services.WebFolderService>();
@@ -350,11 +375,72 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>());
+builder.Services.AddSingleton<PrdAgent.Api.Services.DocumentAssetCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.DocumentAssetCleanupService>());
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactGatewayGrantService,
+    PrdAgent.Api.Services.DesignArtifactGatewayGrantService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
+    PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
+    PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
+// 发布前私有资料确认（2026-09-24）：发布到已分享站点 / 新建对外分享 / 设为公开之前的唯一判定源。
+// 两个网页托管 Controller 以可选依赖注入它；这里漏注册就等于整道闸不存在，有守卫测试盯着。
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceStore,
+    PrdAgent.Api.Services.MongoHostedSitePrivateSourceStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceGate,
+    PrdAgent.Api.Services.HostedSitePrivateSourceGate>();
+// 风格目录（OpenDesign 设计系统快照，内嵌资源）：启动时加载一次；缺失或写坏直接让启动失败并说明原因，
+// 不退化成空目录——空目录与「真的没有风格」分不开，风格卡片与样张会静默消失。
+builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignSystemCatalog>(
+    PrdAgent.Api.Services.DesignSystemCatalog.LoadEmbedded());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignGenerationSettingsService,
+    PrdAgent.Api.Services.DesignGenerationSettingsService>();
+// 「我的风格」：每人自己的风格（归属判定在服务里）；生成时由设置服务按 personal:<id> + 当前用户取出冻结。
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalDesignStyleStore,
+    PrdAgent.Api.Services.MongoPersonalDesignStyleStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalDesignStyleService,
+    PrdAgent.Api.Services.PersonalDesignStyleService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalStyleDerivationService,
+    PrdAgent.Api.Services.PersonalStyleDerivationService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,
+    PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactCancellationCoordinator,
+    PrdAgent.Api.Services.DesignArtifactCancellationCoordinator>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IWebPageDesignArtifactLifecycleAdapter,
+    PrdAgent.Api.Services.WebPageDesignArtifactLifecycleAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptDesignArtifactAdapter,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptContinuationService,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptContinuationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptOpenDesignRunService,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptOpenDesignRunService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactRecoveryWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptPublishCoordinator,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptPublishCoordinator>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptPublishRecoveryWorker>();
+builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+// OpenDesign 两条传输面：直连设计执行服务（service）/ 经 CDS 会话（cds-session，回退用）。
+// 选哪条只由 OpenDesignTransportResolver 一处判定（DesignRuntime:OpenDesign:Transport / BaseUrl / ApiKey）。
+PrdAgent.Api.Services.OpenDesignTransportServiceCollectionExtensions.AddOpenDesignExecutors(builder.Services);
+builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedCommentReplyWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
+builder.Services.AddScoped<PrdAgent.Api.Services.IWorkflowWebpageDesignService,
+    PrdAgent.Api.Services.WorkflowWebpageDesignService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 // 工作流结构校验 + 自动接线 + 缺项扫描（纯函数，无状态）
@@ -365,6 +451,13 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>(
 
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteDeletionCleanupService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteOptimizationCleanupService>();
+
+// 关键 MongoDB 索引巡检：启动后查一次清理任务与并发正确性依赖的人工索引在不在，
+// 缺了写 Warning（第一句写后果），只查不建（no-auto-index），不阻塞启动、不参与健康判定。
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Database.MongoIndexAdvisory>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MongoIndexAdvisoryStartupCheck>();
 
 // 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
 builder.Services.AddHostedService<PrdAgent.Api.Services.EscalationNotificationCleanupService>();
@@ -402,6 +495,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
 
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
+builder.Services.AddScoped<PrdAgent.Api.Services.BusinessModelReferenceService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
@@ -422,6 +516,21 @@ builder.Services.AddHttpClient("AiNews", c =>
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
 // 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
 builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
+
+// 模型排行榜：每天把 arena.ai 的公开榜单同步进本地库，页面只读库不打外站。
+// 超时给到 30 秒：榜单页是服务端渲染的大页面（agent 榜约 1.8MB、text 榜约 5.4MB），
+// 按 AiNews 那 8 秒配会稳定超时。出站仍走 SafeOutboundHttpHandler，不绕开 SSRF 防护。
+builder.Services.AddHttpClient(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker.HttpClientName, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-ModelLeaderboard/1.0");
+})
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+// 同步逻辑的唯一实现，周期 Worker 与管理员手动端点共用，避免两份各自漂移。
+builder.Services.AddScoped<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncService>();
+// 只在权威部署上跑：快照是共享库里的全局单行状态，多个分支预览同时写会互相覆盖。
+builder.Services.AddHostedService<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker>();
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，ASR/vision 统一走 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
@@ -446,23 +555,45 @@ builder.Services.AddHttpClient("McpLoopback", c =>
         RemoteCertificateValidationCallback = (_, _, _, _) => true,
     },
 });
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeIndexRefreshQueue>();
+builder.Services.AddScoped<PrdAgent.Api.Services.KnowledgeIndexRefreshProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.WritingDocumentProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
+// 接入台（MCP）：用量闸门 + 调用记录
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.ILiteraryMcpModelSelectionService,
+    PrdAgent.Api.Services.Mcp.LiteraryMcpModelSelectionService>();
+// 网关回环续跳的自证令牌：每进程一份，随进程生灭，不落库
+builder.Services.AddSingleton<PrdAgent.Api.Services.Mcp.McpLoopbackSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentRecordingArchiveWorker>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.LogArchiveService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.LogArchiveWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
 // 启动时把内置「再加工·智能体」种入 DB（reprocess_agents 集合）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.BackgroundTasks.ModelUpgradeCanaryWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ModelReferences.ModelRuntimeReferenceSnapshotBuilder>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ModelReferences.ModelRuntimeReferenceSnapshotWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductClaimWebhookWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductScheduledNotificationWorker>();
+builder.Services.AddHttpClient("ProductAnnouncements")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddScoped<PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncWorker>();
 // 应用调用者同步：启动时增量注册代码中的 AppCaller（含 pa-agent.chat::chat），并自动回填 chat 模型组
 // 管理后台「初始化应用」仍可全量对齐；二者互补，新 Agent 无需人工点初始化
 builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
@@ -483,6 +614,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgen
 builder.Services.AddHttpClient("SafeOutbound")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddScoped<IMiduoPlanetSsoAuditWriter, MiduoPlanetSsoAuditWriter>();
 
 // Report Agent Phase 2: 自动采集服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
@@ -495,6 +627,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGe
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportWebhookService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
+// Report Agent 月报：周报/月报共用的互动服务 + 访问者身份解析
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportInteractionService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportViewerResolver>();
 // Report Agent v2.0: 工作流管道 + 个人数据源
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, PrdAgent.Api.Services.ReportAgent.WorkflowExecutionService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();
@@ -656,15 +791,24 @@ builder.Services.AddSingleton<IAssetStorageRuntimeInfo>(sp =>
     sp.GetRequiredService<IAssetStorage>() as IAssetStorageRuntimeInfo
     ?? throw new InvalidOperationException("IAssetStorage 实现未暴露运行时提供商信息"));
 builder.Services.AddSingleton<AssetStorageReadinessProbe>();
+builder.Services.AddSingleton<ApplicationReadinessProbe>();
 builder.Services.AddHttpClient("AssetStorageReadiness", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
     client.DefaultRequestHeaders.CacheControl =
         new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
 });
+builder.Services.AddHttpClient("AssetStorageStream", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+});
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
+builder.Services.AddSingleton<IRequirementExcelParser, RequirementExcelParser>();
 
 // 海鲜市场「技能包」zip 元数据解析
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.MarketplaceSkills.SkillZipMetadataExtractor>();
@@ -689,9 +833,9 @@ builder.Services.AddSingleton<IIdGenerator>(sp =>
 
 // Run 事件存储（断线续传/观测）：生产用 Redis（高频写，避免 Mongo 写放大）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
-    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
+    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24), taskExecutions: sp.GetRequiredService<ITaskExecutionCoordinator>()));
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
-    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
+    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString, builder.Configuration));
 
 // 注册分布式限流服务（基于 Redis）
 builder.Services.AddSingleton<IRateLimitService>(sp =>
@@ -739,6 +883,18 @@ else if (Encoding.UTF8.GetBytes(apiKeyCryptoSecret.Trim()).Length < 32)
 var jwtSigningKey = new SymmetricSecurityKey(jwtSecretBytes);
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "prdagent";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "prdagent";
+
+builder.Services.AddSingleton(CdsSsoSettings.Read(builder.Configuration));
+builder.Services.AddSingleton<CdsSsoClient>();
+builder.Services.AddSingleton<CdsSsoSessions>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddTransient<CdsSsoAuditHandler>();
+builder.Services.AddHttpClient(nameof(CdsSsoClient), client =>
+{
+    client.Timeout = CdsSsoAuditHandler.RequestTimeout;
+    client.MaxResponseContentBufferSize = CdsSsoAuditHandler.MaxResponseBytes;
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+    .AddHttpMessageHandler<CdsSsoAuditHandler>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -805,6 +961,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     {
                         logger.LogWarning("[401] Token claims无效 - Path: {Path}, Method: {Method}, IP: {IP}, sub: {Sub}, clientType: {ClientType}, tv: {Tv}",
                             requestPath, requestMethod, clientIp, sub ?? "null", clientType ?? "null", tvStr ?? "null");
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionInvalid);
                         context.Fail("Invalid auth session claims");
                         return;
                     }
@@ -815,7 +974,28 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     {
                         logger.LogWarning("[401] Token版本不匹配(已被撤销) - Path: {Path}, Method: {Method}, IP: {IP}, UserId: {UserId}, ClientType: {ClientType}, TokenVersion: {Tv}, CurrentVersion: {CurrentTv}",
                             requestPath, requestMethod, clientIp, sub, clientType, tv, currentTv);
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionRevoked);
                         context.Fail("Token revoked");
+                        return;
+                    }
+
+                    var sessionKey = principal?.FindFirst("sessionKey")?.Value;
+                    if (!CdsSsoSessions.IsDelegated(sessionKey)) return;
+
+                    var services = context.HttpContext.RequestServices;
+                    var cdsSettings = services.GetRequiredService<CdsSsoSettings>();
+                    var cdsSessions = services.GetRequiredService<CdsSsoSessions>();
+                    context.Response.Headers.CacheControl = "no-store";
+                    if (clientType != "admin" || !cdsSettings.IsForRequest(context.Request) ||
+                        !await cdsSessions.IsCurrentAsync(sessionKey!, sub, principal?.FindFirst("role")?.Value,
+                            context.HttpContext.RequestAborted))
+                    {
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                            context.HttpContext,
+                            PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionRevoked);
+                        context.Fail("CDS authorization revoked");
                     }
                 }
                 catch (Exception ex)
@@ -823,6 +1003,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     // 安全兜底：依赖服务异常时不直接放行
                     logger.LogWarning(ex, "[401] Token验证异常 - Path: {Path}, Method: {Method}, IP: {IP}",
                         requestPath, requestMethod, clientIp);
+                    PrdAgent.Api.Authentication.AuthorizationFailureContract.Set(
+                        context.HttpContext,
+                        PrdAgent.Api.Authentication.AuthorizationFailureContract.SessionValidationUnavailable);
                     context.Fail("Token validation failed");
                 }
             },
@@ -841,10 +1024,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
                 // 跳过默认 challenge 响应（会覆盖 body）
                 context.HandleResponse();
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.ContentType = "application/json; charset=utf-8";
-                var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
-                await context.Response.WriteAsync(JsonSerializer.Serialize(payload, jsonOptions));
+                await PrdAgent.Api.Authentication.AuthorizationFailureContract.WriteChallengeAsync(
+                    context.HttpContext,
+                    jsonOptions);
             },
             OnForbidden = async context =>
             {
@@ -860,6 +1042,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options => { })
     .AddScheme<PrdAgent.Api.Authentication.AiAccessKeyAuthenticationOptions, PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler>(
         PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        options => { })
+    .AddScheme<PrdAgent.Api.Authentication.StableSmokeAuthenticationOptions, PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler>(
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName,
         options => { });
 
 builder.Services.AddAuthorization(options =>
@@ -868,7 +1053,8 @@ builder.Services.AddAuthorization(options =>
     options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
         JwtBearerDefaults.AuthenticationScheme,
         "ApiKey",
-        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName)
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
         .Build();
 });
@@ -929,7 +1115,7 @@ builder.Services.AddCors(options =>
                 })
                 .AllowAnyHeader()
                 .AllowAnyMethod()
-                .WithExposedHeaders("X-Perm-Fingerprint");
+                .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count", "X-Offline-Export-External-Count", "X-Offline-Export-External");
             return;
         }
 
@@ -937,7 +1123,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .WithExposedHeaders("X-Perm-Fingerprint");
+            .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count", "X-Offline-Export-External-Count", "X-Offline-Export-External");
     });
 });
 
@@ -1273,6 +1459,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeJobQueue,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InMemoryInfraAgentRuntimeJobQueue>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentRuntimeWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentSessionCleanupWorker>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
 // CDS 验收报告导入：复用「系统互联」CDS 全局连接，把 CDS 报告增量同步进知识库（一次鉴权，无握手）。
@@ -1285,6 +1472,21 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentHookProfileServic
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentHookProfileService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileService,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentRuntimeProfileService>();
+
+// 通用对话智能体（见 doc/design.platform.chat-agent.md）。
+// 适配层 + 进程内轮次队列 + 后台 worker；对话循环在 agent 运行时的官方 SDK 里，此处没有循环。
+builder.Services.Configure<PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions>(
+    builder.Configuration.GetSection(
+        PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions.SectionName));
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentTurnQueue,
+    PrdAgent.Infrastructure.Services.ChatAgent.InMemoryChatAgentTurnQueue>();
+// 一次性转派的 runId → 发起人台账。必须是 Singleton：工具回调是另一条 HTTP 请求进来的，
+// Scoped 的话回调那一侧永远拿到一个空台账，工具会全部因「没有用户身份」而拒绝执行。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentOneOffRunRegistry,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOneOffRunRegistry>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IChatAgentService,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ChatAgentTurnWorker>();
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.cds.agent.sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
@@ -1305,6 +1507,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IDynamicSidecarRegistry,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.DynamicSidecarRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
+builder.Services.AddSingleton<ITaskScopedRuntimeGrantIssuer, TaskScopedRuntimeGrantIssuer>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeAdapter,
     PrdAgent.Infrastructure.Services.AgentRuntime.SidecarRuntimeAdapter>();
 // Lite 只读审查降级适配器：R1 未闭合 / 官方 sidecar 不可用时的兜底路径（走现有 LLM Gateway）。
@@ -1319,6 +1522,23 @@ builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
 builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService>();
+
+// 把已登记 ToolName 的专业智能体各包成一把工具，交给通用对话智能体自己转派
+// （用户不必先挑智能体）。名单来自 AgentCapabilityRegistry.Delegatable，这里不另抄一份——
+// 契约里新增一个可转派智能体，工具自动就位，不会出现「登记了但没人接线」。
+// 必须在 AgentToolRegistry 之前注册：它构造时会把这些 IAgentTool 一并收进去。
+foreach (var delegatable in PrdAgent.Core.Models.AgentUniverse.AgentCapabilityRegistry.Delegatable)
+{
+    var capability = delegatable;
+    builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.AgentTools.IAgentTool>(sp =>
+        new PrdAgent.Api.Services.Toolbox.AgentDelegateTool(
+            capability,
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<PrdAgent.Api.Services.Toolbox.AgentDelegateTool>>()));
+}
+
+// 进程级未处理异常 / 真实请求计数（自检端点的观测值来源，规则 degradation-must-alarm）。
+builder.Services.AddSingleton<PrdAgent.Api.Middleware.ApiFaultTracker>();
 
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
@@ -1342,11 +1562,23 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
     PrdAgent.Infrastructure.Services.Authorization.GitHubAuthHandler>();
 
+// 历史资源只探测配置的可信源，不跟随跳转；保留系统代理与 TLS 验证。
+builder.Services.AddSingleton(sp => new PrdAgent.Api.Services.HistoricalAssetUrlResolver(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<ILogger<PrdAgent.Api.Services.HistoricalAssetUrlResolver>>(),
+    sp.GetRequiredService<MongoDbContext>().ApiRequestLogs, sp.GetRequiredService<IHttpContextAccessor>()));
+builder.Services.AddHttpClient(nameof(PrdAgent.Api.Services.HistoricalAssetUrlResolver))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+
 // 注册 Webhook 通知服务。Webhook URL 由用户配置，禁用自动重定向防止绕过首跳 SSRF 校验。
 builder.Services.AddHttpClient("WebhookClient")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHttpClient("webhook")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddHttpClient("product-claim-webhook", client => client.Timeout = TimeSpan.FromSeconds(10))
+    .RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHttpClient("TapdBugAgent", client =>
@@ -1370,6 +1602,9 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubOAuthService,
     PrdAgent.Infrastructure.GitHub.GitHubOAuthService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubClient,
     PrdAgent.Infrastructure.GitHub.GitHubPrClient>();
+// per-user GitHub 连接的唯一判定源（连接状态 / token 解密 / 仓库·分支·目录读取）。
+// 知识库 GitHub 同步、共用连接中心 /api/github/* 都走它，避免各应用再抄一份 Device Flow。
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.GitHubUserConnectionService>();
 
 // PR Review V2（pr-review）业务层服务 —— 消费上面的 GitHub 基础设施
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
@@ -1405,6 +1640,8 @@ builder.Services.AddScoped<IGapNotificationService>(sp =>
     return new GapNotificationService(cache, groupService);
 });
 
+// 平台最终启动总闸：新增 HostedService 漏写保护，也必须经过登记与部署准入。
+PrdAgent.Api.Services.BackgroundTasks.BackgroundTaskAdmissionRegistration.EnforceBackgroundTaskAdmission(builder.Services);
 var app = builder.Build();
 
 // 初始化数据库（创建管理员账号和初始邀请码）
@@ -1412,7 +1649,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
     var idGenerator = scope.ServiceProvider.GetRequiredService<IIdGenerator>();
-    var initializer = new DatabaseInitializer(db, idGenerator);
+    var initializer = new DatabaseInitializer(
+        db,
+        idGenerator,
+        builder.Configuration);
     await initializer.InitializeAsync();
 }
 
@@ -1446,39 +1686,14 @@ if (string.Equals(
 }
 
 // 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
+// 观测：把穿透整个管道的异常与真实请求数变成机器读得到的数（规则 degradation-must-alarm）。
+// 必须在最外层——被内层组件处理掉的异常不会走到这里，而 2026-09-09 那次事故的异常
+// 正是一路穿透到 Kestrel 才被记录的。只记不吞。
+app.UseMiddleware<PrdAgent.Api.Middleware.ApiFaultTrackingMiddleware>();
 app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
 app.UseCors();
-app.Use(async (context, next) =>
-{
-    var provided = context.Request.Headers["X-Llmgw-Shadow-Sample-Key"].ToString().Trim();
-    if (string.IsNullOrWhiteSpace(provided))
-    {
-        await next();
-        return;
-    }
-
-    var expected = (builder.Configuration["LlmGwServe:ApiKey"] ?? string.Empty).Trim();
-    if (!FixedTimeEqualsNonEmpty(expected, provided))
-    {
-        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        return;
-    }
-
-    var accessor = context.RequestServices.GetRequiredService<ILLMRequestContextAccessor>();
-    using var _ = accessor.BeginScope(new LlmRequestContext(
-        RequestId: context.TraceIdentifier,
-        GroupId: null,
-        SessionId: null,
-        UserId: null,
-        ViewRole: null,
-        DocumentChars: null,
-        DocumentHash: null,
-        SystemPromptRedacted: null,
-        ForceFullShadowSample: true));
-    await next();
-});
 app.UseWebSockets(new WebSocketOptions
 {
     KeepAliveInterval = TimeSpan.FromSeconds(20),
@@ -1496,12 +1711,27 @@ app.UseAuthorization();
 app.UseMiddleware<PrdAgent.Api.Middleware.AdminPermissionMiddleware>();
 // 权限指纹：每个响应注入 X-Perm-Fingerprint，前端据此判断是否需要刷新权限缓存
 app.UseMiddleware<PrdAgent.Api.Middleware.PermissionFingerprintMiddleware>();
+// 位于认证、权限之后；未登记的新业务不能从此处取得付费执行来源。
+app.UseMiddleware<PrdAgent.Api.Middleware.TaskAdmissionMiddleware>();
 app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
-app.MapGet("/health/ready", AssetStorageReadiness);
-app.MapGet("/api/health/ready", AssetStorageReadiness);
+// 就绪分工（本分支）：/health/ready 回「应用整体就绪」，对象存储单独挂 /health/assets/ready，
+// 免得存储抖一下就把整个应用判成未就绪。主干新增的深度自检按原样保留。
+app.MapGet("/health/ready", ApplicationReadiness);
+app.MapGet("/api/health/ready", ApplicationReadiness);
+app.MapGet("/health/assets/ready", AssetStorageReadiness);
+// 深度自检（2026-09-11，监控自发现协议 doc/spec.platform.monitor-discovery.md）。
+//
+// 与 /health 的分工：那个回「进程还活着」，这个**真把关键链路走一遍**，逐项给定量结论，
+// 并在每条 check 上自报「该怎么监控我」——CDS 插上这个地址就能把监控项建起来。
+//
+// 免鉴权：CDS 探针刻意不携带任何密钥（探测令牌绝不发给外部地址）。所以这里
+// 只回计数、耗时与口径，不回任何业务内容、地址或异常文本。
+// 始终回 200：回 503 会让 CDS 先撞上状态码规则，错误退化成「HTTP 503 不在期望范围」，
+// 而不是「observedValue=3，期望 eq 0」——后者才排得动障。
+app.MapGet("/api/healthz/deep", DeepHealth).AllowAnonymous();
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 
@@ -1540,6 +1770,590 @@ static IResult HealthCheck()
     return Results.Ok(response);
 }
 
+/// <summary>
+/// 深度自检：真跑一次 Mongo 往返，加上进程级的异常与流量计数，每条都自报怎么监控。
+/// </summary>
+static async Task<IResult> DeepHealth(
+    PrdAgent.Api.Middleware.ApiFaultTracker faults,
+    PrdAgent.Infrastructure.Database.MongoDbContext db,
+    PrdAgent.Infrastructure.Database.LlmGatewayDataContext gatewayDb,
+    PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
+    PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
+    PrdAgent.Infrastructure.Database.MongoIndexAdvisory indexAdvisory,
+    ILoggerFactory loggerFactory,
+    IHostEnvironment hostEnvironment,
+    CancellationToken cancellationToken)
+{
+    var now = DateTime.UtcNow;
+
+    // 关键人工索引：深度自检时现查（五个集合各一次 listIndexes，很便宜），
+    // 让 CDS 的常设探针在缺失时响铃——只有启动日志的话，缺了也没人知道（degradation-must-alarm）。
+    // 现查还顺带刷新 /health/ready 的快照，DBA 补建后不必重启。只查不建。
+    // 读不出结论时值落在失败侧哨兵，不许判绿。
+    //
+    // 两个时间边界 + 一次只跑一个：
+    // - 预算 2 秒，必须明显小于 CDS 探针的 5 秒默认超时，否则巡检一慢整个端点被判成连不上，
+    //   同一端点上的其它 check 一起失真；超时时没查完的几条记成「未核实」，照样响铃。
+    // - 60 秒内查过就复用快照：端点匿名可达，被刷时不反复 listIndexes、不反复写告警日志。
+    // - 过期时并发到达的探测共用同一次刷新（single-flight，收在 MongoIndexAdvisory 里）。
+    const int requiredIndexUnknownSentinel = 9999;
+    int requiredIndexIssues;
+    string requiredIndexOutput;
+    try
+    {
+        await indexAdvisory.RefreshIfStaleAsync(
+            db.Database,
+            loggerFactory.CreateLogger<PrdAgent.Infrastructure.Database.MongoIndexAdvisory>(),
+            maxAge: TimeSpan.FromSeconds(60),
+            budget: TimeSpan.FromSeconds(2));
+    }
+    catch (Exception)
+    {
+        // 意外错误：下面按现有快照出结论，没有快照就落失败侧哨兵
+    }
+    var indexReport = indexAdvisory.LastReport;
+    if (indexReport is null)
+    {
+        requiredIndexIssues = requiredIndexUnknownSentinel;
+        requiredIndexOutput = "关键索引巡检没有产出结论，是否缺索引现在未知；去看容器日志里的索引巡检告警";
+    }
+    else
+    {
+        requiredIndexIssues = indexReport.Missing.Count + indexReport.Unverified.Count;
+        requiredIndexOutput = requiredIndexIssues == 0
+            ? $"{PrdAgent.Infrastructure.Database.RequiredMongoIndexCatalog.All.Count} 条需要人工维护的关键索引都在"
+            : $"缺 {indexReport.Missing.Count} 条、无法核实 {indexReport.Unverified.Count} 条关键索引——"
+              + "清理任务可能在整表扫描、或并发写入可能出现重复；请 DBA 按 "
+              + PrdAgent.Infrastructure.Database.RequiredMongoIndexCatalog.GuidePath + " 补建";
+    }
+    var faultCount = faults.CountWithinWindow();
+    var requests = faults.RequestsWithinWindow();
+    var deploymentIdentity = ReadBuildIdentity();
+    // 开发机直接 dotnet run 时可能没有部署目标；生产环境必须同时取得两端并严格对账。
+    // 预览和正式容器都以 Production 启动，因此缺证据同样会被挡住。
+    var deploymentIdentityFailures = deploymentIdentity.Match switch
+    {
+        BuildIdentity.MatchState.Match => 0,
+        BuildIdentity.MatchState.Mismatch => 1,
+        _ => hostEnvironment.IsProduction() ? 1 : 0,
+    };
+    var deploymentIdentityOutput = deploymentIdentity.Match switch
+    {
+        BuildIdentity.MatchState.Match =>
+            $"运行二进制与部署目标一致（{ShortCommit(deploymentIdentity.ActualCommit)}）",
+        BuildIdentity.MatchState.Mismatch =>
+            BuildIdentity.DescribeMismatch(
+                deploymentIdentity.Match,
+                deploymentIdentity.ActualCommit,
+                deploymentIdentity.DeclaredCommit)
+            ?? "运行二进制与部署目标不一致",
+        _ => "无法取得运行二进制或部署目标的 commit，不能证明当前运行版本正确",
+    };
+
+    // Mongo 往返：这是「后端还能不能干活」最便宜的那条真链路。
+    // 探不通时把耗时记成 -1 而不是 0——0 会被判据读成「快得惊人」，是个假绿。
+    long mongoMs;
+    string mongoOutput;
+    try
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await db.Database.RunCommandAsync<MongoDB.Bson.BsonDocument>(
+            new MongoDB.Bson.BsonDocument("ping", 1), cancellationToken: cancellationToken);
+        mongoMs = started.ElapsedMilliseconds;
+        mongoOutput = $"Mongo 往返 {mongoMs} 毫秒";
+    }
+    catch (Exception ex)
+    {
+        mongoMs = -1;
+        mongoOutput = $"Mongo 探不通：{ex.GetType().Name}";
+    }
+
+    // 榜单快照的陈旧度。这是「同步链路还活着吗」唯一不靠人去点就能读到的信号：
+    // 抓取失败时 SyncService 刻意保留旧快照（宁可旧也不写空），读端点照样 200，
+    // 页面上只有一个需要人打开才看得见的 stale 标签——降级把一次持续失败翻译成了一次
+    // 表面成功（degradation-must-alarm.md）。所以这里对**症状**（数据多旧）而不是
+    // 原因（哪次抓取失败）暴露一条机读判据。
+    //
+    // 两条命门（都是 Codex 在 PR #1538 指出的，两条都会让这个 check 变成一盏永远不亮的灯）：
+    //
+    // 1. **哨兵值必须判失败**。第一版在「一条快照都没有」时把值设成 -1，注释还写着
+    //    「判据会判失败」——而判据是 `lte 48`，-1 当然小于 48，于是同步从来没跑起来过的
+    //    部署会永远绿。哨兵值要选在判据的**失败侧**，不能凭直觉挑一个「看起来异常」的数。
+    //    这里统一用 UnhealthySentinel（远大于阈值），任何取不到数的分支都走它。
+    //
+    // 2. **要看覆盖，不只看最旧的那条**。每个榜的失败是各自 catch 的，成功的照写。
+    //    于是「十一个榜里只有一个同步成功」会让这条查询拿到一份很新的快照而判绿，
+    //    另外十个维度在页面上永远空着却无人告警。所以先比对目录里声明的榜是否都在库里，
+    //    缺了就直接判失败——覆盖不全比数据旧更严重。
+    const double leaderboardUnhealthySentinel = 9999;
+    double leaderboardStaleHours;
+    string leaderboardOutput;
+    try
+    {
+        // 只看「本部署该看的那些」：分支预览与权威部署各写各的文档
+        // （PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope），
+        // 自检要判的是**页面上实际显示的那份**陈不陈旧，不是库里所有部署的文档。
+        var snapshots = await db.ModelLeaderboardSnapshots
+            .Find(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.VisibleFilter())
+            .Project(x => new { x.Board, x.FetchedAt, x.PublishedAt, x.DeploymentSlug })
+            .ToListAsync(cancellationToken);
+
+        var storedBoards = snapshots
+            .Select(x => x.Board)
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingBoards = PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardCatalog.Keys
+            .Where(k => !storedBoards.Contains(k))
+            .ToArray();
+
+        if (snapshots.Count == 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = "一个榜单快照都没有——周期同步从来没成功跑完过，"
+                + "整个模型排行榜页面是空的；去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+        else if (missingBoards.Length > 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = $"缺 {missingBoards.Length} 个榜的快照（{string.Join("、", missingBoards)}）——"
+                + "这些维度在页面上是空的；去看容器日志里这几个榜的同步告警";
+        }
+        else
+        {
+            // 每个榜取**它自己最新的那份**，再在这些里面挑最旧的。
+            //
+            // 不能直接对全量文档取最旧（Codex 在 PR #1538 指出）：首次写的并发窗口
+            // （已在本 PR 修掉，但可能已经在库里留下残留）会让同一个榜有两条文档，
+            // 而同步只更新其中一条、从不删另一条。覆盖判断用的是集合、不受影响，
+            // 但陈旧度会一直盯着那条永远不再更新的孤儿，48 小时后这条 check 就永久告警，
+            // 而实际上每个榜都在正常同步——一条永远响的铃和一条永远不响的铃同样没用。
+            // 挑「哪一份是这个榜当前生效的」用与三个读取点同一个函数，不再各写一遍排序。
+            // 一条都挑不出来时 First() 会抛，被外层 catch 接住落到失败侧哨兵——
+            // 这正是想要的：读不出「页面在显示哪一份」就不能判绿。
+            var oldest = snapshots
+                .GroupBy(x => x.Board, StringComparer.OrdinalIgnoreCase)
+                .Select(g => PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.PickVisible(
+                    g.ToList(), x => x.DeploymentSlug, x => x.FetchedAt))
+                .Where(x => x is not null)
+                .OrderBy(x => x!.PublishedAt ?? x.FetchedAt)
+                .First()!;
+            leaderboardStaleHours = Math.Round((now - (oldest.PublishedAt ?? oldest.FetchedAt)).TotalHours, 1);
+            leaderboardOutput = leaderboardStaleHours <= 48
+                ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
+                : $"最旧榜单的数据日期距今已 {leaderboardStaleHours} 小时（{oldest.Board}）——"
+                  + "请核对官方发布日期和 ModelLeaderboardSync 同步日志";
+        }
+    }
+    catch (Exception ex)
+    {
+        // 读不到就是读不到，不能判绿（同上：哨兵必须在失败侧）
+        leaderboardStaleHours = leaderboardUnhealthySentinel;
+        leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
+    }
+
+    // 自检只读目录，不认领实际调用的半开租约；不可用状态仍如实报告。
+    var visualImageRoute = await PrdAgent.Api.Services.VisualModelRouteProbe.CheckAsync(visualModels, cancellationToken);
+    var visualImageRouteFailures = visualImageRoute.Failures;
+    var visualImageRouteOutput = visualImageRoute.Output;
+
+    // 业务选择器与执行链路必须使用同一个稳定模型身份。只看“目录非空”会漏掉最危险的
+    // 情况：页面展示旧模型池成员名，但运行时只接受 LLM Gateway PublicId。该探针对所有
+    // 仍消费 IModelPoolQueryService 的核心入口执行同一份目录 -> 默认 -> 指定模型闭环。
+    var modelCatalogResult = await modelCatalogContract.CheckAsync(cancellationToken);
+
+    // 生图真实调用结果：路由预检只能证明「现在能解析」，不能证明上一笔真实请求有没有
+    // 被上游或网关拒绝。过去只盯未处理异常，而模型不开放、能力不匹配、上游 4xx/5xx
+    // 都会被业务层转成结构化失败，进程没有抛异常，监控因此永远绿。
+    //
+    // 这里读取网关已经脱敏的请求日志，只看最近 6 小时内 MAP 三个生图场景的最终状态。
+    // 判据用「最新连续失败数」而不是窗口失败总数：故障后成功一次即表示链路已经恢复，
+    // CDS 会留下故障/恢复事件；旧失败不会让红灯再挂 6 小时。
+    var visualImageRecentRequests = 0;
+    var visualImageConsecutiveFailures = -1;
+    const long visualImageLatencyBudgetMs = 180_000;
+    long visualImageLatestSuccessDurationMs = 0;
+    string visualImageOutcomeOutput;
+    string visualImageLatencyOutput;
+    try
+    {
+        var imageCallers = PrdAgent.Api.Services.VisualModelPolicyService.AppCallers;
+        var since = now.AddMinutes(-faults.WindowMinutes);
+        var filter = MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.And(
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Gte(x => x.StartedAt, since),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.In(x => x.AppCallerCode, imageCallers),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Ne(x => x.Status, "running"));
+        var outcomes = await gatewayDb.LlmRequestLogs
+            .Find(filter)
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20)
+            .Project(x => new { x.Status, x.DurationMs })
+            .ToListAsync(cancellationToken);
+        visualImageRecentRequests = outcomes.Count;
+        visualImageConsecutiveFailures = outcomes.TakeWhile(x => x.Status != "succeeded").Count();
+        var latestSuccess = outcomes.FirstOrDefault(x => x.Status == "succeeded");
+        visualImageLatestSuccessDurationMs = Math.Max(0, latestSuccess?.DurationMs ?? 0);
+        visualImageOutcomeOutput = outcomes.Count == 0
+            ? $"最近 {faults.WindowMinutes} 分钟没有生图真实调用，无法用真实结果证明链路可用"
+            : visualImageConsecutiveFailures == 0
+                ? $"最近一笔生图真实调用成功；窗口内采样 {outcomes.Count} 笔"
+                : $"最近连续 {visualImageConsecutiveFailures} 笔生图真实调用失败；详情见网关调用日志";
+        visualImageLatencyOutput = latestSuccess == null
+            ? $"最近 {faults.WindowMinutes} 分钟没有成功的生图调用，无法评估响应耗时"
+            : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs
+                ? $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，处于 180000ms 体验预算内"
+                : $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，超过 180000ms 体验预算；详情见网关调用日志";
+    }
+    catch (Exception ex)
+    {
+        visualImageOutcomeOutput = $"读取生图真实调用结果失败：{ex.GetType().Name}";
+        visualImageLatencyOutput = $"读取生图响应耗时失败：{ex.GetType().Name}";
+    }
+
+    var payload = new Dictionary<string, object?>
+    {
+        ["status"] = faultCount == 0 && mongoMs >= 0 && deploymentIdentityFailures == 0
+            && visualImageRouteFailures == 0
+            && modelCatalogResult.FailureCount == 0
+            && visualImageConsecutiveFailures == 0 ? "pass" : "fail",
+        ["version"] = "1",
+        ["serviceId"] = "prd-api",
+        ["description"] = "MAP 后端深度自检",
+        ["time"] = now.ToString("o"),
+        // check 用 Dictionary 而不是匿名对象：自描述段的键是 `cds:monitor`，带冒号，
+        // 匿名类型的属性名写不出来。
+        ["checks"] = new Dictionary<string, object[]>
+        {
+            ["api:unhandled-exceptions"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "api.unhandled-exceptions",
+                    ["componentType"] = "system",
+                    ["observedValue"] = faultCount,
+                    ["observedUnit"] = "count",
+                    ["status"] = faultCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = faultCount == 0
+                        ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
+                        : $"最近 {faults.WindowMinutes} 分钟出现 {faultCount} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 后端近期未处理异常数",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "api.requests",
+                        // 自称生产：跑在分支预览上时 CDS 会按地址判成分支预览并压过这句自称，
+                        // 所以写 production 不会让临时分支混进负责人的第一屏。
+                        environment = "production",
+                        // 对外只出业务名与红绿，不出地址、判据、日志——所以这条可以公开。
+                        publicVisible = true,
+                        publicName = "MAP 后端",
+                    },
+                },
+            },
+            ["mongo:required-indexes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "mongo.required-indexes",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = requiredIndexIssues,
+                    ["observedUnit"] = "count",
+                    // 与下面 cds:monitor 的 op/value 同一个判据
+                    ["status"] = requiredIndexIssues == 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    // 对外只给数量与后果，不列索引名（端点匿名可读）；名字在容器日志与 /health/ready 里
+                    ["output"] = requiredIndexOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 关键人工索引缺失数",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        // 2 小时一轮，不是 6 小时：CDS 目前不读单条监控的 failuresToAlarm，一律按全局
+                        // 连败 3 次才告警（debt.platform.md MD-1）。6 小时一轮会让缺索引最长 18 小时才响；
+                        // 2 小时 × 3 次仍在 6 小时内。每轮只多 5 次 listIndexes，60 秒内还会复用快照。
+                        intervalSeconds = 7200,
+                        severity = "P1",
+                        // 主动读一次状态，走默认的 active，不设 sampleComponentId
+                    },
+                },
+            },
+            ["model-leaderboard:staleness"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-leaderboard.staleness",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = leaderboardStaleHours,
+                    ["observedUnit"] = "h",
+                    // 与下面 cds:monitor 的 op/value 同一个判据，两处不许各写一遍：
+                    // 拿不到数的分支已经把值置成远大于阈值的哨兵，这里不必再判一次「是不是 -1」
+                    ["status"] = leaderboardStaleHours <= 48 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = leaderboardOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "模型榜快照陈旧度",
+                        field = "observedValue",
+                        // 同步是每天一轮，容忍连着两轮失败（48 小时）再响——与页面上 stale
+                        // 标签同一个阈值，两处不许各定一个
+                        op = "lte",
+                        value = 48,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P2",
+                        // 不设 observeMode：这条是**主动读一次状态**，走默认的 active。
+                        //
+                        // 第一版照抄了上面那条未处理异常的 passive + sampleComponentId，但那两条的
+                        // 形状根本不同：那条判的是「窗口内出了几次异常」，要配一个**另一条 check**
+                        // 给出的请求量才有意义，所以 sampleComponentId 指向 api.requests。
+                        // 这条我却让它指向自己，于是 CDS 会把「快照多旧」同时当成判据值和样本量——
+                        // 刚同步完那一刻值是 0，面板上会显示「0 次真实调用」而拒绝判绿；平时显示
+                        // 12.4，又像是 12 次请求（Codex 在 PR #1538 指出）。
+                    },
+                },
+            },
+            ["api:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "api.requests",
+                    ["componentType"] = "system",
+                    ["observedValue"] = requests,
+                    ["observedUnit"] = "count",
+                    ["status"] = requests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = requests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟有 {requests} 次真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有任何真实调用——上面那条零异常不作数",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 后端近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                        environment = "production",
+                        // 「有没有人在用」是内部判据，对外说它没有意义，不公开。
+                        publicVisible = false,
+                    },
+                },
+            },
+            ["deployment:version-match"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "deployment.version-match",
+                    ["componentType"] = "system",
+                    ["observedValue"] = deploymentIdentityFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = deploymentIdentity.Match == BuildIdentity.MatchState.Unknown
+                        && deploymentIdentityFailures == 0
+                            ? "warn"
+                            : deploymentIdentityFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = deploymentIdentityOutput,
+                    ["actualCommit"] = ShortCommit(deploymentIdentity.ActualCommit),
+                    ["expectedCommit"] = ShortCommit(deploymentIdentity.DeclaredCommit),
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 运行版本与发布目标一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 发布版本",
+                    },
+                },
+            },
+            ["visual-image:default-route"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.default-route",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRouteFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRouteFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRouteOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图模型场景路由",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图模型",
+                    },
+                },
+            },
+            ["model-catalog:selector-runtime-contract"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-catalog.selector-runtime-contract",
+                    ["componentType"] = "service",
+                    ["observedValue"] = modelCatalogResult.FailureCount,
+                    ["observedUnit"] = "count",
+                    ["targetCount"] = modelCatalogResult.TargetCount,
+                    ["catalogEntryCount"] = modelCatalogResult.CatalogEntryCount,
+                    ["status"] = modelCatalogResult.FailureCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = modelCatalogResult.Output,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 业务模型目录与运行时可用性一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 业务模型目录",
+                    },
+                },
+            },
+            ["visual-image:recent-outcomes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.recent-outcomes",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageConsecutiveFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageConsecutiveFailures == 0
+                        ? (visualImageRecentRequests > 0 ? "pass" : "warn")
+                        : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageOutcomeOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用结果",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图真实调用",
+                    },
+                },
+            },
+            ["visual-image:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.requests",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRecentRequests,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRecentRequests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRecentRequests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟采样到 {visualImageRecentRequests} 笔生图真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有生图真实调用",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                        environment = "production",
+                        publicVisible = false,
+                    },
+                },
+            },
+            ["visual-image:latency"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.latency",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageLatestSuccessDurationMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = visualImageLatestSuccessDurationMs == 0
+                        ? "warn"
+                        : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageLatencyOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图最近成功响应耗时",
+                        field = "observedValue",
+                        op = "lte",
+                        value = visualImageLatencyBudgetMs,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P1",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图响应耗时",
+                    },
+                },
+            },
+            ["db:roundtrip"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "db.roundtrip",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = mongoMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = mongoMs >= 0 && mongoMs < 2000 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = mongoOutput,
+                    // 这条按 5 分钟一次：它是会变的量（往返耗时），高频才看得出趋势；
+                    // 上面两条是计数器，6 小时一次足够。节奏由每条 check 自己说，
+                    // 不是整个端点一个频率——这正是把声明放在服务这一侧的好处。
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 数据库往返耗时",
+                        field = "observedValue",
+                        op = "lt",
+                        value = 2000,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 2,
+                        severity = "P1",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 数据库",
+                    },
+                },
+            },
+        },
+    };
+
+    return Results.Content(
+        System.Text.Json.JsonSerializer.Serialize(payload),
+        "application/health+json");
+}
+
 static async Task<IResult> AssetStorageReadiness(
     AssetStorageReadinessProbe probe,
     HttpContext context,
@@ -1563,26 +2377,80 @@ static async Task<IResult> AssetStorageReadiness(
         statusCode: statusCode);
 }
 
+static async Task<IResult> ApplicationReadiness(
+    ApplicationReadinessProbe probe,
+    HttpContext context,
+    CancellationToken cancellationToken,
+    bool force = false)
+{
+    if (force && !AssetStorageReadinessProbe.CanForceProbe(
+            context.Connection.RemoteIpAddress))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    var result = await probe.CheckAsync(
+        force: force,
+        cancellationToken: cancellationToken);
+    var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status503ServiceUnavailable;
+    return TypedResults.Json(
+        result,
+        AppJsonContext.Default.ApplicationReadinessResponse,
+        statusCode: statusCode);
+}
+
 static IResult VersionInfo(IHostEnvironment env)
 {
-    var informationalVersion = Assembly.GetExecutingAssembly()
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-        ?? "unknown";
-    var commit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
+    var identity = ReadBuildIdentity();
     var buildTime = FirstEnv("BUILD_TIME", "BUILD_TIME_UTC", "CDS_BUILD_TIME", "VERCEL_GIT_COMMIT_DATE");
+
+    // commit 字段保持向后兼容，但优先给实际值 —— 一个值没法自证，对账结论看 commitMatch
+    var effective = identity.ActualCommit ?? identity.DeclaredCommit;
 
     return Results.Ok(new
     {
         app = "prd-agent",
         service = "prd-api",
-        version = informationalVersion,
-        commit,
-        shortCommit = ShortCommit(commit),
+        version = identity.InformationalVersion,
+        commit = effective,
+        shortCommit = ShortCommit(effective),
+        actualCommit = identity.ActualCommit,
+        expectedCommit = identity.DeclaredCommit,
+        commitMatch = BuildIdentity.ToWireValue(identity.Match),
+        commitWarning = BuildIdentity.DescribeMismatch(
+            identity.Match,
+            identity.ActualCommit,
+            identity.DeclaredCommit),
         buildTimeUtc = buildTime,
         environment = env.EnvironmentName,
         serverTimeUtc = DateTime.UtcNow,
     });
+}
+
+static (string InformationalVersion, string? ActualCommit, string? DeclaredCommit, BuildIdentity.MatchState Match)
+    ReadBuildIdentity()
+{
+    var informationalVersion = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "unknown";
+
+    // 实际值由编译写进程序集，期待值由部署平台注入；两者必须独立取得才能对账。
+    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
+    var declaredCommit = FirstEnv(
+        "GIT_COMMIT",
+        "COMMIT_SHA",
+        "GITHUB_SHA",
+        "SOURCE_VERSION",
+        "CDS_COMMIT_SHA",
+        "VERCEL_GIT_COMMIT_SHA");
+    return (
+        informationalVersion,
+        actualCommit,
+        declaredCommit,
+        BuildIdentity.Compare(actualCommit, declaredCommit));
 }
 
 static string? FirstEnv(params string[] names)
@@ -1599,19 +2467,6 @@ static string? ShortCommit(string? commit)
 {
     if (string.IsNullOrWhiteSpace(commit)) return null;
     return commit.Length <= 8 ? commit : commit[..8];
-}
-
-static bool FixedTimeEqualsNonEmpty(string expected, string provided)
-{
-    if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(provided))
-    {
-        return false;
-    }
-
-    var expectedBytes = Encoding.UTF8.GetBytes(expected);
-    var providedBytes = Encoding.UTF8.GetBytes(provided);
-    return expectedBytes.Length == providedBytes.Length
-           && CryptographicOperations.FixedTimeEquals(expectedBytes, providedBytes);
 }
 
 // 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）

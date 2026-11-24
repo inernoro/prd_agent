@@ -6,8 +6,11 @@ using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Deployment;
 using PrdAgent.Infrastructure.Security;
@@ -28,15 +31,18 @@ public sealed class LlmGatewaySsoController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly LlmGatewayDataContext _gatewayData;
     private readonly IConfiguration _configuration;
+    private readonly IAdminPermissionService _permissionService;
 
     public LlmGatewaySsoController(
         MongoDbContext db,
         LlmGatewayDataContext gatewayData,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdminPermissionService permissionService)
     {
         _db = db;
         _gatewayData = gatewayData;
         _configuration = configuration;
+        _permissionService = permissionService;
     }
 
     [HttpPost("ticket")]
@@ -45,10 +51,14 @@ public sealed class LlmGatewaySsoController : ControllerBase
     public async Task<IActionResult> CreateTicket(CancellationToken ct)
     {
         // 只接受 MAP 管理后台真人会话。Agent/API key 即使绑定了管理员用户，也不能签发浏览器 SSO。
-        var clientType = User.FindFirst("clientType")?.Value;
-        var sessionKey = User.FindFirst("sessionKey")?.Value;
-        if (!string.Equals(clientType, "admin", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(sessionKey))
+        if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    "SYNTHETIC_SESSION_FEDERATION_FORBIDDEN",
+                    "合成测试会话不能进入外部控制台，请使用真人管理员会话登录"));
+        }
+        if (!FederatedConsoleSessionPolicy.IsEligibleBrowserSession(User))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("MAP_SSO_BROWSER_SESSION_REQUIRED", "请使用 MAP 管理后台登录后再打开模型网关"));
@@ -62,13 +72,18 @@ public sealed class LlmGatewaySsoController : ControllerBase
             user = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         }
 
-        if (!isRoot && (user is null
-                        || user.Status != UserStatus.Active
-                        || user.UserType != UserType.Human
-                        || user.Role != UserRole.ADMIN))
+        IReadOnlyList<string> effectivePermissions = Array.Empty<string>();
+        if (!isRoot && user is not null && user.Status == UserStatus.Active && user.UserType == UserType.Human)
+        {
+            effectivePermissions = await _permissionService.GetEffectivePermissionsAsync(user.UserId, false, ct);
+        }
+
+        if (!isRoot && !LlmGatewayConsoleAccessPolicy.CanEnter(user, effectivePermissions))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail("MAP_ADMIN_REQUIRED", "只有 MAP 管理员可以直接进入模型网关"));
+                ApiResponse<object>.Fail(
+                    "LLM_GATEWAY_ACCESS_REQUIRED",
+                    "当前账号没有模型网关权限，请让管理员在用户管理的后台权限中授予“模型网关”权限"));
         }
 
         var effectiveUserId = isRoot ? "root" : user!.UserId;

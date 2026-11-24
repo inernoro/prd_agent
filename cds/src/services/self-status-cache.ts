@@ -52,6 +52,8 @@ export interface SelfStatusSnapshot {
   runningPid: number;
   pidStartedAt: string | null;
   restartStatus: 'not_required' | 'pending' | 'completed' | 'incomplete';
+  /** 重启前的等待（在等哪几个部署、等了多久）；不在等时为 null。 */
+  restartWait?: unknown;
   activeSelfUpdate: unknown;
   lastSelfUpdate: unknown;
   selfUpdateHistory: unknown[];

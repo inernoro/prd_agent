@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.42); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11.5px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .sp { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; box-sizing: border-box; }
+    .paper-in { width: 700px; margin: 0 auto; }
+    .paper h1 { font-size: 25px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 20px; }
+    .paper h2 { font-size: 15px; margin: 18px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .send { border-radius: 10px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .note-row { display: flex; gap: 22px; padding: 2px 2px 0; }
+    .note-row div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .note-row b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .note-row .ok b { color: #4ade80; }
+    .note-row .warn b { color: #D97757; }
+    h3 { font-size: 19px; margin: 2px 0 0; letter-spacing: -0.005em; }
+    .lede { font-size: 13px; line-height: 1.8; color: rgba(247,247,251,0.72); max-width: 940px; margin: 0; }
+    .three { display: flex; gap: 12px; }
+    .card { flex-grow: 1; flex-basis: 0; padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); display: flex; flex-direction: column; gap: 7px; }
+    .card .k { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); }
+    .card .t { font-size: 13.5px; font-weight: 600; }
+    .card .d { font-size: 11.5px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .verdict { margin-top: auto; padding-top: 8px; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; }
+    .card.yes { border-color: rgba(74,222,128,0.30); background: rgba(74,222,128,0.07); }
+    .card.yes .verdict { color: #4ade80; }
+    .card.half { border-color: rgba(217,119,87,0.30); background: rgba(217,119,87,0.07); }
+    .card.half .verdict { color: #D97757; }
+    .card.no { border-color: rgba(255,255,255,0.14); }
+    .card.no .verdict { color: rgba(247,247,251,0.50); }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; color: rgba(247,247,251,0.50); font-weight: 400; padding: 0 10px 7px 0; border-bottom: 1px solid rgba(255,255,255,0.10); }
+    td { font-size: 12px; line-height: 1.6; color: rgba(247,247,251,0.80); padding: 9px 10px 9px 0; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
+    td.n { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: rgba(247,247,251,0.62); white-space: nowrap; }
+    td b { color: #f7f7fb; font-weight: 600; }
+    .traps { display: flex; flex-direction: column; gap: 9px; }
+    .trap { display: flex; gap: 11px; padding: 12px 13px; border-radius: 11px; background: rgba(217,119,87,0.08); border: 1px solid rgba(217,119,87,0.26); }
+    .trap .n { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.95); margin-top: 2px; }
+    .trap .t { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+    .trap .d { font-size: 11.5px; line-height: 1.75; color: rgba(247,247,251,0.72); }
+    code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 4px; color: rgba(247,247,251,0.90); }
+    .cols { display: flex; gap: 18px; align-items: flex-start; }
+    .half2 { flex-grow: 1; flex-basis: 0; }
+    .sect { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); margin-bottom: 9px; }
+    .spring { padding: 12px 13px; border-radius: 11px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; line-height: 1.7; color: rgba(247,247,251,0.72); word-break: break-all; }
+    .spring b { color: #D97757; font-weight: 400; }
+  </style>
+</helmet>
+
+<div class="board">
+
+  <div class="eyebrow">动效 · 规格与边界<em>「水珠变长条再变框框」在苹果那边是三件事叠在一起。分开看才知道哪件能抄、哪件抄不了</em></div>
+  <h3>三件事，两件能完全复刻，一件建议放弃</h3>
+
+  <div class="three">
+    <div class="card yes">
+      <div class="k">01 · 形变</div>
+      <div class="t">同一个容器从 A 变到 B</div>
+      <div class="d">苹果管这叫 fluid interface，web 上对应 FLIP / shared-element transition。关键不是「像」，是<b>从头到尾只有一个元素</b>，内容交叉淡入淡出。左边那块画板就是纯 CSS 做的。</div>
+      <div class="verdict">能完全复刻 · 已做进 demo</div>
+    </div>
+    <div class="card half">
+      <div class="k">02 · 弹簧</div>
+      <div class="t">过冲再回弹，不是贝塞尔</div>
+      <div class="d">贝塞尔画不出「冲过头再退回来」，而那正是手感的来源。CSS 的 <code>linear()</code> 能把一条弹簧曲线逐点烘进去，非交互动效够用；<b>但手势跟随式的可打断弹簧要 JS</b>（中途改目标要重新求解）。</div>
+      <div class="verdict">静态动效可复刻 · 跟手的要 JS</div>
+    </div>
+    <div class="card no">
+      <div class="k">03 · 液态玻璃</div>
+      <div class="t">镜面高光 + 实时折射</div>
+      <div class="d">iOS 26 那层「边缘把背后内容折弯」是 GPU 原生的。web 上勉强能用 SVG <code>feDisplacementMap</code> + 法线贴图凑，但在滚动内容上会糊、开销大。<b>水珠融合</b>（goo filter）倒是能做，见下面第 1 条坑。</div>
+      <div class="verdict">建议不做 · 折射不划算</div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="half2">
+      <div class="sect">时间线（demo 里用的就是这组值）</div>
+      <table>
+        <tr><th>段</th><th>时长</th><th>曲线</th><th>动什么</th></tr>
+        <tr><td><b>胶囊 → 长条</b></td><td class="n">640ms</td><td class="n">spring<br>.36 / ζ.82</td><td>right · bottom · width · height · radius。中途先横向窜过头再回弹 —— 这一帧就是「水珠被拉长」</td></tr>
+        <tr><td><b>提示弹出</b></td><td class="n">每枚 480ms<br>错开 60ms</td><td class="n">spring<br>.30 / ζ.70</td><td>opacity + translateY 26→0 + scale .7→1。起点压在条上，读起来是「从条里弹出来」而不是「淡入」</td></tr>
+        <tr><td><b>内容交叉</b></td><td class="n">出 90ms<br>进 140ms（延 80ms）</td><td class="n">ease-out</td><td>只有 opacity。拉伸文字比不变形还难看</td></tr>
+        <tr><td><b>长条 → 侧栏</b></td><td class="n">560ms</td><td class="n">spring<br>.36 / ζ.82</td><td>width/height/radius；radius 999→18 且只作用在左侧两角</td></tr>
+        <tr><td><b>收回</b></td><td class="n">480ms</td><td class="n">spring<br>.32 / ζ.95</td><td>反向走一遍。<b>收回不该有弹跳</b> —— 关闭动作带回弹会显得轻浮</td></tr>
+      </table>
+      <div style="height:10px"></div>
+      <div class="spring">
+        形变那条弹簧烘成 CSS（response .36s，ζ .82，过冲 1.1%）：<br>
+        <b>animation-timing-function:</b> linear(0, .1055, .3144, .5281, .7045, .8326, .9171, .9677, .9948, 1.0071, <b>1.0109</b>, 1.0105, 1.0084, 1.006, 1.0039, 1.0023, 1.0012, 1.0005, 1.0001, 1, …);
+      </div>
+    </div>
+
+    <div class="half2">
+      <div class="sect">四条真会踩的坑</div>
+      <div class="traps">
+        <div class="trap"><div class="n">01</div><div>
+          <div class="t">水珠融合与真玻璃互斥</div>
+          <div class="d">goo 靠父层 <code>filter: blur() contrast()</code> 把两个形状黏起来，而 <code>filter</code> 会另起一个光栅化上下文 —— 里面的 <code>backdrop-filter</code> 就取不到背后的页面了。同一时刻只能要一个。折中：融合只发生在提示飞出/收回那 ~200ms，那段把玻璃降级成近似实底，落位后再切回来，切换必须藏在 opacity 底下，否则会看到闪一下。</div>
+        </div></div>
+        <div class="trap"><div class="n">02</div><div>
+          <div class="t">形变必须是同一个元素</div>
+          <div class="d">两个元素交叉淡入淡出，中途圆角、投影、底色会同时存在两套，穿帮得非常明显 —— 人眼对这个极敏感。宁可结构上麻烦一点，也要让它从头到尾是一个 DOM 节点。</div>
+        </div></div>
+        <div class="trap"><div class="n">03</div><div>
+          <div class="t">面板浮在 iframe 上会掉帧</div>
+          <div class="d">托管正文跑在 iframe 里，Chromium 对跨 iframe 的 <code>backdrop-filter</code> 合成不友好，形变过程中很容易掉到 30fps 以下。对策：动起来之前把 blur 调到 0 或换成半实底，落位后再升起来。用户看不出来，掉帧看得出来。</div>
+        </div></div>
+        <div class="trap"><div class="n">04</div><div>
+          <div class="t">减弱动态效果要给终态，不是空白</div>
+          <div class="d"><code>prefers-reduced-motion: reduce</code> 时只保留 opacity、不做形变，并且直接落到终态。左边那块画板已经这么写了 —— 关掉动效的人看到的是静止的长条，不是一片空。</div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note-row">
+    <div class="ok"><b>给实现的一句话</b>先把坑 02、03、04 当成硬约束写进组件结构（一个节点、blur 可临时降级、reduced-motion 分支），动效参数再慢慢调。参数好调，结构不好改。</div>
+    <div class="warn"><b>我没验的部分</b>这套值是在浅色长文上量的。托管页什么底都有（深色、大图、满屏渐变），玻璃的对比度和形变的掉帧都得拿几种真实站点跑一遍才算定。坑 01 的「200ms 切换」我也只推演过，没真写过 —— 真要上 goo 得先做个一次性验证。</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

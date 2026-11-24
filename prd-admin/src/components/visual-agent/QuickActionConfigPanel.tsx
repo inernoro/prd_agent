@@ -281,7 +281,7 @@ export function QuickActionConfigPanel({
                   border: '1px solid rgba(250, 204, 21, 0.30)',
                 }}
               >
-                <Wand2 size={11} style={{ color: 'rgba(250, 204, 21, 0.85)' }} />
+                <Wand2 size={11} style={{ color: 'var(--accent-fg-amber)' }} />
               </span>
               <div className="flex-1 min-w-0">
                 <div

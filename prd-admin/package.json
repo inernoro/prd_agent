@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && node --max-old-space-size=4096 node_modules/vite/bin/vite.js build",
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "tsc": "tsc",
@@ -27,6 +27,9 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@lexical/react": "^0.39.0",
     "@lexical/utils": "^0.39.0",
     "@radix-ui/react-dialog": "^1.1.6",
@@ -41,6 +44,8 @@
     "@tailwindcss/vite": "^4.1.17",
     "@uiw/react-md-editor": "^4.1.1",
     "@xyflow/react": "^12.10.0",
+    "@zip.js/zip.js": "^2.25.0",
+    "ag-psd": "^31.0.2",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
     "echarts": "^6.0.0",
@@ -75,6 +80,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/dagre": "^0.7.54",
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^22.20.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -85,6 +91,7 @@
     "@vitejs/plugin-react": "^4.3.3",
     "eslint": "^9.15.0",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "jsdom": "26.1.0",
     "serve": "^14.2.6",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.6.3",

@@ -1,19 +1,20 @@
 /**
  * 全局快捷提 bug（Ctrl+B / Command+B）。
  *
- * 挂载在 App 根，跨路由常驻，提供两个入口：
+ * 挂载在控制台持久化外壳，仅系统所有者可用，提供两个入口：
  *   1. 快捷键 Ctrl+B（Mac 上 Command+B），输入框聚焦时不抢占（见 BugReportCore）；
  *   2. window 事件 OPEN_BUG_REPORT_EVENT，由控制台左侧栏固定入口触发，也允许其它组件携预填打开。
  *
  * 模态三硬约束：createPortal 到 document.body、尺寸走 inline style、
  * 滚动区 minHeight:0 + overflowY:auto + overscrollBehavior:contain。
- * z-index：遮罩 300（portal 顶层）——本弹窗由 App 根 portal 出来，必须盖住
+ * z-index：遮罩 300（portal 顶层）——本弹窗由外壳 portal 出来，必须盖住
  * 信息中心与其它全局 chrome。见 .claude/rules/cds-theme-tokens.md §4。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Bug, ImagePlus, Loader2, Paperclip, X } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
 import {
   BUG_SEVERITY_OPTIONS,
@@ -241,7 +242,7 @@ export function BugReportDialog(): JSX.Element | null {
       role="presentation"
     >
       <div
-        className="flex w-full max-w-[680px] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
+        className="flex w-full max-w-[42.5rem] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
         style={{ maxHeight: '86vh' }}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
@@ -252,7 +253,7 @@ export function BugReportDialog(): JSX.Element | null {
           <div className="flex items-center gap-2 text-sm font-medium">
             <Bug className="size-5 text-primary" />
             提交缺陷
-            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{hint}</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">{hint}</span>
           </div>
           <button
             type="button"
@@ -294,7 +295,7 @@ export function BugReportDialog(): JSX.Element | null {
             onPaste={handlePaste}
             placeholder={'描述你遇到的问题…\n\n第一行将作为标题\n支持粘贴截图或把文件拖进来\n页面地址、路由、主题、浏览器信息会自动带上，不用手写'}
             className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-            style={{ minHeight: 180 }}
+            style={{ minHeight: '11.25rem' }}
           />
 
           <div className="flex flex-wrap items-center gap-2">
@@ -327,7 +328,7 @@ export function BugReportDialog(): JSX.Element | null {
                   ) : (
                     <Paperclip className="size-4" />
                   )}
-                  <span className="max-w-[140px] truncate">{item.name}</span>
+                  <span className="max-w-[8.75rem] truncate">{item.name}</span>
                   <button
                     type="button"
                     onClick={() => removeAttachment(index)}
@@ -384,15 +385,16 @@ export function BugReportDialog(): JSX.Element | null {
           >
             {result ? '关闭' : '取消'}
           </button>
-          <button
+          <Button
             type="button"
             onClick={() => (result ? resetForm() : void handleSubmit())}
             disabled={submitting || (!result && !description.trim())}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            size="sm"
+            className="h-auto gap-1.5 py-1.5"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <Bug className="size-4" />}
             {submitting ? '提交中…' : result ? '再提交一条' : '提交缺陷'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -358,6 +358,14 @@ public sealed class DailyTipsController : ControllerBase
         // - advanced: 写入真实 Version，管理员升 Version 后 learnedVer < t.Version → 再次弹出。
         var learnedVersion = tier == "advanced" ? version : int.MaxValue;
 
+        // 历史用户可能把 LearnedTips 保存为 null。直接 $push 到 null 会让 Mongo 返回 500，
+        // 表面上按钮已经乐观变成“已学会”，刷新后教程却再次出现。先幂等初始化为空数组，
+        // 再执行 pull + push，保证新老用户都能稳定完成教程。
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId && u.LearnedTips == null,
+            Builders<User>.Update.Set(u => u.LearnedTips, new List<UserLearnedTip>()),
+            cancellationToken: ct);
+
         // 幂等写入:先剔除同 SourceId 的旧记录,再 push 新的 (SourceId, Version)。
         // Mongo 的 $pull 和 $push 不能在同一次 update 里作用于同一字段(冲突),
         // 拆两次调用即可,本端点不是热路径。
@@ -378,6 +386,41 @@ public sealed class DailyTipsController : ControllerBase
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
+    }
+
+    /// <summary>
+    /// 合成测试专用：清理当前合成用户的一条官方教程进度，以便每轮都从真实空状态复测。
+    /// 普通登录会话不可调用，也不能操作其他用户。
+    /// </summary>
+    [HttpDelete("testing/learned/{sourceId}")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ResetSyntheticLearnedProgress(
+        [FromRoute] string sourceId,
+        CancellationToken ct = default)
+    {
+        if (!string.Equals(User.FindFirst("authType")?.Value, "synthetic-test", StringComparison.Ordinal))
+            return Forbid();
+
+        var normalizedSourceId = sourceId.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedSourceId)
+            || !BuildDefaultTips(DateTime.UtcNow).Any(t => t.SourceId == normalizedSourceId))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "官方教程不存在，请刷新教程目录后重试"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId && u.LearnedTips == null,
+            Builders<User>.Update.Set(u => u.LearnedTips, new List<UserLearnedTip>()),
+            cancellationToken: ct);
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.PullFilter(u => u.LearnedTips!,
+                Builders<UserLearnedTip>.Filter.Eq(l => l.SourceId, normalizedSourceId)),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { reset = true, sourceId = normalizedSourceId }));
     }
 
     /// <summary>
@@ -658,7 +701,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=webpages-group-pills]", Title = "第 9 步：分组", Body = "「日期 / 文件夹」二选一，把站点按时间或自建文件夹归类。" },
                         new() { Selector = "[data-tour-id=webpages-view-toggle]", Title = "第 10 步：网格 / 列表视图", Body = "右侧 ⊞ / ☰ 切换；网格有缩略图，列表更紧凑。" },
                         new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹 / 分组", Body = "个人空间用文件夹收纳同类站点，点文件夹名快速过滤；团队空间则是左侧树导航，按专题 / 分类组织，双击可改名，受限分组带锁标识。" },
-                        new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。" },
+                        new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。鼠标移到卡上会浮出操作条，点最右的「更多」可以展开二维码、公开页、评论管理、访客、移动、删除，以及「提问设置」——在那里打开开关，访客就能对着这个网页向 AI 提问。" },
                         new() { Selector = "[data-tour-id=webpages-viewcount]", Title = "第 13 步：访问量", Body = "卡片底部的眼睛图标 + 数字，是该站点累计被打开的次数。" },
                         new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦" },
                     },
@@ -926,10 +969,10 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 7. 视觉创作 —— 本页 11 步完整教程
+            // 7. 视觉创作 —— 本页 12 步完整教程
             T("visual-page-guide", "card",
-                "视觉创作：本页 11 步上手教程",
-                "从写提示词、传参考图、选尺寸场景到开始创作，一次走遍整页。无需配 API key。",
+                "视觉创作：本页 12 步上手教程",
+                "从写提示词、传参考图、挑模型、选尺寸场景到开始创作，一次走遍整页。无需配 API key。",
                 "/visual-agent",
                 "开始本页教程",
                 "[data-tour-id=visual-page-title]",
@@ -943,13 +986,14 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=visual-subtitle]", Title = "第 2 步：它能做什么", Body = "海报、插画、品牌视觉、参考图改造……用一句话描述需求即可。" },
                         new() { Selector = "[data-tour-id=visual-prompt-input]", Title = "第 3 步：写下你想要的画面", Body = "中英文都行，越具体越好（主体 + 场景 + 风格）。" },
                         new() { Selector = "[data-tour-id=visual-image-btn]", Title = "第 4 步：上传参考图", Body = "有参考图就点「图片」上传，AI 会参考它的构图或风格。也可直接 Ctrl/Cmd+V 粘贴剪贴板里的图片，或把本地图片拖进输入框。" },
-                        new() { Selector = "[data-tour-id=visual-size-btn]", Title = "第 5 步：选画布尺寸", Body = "点尺寸按钮选常见规格（方图 / 竖图 / 横图 / 海报等）。" },
-                        new() { Selector = "[data-tour-id=visual-scenarios]", Title = "第 6 步：场景快捷标签", Body = "不知道怎么写？点下面的预设场景一键套用提示词。" },
-                        new() { Selector = "[data-tour-id=visual-pro]", Title = "第 7 步：Pro 高级能力", Body = "高亮的 Pro 标签提供更强的设计与编排能力，点开了解。" },
-                        new() { Selector = "[data-tour-id=visual-defect-btn]", Title = "第 8 步：随手反馈", Body = "遇到问题点 Bug 图标（或 Cmd/Ctrl+B）直接提交缺陷。" },
-                        new() { Selector = "[data-tour-id=visual-submit-btn]", Title = "第 9 步：开始创作", Body = "填好后点「开始创作」，AI 流式生成、过程实时可见，出图后还能继续微调或加水印。" },
-                        new() { Selector = "[data-tour-id=visual-projects]", Title = "第 10 步：最近项目", Body = "你创建过的项目都收在这里，点开继续编辑。" },
-                        new() { Selector = "[data-tour-id=visual-new-project]", Title = "第 11 步：从空白开始", Body = "想直接进编辑器？点「新建项目」创建空白画布。看到新卡片就算上手" },
+                        new() { Selector = "[data-tour-id=visual-model-btn]", Title = "第 5 步：挑一个绘图模型", Body = "点模型名可以换成别的生图模型：不同模型的画风、速度和擅长的题材都不一样，选中的那个会一直用到下次更换。下一步的尺寸清单也跟着它走。" },
+                        new() { Selector = "[data-tour-id=visual-size-btn]", Title = "第 6 步：选画布尺寸", Body = "点尺寸按钮选常见规格（方图 / 竖图 / 横图 / 海报等）；这里只列当前模型真正支持的档位。" },
+                        new() { Selector = "[data-tour-id=visual-scenarios]", Title = "第 7 步：场景快捷标签", Body = "不知道怎么写？点下面的预设场景一键套用提示词。" },
+                        new() { Selector = "[data-tour-id=visual-pro]", Title = "第 8 步：Pro 高级能力", Body = "高亮的 Pro 标签提供更强的设计与编排能力，点开了解。" },
+                        new() { Selector = "[data-tour-id=visual-defect-btn]", Title = "第 9 步：随手反馈", Body = "遇到问题点 Bug 图标（或 Cmd/Ctrl+B）直接提交缺陷。" },
+                        new() { Selector = "[data-tour-id=visual-submit-btn]", Title = "第 10 步：开始创作", Body = "填好后点「开始创作」，AI 流式生成、过程实时可见，出图后还能继续微调或加水印。" },
+                        new() { Selector = "[data-tour-id=visual-projects]", Title = "第 11 步：最近项目", Body = "你创建过的项目都收在这里，点开继续编辑。" },
+                        new() { Selector = "[data-tour-id=visual-new-project]", Title = "第 12 步：从空白开始", Body = "想直接进编辑器？点「新建项目」创建空白画布。看到新卡片就算上手" },
                     },
                 }),
 
@@ -1052,7 +1096,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=marketplace-search]", Title = "第 3 步：搜索", Body = "按名称快速找到目标配置。" },
                         new() { Selector = "[data-tour-id=marketplace-sort]", Title = "第 4 步：热门 / 最新", Body = "想看大家在用什么点「热门」，想看新货点「最新」。" },
                         new() { Selector = "[data-tour-id=marketplace-list]", Title = "第 5 步：浏览卡片", Body = "每张卡是一个可 fork 的配置，点进去看详情和 fork 数。" },
-                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Cursor 直连市场。看完点「完成」" },
+                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Codex 直连市场。看完点「完成」" },
                     },
                 }),
 
@@ -1137,7 +1181,8 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧这块是文章正文区，右侧是配图标记列表。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 2 步：正文区", Body = "上传或粘贴文章后在这里预览；把 .md / .txt 文件拖进来也能上传。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 3 步：生成配图", Body = "AI 会按正文自动标出配图点并逐张生成，右侧可逐个查看或重生成。" },
-                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」" },
+                        new() { Selector = "[data-tour-id=literary-editor-history]", Title = "第 4 步：历史配图", Body = "改稿、重新规划或重画之前的旧图都不会删，点这里按版本找回，满意的那张可以一键放回原位。" },
+                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 5 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」" },
                     },
                 }),
 
@@ -1225,6 +1270,41 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=workflow-from-template-btn]", Title = "第 2 步：从模板创建", Body = "不想从零搭？用预定义模板一键生成工作流。" },
                         new() { Selector = "[data-tour-id=workflow-list]", Title = "第 3 步：工作流列表", Body = "建好的工作流都在这；首次使用有空状态引导教你建第一个。" },
                         new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」" },
+                    },
+                }),
+
+            // 19. 模型排行榜 —— 本页 9 步教程
+            //
+            // 第 3、4 步的 selector 带逗号兜底（safeQuery 支持选择器列表，首个命中的赢）：
+            // 元信息条与表头只在「已有快照且非空」时才渲染，而分支预览首次进来、
+            // 或目录/榜单拉取失败时都不满足——首次进来的人恰好是自动开讲的对象，
+            // 走到第 3 步就会等十秒然后看到「找不到元素」卡片（Codex 在 PR #1538 指出，
+            // 与上一轮维度切换器那处是同一个形状）。兜底指向常驻的表格容器。
+            //
+            // 新页必须同批带 seed：页头挂了 TipsEntryButton，而 pageTips 为空时它自己隐藏，
+            // 于是入口与自动开讲一起静默消失，页面照常渲染、没有任何东西变红
+            // （predicate-and-wiring-discipline 形状 2，Codex 在 PR #1538 指出）。
+            T("model-leaderboard-page-guide", "card",
+                "模型排行榜：本页 9 步上手教程",
+                "看业界模型在十一个公开分榜上的真实排名，按维度选型，并读懂并列区间与置信区间。",
+                "/model-leaderboard",
+                "开始本页教程",
+                "[data-tour-id=model-leaderboard-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=model-leaderboard-page-title]", Title = "第 1 步：这是什么", Body = "arena.ai 的公开榜单，人类盲测对战出来的模型排名。每天同步一次，不含本站的调用量与成本。", NavigateTo = "/model-leaderboard" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-boards]", Title = "第 2 步：按维度切换", Body = "编程与智能体、对话与理解、图像生成、视频生成四组共十一个分榜。选型看哪一项就点哪个榜——文生图强不代表写代码强。带小灰点的榜是这个环境还没同步过。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-meta], [data-tour-id=model-leaderboard-table]", Title = "第 3 步：先看数据多旧、样本多大", Body = "这条横条写着快照日期与对战样本量（会话数或投票数）。样本几千的榜和样本几十万的榜，可信度不是一回事；日期变金色就是超过两天没同步成功了。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-columns], [data-tour-id=model-leaderboard-table]", Title = "第 4 步：列都是什么意思", Body = "带金色箭头的那列就是当前的排序依据。Agent 榜是六个百分比指标（净改进、确认成功率……），其余是对战分（Elo）加票数——两套表头不同，切榜时列会整批换。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 5 步：名次与并列", Body = "名次后面那个区间是并列范围。写着「3」而区间是 2–6，意思是它和另外几个模型在统计上分不出高下——别把第 3 和第 5 当成两个档。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 6 步：条形右端那根细须", Body = "那是置信区间。两个模型的须重叠得厉害，这点分差就说明不了问题；须短的那个是样本够多、数字更稳。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 7 步：分数不跨榜比", Body = "对战分是相对分。文生图的 1421 和文本对话的 1506 不是一回事，页面上分数永远和榜名一起出现，不要拎出来当「模型总分」。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-range]", Title = "第 8 步：只看开源", Body = "要自己部署就切「仅开源」。它只放**能认出来的标准开源许可**（MIT / Apache 这类）；闭源、非商用、仅研究和各家 community 许可都不在里面，各家自造的许可也不在——那些得你自己读条款。授权原文一直显示在模型名下面那行。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-refresh]", Title = "第 9 步：想要更新的数据", Body = "觉得太旧就点这个按钮重读一次库；有「模型管理」权限的还能点「立即同步」直接从 arena.ai 抓当前这个榜。维度写在网址上（?board=），可以直接把某一屏发给同事。看完点「完成」" },
                     },
                 }),
         };

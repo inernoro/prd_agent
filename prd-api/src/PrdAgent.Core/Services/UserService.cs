@@ -130,6 +130,9 @@ public class UserService : IUserService
         await _userRepository.UpdatePasswordAsync(userId, passwordHash);
     }
 
+
+    public Task<bool> TryReplacePasswordAsync(string userId, string expectedHash, string passwordHash)
+        => _userRepository.TryReplacePasswordAsync(userId, expectedHash, passwordHash);
     public async Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword)
     {
         await _userRepository.UpdateMustResetPasswordAsync(userId, mustResetPassword);

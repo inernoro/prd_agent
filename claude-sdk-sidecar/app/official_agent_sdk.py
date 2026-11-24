@@ -95,9 +95,12 @@ async def run_official_agent(
         permission_result_deny=PermissionResultDeny,
     )
 
-    builtin_allowed = _csv_env(
-        "CLAUDE_AGENT_SDK_ALLOWED_TOOLS",
-        "Read,Grep,Glob",
+    # per-request 优先于进程级 env：请求没带 builtinTools 时行为与历史完全一致；
+    # 带了空数组就是「一个内置工具都不开」，通用对话走这一条。
+    builtin_allowed = (
+        [name.strip() for name in req.builtin_tools if name and name.strip()]
+        if req.builtin_tools is not None
+        else _csv_env("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", "Read,Grep,Glob")
     )
     dangerous_builtin_tools = {"bash": "Bash", "edit": "Edit", "write": "Write"}
     explicitly_allowed = {name.lower() for name in builtin_allowed}

@@ -7,11 +7,18 @@ import type {
   GetUserPreferencesContract,
   UpdateNavLayoutContract,
   UpdateThemeConfigContract,
+  UpdateWebPageAskPreferenceContract,
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
   UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
+  GetUserNavLayoutsContract,
+  ResetUserNavLayoutContract,
+  RemoveNavTokensContract,
+  RemoveNavTokensResult,
+  UserNavLayoutItem,
+  UserNavLayoutsResult,
   ApplyDefaultNavToAllUsersContract,
   ThemeConfigResponse,
   VisualAgentPreferences,
@@ -36,22 +43,65 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; navLayoutSynced?: boolean; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; webPageAskEnabled?: boolean; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
   return ok({
     navOrder: res.data.navOrder ?? [],
     navHidden: res.data.navHidden ?? [],
+    navLayoutSynced: res.data.navLayoutSynced === true,
     defaultNavOrder: res.data.defaultNavOrder ?? [],
     defaultNavHidden: res.data.defaultNavHidden ?? [],
     themeConfig: res.data.themeConfig,
+    webPageAskEnabled: res.data.webPageAskEnabled === true,
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
     agentSwitcherPreferences: res.data.agentSwitcherPreferences,
     homeLauncherPreferences: res.data.homeLauncherPreferences,
     documentStorePinnedIds: res.data.documentStorePinnedIds ?? [],
   });
+}
+
+/**
+ * 转录词云的生效词典：系统级 ∪ 个人补充 − 个人屏蔽。
+ * 合并在后端做，这里只消费结果——前端不维护业务数据映射表。
+ */
+export type TranscriptLexicon = {
+  /** 已经合并好、可直接喂给分词的词表 */
+  terms: string[];
+  system: string[];
+  mine: string[];
+  muted: string[];
+  /** 当前用户能不能改系统表（settings.write）。前端据此决定显不显示那个入口 */
+  canManageSystem: boolean;
+};
+
+export async function getTranscriptLexicon(): Promise<ApiResponse<TranscriptLexicon>> {
+  return apiRequest<TranscriptLexicon>(api.dashboard.userPreferences.transcriptLexicon());
+}
+
+/** 只改个人词典与个人屏蔽；系统级那张表是管理员的，不在这里动。 */
+export async function updateTranscriptLexicon(
+  terms: string[],
+  muted: string[],
+): Promise<ApiResponse<void>> {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.transcriptLexicon(), {
+    method: 'PUT',
+    body: { terms, muted },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+}
+
+/** 更新系统级词典（全局，所有人默认引用）。需要 settings.write，没权限会 403。 */
+export async function updateSystemTranscriptLexicon(terms: string[]): Promise<ApiResponse<void>> {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.transcriptLexiconSystem(), {
+    method: 'PUT',
+    body: { terms },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
 }
 
 /** 更新置顶的知识库 ID 列表（用户级，跨设备/重登录保持） */
@@ -79,6 +129,17 @@ export const updateThemeConfigReal: UpdateThemeConfigContract = async (
   const res = await apiRequest<void>(api.dashboard.userPreferences.theme(), {
     method: 'PUT',
     body: { themeConfig },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+};
+
+export const updateWebPageAskPreferenceReal: UpdateWebPageAskPreferenceContract = async (
+  enabled: boolean
+): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.webPageAsk(), {
+    method: 'PUT',
+    body: { enabled },
   });
   if (!res.success) return res;
   return ok(undefined);
@@ -151,5 +212,48 @@ export const applyDefaultNavToAllUsersReal: ApplyDefaultNavToAllUsersContract = 
   return ok({
     matchedCount: res.data.matchedCount ?? 0,
     modifiedCount: res.data.modifiedCount ?? 0,
+  });
+};
+
+export const getUserNavLayoutsReal: GetUserNavLayoutsContract = async (): Promise<ApiResponse<UserNavLayoutsResult>> => {
+  const res = await apiRequest<UserNavLayoutsResult>(api.settings.userNavLayouts());
+  if (!res.success) return res;
+  const items = (res.data.items ?? []).map(normalizeUserNavLayoutItem);
+  return ok({
+    items,
+    totalCount: res.data.totalCount ?? items.length,
+    customizedCount: res.data.customizedCount ?? items.filter((it) => it.customized).length,
+    catalog: res.data.catalog ?? [],
+  });
+};
+
+export const resetUserNavLayoutReal: ResetUserNavLayoutContract = async (userId): Promise<ApiResponse<UserNavLayoutItem>> => {
+  const res = await apiRequest<UserNavLayoutItem>(api.settings.userNavLayout(userId), { method: 'DELETE' });
+  if (!res.success) return res;
+  return ok(normalizeUserNavLayoutItem(res.data));
+};
+
+function normalizeUserNavLayoutItem(raw: UserNavLayoutItem): UserNavLayoutItem {
+  return {
+    ...raw,
+    navOrder: raw.navOrder ?? [],
+    navHidden: raw.navHidden ?? [],
+    customized: Boolean(raw.customized),
+  };
+}
+
+export const removeNavTokensReal: RemoveNavTokensContract = async (tokens): Promise<ApiResponse<RemoveNavTokensResult>> => {
+  const res = await apiRequest<RemoveNavTokensResult>(api.settings.removeNavTokens(), {
+    method: 'POST',
+    body: { tokens },
+  });
+  if (!res.success) return res;
+  return ok({
+    tokens: res.data.tokens ?? tokens,
+    defaultRemovedCount: res.data.defaultRemovedCount ?? 0,
+    defaultNavOrder: res.data.defaultNavOrder ?? [],
+    defaultNavHidden: res.data.defaultNavHidden ?? [],
+    usersMatchedCount: res.data.usersMatchedCount ?? 0,
+    usersModifiedCount: res.data.usersModifiedCount ?? 0,
   });
 };

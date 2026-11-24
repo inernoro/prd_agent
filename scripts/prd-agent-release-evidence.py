@@ -68,6 +68,13 @@ def read_json(path: str) -> object | None:
         }
 
 
+def hash_prefix(value: str) -> str | None:
+    normalized = value.strip().lower()
+    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+        return None
+    return normalized[:12]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Write an immutable production release evidence record")
     parser.add_argument("--out", required=True)
@@ -89,9 +96,39 @@ def main() -> int:
     parser.add_argument("--static-before-current", default="")
     parser.add_argument("--static-before-previous", default="")
     parser.add_argument("--smoke-json", default="")
+    parser.add_argument("--rollback-smoke-json", default="")
+    parser.add_argument("--gateway-readiness-baseline", default="")
+    parser.add_argument("--force-external", choices=["0", "1"], default="0")
     parser.add_argument("--asset-storage-readiness-json", default="")
     parser.add_argument("--failure-stage", default="")
     parser.add_argument("--rollback-result", default="not-needed")
+    parser.add_argument(
+        "--gateway-bind-state",
+        choices=["not-checked", "coherent", "confirmed-drift", "probe-error", "repair-failed"],
+        default="not-checked",
+    )
+    parser.add_argument("--gateway-bind-reason", default="")
+    parser.add_argument(
+        "--gateway-bind-initial-state",
+        choices=["not-checked", "coherent", "confirmed-drift", "probe-error", "repair-failed"],
+        default="not-checked",
+    )
+    parser.add_argument("--gateway-bind-initial-reason", default="")
+    parser.add_argument("--gateway-bind-recreated", choices=["0", "1"], default="0")
+    parser.add_argument("--gateway-container-before", default="")
+    parser.add_argument("--gateway-container-after", default="")
+    parser.add_argument("--gateway-host-static-target", default="")
+    parser.add_argument("--gateway-container-static-target", default="")
+    parser.add_argument("--gateway-host-static-sha256", default="")
+    parser.add_argument("--gateway-container-static-sha256", default="")
+    parser.add_argument("--gateway-host-nginx-sha256", default="")
+    parser.add_argument("--gateway-container-nginx-sha256", default="")
+    parser.add_argument("--gateway-bind-initial-host-static-target", default="")
+    parser.add_argument("--gateway-bind-initial-container-static-target", default="")
+    parser.add_argument("--gateway-bind-initial-host-static-sha256", default="")
+    parser.add_argument("--gateway-bind-initial-container-static-sha256", default="")
+    parser.add_argument("--gateway-bind-initial-host-nginx-sha256", default="")
+    parser.add_argument("--gateway-bind-initial-container-nginx-sha256", default="")
     args = parser.parse_args()
 
     output = Path(args.out)
@@ -127,7 +164,35 @@ def main() -> int:
             "previous": path_metadata(args.previous_link),
         },
         "publicSurface": read_json(args.smoke_json),
+        "rollbackPublicSurface": read_json(args.rollback_smoke_json),
+        "gatewayBeforeRelease": read_json(args.gateway_readiness_baseline),
+        "forcedExternalChecks": args.force_external == "1",
         "assetStorageReadiness": read_json(args.asset_storage_readiness_json),
+        "gatewayBindMount": {
+            "recreated": args.gateway_bind_recreated == "1",
+            "containerIdBefore": args.gateway_container_before or None,
+            "containerIdAfter": args.gateway_container_after or None,
+            "initial": {
+                "state": args.gateway_bind_initial_state,
+                "reason": args.gateway_bind_initial_reason or None,
+                "hostStaticTarget": args.gateway_bind_initial_host_static_target or None,
+                "containerStaticTarget": args.gateway_bind_initial_container_static_target or None,
+                "hostStaticSha256Prefix": hash_prefix(args.gateway_bind_initial_host_static_sha256),
+                "containerStaticSha256Prefix": hash_prefix(args.gateway_bind_initial_container_static_sha256),
+                "hostNginxSha256Prefix": hash_prefix(args.gateway_bind_initial_host_nginx_sha256),
+                "containerNginxSha256Prefix": hash_prefix(args.gateway_bind_initial_container_nginx_sha256),
+            },
+            "final": {
+                "state": args.gateway_bind_state,
+                "reason": args.gateway_bind_reason or None,
+                "hostStaticTarget": args.gateway_host_static_target or None,
+                "containerStaticTarget": args.gateway_container_static_target or None,
+                "hostStaticSha256Prefix": hash_prefix(args.gateway_host_static_sha256),
+                "containerStaticSha256Prefix": hash_prefix(args.gateway_container_static_sha256),
+                "hostNginxSha256Prefix": hash_prefix(args.gateway_host_nginx_sha256),
+                "containerNginxSha256Prefix": hash_prefix(args.gateway_container_nginx_sha256),
+            },
+        },
         "firstFailureStage": args.failure_stage or None,
         "rollbackResult": args.rollback_result,
     }

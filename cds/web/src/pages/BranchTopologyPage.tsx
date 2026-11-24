@@ -1,10 +1,16 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  TOPOLOGY_BAND_CLASS, TOPOLOGY_BODY_GRID_CLASS, TOPOLOGY_CONTROLS_CLASS,
+  TOPOLOGY_CONTROL_HEIGHT, TOPOLOGY_FILTER_GRID_CLASS, TOPOLOGY_NODE_GRID_CLASS, TopologyPageSkeleton,
+} from '@/components/skeletons/WorkspaceSkeletons';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
   Boxes,
   CheckCircle2,
+  ChevronRight,
   Clock3,
   Cloud,
   Copy,
@@ -16,7 +22,6 @@ import {
   Layers3,
   Loader2,
   Maximize2,
-  Network,
   Play,
   Plus,
   RefreshCw,
@@ -32,19 +37,22 @@ import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import {
   Dialog,
   DialogContent,
+  DialogBody,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import { createLatestWinsGate } from '@/lib/latest-wins';
+import { userErrorMessage } from '@/lib/userErrorMessage';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import {
   reduceBranchListState,
   type BranchListAction,
   type BranchListSlice,
 } from '@/lib/branch-list-state';
-import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { CodePill, ErrorBlock } from '@/pages/cds-settings/components';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
@@ -200,7 +208,7 @@ type LoadState =
       profiles: BuildProfile[];
       infra: InfraService[];
       routingRules: RoutingRule[];
-      previewMode: 'simple' | 'port' | 'multi';
+      previewMode: 'simple' | 'port' | 'multi' | null;
       config: CdsConfigResponse;
       projectWarning?: string;
     };
@@ -292,11 +300,11 @@ function statusLabel(status: BranchSummary['status'] | ServiceState['status'] | 
 }
 
 function statusTone(status: BranchSummary['status'] | ServiceState['status'] | InfraService['status']): string {
-  if (status === 'running') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status === 'running') return 'border-ok/30 bg-ok-soft text-ok';
   if (status === 'building' || status === 'starting' || status === 'restarting') {
-    return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
+    return 'border-info/30 bg-info-soft text-info';
   }
-  if (status === 'stopping') return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
+  if (status === 'stopping') return 'border-warn/30 bg-warn-soft text-warn';
   if (status === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
   return 'border-border bg-muted text-muted-foreground';
 }
@@ -316,7 +324,7 @@ function runningBranchCount(branches: BranchSummary[], profileId: string): numbe
 
 function profilePreviewUrl(
   branch: BranchSummary | null,
-  previewMode: 'simple' | 'port' | 'multi',
+  previewMode: 'simple' | 'port' | 'multi' | null,
   config: CdsConfigResponse,
 ): string {
   if (!branch || branch.status !== 'running') return '';
@@ -358,8 +366,26 @@ function parseEnvText(text: string): Record<string, string> {
 export function BranchTopologyPage(): JSX.Element {
   const projectId = projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const [refreshError, setRefreshError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const readGate = useRef(createLatestWinsGate());
+  const confirmGate = useRef(createLatestWinsGate());
   const [selectedBranchId, setSelectedBranchId] = useState(branchIdFromQuery());
   const [selectedNode, setSelectedNode] = useState<SelectedNode>(null);
+  const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
+  const [desktopDetails, setDesktopDetails] = useState(() => window.matchMedia('(min-width: 1280px)').matches);
+  const [mobileSelection, setMobileSelection] = useState<{ node: Exclude<SelectedNode, null>; projectId: string; branchId: string; label: string } | null>(null);
+  const serviceWorkspace = useRef<HTMLElement>(null);
+  const readErrorTarget = useRef<HTMLButtonElement>(null);
+  const nodeOrigin = useRef<HTMLElement | null>(null);
+  const mobileContainer = useRef<HTMLElement | null>(null);
+  const focusWorkspaceOnClose = useRef(false);
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1280px)');
+    const update = () => setDesktopDetails(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
   const [branchFilter, setBranchFilter] = useState('');
   const [quickBranchName, setQuickBranchName] = useState('');
   const [infraDialogOpen, setInfraDialogOpen] = useState(false);
@@ -367,13 +393,15 @@ export function BranchTopologyPage(): JSX.Element {
 
   const confirmEmptyBranchList = useCallback(async (source: string) => {
     if (!projectId) return;
+    const ticket = confirmGate.current.begin();
     try {
       const [project, branchesRes] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
       ]);
+      if (!confirmGate.current.accept(ticket)) return;
       setState((current) => {
-        if (current.status !== 'ok') return current;
+        if (current.status !== 'ok' || current.project.id !== projectId) return current;
         return applyTopologyBranchAction(current, {
           type: 'authoritativeLoaded',
           branches: branchesRes.branches || [],
@@ -383,8 +411,9 @@ export function BranchTopologyPage(): JSX.Element {
         }).state;
       });
     } catch (err) {
+      if (!confirmGate.current.accept(ticket)) return;
       setState((current) => {
-        if (current.status !== 'ok') return current;
+        if (current.status !== 'ok' || current.project.id !== projectId) return current;
         return applyTopologyBranchAction(current, {
           type: 'refreshFailed',
           message: err instanceof ApiError ? err.message : String(err),
@@ -395,7 +424,11 @@ export function BranchTopologyPage(): JSX.Element {
 
   const refresh = useCallback(async (showLoading = false, forceLive = false) => {
     if (!projectId) return;
-    if (showLoading) setState({ status: 'loading' });
+    const ticket = readGate.current.begin();
+    // 新的完整读取已承接核查；旧空列表确认不能在其失败后冒充最新结果。
+    confirmGate.current.newSession();
+    setRefreshing(true);
+    if (showLoading) { setState({ status: 'loading' }); setRefreshError(''); }
     try {
       const [project, branchesRes, profilesRes, infraRes, routingRulesRes, previewModeRes, config] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
@@ -403,9 +436,12 @@ export function BranchTopologyPage(): JSX.Element {
         apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`),
         apiRequest<InfraResponse>(`/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         apiRequest<RoutingRulesResponse>(`/api/routing-rules?project=${encodeURIComponent(projectId)}`),
-        apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
+        apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: null })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
       ]);
+      if (!readGate.current.accept(ticket)) return;
+      confirmGate.current.newSession();
+      setRefreshError(''); setRefreshing(false);
       let needsEmptyRecheck = false;
       setState((current) => {
         const nextBase: OkLoadState = {
@@ -416,7 +452,7 @@ export function BranchTopologyPage(): JSX.Element {
           profiles: profilesRes.profiles || [],
           infra: infraRes.services || [],
           routingRules: routingRulesRes.rules || [],
-          previewMode: previewModeRes.mode || 'multi',
+          previewMode: ['simple', 'port', 'multi'].includes(previewModeRes.mode || '') ? previewModeRes.mode as 'simple' | 'port' | 'multi' : null,
           config,
           projectWarning: current.status === 'ok' ? current.projectWarning : undefined,
         };
@@ -431,12 +467,18 @@ export function BranchTopologyPage(): JSX.Element {
       });
       if (needsEmptyRecheck) void confirmEmptyBranchList('拓扑分支复核');
     } catch (err) {
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (!readGate.current.accept(ticket)) return;
+      const denied = err instanceof ApiError && (err.status === 401 || err.status === 403);
+      const reason = userErrorMessage(err);
+      const message = denied ? `访问状态需重新确认：${reason}` : reason;
+      setRefreshError(message); setRefreshing(false);
+      setState(current => !denied && current.status === 'ok' && current.project.id === projectId ? applyTopologyBranchAction(current, { type: 'refreshFailed', message }).state : { status: 'error', message });
     }
   }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
     void refresh(true);
+    return () => { readGate.current.newSession(); confirmGate.current.newSession(); };
   }, [refresh]);
 
   useEffect(() => {
@@ -568,12 +610,25 @@ export function BranchTopologyPage(): JSX.Element {
     ));
   }, [branchFilter, state]);
 
-  const selectedProfile = state.status === 'ok' && selectedNode?.kind === 'profile'
-    ? state.profiles.find((profile) => profile.id === selectedNode.id) || null
-    : null;
-  const selectedInfra = state.status === 'ok' && selectedNode?.kind === 'infra'
-    ? state.infra.find((service) => service.id === selectedNode.id) || null
-    : null;
+  const chooseNode = (node: Exclude<SelectedNode, null>, label: string, source: HTMLButtonElement) => {
+    nodeOrigin.current = source; focusWorkspaceOnClose.current = false;
+    setSelectedNode(node);
+    if (!desktopDetails) { setMobileSelection({ node, projectId, branchId: selectedBranchId, label }); setMobileDetailsOpen(true); }
+  };
+  const mobileObjectAvailable = Boolean(mobileSelection && state.status === 'ok'
+    && projectId === mobileSelection.projectId && state.project.id === mobileSelection.projectId
+    && (!mobileSelection.branchId || state.branches.some(branch => branch.id === mobileSelection.branchId))
+    && (mobileSelection.node.kind === 'profile' ? state.profiles.some(profile => profile.id === mobileSelection.node.id) : state.infra.some(service => service.id === mobileSelection.node.id)));
+  useEffect(() => {
+    if (!mobileSelection || !mobileDetailsOpen) return;
+    if (desktopDetails) { setMobileDetailsOpen(false); return; }
+    if (mobileSelection.projectId !== projectId) { setMobileDetailsOpen(false); setToast('当前项目已变更，已关闭原服务详情。'); return; }
+    if (state.status === 'ok' && !mobileObjectAvailable) {
+      focusWorkspaceOnClose.current = true;
+      setMobileDetailsOpen(false);
+      setToast('原选中对象已不在当前拓扑中，已返回服务列表。');
+    }
+  }, [desktopDetails, mobileDetailsOpen, mobileSelection, mobileObjectAvailable, projectId, state.status]);
 
   useEffect(() => {
     if (state.status !== 'ok') return;
@@ -611,6 +666,15 @@ export function BranchTopologyPage(): JSX.Element {
   const activeBranchServiceTotal = serviceCount(activeBranch);
   const activeBranchRunningServices = runningServiceCount(activeBranch);
   const activePreviewUrl = state.status === 'ok' ? profilePreviewUrl(activeBranch, state.previewMode, state.config) : '';
+  const nodeDetails = (node: SelectedNode, branch: BranchSummary | null) => state.status === 'ok' ? (
+    <NodeDetails
+      key={`${projectId}:${node?.kind}:${node?.id}:${branch?.id || 'shared'}`}
+      selectedProfile={node?.kind === 'profile' ? state.profiles.find(profile => profile.id === node.id) || null : null}
+      selectedInfra={node?.kind === 'infra' ? state.infra.find(service => service.id === node.id) || null : null}
+      branches={state.branches} activeBranch={branch} infra={state.infra} routingRules={state.routingRules}
+      previewMode={state.previewMode} config={state.config} projectId={projectId} snapshotStale={Boolean(refreshError)} onToast={setToast}
+    />
+  ) : null;
   const openQuickPreview = (branchName: string): void => {
     const next = branchName.trim();
     if (!next) return;
@@ -676,6 +740,7 @@ export function BranchTopologyPage(): JSX.Element {
                 variant="ghost"
                 size="icon"
                 onClick={() => void refresh(false, true)}
+                disabled={refreshing}
                 aria-label="刷新"
                 title="刷新"
               >
@@ -705,18 +770,23 @@ export function BranchTopologyPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
-        <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
-          <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
-            <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
-            <TopologyMetric label="基础设施" value={totalInfra} detail="项目共享容器" icon={<Database className="h-4 w-4" />} />
-            <TopologyMetric label="运行分支" value={`${runningBranches}/${totalBranches}`} detail={errorBranches ? `${errorBranches} 个异常` : '状态正常'} icon={<GitBranch className="h-4 w-4" />} tone={errorBranches ? 'warning' : 'default'} />
-            <TopologyMetric label="视图模式" value={activeBranch ? '单分支' : '共享'} detail={activeBranch?.branch || '全部分支'} icon={<Network className="h-4 w-4" />} />
-            <TopologyMetric label="预览模式" value={state.status === 'ok' ? state.previewMode : '-'} detail={state.status === 'ok' ? (state.config.previewDomain || state.config.mainDomain || 'localhost') : '-'} icon={<TerminalSquare className="h-4 w-4" />} />
+      <Workspace fluid>
+        {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
+        {state.status === 'ok' && refreshError ? <div role="alert" className="mb-3 flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">拓扑读取失败：{refreshError}；当前显示上次成功读取的快照。</p><Button variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
+        {state.status === 'ok' ? <div className={TOPOLOGY_CONTROLS_CLASS}>
+          <div className="space-y-2 px-4 py-3" aria-label="拓扑概况">
+            {refreshError ? <p className="text-sm text-muted-foreground">上次拓扑快照</p> : null}
+            <dl className="flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm">
+              <div className="flex flex-wrap items-baseline gap-x-2"><dt className="text-muted-foreground">应用服务</dt><dd><strong>{totalProfiles}</strong><span className="ml-2 text-muted-foreground">{runningServices} 个运行实例</span></dd></div>
+              <div className="flex items-baseline gap-2"><dt className="text-muted-foreground">基础设施</dt><dd><strong>{totalInfra}</strong><span className="ml-2 text-muted-foreground">项目共享</span></dd></div>
+              <div className="flex flex-wrap items-baseline gap-x-2"><dt className="text-muted-foreground">运行分支</dt><dd><strong>{runningBranches}/{totalBranches}</strong>{errorBranches ? <span className="ml-2 text-warn">{errorBranches} 个异常</span> : <span className="ml-2 text-muted-foreground">{totalBranches ? '未记录异常' : '尚无跟踪分支'}</span>}</dd></div>
+            </dl>
+            <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">视图模式：{activeBranch ? '单分支' : '共享'} · 预览模式：{state.previewMode ?? '未确认'} · {state.config.previewDomain || state.config.mainDomain || '域名未配置或未读取'}</p>
+            {!state.previewMode ? <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-warn"><p className="min-w-0 flex-1">预览模式未确认，暂不生成预览入口；服务与关系仍可查看。</p><Button variant="outline" size="sm" className="min-h-11" disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
           </div>
 
-          {state.status === 'ok' && state.projectWarning ? (
-            <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+          {state.status === 'ok' && state.projectWarning && !refreshError ? (
+            <div className="border-t border-warn/20 bg-warn-soft px-4 py-2 text-sm text-warn">
               {state.projectWarning}
             </div>
           ) : null}
@@ -724,20 +794,22 @@ export function BranchTopologyPage(): JSX.Element {
           {state.status === 'ok' ? (
             <div className="border-t border-border px-4 py-3">
               <div className="space-y-3">
-                <div className="grid gap-3 lg:grid-cols-[220px_minmax(260px,1fr)_minmax(260px,420px)] lg:items-center">
+                <div className={TOPOLOGY_FILTER_GRID_CLASS}>
                   <label className="relative block">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <input
                       value={branchFilter}
                       onChange={(event) => setBranchFilter(event.target.value)}
-                      className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      className="h-11 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
                       placeholder="搜索分支"
+                      style={{ height: TOPOLOGY_CONTROL_HEIGHT }}
                     />
                   </label>
-                  <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[52px_minmax(0,1fr)] sm:items-center">
+                  <label className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-[3.25rem_minmax(0,1fr)] sm:items-center">
                     <span>分支</span>
                     <select
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="h-11 min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      style={{ height: TOPOLOGY_CONTROL_HEIGHT }}
                       value={selectedBranchId}
                       onChange={(event) => setSelectedBranchId(event.target.value)}
                     >
@@ -749,8 +821,10 @@ export function BranchTopologyPage(): JSX.Element {
                       ))}
                     </select>
                   </label>
+                  <details className="group min-w-0">
+                    <summary style={{ minHeight: TOPOLOGY_CONTROL_HEIGHT }} className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />按分支名打开预览</summary>
                   <form
-                    className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+                    className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
                     onSubmit={(event) => {
                       event.preventDefault();
                       openQuickPreview(quickBranchName);
@@ -763,7 +837,7 @@ export function BranchTopologyPage(): JSX.Element {
                         id="topology-quick-branch"
                         value={quickBranchName}
                         onChange={(event) => setQuickBranchName(event.target.value)}
-                        className="h-9 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                        className="h-11 min-w-0 flex-1 border-0 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
                         placeholder="粘贴分支并预览"
                       />
                     </div>
@@ -772,15 +846,12 @@ export function BranchTopologyPage(): JSX.Element {
                       预览
                     </Button>
                   </form>
+                  </details>
                   {branchFilter.trim() && !branchFilterHasMatches ? (
                     <div className="text-xs text-muted-foreground lg:col-start-2 lg:col-span-2">
                       没有匹配的已跟踪分支，可直接粘贴分支名预览，或回分支列表处理批量运维。
                     </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground lg:col-start-2 lg:col-span-2">
-                      {activeBranch ? `当前分支：${activeBranch.branch}` : '共享视图：按所有分支聚合'}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
                 <TopologyContextBar
                   projectId={projectId}
@@ -789,28 +860,25 @@ export function BranchTopologyPage(): JSX.Element {
                   runningServices={activeBranchRunningServices}
                   totalServices={activeBranchServiceTotal}
                   totalBranches={totalBranches}
+                  stale={Boolean(refreshError)}
                 />
               </div>
             </div>
           ) : null}
-        </div>
+        </div> : null}
 
-        {state.status === 'loading' ? (
-          <div className="cds-workspace cds-workspace-wide">
-            <LoadingBlock label="加载服务拓扑" />
-          </div>
-        ) : null}
         {state.status === 'error' ? (
-          <div className="cds-workspace cds-workspace-wide">
+          <div className="w-full">
             <ErrorBlock message={state.message} />
+            <Button ref={readErrorTarget} variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button>
           </div>
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="cds-workspace cds-workspace-wide grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <section className="min-h-[620px] cds-surface-raised cds-hairline p-4">
+          <div className={`grid gap-4 ${state.profiles.length || state.infra.length ? TOPOLOGY_BODY_GRID_CLASS : ''}`}>
+            <section ref={serviceWorkspace} tabIndex={-1} aria-label="服务与基础设施" className={`cds-surface-raised cds-hairline p-4 ${state.profiles.length || state.infra.length ? 'min-h-[38.75rem]' : ''}`}>
               {state.profiles.length === 0 && state.infra.length === 0 ? (
-                <div className="flex min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+                <div className="flex flex-col items-center justify-center gap-3 py-8 text-center text-sm text-muted-foreground">
                   <Layers3 className="h-10 w-10" />
                   <div className="text-base font-medium text-foreground">还没有服务节点</div>
                   <div>先完成 clone 自动识别，或直接在拓扑页添加数据库、缓存等基础设施。</div>
@@ -820,7 +888,7 @@ export function BranchTopologyPage(): JSX.Element {
                       新增基础设施
                     </Button>
                     <Button asChild variant="outline">
-                      <a href={`/settings/${encodeURIComponent(projectId)}`}>打开项目设置</a>
+                      <a href={`/settings/${encodeURIComponent(projectId)}?tab=compose&section=services`}>配置应用服务</a>
                     </Button>
                   </div>
                 </div>
@@ -831,7 +899,7 @@ export function BranchTopologyPage(): JSX.Element {
                     description={activeBranch ? `当前分支：${activeBranch.branch}` : '共享视图：聚合所有已跟踪分支'}
                     icon={<Cloud className="h-4 w-4" />}
                   >
-                    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                    <div className={TOPOLOGY_NODE_GRID_CLASS}>
                       {state.profiles.map((profile) => (
                         <ProfileNode
                           key={profile.id}
@@ -839,7 +907,7 @@ export function BranchTopologyPage(): JSX.Element {
                           branches={state.branches}
                           activeBranch={activeBranch}
                           selected={selectedNode?.kind === 'profile' && selectedNode.id === profile.id}
-                          onClick={() => setSelectedNode({ kind: 'profile', id: profile.id })}
+                          onClick={source => chooseNode({ kind: 'profile', id: profile.id }, profile.name || profile.id, source)}
                         />
                       ))}
                     </div>
@@ -865,13 +933,13 @@ export function BranchTopologyPage(): JSX.Element {
                         </Button>
                       </div>
                     ) : (
-                      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                      <div className={TOPOLOGY_NODE_GRID_CLASS}>
                         {state.infra.map((service) => (
                           <InfraNode
                             key={service.id}
                             service={service}
                             selected={selectedNode?.kind === 'infra' && selectedNode.id === service.id}
-                            onClick={() => setSelectedNode({ kind: 'infra', id: service.id })}
+                            onClick={source => chooseNode({ kind: 'infra', id: service.id }, service.name || service.id, source)}
                           />
                         ))}
                       </div>
@@ -881,22 +949,33 @@ export function BranchTopologyPage(): JSX.Element {
               )}
             </section>
 
-            <aside className="min-h-[620px] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-40px)] xl:overflow-auto">
-              <NodeDetails
-                selectedProfile={selectedProfile}
-                selectedInfra={selectedInfra}
-                branches={state.branches}
-                activeBranch={activeBranch}
-                infra={state.infra}
-                routingRules={state.routingRules}
-                previewMode={state.previewMode}
-                config={state.config}
-                projectId={projectId}
-                onToast={setToast}
-              />
-            </aside>
+            {desktopDetails && (state.profiles.length || state.infra.length) ? <aside className="min-h-[38.75rem] cds-surface-raised cds-hairline p-4 xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-auto">
+              {nodeDetails(selectedNode, activeBranch)}
+            </aside> : null}
           </div>
         ) : null}
+
+        <Dialog open={mobileDetailsOpen && !desktopDetails} onOpenChange={setMobileDetailsOpen}>
+          <DialogContent ref={node => { if (node) mobileContainer.current = node; }} frame className="max-w-3xl" onCloseAutoFocus={event => {
+            const needsFallback = focusWorkspaceOnClose.current || !nodeOrigin.current?.isConnected;
+            focusWorkspaceOnClose.current = false;
+            if (!needsFallback) return;
+            const active = document.activeElement;
+            if (active instanceof HTMLElement && active !== document.body && active !== document.documentElement && !mobileContainer.current?.contains(active)) return;
+            const target = serviceWorkspace.current || readErrorTarget.current;
+            if (target?.isConnected) { event.preventDefault(); target.focus({ preventScroll: true }); }
+          }}>
+            <DialogTitle className="sr-only">{mobileSelection?.label || '所选对象'} · 服务详情</DialogTitle>
+            <DialogDescription className="sr-only">查看所选服务的运行状态与配置；关闭后返回原节点和列表位置。</DialogDescription>
+            <DialogBody className="pt-8">
+              {refreshError ? <div role="alert" className="mb-4 space-y-2 text-sm text-warn"><p>拓扑读取失败：{refreshError}；{mobileObjectAvailable ? '保留原对象的上次快照。' : '原对象当前暂时无法重新确认。'}</p><Button variant="outline" style={{ minHeight: 44 }} disabled={refreshing} onClick={() => void refresh()}>重试读取</Button></div> : null}
+              {mobileSelection && mobileObjectAvailable && state.status === 'ok'
+                ? nodeDetails(mobileSelection.node, mobileSelection.branchId ? state.branches.find(branch => branch.id === mobileSelection.branchId) || null : null)
+                : <p role="alert" className="text-sm text-muted-foreground">暂时无法显示该服务详情，请重新读取或返回拓扑。</p>}
+            </DialogBody>
+            <DialogFooter className="shrink-0 border-t border-border px-5 py-3"><Button variant="outline" style={{ minHeight: 44 }} onClick={() => setMobileDetailsOpen(false)}>返回拓扑</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <CreateInfraDialog
           projectId={projectId}
@@ -919,6 +998,7 @@ export function BranchTopologyPage(): JSX.Element {
             {toast}
           </div>
         ) : null}
+        </>}
       </Workspace>
     </AppShell>
   );
@@ -938,7 +1018,7 @@ function TopologyBand({
   children: JSX.Element;
 }): JSX.Element {
   return (
-    <section className="rounded-md border border-border bg-background/40 p-4">
+    <section className={TOPOLOGY_BAND_CLASS}>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
           {icon}
@@ -1023,12 +1103,16 @@ function CreateInfraDialog({
           setSubmitting(false);
           return;
         }
+        const imageBase = (value: string) => (value.toLowerCase().split('/').pop() || '').split(':')[0];
+        const freshStorage = catalogItems.some(item => item.hasPersistence && imageBase(dockerImage).startsWith(imageBase(item.dockerImage)));
+        if (freshStorage && !window.confirm('将为该服务创建全新的空数据卷，不会复用或改动现有数据卷。是否继续？')) return;
         await apiRequest(`/api/infra?project=${encodeURIComponent(projectId)}`, {
           method: 'POST',
           body: {
             id: serviceId,
             name: name.trim() || serviceId,
             dockerImage,
+            ...(freshStorage ? { initializeStorage: 'new-only' } : {}),
             containerPort: port,
             env: parseEnvText(envText),
           },
@@ -1183,39 +1267,6 @@ function CreateInfraDialog({
   );
 }
 
-function TopologyMetric({
-  label,
-  value,
-  detail,
-  icon,
-  tone = 'default',
-}: {
-  label: string;
-  value: string | number;
-  detail: string;
-  icon: JSX.Element;
-  tone?: 'default' | 'warning';
-}): JSX.Element {
-  return (
-    <div className="rounded-md border border-border bg-background px-3 py-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <span
-          className={
-            tone === 'warning'
-              ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-500'
-              : 'inline-flex h-7 w-7 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground'
-          }
-        >
-          {icon}
-        </span>
-      </div>
-      <div className="truncate text-lg font-semibold">{value}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
-    </div>
-  );
-}
-
 function TopologyContextBar({
   projectId,
   activeBranch,
@@ -1223,6 +1274,7 @@ function TopologyContextBar({
   runningServices,
   totalServices,
   totalBranches,
+  stale = false,
 }: {
   projectId: string;
   activeBranch: BranchSummary | null;
@@ -1230,20 +1282,20 @@ function TopologyContextBar({
   runningServices: number;
   totalServices: number;
   totalBranches: number;
+  stale?: boolean;
 }): JSX.Element {
   if (!activeBranch) {
     return (
-      <div className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <div className="font-medium">共享视图</div>
-          <div className="mt-1 text-xs text-muted-foreground">
+          <div className="text-sm text-muted-foreground">
             聚合 {totalBranches} 个分支的部署覆盖，适合检查服务与基础设施关系。
           </div>
         </div>
         <Button asChild variant="outline" size="sm">
           <a href={`/branches/${encodeURIComponent(projectId)}`}>
             <GitBranch />
-            选择或部署分支
+            管理分支
           </a>
         </Button>
       </div>
@@ -1251,7 +1303,7 @@ function TopologyContextBar({
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3 text-sm xl:flex-row xl:items-center xl:justify-between">
+    <div className="flex flex-col gap-2 text-sm xl:flex-row xl:items-center xl:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="font-medium">{activeBranch.branch}</span>
         <span className={`rounded-md border px-2 py-1 text-xs ${statusTone(activeBranch.status)}`}>
@@ -1265,7 +1317,7 @@ function TopologyContextBar({
           <Button asChild size="sm">
             <a href={previewUrl} target="_blank" rel="noreferrer">
               <ExternalLink />
-              打开预览
+              {stale ? '打开上次入口' : '打开预览'}
             </a>
           </Button>
         ) : null}
@@ -1291,7 +1343,7 @@ function ProfileNode({
   branches: BranchSummary[];
   activeBranch: BranchSummary | null;
   selected: boolean;
-  onClick: () => void;
+  onClick: (source: HTMLButtonElement) => void;
 }): JSX.Element {
   const activeService = serviceForProfile(activeBranch, profile.id);
   const status = activeBranch ? activeService?.status || 'stopped' : runningBranchCount(branches, profile.id) > 0 ? 'running' : 'stopped';
@@ -1303,7 +1355,7 @@ function ProfileNode({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={event => onClick(event.currentTarget)}
       className={[
         'group min-h-40 rounded-md border bg-background px-4 py-3 text-left transition-colors hover:border-primary/60 hover:bg-accent/20',
         selected ? 'border-primary ring-2 ring-primary/20' : 'border-border',
@@ -1313,7 +1365,7 @@ function ProfileNode({
         <div className="flex min-w-0 items-start gap-3">
           <StatusGlyph status={status} />
           <div className="min-w-0">
-            <div className="truncate font-semibold">{profile.name || profile.id}</div>
+            <div className="font-semibold [overflow-wrap:anywhere]">{profile.name || profile.id}</div>
             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{profile.id}</div>
           </div>
         </div>
@@ -1363,12 +1415,12 @@ function InfraNode({
 }: {
   service: InfraService;
   selected: boolean;
-  onClick: () => void;
+  onClick: (source: HTMLButtonElement) => void;
 }): JSX.Element {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={event => onClick(event.currentTarget)}
       className={[
         'group min-h-36 rounded-md border bg-background px-4 py-3 text-left transition-colors hover:border-primary/60 hover:bg-accent/20',
         selected ? 'border-primary ring-2 ring-primary/20' : 'border-border',
@@ -1378,7 +1430,7 @@ function InfraNode({
         <div className="flex min-w-0 items-start gap-3">
           <StatusGlyph status={service.status} />
           <div className="min-w-0">
-            <div className="truncate font-semibold">{service.name || service.id}</div>
+            <div className="font-semibold [overflow-wrap:anywhere]">{service.name || service.id}</div>
             <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{service.id}</div>
           </div>
         </div>
@@ -1401,7 +1453,7 @@ function InfraNode({
 function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceState['status'] | InfraService['status'] }): JSX.Element {
   if (status === 'running') {
     return (
-      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-500">
+      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-ok/30 bg-ok-soft text-ok">
         <CheckCircle2 className="h-4 w-4" />
       </span>
     );
@@ -1415,7 +1467,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
   }
   if (status === 'building' || status === 'starting' || status === 'restarting' || status === 'stopping') {
     return (
-      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-500/30 bg-sky-500/10 text-sky-500">
+      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-info/30 bg-info-soft text-info">
         <Clock3 className="h-4 w-4" />
       </span>
     );
@@ -1430,7 +1482,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
 function NodeMiniStat({ label, value }: { label: string; value: string | number }): JSX.Element {
   return (
     <div className="cds-surface-sunken cds-hairline px-2 py-2">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[0.6875rem] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-xs font-medium">{value}</div>
     </div>
   );
@@ -1490,14 +1542,16 @@ function NodeDetails({
   config,
   projectId,
   onToast,
+  snapshotStale = false,
 }: {
   selectedProfile: BuildProfile | null;
+  snapshotStale?: boolean;
   selectedInfra: InfraService | null;
   branches: BranchSummary[];
   activeBranch: BranchSummary | null;
   infra: InfraService[];
   routingRules: RoutingRule[];
-  previewMode: 'simple' | 'port' | 'multi';
+  previewMode: 'simple' | 'port' | 'multi' | null;
   config: CdsConfigResponse;
   projectId: string;
   onToast: (message: string) => void;
@@ -1539,7 +1593,7 @@ function NodeDetails({
 
   if (!selectedProfile && !selectedInfra) {
     return (
-      <div className="flex h-full min-h-[540px] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
+      <div className="flex h-full min-h-[33.75rem] flex-col items-center justify-center gap-3 text-center text-sm text-muted-foreground">
         <Boxes className="h-10 w-10" />
         <div className="text-base font-medium text-foreground">选择一个节点</div>
         <div>点击左侧应用服务或基础设施节点查看运行状态、依赖和跳转入口。</div>
@@ -1554,6 +1608,7 @@ function NodeDetails({
         projectId={projectId}
         branchId={activeBranch?.id}
         onToast={onToast}
+        readOnly={snapshotStale}
       />
     );
   }
@@ -1575,45 +1630,41 @@ function NodeDetails({
 
   return (
     <div className="space-y-5">
-      <DetailHeader icon={<TerminalSquare className="h-5 w-5" />} title={profile.name || profile.id} subtitle="应用服务" />
+      <DetailHeader icon={<TerminalSquare className="h-5 w-5" />} title={profile.name || profile.id} subtitle={`${activeBranch ? `应用服务 · ${activeBranch.branch}` : '应用服务 · 共享视图'}${snapshotStale ? ' · 上次快照' : ''}`} />
 
-      <div className="grid gap-2 sm:grid-cols-4">
-        <NodeMiniStat label="状态" value={serviceStateLabel} />
-        <NodeMiniStat label="分支" value={branchesUsingProfile.length} />
-        <NodeMiniStat label="端口" value={profile.containerPort || '-'} />
-        <NodeMiniStat label="路由" value={routeLabel} />
-      </div>
+      <DetailRows columns={2} rows={[
+        ['状态', serviceStateLabel], ['配置分支', String(branchesUsingProfile.length)],
+        ['容器端口', String(profile.containerPort || '-')], ['路由', routeLabel],
+      ]} />
 
-      <div className="cds-surface-sunken cds-hairline px-3 py-3 text-sm">
+      <div className="border-t border-border pt-3 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <CodePill>{profile.id}</CodePill>
           {activeService ? <CodePill>:{activeService.hostPort}</CodePill> : null}
-          {previewUrl ? <CodePill>可预览</CodePill> : null}
+          {previewUrl ? <CodePill>{snapshotStale ? '上次入口已记录' : '可预览'}</CodePill> : null}
         </div>
         <div className="mt-2 break-words text-muted-foreground">
-          {profile.dockerImage || '未配置镜像'} · {profile.command || '未配置启动命令'}
+          {profile.dockerImage || '未配置镜像'}{!profile.command ? ' · 未配置启动命令' : ''}
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
         {activeBranch ? (
-          <Button asChild>
+          <Button asChild style={{ minHeight: 44 }}>
             <a href={`/branch-panel/${encodeURIComponent(activeBranch.id)}?project=${encodeURIComponent(projectId)}`}>
               打开分支详情
             </a>
           </Button>
         ) : null}
         {previewUrl ? (
-          <Button asChild variant="outline">
+          <Button asChild variant="outline" style={{ minHeight: 44 }}>
             <a href={previewUrl} target="_blank" rel="noreferrer">
-              打开预览
+              {snapshotStale ? '打开上次入口' : '打开预览'}
             </a>
           </Button>
         ) : null}
         {!previewUrl && activeBranch ? (
-          <Button type="button" variant="outline" onClick={() => onToast('当前预览模式需要在分支详情页打开')}>
-            预览入口
-          </Button>
+          <p className="basis-full text-sm text-muted-foreground">{previewMode ? '预览请从分支详情进入。' : '预览模式未确认；请重试读取，或打开分支详情核对。'}</p>
         ) : null}
       </div>
 
@@ -1738,12 +1789,7 @@ function NodeDetails({
               actionHref={`/branches/${encodeURIComponent(projectId)}`}
               actionLabel="回到分支列表"
             />
-          ) : runtimeState.status === 'loading' ? (
-            <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              加载日志
-            </div>
-          ) : runtimeState.status === 'error' ? (
+          ) : runtimeState.status === 'loading' ? <ContentLoading label="加载服务日志" variant="log" /> : runtimeState.status === 'error' ? (
             <ErrorBlock message={runtimeState.message} />
           ) : runtimeState.status === 'ok' ? (
             <RuntimeLogs
@@ -1766,12 +1812,7 @@ function NodeDetails({
               actionHref={`/branches/${encodeURIComponent(projectId)}`}
               actionLabel="回到分支列表"
             />
-          ) : runtimeState.status === 'loading' ? (
-            <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              加载提交
-            </div>
-          ) : runtimeState.status === 'error' ? (
+          ) : runtimeState.status === 'loading' ? <ContentLoading label="加载提交历史" variant="rows" /> : runtimeState.status === 'error' ? (
             <ErrorBlock message={runtimeState.message} />
           ) : runtimeState.status === 'ok' ? (
             <RuntimeCommits
@@ -1792,8 +1833,10 @@ function InfraDetails({
   projectId,
   branchId,
   onToast,
+  readOnly = false,
 }: {
   selectedInfra: InfraService;
+  readOnly?: boolean;
   projectId: string;
   branchId?: string;
   onToast: (message: string) => void;
@@ -1816,6 +1859,7 @@ function InfraDetails({
   }
 
   async function runInfraAction(next: 'start' | 'stop' | 'restart'): Promise<void> {
+    if (readOnly) return;
     setAction(next);
     try {
       await apiRequest(`/api/infra/${encodeURIComponent(selectedInfra.id)}/${next}?project=${encodeURIComponent(projectId)}`, {
@@ -1832,8 +1876,8 @@ function InfraDetails({
 
   return (
     <div className="space-y-5">
-      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle="基础设施" />
-      <DetailRows
+      <DetailHeader icon={<Database className="h-5 w-5" />} title={selectedInfra.name || selectedInfra.id} subtitle={`基础设施 · 项目共享${readOnly ? ' · 上次快照' : ''}`} />
+      <DetailRows columns={2}
         rows={[
           ['状态', statusLabel(selectedInfra.status)],
           ['镜像', selectedInfra.dockerImage],
@@ -1843,20 +1887,21 @@ function InfraDetails({
         ]}
       />
       {selectedInfra.errorMessage ? <ErrorBlock message={selectedInfra.errorMessage} /> : null}
+      {readOnly ? <p className="text-sm text-warn">拓扑尚未重新确认，维护操作暂不可用；请先重试读取。</p> : null}
       <div className="grid gap-2 sm:grid-cols-2">
-        <Button type="button" variant="outline" onClick={() => void runInfraAction('start')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('start')} disabled={action !== null || readOnly}>
           {action === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
           启动
         </Button>
-        <Button type="button" variant="outline" onClick={() => void runInfraAction('restart')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('restart')} disabled={action !== null || readOnly}>
           {action === 'restart' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
           重启
         </Button>
-        <Button type="button" variant="outline" onClick={() => void runInfraAction('stop')} disabled={action !== null}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void runInfraAction('stop')} disabled={action !== null || readOnly}>
           {action === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
           停止
         </Button>
-        <Button type="button" variant="outline" onClick={() => void loadLogs()} disabled={logsState.status === 'loading'}>
+        <Button type="button" variant="outline" style={{ minHeight: 44 }} onClick={() => void loadLogs()} disabled={logsState.status === 'loading'}>
           {logsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <FileText />}
           查看日志
         </Button>
@@ -1894,12 +1939,7 @@ function InfraDetails({
             title="点击查看日志"
             description="不需要离开拓扑页即可确认数据库、缓存或对象存储是否启动成功。"
           />
-        ) : logsState.status === 'loading' ? (
-          <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            加载日志
-          </div>
-        ) : logsState.status === 'error' ? (
+        ) : logsState.status === 'loading' ? <ContentLoading label="加载基础设施日志" variant="log" /> : logsState.status === 'error' ? (
           <ErrorBlock message={logsState.message} />
         ) : (
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">
@@ -1907,7 +1947,7 @@ function InfraDetails({
           </pre>
         )}
       </DisclosurePanel>
-      <Button asChild variant="outline">
+      <Button asChild variant="outline" style={{ minHeight: 44 }}>
         <a href={`/settings/${encodeURIComponent(projectId)}#cache`}>打开项目设置</a>
       </Button>
     </div>
@@ -1929,20 +1969,20 @@ function DetailHeader({
         {icon}
       </div>
       <div className="min-w-0">
-        <h2 className="truncate text-base font-semibold">{title}</h2>
+        <h2 className="text-base font-semibold [overflow-wrap:anywhere]">{title}</h2>
         <div className="mt-1 text-sm text-muted-foreground">{subtitle}</div>
       </div>
     </div>
   );
 }
 
-function DetailRows({ rows }: { rows: Array<[string, string]> }): JSX.Element {
+function DetailRows({ rows, columns = 1 }: { rows: Array<[string, string]>; columns?: 1 | 2 }): JSX.Element {
   return (
-    <dl className="space-y-3">
+    <dl className={columns === 2 ? 'grid grid-cols-2 gap-x-4 gap-y-3' : 'space-y-3'}>
       {rows.map(([label, value]) => (
-        <div key={label}>
+        <div key={label} className="min-w-0">
           <dt className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">{label}</dt>
-          <dd className="mt-1 break-words text-sm">{value || '-'}</dd>
+          <dd className="mt-1 text-sm [overflow-wrap:anywhere]">{value || '-'}</dd>
         </div>
       ))}
     </dl>
@@ -2054,7 +2094,7 @@ function RuntimeLogs({
             详情页
           </a>
         </div>
-        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
           {containerLog || '还没有日志输出'}
         </pre>
       </section>

@@ -57,7 +57,7 @@ export function statusClass(status: StatusLike): string {
  */
 export function statusRailClass(status: StatusLike): string {
   if (status === 'running') {
-    return 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]';
+    return 'bg-emerald-500 shadow-[0_0_0.375rem_rgba(16,185,129,0.6)]';
   }
   if (status === 'building' || status === 'starting' || status === 'restarting') {
     return 'bg-sky-500 animate-pulse';

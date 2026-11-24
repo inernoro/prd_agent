@@ -823,7 +823,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="校验并发布模型网关权威教程")
     parser.add_argument("command", choices=("check", "plan", "apply", "graph-draft"))
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    parser.add_argument("--base-url", default=os.environ.get("MAP_BASE_URL", "https://map.ebcone.net"))
+    parser.add_argument("--base-url", default=os.environ.get("MAP_BASE_URL", ""))
     parser.add_argument("--store-id", default=os.environ.get("MAP_TUTORIAL_STORE_ID"))
     parser.add_argument("--key-env", default="MAP_DOC_STORE_KEY")
     parser.add_argument("--json", action="store_true")
@@ -833,6 +833,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command in ("plan", "apply") and not args.base_url.strip():
+            raise TutorialError("plan/apply 必须通过 MAP_BASE_URL 或 --base-url 指定部署入口")
         source = load_and_validate(args.manifest)
         if args.command == "check":
             result: dict[str, Any] = {

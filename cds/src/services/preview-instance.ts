@@ -26,6 +26,23 @@ export function isPreviewInstance(env: NodeJS.ProcessEnv = process.env): boolean
 }
 
 /**
+ * 「这条构建配置起的是不是一个 CDS 预览实例」——父实例侧的判定。
+ *
+ * 父实例在两处需要知道：forwarder 注入徽章时（渲染「CDS 托管 CDS」变体），以及部署时
+ * （把脱敏镜像写进子实例的 worktree）。判据与子实例自己的 isPreviewInstance 同源：
+ * 都看 CDS_PREVIEW_INSTANCE 的取值，只是这里读的是 compose 声明进 profile.env 或
+ * 项目环境变量里的那份，而不是进程 env。
+ */
+export function profileHostsPreviewInstance(
+  profile: { env?: Record<string, string> } | null | undefined,
+  projectEnv?: Record<string, string> | null,
+): boolean {
+  const fromProfile = profile?.env?.CDS_PREVIEW_INSTANCE;
+  const fromProject = projectEnv?.CDS_PREVIEW_INSTANCE;
+  return isPreviewInstance({ CDS_PREVIEW_INSTANCE: fromProfile ?? fromProject ?? '' } as NodeJS.ProcessEnv);
+}
+
+/**
  * 预览实例里禁止执行的宿主操作二进制。判定按「每个 shell 片段的首个命令 token」，
  * 兼容 sudo / env / VAR=x 前缀。真正的安全底座是容器根本不挂 docker.sock —— 本
  * 拦截只负责把失败变成一句用户看得懂的话。
@@ -88,6 +105,28 @@ export function previewInstanceBlockedMessage(binary: string): string {
 const SECRET_ENV_KEY_PATTERN =
   /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|MONGO|REDIS|DATABASE|CONNECTION|_URI$|_URL$|_DSN$)/i;
 
+/**
+ * 成组的凭据：**要么整组留、要么整组删**，不许按「哪个名字看着像密钥」逐个判。
+ *
+ * R2 的四件套里只有 `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` 命中上面那个模式，
+ * `R2_ENDPOINT` / `R2_BUCKET` 不命中。于是子实例被清洗成「四缺二」——那既不是
+ * 「有意只用本地」（四个全空），也不是「配全了」，而是**配置事故**那一档，
+ * 解析器按规矩当场抛错，`StateService` 一构造就炸，子实例根本开不了机
+ *（2026-09-15，Codex review 抓到；实测 /healthz 503）。
+ *
+ * 根因不在那个抛错——抛错是对的（durable-payload-storage：凭据不全必须拒绝）。
+ * 根因是**清洗把一组凭据拆散了**。所以这里按组补齐，而不是去放松那个判据。
+ * 顺带也更正确：子实例本来就不该往父实例的桶里写东西
+ *（见 cross-project-isolation.md）。
+ */
+const SECRET_GROUP_COMPANION_KEYS = new Set([
+  'R2_ENDPOINT',
+  'R2_BUCKET',
+  'R2_PREFIX',
+  'CDS_REPORTS_R2_BUCKET',
+  'CDS_REPORTS_R2_PREFIX',
+]);
+
 function normalizePreviewPublicBaseUrl(value: string | undefined): string {
   if (!value) return '';
   try {
@@ -118,6 +157,20 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   // 先抄下子实例专用凭据（本身命中 PASSWORD 模式，会在下面的循环里被删）。
   const previewUsername = env.CDS_PREVIEW_USERNAME;
   const previewPassword = env.CDS_PREVIEW_PASSWORD;
+  // AI 静态钥匙一律不留给子实例。父实例的 AI_ACCESS_KEY / CDS_AI_ACCESS_KEY 命中
+  // ACCESS_KEY 模式，被下面的循环删掉——那把钥匙能操作生产 CDS。
+  //
+  // **也不要为子实例单独生成一把走 CDS_PREVIEW_ 前缀的**（这里曾经就是那么做的，
+  // 合并前撤除）：项目级 env 是同项目所有分支预览共用的一份（见
+  // .claude/rules/cross-project-isolation.md 通道 9），而进程级静态钥匙在
+  // resolveAiSession 里不带项目作用域、等价管理员——任一条未合并分支就能以管理员
+  // 身份打到兄弟分支的预览。
+  //
+  // 也不要以为「换成项目级 Agent Key（cdsp_）就行了」：那把钥匙是拿收方实例自己
+  // 库里的哈希去比对的（StateService.findAgentKeyForAuth），而子实例是独立存储、
+  // 首启 seed 的，父实例签的 cdsp_ 在它那儿根本不存在。带作用域的自测凭据是**尚未
+  // 落地的后续事项**，不是现成绕行；眼下 Agent 免登录自测没有通道，只能由人给口令。
+  // 台账见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.cds.md。
   const previewPublicBaseUrl = normalizePreviewPublicBaseUrl(env.CDS_PREVIEW_PUBLIC_BASE_URL);
   const previewSso = {
     enabled: env.CDS_PREVIEW_SSO_ENABLED,
@@ -131,7 +184,10 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   };
   const scrubbed: string[] = [];
   for (const key of Object.keys(env)) {
-    if (!SECRET_ENV_KEY_PATTERN.test(key) && !key.startsWith('CDS_SSO_')) continue;
+    if (!SECRET_ENV_KEY_PATTERN.test(key)
+      && !SECRET_GROUP_COMPANION_KEYS.has(key)
+      && !key.startsWith('CDS_DESIGN_MAP_HANDOFF_')
+      && !key.startsWith('CDS_SSO_')) continue;
     delete env[key];
     scrubbed.push(key);
   }
@@ -177,6 +233,14 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
  */
 export class PreviewInstanceShellExecutor implements IShellExecutor {
   constructor(private readonly inner: IShellExecutor) {}
+
+  async execBackgroundObservation(command: string, options?: ExecOptions): Promise<ExecResult> {
+    if (findBlockedBinary(command)) return this.exec(command, options);
+    if (!this.inner.execBackgroundObservation) {
+      return { stdout: '', stderr: '非紧急查询执行器暂不可用，请稍后重试。', exitCode: 1 };
+    }
+    return this.inner.execBackgroundObservation(command, options);
+  }
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     const blocked = findBlockedBinary(command);

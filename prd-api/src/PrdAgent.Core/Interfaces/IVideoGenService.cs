@@ -25,11 +25,23 @@ public interface IVideoGenService
     /// <summary>按 ID 查询视频生成任务</summary>
     Task<VideoGenRun?> GetRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 
+    /// <summary>仅用于已鉴权本人详情读取；按原许可选择中断任务所属版本，不创建执行许可。</summary>
+    Task PrepareGenerationRecoveryAsync(VideoGenRun run, string ownerAdminId, string appKey, CancellationToken ct = default)
+        => Task.CompletedTask;
+
     /// <summary>分页列出视频生成任务</summary>
     Task<(long total, List<VideoGenRun> items)> ListRunsAsync(string ownerAdminId, string? appKey = null, int limit = 20, int skip = 0, CancellationToken ct = default);
 
     /// <summary>请求取消任务</summary>
     Task<bool> CancelRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
+
+    /// <summary>删除终态任务及其不再被引用的生成产物；可同时回收仅属于该任务的空项目。</summary>
+    Task<DeleteVideoGenRunResult?> DeleteRunAsync(
+        string runId,
+        string ownerAdminId,
+        bool deleteEmptyProject = false,
+        string? appKey = null,
+        CancellationToken ct = default);
 
     /// <summary>统计指定用户今日在指定 appKey 下的视频生成次数</summary>
     Task<long> CountTodayRunsAsync(string ownerAdminId, string appKey, CancellationToken ct = default);

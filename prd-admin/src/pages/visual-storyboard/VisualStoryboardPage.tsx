@@ -501,7 +501,7 @@ export default function VisualStoryboardPage() {
         </div>
 
         {phase === 'scripting' ? (
-          // 拆分镜为非流式 LLM 调用：给动画骨架 + 预估耗时，避免空白等待（CLAUDE.md §6 兜底；流式逐镜见 doc/debt.visual-agent.md「Visual Agent 视觉分镜台」 #4）
+          // 拆分镜为非流式 LLM 调用：给动画骨架 + 预估耗时，避免空白等待（CLAUDE.md §6 兜底；流式逐镜见 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.visual-agent.md「Visual Agent 视觉分镜台」 #4）
           <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
             正在把内容拆成分镜，长文约需 10-40 秒，下方会逐镜浮现…
           </div>
@@ -658,7 +658,7 @@ export default function VisualStoryboardPage() {
                             ) : null}
                             {s.vidStatus === 'error' ? (
                               <div
-                                className="absolute inset-x-0 bottom-0 px-2 py-1 text-[11px] text-center"
+                                className="surface-tone-dark absolute inset-x-0 bottom-0 px-2 py-1 text-[11px] text-center"
                                 style={{ background: 'rgba(127,29,29,0.85)', color: '#fff' }}
                               >
                                 {s.vidError || '视频生成失败'}

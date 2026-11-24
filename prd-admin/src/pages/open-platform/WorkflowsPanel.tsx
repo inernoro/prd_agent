@@ -241,7 +241,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                         {emailDomain ? (
                           <code
                             className="px-2.5 py-1 rounded text-sm font-mono"
-                            style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(96,165,250,0.95)' }}
+                            style={{ background: 'rgba(59,130,246,0.1)', color: 'var(--accent-fg-blue)' }}
                           >
                             {wf.addressPrefix}@{emailDomain}
                           </code>

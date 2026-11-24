@@ -17,9 +17,10 @@
 
 ### 1. 双出口必须是两个独立 HTTPS，禁止 http 混入
 
-- 主应用与网关（或任意两个对外部件）各自拥有**独立命名子域**，走 CDS v3 子域路由：`<slug>-<sub>.miduo.org`（`BuildProfile.subdomain` + forwarder 命名 host 路由）。网关入口是独立子域，**不是**埋在主应用域名下的 `/gw/v1` path-prefix。
+- 主应用走分支主域名；其它用户页面可用独立命名子域，走 `BuildProfile.subdomain` + forwarder 命名 host 路由。主应用服务即使也有命名子域，入口列表只能显示一次，禁止把同一页面伪装成两个入口。
 - 两个出口**全部 HTTPS**。任一出口出现 `http://`（含内部转发对外暴露、混合内容）即违规，必须修到全 HTTPS。
 - 交付时给出**每个出口的最终深链**（落到该出口用户会看的那一屏，见 `CLAUDE.md §11`），不是只给根域名。
+- 入口名称与页面路径必须由 `cds.web-entry-name` / `cds.web-entry-path` 声明（compose 是 Agent 侧的 SSOT；用户侧等价入口是分支面板「应用已上线 → 配置入口」，写的是同一份 `BuildProfile.subdomain` / `webEntry`，可选存项目档或分支档）。`cds.readiness-path` 是机器探针，禁止展示成用户入口；API-only 服务可以有 `cds.subdomain`，但不应声明 Web 入口。
 
 ### 2. 每个容器职责必须在面板/文档显式标注
 
@@ -65,4 +66,4 @@
 - `cds-auto-deploy.md`：push 即部署 + 分支状态 SSE；本规则补「多容器部署时每个容器职责要透明」。
 - `living-status-board.md`：拓扑说明挂进看板。
 - `content-fills-canvas.md` / `full-height-layout.md`：观测前端（llmgw-web）等 UI 出口本身也要满足内容填满 / 撑满高度。
-- 本次实例：`doc/debt.platform.llm-gateway.isolation.md`（波2.5 CDS 命名子域实施证据）、`doc/design.platform.llm-gateway.physical-isolation.md`（当前部署拓扑）。
+- 当前部署拓扑和波 2.5 命名子域实施证据可按以下资料核对。 [部署拓扑](../../doc/design.platform.llm-gateway.physical-isolation.md) · [历史证据](https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.llm-gateway.isolation.md)

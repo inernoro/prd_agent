@@ -7,8 +7,10 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
 const { chromium } = require(PW);
-import { attachAutoCapture, _bumpCaptureSession } from '/home/user/prd_agent/.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
-export * from '/home/user/prd_agent/.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
+// 兄弟技能的 harness 按相对路径引，不写死某台机器的 checkout：
+// 写死的话换个仓库位置就是 ERR_MODULE_NOT_FOUND，在跑到任何一行之前就挂。
+import { attachAutoCapture, _bumpCaptureSession } from '../../../create-visual-test-to-kb/scripts/harness.mjs';
+export * from '../../../create-visual-test-to-kb/scripts/harness.mjs';
 import { installNodeFetchRoute } from './proxyroute.mjs';
 
 export async function launchCds(cfg, opts = {}) {

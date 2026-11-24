@@ -1,7 +1,6 @@
 import type { ApiResponse } from '@/types/api';
 import type {
   ModelSchedulerConfig,
-  UpdateSchedulerConfigRequest,
 } from '../../types/schedulerConfig';
 import type { ISchedulerConfigService } from '../contracts/schedulerConfig';
 import { useAuthStore } from '@/stores/authStore';
@@ -29,32 +28,8 @@ export class SchedulerConfigService implements ISchedulerConfigService {
     return res.json();
   }
 
-  async updateConfig(
-    request: UpdateSchedulerConfigRequest
-  ): Promise<ApiResponse<ModelSchedulerConfig>> {
-    const res = await fetch(`${API_BASE}${api.mds.schedulerConfig()}`, {
-      method: 'PUT',
-      headers: {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    });
-
-    if (!res.ok) {
-      throw new Error(`更新系统配置失败: ${res.status}`);
-    }
-
-    return res.json();
-  }
-
   async getSchedulerConfig(): Promise<ApiResponse<ModelSchedulerConfig>> {
     return this.getConfig();
   }
 
-  async updateSchedulerConfig(
-    request: UpdateSchedulerConfigRequest
-  ): Promise<ApiResponse<ModelSchedulerConfig>> {
-    return this.updateConfig(request);
-  }
 }

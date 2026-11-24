@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -25,6 +26,7 @@ public class HomepageAssetsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<HomepageAssetsController> _logger;
     private readonly IAssetStorage _assetStorage;
+    private readonly HomepageAssetCopier _copier;
 
     // 允许 a-z0-9._- ，首字符必须字母/数字；点号用于分段（card.marketplace / agent.prd-agent.image）
     private static readonly Regex SlotRegex = new(@"^[a-z0-9][a-z0-9._\-]{0,127}$", RegexOptions.Compiled);
@@ -35,11 +37,16 @@ public class HomepageAssetsController : ControllerBase
     private static readonly Regex HeroSlotRegex = new(@"^hero\.(.+)$", RegexOptions.Compiled);
     private const long MaxUploadBytes = 20 * 1024 * 1024; // 20MB：图片 + 短视频
 
-    public HomepageAssetsController(MongoDbContext db, ILogger<HomepageAssetsController> logger, IAssetStorage assetStorage)
+    public HomepageAssetsController(
+        MongoDbContext db,
+        ILogger<HomepageAssetsController> logger,
+        IAssetStorage assetStorage,
+        HomepageAssetCopier copier)
     {
         _db = db;
         _logger = logger;
         _assetStorage = assetStorage;
+        _copier = copier;
     }
 
     private static (bool ok, string? error, string normalized) NormalizeSlot(string slot)
@@ -111,10 +118,12 @@ public class HomepageAssetsController : ControllerBase
     private static HomepageAssetDto ToDto(HomepageAsset x) => new()
     {
         Slot = x.Slot,
-        Url = x.Url,
+        // 带版本：同 slot 重生成写的是同一个对象 key，不换 URL 的话管理员刷不出新图
+        Url = HomepageAssetUrl.Versioned(x),
         Mime = x.Mime,
         SizeBytes = x.SizeBytes,
-        UpdatedAt = x.UpdatedAt
+        UpdatedAt = x.UpdatedAt,
+        Prompt = x.Prompt
     };
 
     /// <summary>
@@ -207,9 +216,12 @@ public class HomepageAssetsController : ControllerBase
                 .Set(x => x.Url, url)
                 .Set(x => x.Mime, mime)
                 .Set(x => x.SizeBytes, bytes.LongLength)
+                // 手工上传覆盖掉 AI 生成的那版时，旧提示词就不再描述这张图了，一并清掉
+                .Set(x => x.Prompt, (string?)null)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
 
+        existing.Prompt = null;
         existing.RelativePath = objectKey;
         existing.Url = url;
         existing.Mime = mime;
@@ -217,6 +229,139 @@ public class HomepageAssetsController : ControllerBase
         existing.UpdatedAt = now;
 
         _logger.LogInformation("Replaced homepage asset: slot={Slot} ext={Ext} size={Size}", slotNorm, ext, bytes.LongLength);
+        return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(existing)));
+    }
+
+    /// <summary>
+    /// 认领：把一次生图任务的产物挂到某个 slot 上（管理端「首页预览图」的生成落地口）。
+    ///
+    /// **先把字节复制进我们自己的存储，再写槽位**。早先这里是直接引用生图产物的地址，
+    /// 理由是「Worker 存的是内容寻址对象，地址恒定」——但那只在 run 绑了工作区时成立。
+    /// 首页配图这条 run 没有工作区，Worker 的落存整段跳过，`Url` 就是供应商返回的地址，
+    /// 常带签名、有有效期：生成当天首页正常，等它过期，未登录访客看到的是一排裂图，
+    /// 而管理端不报错。复制的代价是七张图多存一份，换来一条能一句话说清的不变量：
+    /// 首页槽位引用的对象一定是我们自己存的。
+    /// </summary>
+    [HttpPost("adopt-image-run")]
+    [ProducesResponseType(typeof(ApiResponse<HomepageAssetDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> AdoptImageRun([FromBody] AdoptImageRunRequest req, CancellationToken ct)
+    {
+        var adminId = this.GetRequiredUserId();
+
+        var (ok, err, slotNorm) = NormalizeSlot(req?.Slot ?? string.Empty);
+        if (!ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "slot 不合法"));
+
+        var runId = (req?.RunId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId).Limit(1).FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图任务不存在"));
+        // 只有任务发起人能把它的产物挂到首页 slot 上，避免拿到别人的 runId 就能改首页
+        if (!string.Equals(run.OwnerAdminId, adminId, StringComparison.Ordinal))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图任务不存在"));
+
+        var itemIndex = req?.ItemIndex ?? 0;
+        var imageIndex = req?.ImageIndex ?? 0;
+        var item = await _db.ImageGenRunItems
+            .Find(x => x.RunId == runId && x.ItemIndex == itemIndex && x.ImageIndex == imageIndex)
+            .Limit(1)
+            .FirstOrDefaultAsync(ct);
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图结果不存在"));
+        if (item.Status != ImageGenRunItemStatus.Done)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "这张图还没生成完成，不能挂到首页"));
+        // 出图了却没有地址：调用方按 b64_json 发的、又没有 workspace 落资产，产物只在 base64 里。
+        // 这里引用的是 URL，认领不了——说清楚是哪一步的问题，别报成「还没生成完成」。
+        if (string.IsNullOrWhiteSpace(item.Url))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "这张图只有 base64、没有可引用的地址，挂不到首页。发起生图时请用 responseFormat=url"));
+
+        // 把字节取回来存进我们自己的存储。mime / 大小都以真正存下来的那份为准——
+        // 不再从资产记录或 URL 后缀去猜：猜错只是标签不对，而这里拿到的是实物。
+        HomepageAssetCopier.Copied copied;
+        try
+        {
+            copied = await _copier.CopyAsync(item.Url!, ext => BuildObjectKey(slotNorm, ext), ct);
+        }
+        catch (HomepageAssetCopier.CopyFailedException ex)
+        {
+            _logger.LogWarning("Adopt copy failed: slot={Slot} run={Run} msg={Msg}", slotNorm, runId, ex.Message);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        var imageUrl = copied.Url;
+        var mime = copied.Mime;
+        var sizeBytes = copied.SizeBytes;
+
+        var prompt = (req?.Prompt ?? item.Prompt ?? string.Empty).Trim();
+        if (prompt.Length > 4000) prompt = prompt[..4000];
+
+        var now = DateTime.UtcNow;
+        // 这一句只是读，但它排在上传**之后**——被取消的话，下面那两处 CancellationToken.None
+        // 的写库一句都跑不到，等于白保护：字节已经落在存储上（同 key 时线上那张图已经被换掉），
+        // 库里还是旧的。上传之后的每一步都不再看请求还连不连着。
+        var existing = await _db.HomepageAssets.Find(x => x.Slot == slotNorm).Limit(1)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (existing == null)
+        {
+            var rec = new HomepageAsset
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Slot = slotNorm,
+                RelativePath = copied.ObjectKey,
+                Url = imageUrl,
+                Mime = mime,
+                SizeBytes = sizeBytes,
+                Prompt = string.IsNullOrWhiteSpace(prompt) ? null : prompt,
+                CreatedByAdminId = adminId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            // 字节已经上传完了，这一步是把它认下来。用 CancellationToken.None：管理员这时
+            // 关掉标签页的话，对象留在存储里而库里没有记录，这次认领白做还留个孤儿。
+            await _db.HomepageAssets.InsertOneAsync(rec, cancellationToken: CancellationToken.None);
+            _logger.LogInformation("Adopted image-gen result into homepage slot={Slot} run={Run}", slotNorm, runId);
+            return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(rec)));
+        }
+
+        // 旧对象只在「确实换了一个 key」时才删。扩展名没变时新旧 key 相同，此刻那个 key 上
+        // 躺着的已经是刚上传的新图——照删就是把自己刚存的东西删掉，首页当场裂。
+        // **删除还必须排在库里切换成功之后**：先删后写的话，中间一旦取消或写库失败，
+        // 记录还指着一个已经不存在的对象，首页那一格就此变成裂图，而这次认领是失败的。
+        var staleKey = string.Equals(existing.RelativePath, copied.ObjectKey, StringComparison.Ordinal)
+            ? string.Empty
+            : existing.RelativePath;
+
+        await _db.HomepageAssets.UpdateOneAsync(
+            x => x.Id == existing.Id,
+            Builders<HomepageAsset>.Update
+                .Set(x => x.RelativePath, copied.ObjectKey)
+                .Set(x => x.Url, imageUrl)
+                .Set(x => x.Mime, mime)
+                .Set(x => x.SizeBytes, sizeBytes)
+                .Set(x => x.Prompt, string.IsNullOrWhiteSpace(prompt) ? null : prompt)
+                .Set(x => x.UpdatedAt, now),
+            // 同上，也是 None。这条尤其不能半路取消：新旧 key 相同时，存储上那个对象已经被
+            // 覆盖成新图了，库里却还留着旧图的 mime / 大小 / 提示词，页面与记录当场对不上。
+            cancellationToken: CancellationToken.None);
+
+        // 切换已经落库，这时候删旧对象才安全；删失败也只是留个孤儿，不会让首页裂图。
+        // 用 CancellationToken.None：请求这时已经成功了，客户端断开不该把清理掐掉。
+        if (!string.IsNullOrWhiteSpace(staleKey))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(staleKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete old homepage asset {Key}: {Msg}", staleKey, ex.Message); }
+        }
+
+        existing.RelativePath = copied.ObjectKey;
+        existing.Url = imageUrl;
+        existing.Mime = mime;
+        existing.SizeBytes = sizeBytes;
+        existing.Prompt = string.IsNullOrWhiteSpace(prompt) ? null : prompt;
+        existing.UpdatedAt = now;
+
+        _logger.LogInformation("Replaced homepage slot={Slot} with image-gen result run={Run}", slotNorm, runId);
         return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(existing)));
     }
 
@@ -234,13 +379,75 @@ public class HomepageAssetsController : ControllerBase
         if (existing == null)
             return Ok(ApiResponse<object>.Ok(new { deleted = false, reason = "not found" }));
 
-        try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
-        catch (Exception ex) { _logger.LogWarning("Failed to delete homepage asset object {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        // RelativePath 为空 = 这条只是引用了生图产物的 URL，对象不归本 slot 所有，不能删
+        if (!string.IsNullOrWhiteSpace(existing.RelativePath))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete homepage asset object {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        }
 
         var res = await _db.HomepageAssets.DeleteOneAsync(x => x.Id == existing.Id, ct);
         _logger.LogWarning("Admin deleted homepage asset slot={Slot}", slotNorm);
         return Ok(ApiResponse<object>.Ok(new { deleted = res.DeletedCount > 0 }));
     }
+}
+
+/// <summary>
+/// 对外首页（`/home`）的配图读取 —— **匿名可读**。
+///
+/// 为什么不复用 `api/homepage/assets`：那个端点是 `[Authorize]`，服务的是登录后的
+/// 首页；而 `/home` 是不登录就能打开的宣传页，拿不到 token。
+///
+/// 只暴露 `landing.` 前缀这一族，不是整张表：这里是公网无鉴权面，把全部 slot
+/// （含内部卡片背景、Agent 封面）一并吐出去等于白送一份资源清单。
+/// </summary>
+[ApiController]
+[Route("api/v1/landing/preview-assets")]
+[AllowAnonymous]
+public class LandingPreviewAssetsController : ControllerBase
+{
+    private const string SlotPrefix = "landing.";
+    private readonly MongoDbContext _db;
+
+    public LandingPreviewAssetsController(MongoDbContext db)
+    {
+        _db = db;
+    }
+
+    /// <summary>返回 slot → url 的字典；没有配图的幕不出现在结果里。</summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(ApiResponse<Dictionary<string, string>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAll(CancellationToken ct)
+    {
+        var list = await _db.HomepageAssets
+            .Find(x => x.Slot.StartsWith(SlotPrefix))
+            .ToListAsync(ct);
+
+        // 只给 slot 与 url：提示词、体积、上传者都是内部信息，公网面不该带
+        var map = list
+            .Where(x => !string.IsNullOrWhiteSpace(x.Url))
+            .ToDictionary(x => x.Slot, HomepageAssetUrl.Versioned);
+        return Ok(ApiResponse<Dictionary<string, string>>.Ok(map));
+    }
+}
+
+/// <summary>把一次生图任务的某张产物挂到首页 slot 上。</summary>
+public class AdoptImageRunRequest
+{
+    /// <summary>目标槽位，如 `landing.layers`</summary>
+    public string Slot { get; set; } = string.Empty;
+
+    /// <summary>生图任务 Id（必须是调用者本人发起的）</summary>
+    public string RunId { get; set; } = string.Empty;
+
+    /// <summary>任务内第几条计划项（一次「全部重新生成」会有多条）</summary>
+    public int ItemIndex { get; set; }
+
+    /// <summary>该计划项里的第几张图（当前每项只生一张，恒为 0）</summary>
+    public int ImageIndex { get; set; }
+
+    /// <summary>本次实际用的提示词；留空则回落到生图结果自带的那条</summary>
+    public string? Prompt { get; set; }
 }
 
 /// <summary>
@@ -272,10 +479,12 @@ public class HomepageAssetsPublicController : ControllerBase
             x => new HomepageAssetDto
             {
                 Slot = x.Slot,
-                Url = x.Url,
+                Url = HomepageAssetUrl.Versioned(x),
                 Mime = x.Mime,
                 SizeBytes = x.SizeBytes,
                 UpdatedAt = x.UpdatedAt
+                // 不带 Prompt：这个端点只挡了登录，任何登录用户都能拉。提示词是管理员
+                // 写的，管理端自己走 /api/assets/homepage/list（带 assets.read 门）能拿到。
             });
         return Ok(ApiResponse<Dictionary<string, HomepageAssetDto>>.Ok(map));
     }

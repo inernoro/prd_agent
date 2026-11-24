@@ -30,9 +30,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       set({ config });
     } catch (err) {
       console.error('Failed to load config:', err);
-      // 使用默认配置
+      // 正式地址由打包环境或远程 client-config 下发，读取失败时不猜部署域名。
       set({
-        config: { apiBaseUrl: 'https://map.ebcone.net', isDeveloper: false },
+        config: { apiBaseUrl: '', isDeveloper: false },
       });
     } finally {
       set({ isLoading: false });
@@ -58,4 +58,3 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   openModal: () => set({ isModalOpen: true }),
   closeModal: () => set({ isModalOpen: false }),
 }));
-

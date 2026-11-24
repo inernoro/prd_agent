@@ -1,8 +1,10 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 团队动态（工作日志）— 全平台白名单写操作留痕，支撑「张三 在 知识库 发布了文档《标题》」式时间线渲染。
-/// 由 ActivityLogActionFilter 在白名单动作成功后自动写入，无需逐端点埋点。
+/// HTTP 动作由 ActivityLogActionFilter 在白名单动作成功后写入；后台领域事实由幂等记录器写入。
 /// 仅存 ActorId（显示名/头像在读取时批量解析）；TargetTitle 为写入时快照（对象删除后仍可展示）。
 /// </summary>
 public class ActivityLog
@@ -18,7 +20,7 @@ public class ActivityLog
     /// <summary>模块中文名快照（如「知识库」），写入时固化避免 key 改名后历史错乱</summary>
     public string ModuleLabel { get; set; } = string.Empty;
 
-    /// <summary>动作标识（Controller.Action 复合键，如 DocumentStore.AddEntry）</summary>
+    /// <summary>动作标识（HTTP 使用 Controller.Action；后台使用已登记的领域动作）</summary>
     public string Action { get; set; } = string.Empty;
 
     /// <summary>动作中文标签（如「发布了文档」）</summary>
@@ -33,11 +35,17 @@ public class ActivityLog
     /// <summary>操作对象深链（预留，一期留空）</summary>
     public string? TargetUrl { get; set; }
 
-    /// <summary>HTTP 方法（排障用）</summary>
+    /// <summary>HTTP 方法（后台领域事实固定为 DOMAIN）</summary>
     public string Method { get; set; } = string.Empty;
 
-    /// <summary>请求路径（排障用）</summary>
+    /// <summary>请求路径或领域事实来源（排障用）</summary>
     public string Path { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 后台领域事实的幂等键。HTTP 动作保持为空；空值不写入 BSON，确保 sparse unique 索引不影响普通动态。
+    /// </summary>
+    [BsonIgnoreIfNull]
+    public string? DeduplicationKey { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -218,7 +218,7 @@ export function SubtitleGenerationDrawer({
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ type: 'spring', stiffness: 360, damping: 18 }}
                     className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
+                    style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.25)' }}>
                     <CheckCircle2 size={10} />
                     <SplitText text="已完成" tag="span" delay={40} duration={0.4} from={{ opacity: 0, y: 8 }} to={{ opacity: 1, y: 0 }} />
                   </motion.span>
@@ -228,7 +228,7 @@ export function SubtitleGenerationDrawer({
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                    style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.25)' }}>
                     <AlertCircle size={10} /> 失败
                   </motion.span>
                 ) : starting ? (
@@ -238,7 +238,7 @@ export function SubtitleGenerationDrawer({
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                    style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(59,130,246,0.25)' }}>
                     <MapSpinner size={10} /> 处理中
                   </span>
                 )}
@@ -298,7 +298,7 @@ export function SubtitleGenerationDrawer({
               style={{
                 background: 'rgba(239,68,68,0.08)',
                 border: '1px solid rgba(239,68,68,0.2)',
-                color: 'rgba(248,113,113,0.95)',
+                color: 'var(--accent-fg-danger)',
               }}>
               <div className="break-all whitespace-pre-wrap">{errorMessage}</div>
               {diagnostic && (
@@ -314,7 +314,7 @@ export function SubtitleGenerationDrawer({
                 background: 'rgba(34,197,94,0.06)',
                 border: '1px solid rgba(34,197,94,0.15)',
               }}>
-              <p className="text-[11px]" style={{ color: 'rgba(74,222,128,0.95)' }}>
+              <p className="text-[11px]" style={{ color: 'var(--accent-fg-success)' }}>
                 字幕已生成并保存为新文档，你可以在文件树中找到它。
               </p>
             </div>

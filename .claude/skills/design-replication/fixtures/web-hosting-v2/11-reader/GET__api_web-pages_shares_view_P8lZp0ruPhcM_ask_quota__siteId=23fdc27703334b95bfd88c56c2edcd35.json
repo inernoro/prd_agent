@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:7801/api/web-pages/shares/view/P8lZp0ruPhcM/ask/quota?siteId=23fdc27703334b95bfd88c56c2edcd35",
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "body": "{\"success\":true,\"data\":{\"available\":true,\"siteRemaining\":18,\"siteLimit\":20,\"visitorRemaining\":4,\"visitorLimit\":5},\"error\":null}"
+}

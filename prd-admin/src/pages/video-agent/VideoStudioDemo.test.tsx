@@ -51,7 +51,7 @@ describe('VideoStudioDemo', () => {
 
   it('turns unsupported duration errors into an actionable retry message', () => {
     expect(formatVideoSceneError('Duration 6s is not supported for this model. Supported durations: 5, 10s'))
-      .toContain('系统将在重试时自动采用最接近的可用时长');
+      .toContain('请改用支持的时长后重试');
   });
 
   it('keeps polling during the submission grace period even when the first reload is stale', () => {
@@ -110,7 +110,9 @@ describe('VideoStudioDemo', () => {
 
   it('keeps one stable controllable player and does not preload every version thumbnail', () => {
     expect(videoEditorSource).not.toContain('key={previewUrl}');
-    expect(videoEditorSource).toContain('controls\n                  playsInline');
+    expect(videoEditorSource).toContain('playsInline');
+    expect(videoEditorSource).toContain('<VideoPlaybackControls videoRef={videoRef}');
+    expect(videoEditorSource).not.toContain('controls\n                  playsInline');
     expect(videoEditorSource).not.toContain('<video src={version.videoUrl} muted preload="metadata" />');
     expect(videoEditorSource).toContain('title="预览这个版本"');
   });

@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/types/api';
 
 export interface FeedItem {
   id: string;
-  type: 'prd-session' | 'visual-workspace' | 'defect';
+  type: 'prd-session' | 'visual-workspace' | 'literary-workspace' | 'defect';
   title: string;
   subtitle: string;
   updatedAt: string;
@@ -12,9 +12,16 @@ export interface FeedItem {
   coverAssetId?: string;
 }
 
+/**
+ * 动态流响应。
+ *
+ * `degradedSources`：后端逐个来源查库，单个失败不整体 500（另一个来源照常可用），
+ * 但会把没取到的来源列在这里。**空列表 + 非空 degradedSources = 服务挂了，
+ * 不是"你还没用过"** —— 少了这个字段，前端只看 HTTP 成不成功就会把故障渲染成空态。
+ */
 export type GetMobileFeedContract = (args?: {
   limit?: number;
-}) => Promise<ApiResponse<{ items: FeedItem[] }>>;
+}) => Promise<ApiResponse<{ items: FeedItem[]; degradedSources?: string[] }>>;
 
 // ─── Stats ───
 
@@ -54,9 +61,11 @@ export type GetMobileStatsContract = (args?: {
 
 // ─── Assets ───
 
+export type AssetCategory = 'image' | 'audio' | 'document' | 'attachment' | 'webpage';
+
 export interface MobileAssetItem {
   id: string;
-  type: 'image' | 'document' | 'attachment' | 'webpage';
+  type: AssetCategory;
   title: string;
   /** 内容摘要（前80字） */
   summary?: string | null;
@@ -87,7 +96,7 @@ export interface MobileAssetsResponse {
 }
 
 export type GetMobileAssetsContract = (args?: {
-  category?: 'image' | 'document' | 'attachment' | 'webpage';
+  category?: AssetCategory;
   limit?: number;
   skip?: number;
 }) => Promise<ApiResponse<MobileAssetsResponse>>;

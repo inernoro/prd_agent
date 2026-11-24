@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using PrdAgent.Infrastructure.Database;
 using Shouldly;
 using Xunit;
 
@@ -11,6 +12,10 @@ internal static class TestAssetStorageEnvironment
     [ModuleInitializer]
     internal static void Initialize()
     {
+        // BSON 映射必须先于任何并行测试触发 MongoDB 自动映射。否则先访问新模型的
+        // 测试会把默认 StringSerializer 冻结进全局注册表，使结果依赖执行顺序。
+        BsonClassMapRegistration.Register();
+
         // 测试进程不得继承开发机或发布机器上的正式 COS/R2 选择。需要专门验证
         // 某个云提供商时必须通过测试专用变量显式选择，不能复用生产 ASSETS_PROVIDER。
         var explicitProvider = (Environment.GetEnvironmentVariable(ExplicitProviderVariable)

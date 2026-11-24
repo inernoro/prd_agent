@@ -34,6 +34,7 @@ const JOB_TO_SERVICE: Record<string, string> = {
   'llmgw-image': 'llmgw',
   'llmgw-web-image': 'llmgw-web',
   'llmgw-serve-image': 'llmgw-serve',
+  'design-opendesign-image': 'design-opendesign',
 };
 
 interface WorkflowJob { if?: string; steps?: Array<Record<string, unknown>> }
@@ -52,7 +53,9 @@ const filters = yaml.load(
 /** 从 job 的 `if:` 里取出它引用的全部 `needs.changes.outputs.<name>`。 */
 function referencedFilters(condition: string): string[] {
   const out = new Set<string>();
-  for (const m of condition.matchAll(/needs\.changes\.outputs\.([a-z_]+)/g)) out.add(m[1]);
+  for (const m of condition.matchAll(/needs\.changes\.outputs\.([a-z_]+)/g)) {
+    if (filters[m[1]]) out.add(m[1]);
+  }
   return [...out];
 }
 
@@ -84,6 +87,31 @@ describe('cds-compose 的 buildScope 与 branch-image.yml 的构建触发条件�
     }
   });
 
+  // 顶层 `cds.build-scope` 标签是同一份契约的第二个落点：只有 express 一种模式的服务在项目里没有
+  // activeDeployMode，CDS 读的是基础 profile，模式里的 buildScope 读不到（PR #1618 部署失败的根因）。
+  // 两份必须与 CI 同步，否则漂移时这条对拍依旧全绿、部署却按陈旧范围放行或拒收回退镜像。
+  const services = compose.services as Record<string, { labels?: Record<string, string> }>;
+  const labelScope = (svc: string): string[] | undefined => {
+    const raw = services[svc]?.labels?.['cds.build-scope'];
+    return raw === undefined ? undefined : raw.split(',').map((s) => s.trim()).filter(Boolean).sort();
+  };
+
+  it('服务顶层 cds.build-scope 标签（若声明）与该 job 的触发条件一致', () => {
+    for (const [jobId, svc] of Object.entries(JOB_TO_SERVICE)) {
+      const declared = labelScope(svc);
+      if (declared === undefined) continue;
+      expect(declared, `${svc} 的 cds.build-scope 标签与 job '${jobId}' 的触发条件不一致`).toEqual(ciScopeFor(jobId));
+    }
+  });
+
+  it('只有 express 一种模式的镜像服务必须在顶层声明 cds.build-scope', () => {
+    for (const svc of Object.values(JOB_TO_SERVICE)) {
+      const modeNames = Object.keys(modes[svc] || {});
+      if (modeNames.length !== 1 || modeNames[0] !== 'express') continue;
+      expect(labelScope(svc), `${svc} 只有 express 模式，项目里不会有 activeDeployMode，必须在 services.${svc}.labels 声明 cds.build-scope`).toBeTruthy();
+    }
+  });
+
   it('三个 llmgw 镜像都必须含 prd-api/**（其 Dockerfile 编译 prd-api 的 Core/Infrastructure）', () => {
     for (const svc of ['llmgw', 'llmgw-web', 'llmgw-serve']) {
       expect(modes[svc].express.buildScope, svc).toContain('prd-api/**');
@@ -97,5 +125,34 @@ describe('cds-compose 的 buildScope 与 branch-image.yml 的构建触发条件�
       expect(scope).not.toContain('./');
       expect(scope).not.toContain('**');
     }
+  });
+
+  it('feature 与 main 指向同一提交时全部镜像仍会构建，避免成功工作流回退陈旧 branch 标签', () => {
+    expect((jobs.changes as unknown as { outputs?: Record<string, string> }).outputs?.same_as_main)
+      .toContain('main_equivalence.outputs.value');
+    for (const jobId of Object.keys(JOB_TO_SERVICE)) {
+      expect(jobs[jobId]?.if, jobId).toContain("needs.changes.outputs.same_as_main == 'true'");
+    }
+  });
+  // 2026-09-29：分支没碰 prd-api、main 在分叉后改了 prd-api 时，paths-filter（对比 merge-base）
+  // 判「不用建」，CDS 回退 :branch-main 又证明不了等价（container.ts proveFallbackImage），
+  // 两边都不管，整个部署失败。CI 必须对「构建输入与 main 不一致」的组件补建本提交镜像。
+  it('每个组件的构建判定都叠加了「与 main 的构建输入差异」，且差异判据读的是同一份 filter', () => {
+    const outputs = (jobs.changes as unknown as { outputs?: Record<string, string> }).outputs || {};
+    for (const name of Object.keys(filters)) {
+      expect(outputs[name], `changes.outputs.${name} 缺失`).toBeTruthy();
+      expect(outputs[name], name).toContain(`steps.filter.outputs.${name} == 'true'`);
+      expect(outputs[name], `${name} 没有叠加 main_drift：落后于 main 的分支会两头落空`).toContain(`steps.main_drift.outputs.${name} == 'true'`);
+    }
+    const drift = (jobs.changes.steps || []).find((s) => s.id === 'main_drift');
+    expect(drift, 'changes job 缺少 main_drift 步骤').toBeTruthy();
+    const run = String(drift?.run || '');
+    // 不许另抄一份路径表：路径必须从 id=filter 那一步的 filters 读出来
+    expect(run).toContain('select(.id == "filter")');
+    expect(run).toContain('git diff --quiet origin/main HEAD');
+    // 比较需要 origin/main，它由前一步 main_equivalence 取回；两步的先后不能颠倒
+    const ids = (jobs.changes.steps || []).map((s) => s.id);
+    expect(ids.indexOf('main_equivalence')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('main_equivalence')).toBeLessThan(ids.indexOf('main_drift'));
   });
 });

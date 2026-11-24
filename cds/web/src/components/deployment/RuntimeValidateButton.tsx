@@ -12,8 +12,8 @@ interface StepEv { step: string; status: string; title: string }
 type Verdict = 'pass' | 'warn' | 'fail';
 
 const VERDICT_META: Record<Verdict, { icon: JSX.Element; cls: string; label: string }> = {
-  pass: { icon: <CheckCircle2 className="h-4 w-4" />, cls: 'border-green-500/40 bg-green-500/10 text-green-600', label: '配置可用' },
-  warn: { icon: <AlertTriangle className="h-4 w-4" />, cls: 'border-amber-500/40 bg-amber-500/10 text-amber-600', label: '需确认' },
+  pass: { icon: <CheckCircle2 className="h-4 w-4" />, cls: 'border-ok/40 bg-ok-soft text-ok', label: '配置可用' },
+  warn: { icon: <AlertTriangle className="h-4 w-4" />, cls: 'border-warn/40 bg-warn-soft text-warn', label: '需确认' },
   fail: { icon: <XCircle className="h-4 w-4" />, cls: 'border-destructive/40 bg-destructive/10 text-destructive', label: '不通过' },
 };
 
@@ -105,7 +105,7 @@ export function RuntimeValidateButton({
               {steps.map((s) => (
                 <span
                   key={s.step}
-                  className={`text-[11px] ${s.status === 'done' ? 'text-green-600' : s.status === 'error' ? 'text-destructive' : s.status === 'warning' ? 'text-amber-600' : 'text-muted-foreground'}`}
+                  className={`text-[0.6875rem] ${s.status === 'done' ? 'text-ok' : s.status === 'error' ? 'text-destructive' : s.status === 'warning' ? 'text-warn' : 'text-muted-foreground'}`}
                 >
                   {s.status === 'running' ? '... ' : ''}{s.title}
                 </span>
@@ -114,7 +114,7 @@ export function RuntimeValidateButton({
           ) : null}
           {logs.length > 0 ? (
             <pre
-              className="max-h-44 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-[11px] leading-4 text-muted-foreground"
+              className="max-h-44 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-[0.6875rem] leading-4 text-muted-foreground"
               style={{ overscrollBehavior: 'contain' }}
             >
               {logs.join('\n')}
@@ -126,7 +126,7 @@ export function RuntimeValidateButton({
               <span><span className="font-semibold">{VERDICT_META[result.verdict].label}</span> · {result.summary}</span>
             </div>
           ) : running ? (
-            <div className="text-[11px] text-muted-foreground">正在真实容器里跑你的命令…不行的话改上面的命令/镜像，再点一次试运行。</div>
+            <div className="text-[0.6875rem] text-muted-foreground">正在真实容器里跑你的命令…不行的话改上面的命令/镜像，再点一次试运行。</div>
           ) : null}
         </div>
       ) : null}

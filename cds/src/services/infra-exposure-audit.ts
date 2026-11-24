@@ -1,0 +1,784 @@
+/**
+ * 基础设施暴露面自检。
+ *
+ * ## 为什么单测不够
+ *
+ * `infra-publish.ts` 那套单测管的是「**新建**容器时怎么拼发布参数」。它管不到两件事：
+ *
+ * 1. **存量**。端口绑定在容器创建那一刻就固化了，改代码对已经在跑的容器一个都不生效。
+ *    仓库全绿，宿主上照样可能有一批裸绑全网卡的库。
+ * 2. **别的来路**。手工 `docker run`、compose 导入、别人从宿主直接起的容器，都不经过
+ *    CDS 的发布路径，单测再严也扫不到。
+ *
+ * 所以判据必须取**运行态真值**：`docker ps` 里那串真实端口映射，而不是台账里记的
+ * hostPort 数字（那只是个数字，说明不了绑在哪个地址上）。
+ *
+ * ## 判什么
+ *
+ * 两个维度的组合决定危险度：**端口对不对外** × **这个库要不要认证**。
+ * 「对外 + 无认证」是唯一的 critical——那种库任何人扫到端口就能读能删。
+ *
+ * ## 未知一律从严
+ *
+ * 读不到端口映射、认不出镜像类型时，一律按「可能有问题」报，不按「大概没事」放过。
+ * 把未知当安全是这类自检最常见的失效方式：它会一直绿，直到出事。
+ */
+
+import { isPubliclyPublished } from './infra-publish.js';
+
+export type InfraKind =
+  | 'mongo'
+  | 'redis'
+  | 'mysql'
+  | 'postgres'
+  | 'sqlserver'
+  | 'clickhouse'
+  | 'rabbitmq'
+  | 'elasticsearch'
+  | 'minio'
+  | 'memcached'
+  | 'kafka'
+  | 'nats'
+  | 'nacos'
+  | 'other';
+
+export interface InfraKindHints {
+  id?: string;
+  name?: string;
+  basePresetId?: string;
+  containerName?: string;
+  containerPort?: number;
+  runtimePorts?: string | null;
+}
+
+export type ExposureSeverity = 'critical' | 'warn' | 'ok';
+
+export interface InfraExposureInput {
+  id: string;
+  projectId: string;
+  containerName: string;
+  dockerImage: string;
+  /** 容器自己的环境变量（`.Config.Env`），不是 CDS 台账里那份。 */
+  env?: Record<string, string> | null;
+  /** 容器启动参数（`.Config.Cmd`）。redis 的 `--requirepass` 常在这里。 */
+  args?: readonly string[] | null;
+  /**
+   * `docker ps --format '{{.Ports}}'` 的原文。读不到时给 undefined——
+   * 那会被判成「对外」，因为无从证明它不是。
+   */
+  runtimePorts?: string | null;
+  /** 容器当前是否在跑。停掉的容器不构成暴露面。 */
+  running?: boolean;
+}
+
+export interface InfraExposureFinding {
+  id: string;
+  projectId: string;
+  containerName: string;
+  kind: InfraKind;
+  /** 端口是否发布到了对外地址。 */
+  publiclyPublished: boolean;
+  /** 这个库当前是否配了认证；认不出类型时为 null（未知）。 */
+  authenticated: boolean | null;
+  /** 端口虽然绑在全网卡，但宿主防火墙挡住了。 */
+  firewallBlocked: boolean;
+  severity: ExposureSeverity;
+  /** 人话结论，直接进告警正文。 */
+  reason: string;
+  /** 实际读到的绑定地址，便于核对。 */
+  boundHosts: string[];
+  /** 实际读到的宿主端口。 */
+  hostPorts: number[];
+}
+
+/**
+ * 一台**跑着但一个端口都没发布**的服务。
+ *
+ * 它不构成暴露面，所以不在 findings 里；但它确实在跑，而且「内网无口令」这类判断
+ * 要的正是它。第一版直接 `continue` 丢掉，于是每日体检拿 findings 当完整清单用时，
+ * 「内网但无口令」那一档对这类服务永远不会响——一台纯内网的老库可以一直无声地
+ * 没有口令（Codex review P1）。
+ *
+ * 所以这里把它留下来：**筛掉的是「不算暴露」，不是「不存在」。**
+ */
+export interface InfraInternalService {
+  id: string;
+  projectId: string;
+  containerName: string;
+  kind: InfraKind;
+  /** 有没有配认证；认不出类型时为 null。 */
+  authenticated: boolean | null;
+}
+
+export interface InfraExposureReport {
+  findings: InfraExposureFinding[];
+  /**
+   * 跑着但没发布任何端口的服务。**不进 summary、不进 signature**——它们不是暴露面，
+   * 把它们算进去会让告警标题里的数字对不上人能看见的问题。
+   */
+  internalOnly: InfraInternalService[];
+  criticalCount: number;
+  warnCount: number;
+  /** 一句话结论，进日志与站内告警标题。 */
+  summary: string;
+  /** 只含 critical + warn 的稳定签名，用于「状态没变就不重复告警」。 */
+  signature: string;
+}
+
+/**
+ * 按实际服务元数据识别数据服务。
+ *
+ * 私有仓库与摘要镜像的名字可能完全不含产品名，不能只看 image。端口和 CDS 服务
+ * 元数据同样是容器创建时真正生效的配置，因此作为有限、可解释的后备判据。
+ */
+export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {}): InfraKind {
+  const labels = [dockerImage, hints.id, hints.name, hints.basePresetId, hints.containerName]
+    .map((value) => String(value || '').toLowerCase());
+  const includes = (...needles: string[]): boolean => labels.some((label) => (
+    needles.some((needle) => label.includes(needle))
+  ));
+  if (includes('mongo')) return 'mongo';
+  if (includes('redis')) return 'redis';
+  if (includes('mysql', 'mariadb')) return 'mysql';
+  if (includes('postgres', 'timescale')) return 'postgres';
+  if (includes('sqlserver', 'mssql')) return 'sqlserver';
+  if (includes('clickhouse')) return 'clickhouse';
+  if (includes('rabbitmq')) return 'rabbitmq';
+  if (includes('elasticsearch', 'opensearch')) return 'elasticsearch';
+  if (includes('minio')) return 'minio';
+  if (includes('memcached')) return 'memcached';
+  if (includes('kafka')) return 'kafka';
+  if (includes('nats')) return 'nats';
+  // nacos 此前根本不在这张表里，于是线上两台跑着的 nacos 一直被归成「认不出的服务」：
+  // 安全面判不了它有没有认证，备份面也说不出它缺的是什么。
+  if (includes('nacos')) return 'nacos';
+
+  const publishedContainerPorts = [...String(hints.runtimePorts || '').matchAll(/->(\d+)\//g)]
+    .map((match) => Number(match[1]));
+  const ports = new Set([hints.containerPort, ...publishedContainerPorts].filter(Number.isFinite));
+  if (ports.has(27017)) return 'mongo';
+  if (ports.has(6379)) return 'redis';
+  if (ports.has(3306)) return 'mysql';
+  if (ports.has(5432)) return 'postgres';
+  if (ports.has(1433)) return 'sqlserver';
+  if (ports.has(8123) || ports.has(9009)) return 'clickhouse';
+  if (ports.has(5672) || ports.has(15672)) return 'rabbitmq';
+  if (ports.has(9200)) return 'elasticsearch';
+  // 9000 同时被 ClickHouse 原生协议与 MinIO 使用，不能只凭该端口猜类型。
+  // MinIO 控制台 9001 没有这个歧义；主端口场景由 image/服务元数据识别。
+  if (ports.has(9001)) return 'minio';
+  if (ports.has(11211)) return 'memcached';
+  if (ports.has(9092)) return 'kafka';
+  if (ports.has(4222)) return 'nats';
+  if (ports.has(8848) || ports.has(9848)) return 'nacos';
+  return 'other';
+}
+
+/**
+ * 宿主防火墙对 docker 发布端口的拦截情况。
+ *
+ * 为什么自检必须看这一层：端口绑在全网卡、但被防火墙挡住，和端口绑在全网卡、
+ * 完全裸奔，是**两种危险度**。只看绑定会把前者也报成 critical，报多了就没人看了。
+ *
+ * 更要紧的是反过来那一半：iptables 规则重启会丢。**规则丢了而绑定没变，
+ * 这台机器会在无人知晓的情况下重新变成裸奔**——只看绑定的自检对此完全无感。
+ * 把防火墙纳入判据之后，这条自检同时成了「规则还在不在」的哨兵。
+ */
+export interface FirewallGuard {
+  /** 是否存在「公网网卡进来的一律拒绝」的兜底规则。 */
+  blanket: boolean;
+  /** 被逐个点名拦掉的宿主端口。 */
+  ports: Set<number>;
+}
+
+export interface FirewallBackendSnapshot {
+  name: string;
+  /** 该后端工具是否存在。不存在不等于读取失败。 */
+  available: boolean;
+  /** null 表示连 NAT 运行态都读不到，必须从严。 */
+  dockerNatActive: boolean | null;
+  /** filter 表是否读取成功。 */
+  rulesReadable: boolean;
+  rules: string;
+}
+
+/**
+ * 解析 `iptables -S DOCKER-USER` 的输出。
+ *
+ * 只认真正生效的形状：入接口是公网网卡且动作是 DROP/REJECT。
+ * `-j RETURN`（放行已建立连接那条）不算拦截，混进来会把「没防护」读成「有防护」。
+ */
+export function parseFirewallGuard(rules: string, publicIface: string): FirewallGuard {
+  const guard: FirewallGuard = { blanket: false, ports: new Set() };
+  const iface = (publicIface || '').trim();
+  if (!iface) return guard;
+  const lines = (rules || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const ifacePattern = new RegExp(`-i\\s+${iface}(\\s|$)`);
+  const attachedChains = new Set<string>();
+
+  // INPUT/FORWARD 直接按公网接口挂自有链时，链内规则可以不重复写 -i。
+  // 迭代展开有限跳转，兼容 DOCKER-USER -> 自有链和多层自有链。
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const line of lines) {
+      const source = line.match(/^-A\s+(\S+)/)?.[1];
+      const target = line.match(/-j\s+(\S+)(?:\s|$)/)?.[1];
+      if (!source || !target || ['ACCEPT', 'DROP', 'REJECT', 'RETURN'].includes(target)) continue;
+      const sourceScoped = ['INPUT', 'FORWARD', 'DOCKER-USER'].includes(source)
+        ? ifacePattern.test(line)
+        : attachedChains.has(source);
+      if (sourceScoped && !attachedChains.has(target)) {
+        attachedChains.add(target);
+        changed = true;
+      }
+    }
+  }
+
+  for (const l of lines) {
+    const chain = l.match(/^-A\s+(\S+)/)?.[1];
+    if (!chain) continue;
+    const scoped = ifacePattern.test(l) || attachedChains.has(chain);
+    if (!scoped) continue;
+    if (!/-j\s+(DROP|REJECT)(\s|$)/.test(l)) continue;
+    // 数据服务是 TCP。仅有 UDP 的拒绝规则不能冒充数据库端口保护。
+    if (/-p\s+udp(?:\s|$)/.test(l)) continue;
+    const m = l.match(/--(?:ctorigdstport|dport)\s+(\d+)/);
+    if (m) guard.ports.add(Number(m[1]));
+    else if (!/--ctorigdstport|--dport/.test(l)) guard.blanket = true;
+  }
+  return guard;
+}
+
+/**
+ * 从宿主实际存在的 iptables 后端中选择防护结论。
+ * Docker NAT 可能由 nft 或 legacy 承载；任何活跃后端缺少防护都不能判为已拦截。
+ */
+export function resolveRuntimeFirewallGuard(
+  snapshots: readonly FirewallBackendSnapshot[],
+  publicIface: string,
+): FirewallGuard | null {
+  const available = snapshots.filter((snapshot) => snapshot.available);
+  if (available.some((snapshot) => snapshot.dockerNatActive === null || !snapshot.rulesReadable)) return null;
+  const active = available.filter((snapshot) => snapshot.dockerNatActive === true);
+  if (active.length === 0) return null;
+
+  const guards = active.map((snapshot) => parseFirewallGuard(snapshot.rules, publicIface));
+  const blanket = guards.every((guard) => guard.blanket);
+  const candidates = new Set(guards.flatMap((guard) => [...guard.ports]));
+  const ports = new Set([...candidates].filter((port) => (
+    guards.every((guard) => guard.blanket || guard.ports.has(port))
+  )));
+  return { blanket, ports };
+}
+
+/** 这些宿主端口是不是都被防火墙挡住了。端口读不出来时按「没挡住」处理。 */
+export function isFirewallBlocked(hostPorts: readonly number[], guard?: FirewallGuard | null): boolean {
+  if (!guard) return false;
+  if (guard.blanket) return true;
+  if (hostPorts.length === 0) return false;
+  return hostPorts.every((p) => guard.ports.has(p));
+}
+
+/** 从 `docker ps` 的端口串里抠出**宿主端口号**（防火墙判据要按端口对） */
+export function parsePublishedPorts(ports: string | null | undefined): number[] {
+  const out: number[] = [];
+  const re = /(?:\[[^\]]*\]|[0-9a-fA-F.:]*):(\d+)->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(ports || '')) !== null) out.push(Number(m[1]));
+  return [...new Set(out)];
+}
+
+/**
+ * 从 `docker ps` 的端口串里抠出**绑定地址**。
+ *
+ * 形如 `0.0.0.0:10001->27017/tcp, [::]:10001->27017/tcp` 或
+ * `127.0.0.1:10001->27017/tcp`。只有带 `->` 的才是真的发布到宿主了；
+ * 裸的 `27017/tcp`（只 EXPOSE 没 publish）不算暴露面。
+ */
+export function parsePublishedHosts(ports: string | null | undefined): string[] {
+  const raw = (ports || '').trim();
+  if (!raw) return [];
+  const hosts: string[] = [];
+  // 捕获 `<host>:<port>->` 里的 host；host 可能是 IPv4、`[::]`、或空（老 docker 写法）
+  const re = /(\[[^\]]*\]|[0-9a-fA-F.:]*):\d+->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    const h = (m[1] || '').replace(/^\[|\]$/g, '');
+    // host 为空等于 docker 省略写法，语义是全部网卡
+    hosts.push(h || '0.0.0.0');
+  }
+  return [...new Set(hosts)];
+}
+
+/**
+ * 一次性把「env + 启动参数」拆成可反复提问的判据探针。
+ *
+ * ## 为什么要提到模块级
+ *
+ * 这套分词很讲究：`sh -c "redis-server --requirepass x"` 整条是**一个** Cmd 元素、
+ * 引号本身携带语义（单引号里 `$` 不展开）、`$VAR` 要回到 env 里解析。
+ * 谁要问「启动参数里有没有认证」都得走它。
+ *
+ * 原来它整个长在 `detectInfraAuth` 的闭包里，于是别处想问同一个问题只能另写一份 ——
+ * 而这个仓库反复栽在「同一件事两处判据然后各自漂」（形状 3）。凭据派生要从
+ * `--requirepass` 里取值，正是同一套分词，所以提到模块级共用一份。
+ */
+interface StartupProbe {
+  /** env 里这些键有没有非空值。 */
+  has: (...keys: string[]) => boolean;
+  /** 开关型参数出现即生效（`--auth`）。 */
+  hasFlag: (...flags: string[]) => boolean;
+  /** 取值型参数且**值非空**（`--requirepass x`）。 */
+  hasFlagValue: (...flags: string[]) => boolean;
+  /** 大小写敏感的裸 flag（`-S` 与 `-s` 语义不同）。 */
+  hasCasedFlag: (...flags: string[]) => boolean;
+  /** 取值型参数的**值本身**；取不到返回空串。 */
+  flagValue: (...flags: string[]) => string;
+  /** 整条有效命令，用于匹配跨 token 的结构。 */
+  joined: string;
+}
+
+function buildStartupProbe(
+  env?: Record<string, string> | null,
+  args?: readonly string[] | null,
+): StartupProbe {
+  const e = env || {};
+  const has = (...keys: string[]): boolean => keys.some((k) => !!(e[k] || '').trim());
+  // 有效命令行 = 容器启动参数 + 那些「本身就是一串启动参数」的 env 的值。
+  // 后者只当参数看，不当布尔看。
+  const argCarryingEnv = ['REDIS_ARGS', 'REDIS_EXTRA_FLAGS', 'MONGO_EXTRA_FLAGS'];
+  // 每个 arg 自己还要再按空白拆一层：`sh -c "redis-server --requirepass xxx"` 里
+  // 整条 shell 语句是**一个** Cmd 元素，不拆就永远比不中 `--requirepass`——
+  // 一个真有口令的库会被判成「无认证 critical」。compose 用 `sh -c` 包一层是常态，
+  // 本仓库自己的 redis 预设也是这个形状，所以这不是边角情况。
+  const tokens = [
+    ...(args || []).flatMap((a) => String(a || '').split(/\s+/)),
+    ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
+  ]
+    // Docker inspect 的 Config.Cmd 既可能是逐 token 数组，也可能把完整 shell 命令
+    // 放在一个元素里。必须拆解每个元素，否则 `sh -c "redis-server --requirepass x"`
+    // 会被误判成无认证。这里只需要识别有限的认证 flag，不执行 shell。
+    //
+    // **引号必须留到这一步之后再剥**。引号本身携带语义：单引号里 shell 不做展开，
+    // 所以 `'p$ss'` 是货真价实的密码，而 `"$X"` 要看变量有没有值。在切词时就把引号
+    // 抹掉，下游的 effectiveValue 只看到 `p$ss`，无从分辨它是字面量还是解析不掉的
+    // 展开，于是把一个有口令的库判成裸奔——「说库没密码」的假警报比不报警更糟。
+    // 需要比对 flag 名时用 unquote()，值的判定交给 effectiveValue。
+    .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
+    .map((t) => String(t || '').trim().toLowerCase())
+    .filter(Boolean);
+  /**
+   * 原样保留大小写的那一份。
+   *
+   * 上面为了比对方便把所有 token 转成了小写，而**有些命令行开关是大小写敏感的**：
+   * memcached 的 `-s <file>` 是 unix socket，`-S` 才是启用 SASL。全转小写之后
+   * 两者无法区分，于是一台走 unix socket、根本没配认证的 memcached 会被判成
+   * 「已认证」，还能过认证门禁（Codex review P2）。需要区分大小写的判据用这一份。
+   */
+  const casedTokens = [
+    ...(args || []).flatMap((a) => String(a || '').split(/\s+/)),
+    ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
+  ]
+    .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
+    .map((t) => String(t || '').trim())
+    .filter(Boolean);
+  /** 大小写敏感的裸 flag 判定。只给 `-S` 这类大小写本身携带语义的开关用。 */
+  const hasCasedFlag = (...flags: string[]): boolean => flags.some(
+    (flag) => casedTokens.some((t) => t.replace(/^(["'])([\s\S]*)\1$/, '$2') === flag),
+  );
+  /** 整条有效命令，用来匹配跨 token 的结构（如配置文件里的 authorization 块）。 */
+  const joined = tokens.join(' ');
+  /** 只在「比对 flag 名」时用；判定值的时候必须保留引号。 */
+  const unquote = (t: string): string => t.replace(/^(["'])([\s\S]*)\1$/, '$2');
+  /**
+   * 这个参数值到底有没有「真值」。
+   *
+   * 拆开 `sh -c` 之后拿到的是 shell 片段，形态五花八门：`""`（空口令）、
+   * `"$REDIS_PASSWORD"`（要看变量）、`"$REDIS_PASSWORD";`（尾巴粘着分隔符）、
+   * `'p$ss'`（单引号里的字面量，`$` 不展开）。上一轮是遇到一种加一种，
+   * 这一轮改成两条**结构化**判据，一次覆盖整类，不再追着语法形态打补丁：
+   *
+   * 1. **单引号包起来的一律当字面量**——shell 在单引号里不做任何展开，
+   *    所以 `'p$ss'` 就是密码 `p$ss`，不该因为含 `$` 被误判成没配。
+   * 2. **其余只要还带 `$`，就必须能整体解析成一个有值的变量**，否则按「没有值」处理。
+   *    覆盖 `"$X";`、`"$X" &&`、`${X:-}`、`pre$X` 这些全部形态——它们的共同点是
+   *    **我们无法证明这里有口令**，而在暴露面自检里「证明不了」只能算没有。
+   *
+   * 方向性说明：这里宁可偏向「报成未认证」。漏报（裸奔库被标成已认证）会让一个
+   * 公网无认证数据库从 critical 名单里消失，那是这张表最不能出的错。
+   */
+  const effectiveValue = (raw: string): string => {
+    const t = raw.trim();
+    // 单引号字面量：内容原样，`$` 不展开
+    if (/^'.*'$/.test(t)) return t.slice(1, -1).trim();
+    // 去掉外层双引号 + 粘在尾巴上的 shell 分隔符 / 运算符（`;` `&` `|` `)`）
+    const cleaned = t.replace(/[;&|)]+$/, '').replace(/^["']|["']$/g, '').replace(/[;&|)]+$/, '').trim();
+    if (!cleaned.includes('$')) return cleaned;
+    const ref = /^\$\{?(\w+)\}?$/.exec(cleaned);
+    if (ref) return (e[ref[1].toUpperCase()] || e[ref[1]] || '').trim();
+    // 解析不掉的展开：证明不了有口令，按没有算。
+    return '';
+  };
+  /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
+  const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.some((t) => unquote(t) === f));
+  /**
+   * 取值型参数：`--requirepass x` / `--requirepass=x`，**值为空就不算数**。
+   * `--requirepass ""` 在 redis 里等于没有密码，它不该把库判成已认证。
+   */
+  /**
+   * 取值型参数的**值本身**，判定与 `hasFlagValue` 逐字一致——两者必须同源，
+   * 否则会出现「判据说这台库有口令、取值却取不到」这种自相矛盾。
+   */
+  const flagValue = (...flags: string[]): string => {
+    for (const flag of flags) {
+      // **必须走 casedTokens**：`tokens` 是全部转成小写的（那份只用来比对 flag 名），
+      // 拿它取口令会把 `P4ssW0rd` 变成 `p4ssw0rd`——发出去的凭据认证不上，
+      // 而报错只会说「密码错误」。flag 名仍按不分大小写比。
+      for (let i = 0; i < casedTokens.length; i += 1) {
+        const bare = unquote(casedTokens[i]);
+        if (bare.toLowerCase() === flag.toLowerCase()) {
+          const next = casedTokens[i + 1];
+          if (next && !unquote(next).startsWith('--')) {
+            const v = effectiveValue(next);
+            if (v.length > 0) return v;
+          }
+          continue;
+        }
+        if (bare.toLowerCase().startsWith(`${flag.toLowerCase()}=`)) {
+          const v = effectiveValue(bare.slice(flag.length + 1));
+          if (v.length > 0) return v;
+        }
+      }
+    }
+    return '';
+  };
+  const hasFlagValue = (...flags: string[]): boolean => flags.some((flag) => {
+    for (let i = 0; i < tokens.length; i += 1) {
+      const bare = unquote(tokens[i]);
+      if (bare === flag) {
+        // 下一个 token 保留原引号交给 effectiveValue；这里只用去引号形态判断
+        // 「它是不是又一个 flag」，避免把 `--requirepass --appendonly` 读成有值。
+        const next = tokens[i + 1];
+        if (next && !unquote(next).startsWith('--') && effectiveValue(next).length > 0) return true;
+        continue;
+      }
+      if (bare.startsWith(`${flag}=`) && effectiveValue(bare.slice(flag.length + 1)).length > 0) return true;
+    }
+    return false;
+  });
+  return { has, hasFlag, hasFlagValue, hasCasedFlag, flagValue, joined };
+}
+
+/**
+ * 从启动参数里把某个取值型开关的**值**读出来（如 `--requirepass <口令>`）。
+ *
+ * 与认证判据同一套分词：谁判「有没有认证」用的是哪份 token，谁取口令就用哪份，
+ * 不会出现「判据说有、取值取不到」这种两口径。取不到返回空串。
+ */
+export function readStartupFlagValue(
+  env: Record<string, string> | null | undefined,
+  args: readonly string[] | null | undefined,
+  ...flags: string[]
+): string {
+  return buildStartupProbe(env, args).flagValue(...flags);
+}
+
+/**
+ * 这个库现在有没有认证。
+ *
+ * ## 判据必须取容器自己的配置，不能取 CDS 台账
+ *
+ * 台账里的 env 是「CDS 建这个容器时用了什么」，不是「这个容器现在跑成什么样」。
+ * 两者会分叉：compose 导入的、手工起的、密码写在**启动参数**里的（redis 的
+ * `--requirepass` 就是最常见的一种），台账里都看不到。
+ *
+ * 真实踩过：某个 redis 台账 env 为空、被判成「无认证 critical」，实际连上去
+ * 是 `NOAUTH Authentication required`——它有密码。**一条说「这个库没密码」
+ * 的假警报，比不报警更糟**：它会让人开始怀疑整张表，然后连真的那几条也一起忽略。
+ *
+ * 所以这里同时看两处：容器的 `.Config.Env` 与 `.Config.Cmd`。
+ *
+ * ## 「有这个 key」不等于「配了认证」
+ *
+ * 反过来的假阴性同样要防：`REDIS_ARGS` 是 redis-stack 用来塞启动参数的口子，
+ * 里面完全可能只有 `--appendonly yes`。把「这个 env 存在」当成认证证据，
+ * 一个真裸奔的公网库就会被从 critical 降级，还配上一句「已配置认证」——
+ * 比不报警更糟的那种假消息，方向只是反过来（Codex review P1，2026-08-16）。
+ *
+ * 所以 arg 型 env 只贡献**内容**（并进有效命令行一起扫），不贡献**存在性**；
+ * 认证判据一律落到「真的出现了某个生效的认证参数」上。
+ *
+ * ## 未知不等于没有
+ *
+ * 认不出镜像类型时返回 null（未知），**不返回 false**——把「我不知道」和
+ * 「我确认没有」混成一个值，报表上就分不清该去查还是该去修。
+ */
+export function detectInfraAuth(
+  kind: InfraKind,
+  env?: Record<string, string> | null,
+  /** 容器启动参数（`.Config.Cmd`）。密码经常藏在这里而不是 env 里。 */
+  args?: readonly string[] | null,
+): boolean | null {
+  const e = env || {};
+  const { has, hasFlag, hasFlagValue, hasCasedFlag, joined } = buildStartupProbe(env, args);
+  switch (kind) {
+    case 'mongo':
+      return (has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
+          && has('MONGO_INITDB_ROOT_PASSWORD', 'MONGO_PASSWORD', 'MONGODB_PASSWORD'))
+        || hasFlag('--auth')
+        || hasFlagValue('--keyfile');
+    case 'redis':
+      /**
+       * **只认启动参数，不认 env**（2026-08-27 收敛，台账 E81）。
+       *
+       * 上一版是 `env 里有 REDIS_PASSWORD` **或** `命令行上有 --requirepass`，
+       * 取或。理由写着「只看 env 会把它误判成裸奔」——防的是假阳性。
+       * 但取或让它在另一个方向变成**假阴性**：一台 env 里有口令、启动却没开
+       * 认证的 redis，会被判成「已认证」，于是每日体检压掉 `naked-internal`，
+       * 而它对同网段的任何人都是敞开的。安全结论上假阴性比假阳性贵得多。
+       *
+       * 更要命的是它当时与另外两处判据不一致：创建门禁只认命令行、凭据派生
+       * 也只认命令行。同一台库，一边说裸奔、一边说安全，对外发声的是判错的
+       * 那一边。同一个文件对 memcached / kafka / nats 明确写着「口令存在不等于
+       * 服务在校验它」，redis 这一支当时没照做。
+       *
+       * 现在这里是**唯一一份** redis 认证判据，另外两处都调它。
+       */
+      return hasFlagValue('--requirepass', '--user', '--aclfile');
+    case 'mysql':
+      return has('MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD')
+        || (has('MYSQL_USER') && has('MYSQL_PASSWORD'))
+        || (has('MARIADB_USER') && has('MARIADB_PASSWORD'));
+    case 'postgres':
+      return has('POSTGRES_PASSWORD', 'PGPASSWORD');
+    case 'sqlserver':
+      return has('MSSQL_SA_PASSWORD', 'SA_PASSWORD');
+    case 'clickhouse':
+      return has('CLICKHOUSE_PASSWORD');
+    case 'rabbitmq':
+      return has('RABBITMQ_DEFAULT_USER') && has('RABBITMQ_DEFAULT_PASS');
+    case 'elasticsearch': {
+      const security = String(e['xpack.security.enabled'] || e.XPACK_SECURITY_ENABLED || '')
+        .trim()
+        .toLowerCase();
+      return security !== 'false' && has('ELASTIC_PASSWORD');
+    }
+    case 'minio':
+      return has('MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
+        && has('MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
+    case 'nacos': {
+      /**
+       * nacos **默认不开鉴权**：不设 `NACOS_AUTH_ENABLE=true` 时，任何人打到
+       * 8848 就能读写全部配置。所以这里的判据是「开关真的打开了」，
+       * 而不是「env 里有没有口令」——口令配了但开关没开，等于没配。
+       *
+       * 开关打开之后 nacos 还要求 `NACOS_AUTH_TOKEN`（JWT 密钥）与两个 identity
+       * 变量，缺任何一个它会拒绝启动或退回不安全模式。少一个就不算配好。
+       */
+      const enabled = String(e.NACOS_AUTH_ENABLE || '').trim().toLowerCase();
+      if (!['true', '1', 'yes'].includes(enabled)) return false;
+      return has('NACOS_AUTH_TOKEN')
+        && has('NACOS_AUTH_IDENTITY_KEY')
+        && has('NACOS_AUTH_IDENTITY_VALUE');
+    }
+    case 'memcached':
+      // 这三类原来一律 `return false`（「目录还没给它们认证」）。目录补上之后
+      // 那个常量就从「保守判定」变成了**谎报**：一台配好认证的库会永远挂在
+      // critical 名单里，而告警报多了就没人看了。现在改成读真实配置。
+      //
+      // `-Y <file>` 是 ASCII 协议认证，`-S` 是 SASL。env 里的 MEMCACHED_PASSWORD
+      // 单独不算数——口令存在不等于服务在校验它，必须命令行上真的启用了某一种。
+      //
+      // **`-S` 必须区分大小写**：小写的 `-s <file>` 是 unix socket，和认证毫无关系。
+      // 原来用的是转小写之后的 token，于是一台走 unix socket、没配任何认证的
+      // memcached 会被判成「已认证」并通过门禁（Codex review P2）。
+      return hasFlagValue('-y', '--auth-file') || hasCasedFlag('-S');
+    case 'kafka':
+      return kafkaClientListenersAuthenticated(e);
+    case 'nats':
+      // 两种配法都认，但都要求「口令确实在某处生效」：
+      // 1. 命令行 `--user/--pass` 或 `--auth <token>`；
+      // 2. 命令自己在容器里写一份带 authorization 块的配置、再 `-c` 加载它
+      //    （预设走的就是这条，为的是不让明文进 argv，见 infra-catalog 的注释）。
+      //
+      // 单看 `-c <file>` 不算数，有两个理由：配置文件里可以什么都没有；而且
+      // **`-c` 这个 flag 太泛**——这些命令外面都套着 `sh -c`，拿 hasFlagValue('-c')
+      // 去问等于恒真（写这条测试时当场撞上）。所以必须是 nats-server 自己被
+      // 带着 `-c/--config` 拉起来，且同一条命令里构造过 authorization 块。
+      return hasFlagValue('--pass', '--auth')
+        || (/authorization\s*\{/i.test(joined)
+          && /nats-server[^|;&]*\s(?:-c|--config)(?:=|\s+)\S/i.test(joined));
+    default:
+      return null;
+  }
+}
+
+/**
+ * Kafka 对外那几个监听器，是不是**每一个**都走了带认证的协议。
+ *
+ * ## 为什么不能只看广播地址的字面前缀
+ *
+ * 监听器的**名字**由部署方随便取，`CLIENT://kafka:9092` 里的 CLIENT 什么也说明不了；
+ * 它到底是明文还是 SASL，写在 `listener.security.protocol.map` 里。上一版判据看的是
+ * 「广播地址是不是以 PLAINTEXT:// 开头」——那读的是名字，不是**生效的协议**
+ * （predicate-and-wiring-discipline 形状 6）。把监听器改名叫 CLIENT 而协议仍是
+ * PLAINTEXT，旧判据会判「已认证」，这正是它最该拦下的那一种。
+ *
+ * 现在顺着映射把每个广播出去的监听器解析成真实协议：只要有一个落到 PLAINTEXT
+ * （或 SSL——那只加密不认证），整台就算没有认证。名字在映射里查不到时，
+ * 按 Kafka 自己的规则回落「名字即协议」。
+ */
+function kafkaClientListenersAuthenticated(e: Record<string, string>): boolean {
+  const advertised = String(e.KAFKA_ADVERTISED_LISTENERS || e.KAFKA_LISTENERS || '').trim();
+  if (!advertised) return false;
+  if (!String(e.KAFKA_SASL_ENABLED_MECHANISMS || '').trim()) return false;
+
+  const map = new Map<string, string>();
+  for (const pair of String(e.KAFKA_LISTENER_SECURITY_PROTOCOL_MAP || '').split(',')) {
+    const [name, protocol] = pair.split(':');
+    if (name && protocol) map.set(name.trim().toUpperCase(), protocol.trim().toUpperCase());
+  }
+  // 控制面监听器不对外发布，用不用 SASL 与「谁能连上这台 broker」无关。
+  const controllerNames = new Set(
+    String(e.KAFKA_CONTROLLER_LISTENER_NAMES || '')
+      .split(',')
+      .map((n) => n.trim().toUpperCase())
+      .filter(Boolean),
+  );
+
+  const clientListeners = advertised
+    .split(',')
+    .map((entry) => entry.split('://')[0]?.trim().toUpperCase() || '')
+    .filter(Boolean)
+    .filter((name) => !controllerNames.has(name));
+  if (clientListeners.length === 0) return false;
+
+  return clientListeners.every((name) => {
+    const protocol = map.get(name) ?? name;
+    return protocol.startsWith('SASL_');
+  });
+}
+
+function describe(f: Omit<InfraExposureFinding, 'reason' | 'severity'>): { severity: ExposureSeverity; reason: string } {
+  const where = f.boundHosts.length ? f.boundHosts.join(' / ') : '读不到端口映射';
+  if (!f.publiclyPublished) {
+    return { severity: 'ok', reason: `端口只绑在 ${where}，宿主之外够不着` };
+  }
+  // 绑在全网卡但防火墙挡住了：真实可达性等于零，但这份保护是**易失的**——
+  // iptables 规则重启就丢，丢了立刻回到裸奔。所以降级到 warn 而不是 ok，
+  // 让它一直留在视野里，直到绑定本身被改掉（重建容器）为止。
+  if (f.firewallBlocked) {
+    const authNote = f.authenticated === false ? '且该库无认证' : '';
+    return {
+      severity: 'warn',
+      reason: `端口绑在 ${where}（全网卡）${authNote}，当前由宿主防火墙挡着。`
+        + '防火墙规则重启会丢，丢了立刻恢复暴露；根治要重建容器让绑定地址收窄',
+    };
+  }
+  if (f.authenticated === false) {
+    return {
+      severity: 'critical',
+      reason: `端口发布在 ${where}（对外可达）且没有配置认证：任何人扫到这个端口就能直接读写该服务`,
+    };
+  }
+  if (f.authenticated === null) {
+    return {
+      severity: 'warn',
+      reason: `端口发布在 ${where}（对外可达），且认不出镜像类型、无法判断有没有认证，需要人工确认`,
+    };
+  }
+  return {
+    severity: 'warn',
+    reason: `端口发布在 ${where}（对外可达）。已配认证，但没有理由让数据面直接对公网`,
+  };
+}
+
+/**
+ * 跑一遍判定。纯函数——输入是快照，输出是结论，不碰 docker 也不碰网络，
+ * 方便用真实事故值写回归。
+ */
+export function auditInfraExposure(
+  inputs: readonly InfraExposureInput[],
+  opts: { firewall?: FirewallGuard | null } = {},
+): InfraExposureReport {
+  const findings: InfraExposureFinding[] = [];
+  const internalOnly: InfraInternalService[] = [];
+  for (const svc of inputs) {
+    // 停掉的容器不占端口，不构成暴露面
+    if (svc.running === false) continue;
+    const kind = detectInfraKind(svc.dockerImage, {
+      id: svc.id,
+      containerName: svc.containerName,
+      runtimePorts: svc.runtimePorts,
+    });
+    const boundHosts = parsePublishedHosts(svc.runtimePorts);
+    // 没发布任何端口 = 完全不对外（区别于「读不到」）。不算暴露面，但**要留着**：
+    // 它还在跑，「内网无口令」那类判断要的就是它。丢掉的话，下游把 findings 当完整
+    // 清单用时会静默漏掉整整一类服务（Codex review P1）。
+    if (svc.runtimePorts != null && boundHosts.length === 0) {
+      internalOnly.push({
+        id: svc.id,
+        projectId: svc.projectId,
+        containerName: svc.containerName,
+        kind,
+        authenticated: detectInfraAuth(kind, svc.env, svc.args),
+      });
+      continue;
+    }
+    const hostPorts = parsePublishedPorts(svc.runtimePorts);
+    const base = {
+      id: svc.id,
+      projectId: svc.projectId,
+      containerName: svc.containerName,
+      kind,
+      // 读不到映射时 boundHosts 为空 → isPubliclyPublished 判真，从严
+      publiclyPublished: isPubliclyPublished(boundHosts),
+      authenticated: detectInfraAuth(kind, svc.env, svc.args),
+      firewallBlocked: isFirewallBlocked(hostPorts, opts.firewall),
+      boundHosts,
+      hostPorts,
+    };
+    findings.push({ ...base, ...describe(base) });
+  }
+
+  const critical = findings.filter((f) => f.severity === 'critical');
+  const warn = findings.filter((f) => f.severity === 'warn');
+  const shielded = warn.filter((f) => f.firewallBlocked).length;
+  const summary = critical.length > 0
+    ? `${critical.length} 个基础设施服务对外可达且无认证：${critical.map((f) => f.id).join('、')}`
+    : shielded > 0 && shielded === warn.length
+      // 说清「靠防火墙挡着」而不是「安全了」：这份保护重启就没，不该读成已解决
+      ? `${shielded} 个基础设施端口仍绑在全网卡，当前由宿主防火墙挡着（易失，重建容器才根治）`
+      : warn.length > 0
+        ? `${warn.length} 个基础设施端口对外可达（其中 ${shielded} 个有防火墙挡着）`
+        : `全部 ${findings.length} 个基础设施端口都没有对外暴露`;
+
+  return {
+    findings,
+    internalOnly,
+    criticalCount: critical.length,
+    warnCount: warn.length,
+    summary,
+    // 只把有问题的进签名：ok 项变动不该触发重复告警
+    signature: [...critical, ...warn]
+      .map((f) => `${f.severity}:${f.projectId}/${f.id}:${f.boundHosts.join(',')}:${f.hostPorts.join(',')}:firewall=${f.firewallBlocked}`)
+      .sort()
+      .join('|'),
+  };
+}
+
+/** 告警正文。列到具体服务，不给「有若干问题」这种查不下去的话。 */
+export function renderExposureReport(report: InfraExposureReport): string {
+  const bad = report.findings.filter((f) => f.severity !== 'ok');
+  if (bad.length === 0) return report.summary;
+  const lines = bad.map((f) => `- [${f.severity}] ${f.projectId}/${f.id}（${f.containerName}）：${f.reason}`);
+  return [
+    report.summary,
+    '',
+    ...lines,
+    '',
+    '端口绑定在容器创建时固化，改配置对存量容器不生效，需要重建对应容器才会落地；',
+    '重建有状态服务之前先确认有可用备份。',
+  ].join('\n');
+}

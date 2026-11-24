@@ -7,8 +7,7 @@ namespace PrdAgent.Tests;
 /// 作品广场热度排序公式测试（CI 可运行，纯函数无需 Mongo）。
 ///
 /// 这是 SubmissionsController 聚合管道排序的权威公式锚点：
-/// 管道里的 (LikeCount*LikeWeight + ViewCount) / pow(ageHours+2, Gravity)
-/// 必须与 GalleryRanking.HotScore 行为一致。
+/// 管道里的长期新鲜度 + 短期互动热度必须与 GalleryRanking.HotScore 行为一致。
 /// </summary>
 public class GalleryRankingTests
 {
@@ -22,6 +21,39 @@ public class GalleryRankingTests
 
         Assert.True(freshWork > oldViral,
             $"新作品应能冒泡到老爆款之上 (fresh={freshWork}, oldViral={oldViral})");
+    }
+
+    [Fact]
+    public void NewWork_WithNoEngagement_GetsFirstExposureAheadOfOldViewedWork()
+    {
+        // 新投稿还没有曝光，不应因 0 浏览而永远沉底。
+        var freshUnseen = GalleryRanking.HotScore(likeCount: 0, viewCount: 0, ageHours: 1);
+        var oldViewed = GalleryRanking.HotScore(likeCount: 0, viewCount: 20, ageHours: 24 * 30);
+
+        Assert.True(freshUnseen > oldViewed,
+            $"零互动新作品应获得首轮曝光 (fresh={freshUnseen}, oldViewed={oldViewed})");
+    }
+
+    [Fact]
+    public void FreshnessBaseline_RemainsHighForSevenDays()
+    {
+        var published = GalleryRanking.HotScore(0, 0, ageHours: 0);
+        var sevenDaysOld = GalleryRanking.HotScore(0, 0, ageHours: 24 * 7);
+
+        Assert.True(sevenDaysOld >= published * 0.5,
+            $"七天新作应至少保留一半初始新鲜度 (published={published}, sevenDays={sevenDaysOld})");
+    }
+
+    [Fact]
+    public void FreshnessBaseline_RemainsDiscoverableForThirtyDays()
+    {
+        var published = GalleryRanking.HotScore(0, 0, ageHours: 0);
+        var thirtyDaysOld = GalleryRanking.HotScore(0, 0, ageHours: 24 * 30);
+
+        Assert.True(thirtyDaysOld >= published * 0.15,
+            $"三十天作品应保留可发现的新鲜度 (published={published}, thirtyDays={thirtyDaysOld})");
+        Assert.True(thirtyDaysOld < published,
+            "三十天作品仍须低于刚发布作品，避免旧内容长期占据首页");
     }
 
     [Fact]
@@ -46,10 +78,11 @@ public class GalleryRankingTests
     public void LikeIsWeightedHeavierThanView()
     {
         // 1 个赞应当显著重于 1 次浏览（LikeWeight = 3）
+        var baseline = GalleryRanking.HotScore(likeCount: 0, viewCount: 0, ageHours: 5);
         var oneLike = GalleryRanking.HotScore(likeCount: 1, viewCount: 0, ageHours: 5);
         var oneView = GalleryRanking.HotScore(likeCount: 0, viewCount: 1, ageHours: 5);
 
-        Assert.Equal(GalleryRanking.LikeWeight, oneLike / oneView, precision: 6);
+        Assert.Equal(GalleryRanking.LikeWeight, (oneLike - baseline) / (oneView - baseline), precision: 6);
     }
 
     [Fact]
@@ -72,5 +105,35 @@ public class GalleryRankingTests
         var viaHours = GalleryRanking.HotScore(20, 40, ageHours: 48);
 
         Assert.Equal(viaHours, viaDate, precision: 9);
+    }
+
+    [Fact]
+    public void LiteraryWork_UsesLatestSourceUpdate_AsActivityTime()
+    {
+        var createdAt = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+        var submissionUpdatedAt = createdAt.AddDays(2);
+        var latestWorkspaceUpdate = createdAt.AddMonths(5);
+
+        var activityAt = GalleryRanking.ResolveActivityAt(
+            createdAt,
+            submissionUpdatedAt,
+            latestWorkspaceUpdate,
+            tracksSourceUpdates: true);
+
+        Assert.Equal(latestWorkspaceUpdate, activityAt);
+    }
+
+    [Fact]
+    public void VisualWork_DoesNotBorrowLaterWorkspaceActivity()
+    {
+        var createdAt = new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var activityAt = GalleryRanking.ResolveActivityAt(
+            createdAt,
+            createdAt.AddDays(2),
+            createdAt.AddMonths(5),
+            tracksSourceUpdates: false);
+
+        Assert.Equal(createdAt, activityAt);
     }
 }

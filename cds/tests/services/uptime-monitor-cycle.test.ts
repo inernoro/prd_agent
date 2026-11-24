@@ -106,6 +106,74 @@ describe('selectProbeTargets 目标推导', () => {
   });
 });
 
+describe('UptimeMonitorService 探测循环健康（2026-09-08 停摆复盘）', () => {
+  it('探测器永不返回时被硬 deadline 打断，轮次照常完成、记内部故障、不参与降级', async () => {
+    vi.useFakeTimers();
+    try {
+      let clock = Date.UTC(2026, 8, 8, 0, 0, 0);
+      const monitor = makeMonitor({
+        branches: [branch()],
+        probe: () => new Promise(() => { /* 永不返回 */ }),
+        now: () => clock,
+        config: { timeoutMs: 1_000 },
+      });
+      const cycle = monitor.runCycle();
+      // 硬 deadline = timeoutMs + 5s
+      await vi.advanceTimersByTimeAsync(6_100);
+      clock += 6_100;
+      await cycle;
+      const health = monitor.getCycleHealth();
+      expect(health.running).toBe(false);
+      expect(health.probeDeadlineHits).toBe(1);
+      expect(health.lastCycleAt).not.toBeNull();
+      const target = monitor.getSummary().targets[0];
+      expect(target.lastSample?.up).toBe(false);
+      expect(target.lastSample?.err).toContain('硬 deadline');
+      expect(target.degraded).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('上一轮卡死超过 3 个间隔时看门狗强制复位并跑新一轮；健康快照在停摆期间为 stale', async () => {
+    vi.useFakeTimers();
+    try {
+      let clock = Date.UTC(2026, 8, 8, 0, 0, 0);
+      let hang = true;
+      const monitor = makeMonitor({
+        branches: [branch()],
+        probe: () => (hang ? new Promise(() => { /* 卡死 */ }) : Promise.resolve({ up: true, ms: 3, code: 200 })),
+        now: () => clock,
+        config: { intervalMs: 60_000, timeoutMs: 1_000 },
+      });
+      // 用一个不会被 deadline 打断的方式模拟「整轮卡住」：让 deadline 之前就检查 running。
+      const first = monitor.runCycle();
+      expect(monitor.getCycleHealth().running).toBe(true);
+      // 3 个间隔内：视为仍在跑，重入直接跳过
+      clock += 2 * 60_000;
+      await monitor.runCycle();
+      expect(monitor.getCycleHealth()).toMatchObject({ running: true, watchdogResets: 0 });
+      // 超过 3 个间隔：看门狗复位并开新一轮
+      clock += 2 * 60_000;
+      expect(monitor.getCycleHealth().stale).toBe(true);
+      hang = false;
+      await monitor.runCycle();
+      const health = monitor.getCycleHealth();
+      expect(health.watchdogResets).toBe(1);
+      expect(health.running).toBe(false);
+      expect(health.stale).toBe(false);
+      expect(monitor.getSummary().targets[0].lastSample?.up).toBe(true);
+      expect(monitor.getSummary().cycle.ok).toBe(true);
+      // 旧轮的 deadline 到期后不得覆盖新轮结果
+      await vi.advanceTimersByTimeAsync(7_000);
+      await first;
+      expect(monitor.getSummary().targets[0].lastSample?.up).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('UptimeMonitorService 探测轮次', () => {
   it('探测不刷新 lastAccessedAt，也不写分支台账（否则 idleTTL 降温被废）', async () => {
     const b = branch();
@@ -553,7 +621,7 @@ describe('集群：远端 executor 上的分支不得用协调端地址探测', 
   });
 });
 
-describe('监控范围默认只看主干（用户 2026-07-28 反馈「监控的有点多了」）', () => {
+describe('监控范围（2026-07-28 默认只看主干；2026-09-08 监控中心重做后默认全部分支、展示层折叠）', () => {
   const b = (id: string, name: string, projectId = 'p1') => ({
     id, projectId, branch: name, status: 'running',
     services: { api: { status: 'running', hostPort: 30000 } },
@@ -561,13 +629,22 @@ describe('监控范围默认只看主干（用户 2026-07-28 反馈「监控的�
 
   const all = [b('p1-main', 'main'), b('p1-feat', 'feat/x'), b('p1-master', 'master', 'p2')];
 
-  it('默认 scope=trunk：只产主干目标，特性分支根本不进列表', () => {
+  it('默认 scope=all：特性分支也进列表（主列表按项目折叠成汇总行，噪声在展示层解决）', () => {
     const ids = selectProbeTargets(all, []).map((t) => t.branchId);
-    expect(ids).toEqual(['p1-main', 'p1-master']);
+    expect(ids).toEqual(['p1-main', 'p1-feat', 'p1-master']);
+    delete process.env.CDS_UPTIME_SCOPE;
+    expect(uptimeConfigFromEnv('/srv/cds').scope).toBe('all');
   });
 
-  it('scope=all 时恢复全量（逃生阀）', () => {
-    expect(selectProbeTargets(all, [], { scope: 'all' })).toHaveLength(3);
+  it('scope=trunk 仍可收窄到主干（逃生阀），特性分支根本不进列表', () => {
+    const ids = selectProbeTargets(all, [], { scope: 'trunk' }).map((t) => t.branchId);
+    expect(ids).toEqual(['p1-main', 'p1-master']);
+    process.env.CDS_UPTIME_SCOPE = 'trunk';
+    try {
+      expect(uptimeConfigFromEnv('/srv/cds').scope).toBe('trunk');
+    } finally {
+      delete process.env.CDS_UPTIME_SCOPE;
+    }
   });
 
   it('认得项目自定义的默认分支名（gitDefaultBranch）', () => {

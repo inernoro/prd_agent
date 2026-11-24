@@ -235,7 +235,7 @@ export function TeamScopeBar({
             <button
               type="button"
               className={pillBase}
-              style={value.scope === 'mine' ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' } : { color: 'var(--text-muted)' }}
+              style={value.scope === 'mine' ? { background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)' } : { color: 'var(--text-muted)' }}
               onClick={applyMine}
             >
               我的
@@ -243,7 +243,7 @@ export function TeamScopeBar({
             <button
               type="button"
               className={pillBase}
-              style={value.scope === 'team' ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' } : { color: 'var(--text-muted)' }}
+              style={value.scope === 'team' ? { background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)' } : { color: 'var(--text-muted)' }}
               onClick={onTeamPillClick}
             >
               <Users size={13} />
@@ -444,7 +444,7 @@ export function TeamScopeBar({
                 style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               />
-              <button type="button" className="px-3 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>
+              <button type="button" className="px-3 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)' }} onClick={handleCreate}>
                 <Plus size={12} /> 创建
               </button>
             </div>

@@ -150,12 +150,24 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
           color: 'var(--text-muted)',
           fontSize: 13,
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'flex-start',
           gap: 8,
         }}
       >
-        <Link2 size={14} />
-        还没有文档引用这篇，也没有指向其他文档的链接。在正文里输入 <code style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)', padding: '1px 6px', borderRadius: 3 }}>[[标题]]</code> 试试。
+        <Link2 size={14} style={{ flexShrink: 0, marginTop: 3 }} />
+        {/*
+          这句话必须整段包在一个普通块里，不能直接摊在 flex 容器下。
+          摊开时每段文本和这个 <code> 都会各自成为 flex item，行内元素被 blockify 成
+          display:block 再被压到 min-content 宽——390px 手机上实测压到 48px，
+          「[[标题]]」直接折成两行跟右边的「试试。」错位叠在一起
+          （2026-08-11 外部验收实测，深浅主题都复现）。
+          nowrap 是第二道闸：无论外面怎么排版，这个 chip 都不许从中间断开。
+        */}
+        <span style={{ lineHeight: 1.7 }}>
+          还没有文档引用这篇，也没有指向其他文档的链接。在正文里输入{' '}
+          <code style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)', padding: '1px 6px', borderRadius: 3, whiteSpace: 'nowrap' }}>[[标题]]</code>{' '}
+          试试。
+        </span>
       </div>
     );
   }

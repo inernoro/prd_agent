@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { ReleaseTarget } from '../../src/types.js';
-import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, probeReleaseSurface, releaseScriptPhase, shouldUseCustomRollbackCommand } from '../../src/services/release-service.js';
+import { buildReleaseCommand, buildRemoteRepositoryCheckCommand, buildScriptCheckCommand, extractReleaseScriptPaths, healthResponseSemanticFailure, isDefaultScriptChain, isLocalProdReleaseCommand, parseRemoteRepositoryIdentity, probeHealthcheckStatus, probeReleaseSurface, releaseScriptPhase, shouldUseCustomRollbackCommand } from '../../src/services/release-service.js';
 
 function target(appPath = '/opt/prd agent'): ReleaseTarget {
   const now = new Date().toISOString();
@@ -184,6 +184,37 @@ describe('release service script preflight helpers', () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it('rejects HTTP 200 when the service reports a binary-to-target commit mismatch', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+        .end('{"status":"healthy","commitMatch":"mismatch"}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const addr = server.address() as { port: number };
+      const result = await probeHealthcheckStatus(`http://127.0.0.1:${addr.port}/api/version`, 500);
+      expect(result.status).toBe('failed');
+      expect(result.message).toContain('commitMatch=mismatch');
+
+      const preflight = await probeHealthcheckStatus(
+        `http://127.0.0.1:${addr.port}/api/version`,
+        500,
+        { semantic: false },
+      );
+      expect(preflight.status).toBe('healthy');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('honors self-described JSON health status while preserving plain-text compatibility', () => {
+    expect(healthResponseSemanticFailure('{"status":"fail"}', 'application/health+json'))
+      .toContain('status=fail');
+    expect(healthResponseSemanticFailure('{"status":"pass"}', 'application/health+json')).toBeNull();
+    expect(healthResponseSemanticFailure('{"commitMatch":"match"}', 'application/json')).toBeNull();
+    expect(healthResponseSemanticFailure('ok', 'text/plain')).toBeNull();
   });
 
   it('requires the public HTML and entry assets for generated static releases', async () => {

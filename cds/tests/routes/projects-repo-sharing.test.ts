@@ -1,0 +1,441 @@
+/**
+ * 一个仓库喂多个项目时，接口要把「和谁关联」端给界面。
+ *
+ * 这条线特别容易断得无声无息：判据函数（repo-sharing.ts）单测全绿，路由里
+ * 只要少写一行赋值，界面就什么都收不到，而后端测试照样全绿。所以这里从
+ * HTTP 出口断言，而不是断言那个函数。
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { createProjectsRouter } from '../../src/routes/projects.js';
+import { StateService } from '../../src/services/state.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { GitHubAppClient } from '../../src/services/github-app-client.js';
+import type { BuildProfile } from '../../src/types.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+
+const REPO = 'octocat/monorepo';
+
+async function post(
+  server: http.Server,
+  urlPath: string,
+  body: unknown,
+  headers?: Record<string, string>,
+) {
+  const payload = JSON.stringify(body);
+  return new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request(
+      {
+        hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          ...(headers || {}),
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (c: Buffer) => (raw += c.toString()));
+        res.on('end', () => resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }));
+      },
+    );
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function call(
+  server: http.Server,
+  method: string,
+  urlPath: string,
+  headers?: Record<string, string>,
+) {
+  return new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request(
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
+      (res) => {
+        let raw = '';
+        res.on('data', (c: Buffer) => (raw += c.toString()));
+        res.on('end', () => resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function get(server: http.Server, urlPath: string, headers?: Record<string, string>) {
+  return new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request(
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'GET', headers },
+      (res) => {
+        let raw = '';
+        res.on('data', (c: Buffer) => (raw += c.toString()));
+        res.on('end', () => resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** 建项目会创建 docker 网络；这里把它 mock 成成功，与 projects.test.ts 一致。 */
+function mockDockerNetwork(shell: MockShellExecutor): void {
+  const existing = new Set<string>();
+  const nameOf = (cmd: string): string => cmd.split(/\s+/).pop() || '';
+  shell.addResponsePattern(/^docker network inspect /, (m) => (existing.has(nameOf(m[0]))
+    ? { stdout: 'exists', stderr: '', exitCode: 0 }
+    : { stdout: '', stderr: 'no network', exitCode: 1 }));
+  shell.addResponsePattern(/^docker network create /, (m) => {
+    existing.add(nameOf(m[0]));
+    return { stdout: 'network-id', stderr: '', exitCode: 0 };
+  });
+  shell.addResponsePattern(/^docker network rm /, (m) => {
+    existing.delete(nameOf(m[0]));
+    return { stdout: 'removed', stderr: '', exitCode: 0 };
+  });
+}
+
+describe('项目接口透出同仓关系', () => {
+  let tmpDir: string;
+  let stateService: StateService;
+  let server: http.Server;
+
+  function addProject(id: string, name: string, repo?: string, env?: Record<string, string>) {
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id, slug: id, name, kind: 'git',
+      dockerNetwork: `cds-${id}`, legacyFlag: false, createdAt: now, updatedAt: now,
+      githubRepoFullName: repo,
+      customEnv: env,
+    });
+  }
+
+  function addProfileWithCommand(projectId: string, id: string, name: string, command: string) {
+    stateService.addBuildProfile({
+      id, projectId, name,
+      dockerImage: 'node:22', workDir: '.', containerPort: 3000,
+      hostPortPreference: 0, buildCommand: 'echo build', command,
+    } as BuildProfile);
+  }
+
+  function addScope(projectId: string, buildScope: string[]) {
+    stateService.addBuildProfile({
+      id: `${projectId}-p`, projectId, name: 'app',
+      dockerImage: 'node:22', workDir: '/app', containerPort: 3000,
+      hostPortPreference: 0, buildCommand: 'echo build', buildScope,
+    } as BuildProfile);
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-reposharing-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    stateService.load();
+    const app = express();
+    app.use(express.json());
+    // 模拟 server.ts 的鉴权标记：带 cds-cookie 头的当人类 cookie 会话，其余不标记
+    // —— 后者同时覆盖「CDS_AUTH_MODE=disabled 的实例根本不签会话」这一档。
+    app.use((req, _res, next) => {
+      if (req.headers['cds-cookie'] === '1') (req as any)._cdsCookieAuth = true;
+      next();
+    });
+    const shell = new MockShellExecutor();
+    mockDockerNetwork(shell);
+    app.use('/api', createProjectsRouter({
+      stateService,
+      shell,
+      githubApp: { getInstallationToken: async () => 't' } as GitHubAppClient,
+      // 建「带 git 仓库」的项目要求 CDS 配过源码根目录，否则直接 503
+      config: { reposBase: path.join(tmpDir, 'repos') } as any,
+    }));
+    server = app.listen(0);
+  });
+
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    await new Promise<void>((r) => server.close(() => r()));
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('详情接口给出兄弟项目和一句结论', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+
+    const res = await get(server, '/api/projects/p-main');
+    expect(res.status).toBe(200);
+    const sharing = res.body.repoSharing;
+    // 界面要能点进兄弟项目，所以必须给 id + 名字，不是一个计数
+    expect(sharing.siblings.map((s: any) => s.id).sort()).toEqual(['p-main', 'p-self']);
+    expect(sharing.total).toBe(2);
+    // 两个项目都没划范围 —— 这正是最该被看见的一档
+    expect(sharing.level).toBe('warn');
+    expect(sharing.headline).toContain('全部重建');
+  });
+
+  it('各自划了范围就不再报警', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    addScope('p-main', ['prd-api/**']);
+    addScope('p-self', ['cds/**']);
+
+    const res = await get(server, '/api/projects/p-main');
+    expect(res.body.repoSharing.level).toBe('ok');
+    expect(res.body.repoSharing.unscoped).toBe(0);
+  });
+
+  it('撞在同一个库上时点名是哪个变量撞的', async () => {
+    addProject('p-main', 'MAP', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
+    addProject('p-self', 'CDS Self', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
+
+    const hits = (await get(server, "/api/projects/p-main")).body.repoSharing.sharedInfra;
+    expect(hits).toHaveLength(1);
+    expect(hits[0].key).toBe('MONGO_URL');
+    expect(hits[0].kind).toBe('database');
+  });
+
+  it('列表接口每个项目都带上同仓关系', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+
+    const res = await get(server, '/api/projects');
+    const byId = new Map(res.body.projects.map((p: any) => [p.id, p]));
+    expect((byId.get('p-main') as any).repoSharing.total).toBe(2);
+    expect((byId.get('p-self') as any).repoSharing.total).toBe(2);
+  });
+
+  it('单项目仓库什么都不显示，不给人凭空加一个概念', async () => {
+    addProject('p-only', '独苗', REPO);
+
+    const res = await get(server, '/api/projects/p-only');
+    expect(res.body.repoSharing).toBeNull();
+  });
+
+  it('共享判定读的是真正注入容器的 env：继承的全局变量也要算', async () => {
+    // 裸 project.customEnv 会漏掉「两个项目都继承同一个全局库地址」这一整类，
+    // 而真正进容器的是 getCustomEnv（继承的全局 + 旧 bucket + 项目自己的）。
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    for (const id of ['p-main', 'p-self']) {
+      stateService.updateProject(id, { inheritGlobalEnv: true });
+    }
+    stateService.setCustomEnv({ MONGO_URL: 'mongodb://box:27017/shared' }, '_global');
+
+    const res = await get(server, '/api/projects/p-main', { 'cds-cookie': '1' });
+    const hits = res.body.repoSharing.sharedInfra;
+    expect(hits).toHaveLength(1);
+    expect(hits[0].key).toBe('MONGO_URL');
+  });
+
+  it('机器凭据拿不到同仓关系：它可能只被授权了本项目', async () => {
+    addProject('p-main', 'MAP', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
+    addProject('p-self', 'CDS Self', REPO, { MONGO_URL: 'mongodb://box:27017/shared' });
+
+    for (const headers of [
+      { 'x-ai-access-key': 'cdsp_someprojectkey' },
+      { 'ai-access-key': 'cdsg_someglobalkey' },
+      { authorization: 'Bearer cdsu_someusercredential' },
+    ]) {
+      const res = await get(server, '/api/projects/p-main', headers);
+      expect(res.body.repoSharing, JSON.stringify(headers)).toBeNull();
+    }
+  });
+
+  it('机器凭据建项目撞上已绑仓库时，只知道「没绑上」，不知道是被谁绑的', async () => {
+    // 同一个 PR 里一边给 repoSharing 加隔离、一边从建项目响应里端出兄弟项目的
+    // id 与名字，就是自己给自己开后门：create-only 的钥匙本来读不到别的项目。
+    addProject('p-main', 'MAP', REPO);
+
+    const res = await post(server, '/api/projects', {
+      name: '新项目', gitRepoUrl: 'https://github.com/octocat/monorepo.git',
+    }, { 'x-ai-access-key': 'cdsg_createonly' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.repoAlreadyLinked).toBeTruthy();
+    expect(res.body.repoAlreadyLinked.projects).toEqual([]);
+    // 但「有几个」还是要说，否则界面连话都说不完整
+    expect(res.body.repoAlreadyLinked.projectCount).toBe(1);
+  });
+
+  it('浏览器会话照常拿到兄弟项目明细，才点得进去', async () => {
+    addProject('p-main', 'MAP', REPO);
+
+    const res = await post(server, '/api/projects', {
+      name: '新项目二', gitRepoUrl: 'https://github.com/octocat/monorepo.git',
+    }, { 'cds-cookie': '1' });
+
+    // 带上 scoped，确认文案才能按「划没划范围」分档说话
+    expect(res.body.repoAlreadyLinked.projects).toEqual([{ id: 'p-main', name: 'MAP', scoped: false }]);
+  });
+
+  it('不签会话的实例（CDS_AUTH_MODE=disabled）里，真人照样看得见', async () => {
+    // 判据若写成「是不是 cookie 会话」，这一档永远为假 —— 真人用浏览器打开
+    // 什么都看不到，而且不会有任何报错。
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+
+    const res = await get(server, '/api/projects/p-main');
+    expect(res.body.repoSharing?.total).toBe(2);
+  });
+
+  it('横幅拿得到「本项目看起来只关心哪儿」，用户不必从空白开始', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    addProfileWithCommand('p-self', 'cds', 'cds', 'cd cds && ./exec_cds.sh start');
+
+    const res = await get(server, '/api/projects/p-self');
+    expect(res.body.repoSharing.scopeSuggestion.scope).toEqual(['cds/**']);
+    expect(res.body.repoSharing.scopeSuggestion.why).toContain('cd cds');
+  });
+
+  it('自己已经划过范围的项目不再被劝', async () => {
+    addProject('p-main', 'MAP', REPO);
+    addProject('p-self', 'CDS Self', REPO);
+    addScope('p-self', ['cds/**']);
+
+    const res = await get(server, '/api/projects/p-self');
+    expect(res.body.repoSharing.scopeSuggestion).toBeNull();
+  });
+});
+
+describe('划范围的候选与一键采纳', () => {
+  let tmpDir: string;
+  let stateService: StateService;
+  let server: http.Server;
+
+  function addProject(id: string, name: string) {
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id, slug: id, name, kind: 'git',
+      dockerNetwork: `cds-${id}`, legacyFlag: false, createdAt: now, updatedAt: now,
+      githubRepoFullName: REPO, repoPath: tmpDir,
+    });
+  }
+
+  function addProfile(projectId: string, id: string, extra: Partial<BuildProfile>) {
+    stateService.addBuildProfile({
+      id, projectId, name: id,
+      dockerImage: 'node:22', workDir: '.', containerPort: 3000,
+      hostPortPreference: 0, buildCommand: 'echo build',
+      ...extra,
+    } as BuildProfile);
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-scopeopt-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    stateService.load();
+    // 仓库里真实存在的一级目录 —— 候选清单读的是磁盘，不是编的
+    for (const d of ['cds', 'prd-api', 'prd-admin', '.git', 'node_modules']) {
+      fs.mkdirSync(path.join(tmpDir, d), { recursive: true });
+    }
+    const app = express();
+    app.use(express.json());
+    const shell = new MockShellExecutor();
+    mockDockerNetwork(shell);
+    app.use('/api', createProjectsRouter({
+      stateService,
+      shell,
+      githubApp: { getInstallationToken: async () => 't' } as GitHubAppClient,
+      // 建「带 git 仓库」的项目要求 CDS 配过源码根目录，否则直接 503
+      config: { reposBase: path.join(tmpDir, 'repos') } as any,
+    }));
+    server = app.listen(0);
+  });
+
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    await new Promise<void>((r) => server.close(() => r()));
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('候选目录来自仓库实际内容，且不含点目录与 node_modules', async () => {
+    addProject('p-self', 'CDS Self');
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    expect(res.body.repoDirs).toEqual(['cds', 'prd-admin', 'prd-api']);
+  });
+
+  it('每个服务分开给「你定过的」和「我猜的」，让用户判断该不该信', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });
+    addProfile('p-self', 'api', { deployModes: { express: { buildScope: ['prd-api/**'] } } as any });
+
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    const byId = Object.fromEntries(res.body.profiles.map((p: any) => [p.id, p]));
+    expect(byId.cds).toMatchObject({ declared: [], suggested: ['cds/**'] });
+    expect(byId.cds.why).toContain('cd cds');
+    expect(byId.api).toMatchObject({ declared: ['prd-api/**'], suggested: [] });
+  });
+
+  it('范围声明在部署模式上时标为不可改：这里写的是另一个字段，改了盖不掉它', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'gw', { deployModes: { express: { buildScope: ['llmgw/serving/**'] } } as any });
+    addProfile('p-self', 'cds', { buildScope: ['cds/**'] });
+
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    const byId = Object.fromEntries(res.body.profiles.map((p: any) => [p.id, p]));
+    // 判定取并集，所以「清空」清不掉、「改窄」反而变宽 —— 只能只读，别让界面说谎
+    expect(byId.gw.editable).toBe(false);
+    expect(byId.gw.declaredOnDeployModes).toEqual(['llmgw/serving/**']);
+    // 声明在 profile 顶层的那条照常可改
+    expect(byId.cds.editable).toBe(true);
+    expect(byId.cds.declaredOnDeployModes).toEqual([]);
+  });
+
+  it('顶层与部署模式都声明过时，顶层那份也要端出去 —— 看不见却在生效最糟', async () => {
+    // 判定取「顶层 ∪ 各模式」的并集。只渲染模式那一半，顶层那些路径就是看不见
+    // 却照样让项目重建的声明；用户对着对话框以为范围只有模式里那几条。
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'both', {
+      buildScope: ['legacy/**'],
+      deployModes: { express: { buildScope: ['llmgw/serving/**'] } },
+    } as any);
+
+    const res = await get(server, '/api/projects/p-self/scope-options');
+    const byId = Object.fromEntries(res.body.profiles.map((p: any) => [p.id, p]));
+    expect(byId.both.editable).toBe(false);
+    expect(byId.both.declaredOnDeployModes).toEqual(['llmgw/serving/**']);
+    expect(byId.both.declaredOnProfile).toEqual(['legacy/**']);
+  });
+
+  it('一键采纳只写没声明过的那些，人做过的决定不被一次猜覆盖', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });
+    addProfile('p-self', 'api', { buildScope: ['prd-api/**'], command: 'cd 别处 && x' });
+
+    const res = await call(server, 'POST', '/api/projects/p-self/scope-options/apply');
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toEqual([{ profileId: 'cds', scope: ['cds/**'] }]);
+    expect(stateService.getBuildProfile('cds')?.buildScope).toEqual(['cds/**']);
+    // 已声明的那条原样不动
+    expect(stateService.getBuildProfile('api')?.buildScope).toEqual(['prd-api/**']);
+  });
+
+  it('有服务看不出待在哪时整个项目不给建议 —— 按已知的收窄会让它静默不重建', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { command: 'cd cds && ./exec_cds.sh start' });
+    addProfile('p-self', 'mystery', { command: 'dotnet run' });
+
+    const options = await get(server, '/api/projects/p-self/scope-options');
+    expect(options.body.suggestion).toBeNull();
+
+    const applied = await call(server, 'POST', '/api/projects/p-self/scope-options/apply');
+    expect(applied.status).toBe(409);
+    expect(applied.body.error).toBe('no_suggestion');
+  });
+
+  it('全都已经声明过时没有可采纳的东西', async () => {
+    addProject('p-self', 'CDS Self');
+    addProfile('p-self', 'cds', { buildScope: ['cds/**'] });
+    const applied = await call(server, 'POST', '/api/projects/p-self/scope-options/apply');
+    expect(applied.status).toBe(409);
+  });
+});

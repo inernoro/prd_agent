@@ -1,3 +1,4 @@
+import type { ProjectIdentityRecord } from '../types.js';
 import crypto from 'node:crypto';
 
 /**
@@ -5,16 +6,16 @@ import crypto from 'node:crypto';
  *
  * 历史背景（务必读完再改这个文件）：
  *
- * v1：分支预览 URL 是 `${branchSlug}.miduo.org`
+ * v1：分支预览 URL 是 `${branchSlug}.<root-domain>`
  *     问题：CDS 多项目改造（PR #498，2026-04-24）后，非 legacy 项目的
  *     entry 存到 canonical id `${projectSlug}-${branchSlug}` 下；裸 slug
  *     URL 在 proxy 里查不到 → auto-build 死循环 → 用户看到 HTTP 400。
  *
- * v2（2026-04-26 ceb2c01）：URL 改成 `${projectSlug}-${branchSlug}.miduo.org`
+ * v2（2026-04-26 ceb2c01）：URL 改成 `${projectSlug}-${branchSlug}.<root-domain>`
  *     问题：项目名（`prd-agent`）放在最前面，"我现在在干啥"反而排到后面，
  *     用户体验上重要的信息被埋住。
  *
- * v3（本文件）：URL 改成 `${tail}-${prefix}-${projectSlug}.miduo.org`
+ * v3（本文件）：URL 改成 `${tail}-${prefix}-${projectSlug}.<root-domain>`
  *     - tail 是分支名第一个 `/` 后的部分（"在干啥"）
  *     - prefix 是 `/` 前的 agent/类型前缀（claude / cursor / feat / fix）
  *     - projectSlug 在最后（项目身份信息，最不需要常看）
@@ -68,14 +69,16 @@ function capPreviewSlug(slug: string): string {
 export interface PreviewProjectIdentity {
   id?: string | null;
   slug?: string | null;
-  aliasSlug?: string | null;
+  identityHistory?: ProjectIdentityRecord[];
+  previewAddresses?: Record<string, { branchName?: string; projectSlug?: string; customSubdomain?: string }>;
+  mirror?: { routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] } };
   name?: string | null;
   gitRepoUrl?: string | null;
   githubRepoFullName?: string | null;
   legacyFlag?: boolean | null;
 }
 
-export type PreviewProjectIdentitySource = 'aliasSlug' | 'slug' | 'repo' | 'fallback' | 'id' | 'name' | 'default';
+export type PreviewProjectIdentitySource = 'slug' | 'repo' | 'fallback' | 'id' | 'name' | 'default';
 
 export interface ResolvedPreviewProjectIdentity {
   slug: string;
@@ -155,11 +158,6 @@ export function resolvePreviewProjectIdentity(
   project: PreviewProjectIdentity | undefined | null,
   fallback?: string | null,
 ): ResolvedPreviewProjectIdentity {
-  const alias = slugifyForPreview(project?.aliasSlug || '');
-  if (alias) {
-    return { slug: alias, source: 'aliasSlug', degraded: false };
-  }
-
   const slug = slugifyForPreview(project?.slug || '');
   if (slug) {
     if (project?.legacyFlag && isGenericPreviewProjectSlug(slug)) {
@@ -167,7 +165,7 @@ export function resolvePreviewProjectIdentity(
         slug,
         source: 'slug',
         degraded: true,
-        reason: `legacy project slug '${slug}' is generic; keeping it unless a collision-checked aliasSlug is persisted`,
+        reason: `legacy project slug '${slug}' is generic; keeping the persisted project slug`,
       };
     }
     return { slug, source: 'slug', degraded: false };
@@ -222,7 +220,7 @@ export function resolvePreviewProjectIdentity(
 }
 
 /**
- * 解析 preview host 时保留历史 project.slug / aliasSlug 兼容；新链接只用
+ * 解析旧入口时从审计快照取历史 slug；正常配置只有一个 slug，新链接只用
  * previewProjectSlug() 生成。
  */
 export function previewProjectSlugCandidates(
@@ -232,7 +230,7 @@ export function previewProjectSlugCandidates(
   const candidates = [
     previewProjectSlug(project, fallback),
     project?.slug,
-    project?.aliasSlug,
+    ...projectHistoricalSlugs(project),
     fallback,
     project?.id,
     repoNameFromGitRef(project?.gitRepoUrl),
@@ -241,6 +239,28 @@ export function previewProjectSlugCandidates(
     .map((s) => slugifyForPreview(String(s || '')))
     .filter(Boolean);
   return Array.from(new Set(candidates));
+}
+
+/** 历史名称只用于旧入口和资源兼容，不是第二份可编辑配置。 */
+export function projectHistoricalSlugs(project: PreviewProjectIdentity | undefined | null): string[] {
+  const values = [project?.slug, ...(project?.mirror?.routingIdentity?.historicalSlugs || [])];
+  for (const record of project?.identityHistory || []) {
+    for (const snapshot of [record.before, record.after]) {
+      if (snapshot) values.push(snapshot.slug, snapshot.originalIdentifier, snapshot.previewIdentifier);
+    }
+  }
+  return [...new Set(values.map((value) => slugifyForPreview(value || '')).filter(Boolean))];
+}
+
+/** 项目查找优先匹配 id；slug 不能占用其他项目的 id 或历史名称。 */
+export function projectReservedIdentifiers(project: PreviewProjectIdentity): string[] {
+  return [...new Set([project.id || '', ...projectHistoricalSlugs(project)].filter(Boolean))];
+}
+
+/** 已创建资源的名字不随项目改名重算；关联始终由项目 id 及资源 id 保存。 */
+export function projectResourceNamespace(project: PreviewProjectIdentity): string {
+  const initial = project.identityHistory?.[0]?.after;
+  return project.mirror?.routingIdentity?.resourceNamespace || initial?.originalIdentifier || initial?.slug || project.slug || project.id || 'default';
 }
 
 export function previewSlugMatchPercent(
@@ -314,4 +334,14 @@ export function computePreviewSlug(branch: string, projectSlug: string): string 
   else if (!tail) slug = `${prefix}-${project}`;
   else slug = `${tail}-${prefix}-${project}`;
   return capPreviewSlug(slug);
+}
+
+export function previewBranchName(branch: string): string { return computePreviewSlug(branch, '').replace(/-+$/, ''); }
+
+/** DNS-facing branch configuration; all public URL producers consume this. */
+export function configuredPreviewSlug(branch: string, project: PreviewProjectIdentity | undefined | null, fallback?: string | null): string {
+  const override = project?.previewAddresses && Object.hasOwn(project.previewAddresses, branch) ? project.previewAddresses[branch] : undefined;
+  if (override?.customSubdomain) return override.customSubdomain;
+  if (override?.branchName || override?.projectSlug) return `${override.branchName || previewBranchName(branch)}-${override.projectSlug || previewProjectSlug(project, fallback)}`;
+  return computePreviewSlug(branch, previewProjectSlug(project, fallback));
 }

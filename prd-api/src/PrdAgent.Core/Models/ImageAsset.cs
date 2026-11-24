@@ -19,11 +19,15 @@ public class ImageAsset
     public int Height { get; set; } = 0;
     public long SizeBytes { get; set; } = 0;
     public string Url { get; set; } = string.Empty;
+    /// <summary>Url 对应展示对象的 SHA256；启用水印时与 OriginalSha256 不同。</summary>
+    public string? DisplaySha256 { get; set; }
     public string? Prompt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>文章配图场景：该图片在文章中的插入位置索引(0-based)</summary>
     public int? ArticleInsertionIndex { get; set; }
+    /// <summary>明确绑定配图流程的版本；这种资产不能参与旧数据的位置猜测回填。</summary>
+    public int? ArticleWorkflowVersion { get; set; }
 
     /// <summary>文章配图场景：原始提示词标记文本(如"温馨的咖啡厅场景")</summary>
     public string? OriginalMarkerText { get; set; }
@@ -57,4 +61,3 @@ public class ImageAsset
     /// </summary>
     public string? DescriptionModelId { get; set; }
 }
-

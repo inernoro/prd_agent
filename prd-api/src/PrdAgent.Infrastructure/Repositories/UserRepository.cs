@@ -60,6 +60,34 @@ public class UserRepository : IUserRepository
             Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
     }
 
+    public async Task<bool> TryReplacePasswordAsync(string userId, string expectedHash, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(expectedHash)) return false;
+
+        // 条件更新：校验旧密码和写新密码之间有一段窗口，两个会话可以同时通过校验。
+        // 都无条件写下去的话，两边都会接着清会话、各自签发新会话——于是密码没写赢的
+        // 那一方仍然登着，而「改密码会把其它设备踢下线」这句承诺当场落空。
+        var result = await _users.UpdateOneAsync(
+            Builders<User>.Filter.And(
+                Builders<User>.Filter.Eq(u => u.UserId, userId),
+                Builders<User>.Filter.Eq(u => u.PasswordHash, expectedHash),
+                // 状态也要进这个原子谓词。控制器里那道 Active 检查读的是**更早**的快照：
+                // 管理员在「读到还是启用」和「这句更新执行」之间把人停掉的话，更新照样成功，
+                // 端点接着签发一整套新令牌——停用输给了改密。放进来，停用才赢得了这场竞态。
+                Builders<User>.Filter.Eq(u => u.Status, UserStatus.Active)),
+            Builders<User>.Update
+                .Set(u => u.PasswordHash, passwordHash)
+                // 「必须改密」这个标记跟着密码一起写，不能拆成后面单独一句。
+                //
+                // 拆开的话有这么一段窗口：本方法刚写完新密码，管理员的重置端点紧接着
+                // 原子地写下临时密码 + MustResetPassword=true，然后那句单独的
+                // 「清标记」再无条件把它抹回 false——管理员发的临时密码从此不再强制
+                // 首登改密，而自助这一侧还照常签发了新会话。
+                // 谁写赢了密码，谁就同时拥有这个标记的状态。
+                .Set(u => u.MustResetPassword, false));
+        return result.ModifiedCount > 0;
+    }
+
     public async Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword)
     {
         if (string.IsNullOrWhiteSpace(userId)) return;

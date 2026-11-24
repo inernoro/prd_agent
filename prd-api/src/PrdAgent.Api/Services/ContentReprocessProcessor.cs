@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -15,6 +16,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ContentReprocessProcessor
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly ILlmGateway _llmGateway;
     private readonly IDocumentService _documentService;
     private readonly ILLMRequestContextAccessor _llmCtx;
@@ -24,8 +26,10 @@ public class ContentReprocessProcessor
         ILlmGateway llmGateway,
         IDocumentService documentService,
         ILLMRequestContextAccessor llmCtx,
-        ILogger<ContentReprocessProcessor> logger)
+        ILogger<ContentReprocessProcessor> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _llmGateway = llmGateway;
         _documentService = documentService;
         _llmCtx = llmCtx;
@@ -34,6 +38,10 @@ public class ContentReprocessProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 防御：旧 BSON 文档可能没 Messages 字段 → 反序列化为 null。
         // 这一行必须在第一次访问 run.Messages 之前（包括下面日志里 Count）（Bugbot #1 五轮 High）
         run.Messages ??= new List<ReprocessChatMessage>();
@@ -144,8 +152,7 @@ public class ContentReprocessProcessor
             DocumentHash: null,
             SystemPromptRedacted: "doc-store-reprocess",
             RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate,
@@ -191,7 +198,10 @@ public class ContentReprocessProcessor
             }
             else if (chunk.Type == "error")
             {
-                throw new InvalidOperationException($"LLM 调用失败: {chunk.ErrorMessage}");
+                // 带着结构化码抛：配置问题与上游抖动的文案、要不要自动重试都按它判
+                // 全限定：本文件同时引了 PrdAgent.Core.Interfaces.LlmGateway，
+                // 再 using PrdAgent.Core.LlmGateway 会让 ILlmGateway 变成歧义引用（CS0104）
+                throw PrdAgent.Core.LlmGateway.GatewayRouteFailureException.FromChunk(chunk, "LLM 调用失败");
             }
         }
 

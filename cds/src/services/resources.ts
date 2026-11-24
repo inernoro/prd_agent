@@ -1,4 +1,5 @@
 import type { BranchEntry, BuildProfile, InfraService, ResourceCloneTask, ResourceExternalAccessPolicy, ServiceState } from '../types.js';
+import { branchDbCredentialsBelongTo, type BranchDbRuntime } from './branch-db-identity.js';
 
 export type UnifiedResourceKind = 'app' | 'database' | 'cache' | 'queue' | 'storage' | 'service';
 export type UnifiedResourceStatus = ServiceState['status'] | 'stopped';
@@ -33,6 +34,12 @@ export interface UnifiedResourceCapabilitySet {
   dangerousActions: boolean;
 }
 
+const INTERNAL_RESOURCE_RAW = Symbol('cds.unified-resource.internal-raw');
+
+export type UnifiedResourceRaw = ServiceState | (Omit<InfraService, 'env'> & {
+  env: Record<string, string>;
+});
+
 export interface UnifiedBranchResource {
   id: string;
   source: 'app' | 'infra';
@@ -59,7 +66,12 @@ export interface UnifiedBranchResource {
   cloneTasks?: ResourceCloneTask[];
   containerName?: string;
   errorMessage?: string;
-  raw: ServiceState | InfraService;
+  /**
+   * 兼容旧工作台的资源摘要。基础设施环境变量只保留键名，值统一掩码；
+   * 真实状态通过不可枚举的内部引用供路由使用，绝不能进入 API JSON。
+   */
+  raw: UnifiedResourceRaw;
+  [INTERNAL_RESOURCE_RAW]?: ServiceState | InfraService;
 }
 
 export interface BuildUnifiedResourcesInput {
@@ -93,7 +105,30 @@ function normalizeStatus(status?: string): UnifiedResourceStatus {
   return status === 'running' ? 'running' : 'stopped';
 }
 
+function maskInfraService(service: InfraService): UnifiedResourceRaw {
+  const { credentialRotationVault: _credentialRotationVault, ...publicService } = service;
+  return {
+    ...publicService,
+    env: Object.fromEntries(Object.keys(service.env || {}).map((key) => [key, '******'])),
+  };
+}
+
+function attachInternalRaw<T extends UnifiedBranchResource>(resource: T, raw: ServiceState | InfraService): T {
+  Object.defineProperty(resource, INTERNAL_RESOURCE_RAW, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: raw,
+  });
+  return resource;
+}
+
+export function getUnifiedResourceInternalRaw(resource: UnifiedBranchResource): ServiceState | InfraService {
+  return resource[INTERNAL_RESOURCE_RAW] || resource.raw;
+}
+
 export function inferAppRuntime(profile?: BuildProfile, service?: ServiceState): string {
+  if (service?.staticWeb || service?.runtimeKind === 'static') return '静态文件';
   const raw = text([
     profile?.id,
     profile?.name,
@@ -135,8 +170,20 @@ function internalInfraAddress(service: InfraService): string {
   return service.containerPort ? `${service.id}:${service.containerPort}` : service.id;
 }
 
-function infraConnectionString(runtime: string, service: InfraService, host: string, branchEnv: Record<string, string> = {}): string {
+function infraConnectionString(runtime: string, service: InfraService, host: string, rawBranchEnv: Record<string, string> = {}): string {
   const env = service.env || {};
+  // 分支 env 只有一份，而一个分支可以挂多台同类型库；不判归属就会把 A 库的账号/库名
+  // 显示成 B 库的连接串（同一处漏判在工作台上表现为 1045，见 branch-db-identity）。
+  const runtimeKey: BranchDbRuntime | null = runtime === 'MySQL'
+    ? 'mysql'
+    : runtime === 'PostgreSQL'
+      ? 'postgres'
+      : runtime === 'MongoDB'
+        ? 'mongodb'
+        : null;
+  const branchEnv = runtimeKey && !branchDbCredentialsBelongTo(rawBranchEnv, runtimeKey, service.id)
+    ? {}
+    : rawBranchEnv;
   const port = service.hostPort || service.containerPort || 0;
   if (runtime === 'MySQL') {
     const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.MARIADB_DATABASE || 'app';
@@ -225,7 +272,7 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
     const resourceId = `app:${service.profileId}`;
     const policy = policyByResourceId.get(resourceId);
     const externalUrl = policy?.enabled && policy.address ? policy.address : input.previewUrl || '';
-    return {
+    return attachInternalRaw({
       id: resourceId,
       source: 'app' as const,
       kind: 'app' as const,
@@ -259,8 +306,8 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
       cloneTasks: cloneTasksByResourceId.get(resourceId) || [],
       containerName: service.containerName,
       errorMessage: service.errorMessage,
-      raw: service,
-    };
+      raw: { ...service },
+    }, service);
   });
 
   const infraResources = input.infraServices.map((service) => {
@@ -269,7 +316,7 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
     const resourceId = `infra:${service.id}`;
     const policy = policyByResourceId.get(resourceId);
     const tcpAddress = publicTcpAddress(publicHost, service.hostPort);
-    return {
+    return attachInternalRaw({
       id: resourceId,
       source: 'infra' as const,
       kind: inferred.kind,
@@ -311,8 +358,8 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
       cloneTasks: cloneTasksByResourceId.get(resourceId) || [],
       containerName: service.containerName,
       errorMessage: service.errorMessage,
-      raw: service,
-    };
+      raw: maskInfraService(service),
+    }, service);
   });
 
   const rank: Record<UnifiedResourceKind, number> = { app: 0, database: 1, cache: 2, queue: 3, storage: 4, service: 5 };

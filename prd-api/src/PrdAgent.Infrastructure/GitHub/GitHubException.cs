@@ -71,8 +71,10 @@ public class GitHubException : Exception
 
     // ===== Generic GitHub factory methods =====
 
+    // 文案必须自带下一步动作：前端的用户文案净化器会把「没有可执行动作」的消息
+    // 换成通用兜底（「请检查输入后重试」），那样用户既不知道发生了什么、也不知道该做什么。
     public static GitHubException NotConnected() =>
-        new(GitHubErrorCodes.GITHUB_NOT_CONNECTED, 412, "尚未连接 GitHub 账号，请先授权");
+        new(GitHubErrorCodes.GITHUB_NOT_CONNECTED, 412, "尚未连接 GitHub 账号，请先在知识库里连接后重试");
 
     public static GitHubException TokenExpired() =>
         new(GitHubErrorCodes.GITHUB_TOKEN_EXPIRED, 401, "GitHub 连接已过期，请重新授权");
@@ -82,14 +84,16 @@ public class GitHubException : Exception
 
     public static GitHubException RepoNotVisible(string owner, string repo) =>
         new(GitHubErrorCodes.GITHUB_REPO_NOT_VISIBLE, 404,
-            $"仓库 {owner}/{repo} 不存在，或你的 GitHub 账号无权访问（私有仓需要 repo scope）");
+            $"仓库 {owner}/{repo} 不存在，或你的 GitHub 账号无权访问；"
+            + "请核对仓库地址，或重新连接 GitHub 账号并授予私有仓权限后重试");
 
     public static GitHubException PrNumberInvalid(string owner, string repo, int number) =>
         new(GitHubErrorCodes.PR_NUMBER_INVALID, 404,
             $"仓库 {owner}/{repo} 可见，但 PR #{number} 不存在");
 
     public static GitHubException Forbidden() =>
-        new(GitHubErrorCodes.GITHUB_FORBIDDEN, 403, "GitHub 拒绝访问该资源");
+        new(GitHubErrorCodes.GITHUB_FORBIDDEN, 403,
+            "GitHub 拒绝访问该资源，请确认这个 GitHub 账号对该仓库有读取权限后重试");
 
     public static GitHubException RateLimited(string? retryAfter) =>
         new(GitHubErrorCodes.GITHUB_RATE_LIMITED, 429,

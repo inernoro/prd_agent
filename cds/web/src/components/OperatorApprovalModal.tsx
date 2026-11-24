@@ -12,7 +12,7 @@
  *   - 显示 caller 来源 / op danger 等级 / args / 估时
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Bot, ShieldCheck, ShieldX, Wrench } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import { nextUnseenApproval, createApprovalPollingGate } from '@/hooks/approvalPolling';
 
 interface PendingRequest {
   id: string;
@@ -35,27 +36,63 @@ interface PendingRequest {
 }
 
 const DANGER_META: Record<string, { label: string; tone: string; icon: React.ReactNode }> = {
-  safe: { label: '安全/只读', tone: 'text-emerald-700 dark:text-emerald-300', icon: <ShieldCheck className="h-4 w-4" /> },
-  sensitive: { label: '会改运行时', tone: 'text-amber-700 dark:text-amber-300', icon: <AlertTriangle className="h-4 w-4" /> },
+  safe: { label: '安全/只读', tone: 'text-ok', icon: <ShieldCheck className="h-4 w-4" /> },
+  sensitive: { label: '会改运行时', tone: 'text-warn', icon: <AlertTriangle className="h-4 w-4" /> },
   destructive: { label: '高危', tone: 'text-destructive', icon: <ShieldX className="h-4 w-4" /> },
 };
 
-export function OperatorApprovalModal(): JSX.Element | null {
+export function OperatorApprovalModal({ onCountChange, openRequest = 0 }: {
+  onCountChange: (count: number) => void;
+  openRequest?: number;
+}): JSX.Element | null {
   const events = useCdsEvents();
   const [pending, setPending] = useState<PendingRequest | null>(null);
   const [busy, setBusy] = useState(false);
+  const [requests, setRequests] = useState<PendingRequest[]>([]);
+  const [actionError, setActionError] = useState('');
+  // 关闭只表示稍后处理，不改变服务端审批状态；当前控制台会话不再自动抢焦点。
+  const deferred = useRef(new Set<string>());
+  const unknownResults = useRef(new Set<string>());
+  const [refreshError, setRefreshError] = useState('');
+  const [refreshGate] = useState(() => createApprovalPollingGate<{ pending: PendingRequest[] }>());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   // 拿当前所有 pending request,选最新一条展示
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requireFresh = false) => {
+    const checkingIds = requireFresh ? new Set(unknownResults.current) : new Set<string>();
     try {
-      const data = await apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests');
+      const read = () => apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests');
+      const result = await (requireFresh ? refreshGate.runFresh(read) : refreshGate.run(read));
+      if (!mounted.current) return;
+      setRefreshError('');
+      if (requireFresh) { for (const id of checkingIds) unknownResults.current.delete(id); setActionError(''); }
+      if (result.kind === 'forbidden') { setRequests([]); setPending(null); return; }
+      const data = result.data;
       const list = (data.pending || []).filter((r) => r.status === 'pending');
-      if (list.length > 0) setPending(list[0]);
-      else setPending(null);
-    } catch {
-      // 静默 — 服务不可达不应弹错
+      setRequests(list);
+      const activeIds = new Set(list.map(request => request.id));
+      for (const id of deferred.current) if (!activeIds.has(id)) deferred.current.delete(id);
+      setPending(current => nextUnseenApproval(list, deferred.current, current?.id) ?? null);
+    } catch (error) {
+      if (mounted.current) setRefreshError(error instanceof Error ? error.message : '请求失败，请稍后重试');
     }
-  }, []);
+  }, [refreshGate]);
+
+  useEffect(() => { onCountChange(requests.length); }, [requests.length, onCountChange]);
+  useEffect(() => {
+    if (!openRequest) return;
+    setActionError('');
+    setPending(requests[0] ?? null);
+    void refresh();
+  }, [openRequest]);
+
+  const deferPending = (): void => {
+    if (busy) return;
+    if (pending) deferred.current.add(pending.id);
+    setPending(null);
+    setActionError('');
+  };
 
   // 初始进页面拉一次
   useEffect(() => { void refresh(); }, [refresh]);
@@ -71,14 +108,20 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const approve = useCallback(async (scope: 'once' | 'session') => {
     if (!pending || busy) return;
     setBusy(true);
+    setActionError('');
     try {
       await apiRequest(`/api/cds-system/operator/requests/${encodeURIComponent(pending.id)}/approve`, {
         method: 'POST',
         body: { scope },
       });
+      deferred.current.add(pending.id);
       setPending(null);
       // 给后端一点时间 publish completed,再 refresh
       window.setTimeout(() => void refresh(), 500);
+    } catch (error) {
+      unknownResults.current.add(pending.id);
+      setActionError(error instanceof Error ? error.message : '请求中断');
+      void refresh(true);
     } finally {
       setBusy(false);
     }
@@ -87,28 +130,41 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const reject = useCallback(async () => {
     if (!pending || busy) return;
     setBusy(true);
+    setActionError('');
     try {
       await apiRequest(`/api/cds-system/operator/requests/${encodeURIComponent(pending.id)}/reject`, {
         method: 'POST',
       });
+      deferred.current.add(pending.id);
       setPending(null);
+      void refresh();
+    } catch (error) {
+      unknownResults.current.add(pending.id);
+      setActionError(error instanceof Error ? error.message : '请求中断');
+      void refresh(true);
     } finally {
       setBusy(false);
     }
-  }, [pending, busy]);
+  }, [pending, busy, refresh]);
 
+  if (refreshError) return <section role="alert" className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-lg border border-destructive/30 bg-background p-3 text-sm shadow-lg">
+    <p>运维审批请求读取失败：{refreshError}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void refresh()}>重试</Button>
+  </section>;
   if (!pending) return null;
+  const pendingUnconfirmed = unknownResults.current.has(pending.id);
   const meta = DANGER_META[pending.opDanger] ?? DANGER_META.safe;
+  const target = pending.args?.databaseTarget as { runtime?: string; database?: string; port?: number; containerId?: string } | undefined;
+  const visibleArgs = pending.args && Object.fromEntries(Object.entries(pending.args).filter(([key]) => key !== 'databaseTarget'));
 
   return (
-    <Dialog open={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
+    <Dialog open={!!pending} onOpenChange={(open) => { if (!open) deferPending(); }}>
       <DialogContent
         className="max-w-2xl overflow-hidden"
-        style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}
+        style={{ maxHeight: 'min(47.5rem, calc(100dvh - 2rem))' }}
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-amber-600 dark:text-amber-300" />
+            <ShieldCheck className="h-5 w-5 text-warn" />
             需要你的明确授权
           </DialogTitle>
           <DialogDescription>
@@ -116,10 +172,10 @@ export function OperatorApprovalModal(): JSX.Element | null {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4">
+        <div className="rounded-lg border border-warn/35 bg-warn-soft p-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
-              <Bot className="h-5 w-5 text-amber-700 dark:text-amber-300" />
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-warn-soft">
+              <Bot className="h-5 w-5 text-warn" />
             </div>
             <div className="min-w-0 text-sm">
               <div className="font-semibold text-foreground">
@@ -138,7 +194,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
             <div className="mb-2 flex items-center gap-2">
               <Wrench className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">{pending.opName}</span>
-              <span className={`ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] ${meta.tone}`}>
+              <span className={`ml-auto inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[0.6875rem] ${meta.tone}`}>
                 {meta.icon}
                 {meta.label}
               </span>
@@ -146,34 +202,42 @@ export function OperatorApprovalModal(): JSX.Element | null {
             <div className="text-xs text-muted-foreground">
               <code className="font-mono">{pending.opId}</code>
             </div>
-            {pending.args && Object.keys(pending.args).length > 0 ? (
-              <details className="mt-2">
+            {target ? <p className="mt-2 break-words text-xs" role="note">
+              审批目标：{target.runtime} · {target.database} · 端口 {target.port} · 实例 {target.containerId?.slice(0, 12)}
+            </p> : null}
+            {visibleArgs && Object.keys(visibleArgs).length > 0 ? (
+              <details className="mt-2" open={pending.opId.startsWith('database.') ? true : undefined}>
                 <summary className="cursor-pointer text-xs text-foreground/70">参数</summary>
-                <pre className="mt-1 max-h-40 overflow-auto rounded bg-background/50 p-2 text-[10px]">
-                  {JSON.stringify(pending.args, null, 2)}
+                <pre className="mt-1 max-h-40 whitespace-pre-wrap break-words overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
+                  {JSON.stringify(visibleArgs, null, 2)}
                 </pre>
               </details>
             ) : null}
           </div>
 
           <p className="text-xs leading-5 text-muted-foreground">
+            关闭仅收起提醒，不会批准或拒绝；刷新页面可再次处理待批请求。<br />
             选择「<strong>允许本次</strong>」只放行这一次请求。<br />
-            选择「<strong>授权 7 天</strong>」放行接下来 7 天内同一发起方(同一 access key)+ 同一 op 的所有请求,免重复点击。
+            选择「<strong>授权 7 天</strong>」仅放行接下来 7 天内同一发起方、同一操作且参数完全相同的请求；更换目标或 SQL 需要重新批准。
           </p>
         </div>
 
+        {pendingUnconfirmed ? <p role="alert" className="text-sm text-destructive">操作结果尚未确认：{actionError || '正在核验服务端实际状态'}。正在重新读取实际状态；确认仍待处理后才能再次决定。<Button type="button" variant="outline" size="sm" className="ml-2" onClick={() => void refresh(true)}>确认实际状态</Button></p> : null}
         <DialogFooter className="flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={reject} disabled={busy}>
+          <Button type="button" variant="ghost" onClick={deferPending} disabled={busy}>
+            稍后处理
+          </Button>
+          <Button type="button" variant="outline" onClick={reject} disabled={busy || pendingUnconfirmed}>
             拒绝
           </Button>
-          <Button type="button" variant="default" onClick={() => approve('once')} disabled={busy}>
+          <Button type="button" variant="default" onClick={() => approve('once')} disabled={busy || pendingUnconfirmed}>
             允许本次
           </Button>
           <Button
             type="button"
             variant={pending.opDanger === 'destructive' ? 'destructive' : 'default'}
             onClick={() => approve('session')}
-            disabled={busy}
+            disabled={busy || pendingUnconfirmed}
           >
             授权 7 天
           </Button>

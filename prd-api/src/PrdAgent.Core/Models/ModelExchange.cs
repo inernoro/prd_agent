@@ -87,6 +87,7 @@ public class ModelExchange
 /// 把 Exchange 当成"虚拟平台"，一个 Exchange 可以挂多个模型
 /// （Gemini 中继下可以同时挂 gemini-2.5-flash / gemini-3.1-flash-image-preview 等）。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ExchangeModel
 {
     /// <summary>
@@ -109,6 +110,19 @@ public class ExchangeModel
 
     /// <summary>是否启用（禁用后不出现在模型池选择器）</summary>
     public bool Enabled { get; set; } = true;
+    /// <summary>
+    /// 名录外别名的放行标记。控制台写入兑换所时逐条盖（名录内的不盖，它本来就在白名单里），
+    /// 数据面的名录门只认它——认「这条记录来自兑换所」等于认容器，
+    /// 往兑换所里加一个没人看过的别名照样过门。
+    /// </summary>
+    public bool? AllowedOutsideCatalog { get; set; }
+
+    /// <summary>放行人（用户名，或存量迁移的来历说明）。它必须能被人核对，不许伪装成有人审过。</summary>
+    public string? AllowedOutsideCatalogBy { get; set; }
+
+    /// <summary>放行时间。</summary>
+    public DateTime? AllowedOutsideCatalogAt { get; set; }
+
 }
 
 /// <summary>

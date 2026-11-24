@@ -2,8 +2,8 @@
  * 产品管理 — 统一「设置」中心。
  *
  * 把原先分散在「应用」(WorkflowTemplateSection) 与「设置」(SettingsSection) 的配置
- * 合并为单一设置模块，按七分类组织：权限 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 问策知识库。
- * 复用各底层编辑器（FormTemplateEditor / WorkflowEditor / 类型 / 描述模板 / 管理员），
+ * 合并为单一设置模块，集中维护产品、需求、功能、缺陷、客户与问策知识库。
+ * 复用各底层编辑器（FormTemplateEditor / WorkflowEditor / 类型 / 描述模板），
  * 优先级与严重程度走通用等级目录 GradeCatalogManager。
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -36,26 +36,29 @@ import {
   DescTemplateManager,
   CategoryManager,
   RequirementTypeManager,
-  ApplicationAdminManager,
 } from './SettingsSection';
 import { WorkflowEditor } from './WorkflowTemplateSection';
-import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 import { useGradeOptions } from './gradeOptions';
+import { useSearchParams } from 'react-router-dom';
+import { useAuthStore } from '@/stores/authStore';
+import { PRODUCT_MAP_ADMIN } from './productPermissionAccess';
+import { ProductClaimWebhookPanel } from './ProductClaimWebhookPanel';
 
-type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb';
+type SettingsCat = 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb' | 'webhook';
 
 const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: string }[] = [
-  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '按角色分配产品管理内部各页面的访问权限' },
-  { key: 'product', label: '产品', icon: Boxes, desc: '产品类型与产品管理员指派' },
+  { key: 'product', label: '产品', icon: Boxes, desc: '产品类型' },
   { key: 'requirement', label: '需求', icon: ListChecks, desc: '需求的表单、流程、类型、优先级与严重程度' },
   { key: 'feature', label: '功能', icon: Puzzle, desc: '功能的表单、流程、优先级与严重程度' },
   { key: 'defect', label: '缺陷', icon: Bug, desc: '缺陷的表单、流程、优先级与严重程度' },
   { key: 'customer', label: '客户', icon: Users, desc: '客户表单字段定义' },
   { key: 'consult-kb', label: '问策知识库', icon: BookOpen, desc: '营销问策智能体的专属知识库' },
+  { key: 'webhook', label: '版本申领通知', icon: ShieldCheck, desc: '版本申领自动推送、脱敏地址与发送结果' },
 ];
 
 export function ProductSettingsHub() {
-  const [cat, setCat] = useState<SettingsCat>('perm');
+  const [params, setParams] = useSearchParams();
+  const isMapAdmin = useAuthStore(state => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
   const [products, setProducts] = useState<Product[]>([]);
 
   useEffect(() => {
@@ -64,7 +67,9 @@ export function ProductSettingsHub() {
     });
   }, []);
 
-  const activeCat = CATS.find((c) => c.key === cat)!;
+  const categories = CATS.filter((category) => category.key !== 'webhook' || isMapAdmin);
+  const activeCat = categories.find((category) => category.key === params.get('settingsCat')) ?? CATS[0];
+  const cat = activeCat.key;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -75,13 +80,13 @@ export function ProductSettingsHub() {
       <div className="flex min-h-0 flex-1">
         {/* 左侧分类导航 */}
         <nav className="w-44 shrink-0 overflow-y-auto border-r border-token-subtle px-2 py-3" style={{ overscrollBehavior: 'contain' }}>
-          {CATS.map((c) => {
+          {categories.map((c) => {
             const Icon = c.icon;
             const on = c.key === cat;
             return (
               <button
                 key={c.key}
-                onClick={() => setCat(c.key)}
+                onClick={() => { setParams(previous => { const next = new URLSearchParams(previous); next.set('settingsCat', c.key); return next; }, { replace: true }); }}
                 className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${on ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -92,52 +97,14 @@ export function ProductSettingsHub() {
         </nav>
         {/* 右侧内容 */}
         <div className="min-h-0 flex-1 overflow-y-auto p-6" style={{ overscrollBehavior: 'contain' }}>
-          {cat === 'perm' && <PermissionPanel />}
-          {cat === 'product' && <ProductCategoryPanel />}
+          {cat === 'product' && <CategoryManager />}
           {(cat === 'requirement' || cat === 'feature' || cat === 'defect' || cat === 'customer') && (
             <EntitySettingsPanel key={cat} entityType={cat} products={products} />
           )}
           {cat === 'consult-kb' && <ConsultKnowledgePanel />}
+          {cat === 'webhook' && (isMapAdmin ? <ProductClaimWebhookPanel /> : <p role="status" className="text-sm text-token-secondary">仅 MAP 管理员可配置版本申领通知。</p>)}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ════════════════════════ 权限 ════════════════════════
-
-function PermissionPanel() {
-  return (
-    <div className="flex flex-col gap-5">
-      <div className="rounded-xl border border-dashed border-token-subtle bg-token-nested p-4">
-        <div className="text-sm font-medium text-token-primary">按角色分配页面权限</div>
-        <div className="mt-1 text-xs leading-5 text-token-muted">
-          根据用户角色分配产品管理内部各页面（概览 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 设置等）的访问权限。该细粒度授权矩阵建设中，将在后续版本上线；当前页面访问沿用 product-agent.use / manage / admin 三级权限。
-        </div>
-      </div>
-      <div>
-        <div className="mb-2 text-sm font-medium text-token-primary">历史数据导入权限</div>
-        <ApplicationAdminManager />
-      </div>
-    </div>
-  );
-}
-
-// ════════════════════════ 产品 ════════════════════════
-
-function ProductCategoryPanel() {
-  const [tab, setTab] = useState<'category' | 'admins'>('category');
-  return (
-    <div className="flex flex-col gap-4">
-      <SubTabBar
-        tabs={[
-          { key: 'category', label: '产品类型' },
-          { key: 'admins', label: '产品管理员' },
-        ]}
-        active={tab}
-        onChange={(k) => setTab(k as 'category' | 'admins')}
-      />
-      {tab === 'category' ? <CategoryManager /> : <ProductAdminOverviewPanel />}
     </div>
   );
 }
@@ -299,7 +266,7 @@ function GradeCatalogManager({
           <button
             onClick={add}
             disabled={!draftName.trim() || saving}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 disabled:opacity-50"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-50"
           >
             {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 新增
           </button>
@@ -385,7 +352,7 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
       <button
         onClick={save}
         disabled={!dirty || !name.trim() || busy}
-        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-cyan-200/80 hover:bg-cyan-500/10 hover:text-cyan-200 disabled:opacity-30"
+        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 hover:text-[color:var(--accent-fg-blue)] disabled:opacity-30"
       >
         {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
       </button>
@@ -393,7 +360,7 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
         onClick={remove}
         disabled={option.isBuiltin || busy}
         title={option.isBuiltin ? '内置项不可删除' : '删除'}
-        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-red-300/60 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-30"
+        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)] disabled:opacity-30"
       >
         <Trash2 size={12} />
       </button>
@@ -428,7 +395,7 @@ function ConsultKnowledgePanel() {
 
       <div className="flex items-center justify-between">
         <span className="text-xs text-token-secondary">资料列表{entries.length > 0 ? `（${entries.length}）` : ''}</span>
-        <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30">
+        <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30">
           <Plus size={14} /> 添加资料
         </button>
       </div>
@@ -522,7 +489,7 @@ function KbAddModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => 
         </div>
         <div className="flex shrink-0 justify-end gap-2 border-t border-token-subtle px-5 py-3">
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button>
-          <button onClick={save} disabled={saving || !title.trim() || !content.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
+          <button onClick={save} disabled={saving || !title.trim() || !content.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">
             {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
           </button>
         </div>

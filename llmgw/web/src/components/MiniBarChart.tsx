@@ -20,7 +20,12 @@ export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; 
         <div className="lg-mini-bar-empty">暂无数据</div>
       ) : (
         data.map((d, i) => {
-          const ratio = Math.max(0.04, d.count / max);
+          // 零值不画绿柱。此前写的是 Math.max(0.04, …)，于是「当天没有请求」也会长出
+          // 一根 4% 高的绿色小柱；它比真实的低值柱还矮一截，一排下来就是用户说的
+          // 「像缺失的牙齿」。零值改画基线上一段 2px 的灰色刻度（见 .is-zero）——
+          // 「这天是 0」和「这天没数据」是两回事，仍要看得见，但不能长得像一根柱子。
+          const zero = d.count <= 0;
+          const ratio = zero ? 0 : Math.max(0.06, d.count / max);
           const showLabel = i === lastIndex
             || (i % labelStep === 0 && lastIndex - i >= Math.max(2, Math.ceil(labelStep * 0.65)));
           return (
@@ -35,8 +40,8 @@ export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; 
               onClick={() => setActiveIndex(i)}
             >
               <span
-                className="lg-mini-bar-value"
-                style={{ height: `${ratio * 100}%` }}
+                className={`lg-mini-bar-value${zero ? ' is-zero' : ''}`}
+                style={zero ? undefined : { height: `${ratio * 100}%` }}
               />
               <small
                 aria-hidden={!showLabel}

@@ -1,3 +1,5 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { RELEASE_CENTER_BODY_CLASS, RELEASE_CENTER_SECTIONS_CLASS, ReleaseCenterNavigation, ReleaseCenterSkeleton } from '@/components/skeletons/ReleaseCenterSkeleton';
 /**
  * 站点发布中心 v2 —— 环境是骨架，不是一堆等权重的配置方框。
  *
@@ -18,17 +20,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, RefreshCw, Rocket, RotateCcw } from 'lucide-react';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { Plus, RefreshCw, Rocket } from 'lucide-react';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { useNowTick } from '@/hooks/useNowTick';
 import {
   initialReleaseCenterProject,
   releaseCenterDeepLink,
+  releaseCenterSection,
   normalizeProductionOrigin,
   rememberReleaseCenterProject,
+  resolveReleaseProject,
+  resolveInitialReleaseProject,
 } from '@/lib/releaseCenter';
+import type { ReleaseCenterSection } from '@/lib/releaseCenter';
 import {
   buildEnvironmentSections,
   canonicalEnvironments,
@@ -36,11 +42,8 @@ import {
   resolveSelectedTargetId,
   type EnvironmentSection,
 } from '@/lib/releaseEnvironments';
-import { railIsVisible, type RailMarker } from '@/lib/releaseRail';
 import type { PreviewMode, PreviewUrlConfig } from '@/lib/previewUrl';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
-import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
-import { CommitRail } from '@/pages/release-center/CommitRail';
+import { ErrorBlock } from '@/pages/cds-settings/components';
 import { ConfigTab } from '@/pages/release-center/ConfigTab';
 import {
   ArchiveTargetDialog,
@@ -50,11 +53,19 @@ import {
   type RollbackState,
 } from '@/pages/release-center/dialogs';
 import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
-import { EvidenceTab } from '@/pages/release-center/EvidenceTab';
-import { HealthTab } from '@/pages/release-center/HealthTab';
+import { ReleaseTraceOverview } from '@/pages/release-center/ReleaseTraceOverview';
+import { ReleaseGovernancePanel } from '@/pages/release-center/ReleaseGovernancePanel';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
-import { ReleaseTimeline, type TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
-import { Chip, healthLabel, healthTone, formatResponseTime } from '@/pages/release-center/shared';
+import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
+import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
+import { AutoRulesSection } from '@/pages/release-center/AutoRulesSection';
+import { EnvConfigSection } from '@/pages/release-center/EnvConfigSection';
+import { HealthSection } from '@/pages/release-center/HealthSection';
+import { EvidenceSection } from '@/pages/release-center/EvidenceSection';
+import { buildFleetMetrics, buildFleetVerdict, toFleetEnv, type FleetSortKey } from '@/lib/releaseFleet';
+import { resolveFleetRowAction } from '@/lib/releaseConsoleState';
+import type { TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
+import { formatDateTime } from '@/pages/release-center/shared';
 import {
   SiteWizardDialog,
   applyDiscoveredStrategy,
@@ -83,26 +94,51 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'ok'; center: CenterResponse; hosts: RemoteHostOption[] };
 
-type DetailTab = 'overview' | 'history' | 'config' | 'evidence' | 'auto' | 'health';
+/**
+ * 分区。照设计稿 design_handoff_release_center 的五段式——它与旧的六个 tab 不是
+ * 换名字：旧结构是「先选一个目标，再看它的六个页签」（控制台视角），新结构第一屏
+ * 是横着比所有环境的矩阵（治理视角），后四段才落到单个环境上。
+ */
+type CenterSection = ReleaseCenterSection;
 
-const DETAIL_TABS: Array<{ id: DetailTab; label: string }> = [
-  { id: 'overview', label: '概览' },
-  { id: 'history', label: '发布历史' },
-  { id: 'config', label: '配置' },
-  { id: 'evidence', label: '日志与证据' },
-  { id: 'auto', label: '自动发布' },
-  { id: 'health', label: '健康监测' },
-];
+/**
+ * 宽屏判定走**实测宽度**而不是媒体查询：设计稿的阈值是 1264px，来源是
+ * 「1280 视口减掉滚动条实测 1271」。媒体查询量的是视口，这里量的是内容区，
+ * 左侧还有 72px 图标栏——两者对不上会在 1280 那一档抖动。
+ */
+function useMeasuredWide(threshold = 1264): [React.RefObject<HTMLDivElement>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const apply = (): void => setWide(node.offsetWidth >= threshold);
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [threshold]);
+  return [ref, wide];
+}
 
 export function ReleaseCenterPage(): JSX.Element {
-  const [searchParams] = useSearchParams();
+  const canManageConsole = useCanManageConsole();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialProject = initialReleaseCenterProject(
     searchParams,
     typeof window === 'undefined' ? undefined : window.localStorage,
   );
   const [projectId, setProjectId] = useState(initialProject);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectListAttempt, setProjectListAttempt] = useState(0);
+  const projectAvailable = projectsLoaded && Boolean(resolveReleaseProject(projectId, projects));
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const loadedScope = useRef(projectId);
+  const [refreshing, setRefreshing] = useState(false);
+  const [sectionRefresh, setSectionRefresh] = useState(0);
+  const [refreshError, setRefreshError] = useState('');
+  const request = useRef<AbortController | null>(null);
   const [archivedTargets, setArchivedTargets] = useState<ReleaseTarget[]>([]);
   // 通知深链 `?target=&run=` 指名要看哪个目标的哪次发布。只在首次挂载时取一次：
   // 之后用户在页面里切目标不该被 URL 上的旧参数拽回去。
@@ -116,7 +152,11 @@ export function ReleaseCenterPage(): JSX.Element {
   >(() => (deepLink.targetId && deepLink.branchId && deepLink.commitSha
     ? { targetId: deepLink.targetId, branchId: deepLink.branchId, commitSha: deepLink.commitSha }
     : null));
-  const [tab, setTab] = useState<DetailTab>('overview');
+  const navigate = useNavigate();
+  const [section, setSection] = useState<CenterSection>(() => releaseCenterSection(searchParams));
+  const [fleetSort, setFleetSort] = useState<FleetSortKey>('severity');
+  const [rootRef, wide] = useMeasuredWide();
+  const configCardRef = useRef<HTMLDivElement>(null);
   const [historyFilter, setHistoryFilter] = useState<TimelineFilter>('all');
   const [toast, setToast] = useState('');
 
@@ -136,31 +176,92 @@ export function ReleaseCenterPage(): JSX.Element {
   const [releaseIntent, setReleaseIntent] = useState<StartReleaseIntent | null>(null);
 
   const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [systemHosts, setSystemHosts] = useState<RemoteHostOption[]>([]);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode | undefined>(undefined);
   const [previewConfig, setPreviewConfig] = useState<PreviewUrlConfig>({});
 
+  useEffect(() => {
+    setSystemHosts([]);
+    if (!wizardOpen || !canManageConsole || !projectAvailable) return;
+    const controller = new AbortController();
+    // 首次接入项目尚无已绑定主机；所有者从既有系统主机选择，写入仍由服务端鉴权。
+    void apiRequest<{ hosts: Array<RemoteHostOption & { sshPrivateKeyFingerprint?: string }> }>(
+      '/api/cds-system/remote-hosts', { signal: controller.signal },
+    ).then(result => {
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(result.hosts)) throw new Error('现有服务器列表尚未读取');
+      setSystemHosts(result.hosts.map(host => ({ ...host, fingerprint: host.fingerprint || host.sshPrivateKeyFingerprint || '' })));
+    }).catch(() => {
+      if (!controller.signal.aborted) setToast('现有服务器暂未读取，请关闭后重试；原有项目服务器仍可使用。');
+    });
+    return () => controller.abort();
+  }, [wizardOpen, canManageConsole, projectId, projectAvailable]);
+
   const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!projectAvailable) { request.current?.abort(); return; }
+    if (opts?.silent && request.current) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     // silent：后台轮询用——不闪 loading 骨架，数据到了原地替换（变化可感知但不清屏）。
-    if (!opts?.silent) setState({ status: 'loading' });
+    if (!opts?.silent) setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : { status: 'loading' });
+    if (!opts?.silent) setSectionRefresh(value => value + 1);
+    if (!opts?.silent) setRefreshError('');
+    // 后台轮询不能禁用手动刷新；用户可以取消卡住的静默请求。
+    if (!opts?.silent) setRefreshing(true);
     try {
       const [center, targets] = await Promise.all([
-        apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`),
-        apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`),
+        apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),
+        apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),
       ]);
+      if (controller.signal.aborted) return;
+      loadedScope.current = projectId;
       setState({ status: 'ok', center, hosts: targets.remoteHosts || [] });
       setArchivedTargets(targets.archivedTargets || []);
     } catch (err) {
-      if (!opts?.silent) setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (controller.signal.aborted) return;
+      if (!opts?.silent) {
+        const message = err instanceof ApiError ? err.message : String(err);
+        setRefreshError(message);
+        setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : {status:'error',message});
+      }
+    } finally {
+      if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
-  }, [projectId]);
+  }, [projectId, projectAvailable]);
 
-  useEffect(() => { void load(); }, [load]);
+  const refreshProjectData = (): void => {
+    if (!projectAvailable) {
+      setState({ status: 'loading' });
+      setProjectsLoaded(false);
+      setProjectListAttempt(value => value + 1);
+      return;
+    }
+    void load();
+  };
+
+  useEffect(() => { void load(); return () => { request.current?.abort(); }; }, [load]);
   useEffect(() => {
+    if (!projectAvailable) return;
     rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
-  }, [projectId]);
+  }, [projectId, projectAvailable]);
 
-  // 项目列表用于「项目」下拉（best-effort，失败退回手输）。
+  // 当前分区回写 URL，「我在看这一屏」就能整条链接发给别人（设计稿 Interactions）。
+  // replace 而不是 push：切分区不是导航，不该在浏览器后退键上堆五层历史。
+  useEffect(() => {
+    if (!projectAvailable) return;
+    setSearchParams((current) => {
+      if (releaseCenterSection(current) === section && current.get('project') === projectId) return current;
+      const next = new URLSearchParams(current);
+      next.set('project', projectId);
+      if (section === 'fleet') next.delete('section');
+      else next.set('section', section);
+      return next;
+    }, { replace: true });
+  }, [section, projectId, projectAvailable, setSearchParams]);
+
+  // 项目清单是上下文校验的依据，失效链接不能悄悄换成另一个项目。
   useEffect(() => {
     let cancelled = false;
     apiRequest<{ projects?: ProjectLite[] }>('/api/projects')
@@ -168,22 +269,22 @@ export function ReleaseCenterPage(): JSX.Element {
         if (cancelled) return;
         const list = res.projects ?? [];
         setProjects(list);
-        // 记忆值（localStorage）来自另一个 CDS 实例或已删除的项目时，它是个幽灵：
-        // 拿它去打 /discover 只会换来一串 404，而用户什么也没做错。
-        // 有真实项目就落到第一个，让页面直接可用；一个都没有才走空状态引导。
-        if (list.length > 0 && !list.some((project) => project.id === projectId)) {
-          setProjectId(list[0].id);
+        const resolved = resolveInitialReleaseProject(searchParams, window.localStorage, list);
+        if (resolved !== projectId) {
+          setProjectId(resolved);
           setSelectedTargetId('');
-          setDraft((current) => ({ ...current, projectId: list[0].id }));
+          setDraft((current) => ({ ...current, projectId: resolved }));
         }
       })
-      .catch(() => { if (!cancelled) setProjects([]); });
+      .catch((error) => { if (!cancelled) { setProjects([]); setState({ status: 'error', message: error instanceof Error ? error.message : '项目列表读取失败' }); } })
+      .finally(() => { if (!cancelled) setProjectsLoaded(true); });
     return () => { cancelled = true; };
-  }, []);
+  }, [projectListAttempt]);
 
   // 就地发布需要分支与预览地址推导所需的配置。三个请求都是 best-effort：
   // 任何一个失败都不该拦住这一页——推导不出预览地址时交给发布前检查说话。
   useEffect(() => {
+    if (!projectAvailable) { setBranches([]); setBranchesLoading(false); return; }
     let cancelled = false;
     setBranchesLoading(true);
     void Promise.allSettled([
@@ -198,13 +299,15 @@ export function ReleaseCenterPage(): JSX.Element {
       setBranchesLoading(false);
     });
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, projectAvailable]);
 
   const center = state.status === 'ok' ? state.center : undefined;
   const rows = useMemo(() => center?.rows ?? [], [center]);
   const runs = useMemo(() => center?.runs ?? [], [center]);
   const commitMeta = useMemo(() => center?.commitMeta ?? {}, [center]);
-  const hosts = state.status === 'ok' ? state.hosts : [];
+  const hosts = useMemo(() => [...new Map([
+    ...(canManageConsole ? systemHosts : []), ...(state.status === 'ok' ? state.hosts : []),
+  ].map(host => [host.id, host])).values()], [canManageConsole, systemHosts, state]);
   const rail = center?.commitRail;
   const branchLabel = rail?.branch || 'main';
 
@@ -261,17 +364,6 @@ export function ReleaseCenterPage(): JSX.Element {
     [rows, effectiveTargetId, selectedRow],
   );
 
-  const railMarkers: RailMarker[] = useMemo(() => sections.flatMap((section) => (
-    section.entries
-      .filter((entry) => entry.row.currentCommit)
-      .map((entry) => ({
-        targetId: entry.targetId,
-        label: section.degraded ? entry.row.target.name : section.label,
-        environment: section.environment,
-        commitSha: entry.row.currentCommit,
-      }))
-  )), [sections]);
-
   // 存在非终态 run 时静默轮询到终态：关掉日志弹窗后页面也要自己跟进，
   // 否则环境卡会永远停在「发布中」，失败也无提示。
   const hasActiveRun = rows.some((row) => row.latestRun && !isReleaseTerminal(row.latestRun.status))
@@ -299,6 +391,7 @@ export function ReleaseCenterPage(): JSX.Element {
   }, [state, runs]);
 
   const openCreateWizard = (): void => {
+    if (!projectAvailable) { setToast('请先选择当前实例中的有效项目。'); return; }
     const base = emptySiteDraft(projectId);
     const initial = {
       ...base,
@@ -408,6 +501,25 @@ export function ReleaseCenterPage(): JSX.Element {
     setRollbackState({ row, sourceRun: run });
   };
 
+  /**
+   * 从一条发布记录打开回滚对话框。
+   *
+   * 证据表和日志弹窗列的是**全部环境**的记录，不是当前侧栏选中的那个。原来这两处
+   * 各自决定传哪个 row：日志弹窗按 `run.targetId` 找回归属环境，证据表却直接把
+   * selectedRow 递进去——选中 A、回滚 B 的记录时，对话框标题写 A、候选版本列 A 的，
+   * 而 sourceRun 属于 B，后端只会以「版本不属于该环境」拒掉。
+   *
+   * 归属解析只留这一份，调用方不许再自己找 row（找第二遍就会漂移出第二种答案）。
+   */
+  const openRollbackForRun = (run: ReleaseRun): void => {
+    const owner = rows.find((item) => item.target.id === run.targetId);
+    if (!owner) {
+      setToast('没有找到这条记录对应的环境');
+      return;
+    }
+    openRollback(owner, run);
+  };
+
   const rollback = async (sourceRun: ReleaseRun, targetReleaseId: string): Promise<void> => {
     setToast('');
     try {
@@ -486,9 +598,58 @@ export function ReleaseCenterPage(): JSX.Element {
     }
   };
 
-  const historyRuns = historyFilter === 'failed'
-    ? selectedRuns.filter((run) => run.status === 'failed' || run.status === 'rollback_failed')
-    : selectedRuns;
+  /* ── 全环境矩阵的派生值 ─────────────────────────────────────────── */
+
+  const fleetEnvs = useMemo(() => rows.map(toFleetEnv), [rows]);
+  const verdict = useMemo(() => buildFleetVerdict(fleetEnvs, nowMs), [fleetEnvs, nowMs]);
+  const metrics = useMemo(() => buildFleetMetrics(fleetEnvs), [fleetEnvs]);
+
+  /** 分区角标：只显示能算出来的数，算不出就不显示这个角标。 */
+  const sectionBadge = (id: CenterSection): string => {
+    if (id === 'fleet') return `${rows.length} 个`;
+    if (id === 'health') {
+      const unmonitored = fleetEnvs.filter((env) => env.health === 'unmonitored').length;
+      return unmonitored > 0 ? `${unmonitored} 未监测` : '';
+    }
+    return '';
+  };
+
+  /* ── 两页之间怎么跳 ─────────────────────────────────────────────────
+   *
+   * 发布中心「看」，发布控制台「做」。三条规则：
+   *
+   * 1. 顶栏主按钮进控制台，只带项目 —— 用户还没决定发哪个环境。
+   * 2. 矩阵行上的发布 / 回滚**带上目标**，控制台落地即选中，不用重选；
+   *    回滚再带 intent，让控制台知道用户是来退版本的，由它承接二次确认。
+   * 3. **提升不跳页**：它带着一个钉死的 commit，只有本页的 StartReleaseDialog
+   *    会把它作为 expectedCommitSha 发出去。跳控制台等于把候选版本丢在半路，
+   *    控制台按自己默认选中的分支发一版——UI 上写着「提升版本」，发的却是别的东西。
+   * 4. 下钻（点行、点判断句里的环境名）**不跳页**，只切到本页的「环境与配置」——
+   *    看配置不该把人甩到另一个页面去。
+   *
+   * 参数一律走 query，不进路径：控制台是一个页面，不是每个环境一个路由。
+   */
+  const consoleHref = (targetId?: string, intent?: 'rollback'): string => {
+    const params = new URLSearchParams();
+    if (projectId) params.set('project', projectId);
+    if (targetId) params.set('target', targetId);
+    if (intent) params.set('intent', intent);
+    const query = params.toString();
+    return query ? `/release-console?${query}` : '/release-console';
+  };
+
+  const inspectEnv = (envId: string): void => {
+    setSelectedTargetId(envId);
+    setSection('config');
+  };
+
+  const executeRowAction = (envId: string, intent: 'deploy' | 'promote' | 'rollback'): void => {
+    const promoteRow = rows.find((item) => item.target.id === envId);
+    // 留本页还是跳控制台，判据在 lib/releaseConsoleState，页面只负责执行。
+    const action = resolveFleetRowAction(intent, Boolean(promoteRow?.promotion));
+    if (action.kind === 'promote' && promoteRow) { void startPromotion(promoteRow); return; }
+    navigate(consoleHref(envId, action.kind === 'navigate' ? action.intent : undefined));
+  };
 
   return (
     <AppShell
@@ -496,228 +657,274 @@ export function ReleaseCenterPage(): JSX.Element {
       wide
       topbar={(
         <TopBar
-          left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心' }]} />}
+          left={(
+            <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布工作台', href: consoleHref() }, { label: '环境管理' }]} />
+              <span className="cds-ident text-[0.7188rem] text-muted-foreground">release center · 环境生命周期</span>
+              {/* 项目胶囊：这一页所有数字都在某个项目的语境里，项目必须一眼可见可换。 */}
+              {projects.length > 0 ? (
+                <select
+                  value={projectAvailable ? projectId : ''}
+                  aria-label="项目"
+                  onChange={(event) => {
+                    const next = event.target.value.trim();
+                    setProjectId(next);
+                    setSelectedTargetId('');
+                    setDraft((current) => ({ ...current, projectId: next }));
+                  }}
+                  className="h-7 max-w-[13.75rem] rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-[0.7812rem] outline-none focus:border-[hsl(var(--hairline-strong))]"
+                >
+                  <option value="" disabled>请选择当前实例中的项目</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name && project.name !== project.id ? `${project.name}（${project.id}）` : project.id}
+                    </option>
+                  ))}
+                </select>
+              ) : !projectsLoaded ? <span className="cds-loading-skeleton-panel h-7 w-[12.75rem] max-w-full rounded-full" aria-hidden="true" /> : null}
+            </span>
+          )}
           right={(
             <>
               <PaletteHint />
-              <Button variant="outline" size="sm" onClick={() => void load()}>
-                <RefreshCw />
+              <Button variant="outline" size="sm" onClick={refreshProjectData} disabled={refreshing || !projectsLoaded}>
+                <RefreshCw className={refreshing ? 'animate-spin' : ''} />
                 刷新
+              </Button>
+              <Button variant="outline" size="sm" disabled={!projectAvailable} onClick={openCreateWizard}>
+                <Plus />
+                新建环境
+              </Button>
+              {/*
+                发布工作台承接批次与逐目标发布；主页面保留版本追溯和审批。
+                带上当前项目，进去不用重选。
+              */}
+              <Button size="sm" variant="outline" asChild>
+                <Link to={consoleHref()}>
+                  <Rocket />
+                  发布工作台
+                </Link>
               </Button>
             </>
           )}
         />
       )}
     >
-      <Workspace wide>
-        {/* 移动端整页自然流竖滚；lg 起切回填满视口、各窗格自己滚。 */}
-        <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:overflow-hidden"
-          style={{ overscrollBehavior: 'contain' }}
-        >
-          <header className="cds-surface-raised cds-hairline shrink-0 rounded-lg p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="text-lg font-semibold">站点发布</h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  一个项目的所有环境都在这里：谁停在哪个提交、健不健康、坏了退哪一版。
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">项目</span>
-                  {projects.length > 0 ? (
-                    <select
-                      value={projectId}
-                      onChange={(event) => {
-                        const next = event.target.value.trim() || 'default';
-                        setProjectId(next);
-                        setSelectedTargetId('');
-                        setDraft((current) => ({ ...current, projectId: next }));
-                      }}
-                      className="h-9 w-56 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
-                    >
-                      {/* 当前 id 不在项目列表里（历史记忆值/敲错的旧值）也保留成一项，
-                          并明示「未知」，不再让用户面对莫名其妙的空列表 */}
-                      {!projects.some((project) => project.id === projectId) ? (
-                        <option value={projectId}>{projectId}（未知项目）</option>
-                      ) : null}
-                      {projects.map((project) => (
-                        <option key={project.id} value={project.id}>
-                          {project.name && project.name !== project.id ? `${project.name}（${project.id}）` : project.id}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      value={projectId}
-                      onChange={(event) => {
-                        const next = event.target.value.trim() || 'default';
-                        setProjectId(next);
-                        setSelectedTargetId('');
-                        setDraft((current) => ({ ...current, projectId: next }));
-                      }}
-                      className="h-9 w-48 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 font-mono text-sm outline-none focus:border-primary/60"
-                    />
-                  )}
-                </label>
-                <Button onClick={openCreateWizard}>
-                  <Plus />
-                  添加环境
-                </Button>
-              </div>
-            </div>
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        <div ref={rootRef} className="flex h-full min-h-0 flex-col">
+          {!projectsLoaded || projectAvailable && state.status === 'loading' ? <ReleaseCenterSkeleton section={section} /> : <>
+          {/* 分区导航。设计稿是 sticky；这一页在 CDS 里是固定外壳 + 内容区内滚，
+              导航天然常驻，效果相同而且不会在滚动时抖。 */}
+          <ReleaseCenterNavigation section={section} badgeFor={sectionBadge} onSelect={setSection} />
+
+          <div className={RELEASE_CENTER_BODY_CLASS}>
             {toast ? (
-              <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">{toast}</div>
+              <div className="mb-4 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-2.5 text-sm">
+                {toast}
+              </div>
             ) : null}
-          </header>
 
-          {state.status === 'loading' ? <LoadingBlock label="正在加载发布环境" /> : null}
-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {projectsLoaded && !projectAvailable && state.status !== 'error' ? <div role="alert" className="rounded-md border border-warn/30 bg-warn-soft p-5 text-sm">{projects.length ? '当前链接或上次选择的项目不在此实例中，请从上方重新选择项目。' : '当前实例还没有可用项目，请先创建项目。'}</div> : null}
+            {state.status === 'ok' && refreshError ? <div role="alert" className="mb-4 space-y-2 rounded-md border border-destructive/30 p-3 text-sm">
+              <p>刷新失败，保留上次结果：{refreshError}</p>
+              <Button variant="outline" size="sm" disabled={refreshing} onClick={refreshProjectData}>重试</Button>
+            </div> : null}
 
-          {state.status === 'ok' && rows.length === 0 ? (
-            <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} />
-          ) : null}
-
-          {state.status === 'ok' && rows.length > 0 ? (
-            <>
-              {railIsVisible(rail) ? (
-                <CommitRail
-                  rail={rail}
-                  markers={railMarkers}
-                  selectedPosition={selectedRow?.commitPosition}
-                  nowMs={nowMs}
-                  onSelectMarker={setSelectedTargetId}
-                />
-              ) : null}
-
-              {/* 手机：单列自然堆叠，高度由内容决定（flex-1 + basis 0 在无界高度里会塌成 0）。
-                  lg 起才切回主从网格并填满剩余高度。 */}
-              <div className="flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[264px_minmax(0,1fr)] lg:items-stretch">
-                <EnvironmentSidebar
-                  sections={sections}
-                  selectedTargetId={effectiveTargetId}
-                  branch={branchLabel}
-                  archivedTargets={archivedTargets}
-                  nowMs={nowMs}
-                  onSelect={(id) => { setSelectedTargetId(id); setTab('overview'); }}
-                  onAdd={openCreateWizard}
-                />
-
-                {selectedRow ? (
-                  <section className="cds-surface-raised cds-hairline flex flex-col overflow-hidden rounded-lg lg:h-full lg:min-h-0">
-                    <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 px-4 pb-3 pt-4">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="truncate text-lg font-semibold">{selectedRow.target.name}</h2>
-                          <Chip tone={healthTone(selectedRow.healthStatus)}>
-                            {healthLabel(selectedRow.healthStatus)}
-                            {selectedRow.health?.responseTimeMs ? ` · ${formatResponseTime(selectedRow.health.responseTimeMs)}` : ''}
-                          </Chip>
-                          {selectedRow.target.isCanonical !== false ? <Chip>主目标</Chip> : null}
-                          {!selectedRow.target.isEnabled ? <Chip tone="warn">已停用</Chip> : null}
-                        </div>
-                        <div className="mt-1.5 truncate text-xs text-muted-foreground">
-                          {publicUrlOf(selectedRow) || '未配置上线地址'}
-                          {selectedRow.target.ssh ? ` · ${selectedRow.target.ssh.user}@${selectedRow.target.ssh.host} · ${selectedRow.target.ssh.appPath}` : ''}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button onClick={() => setReleaseIntent({ row: selectedRow })}>
-                          <Rocket />
-                          发布新版本
-                        </Button>
-                        <Button variant="outline" onClick={() => openRollback(selectedRow)} disabled={!selectedRow.canRollback}>
-                          <RotateCcw />
-                          回滚
-                        </Button>
-                      </div>
+            {projectAvailable && state.status === 'ok' ? (
+              <div className={RELEASE_CENTER_SECTIONS_CLASS}>
+                {/* 主页面已在版本追溯里显示健康快照，管理分区保留监控摘要。 */}
+                {section !== 'fleet' && rows.length > 0 ? <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
+                  <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">
+                    <span
+                      className={`mt-2 h-[0.5625rem] w-[0.5625rem] shrink-0 rounded-full ${
+                        verdict.tone === 'bad' ? 'bg-bad cds-verdict-pulse'
+                          : verdict.tone === 'warn' ? 'bg-warn cds-verdict-pulse' : 'bg-ok'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <p className="text-[1.125rem] font-bold leading-[1.45] max-2xl:text-[1.0312rem] max-lg:text-[0.9375rem]">
+                        {verdict.segments.map((seg, index) => (seg.envId ? (
+                          <button
+                            key={`${seg.text}-${index}`}
+                            type="button"
+                            onClick={() => inspectEnv(seg.envId as string)}
+                            className="text-primary underline decoration-dotted underline-offset-4"
+                          >
+                            {seg.text}
+                          </button>
+                        ) : (
+                          <span key={`${seg.text}-${index}`}>{seg.text}</span>
+                        )))}
+                      </p>
+                      <p className="mt-1.5 cds-ident text-xs text-muted-foreground">
+                        数据截至 {formatDateTime(new Date(nowMs).toISOString())} · {verdict.gap}
+                      </p>
                     </div>
+                  </div>
 
-                    <nav className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3" style={{ overscrollBehavior: 'contain' }}>
-                      {DETAIL_TABS.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => setTab(item.id)}
-                          className={`shrink-0 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] transition-colors ${
-                            tab === item.id
-                              ? 'border-primary font-semibold text-foreground'
-                              : 'border-transparent text-muted-foreground hover:text-foreground'
-                          }`}
+                  {/* 四个归因指标。算不出的那一块不会出现在数组里，这里不占位。 */}
+                  {metrics.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 max-lg:basis-full">
+                      {metrics.map((metric) => (
+                        <div
+                          key={metric.key}
+                          className="min-w-[8.25rem] flex-1 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 max-lg:basis-[7.5rem]"
                         >
-                          {item.label}
-                        </button>
+                          <div className="text-[0.6562rem] text-muted-foreground">{metric.label}</div>
+                          <div className={`cds-ident text-base font-bold ${
+                            metric.tone === 'bad' ? 'text-bad'
+                              : metric.tone === 'warn' ? 'text-warn' : ''
+                          }`}>
+                            {metric.value}
+                          </div>
+                          {/* 名字可截、数字不可截：省略号从尾巴吃起，先吃掉的会是
+                              「占 25 次」这半句——而那才是归因句里唯一有信息的部分。 */}
+                          <div
+                            className="flex items-baseline gap-1 text-[0.6562rem] text-muted-foreground"
+                            title={`${metric.attributionName} ${metric.attributionDetail}`.trim()}
+                          >
+                            <span className="min-w-0 truncate">{metric.attributionName}</span>
+                            {metric.attributionDetail
+                              ? <span className="shrink-0">{metric.attributionDetail}</span>
+                              : null}
+                          </div>
+                        </div>
                       ))}
-                    </nav>
-
-                    {/* 主产物区：移动端给最小高度避免塌成 0，lg 起 flex-1 填满整列。 */}
-                    <div
-                      className="min-h-[320px] p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
-                      style={{ overscrollBehavior: 'contain' }}
-                    >
-                      {tab === 'overview' ? (
-                        <OverviewTab
-                          row={selectedRow}
-                          runs={selectedRuns}
-                          commitMeta={commitMeta}
-                          branch={branchLabel}
-                          nowMs={nowMs}
-                          retryingRunId={retryingRunId}
-                          promoting={promoting}
-                          onPromote={() => void startPromotion(selectedRow)}
-                          onOpenLogs={setLogRun}
-                          onRetry={(run) => void retryRelease(run)}
-                          onRollback={(run) => openRollback(selectedRow, run)}
-                          onSeeAll={() => setTab('history')}
-                          onOpenConfig={() => setTab('config')}
-                        />
-                      ) : null}
-
-                      {tab === 'history' ? (
-                        <ReleaseTimeline
-                          title="发布历史"
-                          runs={historyRuns}
-                          row={selectedRow}
-                          commitMeta={commitMeta}
-                          nowMs={nowMs}
-                          liveReleaseId={selectedRow.currentVersion}
-                          retryingRunId={retryingRunId}
-                          filter={historyFilter}
-                          onFilter={setHistoryFilter}
-                          onOpenLogs={setLogRun}
-                          onRetry={(run) => void retryRelease(run)}
-                          onRollback={(run) => openRollback(selectedRow, run)}
-                        />
-                      ) : null}
-
-                      {tab === 'config' ? (
-                        <ConfigTab
-                          row={selectedRow}
-                          publicUrl={publicUrlOf(selectedRow)}
-                          onConfigure={() => openConfigureWizard(selectedRow.target)}
-                          onArchive={() => setArchiveState({ row: selectedRow, reason: '' })}
-                        />
-                      ) : null}
-
-                      {tab === 'evidence' ? <EvidenceTab row={selectedRow} runs={selectedRuns} /> : null}
-
-                      {tab === 'auto' ? (
-                        <AutoReleaseTab
-                          row={selectedRow}
-                          otherRows={otherRows}
-                          branches={branches}
-                          onToast={setToast}
-                        />
-                      ) : null}
-
-                      {tab === 'health' ? <HealthTab row={selectedRow} nowMs={nowMs} /> : null}
                     </div>
-                  </section>
+                  ) : null}
+
+                  {verdict.actionEnvId ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => inspectEnv(verdict.actionEnvId as string)}
+                      className="h-9 shrink-0 border-bad/40 bg-bad-soft text-bad hover:bg-bad-soft max-lg:w-full"
+                    >
+                      去处理 {fleetEnvs.find((env) => env.id === verdict.actionEnvId)?.name || verdict.actionEnvId}
+                    </Button>
+                  ) : null}
+                </section> : null}
+
+                {/* ══ 分区一：全环境矩阵 ══ */}
+                {section === 'fleet' ? <ReleaseGovernancePanel key={`governance:${projectId}`} projectId={projectId} row={selectedRow} targets={rows} onSelectTarget={setSelectedTargetId} refreshVersion={sectionRefresh} onChanged={() => void load({ silent: true })} /> : null}
+                {section === 'fleet' ? <ReleaseTraceOverview rows={rows} rail={rail} commitMeta={commitMeta} selectedTargetId={effectiveTargetId} onSelect={setSelectedTargetId} onOpenLogs={setLogRun} onInspect={inspectEnv} /> : null}
+                {rows.length === 0 ? <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} /> : null}
+                {section === 'fleet' ? (
+                  rows.length > 0 ? <FleetMatrix
+                    envs={fleetEnvs}
+                    sort={fleetSort}
+                    onSort={setFleetSort}
+                    nowMs={nowMs}
+                    wide={wide}
+                    onInspect={inspectEnv}
+                    onExecute={executeRowAction}
+                  /> : null
+                ) : null}
+
+                {/* ══ 分区二~五：都落到单个环境上，左边一列选环境 ══ */}
+                {section !== 'fleet' && rows.length > 0 ? (
+                  <div className={wide ? 'grid grid-cols-[16.25rem_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
+                    <EnvironmentSidebar
+                      sections={sections}
+                      selectedTargetId={effectiveTargetId}
+                      branch={branchLabel}
+                      archivedTargets={archivedTargets}
+                      nowMs={nowMs}
+                      onSelect={(id) => setSelectedTargetId(id)}
+                      onAdd={openCreateWizard}
+                    />
+
+                    {selectedRow ? (
+                      <div className="flex min-w-0 flex-col gap-4">
+                        {section === 'config' ? (
+                          <div ref={configCardRef} className="flex flex-col gap-4">
+                            {/*
+                              稿子 §3 只有这张策略表单。这里多留了下面两块，各有实打实的理由：
+                              - ConfigTab：接入信息（主机 / 路径 / 脚本原文）与归档入口，
+                                策略表单管「怎么发」，它管「这台机器是什么、不要了怎么归档」。
+                              - OverviewTab：带 expectedCommitSha 钳制的「提升版本」目前只在这里。
+                                矩阵那颗「提升版本」跳的是控制台，而控制台还没实现带钳制的提升——
+                                在补上之前删掉它，等于把「分支已前进就拒绝发布」这道保护弄丢。
+                              这两块要按稿子拿掉，前置条件是先把带钳制的提升搬进控制台。
+                            */}
+                            <EnvConfigSection
+                              row={selectedRow}
+                              onSaved={setToast}
+                              onReload={() => void load()}
+                              onConfigure={() => openConfigureWizard(selectedRow.target)}
+                            />
+                            {/* 只读的接入信息与归档入口留在下面：策略表单管「怎么发」，
+                                这一块管「这台机器是什么、不要了怎么归档」，两件事。 */}
+                            <ConfigTab
+                              row={selectedRow}
+                              publicUrl={publicUrlOf(selectedRow)}
+                              onConfigure={() => openConfigureWizard(selectedRow.target)}
+                              onArchive={() => setArchiveState({ row: selectedRow, reason: '' })}
+                            />
+                            <OverviewTab
+                              row={selectedRow}
+                              runs={selectedRuns}
+                              commitMeta={commitMeta}
+                              branch={branchLabel}
+                              nowMs={nowMs}
+                              retryingRunId={retryingRunId}
+                              promoting={promoting}
+                              onPromote={() => void startPromotion(selectedRow)}
+                              onOpenLogs={setLogRun}
+                              onRetry={(run) => void retryRelease(run)}
+                              onRollback={(run) => openRollbackForRun(run)}
+                              onSeeAll={() => setSection('evidence')}
+                              onOpenConfig={() => configCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                            />
+                          </div>
+                        ) : null}
+
+                        {/* 上：稿子 §4 的事件规则（分支 → 环境）。
+                            下：既有的定时规则编辑器——定时发布是真实在用的功能，
+                            稿子没画不等于可以删掉，它是另一种触发面。 */}
+                        {section === 'rules' ? (
+                          <div className="flex min-w-0 flex-col gap-4">
+                            <AutoRulesSection projectId={projectId} rows={rows} onToast={setToast} refreshVersion={sectionRefresh} />
+                            <AutoReleaseTab
+                              refreshVersion={sectionRefresh}
+                              row={selectedRow}
+                              otherRows={otherRows}
+                              branches={branches}
+                              onToast={setToast}
+                            />
+                          </div>
+                        ) : null}
+
+                        {section === 'health' ? (
+                          <HealthSection refreshVersion={sectionRefresh} envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
+                        ) : null}
+
+                        {/* 稿子 §6 的六列表是唯一的证据表。这里曾经把旧的
+                            ReleaseTimeline 也一起渲染，同一批 run 出现两遍——
+                            两张表比任意一张都糟。时间线独有的能力（仅失败筛选、
+                            看失败原因、回滚到此版本、提交说明）已折进这一张表。 */}
+                        {section === 'evidence' ? (
+                          <EvidenceSection
+                            refreshVersion={sectionRefresh}
+                            row={selectedRow}
+                            rows={rows}
+                            runs={runs}
+                            commitMeta={commitMeta}
+                            filter={historyFilter === 'failed' ? 'failed' : 'all'}
+                            onFilter={setHistoryFilter}
+                            retryingRunId={retryingRunId}
+                            onRetry={(run) => void retryRelease(run)}
+                            onRollback={(run) => openRollbackForRun(run)}
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
-            </>
-          ) : null}
+            ) : null}
+          </div>
+          </>}
         </div>
       </Workspace>
 
@@ -760,14 +967,7 @@ export function ReleaseCenterPage(): JSX.Element {
         canRollback={Boolean(logRun && rows.some((row) => row.target.id === logRun.targetId && (row.successfulRuns || []).length > 0))}
         onClose={() => setLogRun(null)}
         onRetry={(run) => void retryRelease(run)}
-        onRollback={(run) => {
-          const row = rows.find((item) => item.target.id === run.targetId);
-          if (!row) {
-            setToast('没有找到这条记录对应的环境');
-            return;
-          }
-          openRollback(row, run);
-        }}
+        onRollback={(run) => openRollbackForRun(run)}
       />
       <ArchiveTargetDialog
         state={archiveState}
@@ -832,6 +1032,10 @@ function draftFromTarget(target: ReleaseTarget): SiteDraft {
     deployCommand: ssh?.deployCommand || '',
     healthcheckUrl: ssh?.healthcheckUrl || '',
     strategyMode: strategy.mode,
+    originalStrategy: strategy,
+    scriptFile: strategy.scriptFile,
+    ciWorkflowFile: strategy.ciWorkflowFile,
+    managedScript: strategy.script,
     composeFile: strategy.composeFile || 'compose.yml',
     composeProject: strategy.composeProject || `${target.projectId}-prod`,
     buildCommand: strategy.buildCommand || 'pnpm install --frozen-lockfile && pnpm build',

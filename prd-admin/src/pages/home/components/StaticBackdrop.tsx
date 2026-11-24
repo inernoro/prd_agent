@@ -7,7 +7,7 @@
  * StaticBackdrop 只保留"干净的全站底色 + 点阵 + 顶部紫光晕 + 扫描线 + 噪点"。
  *
  * 层级：
- *   1 · 纯深色底 #050510
+ *   1 · 暖石墨底 #100E0C（与应用内 --bg-base 同族，官网不再是冷黑）
  *   2 · 顶部点阵网格（Vercel 风，mask fade）
  *   3 · 顶部紫色径向光晕（Linear 签名）
  *   4 · CRT 横向扫描线（约 0.02 opacity 纯 alpha 叠加；禁止 mix-blend——全屏混合逐帧重算）
@@ -30,7 +30,7 @@ export function StaticBackdrop({ mode = 'fixed' }: StaticBackdropProps = {}) {
     <div
       className={`${positionClass} z-0 pointer-events-none overflow-hidden`}
       aria-hidden
-      style={{ background: '#050510' }}
+      style={{ background: '#100E0C' }}
     >
       {/* Layer 1 · 顶部点阵网格 */}
       <div
@@ -46,13 +46,12 @@ export function StaticBackdrop({ mode = 'fixed' }: StaticBackdropProps = {}) {
         }}
       />
 
-      {/* Layer 2 · 顶部冷白径向光晕（Linear 签名 · 去紫版）
-         slate-300 冷白 + 微弱 teal，完全不用紫色 —— 避免"AI 紫"的套路感 */}
+      {/* Layer 2 · 顶部暖光晕：暖纸白 + 赭红 + 一点黛青，和登录后的门头氛围同一支笔 */}
       <div
         className="absolute inset-0"
         style={{
           background: `
-            radial-gradient(ellipse 95% 65% at 50% -5%, rgba(203, 213, 225, 0.28) 0%, rgba(148, 163, 184, 0.10) 22%, rgba(14, 116, 144, 0.05) 45%, transparent 70%)
+            radial-gradient(ellipse 95% 65% at 50% -5%, rgba(233, 214, 198, 0.26) 0%, rgba(200, 98, 58, 0.12) 24%, rgba(93, 122, 116, 0.05) 46%, transparent 70%)
           `,
         }}
       />

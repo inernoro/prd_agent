@@ -2,7 +2,7 @@
  * Nginx upstream template generator — Phase 3 of the CDS resilience plan.
  *
  * In the distributed deployment (Master + multiple executors), the public
- * Nginx in front of the cluster routes `<branch>.miduo.org` or `X-Branch`
+ * Nginx in front of the cluster routes `<branch>.<root-domain>` or `X-Branch`
  * header requests to the specific executor holding that branch. This file
  * generates the Nginx config snippet for that upstream layer.
  *
@@ -26,7 +26,7 @@
 import type { ExecutorNode } from '../types.js';
 
 export interface NginxUpstreamOptions {
-  /** Public-facing domain suffix, e.g. "miduo.org". */
+  /** Public-facing domain suffix, e.g. "example.com". */
   previewDomain: string;
   /** Name of the upstream block. Default: "cds_executors". */
   upstreamName?: string;

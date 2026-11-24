@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; height: 620px; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .spacer { flex-grow: 1; }
+    .tb-search { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 9px; border-radius: 8px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.55); font-size: 11.5px; }
+    .kbd { font-family: 'JetBrains Mono', monospace; font-size: 10px; border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 2px 5px; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; padding: 30px 0; height: 576px; box-sizing: border-box; }
+    .paper-in { width: 720px; margin: 0 auto; }
+    .paper h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 22px; }
+    .paper h2 { font-size: 15px; margin: 20px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .scrim { position: absolute; inset: 0; background: rgba(8,8,11,0.62); display: flex; align-items: flex-start; justify-content: center; padding-top: 96px; }
+    .cmd { width: 620px; border-radius: 14px; background: rgba(30,30,36,0.98); border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 24px 60px -12px rgba(10,10,14,0.55); overflow: hidden; }
+    .cmd-field { display: flex; align-items: center; gap: 11px; padding: 15px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .cmd-field span { flex-grow: 1; font-size: 15px; color: rgba(247,247,251,0.55); }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .grp { padding: 10px 12px 4px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 6px; }
+    .row { display: flex; align-items: center; gap: 10px; margin: 0 8px; padding: 10px 10px; border-radius: 9px; color: rgba(247,247,251,0.86); font-size: 13.5px; }
+    .row.on { background: rgba(217,119,87,0.14); border: 1px solid rgba(217,119,87,0.32); }
+    .row .en { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.38); }
+    .cmd-foot { display: flex; align-items: center; gap: 14px; padding: 10px 16px; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: rgba(247,247,251,0.55); }
+    .why { display: flex; gap: 26px; padding: 2px 2px 0; }
+    .why div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .why b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .why .good b { color: #4ade80; }
+    .why .bad b { color: #D97757; }
+  </style>
+</helmet>
+
+<div class="board">
+  <div class="eyebrow">方向 A · 居中命令面板（Algolia Ask AI / Notion Q&amp;A 一路）</div>
+  <div class="screen">
+    <div class="topbar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+      <div class="tb-title">客户端首页改版 · 视觉验收</div>
+      <div class="spacer"></div>
+      <div class="tb-search">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        就这一页提个问题
+        <span class="kbd">⌘K</span>
+      </div>
+      <div class="tb-btn">评论 3</div>
+    </div>
+    <div class="paper">
+      <div class="paper-in">
+        <h1>客户端首页改版 · 视觉验收</h1>
+        <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
+        <h2>一、首屏与信息层级</h2>
+        <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>
+      </div>
+    </div>
+    <div class="scrim">
+      <div class="cmd">
+        <div class="cmd-field">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          <span>就这一页提个问题</span>
+          <div class="quota">本页今日剩 18 / 20<br>你这小时剩 4 / 5</div>
+        </div>
+        <div class="grp">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+          上传时从正文自动读出的 5 个问题
+        </div>
+        <div class="row on">这份验收报告的结论是什么？<span class="en">↵</span></div>
+        <div class="row">哪些问题还没修完？</div>
+        <div class="row">搜索入口为什么算未通过？</div>
+        <div class="row">34 项走查里通过了多少？</div>
+        <div class="row">导航从 7 项收敛到 4 项，剩下的去哪了？</div>
+        <div class="cmd-foot">
+          <span>↑↓ 选择</span><span>↵ 提问</span><span>Esc 关闭</span>
+          <div class="spacer"></div>
+          <span>回答只依据本页正文</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="why">
+    <div class="good"><b>为什么选它</b>键盘直达，空态被 5 条词条填满，跟站内 ⌘K 是同一套肌肉记忆；答案与正文分屏无争，弹层里能放长答案。</div>
+    <div class="bad"><b>代价</b>整块遮住正文，读到一半问问题会丢失阅读位置；移动端必须换成另一套形态，等于维护两份版式。</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

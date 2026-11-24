@@ -1,0 +1,286 @@
+import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { hasFetchableHtml, canUseSrcDocPreview, preserveSrcDocFragmentLinks, resolvePreviewSource, withPreviewBase } from './previewHtml';
+
+/**
+ * 「这个站点走 srcDoc 还是直链」的判据。
+ *
+ * 事故（2026-08-25 用户反馈「概率不显示内容」）：Markdown 包装站被这条判据一刀切排除，
+ * 于是永远拿不回原文、只能走直链 iframe —— 而直链正是那条「Chrome 只绘制空白」的路径。
+ * 表现是标题栏正常、下面一片白；普通 HTML 站因为走 srcDoc 反而好好的，
+ * 所以看上去像「有的能开有的不能开」。
+ */
+const site = (over: Partial<Parameters<typeof hasFetchableHtml>[0]> = {}) => ({
+  siteUrl: 'https://host.example/u/abc/index.html',
+  entryFile: 'index.html',
+  ...over,
+});
+
+describe('站点正文可取回判据', () => {
+  it('Markdown 包装站可以取回正文（壳子就是服务端渲染好的完整 HTML）', () => {
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'markdown' }))).toBe(true);
+  });
+
+  it('PDF / 视频包装站不取（壳子里没有正文，且必须以托管域名为源加载同目录资产）', () => {
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'pdf' }))).toBe(false);
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'video' }))).toBe(false);
+    expect(hasFetchableHtml(site({ pdfAssetUrl: 'https://host.example/u/abc/a.pdf' }))).toBe(false);
+  });
+
+  it('将来新增的包装形态默认不取（default-deny，不靠「忘了排除」放行）', () => {
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'audio' }))).toBe(false);
+  });
+
+  it('普通 HTML 站照常取', () => {
+    expect(hasFetchableHtml(site())).toBe(true);
+    expect(hasFetchableHtml(site({ entryFile: 'main.htm' }))).toBe(true);
+  });
+
+  it('入口不是 HTML 就不取', () => {
+    expect(hasFetchableHtml(site({ siteUrl: 'https://host.example/u/abc/a.pdf', entryFile: 'a.pdf' }))).toBe(false);
+  });
+
+  // 前后端各有一份同样的白名单：两边不同步时，前端会去问一个后端仍然拒绝的接口，
+  // 用户看到的是「取不回正文」的角标而不是正文。这条守卫盯住那份名单本身。
+  it('后端的可读包装类型名单与前端一致', () => {
+    const controller = fs.readFileSync(
+      path.join(__dirname, '../../../../prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs'),
+      'utf8',
+    );
+    const at = controller.indexOf('SrcDocReadableWrappers');
+    expect(at, '后端名单改名了，守卫要同步').toBeGreaterThan(-1);
+    const decl = controller.slice(at, at + 260);
+    expect(decl).toContain('"markdown"');
+    expect(decl).not.toContain('"pdf"');
+    expect(decl).not.toContain('"video"');
+  });
+});
+
+describe('srcDoc 安全判据（模块脚本一律退回直链）', () => {
+  it('自包含的 Markdown 壳子可以走 srcDoc', () => {
+    expect(canUseSrcDocPreview('<!DOCTYPE html><html><head><style>body{margin:0}</style></head><body><h1>标题</h1></body></html>')).toBe(true);
+  });
+
+  it('任何 type=module 的脚本都退回直链（三种引号写法都要认）', () => {
+    expect(canUseSrcDocPreview('<script type="module" src="/a.js"></script>')).toBe(false);
+    expect(canUseSrcDocPreview("<script type='module'>import './a.js'</script>")).toBe(false);
+    expect(canUseSrcDocPreview('<script type=module src=/a.js></script>')).toBe(false);
+  });
+});
+
+describe('CDN 注入的遥测脚本', () => {
+  // 托管域名前面的 CDN 会往每份 HTML 里塞一条 type=module 的 beacon。
+  // 它不是用户内容，却让 canUseSrcDocPreview 一律判否 —— 每个站点都被踢到会白屏的直链路径。
+  const beacon = '<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226?token=x"></script>';
+  const page = `<!DOCTYPE html><html><body><h1>正文</h1>${beacon}</body></html>`;
+
+  it('带 beacon 的普通页面仍然可以走 srcDoc', () => {
+    expect(canUseSrcDocPreview(page)).toBe(true);
+  });
+
+  it('页面自己的 module 脚本照旧退回直链（不能被这条豁免带跑）', () => {
+    expect(canUseSrcDocPreview(`${page}<script type="module" src="./app.js"></script>`)).toBe(false);
+  });
+
+  it('注入 base 时把 beacon 一并剥掉，别在访客控制台刷 CORS 报错', () => {
+    const out = withPreviewBase(page, 'https://host.example/u/abc/index.html');
+    expect(out).not.toContain('cloudflareinsights.com');
+    expect(out).toContain('<h1>正文</h1>');
+  });
+
+  it('不做「凡是跨域 module 一律剥」——那种页面可能真靠 CDN 上的 ESM 依赖跑', () => {
+    const esm = '<script type="module" src="https://esm.sh/vue@3"></script>';
+    expect(canUseSrcDocPreview(`<html><body>${esm}</body></html>`)).toBe(false);
+  });
+});
+
+describe('srcDoc 页内锚点', () => {
+  it('注入 base 后纯片段链接仍停留在当前 srcDoc，不请求对象存储目录', () => {
+    const out = withPreviewBase(
+      '<html><head></head><body><a href="#risk">风险</a><section id="risk">正文</section></body></html>',
+      'https://storage.example/data/web-hosting/sites/site-1/index.html',
+    );
+
+    expect(out).toContain('<base href="https://storage.example/data/web-hosting/sites/site-1/">');
+    expect(out).toContain('href="about:srcdoc#risk"');
+    expect(out).not.toContain('href="#risk"');
+  });
+
+  it('只改 a 与 area 的纯片段，不改资源引用、相对页面和外链', () => {
+    const html = [
+      '<a href=#top>顶部</a>',
+      "<area href='#map'>",
+      '<use href="#icon"></use>',
+      '<a href="./detail.html#part">详情</a>',
+      '<a href="https://example.test/#part">外链</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="about:srcdoc#top"');
+    expect(out).toContain('href="about:srcdoc#map"');
+    expect(out).toContain('<use href="#icon"></use>');
+    expect(out).toContain('href="./detail.html#part"');
+    expect(out).toContain('href="https://example.test/#part"');
+  });
+
+  it('先解码 HTML 字符引用，再识别并保护页内锚点', () => {
+    const html = [
+      '<a href="&#35;risk">十进制</a>',
+      '<a href="&#x23;summary">十六进制</a>',
+      '<area href="&num;map">命名实体</area>',
+      '<a href="&amp;not-fragment">非锚点</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="about:srcdoc#risk"');
+    expect(out).toContain('href="about:srcdoc#summary"');
+    expect(out).toContain('href="about:srcdoc#map"');
+    expect(out).toContain('href="&amp;not-fragment"');
+  });
+
+  it('页面自带绝对 base 时同样保护纯片段链接', () => {
+    const out = withPreviewBase(
+      '<html><head><base href="https://cdn.example/assets/"></head><body><a href="#summary">摘要</a></body></html>',
+      'https://storage.example/site/index.html',
+    );
+
+    expect(out).toContain('<base href="https://cdn.example/assets/">');
+    expect(out).toContain('href="about:srcdoc#summary"');
+  });
+
+  it('base 地址按浏览器语义解码字符引用后再分类和解析', () => {
+    const relative = withPreviewBase(
+      '<html><head><base href="&#47;assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    const absolute = withPreviewBase(
+      '<html><head><base href="https&colon;//cdn.example/assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    const namedSlash = withPreviewBase(
+      '<html><head><base href="&sol;shared/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+
+    expect(relative).toContain('<base href="https://storage.example/assets/">');
+    expect(relative).not.toContain('&amp;#47;assets/');
+    expect(absolute).toContain('<base href="https&colon;//cdn.example/assets/">');
+    expect(namedSlash).toContain('<base href="https://storage.example/shared/">');
+  });
+
+  it('忽略 data-href 等同名后缀属性，只改真正的 href', () => {
+    const out = preserveSrcDocFragmentLinks(
+      `<a data-note=" href='#quoted-fake'" data-href="#tracking" aria-label="章节" href="#section">正文</a>`,
+    );
+
+    expect(out).toContain(`data-note=" href='#quoted-fake'"`);
+    expect(out).toContain('data-href="#tracking"');
+    expect(out).toContain('href="about:srcdoc#section"');
+    expect(out).not.toContain('data-href="about:srcdoc#tracking"');
+  });
+
+  it('引号内的大于号不会截断开始标签，后面的真实 href 仍会被保护', () => {
+    const out = preserveSrcDocFragmentLinks(
+      '<a title="score > 0" data-href="#tracking" href="#risk">风险</a>',
+    );
+
+    expect(out).toContain('title="score > 0"');
+    expect(out).toContain('data-href="#tracking"');
+    expect(out).toContain('href="about:srcdoc#risk"');
+  });
+
+  it('base 与 head 的属性里出现大于号时仍能正确改写或注入', () => {
+    const rewrittenBase = withPreviewBase(
+      '<html><head><base title="score > 0" href="./assets/"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    expect(rewrittenBase).toContain('title="score > 0" href="https://storage.example/site/assets/"');
+
+    const injectedBase = withPreviewBase(
+      '<html><head data-note="score > 0"></head><body></body></html>',
+      'https://storage.example/site/index.html',
+    );
+    expect(injectedBase).toContain('<head data-note="score > 0"><base href="https://storage.example/site/">');
+  });
+
+  it('忽略 RCDATA、模板与 body 中的伪 base，只向真实 head 注入', () => {
+    const html = [
+      '<html><head><title><base href="/title-fake"></title></head>',
+      '<body><textarea><base href="/textarea-fake"></textarea>',
+      '<template><base href="/template-fake"></template>',
+      '<base href="/body-fake"><img src="asset.png"></body></html>',
+    ].join('');
+    const out = withPreviewBase(html, 'https://storage.example/site/index.html');
+
+    expect(out).toContain('<head><base href="https://storage.example/site/">');
+    expect(out).toContain('<textarea><base href="/textarea-fake"></textarea>');
+    expect(out).toContain('<template><base href="/template-fake"></template>');
+    expect(out).toContain('<base href="/body-fake">');
+  });
+
+  it('脚本字符串与 HTML 注释里的伪锚点不会被当成真实标签改写', () => {
+    const html = [
+      '<script>const sample = `<a href="#script-fake">`;</script>',
+      '<!-- <a href="#comment-fake"> -->',
+      '<a href="#real">正文</a>',
+    ].join('');
+    const out = preserveSrcDocFragmentLinks(html);
+
+    expect(out).toContain('href="#script-fake"');
+    expect(out).toContain('href="#comment-fake"');
+    expect(out).toContain('href="about:srcdoc#real"');
+  });
+});
+
+/**
+ * 预览源三态判定。
+ *
+ * 核心不变量：**不知道该走哪条路时什么都不发**（pending 期间 iframe 空着）。
+ * 2026-09-18 事故的根因就是旧写法在首帧无条件挂了直链地址。
+ */
+describe('resolvePreviewSource', () => {
+  const base = { fetchable: true, inlineHtml: null, settled: false, waitedOut: false };
+
+  it('还在等正文：pending，不给 iframe 任何 src', () => {
+    expect(resolvePreviewSource(base)).toBe('pending');
+  });
+
+  it('拿到可内联的正文：srcdoc', () => {
+    expect(resolvePreviewSource({ ...base, inlineHtml: '<html>x</html>' })).toBe('srcdoc');
+  });
+
+  it('包装资产站一开始就知道只能直链，不必空等一个超时窗口', () => {
+    expect(resolvePreviewSource({ ...base, fetchable: false })).toBe('direct');
+  });
+
+  it('取正文有结论了但没有可内联的正文（失败 / 打包型 SPA）：转直链', () => {
+    expect(resolvePreviewSource({ ...base, settled: true })).toBe('direct');
+  });
+
+  it('等超时了必须转直链 —— 代理挂掉不能让人永远停在准备中', () => {
+    expect(resolvePreviewSource({ ...base, waitedOut: true })).toBe('direct');
+  });
+
+  it('正文已经到手时，超时不该把它挤掉', () => {
+    expect(resolvePreviewSource({ ...base, inlineHtml: '<html>x</html>', waitedOut: true })).toBe('srcdoc');
+  });
+
+  it('无论哪一档，pending 都不会在「已有结论」之后出现', () => {
+    for (const settled of [true, false]) {
+      for (const waitedOut of [true, false]) {
+        const out = resolvePreviewSource({ ...base, settled, waitedOut });
+        if (settled || waitedOut) expect(out).toBe('direct');
+        else expect(out).toBe('pending');
+      }
+    }
+  });
+});
+
+// LocalAssetStorage 返回站内路径；代理成功后，srcDoc 也必须能建立资源基址。
+describe('本地托管正文的预览基址', () => {
+  it('按当前页面来源解析站内地址，保留资源目录而去掉入口查询参数', () => {
+    const out = withPreviewBase('<head></head><h1>原文</h1>', '/local-assets/sites/a/index.html?v=1', 'https://admin.example');
+    expect(out).toContain('<base href="https://admin.example/local-assets/sites/a/">');
+  });
+});

@@ -257,8 +257,8 @@ export function LlmRequestDetailDialog({
                   .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
                   .prd-md li { margin: 4px 0; }
                   .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
-                  .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
-                  .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+                  .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: var(--accent-fg-violet); border-radius: 10px; }
+                  .prd-md a { color: var(--accent-fg-blue); text-decoration: underline; }
                   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
                   .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 12px; overflow: auto; }
                   .prd-md pre code { background: transparent; border: 0; padding: 0; }

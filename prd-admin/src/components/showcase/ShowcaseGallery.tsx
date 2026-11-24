@@ -202,7 +202,7 @@ function ShowcaseCard({
           {/* Bottom row: date + stats */}
           <div className="flex items-center gap-2">
             <span className="text-[10px] drop-shadow" style={{ color: 'var(--text-on-media-muted)' }}>
-              {new Date(item.createdAt).toLocaleDateString()}
+              {new Date(item.activityAt ?? item.createdAt).toLocaleDateString()}
             </span>
             <div className="flex-1" />
             {item.viewCount > 0 && (

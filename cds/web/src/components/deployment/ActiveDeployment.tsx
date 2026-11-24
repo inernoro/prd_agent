@@ -1,5 +1,6 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, Clock, Copy, ExternalLink, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -16,16 +17,16 @@ function lastLines(text: string, n: number): string {
 
 function logLineClass(line: string): string {
   if (/\b(error|failed|fatal|exception|panic|denied)\b|错误|失败|异常|拒绝/i.test(line)) {
-    return 'text-red-300';
+    return 'text-bad';
   }
   if (/\b(warn|warning|deprecated)\b|警告/i.test(line)) {
-    return 'text-amber-300';
+    return 'text-warn';
   }
   if (/\b(success|succeeded|done|ready|listening|started|completed)\b|成功|完成|就绪|启动/i.test(line)) {
-    return 'text-emerald-300';
+    return 'text-ok';
   }
   if (/https?:\/\/|file:\/\/|\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/.test(line)) {
-    return 'text-sky-300';
+    return 'text-info';
   }
   if (/^\s*(at |\+|>|npm |pnpm |yarn |dotnet |node )/.test(line)) {
     return 'text-slate-300';
@@ -60,14 +61,14 @@ function HighlightedLogBlock({
     <div className={`relative min-h-0 ${hasHeightClass ? className : `h-full ${className}`}`}>
       <button
         type="button"
-        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[11px] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
+        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[0.6875rem] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
         onClick={scrollToBottom}
         title="跳到容器日志底部"
       >
         <ArrowDownToLine className="h-3 w-3" />
         底部
       </button>
-      <div ref={viewportRef} className="h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[11px] leading-5">
+      <div ref={viewportRef} className="h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[0.6875rem] leading-5">
         {lines.map((line, index) => (
           <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
             {line || ' '}
@@ -113,7 +114,7 @@ function PrimaryContainerLogPanel({
         {containerLogControls?.onMaximize ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
+            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[0.6875rem] hover:border-[hsl(var(--hairline-strong))]"
             onClick={() => setMaximized(true)}
             title="在弹窗中查看完整容器日志"
           >
@@ -127,7 +128,7 @@ function PrimaryContainerLogPanel({
           {containerLogControls!.services.map((svc) => {
             const active = svc.profileId === containerLogControls!.selected;
             const dot = svc.status === 'running'
-              ? 'bg-emerald-500'
+              ? 'bg-ok'
               : svc.status === 'error'
                 ? 'bg-destructive'
                 : 'bg-muted-foreground/40';
@@ -136,7 +137,7 @@ function PrimaryContainerLogPanel({
                 key={svc.profileId}
                 type="button"
                 onClick={() => containerLogControls!.onSelect(svc.profileId)}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[0.6875rem] transition-colors ${
                   active
                     ? 'border-primary bg-primary/10 text-foreground'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'
@@ -155,12 +156,7 @@ function PrimaryContainerLogPanel({
           <div className={`${emptyLogStateClass} rounded border border-dashed border-[hsl(var(--hairline))] px-3 text-center text-xs text-muted-foreground`}>
             还没有容器日志。容器进入 running 后这里会显示 docker logs 的最后若干行。
           </div>
-        ) : state.status === 'loading' ? (
-          <div className={`${emptyLogStateClass} gap-2 rounded border border-[hsl(var(--hairline))] px-3 text-xs text-muted-foreground`}>
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            正在加载容器日志…
-          </div>
-        ) : state.status === 'error' ? (
+        ) : state.status === 'loading' ? <ContentLoading label="加载容器日志" variant="log" /> : state.status === 'error' ? (
           <div className={`${emptyLogStateClass} rounded border border-destructive/30 bg-destructive/10 px-3 text-center text-xs text-destructive`}>
             {state.message || '容器日志加载失败'}
           </div>
@@ -212,7 +208,7 @@ function PrimaryContainerLogPanel({
                 {containerLogControls!.services.map((svc) => {
                   const active = svc.profileId === containerLogControls!.selected;
                   const dot = svc.status === 'running'
-                    ? 'bg-emerald-500'
+                    ? 'bg-ok'
                     : svc.status === 'error'
                       ? 'bg-destructive'
                       : 'bg-muted-foreground/40';
@@ -236,17 +232,12 @@ function PrimaryContainerLogPanel({
               </div>
             ) : null}
             <div className="min-h-0 flex-1 p-4">
-              {state?.status === 'loading' ? (
-                <div className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] px-3 py-3 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  正在加载容器日志…
-                </div>
-              ) : state?.status === 'error' ? (
+              {state?.status === 'loading' ? <ContentLoading label="加载容器日志" variant="log" /> : state?.status === 'error' ? (
                 <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {state.message || '容器日志加载失败'}
                 </div>
               ) : logs.trim() ? (
-                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" autoScrollToBottom />
+                <HighlightedLogBlock logs={logs} className="h-full text-[0.75rem] leading-6" autoScrollToBottom />
               ) : (
                 <div className="rounded border border-[hsl(var(--hairline))] px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无容器日志。
@@ -283,8 +274,8 @@ export interface ActiveDeploymentProps {
 }
 
 function statusBadgeClass(status: BranchDeploymentItem['status']): string {
-  if (status === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
-  if (status === 'success') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status === 'running') return 'border-info/30 bg-info-soft text-info';
+  if (status === 'success') return 'border-ok/30 bg-ok-soft text-ok';
   return 'border-destructive/30 bg-destructive/10 text-destructive';
 }
 
@@ -373,7 +364,7 @@ export function ActiveDeployment({
         </span>
         <span className="text-sm font-semibold">{deploymentKindLabel(deployment.kind)}</span>
         {triggerText ? (
-          <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">
             {triggerText}
           </span>
         ) : null}
@@ -384,9 +375,9 @@ export function ActiveDeployment({
           <span
             className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
               durationDisplay.stuck
-                ? 'border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                ? 'border-warn/45 bg-warn-soft text-warn'
                 : displayStatus === 'running'
-                  ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                  ? 'border-warn/35 bg-warn-soft text-warn'
                   : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
             }`}
             title={

@@ -1,6 +1,18 @@
+import { buildDocBrowserTree, docBrowserEntryPath } from './docBrowserTree';
+import { ProgressiveEntries } from './ProgressiveEntries';
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePreview } from '@/components/file-preview';
+import { TranscribeStatusCard, type TranscribeStatusRun } from './TranscribeStatusCard';
+import { requestRecordingPlay } from './recordingPlayBridge';
+import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
+import {
+  FilePreview,
+  HTML_ZOOM_STORAGE_KEY,
+  HTML_ZOOM_MIN,
+  HTML_ZOOM_MAX,
+  HTML_ZOOM_STEP,
+  readStoredHtmlZoom,
+} from '@/components/file-preview';
 import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import { CreatePaletteFab } from '@/components/doc-browser/CreatePaletteFab';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
@@ -11,6 +23,7 @@ import {
   Upload, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen, SlidersHorizontal, Share2, ExternalLink, Copy,
   ClipboardCheck, Globe, Maximize2, Minimize2, Video, AudioLines, FileUp, FileText, MoreHorizontal,
+  ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -21,7 +34,11 @@ import '@uiw/react-md-editor/markdown-editor.css';
 const MDEditor = lazy(() => import('@uiw/react-md-editor'));
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
+import { useReaderChromeStore } from '@/stores/readerChromeStore';
+import { glassMobileHeader } from '@/lib/glassStyles';
 import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
+import { describeTranscriptOutcome } from './transcriptSegments';
+import { useNavigate } from 'react-router-dom';
 
 export type { DocBrowserSortMode } from './docBrowserSort';
 
@@ -206,6 +223,7 @@ import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow, History, AlertTriangle } from 'lucide-react';
 import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
+import { listTranscribeStyles } from '@/services/real/documentStore';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
@@ -222,11 +240,52 @@ import {
   frontmatterPrefixOf,
   buildImageMarkdown,
   isReplaceSafe,
+  stripOuterFence,
+  stripDuplicatedBlockPrefix,
+  type ResolvedRange,
 } from './selectionEdit';
+import { useScrollFollowTransform, usePaneRect } from './useOverlayFollow';
+import { buildInlineDiffBody } from './selectionDiffMarkup';
+import {
+  SelectionRewritePrompt,
+  InlineDiffReviewBar,
+  type InlineRewritePhase,
+} from './SelectionRewriteInline';
+import {
+  SELECTION_OVERLAY_BAR,
+  SELECTION_OVERLAY_HIGHLIGHT,
+  SELECTION_OVERLAY_LABEL,
+} from './selectionOverlayStyle';
+import { streamSelectionRewrite } from '@/services/real/documentStore';
 import { threadColor, groupKey } from './inlineCommentShared';
 import { BulkActionBar } from './BulkActionBar';
+import { canOpenSubscriptionPanel, githubDirectoryStatusLabel, subscriptionSyncTone, GITHUB_DIRECTORY_SOURCE } from './subscriptionEntryState';
 
 // ── 类型 ──
+
+/** 划词选区快照：DOM 序号用于同文多处出现时指认用户选的是第几处 */
+type SelectionSnapshot = PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
+
+/** 逐句修改会话：一次「划词 → 说怎么改 → 就地 diff → 采纳/撤销」的全过程状态 */
+type RewriteSession = {
+  entryId: string;
+  sel: SelectionSnapshot;
+  /** 选区在正文 body 中的位置，会话开始时定位一次 */
+  range: ResolvedRange;
+  /** 选区原文，用于 diff 与「撤销即还原」 */
+  original: string;
+  rect: { top: number; left: number; width: number; height: number };
+  rects: Array<{ top: number; left: number; width: number; height: number }>;
+  /** prompt=还在问想怎么改（正文未变）；其余阶段正文已就地呈现 diff */
+  phase: 'prompt' | InlineRewritePhase;
+  actionKey: string;
+  instruction?: string;
+  text: string;
+  model?: string;
+  errorMsg?: string;
+  startedAt: number;
+  applying: boolean;
+};
 
 export type EntryPreview = {
   /** 文本内容（Markdown/纯文本/提取后的 Office 文本） */
@@ -255,6 +314,9 @@ export type DocBrowserEntry = {
   updatedByName?: string;
   summary?: string;
   syncStatus?: string;
+  /** 上次同步失败的原因（GitHub 目录订阅失败时要摊给用户看，不能只留在后台） */
+  syncError?: string;
+  lastSyncAt?: string;
   /** 是否暂停（订阅类型） */
   isPaused?: boolean;
   /** 最近一次"内容真正发生变化"的时间，用于显示 (new) 徽标 */
@@ -336,6 +398,7 @@ export type DocBrowserProps = {
   enableSelectionAi?: boolean;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
+  onCreateWriting?: () => void;
   onUploadFile?: () => void;
   /** 「添加」菜单项：从网页托管导入（提供时显示）。具体选择/导入流程由调用方实现。 */
   onImportFromHosting?: () => void;
@@ -347,7 +410,9 @@ export type DocBrowserProps = {
    * 由 DocBrowser 根据 fileTypeRegistry 的 preview 字段选择渲染方式。
    */
   loadContent: (entryId: string) => Promise<EntryPreview | null>;
-  onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
+  onSearch?: (keyword: string, searchContent: boolean, cursor?: string) => Promise<DocBrowserEntry[] | {
+    items: DocBrowserEntry[]; total: number; nextCursor?: string | null;
+  } | null>;
   /** 点击订阅条目右侧的状态徽标时触发，用于打开订阅详情面板 */
   onOpenSubscription?: (entryId: string) => void;
   /** 点击"生成字幕"时触发（仅 audio/video/image entries 显示） */
@@ -360,8 +425,22 @@ export type DocBrowserProps = {
   onQuickRecord?: () => void;
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
+  /**
+   * 打开这条录音的独立结果页并开始播放。
+   *
+   * 阅读器是共享组件，三处宿主（私人知识库 / 分享只读 / 周报）各自的路由语义不同，
+   * 所以它不认识路由——由知道路由的那个页面传进来。宿主不传就没有结果页可去，
+   * 处理中那一屏自动退回「就地播放」，按钮文案跟着变。
+   */
+  onOpenRecordingResult?: (audioEntryId: string) => void;
+  /** 当前选中音频最近一次转录失败的说明；有值时结果区如实写明原因并把按钮改成重试 */
+  transcribeFailure?: FailedTranscriptionNotice | null;
+  /** 当前条目那条在途转录 run；有值时结果区顶部显示三阶段进度而不是手动入口 */
+  transcribeRun?: TranscribeStatusRun | null;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 音频原文页的问答入口；可预置带时间引用约束的提问。 */
+  onAskRecording?: (entryId: string) => void;
   /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
   onShareEntry?: (entryId: string) => void;
   /** 指定后：当该 entry 被选中且内容加载完成时自动进入编辑态（新建文档免再点一次「编辑」） */
@@ -382,6 +461,11 @@ export type DocBrowserProps = {
    * 不传则不渲染，对现有调用方无影响。
    */
   contentFooter?: (entryId: string) => React.ReactNode;
+  /** 阅读区「更多」菜单顶部自定义插槽（移动端沉浸阅读时页面级信息/动作的收纳处，如 空间信息、分享）。 */
+  readerMenuExtra?: ReactNode;
+  /** 移动端沉浸阅读（标题接管顶栏 + 单行操作 + 满铺）。默认关闭——嵌入式消费方
+   *（pm-agent 知识面板等，宿主自带头部 chrome）不受影响；仅全屏阅读页显式开启（Codex P2）。 */
+  immersiveOnMobile?: boolean;
   /**
    * 启用双链编辑器自动补全：编辑模式下输入 [[ 或 @ 弹出本库文档候选。
    * 不传则编辑器无补全。仅 DocumentStorePage 的私人编辑场景传入。
@@ -534,7 +618,21 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   }
   if (isPrimary) return <Star size={14} style={{ color: 'var(--semantic-warning-text)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'var(--selection-text)' }} />;
-  if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
+  // GitHub 目录订阅：沿用下面订阅源同一套「用图标颜色表达同步状态」的约定。
+  // 之前这里恒为紫色，后台同步失败在文件树里完全看不出来（验收 P2）。
+  if (entry.sourceType === GITHUB_DIRECTORY_SOURCE) {
+    const ghTone = subscriptionSyncTone(entry);
+    const ghColor = ghTone === 'error' ? 'rgba(248,113,113,0.95)'
+      : ghTone === 'paused' ? 'var(--semantic-warning-text)'
+      : ghTone === 'syncing' ? 'rgba(96,165,250,0.95)'
+      : 'rgba(130,80,223,0.7)';
+    const ghLabel = githubDirectoryStatusLabel(ghTone);
+    return (
+      <Github size={14} style={{ color: ghColor }} aria-label={ghLabel}>
+        <title>{ghLabel}</title>
+      </Github>
+    );
+  }
   // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
   // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
   if (entry.sourceType === 'subscription') {
@@ -578,99 +676,17 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
 }
 
 /**
- * 录音/上传音频的统一结果区（音频块下方常驻，2026-07-13 用户确认交互）：
- * - 未转录 → 只生成可编辑原文，不提前强迫用户选整理方式；
- * - 已转录 → 原文留在当前录音页，整理作为用户主动选择的下一步。
+ * 体积读成人话。拿不到（旧条目没记体积、或就是 0）时返回 null，
+ * 界面据此**整段不显示**，而不是印一个「0 B」出来充数。
  */
-function TranscribeHeroCard({
-  currentEntryId,
-  noteEntryId,
-  subtitleEntryId,
-  onStart,
-  onOpenNote,
-  onRestyle,
-}: {
-  currentEntryId: string;
-  noteEntryId?: string;
-  subtitleEntryId?: string;
-  /** 发起原文转录；整理在完成后另选 */
-  onStart?: (styleKey?: string) => void;
-  onOpenNote: (entryId: string) => void;
-  /** 换个整理方式（免重跑转录，打开整理面板） */
-  onRestyle?: () => void;
-}) {
-  const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
-  return (
-    <div
-      className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
-      data-tour-id="doc-transcribe-hero">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
-            <AudioLines size={16} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-token-primary">
-              {inPlace ? '录音和原文已保存在本页' : noteEntryId ? '录音原文已生成' : '把录音转成文字'}
-            </p>
-            <p className="truncate text-[11px] text-token-muted">
-              {inPlace ? '位置与标题保持不变，需要时再一键整理' : noteEntryId ? '点下方打开原文，需要时再一键整理' : '先生成可编辑原文，不自动总结或改写'}
-            </p>
-          </div>
-        </div>
-        {!noteEntryId && onStart && (
-          <button
-            onClick={() => onStart()}
-            className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
-            转成文字
-          </button>
-        )}
-      </div>
-
-      {/* 已转录：历史产物 chips + 换个整理方式 */}
-      {(noteEntryId || subtitleEntryId) && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {noteEntryId && !inPlace && (
-            <button
-              onClick={() => onOpenNote(noteEntryId)}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'rgba(34,197,94,0.1)',
-                border: '1px solid rgba(34,197,94,0.22)',
-                color: 'rgba(74,222,128,0.95)',
-              }}>
-              <BookOpen size={11} /> 转录笔记 <ChevronRight size={11} />
-            </button>
-          )}
-          {subtitleEntryId && (
-            <button
-              onClick={() => onOpenNote(subtitleEntryId)}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'rgba(168,85,247,0.1)',
-                border: '1px solid rgba(168,85,247,0.22)',
-                color: 'rgba(216,180,254,0.95)',
-              }}>
-              <Sparkles size={11} /> 字幕 <ChevronRight size={11} />
-            </button>
-          )}
-          {noteEntryId && onRestyle && (
-            <button
-              onClick={onRestyle}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover-bg-soft"
-              style={{
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-faint)',
-              }}>
-              <Wand2 size={11} /> 一键整理
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function formatFileSizeLabel(bytes?: number): string | null {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function canReprocess(entry: DocBrowserEntry): boolean {
@@ -1129,6 +1145,7 @@ function EntryRenameDialog({
 function TreeNode({
   entry,
   childrenMap,
+  revealPath,
   depth,
   selectedEntryId,
   returnEntryId,
@@ -1164,6 +1181,7 @@ function TreeNode({
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
+  revealPath: ReadonlySet<string>;
   depth: number;
   selectedEntryId?: string;
   /** 从正文退回列表后保留的来源行，只做浅色定位，不代表仍处于选中态。 */
@@ -1474,7 +1492,7 @@ function TreeNode({
               height: 15,
               lineHeight: '15px',
               background: 'rgba(59,130,246,0.12)',
-              color: 'rgba(96,165,250,0.95)',
+              color: 'var(--accent-fg-blue)',
             }}
             title="智能体处理中"
           >
@@ -1544,11 +1562,14 @@ function TreeNode({
       </button>
 
       {/* 子节点 */}
-      {isFolder && isOpen && children.map(child => (
+      {isFolder && isOpen && <ProgressiveEntries items={children} itemKey={child => child.id}
+        revealIndex={children.findIndex(child => revealPath.has(child.id))}
+        render={child => (
         <TreeNode
           key={child.id}
           entry={child}
           childrenMap={childrenMap}
+          revealPath={revealPath}
           depth={depth + 1}
           selectedEntryId={selectedEntryId}
           returnEntryId={returnEntryId}
@@ -1582,50 +1603,8 @@ function TreeNode({
           onToggleSelect={onToggleSelect}
           selectionActive={selectionActive}
         />
-      ))}
+      )} />}
     </>
-  );
-}
-
-// ── 面包屑 ──
-
-function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowserEntry[] }) {
-  const entryMap = useMemo(() => new Map(entries.map(e => [e.id, e])), [entries]);
-
-  const path = useMemo(() => {
-    const result: DocBrowserEntry[] = [];
-    let current = entryMap.get(entryId);
-    if (!current) return result;
-    result.unshift(current);
-    while (current?.parentId) {
-      const parent = entryMap.get(current.parentId);
-      if (!parent) break;
-      result.unshift(parent);
-      current = parent;
-    }
-    return result;
-  }, [entryId, entryMap]);
-
-  // 2026-05-28 用户两次反馈："标题重复显示像 bug"。
-  // 第一次修复改成小灰字字号(11px)，但文件名 + markdown H1 内容仍 99% 重合。
-  // 第二次彻底修：单级路径(就是文件本身,没有父文件夹)直接不渲染面包屑——
-  // 因为 markdown H1 已经是"我是什么文档"的清晰锚点，重复显示无收益。
-  // 仅在多级路径(有父文件夹层级)时才渲染面包屑，作为"我在哪"的位置指示。
-  if (path.length <= 1) return null;
-
-  // 多级路径：仍是小灰字，作为位置指示。最后一段(文件名本身)用 truncate +
-  // max-w 避免吃掉过多空间。
-  return (
-    <div className="flex items-center gap-1 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
-      {path.map((entry, i) => (
-        <span key={entry.id} className="flex items-center gap-1 min-w-0">
-          {i > 0 && <ChevronRight size={10} className="flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.6 }} />}
-          <span className="truncate" title={entry.title} style={i === path.length - 1 ? { maxWidth: '320px' } : undefined}>
-            {entry.title}
-          </span>
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -1634,7 +1613,9 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 function ReaderColumnFrame({ fullscreen, children }: { fullscreen: boolean; children: ReactNode }) {
   if (!fullscreen) return <>{children}</>;
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100vh', background: 'var(--bg-base)' }}>
+    // 100dvh：移动端浏览器工具栏收展时 100vh 会比可视视口高（底部被吃掉一条），
+    // dvh 跟随动态视口；不支持 dvh 的浏览器忽略该声明，由 inset-0 兜底撑满。
+    <div className="fixed inset-0 z-[100] flex flex-col" style={{ height: '100dvh', background: 'var(--bg-base)' }}>
       {children}
     </div>,
     document.body,
@@ -1664,6 +1645,7 @@ export function DocBrowser({
   loadContent,
   onCreateFolder,
   onCreateDocument,
+  onCreateWriting,
   onUploadFile,
   onImportFromHosting,
   onOpenVideoParser,
@@ -1674,7 +1656,11 @@ export function DocBrowser({
   onUploadAudio,
   onQuickRecord,
   onRestyleTranscribe,
+  onOpenRecordingResult,
+  transcribeFailure,
+  transcribeRun,
   onReprocess,
+  onAskRecording,
   onShareEntry,
   autoEditEntryId,
   onAutoEditConsumed,
@@ -1697,14 +1683,49 @@ export function DocBrowser({
   onTagColorsChange,
   inlineCommentShareToken,
   contentFooter,
+  readerMenuExtra,
+  immersiveOnMobile,
   autocompleteStoreId,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
+  const [searchCursor, setSearchCursor] = useState<string | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const navigationTree = useMemo(() => buildDocBrowserTree(entries), [entries]);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   // 音频条目的转录笔记 markdown（歌词滚轮跟读数据源；无笔记为 null）
   const [transcriptNoteMd, setTranscriptNoteMd] = useState<string | null>(null);
+  // 「查看服务状态」的去处：系统告警落在通知中心，不另造一个状态页
+  const navigate = useNavigate();
+  /*
+    正在重新整理时要点名到具体那一种（稿面 cap-S6）。整理方式清单是后端注册表，
+    这里只在真的需要显示时拉一次，绝不在前端另抄一份 key → 名字的映射
+    （frontend-architecture：前端不维护业务映射表）。
+  */
+  const [transcribeStyleNames, setTranscribeStyleNames] = useState<Record<string, string>>({});
+  /*
+   * 只拉一次，用 ref 记住「拉过了」——**不能**把 `transcribeStyleNames` 放进依赖：
+   * 后端返回空清单（或字段缺失）时 `next` 是一个新的 `{}`，长度仍为 0，
+   * 于是守卫拦不住、依赖又变了，effect 立刻再跑一遍 —— 每帧一次网络请求的死循环。
+   * 发布门禁抓到的正是它：整屏被这条循环拖住，首个可用结果从 2.5 秒变成 7.7 秒，
+   * 卡片还会被反复卸载重挂（元素 detach）。
+   */
+  const transcribeStyleNamesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (transcribeStyleNamesLoadedRef.current) return;
+    transcribeStyleNamesLoadedRef.current = true;
+    let stale = false;
+    void listTranscribeStyles().then((res) => {
+      if (stale || !res.success) return;
+      const next: Record<string, string> = {};
+      for (const item of res.data?.items ?? []) next[item.key] = item.label;
+      // 空清单不写回：写了也只是把一个空对象换成另一个空对象，白白多一次渲染
+      if (Object.keys(next).length > 0) setTranscribeStyleNames(next);
+    }).catch(() => undefined);
+    return () => { stale = true; };
+  }, []);
   // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
   // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
   const previewRef = useRef<EntryPreview | null>(null);
@@ -1753,6 +1774,12 @@ export function DocBrowser({
   // 在任何嵌套上下文都铺满视口（遵守 .claude/rules/frontend-modal.md）。
   const [readerFullscreen, setReaderFullscreen] = useState(false);
   const toggleReaderFullscreen = useCallback(() => setReaderFullscreen((v) => !v), []);
+  // HTML 报告字号档位（移动端工具栏 ± 控件；FilePreview 受控应用到 srcDoc body）。
+  // 纯 UI 偏好 → localStorage 记忆（no-localstorage.md 例外清单）
+  const [htmlZoom, setHtmlZoom] = useState<number>(readStoredHtmlZoom);
+  useEffect(() => {
+    try { localStorage.setItem(HTML_ZOOM_STORAGE_KEY, String(htmlZoom)); } catch { /* ignore */ }
+  }, [htmlZoom]);
   // 右侧栏（本页章节 TOC / 批注栏）可收起，给正文让出宽度。纯 UI 偏好，sessionStorage 持久化
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => sessionStorage.getItem('doc-browser-right-collapsed') === '1');
   const toggleRightPanel = useCallback(() => setRightPanelCollapsed((v) => {
@@ -1832,6 +1859,8 @@ export function DocBrowser({
 
   // ── 移动端主从布局：正文为主，目录用左侧抽屉承载。桌面端 isMobile=false 时不改动原布局。──
   const { isMobile } = useBreakpoint();
+  // 沉浸阅读是调用方显式开启的能力：未开启的嵌入式消费方在移动端保持原工具栏行为
+  const immersiveActive = !!immersiveOnMobile && isMobile;
   const [mobileDetail, setMobileDetail] = useState(false);
   const [mobileDirectoryOpen, setMobileDirectoryOpen] = useState(false);
   const [lastVisitedEntryId, setLastVisitedEntryId] = useState<string | undefined>(selectedEntryId);
@@ -1874,15 +1903,36 @@ export function DocBrowser({
   // 把解析结果回传调用方，让「当前这篇」的范围锚点也能覆盖搜索命中
   useEffect(() => { onSelectedEntryChange?.(selectedEntryData); }, [selectedEntryData, onSelectedEntryChange]);
 
+  // ── 移动端沉浸阅读：接管 AppShell 顶栏（文档标题替代应用名 + 返回箭头回列表），
+  //    调用方页面同时据此隐藏自己的头部行（stores/readerChromeStore.ts，2026-08-10 用户确认交互）──
+  const setReaderChrome = useReaderChromeStore((s) => s.setOverride);
+  const clearReaderChrome = useReaderChromeStore((s) => s.clearOverride);
+  useEffect(() => {
+    if (!(immersiveActive && mobileDetail && selectedEntryData && !selectedEntryData.isFolder)) {
+      clearReaderChrome();
+      return;
+    }
+    setReaderChrome({
+      title: getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines),
+      onBack: () => {
+        setMobileDetail(false);
+        setMobileDirectoryOpen(false);
+      },
+    });
+    return () => clearReaderChrome();
+  }, [immersiveActive, mobileDetail, selectedEntryData, useContentTitle, contentFirstLines, setReaderChrome, clearReaderChrome]);
+
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
   // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
   // 否则祖先链断、文件夹不展开、滚不到位。
   const parentMap = useMemo(() => {
     const m = new Map<string, string | undefined>();
-    for (const e of entries) m.set(e.id, e.parentId);
+    for (const [id, parent] of navigationTree.parentIds) m.set(id, parent);
     for (const e of (searchResults ?? [])) if (!m.has(e.id)) m.set(e.id, e.parentId);
     return m;
-  }, [entries, searchResults]);
+  }, [navigationTree, searchResults]);
+  const revealPath = useMemo(() => docBrowserEntryPath(parentMap, selectedEntryId ?? lastVisitedEntryId),
+    [parentMap, selectedEntryId, lastVisitedEntryId]);
 
   // 选中条目自动展开祖先；退回列表后继续滚到刚才阅读的来源行，保留空间记忆。
   useEffect(() => {
@@ -1974,6 +2024,24 @@ export function DocBrowser({
     sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
   } | null>(null);
+  // 逐句修改（就地 diff 改写）会话：划词 → 说想怎么改 → 改动直接长在正文里 → 采纳/撤销。
+  // 与 aiPopover 的区别是「结果在哪」：这里结果就是文章本身的变化，浮层只剩操作条。
+  const [rewrite, setRewrite] = useState<RewriteSession | null>(null);
+  const rewriteAbortRef = useRef<(() => void) | null>(null);
+  // 流式增量先落 ref，再节流刷新 state：每个 chunk 都重渲染整篇 markdown 会把长文档拖垮
+  const rewriteTextRef = useRef('');
+  const rewriteFlushRef = useRef<number | null>(null);
+  const cancelRewriteStream = useCallback(() => {
+    rewriteAbortRef.current?.();
+    rewriteAbortRef.current = null;
+    if (rewriteFlushRef.current != null) {
+      window.clearTimeout(rewriteFlushRef.current);
+      rewriteFlushRef.current = null;
+    }
+  }, []);
+  // 卸载时收掉在途的流，避免组件没了还在往下写
+  useEffect(() => () => cancelRewriteStream(), [cancelRewriteStream]);
+
   // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
   // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
   // composer 状态还在会让覆盖层"复活"在过时位置。AI 浮层同理。
@@ -1982,13 +2050,17 @@ export function DocBrowser({
       setComposer(null);
       setAiPopover(null);
       setImagePopover(null);
+      cancelRewriteStream();
+      setRewrite(null);
     }
-  }, [editMode]);
+  }, [editMode, cancelRewriteStream]);
   useEffect(() => {
     setComposer(null);
     setAiPopover(null);
     setImagePopover(null);
-  }, [selectedEntryId]);
+    cancelRewriteStream();
+    setRewrite(null);
+  }, [selectedEntryId, cancelRewriteStream]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -2171,7 +2243,16 @@ export function DocBrowser({
   // 替换/插入后拼回 frontmatter 前缀，走既有 onSaveContent（PUT content，服务端自动
   // 重锚定行内评论 + 重算双链账本）。歧义无法消除时拒绝替换，宁缺毋错。
   const applySelectionAiEdit = useCallback(async (
-    target: { entryId: string; sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number } },
+    target: {
+      entryId: string;
+      sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
+      /** 会话开始时已定位好的区间。与 original 一起传，且区间内容仍等于 original 时直接复用——
+       *  预览画的和写回的必须是同一个区间，重新定位一次等于让同一件事有两处判据
+       *  （predicate-and-wiring-discipline.md 形状 3） */
+      range?: ResolvedRange;
+      /** 会话开始时该区间里的原文，用来确认区间还指着同一段文字 */
+      original?: string;
+    },
     mode: 'replace' | 'insert-after',
     newText: string,
   ): Promise<boolean> => {
@@ -2182,7 +2263,12 @@ export function DocBrowser({
     }
     const raw = preview.text;
     const body = selectionRawContent;
-    const range = resolveSelectionRange(body, target.sel);
+    // 复用已知区间前先确认它在当前正文里还指着同一段文字；对不上就老老实实重新定位
+    const known = target.range;
+    const knownStillValid = known != null
+      && target.original != null
+      && body.slice(known.start, known.end) === target.original;
+    const range = knownStillValid ? known : resolveSelectionRange(body, target.sel);
     let newBody: string;
     if (mode === 'replace') {
       if (!range) {
@@ -2206,6 +2292,158 @@ export function DocBrowser({
     void refreshComments();
     return true;
   }, [onSaveContent, commitLocalSave, selectedEntryId, preview, selectionRawContent, refreshComments]);
+
+  // 会话与写回函数走 ref 读取：改写流的回调活得比某一次渲染长，闭包捕获会读到旧会话
+  const rewriteRef = useRef<RewriteSession | null>(null);
+  rewriteRef.current = rewrite;
+  const applySelectionAiEditRef = useRef(applySelectionAiEdit);
+  applySelectionAiEditRef.current = applySelectionAiEdit;
+
+  // ── 逐句修改：发起改写流 ──
+  // 结果不进浮层，直接以 <ins>/<del> 标记就地长在正文里；用户看到的等待过程就是文章在变
+  const runRewrite = useCallback((actionKey: string, instruction?: string) => {
+    cancelRewriteStream();
+    rewriteTextRef.current = '';
+    const startedAt = Date.now();
+    setRewrite((s) => (s ? { ...s, phase: 'streaming', actionKey, instruction, text: '', errorMsg: undefined, startedAt } : s));
+
+    // 节流刷新：最多 ~10fps 重渲染正文，长文档也不掉帧
+    const flush = () => {
+      rewriteFlushRef.current = null;
+      const text = rewriteTextRef.current;
+      setRewrite((s) => (s && s.phase === 'streaming' ? { ...s, text } : s));
+    };
+    const scheduleFlush = () => {
+      if (rewriteFlushRef.current == null) rewriteFlushRef.current = window.setTimeout(flush, 100);
+    };
+
+    const session = rewriteRef.current;
+    if (!session) return;
+    rewriteAbortRef.current = streamSelectionRewrite(session.entryId, {
+      selectedText: session.sel.selectedText,
+      contextBefore: session.sel.contextBefore,
+      contextAfter: session.sel.contextAfter,
+      startOffset: session.sel.startOffset,
+      endOffset: session.sel.endOffset,
+      occurrenceIndex: session.sel.domOccurrenceIndex,
+      occurrenceTotal: session.sel.domOccurrenceTotal,
+      actionKey,
+      instruction,
+      onStart: (info) => setRewrite((s) => (s ? { ...s, model: info.model } : s)),
+      onText: (c) => { rewriteTextRef.current += c; scheduleFlush(); },
+      onError: (msg) => {
+        cancelRewriteStream();
+        setRewrite((s) => (s ? { ...s, phase: 'error', errorMsg: msg } : s));
+      },
+      onDone: () => {
+        cancelRewriteStream();
+        // 模型偶发用代码围栏包整段输出，剥掉再进 diff/替换（与兜底浮层同一处理，SSOT）
+        const cleaned = stripOuterFence(rewriteTextRef.current).trim();
+        rewriteTextRef.current = cleaned;
+        setRewrite((s) => (s
+          ? cleaned
+            ? { ...s, phase: 'review', text: cleaned }
+            : { ...s, phase: 'error', errorMsg: '模型没有返回内容，请重试' }
+          : s));
+      },
+    });
+  }, [cancelRewriteStream]);
+
+  // 采纳：把改动写回文档（复用既有替换写回路径，服务端会重锚定评论与双链）
+  const acceptRewrite = useCallback(async () => {
+    const session = rewriteRef.current;
+    const output = rewriteOutputRef.current.trim();
+    if (!session || session.applying || !output) return;
+    setRewrite((s) => (s ? { ...s, applying: true } : s));
+    const ok = await applySelectionAiEditRef.current(session, 'replace', output);
+    if (ok) {
+      toast.success('已采纳', '改动已保存到文档');
+      setRewrite(null);
+    } else {
+      setRewrite((s) => (s ? { ...s, applying: false } : s));
+    }
+  }, []);
+
+  // 撤销：丢弃这次改动。正文从未被写过，收掉会话即还原（这也是「撤销」零风险的原因）
+  const discardRewrite = useCallback(() => {
+    cancelRewriteStream();
+    setRewrite(null);
+  }, [cancelRewriteStream]);
+
+  // 就地 diff 正文：会话进入 streaming 之后，正文渲染的就是「带 <ins>/<del> 标记的改动版」。
+  // 返回 null 表示这次改动不能安全地画在正文上（切档 / 正文被别的路径改过），
+  // 此时不画、并由下面的 effect 取消会话——宁可明说取消，不可把 diff 画到错位置。
+  // 模型输出的规范化只做一次：预览画的、采纳写回的，必须是同一个字符串
+  // （predicate-and-wiring-discipline.md 形状 6：判据读的值要就是真正生效的那个值）
+  const rewriteOutput = useMemo(() => {
+    if (!rewrite || typeof selectionRawContent !== 'string') return '';
+    return stripDuplicatedBlockPrefix(selectionRawContent, rewrite.range, rewrite.text);
+  }, [rewrite, selectionRawContent]);
+  const rewriteOutputRef = useRef(rewriteOutput);
+  rewriteOutputRef.current = rewriteOutput;
+
+  /*
+   * 等待档的正文：只把选区整体压灰（--streaming 那档 CSS），一个半成品的字都不渲染。
+   *
+   * 2026-08-25 用户："一次性完成，其实无需流式输出，不然最后一闪，用户不知道哪些内容发生了变更。"
+   * 逐字长出来的过程看着热闹，但它和最终的 diff 是两套画面 —— 切换那一下整段重排，
+   * 用户刚追着读的位置全变了，反而看不清到底改了哪儿。改成：等 AI 写完，diff 一次性出现。
+   * 等待期的反馈交给条子（正在改写 · 已等待 Xs · 可停止）+ 选区压灰，不是静止的转圈。
+   *
+   * 依赖项只有「选区在哪」，所以整个等待期返回同一个对象，正文一次都不重渲染。
+   */
+  const waitingRangeStart = rewrite?.range.start;
+  const waitingRangeEnd = rewrite?.range.end;
+  const waitingDiff = useMemo(() => {
+    if (typeof selectionRawContent !== 'string') return null;
+    if (waitingRangeStart == null || waitingRangeEnd == null) return null;
+    // newText 传空串 = 整个选区都算「待替换」，全部标 del；流式档的 CSS 把 del 画成压灰无删除线
+    return buildInlineDiffBody(selectionRawContent, { start: waitingRangeStart, end: waitingRangeEnd }, '');
+  }, [selectionRawContent, waitingRangeStart, waitingRangeEnd]);
+
+  const rewriteDiff = useMemo(() => {
+    if (!rewrite || rewrite.phase === 'prompt') return null;
+    if (rewrite.entryId !== selectedEntryId) return null;
+    if (typeof selectionRawContent !== 'string' || !preview?.text) return null;
+    if (selectionRawContent.slice(rewrite.range.start, rewrite.range.end) !== rewrite.original) return null;
+    // 一个字都没吐出来就失败了：此时 diff 会把整段选区标成删除，用户看到自己的段落
+    // 挂着删除线、条子上写「改写失败」，像是内容已经被删掉了（2026-08-21 code review）。
+    // 拿原文当结果算 diff —— 零增零删，正文原样，只有条子报错。
+    if (rewrite.phase === 'error' && !rewriteOutput) {
+      return buildInlineDiffBody(selectionRawContent, rewrite.range, rewrite.original);
+    }
+    // 还在等 AI：正文只把选区压灰，不渲染半成品（见 waitingDiff 的注释）
+    if (rewrite.phase === 'streaming') return waitingDiff;
+    return buildInlineDiffBody(selectionRawContent, rewrite.range, rewriteOutput);
+  }, [rewrite, rewriteOutput, waitingDiff, selectionRawContent, preview, selectedEntryId]);
+
+  // 采纳落库那一瞬间正文已换成新内容、diff 失效，这属于成功路径，不能报「文档已变化」
+  const rewriteDiffBroken = !!rewrite && rewrite.phase !== 'prompt' && !rewrite.applying && !rewriteDiff;
+  useEffect(() => {
+    if (!rewriteDiffBroken) return;
+    cancelRewriteStream();
+    setRewrite(null);
+    toast.error('改写已取消', '文档内容已变化，请重新划选');
+  }, [rewriteDiffBroken, cancelRewriteStream]);
+
+  // 正文渲染源：会话期间喂「带标记的正文」，其余时间照常。frontmatter 前缀要拼回去，
+  // 否则渲染器会把正文首行当成新的 frontmatter 分隔（selectionRawContent 是剥过的 body）
+  // 采纳保存期间 diff 已失效（正文换成新内容），操作条要继续显示「正在保存」，
+  // 所以统计数留一份最后有效值兜底，不让操作条在保存中途凭空消失
+  const lastDiffStatsRef = useRef({ added: 0, removed: 0, codeChangeUnmarked: false });
+  if (rewriteDiff) {
+    lastDiffStatsRef.current = {
+      added: rewriteDiff.added,
+      removed: rewriteDiff.removed,
+      codeChangeUnmarked: rewriteDiff.codeChangeUnmarked,
+    };
+  }
+
+  const previewForRender = useMemo(() => {
+    if (!preview || !rewriteDiff || typeof selectionRawContent !== 'string') return preview;
+    return { ...preview, text: frontmatterPrefixOf(preview.text ?? '', selectionRawContent) + rewriteDiff.body };
+  }, [preview, rewriteDiff, selectionRawContent]);
+
 
   // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
   const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
@@ -2369,19 +2607,8 @@ export function DocBrowser({
 
   // 构建树结构
   const { rootEntries, childrenMap, fileCount } = useMemo(() => {
-    // 移除对 'github_directory' 的硬编码过滤，使订阅文件夹与文件可以在树结构中正常显示。
-    const cMap = new Map<string, DocBrowserEntry[]>();
-    const roots: DocBrowserEntry[] = [];
-
-    for (const e of entries) {
-      if (!e.parentId) {
-        roots.push(e);
-      } else {
-        const siblings = cMap.get(e.parentId) ?? [];
-        siblings.push(e);
-        cMap.set(e.parentId, siblings);
-      }
-    }
+    const roots = [...navigationTree.rootEntries];
+    const cMap = new Map([...navigationTree.childrenMap].map(([id, children]) => [id, [...children]]));
 
     // 排序 SSOT：默认模式消费服务端 SortOrder，未设置时按自然标题兜底。
     const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => compareDocBrowserEntries(a, b, {
@@ -2392,10 +2619,10 @@ export function DocBrowser({
     roots.sort(sortFn);
     for (const [, children] of cMap) children.sort(sortFn);
 
-    const fCount = entries.filter(e => !e.isFolder).length;
+    const fCount = entries.filter(e => !e.isFolder && e.sourceType !== 'github_directory').length;
 
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
-  }, [entries, primaryEntryId, pinnedSet, sortMode]);
+  }, [entries, navigationTree, primaryEntryId, pinnedSet, sortMode]);
 
   // 拖拽自定义排序：仅书籍顺序（消费 SortOrder 的模式）+ 非后端搜索态启用。
   // 时间排序下位置由时间决定，拖了也会弹回，不如不给放置目标（预期管理）。
@@ -2469,7 +2696,6 @@ export function DocBrowser({
 
     // 本地搜索 / tag 过滤（两者 AND）
     const matchIds = new Set<string>();
-    const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
       let searchHit = !hasLocalSearch;
       if (hasLocalSearch) {
@@ -2481,14 +2707,7 @@ export function DocBrowser({
       // 文件夹本身不参与 tag 过滤（无 tag），但若其后代命中则保留
       const tagHit = !hasTagFilter || (!e.isFolder && (e.tags ?? []).some(t => selectedTags.has(t)));
       if (searchHit && tagHit && !e.isFolder) {
-        matchIds.add(e.id);
-        let cur = e;
-        while (cur.parentId) {
-          matchIds.add(cur.parentId);
-          const parent = entryMap.get(cur.parentId);
-          if (!parent) break;
-          cur = parent;
-        }
+        for (const id of docBrowserEntryPath(parentMap, e.id)) matchIds.add(id);
       } else if (hasLocalSearch && !hasTagFilter && e.isFolder && e.title.toLowerCase().includes(kw)) {
         // 仅文本搜索时文件夹标题命中仍保留（与原逻辑保持兼容）
         matchIds.add(e.id);
@@ -2503,7 +2722,7 @@ export function DocBrowser({
     }
 
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines, parentMap]);
 
   // 收集 entries 中所有出现过的 tag（按出现频次排序，热门 tag 排前）
   const allTagsRanked = useMemo(() => {
@@ -2568,10 +2787,12 @@ export function DocBrowser({
     return ids;
   }, [search, searchResults, filteredRoots, filteredChildrenMap, contentFirstLines]);
 
-  // 搜索处理（防抖 + 永远同时搜标题+内容，走后端；onSearch 内部会先 rebuildContentIndex）
+  // 搜索处理：正文检索只读，游标继续加载；过时响应不得覆盖新查询。
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
-    setSearchResults(null);
+    setSearchResults(value.trim() && onSearch ? [] : null);
+    setSearchCursor(null);
+    setSearchError(null);
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
@@ -2586,22 +2807,44 @@ export function DocBrowser({
           const results = await onSearch(trimmed, true);
           // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
           if (reqId !== searchSeqRef.current) return;
-          setSearchResults(results);
-        } catch {
+          setSearchResults(Array.isArray(results) || results == null ? results : results.items);
+          setSearchCursor(results && !Array.isArray(results) ? results.nextCursor ?? null : null);
+          setSearchTotal(results && !Array.isArray(results) ? results.total : results?.length ?? 0);
+        } catch (error) {
           if (reqId !== searchSeqRef.current) return;
-          setSearchResults(null);
+          setSearchResults([]);
+          setSearchError(error instanceof Error ? error.message : '搜索失败，请重试');
         } finally {
           // 仅最新请求负责收起 spinner：陈旧响应不动它（更新的在途请求会收），
           // 但 onSearch 抛错时最新请求也必须解除 loading，避免 spinner 永久卡住。
           if (reqId === searchSeqRef.current) setSearching(false);
         }
-      }, 400);
+      }, 150);
     } else {
       // 搜索框被清空：立即回到本地全量树，并让任何在途响应作废
       setSearchResults(null);
       setSearching(false);
     }
   }, [onSearch]);
+
+  const loadMoreSearchResults = useCallback(async () => {
+    if (!onSearch || !searchCursor || searching) return;
+    const reqId = searchSeqRef.current;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const result = await onSearch(search.trim(), true, searchCursor);
+      if (reqId !== searchSeqRef.current) return;
+      if (!result || Array.isArray(result)) throw new Error('搜索分页失效，请重新搜索');
+      setSearchResults(previous => [...new Map([...(previous ?? []), ...result.items].map(e => [e.id, e])).values()]);
+      setSearchCursor(result.nextCursor ?? null);
+      setSearchTotal(result.total);
+    } catch (error) {
+      if (reqId === searchSeqRef.current) setSearchError(error instanceof Error ? error.message : '加载失败，请重试');
+    } finally {
+      if (reqId === searchSeqRef.current) setSearching(false);
+    }
+  }, [onSearch, searchCursor, search, searching]);
 
   const toggleFolder = useCallback((folderId: string) => {
     setExpandedFolders(prev => {
@@ -2614,11 +2857,11 @@ export function DocBrowser({
 
   // 搜索时自动展开所有文件夹（后端结果为扁平列表时无需展开，但展开无副作用）
   useEffect(() => {
-    if (search.trim()) {
+    if (search.trim() && !onSearch) {
       const allFolderIds = entries.filter(e => e.isFolder).map(e => e.id);
       setExpandedFolders(new Set(allFolderIds));
     }
-  }, [search, entries]);
+  }, [search, entries, onSearch]);
 
   // 加载内容
   // contentKey = `${entryId}:${updatedAt}`：替换文件后后端会更新 updatedAt，
@@ -2736,12 +2979,11 @@ export function DocBrowser({
     const autoSelect = (entryId: string) => {
       didAutoSelectRef.current = true;
       onSelectEntry(entryId);
-      const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
-      let cur = entryMap.get(entryId);
-      while (cur?.parentId) {
-        toExpand.add(cur.parentId);
-        cur = entryMap.get(cur.parentId);
+      let parent = parentMap.get(entryId);
+      while (parent && !toExpand.has(parent)) {
+        toExpand.add(parent);
+        parent = parentMap.get(parent);
       }
       if (toExpand.size > 0) {
         setExpandedFolders(prev => new Set([...prev, ...toExpand]));
@@ -2764,7 +3006,7 @@ export function DocBrowser({
     };
     const first = findFirstDoc(rootEntries);
     if (first) autoSelect(first.id);
-  }, [primaryEntryId, entries, selectedEntryId, onSelectEntry, isMobile, rootEntries, childrenMap]);
+  }, [primaryEntryId, entries, selectedEntryId, onSelectEntry, isMobile, rootEntries, childrenMap, parentMap]);
 
   const handleCreateFolder = useCallback(async () => {
     if (!newFolderName.trim() || !onCreateFolder) return;
@@ -2801,9 +3043,9 @@ export function DocBrowser({
     const ids = Array.from(selectedIds);
     const confirmed = await systemDialog.confirm({
       title: '批量删除文档',
-      message: `将永久删除选中的 ${ids.length} 个文件及其解析正文 / 附件。\n\n此操作不可恢复。`,
+      message: `将选中的 ${ids.length} 个文件移入回收站，30 天内可恢复。`,
       tone: 'danger',
-      confirmText: `永久删除 ${ids.length} 个`,
+      confirmText: `移入回收站 ${ids.length} 个`,
       cancelText: '取消',
     });
     if (!confirmed) return;
@@ -2814,8 +3056,9 @@ export function DocBrowser({
   }, [onDeleteEntry, selectedIds]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, entry: DocBrowserEntry) => {
-    setContextMenu({ x: e.clientX, y: e.clientY, entry });
-  }, []);
+    const canonical = entries.find(item => item.id === entry.id) ?? entry;
+    setContextMenu({ x: e.clientX, y: e.clientY, entry: canonical });
+  }, [entries]);
 
   if (loading) {
     return (
@@ -2830,22 +3073,247 @@ export function DocBrowser({
   }
 
   const isCards = appearance === 'cards';
+  const mobileHasSelectedEntry = Boolean(selectedEntryId);
+  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
+  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
+  // 沉浸阅读态（移动端正文打开）：外层卡片 chrome（p-3 / 圆角 / 浮起面）全部去掉，
+  // 正文从沉浸顶栏下边缘直接开始、左右满铺（2026-08-10 用户「主页面尽可能的大」）
+  const mobileDetailChromeless = immersiveActive && mobileDetail && mobileHasSelectedEntry;
   // cards: 双独立圆角卡片 + 中间 12px 可拖拽分隔条（周报风格）；inset: 单容器无 gap（知识库/分享）
   // cards 模式不再用 gap-3，改由两卡片之间的 ResizeHandle（宽 12px）承担间距 + 拖拽调宽
   const rootClass = isCards
-    ? 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised'
-    : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]';
+    ? (mobileDetailChromeless ? 'flex flex-1 overflow-hidden' : 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised')
+    : (mobileDetailChromeless ? 'surface-inset flex flex-1 gap-0 overflow-hidden' : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]');
   // cards 模式下左右各自包圆角卡片；inset 模式下走原生分隔线
   const sidebarClass = isCards
     ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
-  const mobileHasSelectedEntry = Boolean(selectedEntryId);
-  const sidebarAsMobileDrawer = isMobile && mobileDetail && mobileDirectoryOpen && mobileHasSelectedEntry;
-  const sidebarHiddenForMobileDetail = isMobile && mobileDetail && !mobileDirectoryOpen && mobileHasSelectedEntry;
+
+  // ── 沉浸阅读单行顶栏（移动端）：返回 + 标题 + 字号 + 全屏 + 更多合成一行，
+  //    替代「AppShell 顶栏 + 阅读工具栏」两行（2026-08-10 用户「还有这么多空间没有利用到」）──
+  const mobileImmersiveReading = immersiveActive && mobileDetail && !!selectedEntryData && !selectedEntryData.isFolder;
+  const selectedIsHtmlPreview = !!selectedEntryData && !selectedEntryData.isFolder
+    && (getFileTypeConfig(selectedEntryData.title, selectedEntryData.contentType).preview === 'html'
+      || (selectedEntryData.contentType ?? '').toLowerCase().includes('html')
+      || /\.html?$/i.test(selectedEntryData.title));
+  // 字号仅对 srcDoc 型 HTML 生效：fileUrl 型上传附件走最严 sandbox 跨域 iframe，
+  // zoom 注入不进去，显示控件会变成"改了百分比却没效果"的假开关（Codex P2）
+  const selectedIsZoomableHtml = selectedIsHtmlPreview && !!preview?.text && !preview?.fileUrl;
+
+  // 字号控件（srcDoc 型 HTML 专属）：沉浸态渲染在顶栏、非沉浸移动端渲染在工具栏行——同一份节点
+  const zoomControlsNode = (!editMode && selectedIsZoomableHtml) ? (
+    <>
+      <button
+        type="button"
+        aria-label="缩小字号"
+        disabled={htmlZoom <= HTML_ZOOM_MIN}
+        onClick={() => setHtmlZoom(z => Math.max(HTML_ZOOM_MIN, Math.round((z - HTML_ZOOM_STEP) * 100) / 100))}
+        className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+        style={{ color: 'var(--text-secondary)' }}
+        title={`缩小字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+        <ZoomOut size={16} />
+      </button>
+      {htmlZoom !== 1 && (
+        <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {Math.round(htmlZoom * 100)}%
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label="放大字号"
+        disabled={htmlZoom >= HTML_ZOOM_MAX}
+        onClick={() => setHtmlZoom(z => Math.min(HTML_ZOOM_MAX, Math.round((z + HTML_ZOOM_STEP) * 100) / 100))}
+        className={`${TOOLBAR_ICON_BTN_MOBILE} disabled:opacity-40`}
+        style={{ color: 'var(--text-secondary)' }}
+        title={`放大字号（当前 ${Math.round(htmlZoom * 100)}%）`}>
+        <ZoomIn size={16} />
+      </button>
+    </>
+  ) : null;
+
+  // 「更多」按钮 + 菜单：桌面渲染在工具栏尾部、移动端渲染在沉浸顶栏——同一份节点，杜绝双份漂移
+  const readerMoreNode = (() => {
+    const sel = selectedEntryData;
+    if (!sel || sel.isFolder) return null;
+    const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
+    const showTranscribe = canTranscribe(sel) && !!onTranscribe;
+    const showReprocess = canReprocess(sel) && !!onReprocess;
+    const isAcc = !!(sel.metadata?.kind === 'acceptance-report' || sel.metadata?.verdict);
+    const showEvidence = isAcc && !!preview?.text && !editMode;
+    const showVersions = !!versionApi && !isMobile && !editMode;
+    // GitHub 目录父条目也是订阅：它才是「立即同步 / 暂停 / 看同步日志」真正该作用的对象。
+    // 之前这里只认 sourceType==='subscription'，于是目录条目菜单里根本没有同步入口，
+    // 用户拿一个同步失败的目录无处可点（验收 P1）。
+    const isSubscription = canOpenSubscriptionPanel(sel);
+    const githubSha = sel.metadata?.github_sha;
+    const showSubscription = isSubscription && !!onOpenSubscription;
+    // 移动端把低频动作（目录 / 划词评论 / 编辑）折进菜单，顶栏只留 字号/全屏/更多
+    const showDirectoryItem = isMobile;
+    const showCommentsItem = isMobile && !!trackedEntryForComments;
+    const showEditItem = isMobile && !!onSaveContent
+      && getFileTypeConfig(sel.title, sel.contentType).editable && !editMode;
+    // 原工具栏 chips（验收结论 / README / 置顶 / new / 标签）折进菜单顶部信息区
+    const vc = getVerdictConfig(sel.metadata?.verdict);
+    const tier = sel.metadata?.tier;
+    const isReadme = sel.id === primaryEntryId;
+    const isPinnedItem = pinnedSet.has(sel.id) && !isReadme;
+    const infoTags = sel.tags ?? [];
+    const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
+    const infoAny = !!vc || isReadme || isPinnedItem || infoTags.length > 0 || recentlyChanged;
+    const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions
+      || showSubscription || showDirectoryItem || showCommentsItem || showEditItem || infoAny || !!readerMenuExtra;
+    if (!any) return null;
+    return (
+      <div ref={readerMoreRef} className="relative flex-shrink-0" style={{ marginLeft: 'auto' }}>
+        <button
+          onClick={() => setReaderMoreOpen(v => !v)}
+          className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+          title="更多操作">
+          <MoreHorizontal size={13} />
+        </button>
+        <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
+          anchorRef={readerMoreRef} minWidth={190}
+          className="surface-popover rounded-[10px] p-1.5"
+          style={{ maxHeight: 'min(70vh, 480px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {infoAny && (
+            <div
+              className="flex flex-wrap items-center gap-1.5 px-2 pt-1.5 pb-2 mb-1"
+              style={{ borderBottom: '1px solid var(--border-faint)' }}
+            >
+              {vc && (
+                <span className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
+                  style={{ background: vc.background, color: vc.color, border: vc.border }}
+                  title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}>
+                  {vc.label}{tier ? ` ${tier}` : ''}
+                </span>
+              )}
+              {isReadme && (
+                <span className={TOOLBAR_CHIP}
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
+                  README
+                </span>
+              )}
+              {isPinnedItem && (
+                <span className={TOOLBAR_CHIP}
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
+                  置顶
+                </span>
+              )}
+              {recentlyChanged && (
+                <span className={`${TOOLBAR_CHIP} font-bold`}
+                  style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)', letterSpacing: '0.3px' }}
+                  title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}>
+                  new
+                </span>
+              )}
+              {infoTags.map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                return (
+                  <span key={tag} className={TOOLBAR_CHIP}
+                    style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
+                    #{tag}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {readerMenuExtra != null && (
+            <div onClick={() => setReaderMoreOpen(false)}>
+              {readerMenuExtra}
+            </div>
+          )}
+          {showDirectoryItem && (
+            <ReaderMoreItem icon={<PanelLeftOpen size={13} />} label="文档目录"
+              onClick={() => { setReaderMoreOpen(false); setMobileDirectoryOpen(true); }} />
+          )}
+          {showCommentsItem && (
+            <ReaderMoreItem icon={<MessageSquareText size={13} />}
+              label={commentCount > 0 ? `划词评论 · ${commentCount} 条` : '划词评论'}
+              onClick={() => { setReaderMoreOpen(false); setInlineCommentsOpen(true); }} />
+          )}
+          {showEditItem && (
+            <ReaderMoreItem icon={<Pencil size={13} />} label="编辑文档"
+              onClick={() => { setReaderMoreOpen(false); setEditContent(preview?.text ?? ''); setEditMode(true); }} />
+          )}
+          {showTranscribe && (
+            <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
+              onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
+          )}
+          {showSubtitle && (
+            <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
+              onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
+          )}
+          {showReprocess && (
+            <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
+              onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
+          )}
+          {showEvidence && (
+            <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
+              onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
+          )}
+          {showVersions && (
+            <ReaderMoreItem icon={<History size={13} />} label="历史版本"
+              onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
+          )}
+          {showSubscription && (
+            <ReaderMoreItem icon={<Rss size={13} />}
+              label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
+              onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
+          )}
+        </AnchoredMenu>
+      </div>
+    );
+  })();
 
   return (
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
+      {/* ── 沉浸阅读单行顶栏（移动端，portal 到 body）：返回 + 标题 + 字号 + 全屏 + 更多。
+          AppShell 顶栏与阅读工具栏两行合一，编辑态只留 返回 + 标题（保存/取消在下方工具栏行）。 ── */}
+      {mobileImmersiveReading && !readerFullscreen && createPortal(
+        <header
+          className="fixed top-0 left-0 right-0 z-100 flex items-center gap-1 pl-1 pr-2"
+          style={{
+            ...glassMobileHeader,
+            height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => { setMobileDetail(false); setMobileDirectoryOpen(false); }}
+            className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-xl"
+            style={{ color: 'var(--text-primary)' }}
+            aria-label="返回列表"
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <span
+            className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-none"
+            style={{ color: 'var(--text-primary)' }}
+            title={selectedEntryData ? getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines) : undefined}
+          >
+            {selectedEntryData ? getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines) : ''}
+          </span>
+          {!editMode && (
+            <>
+              {zoomControlsNode}
+              <button
+                type="button"
+                aria-label="全屏阅读"
+                onClick={toggleReaderFullscreen}
+                className={TOOLBAR_ICON_BTN_MOBILE}
+                style={{ color: 'var(--text-secondary)' }}
+                title="全屏阅读">
+                <Maximize2 size={16} />
+              </button>
+              {readerMoreNode}
+            </>
+          )}
+        </header>,
+        document.body,
+      )}
       {sidebarAsMobileDrawer && (
         <div
           className="fixed inset-0 z-[130]"
@@ -2867,7 +3335,7 @@ export function DocBrowser({
           height: sidebarAsMobileDrawer ? '100dvh' : undefined,
           maxHeight: sidebarAsMobileDrawer ? '100dvh' : undefined,
           borderRadius: sidebarAsMobileDrawer ? 0 : undefined,
-          background: sidebarAsMobileDrawer ? 'rgba(22,22,28,0.96)' : undefined,
+          background: sidebarAsMobileDrawer ? 'var(--overlay-panel-solid)' : undefined,
           backdropFilter: sidebarAsMobileDrawer ? 'blur(22px) saturate(160%)' : undefined,
           WebkitBackdropFilter: sidebarAsMobileDrawer ? 'blur(22px) saturate(160%)' : undefined,
           boxShadow: sidebarAsMobileDrawer ? '28px 0 64px rgba(0,0,0,0.45)' : undefined,
@@ -3110,7 +3578,7 @@ export function DocBrowser({
                           style={{
                             background: 'rgba(168,85,247,0.14)',
                             border: '1px solid rgba(168,85,247,0.25)',
-                            color: 'rgba(216,180,254,0.95)',
+                            color: 'var(--accent-fg-violet)',
                           }}>
                           上传文件
                         </button>
@@ -3127,7 +3595,10 @@ export function DocBrowser({
                 </>
               )}
             </div>
-          ) : displayItems.map((item, idx) => (
+          ) : <ProgressiveEntries key={`${search}|${[...selectedTags].join(',')}|${sortMode}`}
+            items={displayItems} itemKey={(item, idx) => item.kind === 'header' ? `grp-${item.bucketKey}-${idx}` : item.entry.id}
+            revealIndex={displayItems.findIndex(item => item.kind === 'entry' && revealPath.has(item.entry.id))}
+            render={(item, idx) => (
             item.kind === 'header' ? (
               <div
                 key={`grp-${item.bucketKey}-${idx}`}
@@ -3147,18 +3618,19 @@ export function DocBrowser({
               /* layout="position"：拖拽换位 / 置顶 / 切排序时 FLIP 位移动画，行滑到新位置
                  而非瞬移（与列表页卡片同一套「看得见去哪了」反馈）。layout 动画单独给
                  无延迟的 spring——不能吃入场 stagger 的 delay，否则重排像多米诺 */
-              layout="position"
-              initial={{ opacity: 0, y: 6 }}
+              layout={search.trim() ? false : 'position'}
+              initial={search.trim() ? false : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{
                 duration: 0.28,
-                delay: Math.min(idx * 0.018, 0.5),
+                delay: search.trim() ? 0 : Math.min(idx * 0.018, 0.5),
                 ease: [0.25, 0.1, 0.25, 1],
                 layout: { type: 'spring', stiffness: 420, damping: 38, delay: 0 },
               }}
             >
             <TreeNode
               entry={item.entry}
+              revealPath={revealPath}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
@@ -3197,7 +3669,13 @@ export function DocBrowser({
             />
             </motion.div>
             )
-          ))}
+          )} />}
+          {searchError && <div role="alert" className="px-3 py-2 text-[11px] text-token-muted">{searchError}</div>}
+          {searchResults !== null && searchCursor && <button type="button" disabled={searching}
+            className="w-full px-3 py-2 text-[11px] text-token-muted hover-text-primary"
+            onClick={() => void loadMoreSearchResults()}>
+            {searching ? '正在加载…' : `加载更多搜索结果（已加载 ${searchResults.length} / ${searchTotal}）`}
+          </button>}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}
         {onMoveEntry && (
@@ -3277,20 +3755,77 @@ export function DocBrowser({
           全屏时整列经 ReaderColumnFrame createPortal 到 body 铺满视口。 */}
       <ReaderColumnFrame fullscreen={readerFullscreen}>
       <div
-        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
+        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? (mobileDetailChromeless ? ' surface-reading' : ' surface-reading rounded-xl') : ''}`}
         style={{ minHeight: 0, display: isMobile && (!mobileDetail || !selectedEntryId) ? 'none' : undefined }}
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header：移动端保持单行横滑，正文面积优先。 */}
+            {/* 阅读头（2026-08-10 用户确认的重构）：
+                - 桌面：行1 = 文档标题（替代面包屑；父文件夹作浅色前缀保层级）+ 更新于/更新者；
+                        行2 = 主操作图标行。徽标/标签 chips 全部折进「更多」。
+                - 移动：标题已上移到 AppShell 顶栏（readerChromeStore 接管），本处只剩单行主操作。
+                全屏阅读 = 整页只留内容：整块隐藏，退出走半透明浮动钮；编辑态例外（保存/取消在行2上）。 */}
+            {(!readerFullscreen || editMode) && (
+            <>
+            {!isMobile && selectedEntryData && (
+              <div
+                className="flex items-center gap-2 py-2 px-5"
+                style={{ borderBottom: '1px solid var(--border-faint)' }}
+              >
+                {(() => {
+                  const parent = selectedEntryData.parentId
+                    ? entries.find(e => e.id === selectedEntryData.parentId)
+                    : undefined;
+                  if (!parent) return null;
+                  return (
+                    <span
+                      className="text-[11px] flex-shrink-0 max-w-[180px] truncate"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`所在文件夹：${parent.title}`}
+                    >
+                      {parent.title} ›
+                    </span>
+                  );
+                })()}
+                <span
+                  className="min-w-0 truncate text-[14px] font-semibold"
+                  style={{ color: 'var(--text-primary)' }}
+                  title={getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines)}
+                >
+                  {getDisplayTitle(selectedEntryData, useContentTitle, contentFirstLines)}
+                </span>
+                {!selectedEntryData.isFolder && (
+                  <div className="ml-auto flex items-center gap-3 min-w-0 flex-shrink-0">
+                    <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                      更新于 <RelativeTime value={selectedEntryData.updatedAt} fallback="未知时间" title={`最后更新时间：${formatMetaTime(selectedEntryData.updatedAt)}`} />
+                    </span>
+                    {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
+                    {selectedEntryData.updatedByName && (
+                      <span
+                        className="text-[10px] truncate max-w-[160px]"
+                        style={{ color: 'var(--text-muted)' }}
+                        title={`更新者：${selectedEntryData.updatedByName}`}
+                      >
+                        更新者 {selectedEntryData.updatedByName}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {/* 行2：主操作行。移动端非编辑态不渲染——动作全部并入沉浸顶栏一行
+                （2026-08-10 用户「还有这么多空间没有利用到」）；编辑态保留（保存/取消在此）。 */}
+            {(!immersiveActive || editMode) && (
             <div
               className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
               style={{
                 borderBottom: '1px solid var(--border-subtle)',
                 scrollbarWidth: isMobile ? 'none' : undefined,
+                // 横滑到尽头不把手势链给祖先（iOS 会整页橡皮筋，体感"页面在左右滑"）
+                overscrollBehaviorX: isMobile ? 'contain' : undefined,
               }}
             >
-              {/* 移动端目录抽屉入口：不再把正文切回列表。 */}
+              {/* 移动端目录抽屉入口（沉浸态由顶栏/菜单承载，此按钮只在非沉浸或编辑态出现） */}
               {isMobile && (
                 <button
                   onClick={() => setMobileDirectoryOpen(true)}
@@ -3313,172 +3848,8 @@ export function DocBrowser({
                   <ChevronLeft size={12} /> 返回列表
                 </button>
               )}
-              <Breadcrumbs entryId={selectedEntryId} entries={entries} />
-              {/* 验收结论药丸：列表里有、阅读区原先缺失，这里补上让「通过 L1」在阅读视图也一眼可见 */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                const vc = sel && !sel.isFolder ? getVerdictConfig(sel.metadata?.verdict) : null;
-                if (!vc) return null;
-                const tier = sel!.metadata?.tier;
-                return (
-                  <span
-                    className={`${TOOLBAR_CHIP} font-bold tabular-nums`}
-                    style={{ background: vc.background, color: vc.color, border: vc.border }}
-                    title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
-                  >
-                    {vc.label}{tier ? ` ${tier}` : ''}
-                  </span>
-                );
-              })()}
-              {selectedEntryId === primaryEntryId && (
-                <span className={TOOLBAR_CHIP}
-                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
-                  README
-                </span>
-              )}
-              {pinnedSet.has(selectedEntryId) && selectedEntryId !== primaryEntryId && (
-                <span className={TOOLBAR_CHIP}
-                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
-                  置顶
-                </span>
-              )}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder || (sel.tags?.length ?? 0) === 0) return null;
-                const tagLimit = isMobile ? 1 : 4;
-                return (
-                  <>
-                    {sel.tags!.slice(0, tagLimit).map(tag => {
-                      const c = getTagColor(tag, tagColorMap);
-                      return (
-                        <span key={tag} className={TOOLBAR_CHIP}
-                          style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
-                          #{tag}
-                        </span>
-                      );
-                    })}
-                    {sel.tags!.length > tagLimit && (
-                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        +{sel.tags!.length - tagLimit}
-                      </span>
-                    )}
-                  </>
-                );
-              })()}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                // 移动端：隐藏「更新于/更新者」（其 ml-auto 会把自己顶出窄屏右边缘、与标签重叠裁切）。
-                if (!sel || sel.isFolder || isMobile) return null;
-                // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
-                // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
-                return (
-                  <div className="ml-auto flex items-center gap-3 min-w-0">
-                    <span
-                      className="text-[10px] whitespace-nowrap"
-                      style={{ color: 'var(--text-muted)' }}
-                    >
-                      更新于 <RelativeTime value={sel.updatedAt} fallback="未知时间" title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`} />
-                    </span>
-                    {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
-                    {sel.updatedByName && (
-                      <span
-                        className="text-[10px] truncate max-w-[160px]"
-                        style={{ color: 'var(--text-muted)' }}
-                        title={`更新者：${sel.updatedByName}`}
-                      >
-                        更新者 {sel.updatedByName}
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
-              {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
-                const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
-                // 订阅信息已收进「更多」菜单，这里只留 new 徽章
-                if (!recentlyChanged) return null;
-                return (
-                  <>
-                    {recentlyChanged && (
-                      <span
-                        className={`${TOOLBAR_CHIP} font-bold`}
-                        style={{
-                          background: 'rgba(34,197,94,0.1)',
-                          color: 'rgba(74,222,128,0.95)',
-                          border: '1px solid rgba(34,197,94,0.25)',
-                          letterSpacing: '0.3px',
-                        }}
-                        title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}
-                      >
-                        new
-                      </span>
-                    )}
-                  </>
-                );
-              })()}
-              {/* 次要动作统一收进「更多」：转录 / 生成字幕 / 智能体 / 证据板 / 历史版本 / 订阅信息。
-                  2026-07-31 用户反馈「这里也遇到了很多选项的问题」——工具栏一排七八个彩色按钮，
-                  谁是主操作看不出来。现在只留 评论 / 收起 / 全屏 / 编辑 四个常用动作在外面，
-                  其余进菜单：菜单项带文字说明，比一排图标更好认，也不再和标题抢宽度。 */}
-              {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
-                const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
-                const showTranscribe = canTranscribe(sel) && !!onTranscribe;
-                const showReprocess = canReprocess(sel) && !!onReprocess;
-                const isAcc = !!(selectedEntryData?.metadata?.kind === 'acceptance-report' || selectedEntryData?.metadata?.verdict);
-                const showEvidence = isAcc && !!preview?.text && !editMode;
-                const showVersions = !!versionApi && !isMobile && !editMode;
-                const isSubscription = sel.sourceType === 'subscription';
-                const githubSha = sel.metadata?.github_sha;
-                const showSubscription = isSubscription && !!onOpenSubscription;
-                const any = showSubtitle || showTranscribe || showReprocess || showEvidence || showVersions || showSubscription;
-                if (!any) return null;
-                return (
-                  <div ref={readerMoreRef} className="relative flex-shrink-0">
-                    <button
-                      onClick={() => setReaderMoreOpen(v => !v)}
-                      className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
-                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                      title="更多操作">
-                      <MoreHorizontal size={13} />
-                    </button>
-                    <AnchoredMenu open={readerMoreOpen} onClose={() => setReaderMoreOpen(false)}
-                      anchorRef={readerMoreRef} minWidth={190}
-                      className="surface-popover rounded-[10px] p-1.5">
-                      {showTranscribe && (
-                        <ReaderMoreItem icon={<AudioLines size={13} />} label="转录并生成摘要"
-                          onClick={() => { setReaderMoreOpen(false); onTranscribe!(sel.id); }} />
-                      )}
-                      {showSubtitle && (
-                        <ReaderMoreItem icon={<Sparkles size={13} />} label="生成字幕"
-                          onClick={() => { setReaderMoreOpen(false); onGenerateSubtitle!(sel.id); }} />
-                      )}
-                      {showReprocess && (
-                        <ReaderMoreItem icon={<Wand2 size={13} />} label="用智能体加工"
-                          onClick={() => { setReaderMoreOpen(false); onReprocess!(sel.id); }} />
-                      )}
-                      {showEvidence && (
-                        <ReaderMoreItem icon={<Workflow size={13} />} label="证据板"
-                          onClick={() => { setReaderMoreOpen(false); setEvidenceGraphOpen(true); }} />
-                      )}
-                      {showVersions && (
-                        <ReaderMoreItem icon={<History size={13} />} label="历史版本"
-                          onClick={() => { setReaderMoreOpen(false); setVersionHistoryOpen(true); }} />
-                      )}
-                      {showSubscription && (
-                        <ReaderMoreItem icon={<Rss size={13} />}
-                          label={githubSha ? `订阅信息 · #${githubSha.slice(0, 7)}` : '订阅信息'}
-                          onClick={() => { setReaderMoreOpen(false); onOpenSubscription!(sel.id); }} />
-                      )}
-                    </AnchoredMenu>
-                  </div>
-                );
-              })()}
-              {/* 批次 D：划词评论开关按钮 */}
-              {trackedEntryForComments && (
+              {/* 批次 D：划词评论开关按钮（移动端折进「更多」菜单，不占工具栏位） */}
+              {trackedEntryForComments && !isMobile && (
                 <button
                   onClick={() => setInlineCommentsOpen(true)}
                   // 图标化：无评论时纯图标方钮；有评论时图标 + 数字（数字是关键信息，不能丢）
@@ -3486,7 +3857,7 @@ export function DocBrowser({
                   style={{
                     background: 'rgba(168,85,247,0.08)',
                     border: '1px solid rgba(168,85,247,0.18)',
-                    color: 'rgba(216,180,254,0.95)',
+                    color: 'var(--accent-fg-violet)',
                   }}
                   title={commentCount > 0 ? `已有 ${commentCount} 条评论 — 点击查看 / 添加` : '划词评论 — 选中文本后浮起「添加评论」'}
                 >
@@ -3508,12 +3879,18 @@ export function DocBrowser({
                   <PanelRight size={12} /> {rightPanelCollapsed ? '章节' : '收起'}
                 </button>
               )}
-              {/* 全屏阅读（CSS 全屏覆盖层，ESC 退出） */}
-              {selectedEntryId && !isMobile && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+              {/* 非沉浸移动端：字号控件仍在工具栏行 */}
+              {isMobile && !immersiveActive && zoomControlsNode}
+              {/* 全屏阅读（CSS 全屏覆盖层，ESC / 再点一次退出）。沉浸态移动端入口在沉浸顶栏。 */}
+              {selectedEntryId && (!isMobile || !immersiveActive) && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
                 <button
                   onClick={toggleReaderFullscreen}
-                  className={TOOLBAR_ICON_BTN}
-                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                  className={isMobile ? TOOLBAR_ICON_BTN_MOBILE : TOOLBAR_ICON_BTN}
+                  style={{
+                    background: readerFullscreen ? 'var(--selection-bg)' : 'var(--bg-card)',
+                    border: `1px solid ${readerFullscreen ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
+                    color: readerFullscreen ? 'var(--selection-text)' : 'var(--text-muted)',
+                  }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
                   {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                 </button>
@@ -3533,7 +3910,7 @@ export function DocBrowser({
                           <button
                             onClick={() => setMdEditRich((v) => !v)}
                             className={TOOLBAR_BTN}
-                            style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'rgba(216,180,254,0.95)' }}
+                            style={{ background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.18)', color: 'var(--accent-fg-violet)' }}
                             title={mdEditRich ? '切换到源码模式（支持 [[ 引用自动补全）' : '切换到富文本（所见即所得）'}>
                             {mdEditRich ? '源码' : '富文本'}
                           </button>
@@ -3551,7 +3928,7 @@ export function DocBrowser({
                           }}
                           disabled={saving}
                           className={TOOLBAR_BTN}
-                          style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
+                          style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'var(--accent-fg-success)' }}>
                           {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={12} />}
                           保存
                         </button>
@@ -3562,7 +3939,7 @@ export function DocBrowser({
                           <X size={12} /> 取消
                         </button>
                       </>
-                    ) : (
+                    ) : !isMobile ? (
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
                         className={TOOLBAR_ICON_BTN}
@@ -3570,11 +3947,40 @@ export function DocBrowser({
                         title="编辑文档">
                         <Pencil size={13} />
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 );
               })()}
+              {/* 「更多」置尾（沉浸态移动端渲染在沉浸顶栏，共享同一节点） */}
+              {(!isMobile || !immersiveActive) && readerMoreNode}
             </div>
+            )}
+            </>
+            )}
+            {/* 全屏沉浸态：半透明浮动退出钮（fixed 挂在 portal 树内，z 高于全屏覆盖层） */}
+            {readerFullscreen && !editMode && (
+              <button
+                type="button"
+                onClick={toggleReaderFullscreen}
+                aria-label="退出全屏"
+                title="退出全屏（ESC）"
+                className="fixed inline-flex items-center justify-center rounded-full cursor-pointer transition-opacity active:opacity-70"
+                style={{
+                  top: 'calc(env(safe-area-inset-top, 0px) + 10px)',
+                  right: 12,
+                  zIndex: 130,
+                  width: 38,
+                  height: 38,
+                  background: 'color-mix(in srgb, var(--bg-elevated) 68%, transparent)',
+                  backdropFilter: 'blur(10px)',
+                  WebkitBackdropFilter: 'blur(10px)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <Minimize2 size={16} />
+              </button>
+            )}
             {/* 内容区 + 右侧本页章节导航（F1）。 */}
             <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0, background: 'var(--bg-card)' }}>
               {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
@@ -3608,7 +4014,14 @@ export function DocBrowser({
               })()}
               <div
                 ref={contentAreaRef}
-                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
+                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`
+                  // 就地 diff 的着色挂在容器类上：正文里的 <ins>/<del> 会被 sanitize 剥掉 class，
+                  // 只能由容器按标签选择（styles/doc-diff.css）。
+                  // 流式期间额外挂 --streaming：原文只是「正在被替换」，还没被删掉，
+                  // 此时全篇红删除线会让人以为内容已经没了（2026-08-25 用户对着截图说「什么雷霆布局」）。
+                  // 那一档按 ChatGPT canvas 的做法：原文整体压灰，新内容照常蓝色长出来。
+                  + (rewriteDiff ? ' doc-inline-diff' : '')
+                  + (rewrite?.phase === 'streaming' ? ' doc-inline-diff--streaming' : '')}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
                 {/* 生成产物（转录笔记/字幕/再加工）→ 来源文件快速跳转：
@@ -3624,9 +4037,10 @@ export function DocBrowser({
                       onClick={() => handleSelectEntry(srcId)}
                       className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover-bg-soft"
                       style={{
-                        background: 'rgba(168,85,247,0.08)',
-                        border: '1px solid rgba(168,85,247,0.22)',
-                        color: 'rgba(216,180,254,0.95)',
+                        // 无紫色（设计稿硬约束）：来源文件与录音结果同屏，配色必须一致
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-faint)',
+                        color: 'var(--text-secondary)',
                       }}
                       title="打开来源文件">
                       {isAudioSrc ? <AudioLines size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
@@ -3640,10 +4054,63 @@ export function DocBrowser({
                     未转录时给「开始转录」主按钮，已转录时给「查看转录笔记」直达 */}
                 {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
                   && (onTranscribe || selectedEntryData.metadata?.transcribe_entry_id) && (
-                  <TranscribeHeroCard
+                  <TranscribeStatusCard
                     currentEntryId={selectedEntryData.id}
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
+                    activeRun={transcribeRun}
+                    lastFailure={transcribeFailure}
+                    audioTitle={selectedEntryData.title}
+                    audioSizeLabel={formatFileSizeLabel(selectedEntryData.fileSize)}
+                    /* 录制日期（稿面 cap-A4/A5 编在音频卡标题里）：条目自己的创建时刻，不另造 */
+                    audioDateLabel={selectedEntryData.createdAt
+                      ? new Date(selectedEntryData.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
+                      : null}
+                    transcriptPreview={transcribeRun?.transcriptPreview}
+                    generatedSentences={transcribeRun?.transcriptSentenceCount}
+                    /*
+                      转录跑完那条绿卡（稿面 v2-S3 / cap-S5）的口径全部数自这份原文本身：
+                      句数、说话人数、有没有纪要与待办。数不出来（还没加载到原文）就传 null，
+                      卡片不出现——不摆一个「132 句」的示例数。
+                    */
+                    completion={transcriptNoteMd ? describeTranscriptOutcome(transcriptNoteMd) : null}
+                    onOpenServiceStatus={() => navigate('/notifications')}
+                    /*
+                      正在重新整理时点名到具体那一种（稿面 cap-S6）。名字来自笔记条目上
+                      记着的整理方式，不在这里另抄一份清单——清单是后端注册表。
+                    */
+                    organizeStyleLabel={transcribeStyleNames[
+                      String(selectedEntryData.metadata?.transcribe_style_key ?? '')
+                    ] ?? null}
+                    // 「重新录制」走的就是这个库的录音入口，不另开一条路径
+                    onReRecord={onQuickRecord ?? onUploadAudio}
+                    // 「下载音频」用的是这条音频真实的下载地址；没加载到就不给按钮
+                    onDownloadAudio={preview?.fileUrl ? () => {
+                      const link = document.createElement('a');
+                      link.href = preview.fileUrl!;
+                      link.download = selectedEntryData.title || '录音';
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    } : undefined}
+                    /*
+                      「复制原文」（稿面 cap-S8）：整理挂了但原文好好的，先把原文拿走自己整理。
+                      拿不到原文就不给这颗按钮——不给一个点了什么都不发生的出口。
+                    */
+                    onCopyTranscript={transcriptNoteMd
+                      ? () => {
+                        void navigator.clipboard?.writeText(transcriptNoteMd).then(
+                          () => toast.success('原文已复制'),
+                          () => toast.error('复制失败，请手动选中原文复制'),
+                        );
+                      }
+                      : undefined}
+                    // 「联系支持」（稿面 cap-S10）落到缺陷智能体：那是这套系统里真实的报障入口
+                    onContactSupport={() => navigate('/defect-agent')}
+                    onEnterResult={onOpenRecordingResult
+                      ? () => onOpenRecordingResult(selectedEntryData.id)
+                      : undefined}
+                    onPlayRequest={requestRecordingPlay}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}
                     onRestyle={onRestyleTranscribe ? () => onRestyleTranscribe(selectedEntryData.id) : undefined}
@@ -3716,7 +4183,13 @@ export function DocBrowser({
                       || selectedEntryData?.contentType === 'application/x-github-directory') ? (
                   <FilePreview
                     entry={selectedEntryData}
-                    preview={preview}
+                    // 逐句修改会话期间渲染的是「带标记的改动版」正文（未落库，撤销即还原）
+                    preview={previewForRender}
+                    // 移动端内容区 px-4（16px）：HTML 报告纸面用负 margin 抵消它满铺卡片宽
+                    htmlBleedX={16}
+                    // 字号档位只在移动端生效：桌面无调节控件，若把移动端的档位带过去
+                    // 会放大后无处重置（Codex P2）——桌面恒传 1
+                    htmlZoom={isMobile ? htmlZoom : 1}
                     transcriptNoteMd={transcriptNoteMd}
                     onSaveTranscriptNote={audioNoteId && onSaveContent ? async (nextNoteMd) => {
                       const saved = audioNoteId === selectedEntryData?.id
@@ -3725,6 +4198,12 @@ export function DocBrowser({
                       if (saved) setTranscriptNoteMd(nextNoteMd);
                       return saved;
                     } : undefined}
+                    onAskRecording={selectedEntryData && onAskRecording
+                      ? () => onAskRecording(selectedEntryData.id)
+                      : undefined}
+                    onRestyleTranscript={onRestyleTranscribe && selectedEntryData
+                      ? () => onRestyleTranscribe(selectedEntryData.id)
+                      : undefined}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
@@ -3740,7 +4219,7 @@ export function DocBrowser({
                 )}
                 {/* 划词选中时的浮层动作条——评论按钮仅有评论权限时出现（只读访客不弹，
                     避免写了提交才 403，Codex P2）；AI 改写/配图按钮仅可写 + 文本类条目时出现 */}
-                {liveSelection && !composer && !aiPopover && !imagePopover && !editMode
+                {liveSelection && !composer && !aiPopover && !imagePopover && !rewrite && !editMode
                   && (commentsCanCreate || selectionAiAvailable) && (
                   <SelectionActionPopover
                     selection={liveSelection}
@@ -3756,7 +4235,28 @@ export function DocBrowser({
                     onAiRewrite={selectionAiAvailable ? () => {
                       const snap = captureSelectionSnapshot();
                       if (!snap) return;
-                      setAiPopover(snap);
+                      // 能安全整段替换 → 走「逐句修改」：改动就地长在正文里，采纳前不落库。
+                      // 定位不了 / 选区卡在链接标记内部 → 退回老浮层（那里还能插入到原文后 / 复制），
+                      // 不硬把 diff 画到一个指认不了的位置（selectionEdit.ts 的一贯口径）。
+                      const body = selectionRawContent ?? '';
+                      const range = resolveSelectionRange(body, snap.sel);
+                      if (range && isReplaceSafe(body, range)) {
+                        setRewrite({
+                          entryId: snap.entryId,
+                          sel: snap.sel,
+                          range,
+                          original: body.slice(range.start, range.end),
+                          rect: snap.rect,
+                          rects: snap.rects,
+                          phase: 'prompt',
+                          actionKey: '',
+                          text: '',
+                          startedAt: Date.now(),
+                          applying: false,
+                        });
+                      } else {
+                        setAiPopover(snap);
+                      }
                       clearLiveSelection();
                     } : undefined}
                     onAiImage={selectionAiAvailable ? () => {
@@ -3767,9 +4267,50 @@ export function DocBrowser({
                     } : undefined}
                   />
                 )}
+                {/* 逐句修改：划词后原地问「想怎么改」（正文此时还没动） */}
+                {rewrite && rewrite.phase === 'prompt' && !editMode && (
+                  <>
+                    <PendingSelectionHighlight rects={rewrite.rects} scrollRef={contentAreaRef} />
+                    <SelectionRewritePrompt
+                      anchorRect={rewrite.rect}
+                      scrollRef={contentAreaRef}
+                      selectedText={rewrite.sel.selectedText}
+                      onSubmit={runRewrite}
+                      onClose={discardRewrite}
+                    />
+                  </>
+                )}
+                {/* 逐句修改：改动已就地长在正文里 → 只剩操作条（撤销 / 采纳）。
+                    这里不再画选区高亮：正文里的 del/ins 着色本身就是「选了哪段、改了什么」 */}
+                {rewrite && rewrite.phase !== 'prompt' && (rewriteDiff || rewrite.applying) && !editMode && (
+                  <InlineDiffReviewBar
+                    scrollRef={contentAreaRef}
+                    phase={rewrite.phase}
+                    model={rewrite.model}
+                    added={(rewriteDiff ?? lastDiffStatsRef.current).added}
+                    removed={(rewriteDiff ?? lastDiffStatsRef.current).removed}
+                    codeChangeUnmarked={(rewriteDiff ?? lastDiffStatsRef.current).codeChangeUnmarked}
+                    startedAt={rewrite.startedAt}
+                    errorMsg={rewrite.errorMsg}
+                    applying={rewrite.applying}
+                    onAccept={acceptRewrite}
+                    onDiscard={discardRewrite}
+                    onRetry={() => setRewrite((s) => (s ? { ...s, phase: 'prompt', text: '', errorMsg: undefined } : s))}
+                    onStop={() => {
+                      cancelRewriteStream();
+                      const text = stripOuterFence(rewriteTextRef.current).trim();
+                      setRewrite((s) => (s
+                        ? text
+                          ? { ...s, phase: 'review', text }
+                          : { ...s, phase: 'prompt', text: '' }
+                        : s));
+                    }}
+                  />
+                )}
                 {/* 行内评论高亮 + 气泡：把他人评论锚回正文，边读边可见。始终内联呈现；
-                    点击气泡走 onActivate 打开右侧批注栏（mode="margin" → 不就地展开卡片） */}
-                {!editMode && !contentLoading && tocContent && inlineCommentItems.length > 0 && (
+                    点击气泡走 onActivate 打开右侧批注栏（mode="margin" → 不就地展开卡片）。
+                    就地 diff 期间不挂：正文文本已临时改变，按原文搜索的锚点会画到错位置 */}
+                {!editMode && !contentLoading && !rewriteDiff && tocContent && inlineCommentItems.length > 0 && (
                   <InlineCommentOverlay
                     containerRef={contentAreaRef}
                     comments={inlineCommentItems}
@@ -3953,6 +4494,7 @@ export function DocBrowser({
         <CreatePaletteFab
           onDoubleActivation={onQuickRecord ?? onUploadAudio}
           actions={[
+            ...(onCreateWriting ? [{ key: 'writing', label: '按模版成文', icon: FilePlus, onClick: onCreateWriting }] : []),
             ...(onCreateDocument ? [{ key: 'doc', label: '写文章', icon: FilePlus, onClick: onCreateDocument }] : []),
             ...(onUploadAudio ? [{ key: 'audio', label: '录音转笔记', icon: AudioLines, onClick: onUploadAudio, hue: 'rgba(34,197,94,0.92)' }] : []),
             ...((onUploadFile || onOpenVideoParser || onImportFromHosting) ? [{
@@ -3995,9 +4537,9 @@ export function DocBrowser({
                   : '解析正文、附件文件';
             const confirmed = await systemDialog.confirm({
               title: `确认删除${isFolder ? '文件夹' : '文档'}`,
-              message: `删除「${target.title}」将永久清除：\n  · ${consequence}\n\n此操作不可恢复。`,
+              message: `将「${target.title}」移入回收站：\n  · ${consequence}\n\n30 天内可在知识库回收站恢复。`,
               tone: 'danger',
-              confirmText: '永久删除',
+              confirmText: '移入回收站',
               cancelText: '取消',
             });
             if (confirmed) onDeleteEntry(entryId);
@@ -4106,75 +4648,47 @@ function PendingSelectionHighlight({
   rects: Array<{ top: number; left: number; width: number; height: number }>;
   scrollRef?: React.RefObject<HTMLElement>;
 }) {
-  const [scrollDy, setScrollDy] = useState(0);
-  // 滚动容器在视口里的 bounding rect —— 用来把高亮裁剪在正文区域内，
-  // 避免选区滚出正文后还在 toolbar/sidebar 上面继续画（Codex P2）。
-  const [clip, setClip] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => {
-      setScrollDy(read() - start);
-      const el = scrollRef?.current;
-      if (el) {
-        const r = el.getBoundingClientRect();
-        setClip({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
-      } else {
-        setClip(null);
-      }
-    };
-    onScroll(); // 初始化一次拿到当前裁剪框
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
+  const layerRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动**直写 DOM**，不走 state：这是整条链上面积最大的浮层，
+  // 原来每个 scroll 事件都 setState 两次（clip 每次还是新对象，必定重渲染），
+  // 而且走 state 意味着高亮永远慢正文一帧——正是「浮动窗卡卡的」里最重的一份。
+  useScrollFollowTransform(layerRef, scrollRef);
+  // 滚动容器在视口里的位置：拿它当裁剪框，避免选区滚出正文后还在 toolbar/sidebar 上继续画。
+  // 它只在侧栏收放 / 窗口缩放时才变，走 state 完全够用。
+  const clip = usePaneRect(scrollRef);
   if (rects.length === 0) return null;
   return createPortal(
-    <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
-      {rects.map((r, i) => {
-        // 视口坐标：rect 原始 top - 累计滚动位移
-        const top = r.top - scrollDy;
-        const left = r.left;
-        const right = left + r.width;
-        const bottom = top + r.height;
-        // 完全滚出滚动容器 → 不渲染（节流 DOM）；部分相交 → 用 clipPath 裁掉容器外的部分
-        if (clip) {
-          if (bottom <= clip.top || top >= clip.bottom || right <= clip.left || left >= clip.right) {
-            return null;
-          }
-        }
-        // 用 inset(top right bottom left) clip-path 把超出 clip 的部分切掉；
-        // 数值相对于元素自身左上角（top/right/bottom/left = 各边收进多少 px）
-        let clipPath: string | undefined;
-        if (clip) {
-          const cTop = Math.max(0, clip.top - top);
-          const cLeft = Math.max(0, clip.left - left);
-          const cRight = Math.max(0, right - clip.right);
-          const cBottom = Math.max(0, bottom - clip.bottom);
-          if (cTop || cLeft || cRight || cBottom) {
-            clipPath = `inset(${cTop}px ${cRight}px ${cBottom}px ${cLeft}px)`;
-          }
-        }
-        return (
+    // 外层钉在正文区上并裁剪：用 overflow:hidden 代替逐块算 clipPath——
+    // 同样的效果，少一坨每帧都要重算的数学。
+    <div
+      aria-hidden
+      style={{
+        position: 'fixed',
+        top: clip?.top ?? 0,
+        left: clip?.left ?? 0,
+        width: clip ? clip.width : '100vw',
+        height: clip ? clip.height : '100vh',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        zIndex: 115,
+      }}
+    >
+      <div ref={layerRef} style={{ position: 'absolute', inset: 0 }}>
+        {rects.map((r, i) => (
           <div
             key={i}
             style={{
               position: 'absolute',
-              top,
-              left,
+              top: r.top - (clip?.top ?? 0),
+              left: r.left - (clip?.left ?? 0),
               width: r.width,
               height: r.height,
-              background: 'rgba(168,85,247,0.28)',
-              borderBottom: '2px solid rgba(168,85,247,0.85)',
+              ...SELECTION_OVERLAY_HIGHLIGHT,
               borderRadius: 2,
-              clipPath,
             }}
           />
-        );
-      })}
+        ))}
+      </div>
     </div>,
     document.body,
   );
@@ -4209,15 +4723,8 @@ function SelectionActionPopover({
   const left = Math.max(8, Math.min(window.innerWidth - estWidth - 8, selection.rect.left + selection.rect.width / 2 - estWidth / 2));
   return (
     <div
-      className="fixed z-40 h-8 px-1.5 rounded-[10px] flex items-center transition-all"
-      style={{
-        top,
-        left,
-        background: 'rgba(20,20,30,0.92)',
-        border: '1px solid rgba(168,85,247,0.4)',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-        backdropFilter: 'blur(12px)',
-      }}
+      className="fixed z-40 h-8 px-1.5 flex items-center transition-all"
+      style={{ top, left, ...SELECTION_OVERLAY_BAR }}
       onMouseDown={(e) => e.preventDefault()}
     >
       {actions.map((a, i) => (
@@ -4226,7 +4733,7 @@ function SelectionActionPopover({
           <button
             onClick={a.onClick}
             className="h-6.5 px-2 rounded-[8px] flex items-center gap-1.5 cursor-pointer hover-bg-soft transition-colors"
-            style={{ color: 'rgba(216,180,254,0.95)' }}
+            style={{ color: SELECTION_OVERLAY_LABEL }}
           >
             {a.icon}
             <span className="text-[11px] font-semibold whitespace-nowrap">{a.label}</span>

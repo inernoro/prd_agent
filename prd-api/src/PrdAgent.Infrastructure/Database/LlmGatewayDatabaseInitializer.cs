@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -85,9 +86,9 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_model_exchanges",
             "llmgw_service_keys",
             "llmgw_service_key_rate_windows",
+            "llmgw_runtime_grants",
             "llmgw_prompt_policies",
             "llmrequestlogs",
-            "llmshadow_comparisons",
             "llmgw_operation_audits",
             "llmgw_login_audits",
             "llmgw_lifecycle_runs",
@@ -127,7 +128,16 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
     {
         var indexes = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
         if (indexes.Any(x => x.GetValue("name", "").AsString == indexName))
-            await collection.Indexes.DropOneAsync(indexName, ct);
+        {
+            try
+            {
+                await collection.Indexes.DropOneAsync(indexName, ct);
+            }
+            catch (MongoCommandException ex) when (ex.Code == 27)
+            {
+                // 多个 serving 实例可能同时完成同一迁移；同伴已删除即视为成功。
+            }
+        }
     }
 
     private async Task BackfillServiceKeyDirectoryAsync(CancellationToken ct)
@@ -184,26 +194,6 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                     .Ascending("Provider")
                     .Ascending("ProviderRequestId"),
                 new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_request" }),
-        }, cancellationToken: ct);
-
-        var shadows = _data.Database.GetCollection<BsonDocument>("llmshadow_comparisons");
-        await shadows.Indexes.CreateManyAsync(new[]
-        {
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys
-                    .Ascending("TenantId")
-                    .Ascending("ReleaseCommit")
-                    .Ascending("AppCallerCode")
-                    .Ascending("Kind")
-                    .Descending("ComparedAt"),
-                new CreateIndexOptions { Name = "idx_llmgw_shadow_tenant_release_caller_kind_time" }),
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys
-                    .Ascending("TenantId")
-                    .Ascending("HasCritical")
-                    .Ascending("HttpOk")
-                    .Descending("ComparedAt"),
-                new CreateIndexOptions { Name = "idx_llmgw_shadow_tenant_failure_time" }),
         }, cancellationToken: ct);
 
         await CreateBsonIndexesAsync("llmgw_operation_audits", new[]
@@ -286,11 +276,9 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelType").Ascending("Enabled").Ascending("DisplayOrder"),
                 new CreateIndexOptions { Name = "idx_llmgw_logical_model_tenant_type_enabled_order" }),
         }, ct);
+        await EnsureOfferingIdentityIndexAsync(ct);
         await CreateBsonIndexesAsync("llmgw_model_offerings", new[]
         {
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("LogicalModelId").Ascending("TargetKind").Ascending("TargetId"),
-                new CreateIndexOptions { Name = "uniq_llmgw_offering_tenant_logical_target", Unique = true }),
             new CreateIndexModel<BsonDocument>(
                 Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("LogicalModelId").Ascending("Enabled").Ascending("HealthStatus").Ascending("Priority"),
                 new CreateIndexOptions { Name = "idx_llmgw_offering_tenant_logical_route" }),
@@ -399,9 +387,8 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                     .Ascending(x => x.RequestId)
                     .Ascending(x => x.Operation),
                 new CreateIndexOptions { Name = "uniq_llmgw_execution_tenant_request", Unique = true }),
-            new CreateIndexModel<GatewayRequestExecutionRecord>(
-                Builders<GatewayRequestExecutionRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
-                new CreateIndexOptions { Name = "ttl_llmgw_request_executions", ExpireAfter = TimeSpan.Zero }),
+            // Execution records contain complete request bodies. They are preserved
+            // by verified offsite archiving, never by an unconditional TTL index.
         }, cancellationToken: ct);
         await DropIndexIfPresentAsync(executions, "uniq_llmgw_execution_request", ct);
 
@@ -499,6 +486,117 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         _logger.LogInformation("[LlmGatewayData] 非破坏性治理索引已就绪；TTL 索引由 lifecycle worker 在持久化 dry-run 后启用");
     }
 
+    private async Task EnsureOfferingIdentityIndexAsync(CancellationToken ct)
+    {
+        /*
+          线路的身份里必须带上「打给上游的是哪一个模型」。
+
+          一个兑换所底下挂着多个别名，同一个对外模型完全可能同时指向其中好几个
+          （UpstreamModelId 决定真正调的是哪一个），它们是**不同的**线路。身份只到
+          TargetId 为止的话，第二条别名插入时撞 E11000——搬迁半途而废，而且重跑还是同样的结果，
+          那条线路就永久丢了（形状 1：判据比它该管的范围窄，「同一个目标的不同别名」这种
+          输入让它给出相反答案）。
+
+          往唯一索引里**加**一个字段只会让约束更松，不会让现存数据冲突，所以升级不需要预清理。
+        */
+        const string legacyIndexName = "uniq_llmgw_offering_tenant_logical_target";
+        const string legacyVersionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
+        const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v3";
+        string[] expectedKeys =
+        [
+            "TenantId",
+            "LogicalModelId",
+            "TargetKind",
+            "TargetId",
+            "UpstreamModelId",
+            "SupersededByOfferingId",
+        ];
+        var collection = _data.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
+        var indexes = await (await collection.Indexes.ListAsync(ct)).ToListAsync(ct);
+        var versionAware = indexes.FirstOrDefault(
+            x => x.GetValue("name", "").AsString == versionAwareIndexName);
+        if (versionAware is not null && !IsEquivalentOfferingIdentityIndex(versionAware, expectedKeys))
+        {
+            throw new InvalidOperationException(
+                $"OFFERING_IDENTITY_INDEX_MISMATCH: {versionAwareIndexName}");
+        }
+
+        // MongoDB 不允许同一 key/options 仅以不同名称重复建索引。旧版本可能已经用旧名
+        // 完成了五字段升级；名称不影响唯一约束，此时直接复用，既避免启动失败，也避免
+        // 为改名制造无唯一索引窗口。只有不存在任何等价索引时才迁移旧四字段索引。
+        var equivalent = indexes.FirstOrDefault(
+            index => IsEquivalentOfferingIdentityIndex(index, expectedKeys));
+        if (equivalent is not null)
+        {
+            _logger.LogInformation(
+                "[LlmGatewayData] Offering 版本感知唯一索引已就绪 index={Index}",
+                equivalent.GetValue("name", "").AsString);
+            return;
+        }
+
+        /*
+          有旧版身份索引在跑时，**启动时不动它**。
+
+          丢掉一条正在生效的唯一索引再同步重建，在大集合上可能阻塞写入、甚至让进程起不来；
+          而两次操作之间但凡失败一次，线路身份就完全失去保护。`no-auto-index` 规则明确禁止
+          在启动逻辑里做这种事，理由正是这个。
+          所以这里只做两件事：全新库（一条等价索引都没有）直接建对的那条；已有旧版的
+          如实报出来并给出该跑的那条命令，交给 DBA 在低峰期做（见
+          doc/guide.platform.mongodb-indexes.md）。在那之前旧索引继续生效——
+          它比新的更严，后果是「同一个兑换所的第二条别名建不出来」，会如实报错而不是静默走偏。
+        */
+        var legacy = indexes.FirstOrDefault(x =>
+            x.GetValue("name", "").AsString == legacyIndexName
+            || x.GetValue("name", "").AsString == legacyVersionAwareIndexName);
+        if (legacy is not null)
+        {
+            _logger.LogWarning(
+                "[LlmGatewayData] 线路身份唯一索引还是旧版 {Index}，它不认 UpstreamModelId："
+                + "同一个兑换所下的第二条别名会撞 E11000（搬迁会在那里半途停下并报错）。"
+                + "这一步不在启动时做——丢一条正在生效的唯一索引再重建会阻塞写入。"
+                + "请 DBA 在低峰期执行：db.llmgw_model_offerings.dropIndex(\"{Index}\") 然后按 "
+                + "doc/guide.platform.mongodb-indexes.md 里 {Expected} 那一条建新索引",
+                legacy.GetValue("name", "").AsString,
+                legacy.GetValue("name", "").AsString,
+                versionAwareIndexName);
+            return;
+        }
+
+        /*
+          一条等价索引都没有（全新库，或索引被人删了）。这里同样**只报不建**。
+
+          上一版在这条分支上建了索引，理由是「全新库没有存量、建它不阻塞」。那个理由站不住：
+          no-auto-index 禁的不是「危险的那几次建索引」，是「启动路径上建索引」这件事本身——
+          判据要是留着「什么时候算安全」的口子，下一个人照着这条分支再加一条就又是合规的，
+          而它真正的代价（副本集里滚动启动各建各的、建失败让进程起不来、以及最要命的
+          「库其实不新、只是索引被误删了」）恰好都出现在被判成安全的那一侧。
+          所以这里不再区分新库旧库：缺就如实报出来，附上该跑的命令，交给 DBA。
+
+          没有这条索引期间线路身份没有唯一约束，两次并发创建可能各插一条同身份线路。
+          创建端点会在撞键时翻成 409（见 console-api 的线路创建），没有索引时撞不上键，
+          于是退化成「后写的那条赢」——不丢数据，但需要人去看一眼，故报 Warning 不是 Information。
+        */
+        _logger.LogWarning(
+            "[LlmGatewayData] 线路身份唯一索引 {Expected} 不存在，线路身份当前没有唯一约束："
+            + "两次并发创建同身份线路都会插进去。启动不建索引（no-auto-index），"
+            + "请 DBA 按 doc/guide.platform.mongodb-indexes.md 里 {Expected} 那一条建索引",
+            versionAwareIndexName,
+            versionAwareIndexName);
+    }
+
+    private static bool IsEquivalentOfferingIdentityIndex(
+        BsonDocument index,
+        IReadOnlyList<string> expectedKeys)
+    {
+        var key = index.GetValue("key", new BsonDocument()).AsBsonDocument;
+        var unique = index.GetValue("unique", false);
+        return unique.IsBoolean
+            && unique.AsBoolean
+            && key.ElementCount == expectedKeys.Count
+            && key.Elements.Select(element => element.Name).SequenceEqual(expectedKeys)
+            && key.Elements.All(element => element.Value.IsNumeric && element.Value.ToInt32() == 1);
+    }
+
     public async Task EnsureRetentionTtlIndexesAsync(CancellationToken ct)
     {
         if (!_configuration.GetValue("LlmGateway:Retention:EnableTtlIndexes", false))
@@ -507,14 +605,12 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             return;
         }
         var logDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:RequestLogDays", 90));
-        var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
         var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:AuditDays", 180));
         await EnsureTtlIndexAsync("llmrequestlogs", "StartedAt", "ttl_llmgw_logs_started", TimeSpan.FromDays(logDays), ct);
-        await EnsureTtlIndexAsync("llmshadow_comparisons", "ComparedAt", "ttl_llmgw_shadow_compared", TimeSpan.FromDays(shadowDays), ct);
         await EnsureTtlIndexAsync("llmgw_operation_audits", "CreatedAt", "ttl_llmgw_operation_audits", TimeSpan.FromDays(auditDays), ct);
         await EnsureTtlIndexAsync("llmgw_login_audits", "CreatedAt", "ttl_llmgw_login_audits", TimeSpan.FromDays(auditDays), ct);
         await EnsureTtlIndexAsync("llmgw_lifecycle_runs", "StartedAt", "ttl_llmgw_lifecycle_runs", TimeSpan.FromDays(auditDays), ct);
-        _logger.LogWarning("[LlmGatewayData] TTL 删除索引已启用 logs={LogDays}d shadow={ShadowDays}d audit={AuditDays}d", logDays, shadowDays, auditDays);
+        _logger.LogWarning("[LlmGatewayData] TTL 删除索引已启用 logs={LogDays}d audit={AuditDays}d", logDays, auditDays);
     }
 
     private async Task EnsureTtlIndexAsync(

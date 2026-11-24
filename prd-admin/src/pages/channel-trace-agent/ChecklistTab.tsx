@@ -170,7 +170,7 @@ export function ChecklistTab() {
                   <div className="text-base font-medium text-token-primary">{selected.title}</div>
                   <div className="text-xs text-token-muted mt-1 flex flex-wrap items-center gap-1.5">
                     {selected.scene && (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300/80">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]">
                         {selected.scene}
                       </span>
                     )}
@@ -487,7 +487,7 @@ function ChecklistEditorModal({
           <button
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-500/15 text-[color:var(--accent-fg-success)] border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40"
           >
             {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             保存

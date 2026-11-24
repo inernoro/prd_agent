@@ -199,7 +199,7 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
 
   const dialog = (
     <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center"
+      className="surface-tone-dark fixed inset-0 z-[10000] flex items-center justify-center"
       style={{
         background: 'rgba(3,3,6,0.78)',
         backdropFilter: 'blur(12px)',

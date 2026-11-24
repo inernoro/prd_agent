@@ -215,7 +215,7 @@ export function RequirementRtfImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="w-full max-w-4xl rounded-xl border border-token-subtle bg-[#111319] shadow-2xl flex flex-col"
+        className="surface-tone-dark w-full max-w-4xl rounded-xl border border-token-subtle bg-[#111319] shadow-2xl flex flex-col"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
         <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-token-subtle">
@@ -252,7 +252,7 @@ export function RequirementRtfImportDialog({
                       </div>
                       {item.requirements.map((reqItem) => (
                         <div key={`${reqItem.requirement.externalId}-${reqItem.indexInFile}`} className="flex items-start gap-3 pl-1">
-                          <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-300 shrink-0">
+                          <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-[color:var(--accent-fg-blue)] shrink-0">
                             <FileText size={17} />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -286,7 +286,7 @@ export function RequirementRtfImportDialog({
             </div>
           )}
           {imageWarnings.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">
               <div className="font-medium text-amber-100 mb-1">部分图片未上传（需求已继续导入）</div>
               <ul className="list-disc pl-4 space-y-0.5 text-amber-100/75">
                 {imageWarnings.map((warning) => (
@@ -308,7 +308,7 @@ export function RequirementRtfImportDialog({
                 <button
                   onClick={() => void runImport()}
                   disabled={parsing || importing || totalRequirementCount === 0}
-                  className="px-4 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/35 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40 flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg bg-cyan-500/20 border border-cyan-500/35 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40 flex items-center gap-1.5"
                 >
                   {importing ? <MapSpinner size={14} /> : <Upload size={14} />}
                   导入 {totalRequirementCount} 条需求

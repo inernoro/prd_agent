@@ -1,0 +1,235 @@
+/**
+ * 首页那句判断的守卫（2026-09-10）。
+ *
+ * 用户看完上一版首页说「我看不懂」——根因是只有计数没有结论。这组断言钉住的就是
+ * conclusion-before-numbers.md 的三条自律：句子必须挂真实数字、严重的先说、
+ * 说不出结论时不许拿空话凑（「整体表现良好」放到任何团队都成立，等于没说）。
+ */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, it, expect } from 'vitest';
+import { buildPipelineHeadline } from '../../web/src/lib/pipelineHeadline.js';
+import type { PipelineOverview, PipelineProjectRow, LeakKind } from '../../web/src/lib/api.js';
+
+function leaks(partial: Partial<Record<LeakKind, number>> = {}): Record<LeakKind, number> {
+  return {
+    'merged-not-accepted': 0, 'merged-while-failing': 0,
+    'deployed-not-accepted': 0, 'report-missing-change-key': 0, ...partial,
+  };
+}
+function row(name: string, extra: Partial<PipelineProjectRow> = {}): PipelineProjectRow {
+  return {
+    projectId: name, projectName: name,
+    funnel: { changes: 0, deployed: 0, accepted: 0, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+    leaks: leaks(), missingKinds: [], staleReports: 0, inFlight: 0,
+    lastActivityAt: null, githubLinked: true, ...extra,
+  };
+}
+function funnel(p: Partial<PipelineOverview['total']> = {}): PipelineOverview['total'] {
+  return { changes: 0, deployed: 0, accepted: 0, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0, ...p };
+}
+function overview(partial: Partial<PipelineOverview> = {}): PipelineOverview {
+  return {
+    generatedAt: '2026-09-10T00:00:00Z', recentDays: null,
+    total: { changes: 0, deployed: 0, accepted: 0, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+    totalLeaks: leaks(), projects: [], staleReports: 0, leaks: [], ...partial,
+  };
+}
+
+describe('buildPipelineHeadline', () => {
+  it('最危险的先说：没验就合并压过部署了没验', () => {
+    const h = buildPipelineHeadline(overview({
+      total: { changes: 9, deployed: 9, accepted: 2, merged: 3, pass: 2, conditional: 0, fail: 0, undetermined: 0 },
+      totalLeaks: leaks({ 'merged-not-accepted': 2, 'deployed-not-accepted': 5 }),
+      leaks: [
+        { kind: 'merged-not-accepted', subject: 'feat/a', projectId: 'p1', reportIds: [] },
+        { kind: 'deployed-not-accepted', subject: 'feat/b', projectId: 'p1', reportIds: [] },
+      ],
+      projects: [row('p1', { leaks: leaks({ 'merged-not-accepted': 2, 'deployed-not-accepted': 5 }) })],
+    }));
+    expect(h.tone).toBe('bad');
+    expect(h.sentence).toBe('2 条改动一次验收都没做，已经进了主干');
+    // 下一步必须指到具体分支，不许写「请关注」
+    expect(h.action).toBe('补验：feat/a');
+  });
+
+  it('判断句必须挂真实数字，不许出现放到任何团队都成立的空话', () => {
+    const cases = [
+      overview({ total: { changes: 5, deployed: 4, accepted: 1, merged: 0, pass: 0, conditional: 1, fail: 0, undetermined: 0 }, totalLeaks: leaks({ 'deployed-not-accepted': 3 }) }),
+      overview({ total: { changes: 3, deployed: 3, accepted: 3, merged: 0, pass: 3, conditional: 0, fail: 0, undetermined: 0 }, projects: [row('p1')] }),
+      overview({ totalLeaks: leaks({ 'merged-while-failing': 1 }) }),
+    ];
+    for (const c of cases) {
+      const h = buildPipelineHeadline(c);
+      expect(h.sentence, h.sentence).toMatch(/\d/);
+      for (const bad of ['整体表现良好', '情况正常', '请关注', '总体可控']) {
+        expect(h.sentence).not.toContain(bad);
+        expect(h.points.join('|')).not.toContain(bad);
+      }
+    }
+  });
+
+  it('全验过就说全验过，不硬造问题', () => {
+    const h = buildPipelineHeadline(overview({
+      total: { changes: 4, deployed: 4, accepted: 4, merged: 0, pass: 4, conditional: 0, fail: 0, undetermined: 0 },
+      projects: [row('p1', { funnel: { changes: 4, deployed: 4, accepted: 4, merged: 0, pass: 4, conditional: 0, fail: 0, undetermined: 0 } })],
+    }));
+    expect(h.tone).toBe('ok');
+    expect(h.sentence).toBe('4 条改动都验过了');
+    expect(h.action).toBeNull();
+  });
+
+  it('一条改动都没有时不编判断', () => {
+    const h = buildPipelineHeadline(overview());
+    expect(h.sentence).toBe('这个窗口里没有改动');
+    expect(h.points).toEqual([]);
+  });
+
+  it('说「没有没验就合并」的前提是查得到；查不到必须同句点明', () => {
+    const linked = buildPipelineHeadline(overview({
+      total: { changes: 2, deployed: 2, accepted: 2, merged: 1, pass: 2, conditional: 0, fail: 0, undetermined: 0 },
+      projects: [row('p1')],
+    }));
+    expect(linked.points).toContain('没有「没验就合并」或「没过还合并」的情况');
+
+    const unlinked = buildPipelineHeadline(overview({
+      total: { changes: 2, deployed: 2, accepted: 2, merged: 0, pass: 2, conditional: 0, fail: 0, undetermined: 0 },
+      projects: [row('p1', { githubLinked: false })],
+    }));
+    // 没接 GitHub 的项目根本查不到合并，绝不能让读者把「没有」读成保证
+    expect(unlinked.points.join('|')).not.toContain('没有「没验就合并」');
+    expect(unlinked.points.join('|')).toContain('查不到');
+  });
+
+  it('只有一个项目时不说「最集中的是它」——那是废话', () => {
+    const one = buildPipelineHeadline(overview({
+      total: { changes: 5, deployed: 4, accepted: 1, merged: 0, pass: 0, conditional: 1, fail: 0, undetermined: 0 },
+      totalLeaks: leaks({ 'deployed-not-accepted': 3 }),
+      projects: [row('演示项目', { leaks: leaks({ 'deployed-not-accepted': 3 }) })],
+    }));
+    expect(one.points.join('|')).not.toContain('最集中');
+
+    const many = buildPipelineHeadline(overview({
+      total: { changes: 9, deployed: 8, accepted: 1, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+      totalLeaks: leaks({ 'deployed-not-accepted': 7 }),
+      projects: [
+        row('甲', { leaks: leaks({ 'deployed-not-accepted': 5 }) }),
+        row('乙', { leaks: leaks({ 'deployed-not-accepted': 2 }) }),
+      ],
+    }));
+    expect(many.points[0]).toBe('最集中的是「甲」，占 5 条');
+  });
+
+  it('结论构成只在有未通过或原则性通过时才说，全通过不占位置', () => {
+    const mixed = buildPipelineHeadline(overview({
+      total: { changes: 6, deployed: 6, accepted: 4, merged: 0, pass: 1, conditional: 2, fail: 1, undetermined: 0 },
+      totalLeaks: leaks({ 'deployed-not-accepted': 2 }),
+      projects: [row('p1', { leaks: leaks({ 'deployed-not-accepted': 2 }) })],
+    }));
+    expect(mixed.points.join('|')).toContain('验过的 4 条里，未通过 1 条、原则性通过 2 条');
+
+    const allPass = buildPipelineHeadline(overview({
+      total: { changes: 6, deployed: 6, accepted: 4, merged: 0, pass: 4, conditional: 0, fail: 0, undetermined: 0 },
+      totalLeaks: leaks({ 'deployed-not-accepted': 2 }),
+      projects: [row('p1', { leaks: leaks({ 'deployed-not-accepted': 2 }) })],
+    }));
+    expect(allPass.points.join('|')).not.toContain('验过的');
+  });
+});
+
+/**
+ * 2026-09-11 补：接线守卫。
+ *
+ * 上面那些断言全绿了整整一天，而这段时间里**没有任何页面引用 buildPipelineHeadline**——
+ * 首页第三次重做时把它删掉了，文件和测试都留在原地，于是首页退回成
+ * 「一堆好看的图形，看不出在讲什么」，用户的原话是「会不会用户一看：这是什么」。
+ *
+ * 这正是 predicate-and-wiring-discipline 形状 2（链路只建一半）＋ 形状 4（测试测不到
+ * 它以为在测的东西）的合体：句子本身对不对，和这句话有没有出现在屏幕上，是两件事。
+ */
+describe('这句判断必须真的出现在页面上', () => {
+  const read = (p: string): string =>
+    readFileSync(resolve(__dirname, '../..', p), 'utf8');
+
+  it('有页面引用它，而且不是测试自己', () => {
+    const roots = ['web/src/pages/reports/PipelinePanel.tsx', 'web/src/pages/ReportsPage.tsx'];
+    const hit = roots.filter((f) => {
+      try {
+        // 必须是真的**调用**：`ReturnType<typeof buildPipelineHeadline>` 这种类型注解
+        // 也含这个名字，只查名字出现过的话，页面把调用删光了守卫照样绿。
+        return /buildPipelineHeadline\s*\(/.test(read(f));
+      } catch {
+        return false;
+      }
+    });
+    expect(hit.length, 'buildPipelineHeadline 没有任何页面引用——它又变成孤儿了').toBeGreaterThan(0);
+  });
+
+  it('引用它的那个页面真的把句子渲染出来了', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    // 光 import 不算：得有组件真的读 sentence 并渲染。
+    // 2026-09-14：紧凑态换成 CompactStrip（数字领衔，没有句子），
+    // 这句判断只在放大态出现，所以要求 >= 1 而不是 >= 2。
+    expect(src).toMatch(/h\.sentence/);
+    expect([...src.matchAll(/<Headline\b/g)].length, '放大态必须有这句判断').toBeGreaterThanOrEqual(1);
+  });
+
+  it('第一眼是紧凑态，细节要点「放大」才铺开', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    expect(src).toMatch(/const \[zoom, setZoom\] = useState\(false\)/);
+    expect(src).toMatch(/zoom \? '收起' : '放大'/);
+    // 紧凑态渲染的是紧凑条（数字领衔），不是缩小的厂房。
+    expect(src).toMatch(/<CompactStrip\b/);
+  });
+
+  it('外壳只是壳，不编码任何数据', () => {
+    // 2026-09-14：厂房剖面删掉后，这条守的对象从 HallShell 换成 Card——
+    // 那个「盛放一屏内容的容器」。意图一字未改：容器一旦开始收 funnel / projects，
+    // 数据就有了第二个渲染出口，两个出口迟早对不上。
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    const sig = src.match(/function Card\(\{[^}]*\}: \{[^}]*\}\)/);
+    expect(sig, '找不到 Card').not.toBeNull();
+    expect(sig![0]).not.toMatch(/funnel|projects|PipelineFunnel|pipeline/);
+  });
+});
+
+describe('严谨页面不写修辞（2026-09-11 用户第三次指出）', () => {
+  // 「合并这一步查不到——是看不见，不是没有」这种破折号对仗、反问、感叹，
+  // 在一个给老板看数的页面上是噪音。用户原话：「你在严谨的页面中插入了一些
+  // 艺术性话语，正常情况下不会干这种事」。破折号与问号叹号是可机检的抓手。
+  const cases: PipelineOverview[] = [
+    overview({ total: funnel({ changes: 71, deployed: 70, accepted: 5, pass: 1, conditional: 1, fail: 3 }), totalLeaks: leaks({ 'deployed-not-accepted': 65 }) }),
+    overview({ total: funnel({ changes: 5, deployed: 5, accepted: 1, conditional: 1 }), projects: [row('p1', { githubLinked: false })] }),
+    overview({ total: funnel({}) }),
+    overview({ total: funnel({ changes: 9, deployed: 9, accepted: 9, pass: 9 }) }),
+    overview({ total: funnel({ changes: 4, deployed: 4, accepted: 1, merged: 3 }), totalLeaks: leaks({ 'merged-not-accepted': 3 }) }),
+  ];
+  it.each(cases.map((c, i) => [i, c] as const))('第 %i 组句子里没有破折号 / 问号 / 叹号', (_i, p) => {
+    const h = buildPipelineHeadline(p);
+    const all = [h.sentence, ...h.points, h.action ?? ''].join(' ');
+    expect(all).not.toMatch(/——/);
+    expect(all).not.toMatch(/[？！?!]/);
+  });
+});
+
+describe('紧凑态：换成紧凑条', () => {
+  const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'), 'utf8');
+
+  it('紧凑态只渲染那一句，支撑点与下一步留给放大态', () => {
+    // Headline 的 !full 分支必须在碰到 points 之前就 return。
+    const body = src.match(/function Headline\(\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(body, '找不到 Headline').not.toBe('');
+    const compact = body.slice(0, body.indexOf('  return ('));
+    expect(compact).toMatch(/if \(!full\)/);
+    expect(compact).not.toMatch(/h\.points/);
+    expect(compact).not.toMatch(/h\.action/);
+  });
+
+  it('紧凑态渲染的是紧凑条，不是缩小的厂房', () => {
+    // 2026-09-14 换稿：把厂房整个缩小那条路走不通——隐喻要占半屏带标签才读得懂，
+    // 缩到几百像素再按「少字」把标签隐去，剩下的只是一堆灰方块。
+    expect(src).toMatch(/<CompactStrip\b/);
+    // 缩放厂房的那套残留不许回来：pp-mini 一旦再出现，说明又走回老路了。
+    expect(src, 'pp-mini 回来了——紧凑态又在缩厂房').not.toMatch(/pp-mini/);
+  });
+});

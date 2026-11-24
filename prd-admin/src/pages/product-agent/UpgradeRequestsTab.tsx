@@ -105,7 +105,7 @@ export function UpgradeRequestsTab({ productId }: { productId: string }) {
       {!creating ? (
         <button
           onClick={() => setCreating(true)}
-          className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+          className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
         >
           <Plus size={15} /> 发起大版本升级申请
         </button>
@@ -134,7 +134,7 @@ export function UpgradeRequestsTab({ productId }: { productId: string }) {
             <button
               onClick={create}
               disabled={!title.trim() || saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
             >
               {saving ? <MapSpinner size={14} /> : <ArrowUpCircle size={14} />} 创建
             </button>
@@ -170,7 +170,7 @@ export function UpgradeRequestsTab({ productId }: { productId: string }) {
                     <button
                       key={n.key}
                       onClick={() => void changeStatus(u, n.key)}
-                      className="px-2 py-0.5 rounded-md text-xs text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10"
+                      className="px-2 py-0.5 rounded-md text-xs text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/10"
                     >
                       {n.label}
                     </button>

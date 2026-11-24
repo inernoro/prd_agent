@@ -189,14 +189,12 @@ must(
   'UsagePage: 账单导入失败必须渲染在导入抽屉内（抽屉 z-index 1100，页面 alert 看不见）',
 );
 
-// 判据是 aria-modal 而不是 createPortal：ModelPoolsPage 的抽屉是普通 fixed 覆盖层，
-// 上一轮用 createPortal 扫就漏了它（判据太窄 = 扫了个假全量）。
-const pools = strip(read('src/pages/ModelPoolsPage.tsx'));
-must(
-  pools.includes('{toast && !drawer ?') && (pools.match(/role="status"/g) || []).length >= 2,
-  'ModelPoolsPage: 抽屉打开时反馈必须渲染在抽屉内（页面级 toast 被 fixed 覆盖层盖住），'
-  + '且同一时刻只保留一个 live region',
-);
+// 这一条原来断言「抽屉打开时 toast 必须渲染在抽屉内」，因为池详情是 fixed 覆盖层，
+// 页面级反馈会被它整块盖住。2026-08-18 改版把详情从 680px 抽屉换成整页分栏之后，
+// 覆盖层没有了，危险源本身消失——所以判据改成更强的一条：**这一页不许再出现模态覆盖层**。
+// 这样既保住原意（反馈不会被盖住），又能在有人把抽屉加回来时立刻变红，而不是悄悄放行。
+// 模型池页面已于 2026-09-15 随断流一起删除，这里原本有 106 行针对它的断言。
+// 池的管理面不再存在；对外模型的线路层面有等价能力（跳过原因逐条标在「调用全貌」里）。
 
 if (failures.length > 0) {
   console.error('教程深链契约守卫未通过：');

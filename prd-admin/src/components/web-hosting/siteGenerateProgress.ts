@@ -1,0 +1,373 @@
+import type { SseEvent } from '@/lib/sse';
+import type { DesignArtifactRunSummary, DesignTimingStats } from '@/services/real/webPages';
+
+export type SiteGenerationProgressEvent =
+  | { kind: 'phase'; phaseCode?: string; message?: string; progress?: number }
+  | { kind: 'model'; model: string; platform: string }
+  | { kind: 'delta'; text: string }
+  /** OpenDesign 写出或更新页面文件时推一次整页正文；revision 单调递增，旧的丢弃。 */
+  | { kind: 'preview'; html: string; revision: number }
+  | { kind: 'done'; siteId: string; siteUrl?: string; destinationApplyError?: string }
+  | { kind: 'cancelled'; message: string }
+  | { kind: 'error'; message: string; code?: string }
+  | { kind: 'unknown' };
+
+export function resolveGeneratedSiteId(run: DesignArtifactRunSummary): string | null {
+  return run.artifactSiteId || run.producedArtifactSiteId || null;
+}
+
+/** 完成态只认同一任务持久化的起止时间，不把重开窗口的零秒或当前时间当作实际耗时。 */
+export function completedRunDurationSeconds(
+  run: Pick<DesignArtifactRunSummary, 'createdAt' | 'completedAt'>,
+): number | null {
+  const start = Date.parse(run.createdAt);
+  const end = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? (end - start) / 1000
+    : null;
+}
+
+export function formatCompletedRunDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '未知';
+  const rounded = Math.round(seconds);
+  const minutes = Math.floor(rounded / 60);
+  return minutes > 0
+    ? `${minutes} 分 ${String(rounded % 60).padStart(2, '0')} 秒`
+    : `${rounded} 秒`;
+}
+
+export function resolvePersistedRunPreview(
+  run: Pick<DesignArtifactRunSummary, 'previewHtml' | 'previewRevision'>,
+): { html: string; revision: number } | null {
+  const html = run.previewHtml?.trim();
+  if (!html) return null;
+  const revision = typeof run.previewRevision === 'number'
+    && Number.isSafeInteger(run.previewRevision)
+    && run.previewRevision >= 0
+    ? run.previewRevision
+    : 0;
+  return { html: run.previewHtml!, revision };
+}
+
+/**
+ * 运行时技术测量只供管理员诊断。普通用户只看到稳定问题类别、线上安全结论和下一步，
+ * 不显示 DOM 摘要、阈值、模型或供应商信息。
+ */
+export function runtimeFailureRecoveryMessage(
+  run: Pick<DesignArtifactRunSummary, 'runtimeFailure' | 'error'>,
+  operation: 'generate' | 'edit',
+): string {
+  const failure = run.runtimeFailure;
+  if (failure?.code === 'design_browser_quality_rejected') {
+    const problems: string[] = [];
+    if (failure.issueCodes.includes('mobile_navigation_unusable')) problems.push('移动端导航还不能可靠操作');
+    if (failure.issueCodes.includes('key_text_contrast_low')) problems.push('关键文字对比度仍不足');
+    const reason = problems.length > 0 ? problems.join('，') : '桌面或移动端仍有可用性问题';
+    const action = operation === 'edit' ? '请保留当前要求并重新发起修改' : '请按原资料和要求重新生成';
+    return `页面没有通过最终浏览器检查：${reason}。已保留最后一版预览，线上页面没有变化；${action}。`;
+  }
+  if (failure?.code === 'design_output_quality_rejected') {
+    const action = operation === 'edit' ? '请缩小修改范围后重新发起' : '请缩小设计要求或减少引用资料后重新生成';
+    return `页面没有通过发布前的内容校验。已保留最后一版预览，线上页面没有变化；${action}。`;
+  }
+  if (failure) {
+    const action = operation === 'edit' ? '请稍后按原要求重新发起修改' : '请稍后按原资料和要求重新生成';
+    return `页面处理没有完成。已保留可用的最后一版预览，线上页面没有变化；${action}。管理员可以在诊断记录中查看技术原因。`;
+  }
+  return run.error?.trim() || (operation === 'edit' ? '页面修改未完成，请重新发起' : '网页生成未完成，请重新发起');
+}
+
+/** 后端只给了模型名、没给平台名时的兜底称谓。三个消费点共用这一份，别各写各的。 */
+export const GATEWAY_PLATFORM_FALLBACK = 'LLM Gateway';
+
+/**
+ * OpenDesign 只把有限阶段码交给普通用户。后端原始命令、路径、工具参数和推理文本
+ * 即使误入事件载荷，也不能绕过这份注册表显示出来。
+ */
+export const DESIGN_PHASE_LABELS: Readonly<Record<string, string>> = {
+  queued: '任务已进入队列',
+  'waiting-capacity': '设计服务繁忙，正在等待空闲位置',
+  'service-recovering': '设计服务正在恢复，任务会自动继续',
+  'preparing-workspace': '正在准备设计工作区',
+  'reading-sources': '正在整理资料与要求',
+  'starting-design': '正在启动页面设计',
+  'composing-page': '正在搭建页面',
+  'reviewing-page': '正在检查页面质量',
+  'repairing-quality': '正在修正页面细节',
+  'collecting-artifact': '正在整理页面产物',
+  'committing-artifact': '正在保存页面版本',
+  'saving-result': '正在保存生成结果',
+  completed: '页面已经生成完成',
+  interrupted: '服务重启中断了任务，可以按原资料重开',
+  failed: '页面生成未完成',
+  cancelled: '页面生成已停止',
+};
+
+export function visibleDesignPhase(
+  phaseCode: unknown,
+  legacyMessage?: unknown,
+): { phaseCode?: string; message?: string } | null {
+  if (typeof phaseCode === 'string' && phaseCode.trim()) {
+    const normalized = phaseCode.trim();
+    const message = DESIGN_PHASE_LABELS[normalized];
+    return message ? { phaseCode: normalized, message } : null;
+  }
+  // 历史 map-gateway Run 没有 phaseCode；保留它们的只读恢复能力。
+  return typeof legacyMessage === 'string' && legacyMessage.trim()
+    ? { message: legacyMessage.trim() }
+    : {};
+}
+
+/**
+ * 刷新后从 run 读回徽章。流事件只在开头出现一次，错过就只能靠这条恢复，
+ * 所以恢复路径必须和流事件用同一套兜底口径。
+ */
+export function resolveRunModelBadge(
+  run: DesignArtifactRunSummary,
+): { model: string; platform: string } | null {
+  const model = run.resolvedModel?.trim();
+  if (!model) return null;
+  return { model, platform: run.resolvedPlatform?.trim() || GATEWAY_PLATFORM_FALLBACK };
+}
+
+export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGenerationProgressEvent {
+  if (!event.data) return { kind: 'unknown' };
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(event.data) as Record<string, unknown>;
+  } catch {
+    return { kind: 'unknown' };
+  }
+
+  if (event.event === 'phase') {
+    const visible = visibleDesignPhase(data.phaseCode, data.message);
+    if (!visible) return { kind: 'unknown' };
+    return {
+      kind: 'phase',
+      ...visible,
+      progress: typeof data.progress === 'number' ? data.progress : undefined,
+    };
+  }
+  // 实际执行的模型只在流的开头出现一次；面板顶部按「{模型} · {平台}」展示，
+  // 值一律来自后端，前端不推断（.claude/rules/ai-model-visibility.md §2）。
+  if (event.event === 'model' && typeof data.model === 'string' && data.model.trim()) {
+    return {
+      kind: 'model',
+      model: data.model,
+      platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : GATEWAY_PLATFORM_FALLBACK,
+    };
+  }
+  if (event.event === 'delta' && typeof data.text === 'string')
+    return { kind: 'delta', text: data.text };
+  if (event.event === 'preview' && typeof data.html === 'string' && data.html.trim()) {
+    return {
+      kind: 'preview',
+      html: data.html,
+      revision: typeof data.revision === 'number' && Number.isFinite(data.revision) ? data.revision : 0,
+    };
+  }
+  if (event.event === 'done' && typeof data.siteId === 'string') {
+    return {
+      kind: 'done',
+      siteId: data.siteId,
+      siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : undefined,
+      // 建站成功、归属失败是一种部分成功：终态事件带着它，调用方据此提示，
+      // 不许让它长得跟完全成功一样。
+      destinationApplyError: typeof data.destinationApplyError === 'string'
+        ? data.destinationApplyError
+        : undefined,
+    };
+  }
+  if (event.event === 'cancelled') {
+    return {
+      kind: 'cancelled',
+      message: typeof data.message === 'string' ? data.message : '网页生成已取消',
+    };
+  }
+  if (event.event === 'error') {
+    return {
+      kind: 'error',
+      message: typeof data.message === 'string' ? data.message : '网页生成失败',
+      code: typeof data.code === 'string' ? data.code : undefined,
+    };
+  }
+  return { kind: 'unknown' };
+}
+
+// ─── 生成中的阶段列表 ───
+
+export interface GenerationStage {
+  /** 去掉「· 已运行 X」这类随时间变化的尾巴后的阶段名，用来判断是不是同一步。 */
+  label: string;
+  /** 这一步最近一次的完整说明（含轮次等细节）。 */
+  detail: string;
+  startedAtMs: number;
+  /** 下一步开始的时刻；仍在进行中为 null。 */
+  endedAtMs: number | null;
+}
+
+/**
+ * 服务端的阶段文案会带上随时间变化的尾巴（「OpenDesign 正在设计并写出页面 · 已运行 3 分 05 秒」），
+ * 直接拿整句判断「换阶段没有」，每秒都会冒出一行新阶段。这里只取「 · 」之前那一段当阶段名。
+ */
+export function generationStageLabel(message: string): string {
+  const trimmed = message.trim();
+  const cut = trimmed.indexOf(' · ');
+  return (cut > 0 ? trimmed.slice(0, cut) : trimmed).trim();
+}
+
+/** 收到一条 phase 消息后更新阶段列表：同名只刷新说明，换名则结束上一步、开新的一步。 */
+export function appendGenerationStage(
+  stages: readonly GenerationStage[],
+  message: string | undefined,
+  nowMs: number,
+): GenerationStage[] {
+  if (!message || !message.trim()) return [...stages];
+  const label = generationStageLabel(message);
+  if (!label) return [...stages];
+  const last = stages[stages.length - 1];
+  if (last && last.label === label) {
+    if (last.detail === message.trim()) return [...stages];
+    return [...stages.slice(0, -1), { ...last, detail: message.trim() }];
+  }
+  const closed = last && last.endedAtMs == null
+    ? [...stages.slice(0, -1), { ...last, endedAtMs: nowMs }]
+    : [...stages];
+  return [...closed, { label, detail: message.trim(), startedAtMs: nowMs, endedAtMs: null }];
+}
+
+/** 终态时把仍在进行的那一步收口，免得完成页上还挂着一个转圈的阶段。 */
+export function closeGenerationStages(stages: readonly GenerationStage[], nowMs: number): GenerationStage[] {
+  return stages.map((stage) => (stage.endedAtMs == null ? { ...stage, endedAtMs: nowMs } : stage));
+}
+
+/** mm:ss；超过一小时用 h:mm:ss。 */
+export function formatGenerationClock(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
+ * 两种执行器的「经验值」耗时。这是产品文案里承诺给用户的量级（快速约 1–2 分钟、精细 9–12 分钟），
+ * 不是按历史运行算出来的——只在真实样本不足时兜底，界面上必须写明「经验值、数据还在积累」，
+ * 不许冒充实测。有足够样本时一律用后端 /api/design-artifacts/timing-stats 的 P50/P95。
+ */
+export const TYPICAL_RUNTIME_MINUTES: Record<string, { min: number; max: number }> = {
+  'map-gateway': { min: 1, max: 2 },
+  'open-design': { min: 9, max: 12 },
+};
+
+/** 某执行器网页生成的真实耗时（秒）。只有后端判定 estimateReady 时才会有值。 */
+export interface GenerationTiming {
+  sampleCount: number;
+  p50Seconds: number;
+  p95Seconds: number;
+}
+
+/**
+ * 从耗时统计里挑出这个执行器的网页生成 P50/P95。样本数不够（后端 estimateReady=false）、
+ * 缺百分位、或者统计没拿到，一律返回 null，调用方退回经验值——不拿两三个样本冒充规律。
+ */
+export function pickGenerationTiming(
+  stats: DesignTimingStats | null | undefined,
+  runtimeId: string | null | undefined,
+  artifactType = 'web-page',
+): GenerationTiming | null {
+  if (!stats || !runtimeId) return null;
+  const group = stats.groups.find((item) => item.runtime === runtimeId && item.artifactType === artifactType);
+  const metric = group?.generation;
+  if (!metric || !metric.estimateReady || metric.p50Seconds == null || metric.p95Seconds == null) return null;
+  return { sampleCount: metric.sampleCount, p50Seconds: metric.p50Seconds, p95Seconds: metric.p95Seconds };
+}
+
+/** 不足一分钟按秒说，否则四舍五入到分钟。 */
+export function formatEtaDuration(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 60) return `${Math.max(1, Math.round(s))} 秒`;
+  return `${Math.round(s / 60)} 分钟`;
+}
+
+/** 发送按钮上那几个字：「约 X 分钟」。真实数据优先，没有就用经验值，都没有给空串。 */
+export function generationEtaShort(runtimeId: string | null | undefined, timing: GenerationTiming | null): string {
+  if (timing) return `约 ${formatEtaDuration(timing.p50Seconds)}`;
+  const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
+  return typical ? `约 ${typical.min}–${typical.max} 分钟` : '';
+}
+
+/**
+ * 耗时统计请求的三种状态。退回经验值时要说清为什么退回：还在读、读到了但样本不够、
+ * 根本没读到是三回事——读不到若也写成「还在积累」，接口坏了会被一直当成样本少
+ * （降级不许静默）；还在读若写成「还在积累」，一条卡住的请求会让这句话永远停在那里。
+ */
+export type TimingStatsState = 'loading' | 'ready' | 'unavailable';
+
+/** 统计请求的上限。超过就按「取不到」处理，不让预估停在「正在读取」。 */
+export const TIMING_STATS_TIMEOUT_MS = 8000;
+
+function fallbackReason(state: TimingStatsState): string {
+  if (state === 'unavailable') return '耗时统计暂时取不到';
+  if (state === 'loading') return '正在读取真实耗时';
+  return '真实耗时数据还在积累';
+}
+
+/** 发送前那句预期说明，带上数字的来路：最近 N 次的中位数，或明说是经验值、以及为什么是经验值。 */
+export function generationEtaSentence(
+  runtimeId: string | null | undefined,
+  timing: GenerationTiming | null,
+  statsState: TimingStatsState = 'ready',
+): string {
+  if (timing) {
+    return `预计约 ${formatEtaDuration(timing.p50Seconds)}（最近 ${timing.sampleCount} 次中位数，慢的时候约 ${formatEtaDuration(timing.p95Seconds)}）`;
+  }
+  const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
+  return typical ? `按经验值约 ${typical.min}–${typical.max} 分钟，${fallbackReason(statsState)}` : '';
+}
+
+export function remainingEstimateText(
+  runtimeId: string | null | undefined,
+  elapsedSeconds: number,
+  timing: GenerationTiming | null = null,
+  statsState: TimingStatsState = 'ready',
+): string {
+  if (timing) {
+    // P50 / P95 是历史总耗时的里程碑，不是剩余时间：还在跑的任务本身就已经比一部分快样本慢，
+    // 拿它减去已用时间会低估；P95 也不是上限。所以只摆「已进行多久」与两个里程碑，不承诺还剩多少。
+    const n = timing.sampleCount;
+    const elapsed = formatEtaDuration(elapsedSeconds);
+    const p50 = formatEtaDuration(timing.p50Seconds);
+    const p95 = formatEtaDuration(timing.p95Seconds);
+    if (elapsedSeconds < timing.p50Seconds) {
+      return `已进行 ${elapsed}；最近 ${n} 次里一半在 ${p50}内完成，慢的约 ${p95}`;
+    }
+    if (elapsedSeconds < timing.p95Seconds) {
+      return `已进行 ${elapsed}，超过最近 ${n} 次的中位数（约 ${p50}）；慢的那一档约 ${p95}完成`;
+    }
+    return `已进行 ${elapsed}，比最近 ${n} 次里 95% 的任务都久（约 ${p95}），任务仍在继续`;
+  }
+  const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
+  if (!typical) return `${fallbackReason(statsState)}，暂不预估剩余时间`;
+  const elapsedMinutes = elapsedSeconds / 60;
+  const low = Math.max(0, Math.ceil(typical.min - elapsedMinutes));
+  const high = Math.max(0, Math.ceil(typical.max - elapsedMinutes));
+  if (high <= 0) return `已超过经验耗时（${typical.min}–${typical.max} 分钟），任务仍在继续`;
+  const reason = fallbackReason(statsState);
+  if (low <= 0) return `按经验值估算（${reason}），预计还需不到 ${high} 分钟`;
+  return `按经验值估算（${reason}），预计还需 ${low}–${high} 分钟`;
+}
+
+/** 「风格：编辑风格 · 提示词版本 1a2b3c4d」；两项都没有就不出这句。 */
+export function runProvenanceText(run: {
+  styleName?: string | null;
+  promptFingerprint?: string | null;
+} | null | undefined): string {
+  if (!run) return '';
+  const parts: string[] = [];
+  if (run.styleName?.trim()) parts.push(`风格：${run.styleName.trim()}`);
+  if (run.promptFingerprint?.trim()) parts.push(`提示词版本 ${run.promptFingerprint.trim().slice(0, 8)}`);
+  return parts.join(' · ');
+}

@@ -38,6 +38,23 @@ public class ArticleIllustrationWorkflow
     public Dictionary<string, DateTime> AssetRunAtByMarkerIndex { get; set; } = new();
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 这一版被换下的时间。只在存进 ArticleWorkflowHistory 时写入，当前版本恒为空。
+    /// 存档时 AssetIdByMarkerIndex 会被改写成「那一刻真正挂在正文上的图」，于是历史里每一版
+    /// 都是一份可信的「换稿前在用的那组」，用户说「恢复成上传前的」不用再按生成时间去猜。
+    /// </summary>
+    public DateTime? ArchivedAt { get; set; }
+
+    /// <summary>被换下的原因，取值见 LiteraryArchiveReason（网页换正文 / 智能体整篇重写 / 网页重新生成标记）。</summary>
+    public string? ArchivedReason { get; set; }
+
+    /// <summary>
+    /// 这一版里挂过、但生成于别的版本的图（改稿沿用、从历史放回）。只增不减。
+    /// 用来判断一张旧图「最后一次在用是哪一版」：没有它，沿用回来又被放回顶掉的图，
+    /// 历史里会错显成早先那次换稿被换下。
+    /// </summary>
+    public List<string> AdoptedAssetIds { get; set; } = new();
 }
 
 public class ArticleIllustrationMarker
@@ -49,6 +66,7 @@ public class ArticleIllustrationMarker
     public string? DraftText { get; set; }  // 用户编辑的提示词
     public string? Status { get; set; }  // idle/parsing/parsed/running/done/error
     public string? RunId { get; set; }  // 生图任务 ID
+    public string? GenerationRequestId { get; set; } // 创建应答丢失时只读查回原任务
     public string? AssetId { get; set; }  // 已生成的图片资产 ID
     public string? Url { get; set; }  // 图片 URL（用于刷新后恢复显示）
     public ArticleIllustrationPlanItem? PlanItem { get; set; }  // 意图解析结果

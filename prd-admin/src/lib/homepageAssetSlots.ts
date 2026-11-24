@@ -28,7 +28,6 @@ export const HOMEPAGE_CARD_SLOTS: HomepageCardSlot[] = [
   { id: 'workflow-agent', slot: 'card.workflow-agent', label: '工作流引擎', hint: '可视化工作流编排，自动化多步骤任务串联' },
   { id: 'web-pages', slot: 'card.web-pages', label: '网页托管', hint: '上传 HTML 或 ZIP，托管并分享你的网页' },
   { id: 'open-platform', slot: 'card.open-platform', label: '开放平台', hint: 'API 签发、应用接入与调用监控' },
-  { id: 'models', slot: 'card.models', label: '模型中心', hint: '大模型与模型池配置、健康监控' },
   { id: 'teams', slot: 'card.teams', label: '团队协作', hint: '团队成员、用户组、分享与协作' },
 ];
 
@@ -155,7 +154,7 @@ export const DEMO_VIDEO_SLOTS: DemoVideoSlot[] = [
     slot: 'demo.skill-openapi.agent-paste.video',
     label: '接入 AI · 粘贴密钥给智能体',
     hint:
-      '录一段 10-30 秒的流程：在海鲜市场创建 Key → 点「复制给智能体使用」→ 切到 Claude Code / Cursor 粘贴 → AI 自动 export 环境变量 + 下载 findmapskills 技能的全过程。建议 16:9、MP4 或 WebM、≤ 20 MB。未上传时前端会显示静态占位卡。',
+      '录一段 10-30 秒的流程：在海鲜市场创建 Key → 点「复制给智能体使用」→ 切到 Claude Code / Codex 粘贴 → AI 自动 export 环境变量 + 下载 findmapskills 技能的全过程。建议 16:9、MP4 或 WebM、≤ 20 MB。未上传时前端会显示静态占位卡。',
   },
 ];
 

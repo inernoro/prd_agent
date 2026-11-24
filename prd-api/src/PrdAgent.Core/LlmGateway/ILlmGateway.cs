@@ -1,0 +1,363 @@
+namespace PrdAgent.Core.LlmGateway;
+
+/// <summary>
+/// LLM Gateway 统一接口 - 所有大模型调用的守门员
+///
+/// 设计原则：
+/// 1. 所有 LLM 调用必须通过此接口
+/// 2. 自动处理模型调度（根据 AppCallerCode 和模型池配置）
+/// 3. 统一日志记录（包括期望模型 vs 实际模型）
+/// 4. 统一健康管理（成功/失败反馈）
+/// 5. 支持流式和非流式响应
+///
+/// 使用示例：
+/// <code>
+/// var request = new GatewayRequest
+/// {
+///     AppCallerCode = "visual-agent.image.vision::generation",
+///     ModelType = "generation",
+///     ExpectedModel = "nano-banana-pro",  // 仅作为提示，不强制
+///     RequestBody = new JsonObject { ["prompt"] = "一只猫" }
+/// };
+///
+/// // 非流式
+/// var response = await gateway.SendAsync(request, ct);
+///
+/// // 流式
+/// await foreach (var chunk in gateway.StreamAsync(request, ct))
+/// {
+///     Console.Write(chunk.Content);
+/// }
+/// </code>
+/// </summary>
+/// <remarks>
+/// 继承 Core 层那个只有 CreateClient 的窄接口，而不是各自声明一份：
+/// 此前两处独立定义、靠装配时的强制类型转换桥接，签名一旦漂移就在运行时才炸。
+/// 继承之后是编译期保证，窄接口也成了 CreateClient 的唯一声明处。
+/// </remarks>
+public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
+{
+    const string MetadataResolutionPurposeHeader = "X-Gateway-Resolution-Purpose";
+    const string ReadOnlyMetadataPurpose = "read-only-metadata";
+
+    /// <summary>
+    /// 发送非流式请求（Chat/Completion）
+    /// </summary>
+    Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default);
+
+    /// <summary>最终物理正文和路由确定后、发送前执行金额准入；未实现时默认拒绝。</summary>
+    Task<GatewayResponse> SendWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>> admit,
+        CancellationToken ct = default)
+        => Task.FromResult(GatewayResponse.Fail("GATEWAY_PHYSICAL_ADMISSION_UNSUPPORTED", "当前网关未提供物理发送前准入", 409));
+
+    /// <summary>
+    /// 发送流式请求（Chat/Completion）
+    /// </summary>
+    IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// 流式请求的物理发送前准入。实现必须在最终模型、请求体和输出上限都确定后，
+    /// 且在任何供应商字节发出前调用 admit。未实现该合同的网关必须明确拒绝，不能退回无保护发送。
+    /// </summary>
+    async IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>> admit,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await Task.CompletedTask;
+        yield return GatewayStreamChunk.Fail(
+            "当前网关未提供物理发送前准入",
+            "GATEWAY_PHYSICAL_ADMISSION_UNSUPPORTED");
+    }
+
+    /// <summary>
+    /// 发送原始 HTTP 请求（使用调用方已解析的模型 Resolution，跳过内部 Resolve 步骤）。
+    /// 遵循 compute-then-send 原则：当调用方已通过 ResolveModelAsync 完成模型调度，
+    /// 再调用此方法可避免 Gateway 内部的第二次 ResolveAsync，保证 "选什么用什么"。
+    /// </summary>
+    Task<GatewayRawResponse> SendRawWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// 原生、无服务端上下文的 Responses 传输；发送阶段只消费既有解析结果。
+    /// 回调必须立即消费字节；它不是 Chat chunk，也不得重组为兼容事件。
+    /// 未实现的网关明确拒绝，不得回退到 Chat 或直连上游。
+    /// </summary>
+    Task<GatewayRawResponse> SendNativeResponsesWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<GatewayNativeAdmissionContext, CancellationToken, Task<GatewayRawResponse?>>? admit = null,
+        CancellationToken ct = default)
+        => Task.FromResult(GatewayRawResponse.Fail(
+            "NATIVE_RESPONSES_UNSUPPORTED", "当前网关未提供原生 Responses 通道", 501));
+
+    /// <summary>
+    /// 使用调用方提供的临时上游 profile 做连通性测试。该方法只用于内部 M2M，
+    /// 使用户保存的 runtime profile 测试也通过 llmgw-serve 触达上游，而不是 MAP 进程直连。
+    /// </summary>
+    Task<GatewayRawResponse> TestUpstreamProfileAsync(
+        GatewayUpstreamProfileTestRequest request,
+        CancellationToken ct = default)
+        => Task.FromResult(GatewayRawResponse.Fail(
+            "PROFILE_TEST_UNSUPPORTED",
+            "当前 ILlmGateway 实现未支持 runtime profile 上游连通性测试。",
+            501));
+
+    /// <summary>
+    /// 预解析模型调度结果（不发送请求）
+    /// 用于前端展示可用模型池信息
+    /// </summary>
+    Task<GatewayModelResolution> ResolveModelAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default);
+
+    /// <summary>只读当前模型元信息，不认领恢复租约；未支持时禁止退回执行解析。</summary>
+    Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => Task.FromResult(new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = expectedModel,
+            ErrorMessage = "当前网关实现不支持只读模型元信息",
+        });
+
+    /// <summary>
+    /// 按异步任务提交阶段记录的 Offering ID 恢复精确路由。
+    /// </summary>
+    Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+        => Task.FromResult(new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = offeringId,
+            ErrorMessage = "当前网关实现不支持按 Offering 恢复路由",
+        });
+
+    /// <summary>
+    /// 解析调用方已经声明的逻辑模型。该契约不能退回同名旧模型池：返回结果必须携带
+    /// 相同的 LogicalModelPublicId，否则按解析失败处理。
+    /// </summary>
+    async Task<GatewayModelResolution> ResolveRequiredLogicalModelAsync(
+        string appCallerCode,
+        string modelType,
+        string logicalModelPublicId,
+        CancellationToken ct = default)
+    {
+        var required = (logicalModelPublicId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(required))
+        {
+            return new GatewayModelResolution
+            {
+                Success = false,
+                ResolutionType = "NotFound",
+                ErrorMessage = "逻辑模型公开标识不能为空",
+            };
+        }
+
+        var resolution = await ResolveModelAsync(
+            appCallerCode,
+            modelType,
+            expectedModel: required,
+            pinnedPlatformId: null,
+            pinnedModelId: null,
+            ct);
+        if (resolution.Success
+            && GatewayLogicalModelIdentity.Accepts(required,
+                resolution.LogicalModelPublicId, resolution.AcceptedModelAliases))
+        {
+            return resolution;
+        }
+
+        return new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = required,
+            ErrorMessage = $"逻辑模型 {required} 未能在当前租户与 appCaller 下解析，已拒绝退回其他模型池。",
+        };
+    }
+
+    /// <summary>
+    /// 获取指定 AppCallerCode 可用的模型池列表
+    /// </summary>
+    Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
+        string appCallerCode,
+        string modelType,
+        CancellationToken ct = default);
+
+    // CreateClient 由继承的 Core.Interfaces.LlmGateway.ILlmGateway 提供，此处不再重复声明。
+}
+
+/// <summary>
+/// 可用模型池信息
+/// </summary>
+public class AvailableModelPool
+{
+    /// <summary>
+    /// 模型池 ID
+    /// </summary>
+    public string Id { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 模型池名称
+    /// </summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>业务模型用途说明，由网关配置下发。</summary>
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// 模型池代码
+    /// </summary>
+    public string Code { get; init; } = string.Empty;
+
+    /// <summary>当前逻辑模型明确登记的兼容标识，不携带供应商凭据。</summary>
+    public List<string> Aliases { get; init; } = new();
+    /// <summary>迁移前的池身份，仅用于解析已有业务选择，不作为模型名称展示。</summary>
+    public List<string> LegacyPoolIds { get; init; } = new();
+
+    /// <summary>
+    /// 优先级
+    /// </summary>
+    public int Priority { get; init; }
+
+    /// <summary>
+    /// 来源类型
+    /// </summary>
+    public string ResolutionType { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 是否为专属池
+    /// </summary>
+    public bool IsDedicated { get; init; }
+
+    /// <summary>
+    /// 是否为默认池
+    /// </summary>
+    public bool IsDefault { get; init; }
+
+    /// <summary>是否为该模型类型的全局默认项，不受调用方专属默认覆盖。</summary>
+    public bool IsDefaultForType { get; init; }
+
+    /// <summary>
+    /// 池内模型列表
+    /// </summary>
+    public List<PoolModelInfo> Models { get; init; } = new();
+
+    /// <summary>近七天有耗时记录的请求平均耗时。</summary>
+    public long? AverageDurationMs { get; init; }
+
+    /// <summary>最近最多十次请求的样本数。</summary>
+    public int RecentTenRequests { get; init; }
+
+    /// <summary>最近最多十次请求成功率；没有样本时为空。</summary>
+    public decimal? RecentTenSuccessRatePercent { get; init; }
+    /// <summary>
+    /// 网关声明的能力标签（如 image_generation / image_layering）。
+    ///
+    /// 应用侧靠它区分「可以挑来生图的模型」与「只能被动作调用的能力」。
+    /// 丢掉这个字段就是「图片分层」曾经混进模型选择器的根因——目录只说了
+    /// 「是什么模型」，没说「能拿来干什么」，前端只好来什么摆什么。
+    /// </summary>
+    public List<string> Capabilities { get; init; } = new();
+}
+
+/// <summary>
+/// 池内模型信息
+/// </summary>
+public class PoolModelInfo
+{
+    /// <summary>
+    /// 模型名称
+    /// </summary>
+    public string ModelId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 平台 ID
+    /// </summary>
+    public string PlatformId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 平台名称
+    /// </summary>
+    public string? PlatformName { get; init; }
+
+    /// <summary>
+    /// 优先级
+    /// </summary>
+    public int Priority { get; init; }
+
+    /// <summary>
+    /// 健康状态
+    /// </summary>
+    public string HealthStatus { get; init; } = "Healthy";
+
+    /// <summary>只读恢复资格快照；实际请求仍须原子认领半开租约。</summary>
+    public bool IsRecoveryProbeAvailable { get; init; }
+
+    /// <summary>
+    /// 健康评分（0-100）
+    /// </summary>
+    public int HealthScore { get; init; } = 100;
+
+    /// <summary>
+    /// 目录生成时已通过名录门校验的实际模型快照。业务侧只读能力展示使用该值，
+    /// 不得为了读元信息再次执行路由解析并认领半开线路。
+    /// </summary>
+    public string? ActualModelId { get; init; }
+
+    /// <summary>实际平台快照；仅用于能力说明，不用于业务侧钉死路由。</summary>
+    public string? ActualPlatformId { get; init; }
+
+    /// <summary>实际模型的参数能力快照；只读目录与真正发送共用同一解析结果来源。</summary>
+    public Dictionary<string, bool>? ParameterCapabilities { get; init; }
+
+    /// <summary>
+    /// LLMGW 在生成目录时固化的图片能力快照。
+    /// MAP 只消费这份公开契约，不得再根据 <see cref="ActualModelId"/> 猜模型类型或查本地型号表。
+    /// </summary>
+    public GatewayImageCapabilitiesSnapshot? ImageCapabilities { get; init; }
+}
+
+/// <summary>
+/// LLMGW 对外发布的图片能力快照。保留原始宽高与模型声明的比例，
+/// 因此这里不包含任何供应商或具体模型名称。
+/// </summary>
+public sealed class GatewayImageCapabilitiesSnapshot
+{
+    public string SizeConstraintType { get; init; } = string.Empty;
+    public string SizeConstraintDescription { get; init; } = string.Empty;
+    public Dictionary<string, List<string>> SizesByResolution { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> AspectRatiosBySize { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public string SizeParamFormat { get; init; } = string.Empty;
+    public bool SizesNotApplicable { get; init; }
+    public int? MustBeDivisibleBy { get; init; }
+    public int? MaxWidth { get; init; }
+    public int? MaxHeight { get; init; }
+    public int? MinWidth { get; init; }
+    public int? MinHeight { get; init; }
+    public long? MaxPixels { get; init; }
+    public List<string> Notes { get; init; } = [];
+    public bool SupportsImageToImage { get; init; }
+    public bool SupportsInpainting { get; init; }
+    public bool IsAdaptive { get; init; }
+}

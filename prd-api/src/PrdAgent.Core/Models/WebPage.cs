@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -14,6 +15,12 @@ namespace PrdAgent.Core.Models;
 [BsonIgnoreExtraElements]
 public class HostedSite
 {
+    public string? WritingTemplateId { get; set; }
+    /// <summary>作者选择的文档类型；旧数据为空时沿用来源写作模版的类型。</summary>
+    public string? DocumentType { get; set; }
+    public List<string> DocumentHeadings { get; set; } = new();
+    public string? DocumentTextExcerpt { get; set; }
+    public int DocumentCharacterCount { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>站点标题</summary>
@@ -29,6 +36,10 @@ public class HostedSite
 
     /// <summary>来源引用（如 workflowExecutionId）</summary>
     public string? SourceRef { get; set; }
+
+    /// <summary>最近一次内容重传的幂等引用；普通重传会清空。</summary>
+    [JsonIgnore]
+    public string? LastReuploadRef { get; set; }
 
     // ── COS 存储 ──
 
@@ -53,6 +64,43 @@ public class HostedSite
     /// <summary>站点包含的文件清单</summary>
     public List<HostedSiteFile> Files { get; set; } = new();
 
+    /// <summary>由服务端依据完整文件角色判定的内容形态，不入库。</summary>
+    [BsonIgnore]
+    public string ContentShape { get; set; } = HostedSiteContentShapes.MultiFile;
+
+    /// <summary>课程附件依赖预览层的受控下载桥；保持既有内联预览，不入库。</summary>
+    [BsonIgnore]
+    public bool RequiresPreviewBridge => HostedSitePdfFiles.Paths(this).Count > 0
+        || Files?.Any(file => string.Equals(file.Path, "downloads/tutorial-package.json", StringComparison.OrdinalIgnoreCase)) == true;
+
+    [BsonIgnore]
+    public string? ZipHomepageAssetPath => Files?.FirstOrDefault(file => file.IsZipHomepageAsset)?.Path;
+
+    /// <summary>
+    /// 内容指针切换后待删除的旧对象 key。与 Files 在同一个站点文档中原子更新，
+    /// 后台清理器按站点 ID 唯一领取并幂等重试。
+    /// </summary>
+    [JsonIgnore]
+    public List<string> PendingAssetCleanupKeys { get; set; } = new();
+
+    [JsonIgnore]
+    public DateTime? AssetCleanupNextAttemptAt { get; set; }
+    [JsonIgnore]
+    public int AssetCleanupAttemptCount { get; set; }
+    [JsonIgnore]
+    public string? AssetCleanupLastErrorCode { get; set; }
+    [JsonIgnore]
+    public string? AssetCleanupLeaseOwnerId { get; set; }
+    [JsonIgnore]
+    public DateTime? AssetCleanupLeaseExpiresAt { get; set; }
+
+    /// <summary>发布已登记但尚未完成指针切换的对象；清理器在租约内不得删除。</summary>
+    [JsonIgnore]
+    public List<string> AssetPublishInProgressKeys { get; set; } = new();
+
+    [JsonIgnore]
+    public DateTime? AssetPublishLeaseExpiresAt { get; set; }
+
     /// <summary>站点总大小 (bytes)</summary>
     public long TotalSize { get; set; }
 
@@ -64,8 +112,29 @@ public class HostedSite
     /// <summary>分类文件夹</summary>
     public string? Folder { get; set; }
 
+    /// <summary>服务端权威文件夹名称键，供客户端比较；不写入 MongoDB。</summary>
+    [BsonIgnore]
+    public string FolderCanonicalName => WebFolderName.Canonicalize(Folder);
+
     /// <summary>封面图 URL</summary>
     public string? CoverImageUrl { get; set; }
+
+    /// <summary>
+    /// PDF 包装站的原始 PDF 直链。不入库（由 CosKey + ContentVersion 算出），只在返回给前端前挂上。
+    ///
+    /// 存在的理由：上传 .pdf 会被包成「index.html 壳子 + 原 PDF」，壳子用 PDF.js 把 PDF 画成 canvas
+    /// （移动端 WebView 在 iframe 里渲染不了 PDF，只能这么做），但壳子依赖第三方 CDN。桌面端要绕开壳子
+    /// 直接交给浏览器原生阅读器，就得拿到这个直链。
+    ///
+    /// 此前它只出现在分享视图的 SharedSiteInfo 上，站内列表拿不到，于是站内大预览的「绕开壳子」
+    /// 分支永远走不到——判据在、数据不在（predicate-and-wiring-discipline 形状 2）。
+    /// </summary>
+    [BsonIgnore]
+    public string? PdfAssetUrl { get; set; }
+
+    /// <summary>当前站点登记的可下载 PDF 相对路径，仅响应派生，不持久化。</summary>
+    [BsonIgnore]
+    public List<string> PdfFilePaths { get; set; } = new();
 
     // ── 所有权 ──
 
@@ -89,6 +158,15 @@ public class HostedSite
 
     // ── 公开可见性 ──
 
+    /// <summary>
+    /// 入口文件是不是一套幻灯片（reveal.js / impress.js / remark / deck.js）。
+    ///
+    /// 上传/替换时扫一次入口 HTML 的真实签名落库，不是运行时猜的——设计稿把「幻灯片」
+    /// 列为五种内容形态之一，而 SlideNavCompatVersion 是无条件盖在所有站点上的垫片版本号，
+    /// 不能当 deck 标记用（那是「不成立的证据」）。老数据没有这个字段，前端按 false 处理。
+    /// </summary>
+    public bool IsSlideDeck { get; set; }
+
     /// <summary>可见性：private = 仅自己可见 | public = 出现在个人公开页 /u/:username</summary>
     public string Visibility { get; set; } = "private";
 
@@ -104,6 +182,74 @@ public class HostedSite
     /// </summary>
     public bool CommentsEnabled { get; set; } = true;
 
+    // ── 向我提问（访客对着这个页面问 AI） ──
+
+    /// <summary>
+    /// 是否开放「向我提问」。
+    ///
+    /// 三态，不是 bool：null = 站点从没单独表过态（含存量站点与新上传），
+    /// true = 明确打开，false = 明确关掉。
+    ///
+    /// null 时读取 owner 的个人默认，个人也没设置则按系统临时默认关闭。之所以留成可空：
+    /// bool 里「没表过态」和「特意关掉」长得一模一样，会让个人默认无从生效。判定一律走
+    /// <see cref="AskAccessPolicy.IsAskOn"/>，不要在别处自己兜底。
+    /// </summary>
+    public bool? AskEnabled { get; set; }
+
+    public bool AiReplyEnabled { get; set; }
+
+    /// <summary>提问面板的欢迎语；空则前端用站点标题兜底</summary>
+    public string? AskWelcome { get; set; }
+
+    /// <summary>
+    /// 站点级开场问题题库 —— owner 在「提问设置」里维护的候选池。
+    /// 分享链接可以从这个池子里各自挑几条（见 WebPageShareLink.AskSuggestedQuestions）；
+    /// 没挑的链接直接用这里的全量（截前 N 条）。
+    /// </summary>
+    public List<string> AskSuggestedQuestions { get; set; } = new();
+
+    /// <summary>
+    /// 这批开场问题是谁写的。
+    ///
+    ///   null / "auto" —— 系统读正文自动生成的，内容一换就重算
+    ///   "manual"      —— owner 在提问设置里动过手，此后自动生成不再覆盖它
+    ///
+    /// 没有这个标记的话，owner 精心改的几句会在下次重新上传时被静默冲掉，
+    /// 而他根本不知道发生过（改动消失是最难查的一类缺陷）。
+    /// </summary>
+    public string? AskQuestionsSource { get; set; }
+
+    /// <summary>
+    /// 上一次自动生成是针对哪个 ContentVersion 算的。
+    ///
+    /// 与 ContentVersion 相等就不重跑——一次上传一次调用，正文没变不重算。
+    /// 读不出正文（纯视频包装站等）时也会盖上这个戳，否则每次有人打开页面
+    /// 都要为一个永远读不出正文的站点重试一遍。
+    /// </summary>
+    public DateTime? AskQuestionsGeneratedFor { get; set; }
+
+    /// <summary>
+    /// 开场问题生成的**跨进程认领**时间（租约）。null = 没人在做。
+    ///
+    /// 进程内的 _inFlight 只挡得住同一个进程。同一个站点可能被两个 CDS 分支部署、
+    /// 或同一部署的两个副本同时排上生成（它们共用一个 Mongo），两边都过了进程内那道门，
+    /// 就会各调一次模型——owner 为同一版正文付两次钱，而后写的那份还会盖掉先写的。
+    ///
+    /// 所以认领必须落在库里，且要在**调模型之前**：CAS 抢到才做。带租约是为了容错——
+    /// 进程崩在中间时没人来清，租约过期后自动可被重新认领，不会把这个站点永久锁死。
+    /// </summary>
+    public DateTime? AskOpenerClaimedAt { get; set; }
+
+    /// <summary>是否允许未登录访客提问。false = 只有登录用户能问（默认，防白嫖 token）</summary>
+    public bool AskAllowAnonymous { get; set; }
+
+    /// <summary>本站点每日提问次数上限（0 = 用系统默认值）</summary>
+    public int AskDailyLimit { get; set; }
+
+    /// <summary>提问配置最后修改时间 / 修改人（审计用，排查"谁把它打开了"）</summary>
+    public DateTime? AskConfigUpdatedAt { get; set; }
+    public string? AskConfigUpdatedBy { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
@@ -118,6 +264,12 @@ public class HostedSite
     /// 所有创建路径都会显式赋 now，老文档则在读取侧回退到 CreatedAt（见 TryBuildPdfAssetUrl）。
     /// </summary>
     public DateTime ContentVersion { get; set; }
+
+    /// <summary>
+    /// 当前线上入口由哪个发布版本写入。该指针与入口对象指针、ContentVersion 在同一次 Mongo CAS 中更新，
+    /// 用于在版本状态最终写入失败后安全重试；其他内容写入路径必须清空。
+    /// </summary>
+    public string? PublishedRevisionId { get; set; }
 
     /// <summary>
     /// 已注入的「幻灯片翻页方向兼容垫片」版本号。0 = 从未注入（存量旧站）。
@@ -141,15 +293,90 @@ public class HostedSiteFile
 
     /// <summary>MIME 类型</summary>
     public string MimeType { get; set; } = string.Empty;
+
+    [BsonIgnoreIfDefault]
+    public bool IsZipHomepageAsset { get; set; }
+
+    /// <summary>
+    /// 当前部署下的安全公开地址。只由服务层依据 CosKey 与 ContentVersion 派生，
+    /// 不入库，避免把部署域名固化进数据。
+    /// </summary>
+    [BsonIgnore]
+    public string? Url { get; set; }
 }
+
+public static class HostedSiteContentShapes
+{
+    public const string SelfContainedHtml = "self-contained-html";
+    public const string MultiFile = "multi-file";
+}
+
+public static class HostedSiteContentShapeRules
+{
+    private static readonly string[] GeneratedPackagePaths =
+    [
+        "assets/accessibility-static-report.json",
+        "assets/design-tokens.json",
+        "assets/page-outline.json",
+        "assets/provenance.json",
+        "index.html",
+        "manifest.json",
+    ];
+
+    public static bool IsSelfContainedHtml(HostedSite site)
+    {
+        var files = site.Files ?? new List<HostedSiteFile>();
+        var extension = Path.GetExtension(site.EntryFile);
+        if (!string.Equals(extension, ".html", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(extension, ".htm", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (files.Count == 1)
+            return string.Equals(files[0].Path, site.EntryFile, StringComparison.OrdinalIgnoreCase);
+        return files.Select(file => file.Path)
+            .OrderBy(filePath => filePath, StringComparer.Ordinal)
+            .SequenceEqual(GeneratedPackagePaths, StringComparer.Ordinal);
+    }
+
+    public static string Resolve(HostedSite site) =>
+        IsSelfContainedHtml(site)
+            ? HostedSiteContentShapes.SelfContainedHtml
+            : HostedSiteContentShapes.MultiFile;
+}
+
+/// <summary>
+/// 已在上游完成路径、摘要、大小、MIME 与产物清单校验的托管文件。
+/// 仅供“新生成网页”原子落站；编辑与版本功能仍只替换入口 HTML。
+/// </summary>
+public sealed record HostedSiteVerifiedFile(
+    string Path,
+    byte[] Content,
+    string Sha256,
+    string MimeType);
 
 /// <summary>
 /// 网页分享链接 — 基于 Token 的分享机制（密码保护 + 过期时间）
 /// </summary>
 [BsonIgnoreExtraElements]
+public sealed record HostedSiteFixedRevision(string RevisionId, string PackageFingerprint, Dictionary<string, string> FileHashes)
+{
+    [JsonIgnore]
+    public CdsFixedShareApproval? CdsApproval { get; init; }
+}
+
+public sealed record CdsFixedShareApproval(string Id, string Issuer, string ProjectId, string DesignId, string PreparationId,
+    int Version, string SourceCommit, string PackageSha256, int ExpiresInHours);
+
 public class WebPageShareLink
 {
+    public HostedCollectionSnapshot? CollectionSnapshot { get; set; }
+    public HostedSiteFixedRevision? FixedRevision { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>命名合集及本次明确授权的成员快照；空值保留历史独立分享语义。</summary>
+    public string? CollectionId { get; set; }
+    public string? MainSiteId { get; set; }
+    public long CollectionVersion { get; set; }
+    public long CollectionShareGeneration { get; set; } = 1;
 
     /// <summary>短 Token（用于 URL）</summary>
     public string Token { get; set; } = GenerateToken();
@@ -159,6 +386,27 @@ public class WebPageShareLink
 
     /// <summary>关联的站点 ID 列表（合集分享时）</summary>
     public List<string> SiteIds { get; set; } = new();
+
+    /// <summary>
+    /// 这条分享到底指向哪几个站点 —— 合集分享看 SiteIds，存量单站点分享只有 SiteId。
+    ///
+    /// 抽出来是因为「两个字段一起认」这件事在读路径上被各写了一遍（鉴权、阅读、另存、
+    /// 分享列表…），少认一个字段的表现是**存量单站点分享整条被漏掉**，而且不报错：
+    /// 访客数一栏就因此对这类分享一直显示 0。判据分裂成多份然后各自漂移的典型
+    /// （predicate-and-wiring-discipline 形状 3），新代码一律走这一个。
+    ///
+    /// SiteId 排在前面：单站点分享的语义主体就是它。
+    /// </summary>
+    public List<string> TargetSiteIds()
+    {
+        var ids = new List<string>();
+        if (!string.IsNullOrEmpty(SiteId)) ids.Add(SiteId);
+        foreach (var id in SiteIds)
+        {
+            if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+        }
+        return ids;
+    }
 
     /// <summary>分享类型：single = 单站点, collection = 合集</summary>
     public string ShareType { get; set; } = "single";
@@ -213,7 +461,20 @@ public class WebPageShareLink
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
+
     public bool IsRevoked { get; set; }
+
+    /// <summary>
+    /// 撤销时刻。存量已撤销的链接没有这个字段（为 null），列表会退回「已撤销」四个字不带日期——
+    /// 不拿 CreatedAt 顶替：那是创建时间，冒充成撤销时间会直接误导人。
+    /// </summary>
+    public DateTime? RevokedAt { get; set; }
+
+    /// <summary>
+    /// 撤销原因（可选，用户撤销时自己填的一句话，如「误发已收回」）。
+    /// 撤销不可逆，几周后回头看列表时这句话是唯一能想起当初为什么撤的线索。
+    /// </summary>
+    public string? RevokedReason { get; set; }
 
     /// <summary>
     /// 链接可见性：
@@ -243,6 +504,20 @@ public class WebPageShareLink
     /// 不参与高频写路径（避免每次访问聚合 distinct count）。
     /// </summary>
     public long UniqueIpCount { get; set; }
+
+    /// <summary>
+    /// 本条分享链接自选的开场问题（创建分享时从站点题库里勾选，也可现场加自定义的）。
+    ///
+    /// 三态语义，**禁止**给这里加 `= new()` 初始化器 —— 加了就把「没选」和「选了空」
+    /// 糊成同一个值，等于永远读不出"这条链接明确不要开场问题"：
+    ///   - null       = 没选过（存量分享反序列化落这里）→ 继承站点题库 HostedSite.AskSuggestedQuestions
+    ///   - 空列表 []  = 明确选了"一个都不显示"→ 面板不出开场问题
+    ///   - 非空列表   = 本链接只显示这几条
+    ///
+    /// 同一个坑 ContentVersion 上面已经栽过一次（初始化器让老文档读出错误的活跃值），
+    /// 三态取舍统一收在 <see cref="AskOpeningQuestions.Resolve"/>，不许在别处各判一遍。
+    /// </summary>
+    public List<string>? AskSuggestedQuestions { get; set; }
 
     private static string GenerateToken()
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))

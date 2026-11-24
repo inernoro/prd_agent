@@ -85,31 +85,31 @@ export const ACCENT_STYLES = {
   blue: {
     bg: 'rgba(59, 130, 246, 0.08)',
     border: 'rgba(59, 130, 246, 0.16)',
-    text: 'rgba(59, 130, 246, 0.95)',
+    text: 'var(--accent-fg-blue)',
   },
   /** 绿色强调 */
   green: {
     bg: 'rgba(34, 197, 94, 0.08)',
     border: 'rgba(34, 197, 94, 0.16)',
-    text: 'rgba(34, 197, 94, 0.95)',
+    text: 'var(--accent-fg-success)',
   },
   /** 金色强调 */
   gold: {
     bg: 'rgba(99, 102, 241, 0.08)',
     border: 'rgba(99, 102, 241, 0.16)',
-    text: 'rgba(99, 102, 241, 0.95)',
+    text: 'var(--accent-fg-blue)',
   },
   /** 紫色强调 */
   purple: {
     bg: 'rgba(168, 85, 247, 0.08)',
     border: 'rgba(168, 85, 247, 0.16)',
-    text: 'rgba(168, 85, 247, 0.95)',
+    text: 'var(--accent-fg-violet)',
   },
   /** 红色强调（危险操作） */
   red: {
     bg: 'rgba(239, 68, 68, 0.08)',
     border: 'rgba(239, 68, 68, 0.18)',
-    text: 'rgba(239, 68, 68, 0.95)',
+    text: 'var(--accent-fg-danger)',
   },
 } as const;
 

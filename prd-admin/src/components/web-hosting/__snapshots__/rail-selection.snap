@@ -1,0 +1,20 @@
+aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:11px;overscroll-behavior:contain;padding:14px;width:300px}
+  div
+    "选中的站点"
+  div
+    "多租户架构设计"
+  button .gap-2.inline-flex.items-center.justify-center {height:38px} [type=button]
+    svg
+    "以访客身份预览这条链接"
+  div
+    "用它真实的访客链接打开，看到的和访客一样。"
+  div {height:1px}
+  button .inline-flex.items-center.justify-center {height:34px} [type=button]
+    "管理分享"
+  div
+    "这条站点的链接：1 条有效"
+    br
+    "累计 9 次访问 · 4 位访客"
+  div .flex-1
+  button {height:32px} [type=button]
+    "取消选择"

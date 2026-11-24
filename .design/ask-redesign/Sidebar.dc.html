@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.42); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11.5px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .sp { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; box-sizing: border-box; }
+    .paper-in { width: 700px; margin: 0 auto; }
+    .paper h1 { font-size: 25px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 20px; }
+    .paper h2 { font-size: 15px; margin: 18px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .send { border-radius: 10px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .note-row { display: flex; gap: 22px; padding: 2px 2px 0; }
+    .note-row div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .note-row b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .note-row .ok b { color: #4ade80; }
+    .note-row .warn b { color: #D97757; }
+    .stage { display: flex; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); background: #141418; height: 560px; }
+    .left { flex-grow: 1; background: #FAFAF8; color: #17171c; padding: 24px 0 0 40px; }
+    .left h2 { font-size: 15px; margin: 0 0 8px; }
+    .left p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; max-width: 460px; }
+    .side { width: 400px; flex-shrink: 0; background: #1e1e24; border-left: 1px solid rgba(255,255,255,0.14); display: flex; flex-direction: column; }
+    .a-head { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .l-title { font-size: 13px; font-weight: 600; }
+    .icb { width: 26px; height: 26px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; color: rgba(247,247,251,0.68); }
+    .icb.on { background: rgba(217,119,87,0.14); border-color: rgba(217,119,87,0.32); color: #f7f7fb; }
+    .a-body { flex-grow: 1; padding: 13px; display: flex; flex-direction: column; gap: 11px; overflow: hidden; }
+    .askrow { display: flex; justify-content: flex-end; }
+    .ask { max-width: 82%; padding: 8px 12px; border-radius: 12px; background: rgba(255,255,255,0.10); font-size: 12.5px; line-height: 1.6; }
+    .ans { font-size: 12.5px; line-height: 1.8; color: rgba(247,247,251,0.80); }
+    .ans b { color: #f7f7fb; font-weight: 600; }
+    .cites { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+    .cite { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 8px; background: rgba(217,119,87,0.12); border: 1px solid rgba(217,119,87,0.32); font-size: 11px; }
+    .cite em { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(217,119,87,0.95); }
+    .follow { display: flex; flex-wrap: wrap; gap: 7px; }
+    .fchip { padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 11.5px; color: rgba(247,247,251,0.68); }
+    .metaline { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: rgba(247,247,251,0.55); }
+    .a-foot { padding: 11px 13px 13px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .field { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 5px 0 12px; border-radius: 11px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 12.5px; color: rgba(247,247,251,0.55); }
+    .hist { position: absolute; top: 46px; left: 8px; right: 8px; border-radius: 12px; background: rgba(36,36,44,0.99); border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 20px 48px rgba(0,0,0,0.55); overflow: hidden; }
+    .h-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 12px; color: rgba(247,247,251,0.80); }
+    .h-row { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .h-row .q { font-size: 12.5px; color: rgba(247,247,251,0.86); }
+    .h-row .m { font-size: 10.5px; color: rgba(247,247,251,0.50); font-family: 'JetBrains Mono', monospace; }
+    .h-row.on { background: rgba(217,119,87,0.10); }
+    .h-foot { padding: 9px 12px; font-size: 11px; line-height: 1.6; color: rgba(247,247,251,0.55); }
+  </style>
+</helmet>
+
+<div class="board">
+
+  <div class="eyebrow">右侧栏 · 对话中<em>答案下面挂引用；引用点一下，左边正文滚过去并高亮那一段</em></div>
+  <div class="stage">
+    <div class="left">
+      <h2>二、搜索入口</h2>
+      <p><span style="background:rgba(217,119,87,0.20); box-shadow:0 0 0 3px rgba(217,119,87,0.20); border-radius:3px">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</span></p>
+      <p style="color:#8a8a92">走查人：视觉组 · 复核：产品组</p>
+    </div>
+    <div class="side">
+      <div class="a-head">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        <div class="l-title">向我提问</div>
+        <div class="sp"></div>
+        <div class="icb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+        <div class="icb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></div>
+      </div>
+      <div class="a-body">
+        <div class="askrow"><div class="ask">这份验收报告的结论是什么？</div></div>
+        <div class="ans">
+          34 项走查里<b>通过 29 项、待修 5 项</b>。首屏与信息层级判为通过：单栏卡片流、导航从 7 项收敛到 4 项。搜索入口是唯一写明未结的一条 —— 已提到常驻，但<b>移动端触达仍偏低</b>，标注为待二轮走查。
+          <div class="cites">
+            <div class="cite"><em>引用 1</em>一、首屏与信息层级</div>
+            <div class="cite"><em>引用 2</em>二、搜索入口</div>
+          </div>
+        </div>
+        <div class="follow">
+          <div class="fchip">哪些问题还没修完？</div>
+          <div class="fchip">34 项里通过了多少？</div>
+        </div>
+        <div class="sp"></div>
+        <div class="metaline">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+          qwen3.6-plus · dashscope
+          <div class="sp"></div>
+          <span class="quota">本页今日剩 17 / 20 · 你这小时剩 3 / 5</span>
+        </div>
+      </div>
+      <div class="a-foot">
+        <div class="field">
+          <span>接着问</span>
+          <div class="send" style="width:30px; height:30px; border-radius:9px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="eyebrow">右侧栏 · 历史<em>点顶栏那枚时钟。这一页问过的每一轮都在，换个问题不必从头解释</em></div>
+  <div class="stage">
+    <div class="left">
+      <h2>一、首屏与信息层级</h2>
+      <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>
+    </div>
+    <div class="side" style="position: relative">
+      <div class="a-head">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        <div class="l-title">向我提问</div>
+        <div class="sp"></div>
+        <div class="icb on"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+        <div class="icb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></div>
+      </div>
+      <div class="hist">
+        <div class="h-head">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+          这一页问过的
+          <div class="sp"></div>
+          <span class="mono" style="font-size:10px; color:rgba(247,247,251,0.50)">3 轮</span>
+        </div>
+        <div class="h-row on"><div class="q">这份验收报告的结论是什么？</div><div class="m">刚刚 · 2 轮往返</div></div>
+        <div class="h-row"><div class="q">搜索入口为什么算未通过？</div><div class="m">12 分钟前 · 1 轮</div></div>
+        <div class="h-row"><div class="q">截图 03 讲的是哪个页面？</div><div class="m">昨天 21:40 · 1 轮</div></div>
+        <div class="h-foot">
+          没登录的话，这份历史只留在这台设备的浏览器里，换设备或清缓存就没了。登录之后跟着账号走。
+        </div>
+      </div>
+      <div class="a-foot" style="margin-top:auto">
+        <div class="field">
+          <span>接着问</span>
+          <div class="send" style="width:30px; height:30px; border-radius:9px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note-row">
+    <div class="ok"><b>历史存在哪</b>登录用户跟着账号走，换设备也在。匿名访客只能存在这台浏览器里 —— 这是身份决定的，不是偷懒，所以面板里直接把这句话写给用户看，别让他换台电脑才发现没了。</div>
+    <div class="warn"><b>额度归属没变</b>历史是「这一页问过什么」的账，配额仍按站点每日 + 访客每小时两层算。两者不要混：能翻到历史不等于能重问一遍不花额度。</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

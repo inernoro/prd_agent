@@ -37,16 +37,17 @@ export const AS_COLOR = {
   /** Pill 按钮底 —— App Store Get 按钮的灰色 */
   pillBg: 'rgba(120, 120, 128, 0.24)',
 
-  /** iOS System Colors（暗色）—— 用于强调色、上眉色等 */
-  blue: '#A5B4FC',
-  green: '#30D158',
-  orange: '#FF9F0A',
-  yellow: '#FFD60A',
-  red: '#FF453A',
-  pink: '#FF375F',
-  purple: '#BF5AF2',
-  teal: '#64D2FF',
-  indigo: '#5E5CE6',
+  /** 语义色槽（名称沿用 iOS 习惯，取值已换成米多墨系：暖石墨 + 赭红身份色，
+   *  紫/靛/品红不在色带内，与桌面 lib/tileAccent 的八色墨带同源） */
+  blue: '#E0956B',
+  green: '#68A385',
+  orange: '#D9A05E',
+  yellow: '#D9B85C',
+  red: '#D9705A',
+  pink: '#C87A63',
+  purple: '#6B8DB8',
+  teal: '#6BA9A2',
+  indigo: '#4E7EA8',
 } as const;
 
 /** iOS 浅色（Light Mode）对照色板 —— 与 AS_COLOR 同形状,配合 useAppStoreColors 切换 */
@@ -68,14 +69,14 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
   pillBg: 'rgba(120, 120, 128, 0.16)',
 
   blue: '#8F3F2B',
-  green: '#34c759',
-  orange: '#ff9500',
-  yellow: '#ffcc00',
-  red: '#ff3b30',
-  pink: '#ff2d55',
-  purple: '#af52de',
-  teal: '#32ade6',
-  indigo: '#5856d6',
+  green: '#3F7A5E',
+  orange: '#A8703C',
+  yellow: '#A8842F',
+  red: '#B0402C',
+  pink: '#A85A44',
+  purple: '#3B5F8A',
+  teal: '#3B7A75',
+  indigo: '#37608A',
 } as const;
 
 /* ───────────── 字号阶梯（严格的 9 档，不允许出现中间值） ───────────── */
@@ -83,6 +84,21 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
 export const AS_TYPE = {
   /** 页面主标题（Today / 下午好）—— SF Pro Display Bold */
   heroTitle: { fontSize: 34, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.08 },
+  /**
+   * 同一档字号的重字重变体（藏书阁 390 终稿）。
+   *
+   * 页面骨架从「粗野」收回 iOS 纪律时，墨边、硬投影、整卡五色底全部去掉，
+   * 只在字重上留一个记号：主标题 800 而不是 700。它是刻意的一处偏离，
+   * 所以单独成档而不是就地写 800 —— 否则下一个人看到那个字面量，
+   * 会以为是随手写的，顺手改回 700。
+   */
+  heroTitleStrong: { fontSize: 34, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.08 },
+
+  /**
+   * 处境句 —— 与 groupTitle 同字号同字重，只是行高松一档（1.25 而非 1.15）。
+   * 它是成段的口语句子，不是标题；按标题的行高排会挤成一坨。
+   */
+  quote: { fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em', lineHeight: 1.25 },
   /** Hero 副标题（日期、一行描述） */
   heroSubtitle: { fontSize: 15, fontWeight: 400, letterSpacing: '-0.01em', lineHeight: 1.3 },
 
@@ -128,6 +144,12 @@ export const AS_SPACE = {
   /** List 分隔线从 icon 右侧开始（icon 52 + 左 padding 20） */
   listDividerInset: 72,
 
+  /** 列表项水平 padding（iOS grouped cell 的左右内边距） */
+  listItemPaddingX: 16,
+  /** 主卡（featured）纵 / 横 padding —— 比列表行宽一档，让它在同屏里读起来是「一块」而不是「一行」 */
+  featuredPaddingY: 18,
+  featuredPaddingX: 20,
+
   /** Featured 卡片圆角 */
   featuredRadius: 22,
   /** Shelf 卡片圆角 */
@@ -155,6 +177,14 @@ export const AS_SIZE = {
   pillHeight: 30,
   /** 智能体宫格里的圆角 icon 尺寸（App Store 主屏 app 图标级） */
   gridIconSize: 60,
+  /**
+   * 列表行里的序号方块（藏书阁卷序「一…七」、推荐书的 1/2）。
+   *
+   * 刻意比 appIconSize 52 小一档：七行叠在一屏时，52 会让「七卷」那组比它上面的
+   * 处境卡组还高，喧宾夺主；44 是 iOS 的最小可点面积，又恰好让 17/13 两行文字与
+   * 方块等高。卷页顶部只出现一个、不成组时仍用 gridIconSize 60。
+   */
+  rowBoxSize: 44,
   /** 智能体宫格行间距 */
   gridGap: 16,
 } as const;

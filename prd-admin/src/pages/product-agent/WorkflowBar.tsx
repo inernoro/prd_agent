@@ -3,17 +3,13 @@
  *
  * 显示对象当前状态 + 可执行的流转动作按钮；点击调 /transition 端点改 CurrentState。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { useAuthStore } from '@/stores/authStore';
-import { getProduct, transition } from '@/services/real/productAgent';
+import { transition } from '@/services/real/productAgent';
 import type { WorkflowDefinition, ProductEntityType } from './types';
 import { normalizeRequirementStateKey, requirementTransitionButtonLabel, resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import {
-  canExecuteWorkflowTransition,
-  isGlobalProductAdmin,
   transitionNeedsDialog,
-  type ProductWorkflowContext,
   type WorkflowTransitionEntitySnapshot,
 } from './workflowTransitionGuard';
 import { WorkflowTransitionDialog } from './WorkflowTransitionDialog';
@@ -41,32 +37,7 @@ export function WorkflowBar({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [product, setProduct] = useState<ProductWorkflowContext | null>(null);
   const [pendingTransition, setPendingTransition] = useState<WorkflowTransition | null>(null);
-
-  const currentUserId = useAuthStore((s) => s.user?.userId ?? '');
-  const permissions = useAuthStore((s) => s.permissions);
-  const isGlobalAdmin = isGlobalProductAdmin(permissions);
-
-  useEffect(() => {
-    if (!productId) {
-      setProduct(null);
-      return;
-    }
-    let active = true;
-    void getProduct(productId).then((res) => {
-      if (!active || !res.success) return;
-      setProduct({
-        ownerId: res.data.ownerId,
-        ownerIds: res.data.ownerIds,
-        adminIds: res.data.adminIds,
-        memberIds: res.data.memberIds,
-      });
-    });
-    return () => {
-      active = false;
-    };
-  }, [productId]);
 
   const entity = entitySnapshot ?? {};
 
@@ -74,12 +45,9 @@ export function WorkflowBar({
   const effectiveStateKey = isRequirement ? normalizeRequirementStateKey(currentState, workflow) : (currentState ?? undefined);
   const state = workflow?.states.find((s) => s.key === effectiveStateKey) ?? workflow?.states.find((s) => s.isInitial) ?? workflow?.states[0];
 
-  const available = useMemo(() => {
-    if (!workflow) return [];
-    const raw = workflow.transitions.filter((t) => !t.fromState || t.fromState === (effectiveStateKey ?? state?.key));
-    if (!product || !currentUserId) return raw;
-    return raw.filter((t) => canExecuteWorkflowTransition(currentUserId, t, product, isGlobalAdmin, entity));
-  }, [workflow, effectiveStateKey, state?.key, product, currentUserId, isGlobalAdmin, entity]);
+  const available = (workflow?.transitions ?? []).filter(
+    (transition) => !transition.fromState || transition.fromState === (effectiveStateKey ?? state?.key),
+  );
 
   const runTransition = async (tr: WorkflowTransition, payload?: { comment?: string; assigneeId?: string; title?: string; grade?: string }) => {
     setBusy(tr.key);
@@ -125,7 +93,7 @@ export function WorkflowBar({
             type="button"
             onClick={() => onClickTransition(t)}
             disabled={!!busy}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-50"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-50"
           >
             {busy === t.key ? <MapSpinner size={12} /> : null}
             {isRequirement ? requirementTransitionButtonLabel(t, workflow) : (t.label || t.key)}

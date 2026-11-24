@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14);
+      --radius: 8px; --radius-sm: 6px;
+      --card-pad: 24px; --sp-tight: 8px; --sp-group: 20px; --sp-layer: 28px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .dot { width: 5px; height: 5px; border-radius: 999px; background: var(--accent); display: inline-block; animation: b 1.1s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.15s; }
+    .dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes b { 0%, 100% { opacity: 0.25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+    .caret { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: -2px; animation: c 1s step-end infinite; }
+    @keyframes c { 50% { opacity: 0; } }
+  </style>
+</helmet>
+
+<div style="padding: 24px 28px; display: flex; flex-direction: column; gap: 20px;">
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.8;">Quickstart</div>
+    <div style="font-size: 13px; color: var(--text-muted);">先说清要做什么，再签发；密钥在下一屏只显示一次。</div>
+  </div>
+
+  <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-layer);">
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="flex: none; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 700;">2</span>
+        <strong style="font-size: 15px; font-weight: 650;">颁发调用用途码</strong>
+        <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: none; background: none; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; border-radius: var(--radius-sm);">改那句话</button>
+      </div>
+      <div style="padding-left: 40px; font-size: 13px; color: var(--text-muted);">按你写的那句话推导</div>
+    </div>
+
+    <!-- 推导中：那句话仍然在场，用户不会失去上下文 -->
+    <div style="display: flex; flex-direction: column; gap: var(--sp-tight);">
+      <div style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">你写的</div>
+      <div style="border-left: 2px solid var(--accent); background: var(--bg-elevated); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; padding: 14px 18px; font-size: 14px; color: var(--text-secondary); line-height: 1.7;">接入小米音响，对接大模型网关指令集</div>
+    </div>
+
+    <!--
+      结果区在推导期间由这块占位，尺寸与成品接近，出结果时不会整页跳动。
+      模型原文用等宽 13px，滚动区固定高度 168px：一直在动的是产物本身的形状。
+    -->
+    <div style="background: var(--accent-soft); border: 1px solid rgba(167,139,250,0.32); border-radius: var(--radius); padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--sp-group);">
+      <div style="display: flex; align-items: center; gap: var(--sp-tight);">
+        <strong style="font-size: 13px; font-weight: 650; color: var(--accent);">模型正在推导两段码</strong>
+        <span style="display: inline-flex; gap: 3px; align-items: center;"><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+        <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">已用 2.4s</span>
+      </div>
+      <div class="mono" style="height: 168px; overflow: hidden; background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 14px 16px; font-size: 13px; line-height: 1.7; color: var(--text-secondary);">{"app":"xiaomi-speaker","feature":"model-gateway-com<span class="caret"></span></div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-group); border-top: 1px solid var(--border-subtle); padding-top: var(--sp-layer);">
+      <span style="flex: 1 1 320px; min-width: 0; font-size: 13px; color: var(--text-muted); line-height: 1.7;">推导完成后会给出码、来源与判断依据，你再确认。</span>
+      <div style="flex: none; display: flex; gap: var(--sp-tight);">
+        <button type="button" disabled style="height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-primary); font: inherit; font-size: 13px; font-weight: 500; opacity: 0.5;">重新生成</button>
+        <button type="button" disabled style="height: 32px; padding: 0 16px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 13px; font-weight: 500; opacity: 0.5;">下一步</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

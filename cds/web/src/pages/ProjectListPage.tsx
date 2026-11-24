@@ -1,6 +1,7 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
+
 import {
   Activity,
   AlertTriangle,
@@ -17,11 +18,15 @@ import {
   ExternalLink,
   FileText,
   Gauge,
+  GitBranch,
+  MoreHorizontal,
+  Box,
   FolderGit2,
   Github,
   KeyRound,
   Loader2,
   Pause,
+  Pin,
   Play,
   Plus,
   RefreshCw,
@@ -43,7 +48,13 @@ import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
 import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
 import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { useCdsEvents } from '@/hooks/useCdsEvents';
+import { useNowTick } from '@/hooks/useNowTick';
+import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
+import { AppShell, ProjectListTopBar, Workspace, useCanShowProjectActions } from '@/components/layout/AppShell';
+import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
+import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
+import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
@@ -59,18 +70,13 @@ import { requestAgentAccess } from '@/lib/agent-onboarding';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 
-const PROJECT_DOCK_BASE_SIZE = 56;
-const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
-const PROJECT_DOCK_DISTANCE = 150;
-const PROJECT_DOCK_SPRING = { mass: 0.12, stiffness: 180, damping: 16 };
-
-interface ProjectSummary {
+export interface ProjectSummary {
   id: string;
   slug: string;
   name: string;
@@ -113,6 +119,8 @@ interface ProjectSummary {
   pausedAt?: string | null;
   pauseReason?: string | null;
   resourceUsage?: ProjectResourceUsage | null;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 interface ProjectResourceUsage {
@@ -128,6 +136,7 @@ interface ProjectResourceUsage {
 interface ProjectsResponse {
   projects: ProjectSummary[];
   total: number;
+  canManageProjects?: boolean;
 }
 
 interface GithubRepo {
@@ -308,6 +317,8 @@ interface AgentKeySummary {
   id: string;
   label?: string;
   scope?: string;
+  planningAccess?: 'read' | 'propose';
+  designAccess?: 'read' | 'feedback' | 'publish';
   access?: AgentKeyScope;
   createdAt?: string;
   createdBy?: string;
@@ -315,6 +326,8 @@ interface AgentKeySummary {
   revokedAt?: string;
   status?: 'active' | 'revoked';
 }
+
+const agentDesignAccessLabels = { read: '设计只读', feedback: '设计实施反馈', publish: '设计稿件发布' } as const;
 
 interface AgentKeysResponse {
   keys: AgentKeySummary[];
@@ -386,7 +399,7 @@ type PendingImportYamlState =
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; projects: ProjectSummary[]; legacy: LegacyCleanupStatus | null };
+  | { status: 'ok'; projects: ProjectSummary[]; legacy: LegacyCleanupStatus | null; canManageProjects: boolean };
 
 function formatRelativeTime(value?: string | null): string {
   if (!value) return '尚未部署';
@@ -449,11 +462,18 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const canShowProjectActions = useCanShowProjectActions();
+  const events = useCdsEvents();
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  /** 建项目时填了个已被绑走的仓库：项目建好了但没绑上，这里当场问清楚。 */
+  const [repoSharePrompt, setRepoSharePrompt] = useState<
+    /** pendingClone：这个项目还没 clone，等用户对冲突拿定主意再开始 */
+    { project: ProjectSummary; info: RepoAlreadyLinked; pendingClone: ProjectSummary | null } | null
+  >(null);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
@@ -469,12 +489,91 @@ export function ProjectListPage(): JSX.Element {
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
   const [pendingImportError, setPendingImportError] = useState('');
+  const [inventorySelection, setInventorySelection] = useState<ProjectInventorySelection>(() => {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(`cds.project-selection:${window.history.state?.key || 'default'}`) || 'null') as ProjectInventorySelection | null;
+      if (value && typeof value.query === 'string' && ['all', 'running', 'paused', 'ready'].includes(value.status) && typeof value.environment === 'string' && ['default', 'recent', 'name'].includes(value.sort) && ['grid', 'list'].includes(value.view)) return value;
+    } catch { /* optional visit context */ }
+    return INITIAL_PROJECT_SELECTION;
+  });
+  const [inventoryPreferences, setInventoryPreferences] = useState<ProjectInventoryPreferences>({ view: 'grid', pinnedProjectIds: [] });
+  useEffect(() => {
+    try { sessionStorage.setItem(`cds.project-selection:${window.history.state?.key || 'default'}`, JSON.stringify(inventorySelection)); } catch { /* optional visit context */ }
+  }, [inventorySelection]);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    const preferences = readProjectInventoryPreferences();
+    setInventoryPreferences(preferences);
+    setInventorySelection(selection => ({ ...selection, view: preferences.view }));
+  }, []);
+
+  const saveInventoryPreferences = (preferences: ProjectInventoryPreferences): void => {
+    setInventoryPreferences(preferences);
+    if (!writeProjectInventoryPreferences(preferences)) setToast('已更新本页排序，浏览器未能保存显示偏好');
+  };
+  const updateInventorySelection = (selection: ProjectInventorySelection): void => {
+    setInventorySelection(selection);
+    if (selection.view !== inventoryPreferences.view) saveInventoryPreferences({ ...inventoryPreferences, view: selection.view });
+  };
+  const toggleProjectPin = (project: ProjectSummary): void => {
+    const wasPinned = inventoryPreferences.pinnedProjectIds.includes(project.id);
+    const preferences = { ...inventoryPreferences, pinnedProjectIds: wasPinned
+      ? inventoryPreferences.pinnedProjectIds.filter(id => id !== project.id)
+      : [...inventoryPreferences.pinnedProjectIds, project.id] };
+    setInventoryPreferences(preferences);
+    const saved = writeProjectInventoryPreferences(preferences);
+    setToast(`${wasPinned ? '已取消置顶' : '已置顶项目'}${saved ? '' : '（本页有效，浏览器未保存）'}`);
+  };
+  const copyProjectName = async (project: ProjectSummary): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(displayName(project));
+      setToast('项目名称已复制');
+    } catch {
+      setToast('浏览器未允许复制，请选择项目名称后手动复制');
+    }
+  };
+  const [repositoryImportOpen, setRepositoryImportOpen] = useState(false);
+  const [environmentTargets, setEnvironmentTargets] = useState<ProjectEnvironmentTarget[]>([]);
+  const [environmentStatus, setEnvironmentStatus] = useState<ProjectEnvironmentStatus>('loading');
+  const hasEnvironmentSnapshot = useRef(false);
+  const [environmentRefresh, setEnvironmentRefresh] = useState(0);
+  const environmentAccess = state.status === 'ok' ? state.canManageProjects : null;
   const [quickRepoUrl, setQuickRepoUrl] = useState('');
   const [quickCreating, setQuickCreating] = useState(false);
   const [pendingImports, setPendingImports] = useState<PendingImportsResponse>({
     imports: [],
     pendingCount: 0,
   });
+
+  useEffect(() => {
+    if (environmentAccess === null) return;
+    if (!environmentAccess) {
+      hasEnvironmentSnapshot.current = false;
+      setEnvironmentTargets([]);
+      setInventorySelection(selection => ({ ...selection, environment: 'all' }));
+      setEnvironmentStatus('unavailable');
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    if (!hasEnvironmentSnapshot.current) setEnvironmentStatus('loading');
+    void apiRequest<{ targets: ProjectEnvironmentTarget[] }>('/api/releases/targets', { signal: controller.signal })
+      .then(data => {
+        if (cancelled) return;
+        hasEnvironmentSnapshot.current = true;
+        setEnvironmentTargets(data.targets || []);
+        setEnvironmentStatus('ready');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        if (hasEnvironmentSnapshot.current) setToast('发布环境刷新失败，已保留上次结果，请稍后刷新重试');
+        else setEnvironmentStatus('error');
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => { cancelled = true; window.clearTimeout(timeout); controller.abort(); };
+  }, [environmentRefresh, environmentAccess]);
 
   const loadPendingImports = useCallback(async (): Promise<PendingImportsResponse | null> => {
     try {
@@ -495,34 +594,41 @@ export function ProjectListPage(): JSX.Element {
   }, []);
 
   const refresh = useCallback(async (showLoading = false) => {
-    if (showLoading) setState({ status: 'loading' });
+    if (showLoading) setState((previous) => previous.status === 'ok' ? previous : { status: 'loading' });
     try {
-      const [projectsRes, legacyRes] = await Promise.all([
-        apiRequest<ProjectsResponse>('/api/projects'),
-        apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null),
-      ]);
+      const projectsRes = await apiRequest<ProjectsResponse>('/api/projects');
       const nextProjects = projectsRes.projects || [];
       const lastKnownGood = lastKnownGoodProjectsRef.current;
-      if (nextProjects.length > 0) {
+      const canManageProjects = projectsRes.canManageProjects !== false;
+      const legacyRes = canManageProjects
+        ? await apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null)
+        : null;
+      if (nextProjects.length > 0 || !canManageProjects) {
         lastKnownGoodProjectsRef.current = nextProjects;
       }
       const suspiciousEmpty =
-        nextProjects.length === 0 &&
+        canManageProjects && nextProjects.length === 0 &&
         ((projectsRes.total || 0) > 0 || lastKnownGood.length > 0);
       setState({
         status: 'ok',
         projects: suspiciousEmpty ? lastKnownGood : nextProjects,
         legacy: legacyRes,
+        canManageProjects,
       });
+      if (!suspiciousEmpty) setLastRefreshedAt(new Date().toISOString());
       if (suspiciousEmpty) {
         setToast('项目列表返回可疑空结果，已保留上一次有效列表');
       }
-      void loadPendingImports();
+      if (canManageProjects) void loadPendingImports();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
   }, [loadPendingImports]);
+
+  useEffect(() => {
+    if (events.lastAccessRequestEvent?.type === 'progress') void refresh(false);
+  }, [events.lastAccessRequestEvent, refresh]);
 
   // 暂停 / 恢复一个项目。乐观刷新；暂停会停止运行容器，由后端后台执行，
   // 前端轮询反映停止结果。返回的 message 已含「正在停止 N 个分支」。
@@ -603,15 +709,36 @@ export function ProjectListPage(): JSX.Element {
   }, [toast]);
 
   const projects = state.status === 'ok' ? state.projects : [];
+  const canManageProjects = state.status === 'ok' && state.canManageProjects;
+  const showProjectCreator = state.status === 'ok' ? state.canManageProjects : canShowProjectActions;
   const legacy = state.status === 'ok' ? state.legacy : null;
-  const activeCount = useMemo(
-    () => projects.reduce((sum, project) => sum + (project.runningServiceCount || 0), 0),
-    [projects],
-  );
   const pendingImportCount = pendingImports.pendingCount || 0;
+  const serviceLabels = useMemo(() => new Map(projects.map(project =>
+    [project.id, uniqueProjectBrands(project).map(brand => brand.label)])), [projects]);
+  const visibleProjects = selectInventoryProjects(projects, inventorySelection, environmentTargets, serviceLabels, inventoryPreferences.pinnedProjectIds);
+
+  function renderProjectCard(project: ProjectSummary): JSX.Element {
+    return (
+      <ProjectCard
+        key={project.id}
+        project={project}
+        canManageProjects={canManageProjects}
+        pinned={inventoryPreferences.pinnedProjectIds.includes(project.id)}
+        onTogglePin={() => toggleProjectPin(project)}
+        onCopyName={() => void copyProjectName(project)}
+        environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
+        onClone={() => setCloneTarget(project)}
+        onAgentKeys={() => setAgentKeyProject(project)}
+        onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
+        onDelete={() => setDeleteTarget(project)}
+        onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
+      />
+    );
+  }
 
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (!canManageProjects) return;
     const gitRepoUrl = quickRepoUrl.trim();
     if (!gitRepoUrl) {
       setToast('先粘贴 Git 仓库 URL');
@@ -625,14 +752,26 @@ export function ProjectListPage(): JSX.Element {
     }
     setQuickCreating(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: { name, gitRepoUrl },
       });
       setQuickRepoUrl('');
       setToast(`已创建 ${displayName(res.project)}`);
-      if (res.project.cloneStatus === 'pending') setCloneTarget(res.project);
+      const needsClone = res.project.cloneStatus === 'pending';
+      // 有冲突就先别开始 clone —— 见下面那条注释与完整表单里的同一处判断。
+      if (needsClone && !res.repoAlreadyLinked) setCloneTarget(res.project);
       await refresh(false);
+      // 仓库导入保留粘贴 URL 直接建项目的路径，撞上已被绑走的仓库同样要当场问清楚。
+      // 只在完整表单里处理会让主路径静默建出一个没绑仓库的项目，
+      // 而用户看到的是「已创建」，之后推送永远到不了它（Codex P1）。
+      if (res.repoAlreadyLinked) {
+        setRepoSharePrompt({
+          project: res.project,
+          info: res.repoAlreadyLinked,
+          pendingClone: needsClone ? res.project : null,
+        });
+      }
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -640,66 +779,24 @@ export function ProjectListPage(): JSX.Element {
     }
   }
 
-  /*
-   * Render. Layout follows Week 4.6 第九刀 (user-tested):
-   *   - TopBar carries the page's primary action (Git URL paste) inline so
-   *     the workspace below is reserved for the project grid only.
-   *   - Automation tools (skill pack / global agent key / agent records)
-   *     hide in a dropdown menu; they are not first-class panels.
-   *   - Workspace renders only the project tile grid.
-   */
+  // 页面标题、操作与筛选属于完整项目页；全局顶栏继续承载通用运维入口。
+  const refreshAction = <Button
+    variant="ghost"
+    size="icon"
+    onClick={() => { void refresh(false); setEnvironmentRefresh(value => value + 1); }}
+    aria-label="刷新项目列表"
+    title="刷新"
+  >
+    <RefreshCw />
+    <span className="md:hidden">刷新</span>
+  </Button>;
   return (
     <AppShell
       active="projects"
       topbar={
-        <TopBar
-          centerWide
-          left={
-            <>
-              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />
-              {state.status === 'ok' && projects.length > 0 ? (
-                <div className="hidden items-center gap-3 border-l border-[hsl(var(--hairline))] pl-3 lg:flex">
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{projects.length}</span>
-                    <span className="cds-stat-label">项目</span>
-                  </span>
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{activeCount}</span>
-                    <span className="cds-stat-label">运行</span>
-                  </span>
-                </div>
-              ) : null}
-            </>
-          }
-          center={
-            <form
-              className="flex min-w-0 items-center gap-1.5"
-              onSubmit={(event) => void createProjectFromRepoUrl(event)}
-            >
-              <label className="sr-only" htmlFor="topbar-git-repo-url">
-                Git 仓库 URL
-              </label>
-              <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
-                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <input
-                  id="topbar-git-repo-url"
-                  className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-                  value={quickRepoUrl}
-                  onChange={(event) => setQuickRepoUrl(event.target.value)}
-                  placeholder="粘贴 Git 仓库 URL · 回车创建并克隆"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-              <Button type="submit" size="sm" disabled={quickCreating || !quickRepoUrl.trim()}>
-                {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-                创建
-              </Button>
-            </form>
-          }
-          right={
-            <>
-              <PaletteHint />
+        <ProjectListTopBar canManageProjects={showProjectCreator} refreshWhileLoading={refreshAction}>
+          {state.status === 'loading' ? undefined : <>
+              {canManageProjects ? <>
               <Button
                 variant="ghost"
                 size="sm"
@@ -729,21 +826,14 @@ export function ProjectListPage(): JSX.Element {
                   {pendingImportCount}
                 </Button>
               ) : null}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => void refresh(false)}
-                aria-label="刷新项目列表"
-                title="刷新"
-              >
-                <RefreshCw />
-                <span className="md:hidden">刷新</span>
-              </Button>
-              <DropdownMenu
+              </> : null}
+              {refreshAction}
+              {state.status === 'ok' && !canManageProjects ? <Button variant="outline" size="sm" onClick={() => navigate('/dts')}><Database />数据同步</Button> : null}
+              {canManageProjects ? <DropdownMenu
                 trigger={
                   <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
                     <Plus />
-                    一键部署
+                    项目工具
                   </Button>
                 }
                 width={240}
@@ -766,6 +856,7 @@ export function ProjectListPage(): JSX.Element {
                   <Github className="h-4 w-4 shrink-0" />
                   从 GitHub 选仓库
                 </DropdownItem>
+                <DropdownItem onSelect={() => navigate('/dts')}><Database className="h-4 w-4 shrink-0" />数据同步</DropdownItem>
                 <DropdownItem onSelect={() => setSandboxOpen(true)}>
                   <Beaker className="h-4 w-4 shrink-0" />
                   从 YAML 沙盒新建
@@ -779,13 +870,12 @@ export function ProjectListPage(): JSX.Element {
                   <FileText className="h-4 w-4 shrink-0" />
                   Agent 申请记录
                 </DropdownItem>
-              </DropdownMenu>
-            </>
-          }
-        />
+              </DropdownMenu> : null}
+          </>}
+        </ProjectListTopBar>
       }
     >
-      <Workspace wide className="cds-workspace-project-list">
+      <Workspace fluid className="cds-project-inventory-workspace">
         {legacy?.legacyInUse ? (
           <div className="mb-6">
             <LegacyBanner
@@ -804,43 +894,148 @@ export function ProjectListPage(): JSX.Element {
           </div>
         ) : null}
 
-        {/* Project tile grid — only content in the workspace, like Railway. */}
-        <section>
-          {state.status === 'loading' ? <ProjectListSkeleton /> : null}
+        {state.status === 'ok' ? <ProjectInventoryHeader
+          projects={projects} selection={inventorySelection} onChange={updateInventorySelection}
+          targets={environmentTargets} environmentStatus={environmentStatus} canManageProjects={canManageProjects}
+          importOpen={repositoryImportOpen} onImport={() => setRepositoryImportOpen(open => !open)}
+          onCreate={() => { setCreateAutoPickRepo(false); setCreateOpen(true); }}
+        /> : null}
+        {canManageProjects && repositoryImportOpen ? (
+            <form
+              className="cds-project-repository-import"
+              id="project-repository-import"
+              onSubmit={(event) => void createProjectFromRepoUrl(event)}
+            >
+              <label className="sr-only" htmlFor="project-import-git-repo-url">
+                Git 仓库 URL
+              </label>
+              <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <input
+                  id="project-import-git-repo-url"
+                  disabled={!canManageProjects}
+                  autoFocus
+                  className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                  value={quickRepoUrl}
+                  onChange={(event) => setQuickRepoUrl(event.target.value)}
+                  placeholder="粘贴 Git 仓库 URL · 回车创建并克隆"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={!canManageProjects || quickCreating || !quickRepoUrl.trim()}>
+                {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
+                创建
+              </Button>
+              <Button variant="outline" type="button" size="sm" onClick={() => { setCreateAutoPickRepo(true); setCreateOpen(true); }}><Github />从 GitHub 选择</Button>
+            </form>
+        ) : null}
+        <section aria-label="项目列表">
+          {state.status === 'loading' ? <ProjectListSkeleton canManageProjects={showProjectCreator} /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
-            <EmptyProjects onCreate={() => setCreateOpen(true)} />
+            <EmptyProjects canManageProjects={canManageProjects} onCreate={() => setCreateOpen(true)} />
           ) : null}
           {state.status === 'ok' && projects.length > 0 ? (
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-              {projects.map((project) => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                  onClone={() => setCloneTarget(project)}
-                  onAgentKeys={() => setAgentKeyProject(project)}
-                  onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
-                  onDelete={() => setDeleteTarget(project)}
-                  onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
-                />
-              ))}
-            </div>
+            visibleProjects.length === 0 ? <div className="cds-project-inventory-empty" role="status">
+              <h2>没有匹配的项目</h2><p>试试其他名称、服务或筛选条件。</p>
+              <Button variant="outline" size="sm" onClick={() => setInventorySelection({ ...INITIAL_PROJECT_SELECTION, view: inventorySelection.view })}>清除筛选</Button>
+            </div> : <ProjectInventorySections
+              projects={visibleProjects} view={inventorySelection.view} separatePaused={inventorySelection.status === 'all'}
+              filterKey={JSON.stringify([inventorySelection.status, inventorySelection.query.trim(), inventorySelection.environment])}
+              renderProject={renderProjectCard}
+            />
           ) : null}
         </section>
+        {state.status === 'ok' && projects.length > 0 ? <footer className="cds-project-inventory-footer" aria-live="polite">
+          <span>显示 {visibleProjects.length} 个项目，共 {projects.length} 个</span>
+          <ProjectInventoryFreshness updatedAt={lastRefreshedAt} />
+        </footer> : null}
 
-        <CreateProjectDialog
+        {canManageProjects ? <CreateProjectDialog
           open={createOpen}
           onOpenChange={(next) => {
             setCreateOpen(next);
             if (!next) setCreateAutoPickRepo(false);
           }}
           autoOpenPicker={createAutoPickRepo}
-          onCreated={async (project) => {
+          onCreated={async (project, repoAlreadyLinked) => {
             setToast(`已创建 ${displayName(project)}`);
-            if (project.cloneStatus === 'pending') setCloneTarget(project);
+            // 有冲突就先别开始 clone —— 让用户先回答「是要共用还是填错了」。
+            // clone 会顺手做自动配置，而私有仓库这时还没拿到共享的 GitHub App
+            // 绑定，拉取本来就可能失败（2026-09-02 Codex P1）。
+            if (project.cloneStatus === 'pending' && !repoAlreadyLinked) setCloneTarget(project);
             await refresh(false);
           }}
-        />
+          onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({
+            project,
+            info,
+            pendingClone: project.cloneStatus === 'pending' ? project : null,
+          })}
+        /> : null}
+
+        {/*
+         * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
+         * （绝大多数是填错地址），但绝不能不说 —— 用户会一直等一个永远不会来的
+         * 自动部署。所以在这里当场问清楚是哪一种。
+         */}
+        <Dialog
+          open={repoSharePrompt !== null}
+          onOpenChange={(next) => { if (!next) setRepoSharePrompt(null); }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>仓库没有绑上</DialogTitle>
+              <DialogDescription>
+                {displayName(repoSharePrompt?.project || ({} as ProjectSummary))} 已创建，但仓库没有绑定。
+              </DialogDescription>
+            </DialogHeader>
+            {repoSharePrompt ? (
+              <>
+                <RepoSharingConfirmBody
+                  repoFullName={repoSharePrompt.info.repoFullName}
+                  siblings={repoSharePrompt.info.projects}
+                  siblingCount={repoSharePrompt.info.projectCount}
+                />
+                {/* 两条出口各自会发生什么，先说清楚，别让用户点完才猜 */}
+                <p className="text-xs text-muted-foreground">
+                  {repoSharePrompt.pendingClone
+                    ? '选「填错了」就先不克隆这个仓库，项目留在未克隆状态，可以在项目卡上重新开始或直接删掉；选「去绑定」会先把仓库绑上，绑好再克隆。'
+                    : '选「填错了」只是不绑仓库，项目本身保持不变。'}
+                </p>
+              </>
+            ) : null}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  /*
+                   * 「填错了」就是说这个仓库地址不对 —— 那就更不该去拉它
+                   * （2026-09-02 Codex P2）。上一版把推迟的 clone 接在这条出口上，
+                   * 等于用户刚说完「填错了」，系统立刻开始克隆并自动配置那个错仓库。
+                   * 这里只关掉弹窗；项目留在未克隆状态，用户可以在项目卡上改地址、
+                   * 手动开始克隆，或者直接删掉重来。
+                   */
+                  setRepoSharePrompt(null);
+                }}
+              >
+                填错了，先不绑
+              </Button>
+              <Button
+                onClick={() => {
+                  // 去绑定：先把仓库绑上再 clone —— 私有仓库的拉取凭据正是从那个
+                  // 绑定来的，反过来先拉多半会失败。clone 入口在项目卡上，绑完
+                  // 随时可以点。
+                  const target = repoSharePrompt?.project.id;
+                  setRepoSharePrompt(null);
+                  if (target) navigate(`/settings/${encodeURIComponent(target)}#github`);
+                }}
+              >
+                去绑定，确认共用
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <SandboxProjectDialog
           open={sandboxOpen}
           onOpenChange={setSandboxOpen}
@@ -897,7 +1092,7 @@ export function ProjectListPage(): JSX.Element {
           onOpenChange={setMonitoringOpen}
         />
         <PendingImportDialog
-          open={pendingImportOpen}
+          open={canManageProjects && pendingImportOpen}
           onOpenChange={(open) => {
             setPendingImportOpen(open);
             if (!open) setPendingImportFocusId(null);
@@ -1123,7 +1318,7 @@ function PendingImportDialog({
             </div>
           </div>
           {item.status === 'approved' ? (
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-ok" />
           ) : item.status === 'rejected' ? (
             <XCircle className="h-5 w-5 shrink-0 text-destructive" />
           ) : (
@@ -1340,9 +1535,9 @@ function LegacyBanner({
   const countText = `${counts.branches || 0} 分支 / ${counts.buildProfiles || 0} profile / ${counts.infraServices || 0} infra`;
 
   return (
-    <div className="mb-5 flex flex-col gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm lg:flex-row lg:items-center lg:justify-between">
+    <div className="mb-5 flex flex-col gap-3 rounded-md border border-warn/40 bg-warn-soft px-4 py-3 text-sm lg:flex-row lg:items-center lg:justify-between">
       <div className="flex gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
         <div>
           <div className="font-semibold text-foreground">
             {status.needsMigration ? '检测到遗留 default 数据' : '检测到 default 残留'}
@@ -1360,79 +1555,25 @@ function LegacyBanner({
   );
 }
 
-/**
- * 项目列表骨架屏 —— 用「即将出现的内容形状」占位,而不是一个孤零零的居中 logo。
- * 骨架卡逐张镜像真实 ProjectCard(标题条 + 220px 点阵画布 + 底部状态行),
- * 加载完成时视觉无缝切换到真数据。节点分片错相位 shimmer,整片"活着"不发呆。
- * 顶部保留一行带品牌 loader 的说明,让用户明确"在加载什么"(预期管理)。
- */
-const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
+// ProjectListSkeleton 的 SSOT 在 @/components/skeletons/PageSkeletons（路由切换骨架与本页数据骨架共用同一副）。
 
-function ProjectListSkeleton(): JSX.Element {
-  return (
-    <div aria-busy="true" aria-live="polite">
-      <div className="mb-5 flex items-center">
-        <CdsLogoLoader
-          label="加载项目列表"
-          size="sm"
-          mineral="iris"
-          className="text-[13px] font-medium text-muted-foreground"
-        />
-      </div>
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-        {SKELETON_CARD_WIDTHS.map((width, index) => (
-          <article
-            key={index}
-            className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
-          >
-            <header className="px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-[18px]" style={{ width }} />
-            </header>
-            <div
-              className="relative mx-3 my-3 h-[220px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
-              style={{
-                backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-                backgroundSize: '14px 14px',
-              }}
-            >
-              <div className="absolute inset-0 flex items-center justify-center gap-2.5">
-                {[0, 1, 2, 3].map((node) => (
-                  <div
-                    key={node}
-                    className="cds-loading-skeleton-panel h-11 w-11 rounded-xl"
-                    style={{ animationDelay: `${node * 0.14}s` }}
-                  />
-                ))}
-              </div>
-              <div className="absolute bottom-4 left-4 right-4 flex items-center gap-2">
-                <div className="cds-loading-skeleton-line h-2.5 w-14" />
-                <div className="cds-loading-skeleton-line h-2.5 w-24" />
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
+function EmptyProjects({ onCreate, canManageProjects }: { onCreate: () => void; canManageProjects: boolean }): JSX.Element {
   return (
     <div className="cds-surface-raised cds-hairline px-6 py-12">
       <div className="mx-auto flex max-w-xl flex-col items-center text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
           <FolderGit2 />
         </div>
-        <h2 className="mt-5 text-lg font-semibold">还没有项目</h2>
+        <h2 className="mt-5 text-lg font-semibold">{canManageProjects ? '还没有项目' : '还没有获授权的项目'}</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-          粘贴上方仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。
+          {canManageProjects ? '点击页头“导入仓库”，粘贴 Git 仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。' : '请联系系统所有者在「用户管理 → 项目授权」中分配访问权限，然后刷新本页。'}
         </p>
-        <div className="mt-5">
+        {canManageProjects ? <div className="mt-5">
           <Button onClick={onCreate}>
             <Plus />
             新建项目
           </Button>
-        </div>
+        </div> : null}
       </div>
     </div>
   );
@@ -1546,76 +1687,65 @@ function NacosIcon(): JSX.Element {
 
 function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[number]): {
   label: string;
-  tileClassName: string;
   icon: JSX.Element;
 } {
   const raw = `${service.id} ${service.name || ''} ${service.dockerImage || ''}`.toLowerCase();
   if (raw.includes('mongo')) {
     return {
       label: 'MongoDB',
-      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-400',
       icon: <MongoIcon />,
     };
   }
   if (raw.includes('redis')) {
     return {
       label: 'Redis',
-      tileClassName: 'border-red-600/45 bg-red-500/15 text-red-600 dark:border-red-500/35 dark:bg-red-500/10 dark:text-red-400',
       icon: <RedisIcon />,
     };
   }
   if (raw.includes('mysql')) {
     return {
       label: 'MySQL',
-      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-400',
       icon: <MysqlIcon />,
     };
   }
   if (raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') || /\bpg[-_0-9]/.test(raw)) {
     return {
       label: 'PostgreSQL',
-      tileClassName: 'border-sky-700/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
       icon: <PostgresIcon />,
     };
   }
   if (raw.includes('milvus')) {
     return {
       label: 'Milvus',
-      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
       icon: <MilvusIcon />,
     };
   }
   if (raw.includes('qdrant') || raw.includes('weaviate') || raw.includes('chroma')) {
     return {
       label: raw.includes('qdrant') ? 'Qdrant' : raw.includes('weaviate') ? 'Weaviate' : 'Vector DB',
-      tileClassName: 'border-fuchsia-600/45 bg-fuchsia-500/15 text-fuchsia-700 dark:border-fuchsia-500/35 dark:bg-fuchsia-500/10 dark:text-fuchsia-300',
       icon: <VectorDbIcon />,
     };
   }
   if (raw.includes('rabbit')) {
     return {
       label: 'RabbitMQ',
-      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-400',
       icon: <RabbitIcon />,
     };
   }
   if (raw.includes('nacos')) {
     return {
       label: 'Nacos',
-      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
       icon: <NacosIcon />,
     };
   }
   if (raw.includes('minio')) {
     return {
       label: 'MinIO',
-      tileClassName: 'border-zinc-500/45 bg-zinc-500/15 text-zinc-700 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-200',
       icon: <MinioIcon />,
     };
   }
   return {
     label: service.name || service.id,
-    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-600 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-300',
     icon: <Database className="cds-project-node-icon" />,
   };
 }
@@ -1623,10 +1753,10 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
 type ProjectBrand = {
   key: string;
   label: string;
-  tileClassName: string;
   icon: JSX.Element;
   score: number;
   source: string;
+  running?: boolean;
 };
 
 function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number]): ProjectBrand {
@@ -1642,7 +1772,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'dotnet',
       label: '.NET',
-      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
       icon: <DotnetIcon />,
       score: 900 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1652,7 +1781,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'node',
       label: 'Node.js',
-      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300',
       icon: <NodeIcon />,
       score: 800 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1662,7 +1790,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'python',
       label: 'Python',
-      tileClassName: 'border-blue-600/45 bg-blue-500/15 text-blue-700 dark:border-blue-500/35 dark:bg-blue-500/10 dark:text-blue-300',
       icon: <PythonIcon />,
       score: 700 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1672,7 +1799,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'java',
       label: 'Java',
-      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-300',
       icon: <JavaIcon />,
       score: 650 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1682,7 +1808,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'go',
       label: 'Go',
-      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-300',
       icon: <GoIcon />,
       score: 640 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1692,7 +1817,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'rust',
       label: 'Rust',
-      tileClassName: 'border-amber-700/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-300',
       icon: <RustIcon />,
       score: 630 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1702,7 +1826,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'php',
       label: 'PHP',
-      tileClassName: 'border-indigo-600/45 bg-indigo-500/15 text-indigo-700 dark:border-indigo-500/35 dark:bg-indigo-500/10 dark:text-indigo-300',
       icon: <PhpIcon />,
       score: 620 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1712,7 +1835,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'static',
       label: 'Static',
-      tileClassName: 'border-lime-600/45 bg-lime-500/15 text-lime-700 dark:border-lime-500/35 dark:bg-lime-500/10 dark:text-lime-300',
       icon: <Braces className="cds-project-node-icon" />,
       score: 500 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1722,7 +1844,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'api',
       label: 'API Service',
-      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
       icon: <Code2 className="cds-project-node-icon" />,
       score: 100 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1731,7 +1852,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
   return {
     key: `app:${service.name || service.id}`,
     label: service.name || service.id,
-    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-700 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-200',
     icon: <Code2 className="cds-project-node-icon" />,
     score: 0 + (service.runningCount || 0),
     source: service.dockerImage || service.command || service.id,
@@ -1772,16 +1892,20 @@ function primaryInfraBrand(service: NonNullable<ProjectSummary['infraServices']>
 
 function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
   const appBrands = (project.appServices || [])
-    .map((service) => appIconFor(service))
+    .map((service) => ({ ...appIconFor(service), running: service.runningCount !== undefined ? service.runningCount > 0 : service.status ? service.status === 'running' : undefined }))
     .filter((brand) => brand.score > 0)
     .sort((left, right) => right.score - left.score);
   const infraBrands = (project.infraServices || [])
-    .map(primaryInfraBrand)
+    .map((service) => ({ ...primaryInfraBrand(service), running: service.status ? service.status === 'running' : undefined }))
     .sort((left, right) => right.score - left.score);
   const selected = new Map<string, ProjectBrand>();
   for (const brand of [...appBrands, ...infraBrands]) {
     const existing = selected.get(brand.key);
-    if (!existing || brand.score > existing.score) selected.set(brand.key, brand);
+    if (!existing) selected.set(brand.key, brand);
+    else selected.set(brand.key, {
+      ...(brand.score > existing.score ? brand : existing),
+      running: existing.running || brand.running,
+    });
   }
   const brands = Array.from(selected.values()).sort((left, right) => right.score - left.score);
   const hasSpecificBrand = brands.some((brand) => !brand.key.startsWith('app:') && !brand.key.startsWith('infra:') && brand.key !== 'api');
@@ -1790,81 +1914,80 @@ function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
     : brands;
 }
 
-function ProjectDockNode({
-  mouseX,
-  className,
-  title,
-  ariaLabel,
-  children,
-}: {
-  mouseX: MotionValue<number>;
-  className: string;
-  title: string;
-  ariaLabel: string;
-  children: React.ReactNode;
-}): JSX.Element {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  const distance = useTransform(mouseX, (value) => {
-    const bounds = ref.current?.getBoundingClientRect();
-    if (!bounds) return Infinity;
-    return value - bounds.x - bounds.width / 2;
-  });
-  const scale = useSpring(
-    useTransform(
-      distance,
-      [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE],
-      [1, PROJECT_DOCK_MAGNIFIED_SIZE / PROJECT_DOCK_BASE_SIZE, 1],
-    ),
-    PROJECT_DOCK_SPRING,
-  );
-  const y = useSpring(
-    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [0, -8, 0]),
-    PROJECT_DOCK_SPRING,
-  );
-  const iconSize = useSpring(
-    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [28, 32, 28]),
-    PROJECT_DOCK_SPRING,
-  );
-  const iconSizePx = useTransform(iconSize, (value) => `${value}px`);
+function ProjectInventoryFreshness({ updatedAt }: { updatedAt: string | null }): JSX.Element {
+  useNowTick(Boolean(updatedAt), 30_000);
+  return <span className="cds-project-inventory-freshness">列表更新于 {formatRelativeTime(updatedAt)}</span>;
+}
 
+const PROJECT_SERVICE_ROLES: Record<string, string> = {
+  dotnet: '应用框架', node: '应用运行时', python: '应用运行时', java: '应用运行时', go: '应用运行时',
+  rust: '应用运行时', php: '应用运行时', static: '静态站点', api: '应用服务', mongo: '文档数据库',
+  mysql: '关系数据库', postgres: '关系数据库', redis: '缓存服务', rabbit: '消息队列', minio: '对象存储',
+  milvus: '向量数据库', qdrant: '向量数据库', weaviate: '向量数据库', chroma: '向量数据库', nacos: '配置服务',
+};
+function projectServiceRole(brand: ProjectBrand): string { return PROJECT_SERVICE_ROLES[brand.key] || '关联服务'; }
+function projectServiceTitle(project: ProjectSummary, brand: ProjectBrand): string {
+  const state = project.paused ? '已暂停' : brand.running === undefined ? '状态未采集' : brand.running ? '运行中' : '未运行';
+  return `${brand.label} · ${projectServiceRole(brand)} · ${state} · ${brand.source}`;
+}
+
+/** A compact inventory, not a dependency graph: no inferred runtime edges. */
+function ProjectServiceModules({ project, brands }: { project: ProjectSummary; brands: ProjectBrand[] }): JSX.Element {
+  if (!brands.length) {
+    const repository = project.githubRepoFullName || project.gitRepoUrl;
+    return (
+      <div className="cds-project-services cds-project-services--repository">
+        <div className="cds-project-repository-mark" aria-hidden>{repository ? <Github /> : <FolderGit2 />}</div>
+        <div className="min-w-0">
+          <span className="cds-project-repository-label">{repository ? '代码仓库' : '项目配置'}</span>
+          <strong className="cds-project-repository-name" title={repository || project.slug}>
+            {project.githubRepoFullName || project.slug}
+          </strong>
+          <span className="cds-project-repository-provider">{repository ? '已关联仓库' : '尚未配置应用服务'}</span>
+        </div>
+      </div>
+    );
+  }
+  const [lead, ...others] = brands;
+  const configuredCount = (project.appServiceCount ?? project.appServices?.length ?? 0)
+    + (project.infraServiceCount ?? project.infraServices?.length ?? 0);
+  const hasServiceInventory = project.appServiceCount !== undefined || project.infraServiceCount !== undefined
+    || project.appServices !== undefined || project.infraServices !== undefined;
+  // Every registered stack remains reachable; long inventories scroll in this
+  // bounded column rather than silently dropping services after the sixth icon.
   return (
-    <motion.span
-      ref={ref}
-      className={className}
-      style={{
-        y,
-        scale,
-        '--project-node-icon-size': iconSizePx,
-      } as unknown as React.CSSProperties}
-      title={title}
-      aria-label={ariaLabel}
-    >
-      {children}
-    </motion.span>
+    <div className={`cds-project-services ${others.length ? '' : 'cds-project-services--single'}`}>
+      <div className="cds-project-service-focus" title={projectServiceTitle(project, lead)}>
+        <span className="cds-project-service-glyph" aria-hidden>{lead.icon}</span>
+        <span className="cds-project-service-copy"><strong>{lead.label}</strong>
+          {!others.length ? <small>{projectServiceRole(lead)}</small> : null}
+        </span>
+      </div>
+      {others.length ? (
+        <div className="cds-project-service-list" data-service-count={others.length}>
+          {others.map((brand) => (
+            <div className="cds-project-service-item" key={brand.key} title={projectServiceTitle(project, brand)}>
+              <span className="cds-project-service-glyph" aria-hidden>{brand.icon}</span>
+              <span className="truncate">{brand.label}</span>
+              <i className={`cds-project-service-dot ${!project.paused && brand.running ? 'bg-ok' : 'bg-muted-foreground/40'}`} aria-label={project.paused ? '已暂停' : brand.running === undefined ? '状态未采集' : brand.running ? '运行中' : '未运行'} />
+            </div>
+          ))}
+        </div>
+      ) : <span className="cds-project-service-caption">{hasServiceInventory ? <><b>{configuredCount}</b> 服务</> : '数量未采集'}</span>}
+    </div>
   );
 }
 
-/*
- * ProjectCard — Railway-style "workspace tile".
- *
- * Bigger by intent (~280px tall) with:
- *   - Title row at the top
- *   - A dot-grid canvas in the middle hosting tech-stack glyphs (so it
- *     never feels empty)
- *   - An in-canvas status row that mirrors Railway's project tiles so the
- *     page reads as a workspace, not a metrics list.
- * Whole tile is a navigation link; secondary actions live in a footer
- * action strip that does not compete with the link affordance.
- */
-function ProjectCard({
-  project,
-  onClone,
-  onAgentKeys,
-  onAgentSessions,
-  onDelete,
-  onTogglePause,
+export function ProjectCard({
+  project, canManageProjects, onClone, onAgentKeys, onAgentSessions, onDelete, onTogglePause,
+  pinned = false, onTogglePin, onCopyName, environments,
 }: {
   project: ProjectSummary;
+  canManageProjects: boolean;
+  pinned?: boolean;
+  onTogglePin?: () => void;
+  onCopyName?: () => void;
+  environments?: readonly string[];
   onClone: () => void;
   onAgentKeys: () => void;
   onAgentSessions: () => void;
@@ -1873,251 +1996,88 @@ function ProjectCard({
 }): JSX.Element {
   const title = displayName(project);
   const paused = project.paused === true;
+  const cloneAction = project.cloneStatus === 'error' ? '重新克隆' : project.cloneStatus === 'pending' ? '开始克隆' : null;
   const usage = project.resourceUsage;
-  const cpu = usage?.cpuPercent ?? 0;
-  const recentBuilds1h = usage?.recentBuilds1h ?? 0;
-  const cpuToneClass = cpu >= 100
-    ? 'text-red-600 dark:text-red-400'
-    : cpu >= 50
-      ? 'text-amber-600 dark:text-amber-400'
-      : 'text-muted-foreground';
+  const cpu = usage?.cpuPercent;
+  const cpuToneClass = cpu !== undefined && cpu >= 100 ? 'text-bad'
+    : cpu !== undefined && cpu >= 50 ? 'text-warn' : 'text-muted-foreground';
   const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
-  const cloneLabel =
-    project.cloneStatus === 'pending'
-      ? '待克隆'
-      : project.cloneStatus === 'cloning'
-        ? '克隆中'
-        : project.cloneStatus === 'error'
-          ? '克隆失败'
-          : null;
+  const cloneLabel = project.cloneStatus === 'pending' ? '待克隆'
+    : project.cloneStatus === 'cloning' ? '克隆中'
+      : project.cloneStatus === 'error' ? '克隆失败' : null;
   const running = project.runningServiceCount || 0;
   const branches = project.branchCount || 0;
-  const appTotal = project.appServiceCount || Math.max(branches, running);
-  const infra = project.infraServices || [];
-  const infraCount = project.infraServiceCount ?? infra.length;
-  const runningInfra = project.runningInfraServiceCount || 0;
-  const totalOnline = running + runningInfra;
-  const totalServices = appTotal + infraCount;
-  const stackBrands = uniqueProjectBrands(project);
-  const visibleStackBrands = stackBrands.slice(0, 6);
-  const hiddenStackBrandCount = Math.max(0, stackBrands.length - visibleStackBrands.length);
-  const dockMouseX = useMotionValue(Infinity);
-  const dotTone = paused
-    ? 'bg-muted-foreground/40'
-    : project.cloneStatus === 'error'
-      ? 'bg-destructive'
-      : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
-        ? 'bg-amber-500'
-        : running > 0
-          ? 'bg-emerald-500'
-          : 'bg-muted-foreground/40';
+  const appTotal = project.appServiceCount ?? Math.max(project.appServices?.length ?? 0, running);
+  const infraCount = project.infraServiceCount ?? project.infraServices?.length ?? 0;
+  const totalOnline = running + (project.runningInfraServiceCount || 0);
+  const totalServices = Math.max(appTotal + infraCount, totalOnline);
+  const stateLabel = paused ? '已暂停' : cloneLabel || (totalOnline > 0 ? '运行中' : '已就绪');
+  const stateTone = paused ? 'text-muted-foreground' : project.cloneStatus === 'error' ? 'text-bad'
+    : !isReady ? 'text-warn' : totalOnline > 0 ? 'text-ok' : 'text-muted-foreground';
+  const monogram = (project.slug || project.name || project.id).slice(0, 2).toLocaleUpperCase();
 
   return (
-    // cds-cv-auto：离屏项目卡跳过 layout/paint（卡片本就 overflow-hidden，无浮层裁剪风险）
-    <article className="cds-project-card cds-cv-auto group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
-      <a
-        href={isReady ? projectHref(project) : '#'}
-        onClick={(event) => {
-          if (!isReady) event.preventDefault();
-        }}
-        className={`flex flex-1 flex-col rounded-lg transition-[filter,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${paused ? 'opacity-60 grayscale' : ''}`}
-      >
-        {/* Header */}
-        <header className="flex items-start justify-between gap-3 px-5 pt-5">
-          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
-          {!isReady && cloneLabel ? (
-            <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600">
-              {cloneLabel}
-            </span>
-          ) : null}
+    <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined} data-pinned={pinned || undefined}>
+      <a data-surface-route href={projectHref(project)}
+        aria-label={project.kind === 'shared-service' ? `管理 ${title} 共享服务` : `查看 ${title} 的分支`} className="cds-project-card-link">
+        <header className="cds-project-card-heading">
+          <span className="cds-project-monogram" aria-hidden>{monogram}</span>
+          <h2 title={project.description ? `${title} · ${project.description}` : title}>{title}</h2>
+          {pinned ? <Pin className="cds-project-pin" aria-label="已置顶" /> : null}
+          <span className={`cds-project-state ${stateTone}`}><i aria-hidden />{stateLabel}</span>
         </header>
-
-        {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
-            "workspace" weight, mirroring Railway's project tiles. */}
-        <div
-          className="relative mx-3 my-3 flex h-[220px] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
-          style={{
-            backgroundImage:
-              'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-            backgroundSize: '14px 14px',
-            backgroundPosition: '0 0',
-          }}
-        >
-          <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
-            <motion.div
-              className="cds-project-node-row flex flex-nowrap items-center justify-center"
-              onMouseMove={(event) => dockMouseX.set(event.clientX)}
-              onMouseLeave={() => dockMouseX.set(Infinity)}
-            >
-              {visibleStackBrands.length > 0 ? (
-                visibleStackBrands.map((brand) => (
-                  <ProjectDockNode
-                    key={brand.key}
-                    mouseX={dockMouseX}
-                    className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
-                    title={`${brand.label}${brand.source ? ` · ${brand.source}` : ''}`}
-                    ariaLabel={`${brand.label} 项目类型`}
-                  >
-                    {brand.icon}
-                  </ProjectDockNode>
-                ))
-              ) : (
-                <ProjectDockNode
-                  mouseX={dockMouseX}
-                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
-                  title="应用服务"
-                  ariaLabel="应用服务"
-                >
-                  <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
-                </ProjectDockNode>
-              )}
-              {hiddenStackBrandCount > 0 ? (
-                <ProjectDockNode
-                  mouseX={dockMouseX}
-                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[12px] font-semibold text-muted-foreground shadow-sm"
-                  title={`另有 ${hiddenStackBrandCount} 个技术栈`}
-                  ariaLabel={`另有 ${hiddenStackBrandCount} 个技术栈`}
-                >
-                  +{hiddenStackBrandCount}
-                </ProjectDockNode>
-              ) : null}
-            </motion.div>
-
-            <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
-              {/* On phones the meta row is width-constrained — hide the static
-                  "production" prefix so live status / online count / CPU don't
-                  get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
-              <span className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 sm:block" aria-hidden />
-              <span className="hidden shrink-0 sm:inline">production</span>
-              <span className="hidden text-muted-foreground/60 sm:inline">·</span>
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} aria-hidden />
-              <span className="shrink-0 text-foreground">
-                {paused ? '已暂停' : isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
-              </span>
-              {!paused && totalServices > 0 ? (
-                <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <span className="min-w-0 truncate tabular-nums">{totalOnline}/{Math.max(totalServices, totalOnline)} 容器在线</span>
-                </>
-              ) : null}
-              {!paused && cpu > 0 ? (
-                <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <span className={`inline-flex shrink-0 items-center gap-1 tabular-nums ${cpuToneClass}`} title="该项目所有运行容器 CPU% 之和">
-                    <Gauge className="h-3 w-3" aria-hidden />
-                    {Math.round(cpu)}%
-                  </span>
-                </>
-              ) : null}
-              {!paused && recentBuilds1h > 0 ? (
-                <>
-                  <span className="hidden text-muted-foreground/60 sm:inline">·</span>
-                  <span className="hidden shrink-0 tabular-nums sm:inline" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        {project.cloneStatus === 'error' && project.cloneError ? (
-          <div className="mx-5 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-            {project.cloneError}
-          </div>
-        ) : null}
-
-      </a>
-
-      <div
-        className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
-          paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
-        }`}
-      >
-        {paused ? (
-          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-600 shadow-sm backdrop-blur">
-            <Pause className="h-3 w-3" aria-hidden />
-            已暂停
+        <ProjectServiceModules project={project} brands={uniqueProjectBrands(project)} />
+        <div className="cds-project-metrics" aria-label="项目运行指标">
+          <span className="cds-project-online" title="应用服务与基础设施容器在线数">
+            <Box aria-hidden />
+            <span>{totalOnline}<span className="text-muted-foreground">/{totalServices}</span> 在线</span>
           </span>
+          <span className={`cds-project-cpu ${cpuToneClass}`} title={cpu === undefined ? 'CPU 使用率尚未采集' : '该项目所有运行容器 CPU% 之和'}>
+            <Gauge aria-hidden />{cpu === undefined ? '—' : `${Math.round(cpu)}%`}
+          </span>
+          <span className="cds-project-build-rate" title="近 1 小时构建次数">
+            {usage ? `${usage.recentBuilds1h} 次构建/时` : '构建频率 —'}
+          </span>
+        </div>
+        <footer className="cds-project-card-footer">
+          <span className="cds-project-environment" title={environments === undefined ? '发布环境尚未读取或当前账号不可见' : environments.length ? `已配置发布目标环境：${environments.join('、')}` : '项目未声明发布目标环境'}>
+            {environments === undefined ? '环境 —' : environments.length ? `${environments[0]}${environments.length > 1 ? ` +${environments.length - 1}` : ''}` : '未配置发布环境'}
+          </span>
+          {project.gitDefaultBranch ? <span className="cds-project-branch" title={`默认分支 ${project.gitDefaultBranch} · ${branches} 个分支`}>
+            <GitBranch aria-hidden /><span>{project.gitDefaultBranch}</span>
+          </span> : null}
+          <span className="cds-project-branch-count" title="查看项目分支">{branches} 分支</span>
+          <time title={project.lastDeployedAt ? `最近部署：${formatDate(project.lastDeployedAt)}` : '尚未部署'}>{formatRelativeTime(project.lastDeployedAt)}</time>
+        </footer>
+        {project.cloneStatus === 'error' && project.cloneError ? (
+          <div className="cds-project-clone-error">{project.cloneError}</div>
         ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onTogglePause();
-          }}
-          aria-label={paused ? `恢复 ${title}` : `暂停 ${title}`}
-          title={paused ? '恢复项目（解冻自动部署/webhook）' : '暂停项目（停止容器并冻结构建/部署/webhook）'}
-        >
-          {paused ? <Play /> : <Pause />}
-        </Button>
-        {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-            onClick={(event) => {
-              event.stopPropagation();
-              onClone();
-            }}
-            aria-label={project.cloneStatus === 'error' ? `重新克隆 ${title}` : `开始克隆 ${title}`}
-            title={project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}
-          >
-            <FolderGit2 />
-          </Button>
-        ) : null}
-        <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="项目设置">
-          <a href={settingsHref(project)} onClick={(event) => event.stopPropagation()} aria-label={`设置 ${title}`}>
-            <Settings />
-          </a>
-        </Button>
-        <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="验收报告">
-          <a href={`/reports?project=${encodeURIComponent(project.id)}`} onClick={(event) => event.stopPropagation()} aria-label={`${title} 验收报告`}>
-            <ClipboardCheck />
-          </a>
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAgentKeys();
-          }}
-          aria-label={`${title} Agent Key`}
-          title="Agent Key"
-        >
-          <KeyRound />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAgentSessions();
-          }}
-          aria-label={`${title} Agent 请求观测台`}
-          title="Agent 请求观测台（实时请求/收发内容/筛选）"
-        >
-          <Activity />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete();
-          }}
-          disabled={project.legacyFlag}
-          aria-label={`删除 ${title}`}
-          title={project.legacyFlag ? 'legacy 项目需要先迁移' : '删除项目'}
-        >
-          <Trash2 />
-        </Button>
-      </div>
+      </a>
+      {project.repoSharing ? (
+        <div className="border-t border-[hsl(var(--hairline))] px-4 py-2">
+          <RepoSharingInline sharing={project.repoSharing} selfId={project.id} />
+        </div>
+      ) : null}
+      {canManageProjects ? (
+        <div className="cds-project-actions">
+          <DropdownMenu width={200} trigger={<Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`${title} 项目操作`} title="项目操作"><MoreHorizontal /></Button>}>
+            <DropdownItem asChild href={projectHref(project)}>{project.kind === 'shared-service' ? <><Settings />管理共享服务</> : <><GitBranch />查看分支</>}</DropdownItem>
+            {onTogglePin ? <DropdownItem onSelect={onTogglePin}><Pin />{pinned ? '取消置顶' : '置顶项目'}</DropdownItem> : null}
+            {onCopyName ? <DropdownItem onSelect={onCopyName}><Copy />复制项目名称</DropdownItem> : null}
+            <DropdownDivider />
+            <DropdownItem onSelect={onTogglePause}>{paused ? <Play /> : <Pause />}{paused ? '恢复项目' : '暂停项目'}</DropdownItem>
+            {cloneAction ? (
+              <DropdownItem onSelect={onClone}><FolderGit2 />{cloneAction}</DropdownItem>
+            ) : null}
+            <DropdownItem asChild href={settingsHref(project)}><Settings />项目设置</DropdownItem>
+            <DropdownItem asChild href={`/reports?project=${encodeURIComponent(project.id)}`}><ClipboardCheck />验收报告</DropdownItem>
+            <DropdownItem onSelect={onAgentKeys}><KeyRound />Agent Key</DropdownItem>
+            <DropdownItem onSelect={onAgentSessions}><Activity />Agent 请求观测台</DropdownItem>
+            <DropdownDivider />
+            <DropdownItem onSelect={onDelete} disabled={project.legacyFlag} destructive><Trash2 />{project.legacyFlag ? '请先迁移 legacy 项目' : '删除项目'}</DropdownItem>
+          </DropdownMenu>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -2300,7 +2260,7 @@ function CloneProgressDialog({
                   entry.tone === 'error'
                     ? 'whitespace-pre-wrap break-words text-destructive'
                     : entry.tone === 'success'
-                      ? 'whitespace-pre-wrap break-words text-emerald-500'
+                      ? 'whitespace-pre-wrap break-words text-ok'
                       : 'whitespace-pre-wrap break-words text-muted-foreground'
                 }
               >
@@ -2397,9 +2357,10 @@ function AgentKeyManagerDialog({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{key.label || key.id}</span>
                         <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
-                        <CodePill>{key.scope || 'rw'}</CodePill>
+                        <CodePill>{key.designAccess ? agentDesignAccessLabels[key.designAccess] : key.scope || 'rw'}</CodePill>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {key.planningAccess && <span>{key.planningAccess === 'read' ? '工程规划只读' : '工程规划提案'}</span>}
                         <span>签发：{formatDate(key.createdAt)}</span>
                         <span>最近使用：{formatDate(key.lastUsedAt)}</span>
                         {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
@@ -2766,6 +2727,8 @@ function AgentKeySignDialog({
   onToast: (message: string) => void;
 }): JSX.Element {
   const [label, setLabel] = useState('');
+  const [planningAccess, setPlanningAccess] = useState<AgentKeySummary['planningAccess']>();
+  const [designAccess, setDesignAccess] = useState<AgentKeySummary['designAccess']>();
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState('');
   const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
@@ -2773,6 +2736,8 @@ function AgentKeySignDialog({
   useEffect(() => {
     if (!open) {
       setLabel('');
+      setPlanningAccess(undefined);
+      setDesignAccess(undefined);
       setError('');
       setSigned(null);
       setSigning(false);
@@ -2788,7 +2753,7 @@ function AgentKeySignDialog({
         `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
         {
           method: 'POST',
-          body: { label: label.trim() || undefined },
+          body: { label: label.trim() || undefined, planningAccess, designAccess },
         },
       );
       setSigned(data);
@@ -2844,7 +2809,23 @@ function AgentKeySignDialog({
                 placeholder="例如 Codex 本地调试"
               />
             </label>
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-muted-foreground">
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">权限</span>
+              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={designAccess ? 'design-' + designAccess : planningAccess ?? ''}
+                onChange={event => {
+                  const scope = event.target.value;
+                  setPlanningAccess(scope === 'read' || scope === 'propose' ? scope : undefined);
+                  setDesignAccess((Object.keys(agentDesignAccessLabels) as Array<keyof typeof agentDesignAccessLabels>)
+                    .find(access => scope === 'design-' + access));
+                }}>
+                <option value="">项目读写</option>
+                <option value="read">工程规划只读</option>
+                <option value="propose">工程规划提案</option>
+                {Object.entries(agentDesignAccessLabels).map(([access, label]) => <option key={access} value={'design-' + access}>{label}</option>)}
+              </select>
+            </label>
+            <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
               签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。
             </div>
             {error ? (
@@ -2926,15 +2907,30 @@ function AgentKeyRevokeDialog({
   );
 }
 
+interface RepoAlreadyLinked {
+  repoFullName: string;
+  /** 兄弟项目明细。机器凭据拿不到，所以可能是空数组——用 projectCount 兜底显示。 */
+  projects: Array<{ id: string; name: string; scoped?: boolean }>;
+  projectCount: number;
+}
+
+interface CreateProjectResponse {
+  project: ProjectSummary;
+  /** 仓库已被别的项目绑走：本项目**没有**绑上，界面要当场说清楚。 */
+  repoAlreadyLinked?: RepoAlreadyLinked;
+}
+
 function CreateProjectDialog({
   open,
   onOpenChange,
   onCreated,
+  onRepoAlreadyLinked,
   autoOpenPicker = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (project: ProjectSummary) => Promise<void>;
+  onCreated: (project: ProjectSummary, repoAlreadyLinked?: RepoAlreadyLinked) => Promise<void>;
+  onRepoAlreadyLinked?: (project: ProjectSummary, info: RepoAlreadyLinked) => void;
   autoOpenPicker?: boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
@@ -3108,7 +3104,7 @@ function CreateProjectDialog({
     }
     setSubmitting(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: {
           name: trimmedName,
@@ -3142,7 +3138,14 @@ function CreateProjectDialog({
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
       onOpenChange(false);
-      await onCreated(res.project);
+      // 冲突信息与项目一起交出去：父组件要据此决定「现在就开始 clone」还是
+      // 「等用户拿定主意再开始」——先开 clone 再问，用户还没回答，仓库已经在
+      // 拉了（2026-09-02 Codex P1）。
+      await onCreated(res.project, res.repoAlreadyLinked);
+      // 仓库已被别的项目绑走时，项目建好了但**仓库没绑上**（后端默认不绑，因为
+      // 绝大多数是填错了地址）。这件事必须当场说，否则用户会以为绑好了，直到
+      // 第一次 push 什么都没发生才发现。
+      if (res.repoAlreadyLinked) onRepoAlreadyLinked?.(res.project, res.repoAlreadyLinked);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -3300,7 +3303,7 @@ function CreateProjectDialog({
                       </label>
                       <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
                       {editableRuntime ? (
-                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_110px]">
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_6.875rem]">
                           <label className="block space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">Docker 镜像</span>
                             <input
@@ -3332,7 +3335,7 @@ function CreateProjectDialog({
                               disabled={!service.enabled}
                               placeholder={preset.command || '填写容器启动命令'}
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               按所选运行时给的最佳努力默认，可直接改；想完全交给仓库识别就把运行环境选「自动识别」。
                             </span>
                           </label>
@@ -3436,7 +3439,7 @@ function CreateProjectDialog({
                               onChange={(event) => setInfraConfigField(preset.id, 'dbName', event.target.value)}
                               placeholder="app（默认）"
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               会写入容器初始化变量并拼进连接串（如 {preset.connectionEnvKeys[0] || 'DATABASE_URL'}）。
                             </span>
                           </label>
@@ -3450,7 +3453,7 @@ function CreateProjectDialog({
                               onChange={(event) => setInfraConfigField(preset.id, 'initSql', event.target.value)}
                               placeholder={'自动识别失败时再填，例如 CREATE TABLE items (id serial primary key, name text);'}
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               普通部署优先使用仓库扫描出的 Prisma / Django / Alembic / schema.sql 推荐方式；这里仅作为高级兜底，保存后可在拓扑页数据面板执行。
                             </span>
                           </label>
@@ -3699,7 +3702,7 @@ function SandboxProjectDialog({
                   setExtraFiles((current) => [...current, { relativePath: '', content: '' }])
                 }
               >
-                <Plus className="mr-1 h-3.5 w-3.5" />
+                <Plus className="mr-1" />
                 添加文件
               </Button>
             </div>
@@ -3735,7 +3738,7 @@ function SandboxProjectDialog({
                           setExtraFiles((current) => current.filter((_, i) => i !== idx))
                         }
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 />
                       </Button>
                     </div>
                     <textarea
@@ -3770,7 +3773,7 @@ function SandboxProjectDialog({
             onClick={() => formRef.current?.requestSubmit()}
             disabled={submitting}
           >
-            {submitting ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Beaker className="mr-1 h-3.5 w-3.5" />}
+            {submitting ? <Loader2 className="mr-1 animate-spin" /> : <Beaker className="mr-1" />}
             创建沙盒项目
           </Button>
         </DialogFooter>
@@ -3889,7 +3892,7 @@ function GithubRepoPickerDialog({
                 没有匹配的仓库。
               </div>
             ) : (
-              <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              <div className="max-h-[26.25rem] space-y-2 overflow-y-auto pr-1">
                 {visibleRepos.map((repo) => (
                   <button
                     key={repo.id}
@@ -4019,7 +4022,7 @@ function PauseProjectDialog({
               : ''}
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+        <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
           适用于长期不用却被反复构建的项目：暂停即止血，随时可一键恢复。
         </div>
         <DialogFooter>
@@ -4174,11 +4177,7 @@ function ResourceUsageDialog({
           className="max-h-[55vh] overflow-y-auto rounded-md border border-[hsl(var(--hairline))]"
           style={{ overscrollBehavior: 'contain' }}
         >
-          {loading && !data ? (
-            <div className="flex items-center justify-center gap-2 px-4 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> 采样中…
-            </div>
-          ) : rows.length === 0 ? (
+          {loading && !data ? <ContentLoading label="读取资源用量" variant="panel" /> : rows.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">
               {data?.sampledAt ? '当前无运行容器或构建活动。' : '采样器尚未产出首个快照，请稍候…'}
             </div>
@@ -4198,15 +4197,15 @@ function ResourceUsageDialog({
                 {rows.map((row) => {
                   const cpuTone =
                     row.cpuPercent >= 100
-                      ? 'text-red-600 dark:text-red-400'
+                      ? 'text-bad'
                       : row.cpuPercent >= 50
-                        ? 'text-amber-600 dark:text-amber-400'
+                        ? 'text-warn'
                         : 'text-foreground';
                   const buildsTone =
                     row.recentBuilds1h >= 10
-                      ? 'text-red-600 dark:text-red-400'
+                      ? 'text-bad'
                       : row.recentBuilds1h >= 4
-                        ? 'text-amber-600 dark:text-amber-400'
+                        ? 'text-warn'
                         : 'text-foreground';
                   return (
                     <tr key={row.projectId} className="border-b border-[hsl(var(--hairline))] last:border-0">
@@ -4214,7 +4213,7 @@ function ResourceUsageDialog({
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium">{row.name}</span>
                           {row.paused ? (
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] font-medium text-warn">
                               <Pause className="h-2.5 w-2.5" aria-hidden /> 已暂停
                             </span>
                           ) : null}
@@ -4239,11 +4238,11 @@ function ResourceUsageDialog({
                           title={row.paused ? '恢复项目' : '暂停项目（停止容器并冻结构建）'}
                         >
                           {busyId === row.projectId ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <Loader2 className="animate-spin" />
                           ) : row.paused ? (
-                            <Play className="h-3.5 w-3.5" />
+                            <Play />
                           ) : (
-                            <Pause className="h-3.5 w-3.5" />
+                            <Pause />
                           )}
                           {row.paused ? '恢复' : '暂停'}
                         </Button>

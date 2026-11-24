@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Send, X, CornerDownLeft, Quote } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useScrollFollowTransform } from './useOverlayFollow';
 
 // 划词后「就地输入」批注的小浮层（取代甩到右侧抽屉）。
 // 锚在选区附近，写完 ⌘/Ctrl+Enter 发送；遵 frontend-modal.md：createPortal 到 body + inline style 定位。
@@ -24,25 +25,15 @@ export function InlineCommentComposer({
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   // 打开时清了选区、坐标是当时快照；滚动后按「累计滚动位移」把浮层平移回锚点处
-  const [scrollDy, setScrollDy] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动走直写 DOM，不走 state（见 useOverlayFollow 的注释：走 state 会慢一帧）
+  useScrollFollowTransform(panelRef, scrollRef);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => setScrollDy(read() - start);
-    // capture=true 捕获正文内层滚动容器；resize 兜底
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -68,16 +59,15 @@ export function InlineCommentComposer({
 
   const node = (
     <div
+      ref={panelRef}
       className="fixed z-[120]"
       style={{
         top,
         left,
         width,
-        // 正文滚动 dy 后锚点上移 dy，浮层同步上移，保持贴着选区
-        transform: `translateY(${-scrollDy}px)`,
         borderRadius: 14,
         padding: 12,
-        background: 'linear-gradient(180deg, rgba(30,28,46,0.97), rgba(20,19,28,0.98))',
+        background: 'var(--overlay-panel-bg)',
         border: '1px solid rgba(168,85,247,0.4)',
         boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
         backdropFilter: 'blur(40px)',
@@ -93,8 +83,8 @@ export function InlineCommentComposer({
         </button>
       </div>
       <div className="flex items-center gap-1 mb-1">
-        <Quote size={9} style={{ color: 'rgba(216,180,254,0.75)' }} />
-        <span className="text-[10px] font-semibold" style={{ color: 'rgba(216,180,254,0.85)' }}>你选中的内容</span>
+        <Quote size={9} style={{ color: 'var(--accent-fg-violet)' }} />
+        <span className="text-[10px] font-semibold" style={{ color: 'var(--accent-fg-violet)' }}>你选中的内容</span>
       </div>
       <div
         className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 max-h-24 overflow-y-auto"
@@ -104,7 +94,7 @@ export function InlineCommentComposer({
           // 边的 color/style，只剩 3px 宽度但变成淡紫——失去引用块视觉强调（Bugbot Low）
           border: '1px solid rgba(168,85,247,0.22)',
           borderLeft: '3px solid rgba(168,85,247,0.7)',
-          color: 'rgba(232,210,255,0.98)',
+          color: 'var(--accent-fg-violet-strong)',
           fontStyle: 'italic',
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
@@ -135,7 +125,7 @@ export function InlineCommentComposer({
           onClick={handleSubmit}
           disabled={submitting || !draft.trim()}
           className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'rgba(216,180,254,0.97)' }}
+          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
         >
           {submitting ? <MapSpinner size={11} /> : <Send size={11} />}
           发送

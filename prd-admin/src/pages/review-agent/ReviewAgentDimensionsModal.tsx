@@ -174,7 +174,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="relative w-full max-w-xl rounded-2xl overflow-hidden flex flex-col border border-token-subtle"
+        className="surface-tone-dark relative w-full max-w-xl rounded-2xl overflow-hidden flex flex-col border border-token-subtle"
         style={{ background: 'rgba(12, 15, 28, 0.97)', maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
@@ -183,7 +183,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
           <div>
             <h2 className="text-sm font-semibold text-token-primary">评审维度配置</h2>
             <p className="text-xs text-token-muted mt-0.5">
-              满分 <span className="text-indigo-400 font-medium">{totalScore}</span> 分（≥80 分视为通过）
+              满分 <span className="text-[color:var(--accent-fg-blue)] font-medium">{totalScore}</span> 分（≥80 分视为通过）
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft transition-colors text-token-muted hover-text-primary">
@@ -193,7 +193,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
 
         {/* 总分不足警告 */}
         {totalScore < 80 && !loading && (
-          <div className="mx-5 mt-3 px-3 py-2 rounded-lg text-xs text-amber-300/90 flex items-center gap-2"
+          <div className="mx-5 mt-3 px-3 py-2 rounded-lg text-xs text-[color:var(--accent-fg-amber)] flex items-center gap-2"
             style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
             <span>⚠</span>
             <span>启用维度总分 <strong>{totalScore}</strong> 分，低于通过线 80 分，任何方案都无法通过，请调整分值</span>
@@ -307,7 +307,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
                           >
                             {Object.entries(groupItemsByCategory(dim.items)).map(([cat, list]) => (
                               <div key={cat} className="px-3 py-2 border-b border-token-subtle last:border-b-0">
-                                <p className="text-[11px] text-indigo-300/80 font-medium mb-1">{cat}</p>
+                                <p className="text-[11px] text-[color:var(--accent-fg-blue)] font-medium mb-1">{cat}</p>
                                 <ul className="space-y-0.5">
                                   {list.map(it => (
                                     <li key={it.id} className="text-xs text-token-secondary leading-relaxed">
@@ -334,7 +334,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
           <div className="flex items-center gap-4">
             <button
               onClick={addDim}
-              className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+              className="flex items-center gap-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               添加维度

@@ -1,3 +1,4 @@
+import { processNetworkTeardowns, type NetworkTeardownState } from './network-teardown.js';
 /**
  * 孤儿容器收割器（Orphan Container Reaper，2026-07-15）。
  *
@@ -45,6 +46,8 @@ export interface TombstoneStateView {
 
 /** 收割器状态视图的窄接口（便于单测注入，不拖整个 StateService）。 */
 export interface OrphanReaperStateView extends TombstoneStateView {
+  getNetworkTeardowns?: NetworkTeardownState['getNetworkTeardowns'];
+  removeNetworkTeardown?: NetworkTeardownState['removeNetworkTeardown'];
   getProjects(): Array<{ id: string }>;
   getAllBranches(): Array<{
     id: string;
@@ -121,6 +124,7 @@ async function listCdsContainers(
 ): Promise<DiscoveredContainer[] | null> {
   const result = await shell.exec(
     `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=${type}" --format '{{.Names}}|{{.State}}|{{.CreatedAt}}|{{.Labels}}'`,
+    { executionLane: 'observation', timeout: 5000 },
   );
   if (result.exitCode !== 0) return null;
   const out: DiscoveredContainer[] = [];
@@ -264,6 +268,9 @@ export async function sweepOrphanCdsContainers(opts: {
   // 墓碑补偿先于一切守卫（Codex P2）：删除最后一个项目后 state 为空，但墓碑是
   // 持久化的显式意图，不依赖「扫描推断」，即使空库也必须重试。
   await processTeardownTombstones({ shell, state, eventLog, instanceId: opts.instanceId });
+  if (state.getNetworkTeardowns && state.removeNetworkTeardown) {
+    await processNetworkTeardowns(shell, state as NetworkTeardownState);
+  }
 
   const projects = state.getProjects();
   const branches = state.getAllBranches();
@@ -321,7 +328,7 @@ export async function sweepOrphanCdsContainers(opts: {
       actions.push({ containerName: container.name, kind, ownerHint, action: 'already-stopped' });
       return;
     }
-    const res = await shell.exec(`docker stop ${quote(container.name)}`, { timeout: 60_000 });
+    const res = await shell.exec(`docker stop ${quote(container.name)}`, { timeout: 60_000, executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
     const ok = res.exitCode === 0;
     actions.push({
       containerName: container.name,

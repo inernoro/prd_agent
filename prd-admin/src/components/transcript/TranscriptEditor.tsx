@@ -169,7 +169,7 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
         {/* TranscribeProgress with live text */}
         {(() => {
           const latestRun = runs.find(r => r.itemId === item.id && r.type === 'asr' &&
-            (r.status === 'queued' || r.status === 'processing'));
+            (r.status === 'scoped_queued' || r.status === 'queued' || r.status === 'processing'));
           return latestRun ? (
             <TranscribeProgress
               runId={latestRun.id}

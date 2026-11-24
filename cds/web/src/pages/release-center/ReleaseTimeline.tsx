@@ -8,6 +8,7 @@
  * 不该再跳一次页面。
  */
 
+import { releaseActorLabel } from '@/lib/releaseProvenance';
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -87,17 +88,17 @@ export function ReleaseTimeline({
             const expanded = expandedId === run.releaseId;
             const duration = formatDuration(run.startedAt, run.finishedAt);
             return (
-              <div key={run.releaseId} className={failed ? 'bg-red-500/[0.07]' : live ? 'bg-primary/[0.07]' : ''}>
-                <div className="grid grid-cols-[16px_minmax(0,1fr)] items-start gap-3 px-4 py-3 md:grid-cols-[16px_minmax(0,1fr)_auto]">
+              <div key={run.releaseId} className={failed ? 'bg-bad-soft' : live ? 'bg-primary/[0.07]' : ''}>
+                <div className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-3 px-4 py-3 md:grid-cols-[1rem_minmax(0,1fr)_auto]">
                   <span className="mt-1.5"><Led tone={runTone(run.status)} /></span>
                   <div className="min-w-0">
-                    <div className="truncate text-[13px] font-medium" title={meta?.subject || run.commitSha}>
+                    <div className="truncate text-[0.8125rem] font-medium" title={meta?.subject || run.commitSha}>
                       {meta?.subject || `提交 ${run.commitSha.slice(0, 12)}`}
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11.5px] text-muted-foreground">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.7188rem] text-muted-foreground">
                       <CodeText>{run.commitSha.slice(0, 7)}</CodeText>
                       {run.artifact?.branchName ? <span className="truncate">{run.artifact.branchName}</span> : null}
-                      <span>{run.operator || meta?.authorName || '-'}</span>
+                      <span>{releaseActorLabel(run.operator)}</span>
                       <span>{formatDateTime(run.startedAt)}</span>
                       {duration ? <span>耗时 {duration}</span> : null}
                       {run.rollbackOf ? <Chip tone="warn">回滚</Chip> : null}
@@ -147,7 +148,7 @@ export function ReleaseTimeline({
         </div>
       )}
       {runs.length > 0 && runs[0] ? (
-        <div className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[11px] text-muted-foreground">
+        <div className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[0.6875rem] text-muted-foreground">
           最近一次记录于 {formatAgo(runs[0].startedAt, nowMs) || '-'}
         </div>
       ) : null}

@@ -51,23 +51,29 @@ describe('selfStatusCache', () => {
 
   it('enqueueRefresh 单 job:并发入队复用同一 jobId', async () => {
     let computeCalls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     selfStatusCache.init({
       computeSnapshot: async () => {
         computeCalls += 1;
-        await new Promise((r) => setTimeout(r, 30));
+        await gate;
         return baseSnapshot;
       },
       scanRemoteBranches: async () => [],
     });
 
-    const job1 = selfStatusCache.enqueueRefresh('manual');
-    const job2 = selfStatusCache.enqueueRefresh('manual');
-    expect(job1.jobId).toBe(job2.jobId);
-    expect(job1.status).toBe('running');
-
-    await flushTicks();
-    // compute 只跑一次,即使两次入队
-    expect(computeCalls).toBe(1);
+    try {
+      const job1 = selfStatusCache.enqueueRefresh('manual');
+      const job2 = selfStatusCache.enqueueRefresh('manual');
+      expect(job1.jobId).toBe(job2.jobId);
+      expect(job1.status).toBe('running');
+      await flushTicks();
+      // 明确保持首轮在途，避免30ms结束后的合法补刷新混进并发断言。
+      expect(computeCalls).toBe(1);
+    } finally {
+      release();
+      await flushTicks();
+    }
   });
 
   it('运行中再入队 → 当前 job 跑完后补跑一次(Codex P2:防丢 self-update 收尾状态)', async () => {

@@ -45,7 +45,7 @@ export function RollbackDialog({
   const rollbackCommand = state?.row.target.ssh?.rollbackCommand?.trim();
   return (
     <Dialog open={!!state} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(720px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(45rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>回滚站点版本</DialogTitle>
         </DialogHeader>
@@ -109,7 +109,7 @@ export function ArchiveTargetDialog({
   const valid = Boolean(state && state.reason.trim().length >= 8);
   return (
     <Dialog open={Boolean(state)} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(620px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(38.75rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>归档发布目标</DialogTitle>
         </DialogHeader>
@@ -156,6 +156,7 @@ export function ReleaseLogDialog({
   onClose,
   onRetry,
   onRollback,
+  readOnly = false,
 }: {
   run: ReleaseRun | null;
   estimate?: ReleaseEtaEstimate;
@@ -164,6 +165,7 @@ export function ReleaseLogDialog({
   onClose: () => void;
   onRetry: (run: ReleaseRun) => void;
   onRollback: (run: ReleaseRun) => void;
+  readOnly?: boolean;
 }): JSX.Element {
   const [current, setCurrent] = useState<ReleaseRun | null>(run);
   useEffect(() => setCurrent(run), [run]);
@@ -192,7 +194,7 @@ export function ReleaseLogDialog({
   const canActOnFailure = Boolean(current && (current.status === 'failed' || current.status === 'rollback_failed'));
   return (
     <Dialog open={!!run} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(768px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(48rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>
             发布记录 {current?.releaseId ? <span className="font-mono text-sm text-muted-foreground">{current.releaseId}</span> : null}
@@ -213,9 +215,9 @@ export function ReleaseLogDialog({
         <div className="grid gap-2">
           {progress.steps.map((step, index) => (
             <div key={step.id} className="flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-sm">
-              {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                : step.state === 'failed' ? <XCircle className="h-4 w-4 text-red-500" />
-                  : step.state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-sky-500" />
+              {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 text-ok" />
+                : step.state === 'failed' ? <XCircle className="h-4 w-4 text-bad" />
+                  : step.state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-info" />
                     : <Circle className="h-4 w-4 text-muted-foreground" />}
               <span className="shrink-0 font-mono text-xs text-muted-foreground">{index + 1}/{progress.total}</span>
               <span className="min-w-0 truncate font-medium">{step.label}</span>
@@ -230,7 +232,7 @@ export function ReleaseLogDialog({
             .map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`)
             .join('\n')}
         />
-        {current && canActOnFailure ? (
+        {current && canActOnFailure && !readOnly ? (
           <div className="flex flex-wrap justify-end gap-2 border-t border-[hsl(var(--hairline))] pt-3">
             <Button variant="outline" onClick={() => onRollback(current)} disabled={!canRollback}>
               <RotateCcw />

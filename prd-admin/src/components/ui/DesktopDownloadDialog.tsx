@@ -187,7 +187,7 @@ export function DesktopDownloadDialog({ open, onOpenChange }: DesktopDownloadDia
                       {isDetected && (
                         <div
                           className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full text-[9px] font-medium"
-                          style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgb(129, 140, 248)', border: '1px solid rgba(99, 102, 241, 0.3)' }}
+                          style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(99, 102, 241, 0.3)' }}
                         >
                           当前系统
                         </div>

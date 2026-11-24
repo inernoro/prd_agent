@@ -169,7 +169,8 @@ public class DoubaoAsrTransformer : IAsyncExchangeTransformer
                 {
                     ["start"] = startSec,
                     ["end"] = endSec,
-                    ["text"] = text
+                    ["text"] = text,
+                    ["speaker"] = ResolveSpeakerId(utterance)
                 });
                 utteranceText += text;
                 currentStart = Math.Max(currentStart, endSec);
@@ -223,6 +224,18 @@ public class DoubaoAsrTransformer : IAsyncExchangeTransformer
         {
             return double.TryParse(node.ToString(), out var parsed) ? parsed : 0;
         }
+    }
+
+    private static string? ResolveSpeakerId(JsonObject utterance)
+    {
+        foreach (var key in new[] { "speaker_id", "speaker", "speakerId" })
+        {
+            var value = TryGetNodeString(utterance, key).Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        }
+
+        return null;
     }
 
     private static double TryGetDurationSeconds(JsonObject result)
