@@ -161,7 +161,7 @@
 .pt-weeklist time { color: var(--ep-muted); font-size: 12px; }
 .pt-weeklist li[data-dim] { opacity: .35; }
 .pt-weeklist li[data-tone="bad"] small { color: var(--ep-danger); }
-@media (max-width: 719px) {
+@media (max-width: 44.9375rem) {
   .pt-body { display: flex; flex-direction: column-reverse; }
   .pt-legend { display: none; }
 }

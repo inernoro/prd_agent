@@ -15,7 +15,7 @@ export const timelineRanges = [[8, '近 8 周'], [12, '近 12 周'], [26, '近�
 const ROW = 36;
 
 function useNarrow() {
-  const query = '(max-width: 719px)';
+  const query = '(max-width: 44.9375rem)';
   const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
   useEffect(() => { const list = window.matchMedia(query); const on = () => setNarrow(list.matches); list.addEventListener('change', on); return () => list.removeEventListener('change', on); }, []);
   return narrow;

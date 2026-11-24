@@ -111,6 +111,14 @@ const historyDraft: DesignEntry = {
   comments: [previousComment, currentComment], feedback: [previousFeedback, currentFeedback],
 };
 const historyWorkspace: DesignWorkspace = { ...workspace, designs: [historyDraft] };
+const guidedVersion: DesignVersion = {
+  ...historyDraft.versions[1], version: 18,
+  screens: [currentScreen, ...['comments', 'deliver'].map(pane => ({
+    ...historyScreen(`fixture-${pane}`, pane), route: `#/design?pane=${pane}`,
+  }))],
+};
+const guidedDraft = { ...historyDraft, versions: [...historyDraft.versions, guidedVersion] };
+const guidedWorkspace = { ...historyWorkspace, designs: [guidedDraft] };
 
 describe('V17 交付工作区', () => {
   it('打开稿件先看画面和这一屏，同时保留旧链接的全文入口', () => {
@@ -221,6 +229,43 @@ describe('V17 交付工作区', () => {
   }, 20_000);
 });
 
+describe('已发布的演示、评论和交付布局', () => {
+  it('同一份稿件的新版展示新右栏，历史版沿用原画面入口', async () => {
+    await withDesignBrowser(() => guidedWorkspace, async page => {
+      await page.goto(browserDesignUrl({ design: guidedDraft.id, version: '18' }));
+      const side = page.getByRole('complementary', { name: '演示、评论和交付' });
+      await side.getByRole('heading', { name: '演示流程' }).waitFor();
+      await side.getByRole('tab', { name: '评论' }).click();
+      await side.getByText('这一版还没有评论。').waitFor();
+      await side.getByRole('tab', { name: '交付' }).click();
+      for (const item of ['做出什么', '做到什么算完成', '为什么要这样', '拿什么做', '还没定的']) {
+        await side.getByRole('heading', { name: new RegExp(item) }).waitFor();
+      }
+      await page.getByRole('combobox', { name: '稿件版本' }).selectOption('2');
+      await side.waitFor({ state: 'hidden' });
+      await page.getByRole('complementary', { name: '这一屏的需求、说明、反馈和资料' })
+        .getByText(currentScreen.name, { exact: true }).waitFor();
+    });
+  }, 20_000);
+
+  it('新版桌面页头一行，手机保留完整版本文案和可用的三个页签', async () => {
+    const markup = design(`&design=${guidedDraft.id}&version=18`, guidedWorkspace);
+    await withLayout(markup, [...draftStyles, 'web/src/pages/design-workspace/design-v18.css'], async page => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const header = page.locator('.dw-head--v18');
+      expect((await header.boundingBox())!.height).toBeCloseTo(44, 0);
+      expect(shareRow([(await header.locator('.dw-draft-actions').boundingBox())!,
+        (await header.getByRole('navigation', { name: '稿件标签' }).boundingBox())!])).toBe(true);
+      await page.setViewportSize({ width: 375, height: 812 });
+      const mobile = await measureDraftHeader(page, guidedVersion.title);
+      checkDraftBounds(mobile, 375);
+      expect(shareRow(mobile.titleGroup)).toBe(true);
+      expect(shareRow(mobile.actionGroup)).toBe(true);
+      expect(mobile.tabOverflow).toBeLessThanOrEqual(1);
+    }, { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
+  }, 15_000);
+});
+
 describe('设计的导航与状态', () => {
   it('在三个标签下保留旧预览、对比、说明和交付验收入口', () => {
     const tabs = { preview: '交付', diff: '交付', delivery: '交付', accept: '验收', rationale: '交付', spec: '交付', notes: '交付', need: '交付', log: '记录' };
@@ -268,6 +313,9 @@ function render(Page: ComponentType, url: string, input = workspace): string {
     if (endpoint === '/api/projects') return { loading: false, data: { projects: [{ id: projectId, name: '虚拟工程项目' }] } };
     if (endpoint === `/api/projects/${projectId}/design`) return { loading: false, data: input };
     if (endpoint === `/api/projects/${projectId}/planning`) return { loading: false, data: board };
+    if (endpoint === `/api/projects/${projectId}/planning?timeline=1`) {
+      return { loading: false, data: { ...board, timeline: { debts: [], debtEvents: [] } } };
+    }
     return { loading: false };
   });
   const report = console.error;
@@ -1237,6 +1285,7 @@ describe('工程规划与设计 V2 前端回归', () => {
       'web/src/pages/engineering-planning/planning.css',
       'web/src/pages/engineering-planning/planning-shell.css',
       'web/src/pages/engineering-planning/planning-decision.css',
+      'web/src/pages/engineering-planning/planning-timeline.css',
     ], async page => {
       for (const [width, height] of [[1024, 640], [853, 533], [375, 812]]) {
         await page.setViewportSize({ width, height });

@@ -1,11 +1,9 @@
 .dw-head--v18 { min-height: 0; }
-.dw-head--v18 .dw-draft-tabbar { min-height: 43px; height: 43px; justify-content: space-between; }
-.dw-head--v18 .dw-tablinks { flex: 1 1 auto; width: auto; }
 .dw-crumb-draft { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 34vw; vertical-align: bottom; }
 .dw-crumb-draft strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
 .dw-crumb-draft .dw-status { flex: none; }
-.dw-workspace--canvas > .dw-deliver { grid-template-columns: minmax(0, 1fr) min(300px, 30%); gap: 10px; }
-.dw-workspace--canvas > .dw-deliver[data-side=off] { grid-template-columns: minmax(0, 1fr); }
+.dw-workspace--canvas > .dw-deliver[data-guided=true] { grid-template-columns: minmax(0, 1fr) min(300px, 30%); gap: 10px; }
+.dw-workspace--canvas > .dw-deliver[data-guided=true][data-side=off] { grid-template-columns: minmax(0, 1fr); }
 
 .dw-sp { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--dw-line); border-radius: 10px; background: var(--dw-pane); }
 .dw-sp-head { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px; border-bottom: 1px solid var(--dw-line); }
@@ -54,17 +52,13 @@
 .dw-deliver:has(> .dw-overlay) > .dw-sp { visibility: hidden; }
 
 @media (min-width: 900px) {
+  .dw-head--v18 { grid-template-columns: minmax(0, 1fr) auto; }
+  .dw-head--v18 .dw-draft-bar { grid-column: 2; grid-row: 1; min-height: 43px; height: 43px; }
+  .dw-head--v18 .dw-draft-tabbar { grid-column: 1; grid-row: 1; min-width: 0; min-height: 43px; height: 43px; }
+  .dw-head--v18 .dw-tablinks { flex: 1 1 auto; }
   .dw-head--v18 .dw-draft-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 }
 @media (max-width: 899px) {
-  .dw-head--v18 .dw-draft-heading { min-height: 26px; padding-block: 2px; }
-  .dw-head--v18 .dw-draft-heading h1 { font-size: 17px; }
-  .dw-workspace--canvas > .dw-deliver { grid-template-columns: minmax(0, 1fr); }
+  .dw-workspace--canvas > .dw-deliver[data-guided=true] { grid-template-columns: minmax(0, 1fr); }
   .dw-sp, .dw-sp-body { overflow: visible; }
-}
-@media (max-width: 639px) {
-  .dw-head--v18 .dw-draft-actions { width: auto; gap: 4px; }
-  .dw-head--v18 .dw-draft-actions .dw-version-select { width: min(110px, 28vw); }
-  .dw-head--v18 .dw-draft-actions .dw-info-body { top: 120px; }
-  .dw-head--v18 .dw-tablinks { justify-content: flex-start; gap: 10px; overflow: auto hidden; }
 }
