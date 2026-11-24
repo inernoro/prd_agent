@@ -1,6 +1,6 @@
-# 测试闭环（`/cds-test`、`/cds 测试`）
+# 测试闭环（`/cds 领一个验收任务`）
 
-用户只说一句话，例如「/cds-test 领一个待验收的任务跑掉」或「/cds-test 跑工程规划设计稿的验收」。剩下的由本流程完成。
+用户只说一句话，例如「/cds 领一个验收任务」或「/cds 跑工程规划稿件的验收」。属于菜单「验收中心」。剩下的由本流程完成。
 
 **交接只走 CDS**：要测什么、按哪一版测、结果和证据都放在 CDS。设计方和实现方从 CDS 读结果，不靠用户在对话之间转述。
 
@@ -33,7 +33,7 @@ CDS 上有两类测试，先都列出来，再按用户的话选：
 | --- | --- |
 | 结构化任务 | 每个用例：`acceptance result <任务编号> --case <用例编号> --file <结果.json>`；全部写完后 `acceptance complete <任务编号>`，再 `acceptance archive-report <任务编号>` |
 | 设计稿验收 | 补证据：`design record <稿件编号> --run <运行编号> --file <证据> --commit <完整提交>`；读结果：`design result <稿件编号>` |
-| 发现的问题 | 设计问题写成实施反馈：MCP `cds_design_feedback {type:"feedback.create", category:"acceptance", screenId, evidence}`。设计方在 `/cds-design` 里会读到。代码缺陷交给对应的修复流程 |
+| 发现的问题 | 设计问题写成实施反馈：MCP `cds_design_feedback {type:"feedback.create", category:"acceptance", screenId, evidence}`。设计方改稿时会读到。代码缺陷交给对应的修复流程 |
 
 结果文件里不放凭据、真实账号或个人数据。
 
