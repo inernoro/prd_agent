@@ -25,7 +25,7 @@
    { "say": ["添加一个任务调度", "每天 9 点跑 xx"], "mission": "tasks" }
   ] },
   { "menu": "验收中心", "say": "测试", "intents": [
-   { "say": ["领一个验收任务", "跑某个稿件的验收", "出验收报告"], "mission": "reports", "read": "reference/test-loop.md" }
+   { "say": ["跑 DSN-xxx 的验收", "领一个验收任务", "出验收报告"], "mission": "reports", "read": "reference/test-loop.md" }
   ] },
   { "menu": "监控中心", "say": "监控", "intents": [
    { "say": ["加一个 xx 的监控"], "doc": { "file": "SKILL.md", "section": "加一条功能监控（用户说「帮我增加 XX 的监控」时）" } },
@@ -39,7 +39,8 @@
    { "say": ["记下这个决策", "记一笔债", "排进落地计划", "看卡在哪"], "mission": "engineering-planning" }
   ] },
   { "menu": "设计", "say": "设计", "intents": [
-   { "say": ["改 xx 模块的设计", "修复 xx 页面的设计", "出一版新设计"], "mission": "design-publish", "read": "reference/design-loop.md" }
+   { "say": ["帮我设计一个页面", "改 xx 模块的设计", "修复 xx 页面的设计", "出一版新设计"], "mission": "design-publish", "read": "reference/design-loop.md" },
+   { "say": ["帮我实现 DSN-xxx", "按交接清单实现"], "doc": { "file": "reference/design-loop.md", "section": "六、实现方：按交接清单实现" } }
   ] },
   { "menu": "接入 Agent", "say": "授权", "intents": [
    { "say": ["给智能体授权", "提权到另一个项目"], "mission": "agent-access" }

@@ -224,7 +224,7 @@
 
 | 你可以说 | 任务 | 先读 | 命令 | 风险 |
 | --- | --- | --- | --- | --- |
-| `/cds 领一个验收任务`、`/cds 跑某个稿件的验收`、`/cds 出验收报告` | 验收报告 | `reference/test-loop.md` | `cdscli report`、`cdscli report-folder`、`cdscli acceptance` | 会写入 |
+| `/cds 跑 DSN-xxx 的验收`、`/cds 领一个验收任务`、`/cds 出验收报告` | 验收报告 | `reference/test-loop.md` | `cdscli report`、`cdscli report-folder`、`cdscli acceptance` | 会写入 |
 
 ### 验收报告
 
@@ -309,7 +309,8 @@
 
 | 你可以说 | 任务 | 先读 | 命令 | 风险 |
 | --- | --- | --- | --- | --- |
-| `/cds 改 xx 模块的设计`、`/cds 修复 xx 页面的设计`、`/cds 出一版新设计` | 发布或修订设计稿 | `reference/design-loop.md` | `cdscli design`、`cdscli framework` | 会写入 |
+| `/cds 帮我设计一个页面`、`/cds 改 xx 模块的设计`、`/cds 修复 xx 页面的设计`、`/cds 出一版新设计` | 发布或修订设计稿 | `reference/design-loop.md` | `cdscli design`、`cdscli framework` | 会写入 |
+| `/cds 帮我实现 DSN-xxx`、`/cds 按交接清单实现` | 六、实现方：按交接清单实现 | `reference/design-loop.md`「六、实现方：按交接清单实现」 | — | 见文档 |
 
 ### 发布或修订设计稿
 
