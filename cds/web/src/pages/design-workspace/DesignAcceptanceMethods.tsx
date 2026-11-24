@@ -20,10 +20,11 @@ function MethodStatus({ status }: { status: DesignMethodStatus }) {
 export function AcceptanceMethodTabs({ active, methods, overall, objective, go }: {
   active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; objective?: boolean; go: (check: AcceptanceCheck) => void;
 }) {
-  const tabs = [{ id: 'overview' as const, name: '总览', status: overall, progress: undefined }, ...methods];
+  const tabs = [{ id: 'overview' as const, name: '总览', status: overall, progress: undefined, setting: undefined }, ...methods];
   return <div className="dw-ac-methods" role="tablist" aria-label="验收手段">
-    {tabs.map(({ id, name, status, progress }, index) => <button key={id} type="button" role="tab" data-check={id} id={`dw-ac-tab-${id}`}
+    {tabs.map(({ id, name, status, progress, setting }, index) => <button key={id} type="button" role="tab" data-check={id} id={`dw-ac-tab-${id}`}
       data-status={objective ? status : undefined}
+      title={setting?.enabled === false ? ['已停用', setting.reason, setting.by.label, setting.at].filter(Boolean).join(' · ') : undefined}
       aria-controls="dw-ac-method-panel" aria-selected={active === id} tabIndex={active === id ? 0 : -1} onClick={() => go(id)}
       onKeyDown={event => {
         const destinations: Record<string, number> = { ArrowLeft: (index + tabs.length - 1) % tabs.length,
@@ -35,7 +36,7 @@ export function AcceptanceMethodTabs({ active, methods, overall, objective, go }
         go(next);
         document.getElementById(`dw-ac-tab-${next}`)?.focus();
       }}>
-      {objective && status === 'disabled' ? <Lock className="dw-ac-lock" role="img" aria-label="未启用" />
+      {objective && status === 'disabled' ? <Lock className="dw-ac-lock" role="img" aria-label={setting?.enabled === false ? '已停用' : '未启用'} />
         : objective && status === 'passed' ? <CheckSquare className="dw-ac-done" role="img" aria-label="已完成" /> : null}
       {name}{(!objective || (status !== 'disabled' && status !== 'passed')) && <span className="dw-ac-dot" data-status={status} role="img" aria-label={names[status]} />}
       {objective && progress && progress.done > 0 && progress.done < progress.total && status !== 'disabled' && status !== 'not_applicable'

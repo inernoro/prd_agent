@@ -13,7 +13,12 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
   const root = await mkdtemp(path.join(tmpdir(), 'cds-design-mcp-'));
   const bytes = Buffer.from('fixture package bytes');
   await writeFile(path.join(root, 'draft.zip'), bytes);
-  const versions = [{ version: 1, title: 'First draft' }, { version: 2, title: 'Second draft' }];
+  const demo = [{ screen: 'members', title: '打开成员', tip: '先查看成员清单。' }];
+  const videos = [{ page: 'accept', file: 'videos/acceptance.mp4', title: '验收演示', artifactId: 'artifact-fixture',
+    chapters: [{ method: 'compare', title: '对照图', start: 0 }] }];
+  const methodSettings = { flow: { enabled: false, by: 'fixture-reviewer', at: '2026-11-25T00:00:00.000Z',
+    reason: '合成流程环境正在恢复。' } };
+  const versions = [{ version: 1, title: 'First draft' }, { version: 2, title: 'Second draft', demo, videos }];
   let write = false;
   let responseProject = projectId;
   const writes = [];
@@ -26,7 +31,9 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
     }
     const value = request.method === 'POST' ? { projectId, reused: writes.length > 1,
       result: { type: 'package', designId: 'DSN-fixture', version: 2 } }
-      : { projectId: responseProject, permissions: { write }, designs: [{ projectId, id: 'DSN-fixture', versions }], frameworks: [{ projectId, id: 'FW-fixture', versions }] };
+      : { projectId: responseProject, permissions: { write },
+        designs: [{ projectId, id: 'DSN-fixture', versions, methodSettings: { 2: methodSettings } }],
+        frameworks: [{ projectId, id: 'FW-fixture', versions }] };
     response.writeHead(request.method === 'POST' && writes.length === 1 ? 201 : 200, { 'content-type': 'application/json' });
     response.end(JSON.stringify(value));
   });
@@ -44,6 +51,11 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
 
   assert.deepEqual((await bridge.listTools()).map(row => row.name), [read]);
   assert.deepEqual(await bridge.call(read, { view: 'framework', id: 'FW-fixture', version: 1 }), { projectId, id: 'FW-fixture', version: versions[0] });
+  const delivery = await bridge.call(read, { view: 'delivery', id: draft.designId, version: 2 });
+  assert.deepEqual({ demo: delivery.demo, videos: delivery.videos, methodSettings: delivery.methodSettings },
+    { demo, videos, methodSettings });
+  const former = await bridge.call(read, { view: 'delivery', id: draft.designId, version: 1 });
+  for (const key of ['demo', 'videos', 'methodSettings']) assert.equal(Object.hasOwn(former, key), false);
   await assert.rejects(bridge.call(publish, draft), /没有稿件发布权限/);
   assert.equal(writes.length, 0);
 

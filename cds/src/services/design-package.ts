@@ -4,7 +4,8 @@ import { promisify } from 'node:util';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { crc32 } from '../utils/zip.js';
-import { designSlots, designViewports, type DesignDeliveryFile, type DesignFrameworkCharter, type DesignMaterial, type DesignRule, type DesignScope, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
+import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoStep, type DesignFrameworkCharter, type DesignMaterial,
+  type DesignRule, type DesignScope, type DesignScreen, type DesignTheme, type DesignVideo } from '../shared/design-workspace.js';
 import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
 import { rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
 import { PlanningError, planningText, rejectPlanning } from './engineering-planning-input.js';
@@ -97,6 +98,43 @@ export function designPngDimensions(bytes: Buffer): { width: number; height: num
     offset = end;
   }
   return undefined;
+}
+
+export function isDesignMp4(bytes: Buffer): boolean {
+  return bytes.length >= 16 && bytes.readUInt32BE(0) >= 16 && bytes.readUInt32BE(0) <= bytes.length
+    && bytes.toString('ascii', 4, 8) === 'ftyp';
+}
+
+function parseDesignPresentation(input: Record<string, unknown>, screens: DesignScreen[], file: (name: string) => Buffer | undefined) {
+  const screensById = new Set(screens.map(screen => screen.id));
+  const demo = input.demo === undefined ? undefined : unique(list(input.demo, '演示流程', 80, (value): DesignDemoStep => {
+    const step = designRecord(value, '演示步骤', ['screen', 'title', 'tip']);
+    const screen = designId(step.screen, '演示画面');
+    if (!screensById.has(screen)) return invalidDesign('演示步骤引用了不存在的画面');
+    return { screen,
+      ...(step.title === undefined ? {} : { title: planningText(step.title, '演示标题', 180) }),
+      ...(step.tip === undefined ? {} : { tip: planningText(step.tip, '演示提示', 600) }) };
+  }), step => step.screen, '演示画面');
+  const videos = input.videos === undefined ? undefined : list(input.videos, '稿件视频', 1, (value): Omit<DesignVideo, 'artifactId'> => {
+    const video = designRecord(value, '稿件视频', ['page', 'file', 'title', 'chapters']);
+    const name = relativeFile(video.file);
+    const bytes = /\.mp4$/i.test(name) && file(name);
+    if (video.page !== 'accept' || !bytes || !isDesignMp4(bytes)) return invalidDesign('验收视频须引用稿件包内的有效 MP4 文件');
+    const chapters = unique(list(video.chapters, '视频章节', designObjectiveMethods.length, value => {
+      const chapter = designRecord(value, '视频章节', ['method', 'title', 'start']);
+      const method = designObjectiveMethods.find(([id]) => id === chapter.method)?.[0];
+      const start = chapter.start;
+      if (!method || typeof start !== 'number' || !Number.isFinite(start) || start < 0 || start > 86_400) {
+        return invalidDesign('视频章节须指定验收方式和有效的开始秒数');
+      }
+      return { method, start, title: planningText(chapter.title, '章节标题', 180) };
+    }), chapter => chapter.method, '视频章节');
+    if (!chapters.length || chapters.some((chapter, index) => index > 0 && chapter.start <= chapters[index - 1].start)) {
+      return invalidDesign('视频章节须按开始时间递增排列');
+    }
+    return { page: video.page, file: name, title: planningText(video.title, '视频标题', 180), chapters };
+  });
+  return { demo, videos };
 }
 
 async function zipEntries(bytes: Buffer, onlyPath?: string): Promise<Map<string, Buffer>> {
@@ -412,6 +450,7 @@ export async function readDesignPackage(bytes: Buffer) {
   }
   const acceptance = gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
     unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项'));
+  const presentation = parseDesignPresentation(input, screens, file);
   const spec: DesignMaterial = { tokens: json('spec/tokens.json'), rules: utf8('spec/rules.md', 64 * 1024),
     components: utf8('spec/components.md', 64 * 1024), skeleton: utf8('spec/skeleton.html', 64 * 1024) };
   const charter = json('spec/charter.json') ?? json('charter.json');
@@ -429,7 +468,7 @@ export async function readDesignPackage(bytes: Buffer) {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
-    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
+    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation,
     acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
     acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
     risks: input.risks === undefined ? undefined : parseCoverage(input.risks, acceptance),

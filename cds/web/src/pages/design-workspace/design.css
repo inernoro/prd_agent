@@ -213,7 +213,10 @@
 }
 .dw-frame > iframe { display: block; position: absolute; inset: 0 auto auto 0; border: none; max-width: none; transform-origin: top left; }
 .dw-frame > iframe[hidden] { display: none; }
+.dw-frame > iframe[data-concealed] { opacity: 0; pointer-events: none; }
 .dw-frame-png { display: block; width: 100%; height: 100%; }
+.dw-frame-loading { position: absolute; inset: 0; display: grid; place-items: end center; padding: 10px; pointer-events: none; }
+.dw-frame-loading > span { border: 1px solid var(--dw-line); border-radius: 7px; background: var(--dw-pane); color: var(--dw-muted); padding: .4em .75em; text-align: center; }
 .dw-frame-empty { text-align: center; padding: 14px; background: var(--dw-pane); color: var(--dw-muted); border: 1px solid var(--dw-line); border-radius: 8px; }
 .dw-pin { position: absolute; z-index: 3; transform: translate(-50%,-50%); border-radius: 50%; display: grid; place-items: center;
   width: 26px; height: 26px; border: 2px solid white; background: var(--dw-accent); color: #172027; font-weight: 750; }

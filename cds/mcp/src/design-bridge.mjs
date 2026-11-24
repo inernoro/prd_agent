@@ -209,6 +209,8 @@ export function createDesignBridge(credentials, options = {}) {
           return { projectId, id: item.id, version: selected.version, delivery: selected.delivery ?? null,
             sourceCommit: selected.sourceCommit, sourcePath: selected.sourcePath, sourceVerification: selected.sourceVerification,
             sha256: selected.sha256, screens, acceptance: selected.acceptance, acceptancePlan: selected.acceptancePlan, checks: selected.checks,
+            ...(selected.demo ? { demo: selected.demo } : {}), ...(selected.videos ? { videos: selected.videos } : {}),
+            ...(item.methodSettings?.[selected.version] ? { methodSettings: item.methodSettings[selected.version] } : {}),
             summary: { screenCount: screens.length, withImplementation: screens.filter(screen => screen.impl).length,
               screenshotSlots: screens.reduce((sum, screen) => sum + screen.themes.length, 0),
               submittedScreenshots: Object.values(renders).reduce((sum, captures) => sum + Object.keys(captures).length, 0),

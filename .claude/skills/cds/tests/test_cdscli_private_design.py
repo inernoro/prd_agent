@@ -30,6 +30,7 @@ GIT_ENV = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'G
 class PrivatePublishCliTest(unittest.TestCase):
     def setUp(self):
         self.writes = []
+        self.cookies = []
         self.run = {'id': 'RUN-fixture', 'version': 9, 'commit': 'a' * 40, 'pullRequest': 42, 'cells': []}
         self.returned_slot = None
         self.returned_record_id = None
@@ -62,13 +63,17 @@ class PrivatePublishCliTest(unittest.TestCase):
                 query = {key: values[0] for key, values in parse_qs(target.query).items()}
                 fixture.writes.append((target.path, self.headers['X-AI-Access-Key'],
                                        self.headers['Content-Type'], query, body))
+                fixture.cookies.append(self.headers['Cookie'])
                 reused = fixture.writes[-1] in fixture.writes[:-1]
                 result = {'type': 'package', 'designId': DESIGN, 'version': 5}
                 if target.path == f'{API}/commands':
                     payload = json.loads(body)
-                    result = {**{field: payload[field] for field in ('type', 'designId', 'runId')},
-                              'version': fixture.run['version']}
                     action = payload['type'].split('.', 1)[-1]
+                    result = {field: payload[field] for field in ('type', 'designId')}
+                    if action in ('enable', 'disable'):
+                        result.update(version=payload['version'], id=fixture.returned_record_id or payload['method'])
+                    else:
+                        result.update(runId=payload['runId'], version=fixture.run['version'])
                     if action == 'visual':
                         result.update(screenId=payload['screenId'], slot=fixture.returned_slot or payload['slot'])
                         if not reused and not fixture.returned_slot:
@@ -119,7 +124,7 @@ class PrivatePublishCliTest(unittest.TestCase):
         return self.invoke('publish', DESIGN, '--dir', str(directory or self.directory),
                            '--intent', 'revise', '--design-key', 'reports/summary', '--expected-version', '4', *args)
 
-    def invoke(self, *args):
+    def invoke(self, *args, member_session=None):
         spec = importlib.util.spec_from_file_location('private_design_cli', CLI)
         cli = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cli)
@@ -132,11 +137,13 @@ class PrivatePublishCliTest(unittest.TestCase):
             return base_run(command, **kwargs)
 
         stdout, stderr = io.StringIO(), io.StringIO()
+        authentication = mock.patch.object(cli, '_human_session_headers', return_value=member_session) \
+            if member_session else contextlib.nullcontext()
         previous = Path.cwd()
         try:
             os.chdir(self.repo)
             with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(cli.subprocess, 'run', record), \
-                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ended:
+                    authentication, contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ended:
                 cli.main(['design', *args])
         finally:
             os.chdir(previous)
@@ -249,6 +256,41 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.assertEqual((route, key, content_type), (f'{API}/feedback', KEY, 'application/json'))
         self.assertEqual(json.loads(payload), {'type': 'feedback.reply', 'requestId': 'cli-supplement-fixture',
                                              'designId': DESIGN, 'feedbackId': 'FDB-previous', 'body': body, 'supplement': True})
+
+    def test_member_toggles_acceptance_method_and_checks_receipt(self):
+        session = {'Cookie': 'cds_session=fixture-member', 'X-AI-Access-Key': ''}
+        reason = '本地夹具的流程环境正在恢复。'
+        flags = (DESIGN, '--version', '9', '--method', 'flow', '--as-user', 'fixture-member')
+        for action, extra in (('disable', ('--reason', reason)), ('enable', ())):
+            with self.subTest(action=action):
+                request_id = f'cli-{action}-method-fixture'
+                command = (f'{action}-method', *flags, '--request-id', request_id, *extra)
+                code, output, stderr = self.invoke(*command, member_session=session)
+                self.assertEqual(code, 0, output or stderr)
+                self.assertEqual(json.loads(output)['data'], {
+                    'projectId': PROJECT, 'reused': False,
+                    'result': {'type': f'acceptance.{action}', 'designId': DESIGN, 'version': 9, 'id': 'flow'},
+                })
+                route, key, content_type, query, payload = self.writes[-1]
+                self.assertEqual((route, key, content_type, query), (f'{API}/commands', '', 'application/json', {}))
+                self.assertEqual(self.cookies[-1], session['Cookie'])
+                expected = {'type': f'acceptance.{action}', 'designId': DESIGN, 'version': 9,
+                            'method': 'flow', 'requestId': request_id}
+                if action == 'disable':
+                    expected['reason'] = reason
+                self.assertEqual(json.loads(payload), expected)
+
+        self.returned_record_id = 'smoke'
+        code, output, stderr = self.invoke('enable-method', *flags, '--request-id', 'wrong-method-receipt', member_session=session)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('验收回执', output or stderr)
+
+    def test_disable_method_requires_reason_before_request(self):
+        code, output, stderr = self.invoke('disable-method', DESIGN, '--version', '9',
+                                           '--method', 'flow', '--as-user', 'fixture-member')
+        self.assertEqual(code, 2, output or stderr)
+        self.assertIn('--reason', output or stderr)
+        self.assertEqual(self.writes, [])
 
     def test_flow_and_smoke_records_reuse_acceptance_permissions_and_verify_the_returned_id(self):
         records = {

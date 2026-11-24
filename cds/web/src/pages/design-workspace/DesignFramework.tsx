@@ -113,7 +113,9 @@ function FrameworkAdoption({ framework, designs }: { framework: Framework; desig
 export function frameworkUses(id: string, designs: DesignEntry[]) {
   return designs.flatMap(entry => {
     const current = latestDesign(entry);
-    const baseline = entry.versions.find(row => row.version === entry.frozen);
+    const baseline = entry.versions.find(row => row.version === entry.frozen)
+      ?? (entry.frozen && entry.librarySummary?.baselineFramework
+        ? { ...current, ...entry.librarySummary.baselineFramework, version: entry.frozen } : undefined);
     const binding = current.framework === id ? current : baseline?.framework === id ? baseline : undefined;
     return binding ? [{ entry, binding }] : [];
   });

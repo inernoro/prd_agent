@@ -3,6 +3,12 @@ import { apiUrl } from '@/lib/api';
 import { currentDesignRun, type DesignEntry, type DesignVersion } from '../../../../src/shared/design-workspace';
 
 export const designPath = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/design`;
+export function designDetailPath(projectId: string, designId: string, version?: number, fromVersion?: number) {
+  const query = new URLSearchParams({ designId });
+  if (version !== undefined) query.set('version', String(version));
+  if (fromVersion !== undefined && fromVersion !== version) query.set('fromVersion', String(fromVersion));
+  return designPath(projectId) + '?' + query;
+}
 export const designArtifact = (projectId: string, artifactId: string) => apiUrl(`${designPath(projectId)}/artifacts/${encodeURIComponent(artifactId)}`);
 export const latestDesign = (entry: DesignEntry): DesignVersion => entry.versions[entry.versions.length - 1];
 export const designSourceNames: Record<NonNullable<DesignVersion['sourceVerification']>, string> = {
@@ -56,13 +62,16 @@ export function failedBaseline(entry: DesignEntry): number | undefined {
 
 export function designFeedbackAwaitsViewer(entry: DesignEntry, feedback: NonNullable<DesignEntry['feedback']>[number], actorId?: string): boolean {
   if (feedback.status === 'responded') return feedback.author.id === actorId;
-  return feedback.status === 'open' && feedback.author.id !== actorId && entry.versions.some(version => version.publisher.id === actorId);
+  return feedback.status === 'open' && feedback.author.id !== actorId
+    && (entry.versions.some(version => version.publisher.id === actorId) || entry.librarySummary?.publisherIds.includes(actorId ?? '') === true);
 }
 
 export function openReviews(entry: DesignEntry) {
   return entry.comments.flatMap(comment => {
     if (comment.closed) return [];
-    const version = [...entry.versions].reverse().find(version => Object.hasOwn(version.resolves, comment.id));
+    const indexed = entry.librarySummary?.reviewVersions[comment.id];
+    const version = [...entry.versions].reverse().find(version => Object.hasOwn(version.resolves, comment.id))
+      ?? (indexed === undefined ? undefined : { ...latestDesign(entry), version: indexed });
     return version && !comment.reviews.some(review => review.version === version.version) ? [{ comment, version }] : [];
   });
 }

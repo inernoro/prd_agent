@@ -124,3 +124,19 @@
   .dw-ac-objective-table :is(th, td) { display: block; padding: .125rem 0; border: 0; }
   .dw-ac-objective-table :is(tr[data-status=missing], tr[data-status=failed]) > :first-child { border: 0; }
 }
+.dw-ac-disable { margin-inline-start: auto; }
+.dw-ac-disable svg { width: 16px; height: 16px; }
+.dw-disable-dialog textarea { min-height: 6rem; }
+.dw-ac-hero { display: flex; align-items: baseline; flex-wrap: wrap; gap: .55rem 1rem; padding-block: .5rem; color: var(--dw-muted); }
+.dw-ac-hero strong { color: var(--dw-ink); }
+.dw-ac-mcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.dw-ac-mcards button { display: grid; align-content: start; text-align: left; white-space: normal; inline-size: 100%; block-size: 100%; gap: 4px; padding: 10px; }
+.dw-ac-mcards button strong { display: flex; align-items: center; gap: 4px; }
+.dw-ac-mcards button small, .dw-ac-effect > small { color: var(--dw-muted); }
+.dw-ac-screen-thumb { width: 48px; max-height: 36px; object-fit: contain; border-radius: 4px; vertical-align: middle; margin-inline-end: 6px; }
+.dw-video { margin: 0; max-width: 640px; min-width: 0; display: grid; gap: 8px; }
+.dw-video video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: var(--dw-sunken); border: 1px solid var(--dw-line); border-radius: 8px; }
+.dw-video-chapters { display: flex; gap: 6px; flex-wrap: wrap; }
+.dw-video-chapters button { white-space: nowrap; }
+.dw-video-chapters small { color: var(--dw-muted); margin-inline-start: 4px; }
+.dw-video-chapters button[aria-current=true] { color: var(--dw-accent); border-color: var(--dw-accent); }

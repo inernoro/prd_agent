@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { useTheme } from '@/lib/theme';
 import { designSlots, designViewports, type DesignCell, type DesignEntry, type DesignRun,
   type DesignScreen, type DesignSlot, type DesignVersion } from '../../../../src/shared/design-workspace';
 import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus, designObjectivePlanEnabled } from '../../../../src/shared/design-methods';
@@ -40,18 +41,16 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
   command: DesignCommand; onRule: (cell: DesignCell) => void; visualOnly?: boolean;
 }) {
   const [params, setParams] = useSearchParams();
+  const { theme } = useTheme();
   const objective = designObjectivePlanEnabled(version);
-  const [preferredSlot, preferSlot] = useState<DesignSlot>(() => {
-    if (typeof window === 'undefined') return 'desktop-light';
-    const viewport = window.matchMedia('(max-width: 47.9375rem)').matches ? 'phone' : 'desktop';
-    return `${viewport}-light`;
-  });
+  const [preferredSlot, preferSlot] = useState<DesignSlot>();
+  const viewport = typeof window !== 'undefined' && window.matchMedia('(max-width: 47.9375rem)').matches ? 'phone' : 'desktop';
   const [filter, setFilter] = useState<'todo' | 'all'>('todo');
   const [selected, setSelected] = useState<string>();
   const opened = objective ? params.get('compare-screen') : selected;
   const selectedScreen = version.screens.find(screen => screen.id === opened);
   const savedSlot = objective ? designSlots.find(value => value === params.get('compare-slot')) : undefined;
-  const candidateSlot = savedSlot ?? preferredSlot;
+  const candidateSlot: DesignSlot = savedSlot ?? preferredSlot ?? `${viewport}-${theme}`;
   const matchingSlots = selectedScreen ? designVisualSlots(selectedScreen) : undefined;
   const slot = matchingSlots?.includes(candidateSlot) ? candidateSlot : matchingSlots?.[0] ?? candidateSlot;
   const setSlot = (next: DesignSlot) => {
@@ -119,6 +118,8 @@ export function DesignVisualAcceptance({ entry, version, run, busy, writable, co
         </button></div>
         <div role="cell" className="dw-vs-verdict">
           <span className="dw-status" data-state={row.verdict}>{verdictNames[row.verdict]}</span>
+          {!row.reference && !visualOnly && <small>对照图由设计方提供</small>}
+          {!row.implementation && <small>{row.screen.impl ? '实现方补实拍' : '实现方绑定画面'}</small>}
           <button type="button" className="ep-text-button" data-action="visual-open" aria-label={`逐项对图 · ${row.screen.name}`}
             aria-haspopup="dialog" aria-expanded={row.screen.id === opened}
             onClick={event => open(event, row.screen.id)}>逐项对图</button>

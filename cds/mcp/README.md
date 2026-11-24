@@ -148,7 +148,7 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 
 ### 交付资料与实施反馈
 
-- `cds_design_read` 的 `delivery` 回读指定稿件版本、文件索引、Git 证明、画面和验收缺项。用 `file` 指定稿件、版本和相对路径来分段读取 UTF-8 原文，使用返回的 `nextOffset` 继续。原 ZIP 和二进制文件可从「交付」页下载。
+- `cds_design_read` 的 `delivery` 回读指定稿件版本、文件索引、Git 证明、画面、演示、验收视频及手段设置。用 `file` 指定稿件、版本和相对路径来分段读取 UTF-8 原文，使用返回的 `nextOffset` 继续。原 ZIP 和二进制文件可从「交付」页下载。
 - `cds_design_read` 的 `feedback` 回读同稿及指定版本相关线程。实施反馈和发布权限都支持 `cds_design_feedback`。用 `feedback.create` 提交，用 `feedback.reply` 回复并可引用自己发布的版本，用 `feedback.resolve` 关闭或重开自己的反馈。项目管理者可复核。使用项目级权限，不在消息或反馈中传递凭据。
 - 用 `cds_design_read` 的 `run` 回读 `run.visual`。项目写授权可回填检查结果，可附工作区内的 `imagePath` 和 `referenceImagePath`。标准与补图边界见 [逐画面对照](../../.claude/skills/cds/reference/design-intake.md#逐画面对照)。
 - 分手段验收的流程和冒烟分别写入 `run.flows` 和 `run.smoke`。各结果按当前运行和稳定编号回读，输入字段见 [按手段验收](../../.claude/skills/cds/reference/design-intake.md#按手段验收)。

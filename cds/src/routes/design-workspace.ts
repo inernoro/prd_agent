@@ -2,11 +2,12 @@ import express, { type NextFunction, type Request, type Response, type Router } 
 import { designId, designPackageLimit, invalidDesign } from '../services/design-package.js';
 import { decorateDesignPrototype, designPrototypeCsp } from '../services/design-prototype.js';
 import type { DesignShareHandoffConfig } from '../services/design-share-handoff.js';
-import type { DesignActor, DesignWorkspaceService } from '../services/design-workspace.js';
+import type { DesignActor, DesignWorkspaceRead, DesignWorkspaceService } from '../services/design-workspace.js';
 import { PlanningError, planningId, rejectPlanning } from '../services/engineering-planning-input.js';
 import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
+const readVersion = (value: unknown) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN;
 const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|feedback(?:\/attachments)?|reviewers|intake|diff|installed|viewed|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
@@ -49,11 +50,19 @@ export function createDesignWorkspaceRouter(deps: {
     };
   }
 
-  router.get(route, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.workspace(projectId, actor))));
+  router.get(route, authorized, handle(async (req, res, projectId, actor) => {
+    const { view, designId: id, version, fromVersion } = req.query;
+    let projection: DesignWorkspaceRead | undefined;
+    if (view === 'summary' && id === undefined && version === undefined && fromVersion === undefined) projection = { summary: true };
+    else if (view === undefined && id !== undefined) projection = { designId: designId(id, '稿件编号'),
+      ...(version === undefined ? {} : { version: readVersion(version) }),
+      ...(fromVersion === undefined ? {} : { fromVersion: readVersion(fromVersion) }) };
+    else if (view !== undefined || version !== undefined || fromVersion !== undefined) return invalidDesign('请指定稿件和需要读取的版本');
+    res.json(await deps.service.workspace(projectId, actor, projection));
+  }));
   router.get(`${route}/intake`, authorized, handle(async (_req, res, projectId, actor) => res.json(await deps.service.intake(projectId, actor))));
   router.get(`${route}/diff`, authorized, handle(async (req, res, projectId, actor) => {
-    const version = (value: unknown) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN;
-    res.json(await deps.service.diff(projectId, actor, designId(req.query.designId, '稿件编号'), version(req.query.from), version(req.query.to)));
+    res.json(await deps.service.diff(projectId, actor, designId(req.query.designId, '稿件编号'), readVersion(req.query.from), readVersion(req.query.to)));
   }));
   router.get(`${route}/installed`, authorized, handle(async (_req, res, projectId, actor) => {
     res.json(await deps.service.installed(projectId, actor));
@@ -121,6 +130,20 @@ export function createDesignWorkspaceRouter(deps: {
     if (artifact.mime.startsWith('text/html') && (req.query.theme === 'light' || req.query.theme === 'dark')) {
       res.send(decorateDesignPrototype(artifact.bytes.toString('utf8')));
       return;
+    }
+    if (artifact.mime === 'video/mp4') {
+      const size = artifact.bytes.length;
+      res.setHeader('Accept-Ranges', 'bytes');
+      const ranges = req.range(size);
+      if (ranges === -1) {
+        res.setHeader('Content-Range', `bytes */${size}`);
+        return res.sendStatus(416);
+      }
+      if (Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length === 1) {
+        const [{ start, end }] = ranges;
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
+        return res.status(206).send(artifact.bytes.subarray(start, end + 1));
+      }
     }
     res.send(artifact.bytes);
   }));

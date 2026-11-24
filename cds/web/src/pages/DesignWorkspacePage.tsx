@@ -22,7 +22,7 @@ import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
+import { designDate, designDetailPath, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 import './design-workspace/design-v17-delivery.css';
@@ -30,7 +30,7 @@ import './design-workspace/design-v18.css';
 
 const tabs = [['delivery', '交付', '人和智能体'], ['accept', '验收', '人和智能体按规则执行'], ['log', '记录', '操作时自动写入']] as const;
 const deliveryQuery = { full: '', part: '', fb: '', file: '', about: '', compare: '' };
-type ReviewTarget = { entryId: string; commentId: string; version: number };
+type ReviewTarget = { entryId: string; commentId: string; version: number; sourceVersion: number };
 type LargeTarget = { entryId: string; version: number };
 const validSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 
@@ -81,12 +81,16 @@ export function DesignWorkspacePage() {
   const options = (projects.data?.projects ?? []).filter(row => !row.mirror);
   const project = params.get('project') ?? options[0]?.id ?? '';
   const authorized = options.some(option => option.id === project);
-  const source = usePlanningRead<DesignWorkspace>(authorized ? designPath(project) : null, reload);
-  const [prior, setPrior] = useState<DesignWorkspace>();
-  useEffect(() => { if (source.data?.projectId === project) setPrior(source.data); }, [source.data, project]);
-  const workspace = source.data?.projectId === project ? source.data : !source.error && prior?.projectId === project ? prior : undefined;
+  const draftId = params.get('design');
+  const versionParam = params.get('version');
+  const selectedVersion = Number(versionParam);
+  const loadPath = !authorized ? null : draftId
+    ? designDetailPath(project, draftId, Number.isSafeInteger(selectedVersion) && selectedVersion > 0 ? selectedVersion : undefined)
+    : designPath(project) + '?view=summary';
+  const source = usePlanningRead<DesignWorkspace>(loadPath, reload);
+  const workspace = source.data?.projectId === project ? source.data : undefined;
   const permissions = workspace?.permissions;
-  const entry = workspace?.designs.find(row => row.id === params.get('design'));
+  const entry = workspace?.designs.find(row => row.id === draftId);
   const requirementKey = params.get('brief');
   const requirement = workspace?.requirements?.find(row => row.designKey === requirementKey);
   const draftRequirement = entry?.designKey ? workspace?.requirements?.find(row => row.designKey === entry.designKey) : undefined;
@@ -94,7 +98,6 @@ export function DesignWorkspacePage() {
   const framework = !libraryFilter && !entry ? workspace?.frameworks.find(row => row.id === frameworkId) : undefined;
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
   const frameworkList = params.get('view') === 'frameworks';
-  const versionParam = params.get('version');
   const version = entry?.versions.find(row => row.version === Number(versionParam)) ?? (entry ? latestDesign(entry) : undefined);
   const canFreeze = permissions?.review && (!entry?.reviewers?.length || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
   const canUnfreeze = permissions?.review && (permissions.steward || canFreeze);
@@ -132,7 +135,7 @@ export function DesignWorkspacePage() {
   const commentParam = params.get('comment') ?? undefined;
   const sceneDraft = entry && version ? `${entry.id}/${version.version}/${screenParam ?? ''}` : '';
   const scene = selectedScene?.draft === sceneDraft ? selectedScene.screen
-    : version?.screens.find(screen => screen.id === screenParam) ?? version?.screens[0];
+    : version?.screens.find(screen => screen.id === (screenParam ?? version.demo?.[0]?.screen)) ?? version?.screens[0];
   const rememberScene = useCallback((screen?: DesignScreen) => setScene(current =>
     current?.draft === sceneDraft && current.screen === screen ? current : { draft: sceneDraft, screen }), [sceneDraft]);
   const compareFrom = Number(params.get('compareFrom') ?? params.get('from')) || undefined;
@@ -147,7 +150,7 @@ export function DesignWorkspacePage() {
     && (params.get('part') !== 'files' && !params.has('file')) ? latestDesignFeedbackAt(entry) || undefined : undefined;
   const viewedBrief = requirement?.designKey;
   const viewedBriefAt = requirement?.sharedAt;
-  const viewingLibrary = !requirementKey && !entry && !framework && !frameworkList;
+  const viewingLibrary = !requirementKey && !draftId && !framework && !frameworkList;
   const serverReading = Boolean(workspace?.viewer);
   useEffect(() => {
     if (!readKey) return;
@@ -195,10 +198,17 @@ export function DesignWorkspacePage() {
     });
     return () => cancelAnimationFrame(frame);
   }, [entry?.id, version?.version, fullView]);
-  const modalEntry = workspace?.designs.find(item => item.id === review?.entryId);
+  const needsDetail = (id: string, version: number) =>
+    !workspace?.designs.some(entry => entry.id === id && entry.versions.some(row => row.version === version && row.prototypeId));
+  const modalSource = usePlanningRead<DesignWorkspace>(authorized && review
+    && (needsDetail(review.entryId, review.version) || needsDetail(review.entryId, review.sourceVersion))
+    ? designDetailPath(project, review.entryId, review.version, review.sourceVersion) : null, reload);
+  const largeSource = usePlanningRead<DesignWorkspace>(authorized && large && needsDetail(large.entryId, large.version)
+    ? designDetailPath(project, large.entryId, large.version) : null, reload);
+  const modalEntry = (modalSource.data ?? workspace)?.designs.find(item => item.id === review?.entryId);
   const reviewComment = modalEntry?.comments.find(item => item.id === review?.commentId);
   const reviewVersion = modalEntry?.versions.find(item => item.version === review?.version);
-  const largeEntry = workspace?.designs.find(item => item.id === large?.entryId);
+  const largeEntry = (largeSource.data ?? workspace)?.designs.find(item => item.id === large?.entryId);
   const largeVersion = largeEntry?.versions.find(item => item.version === large?.version);
   const onChange = (fields: Record<string, string>, replace = false) => {
     const next = new URLSearchParams(params);
@@ -231,7 +241,7 @@ export function DesignWorkspacePage() {
   };
   const openReview = (row: DesignEntry, comment: DesignComment, version: DesignVersion) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setReview({ entryId: row.id, commentId: comment.id, version: version.version });
+    setReview({ entryId: row.id, commentId: comment.id, version: version.version, sourceVersion: comment.version });
   };
   const openLarge = (row: DesignEntry, version: DesignVersion) => {
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -425,6 +435,7 @@ export function DesignWorkspacePage() {
               entry={entry} version={version} active={!large && !review && !fullView}
               comparing={comparing} initialScreenId={screenParam} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
               cornerTools onSceneChange={rememberScene}
+              onSelectScreen={id => onChange({ screen: id, comment: '' }, true)}
               onModeChange={(compare, screen, from) => onChange({ ...deliveryQuery, tab: 'delivery', compare: compare ? '1' : '',
                 screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
               onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
@@ -437,7 +448,7 @@ export function DesignWorkspacePage() {
           {sideClosed ? <button className="ep-button dw-side-open" type="button" data-action="side-open"
             onClick={() => onChange({ side: '' })}><PanelRightOpen />{guidedDelivery ? '演示、评论和交付' : '打开右栏'}</button>
             : guidedDelivery ? <DesignDeliverySide key={`${entry.id}/${version.version}`} entry={entry} version={version} screenId={scene?.id}
-              requirement={draftRequirement} permissions={permissions} tab={sideTab}
+              requirement={draftRequirement} permissions={permissions} tab={sideTab} theme={canvasTheme}
               onTab={value => onChange({ pane: value === 'demo' ? '' : value }, true)}
               open={openFull} onCollapse={() => onChange({ side: 'off' })}
               onScreen={id => onChange({ screen: id, comment: '' }, true)}
@@ -495,17 +506,24 @@ export function DesignWorkspacePage() {
       onPublished={id => { setUpload(false); refresh(value => value + 1); selectEntry(id); }} />}
     {assignment && <DesignReviewerDialog key={`${project}/${assignment.id}`} project={project} entry={assignment} command={command}
       busy={busy} close={() => setAssignReviewers(undefined)} />}
-    {largeEntry && largeVersion && <Dialog open onOpenChange={open => { if (!open) closeLarge(); }}>
+    {large && <Dialog open onOpenChange={open => { if (!open) closeLarge(); }}>
       <DialogContent className="dw-stage ep-dialog" frame onCloseAutoFocus={event => { event.preventDefault(); replayFocus(); }}>
-        <header><DialogTitle>{largeVersion.title} · V{largeVersion.version}</DialogTitle><button className="ep-button" type="button" onClick={closeLarge}><X />退出大屏</button></header>
+        <header><DialogTitle>{largeVersion ? `${largeVersion.title} · V${largeVersion.version}` : '大屏查看'}</DialogTitle><button className="ep-button" type="button" onClick={closeLarge}><X />退出大屏</button></header>
         <DialogDescription className="sr-only">方向键切换画面，按 C 显示评论，按 Esc 退出。</DialogDescription>
-        <DesignCanvas {...canvasCommon} entry={largeEntry} version={largeVersion} comparing={false} active={!review} full onEscape={closeLarge}
+        {largeEntry && largeVersion?.prototypeId ? <DesignCanvas {...canvasCommon} entry={largeEntry} version={largeVersion} comparing={false} active={!review} full onEscape={closeLarge}
           onReview={(comment, sourceVersion) => openReview(largeEntry, comment, sourceVersion)} />
+          : largeSource.error ? <p role="alert" className="dw-placeholder">{largeSource.error} <button type="button" className="ep-button" onClick={refreshWorkspace}>重试</button></p>
+          : <ContentLoading variant="table" label="正在打开大屏" />}
       </DialogContent>
     </Dialog>}
-    {modalEntry && reviewComment && reviewVersion && <DesignReviewDialog entry={modalEntry} comment={reviewComment} version={reviewVersion}
+    {modalEntry && reviewComment && reviewVersion?.prototypeId && !modalSource.loading && <DesignReviewDialog entry={modalEntry} comment={reviewComment} version={reviewVersion}
       canReview={Boolean(permissions?.review && (permissions.steward || permissions.actorId === reviewComment.author.id))}
       command={command} busy={busy} onClose={closeReview} />}
+    {review && (modalSource.loading || modalSource.error) && <Dialog open onOpenChange={open => { if (!open) closeReview(); }}><DialogContent>
+      <DialogTitle>核对评论</DialogTitle>
+      {modalSource.error ? <p role="alert">{modalSource.error} <button type="button" className="ep-button" onClick={refreshWorkspace}>重试</button></p>
+        : <ContentLoading variant="table" label="正在读取评论画面" />}
+    </DialogContent></Dialog>}
     {showCandidates && entry && version && workspace && <ExtractFramework key={`${entry.id}/${version.version}`} entry={entry} version={version} workspace={workspace} command={command}
       busy={busy} issue={issue} close={() => { setIssue(''); setExtract(false); dismissPanel('framework-candidates'); }} />}
     {draftVisible && canFreeze && !activeUpgrade && entry && version && freeze?.id === entry.id && freeze.version === version.version

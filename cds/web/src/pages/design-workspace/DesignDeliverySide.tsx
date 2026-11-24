@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { ArrowRight, Check, MessageSquare, PanelRightClose, RotateCcw } from 'lucide-react';
-import type { DesignComment, DesignEntry, DesignRequirement, DesignVersion, DesignWorkspace } from '../../../../src/shared/design-workspace';
-import { designFeedbackAwaitsViewer } from './design-ui';
+import type { DesignComment, DesignEntry, DesignRequirement, DesignTheme, DesignVersion, DesignWorkspace } from '../../../../src/shared/design-workspace';
+import { designVisualKey } from '../../../../src/shared/design-visual';
+import { designArtifact, designFeedbackAwaitsViewer } from './design-ui';
 import { rationaleOrder } from './DesignRationale';
 import { needTrace } from './DesignNeed';
 export type DesignFullView = 'need' | 'notes' | 'delivery';
@@ -21,9 +22,9 @@ function points(body: string) {
   return items.length ? items : table.length ? table : first ? [plain(first)] : [];
 }
 
-export function DesignDeliverySide({ entry, version, screenId, requirement, permissions, tab, onTab, open, onCollapse, onScreen, onReview, onAccept }: {
+export function DesignDeliverySide({ entry, version, screenId, requirement, permissions, tab, theme, onTab, open, onCollapse, onScreen, onReview, onAccept }: {
   entry: DesignEntry; version: DesignVersion; screenId?: string; requirement?: DesignRequirement; permissions?: Permissions;
-  tab: SideTab; onTab: (tab: SideTab) => void; open: Open; onCollapse: () => void;
+  tab: SideTab; theme: DesignTheme; onTab: (tab: SideTab) => void; open: Open; onCollapse: () => void;
   onScreen: (id: string) => void; onReview: (comment: DesignComment) => void; onAccept: () => void;
 }) {
   const comments = entry.comments.filter(row => row.version === version.version);
@@ -36,39 +37,73 @@ export function DesignDeliverySide({ entry, version, screenId, requirement, perm
       <button type="button" className="ep-button ep-icon-button" aria-label="收起右栏" data-action="side-collapse" onClick={onCollapse}><PanelRightClose /></button>
     </header>
     <div className="dw-sp-body">
-      {tab === 'demo' && <Demo entry={entry} version={version} screenId={screenId} open={open} onScreen={onScreen} />}
+      {tab === 'demo' && <Demo entry={entry} version={version} screenId={screenId} theme={theme} open={open} onScreen={onScreen} />}
       {tab === 'comments' && <Comments version={version} comments={comments} screenId={screenId} onReview={onReview} />}
       {tab === 'deliver' && <Deliver entry={entry} version={version} screenId={screenId} requirement={requirement} permissions={permissions} open={open} onAccept={onAccept} />}
     </div>
   </aside>;
 }
 
-function Demo({ entry, version, screenId, open, onScreen }: { entry: DesignEntry; version: DesignVersion; screenId?: string; open: Open; onScreen: (id: string) => void }) {
-  const [seen, setSeen] = useState<Set<string>>(() => new Set());
-  const steps = version.screens.map(screen => ({ screen, tip: version.acceptance.find(rule => rule.screenId === screen.id)?.rule }));
-  const index = Math.max(0, steps.findIndex(step => step.screen.id === screenId));
-  const current = steps[index], next = steps[index + 1];
-  const go = (id: string) => { setSeen(previous => new Set(previous).add(current.screen.id)); onScreen(id); };
+const demoGroups = ['画面', '设计库', '交付', '说明', '验收', '记录', '框架'] as const;
+function demoGroup(route: string) {
+  if (!route.startsWith('#/design?')) return '画面';
+  const query = new URLSearchParams(route.slice('#/design?'.length));
+  const tab = query.get('tab');
+  if (tab === 'accept') return '验收';
+  if (tab === 'log') return '记录';
+  if (tab && ['need', 'notes', 'rationale', 'spec'].includes(tab)) return '说明';
+  if (query.has('framework') || query.get('view') === 'frameworks') return '框架';
+  return query.has('design') ? '交付' : '设计库';
+}
+
+function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: DesignEntry; version: DesignVersion; screenId?: string; theme: DesignTheme; open: Open; onScreen: (id: string) => void }) {
+  const [all, setAll] = useState(false);
+  const every = version.screens.map(screen => ({ screen, title: screen.name, tip: version.acceptance.find(rule => rule.screenId === screen.id)?.rule }));
+  const declared = version.demo?.flatMap(row => {
+    const screen = version.screens.find(screen => screen.id === row.screen);
+    return screen ? [{ screen, title: row.title || screen.name, tip: row.tip }] : [];
+  }) ?? [];
+  const steps = declared.length && !all ? declared : every;
+  const index = steps.findIndex(step => step.screen.id === screenId);
+  const current = steps[Math.max(index, 0)], next = steps[Math.max(index, 0) + 1];
+  const thumb = (screen: DesignVersion['screens'][number]) => {
+    const color = screen.themes.includes(theme) ? theme : screen.themes[0];
+    const captured = entry.runs.slice().reverse().find(run => run.version === version.version)
+      ?.visual?.[designVisualKey(screen.id, `${screen.viewport}-${color}`)]?.referenceImageId;
+    return version.renders?.[screen.id]?.[color]?.id ?? captured ?? version.renders?.[screen.id]?.light?.id;
+  };
   const { ordered, authorVersion } = rationaleOrder(entry, version);
   const why = ordered.filter(item => item.key === 'goal' || item.key === 'choices')
     .flatMap(item => item.parts.flatMap(part => points(part.body))).slice(0, 6);
   return <>
     <section className="dw-sp-sec" data-sec="flow">
-      <h3>演示流程<small>{steps.length ? `${index + 1} / ${steps.length}` : ''}</small></h3>
-      {steps.length ? <ol className="dw-sp-steps">{steps.map((step, i) => <li key={step.screen.id}>
-        <button type="button" aria-current={i === index ? 'step' : undefined} data-done={seen.has(step.screen.id) && i !== index || undefined} onClick={() => go(step.screen.id)}>
-          <span className="dw-sp-n">{seen.has(step.screen.id) && i !== index ? <Check /> : i + 1}</span>
-          <span>{step.screen.name}{step.screen.viewport === 'phone' && !step.screen.name.includes('手机') ? <small>手机</small> : null}</span>
-        </button></li>)}</ol>
-        : <p className="dw-ds-empty">这一版没有画面清单，只能整页查看原型。</p>}
+      <h3>演示流程<small>{steps.length ? `${Math.max(index, 0) + 1} / ${steps.length}` : ''}</small></h3>
       {current && <div className="dw-sp-tip">
-        <p>{current.tip ? <>这一屏要看：{current.tip}</> : `看「${current.screen.name}」。`}</p>
+        <p><strong>{current.title}</strong>{current.tip ? ` · ${current.tip}` : ''}</p>
         <div className="dw-sp-acts">
-          {next ? <button type="button" className="ep-button ep-button--primary" data-action="demo-next" onClick={() => go(next.screen.id)}>下一步：{next.screen.name}<ArrowRight /></button>
+          {next ? <button type="button" className="ep-button ep-button--primary" data-action="demo-next" onClick={() => onScreen(next.screen.id)}>下一步：{next.title}<ArrowRight /></button>
             : <span className="dw-sp-done"><Check />走完了，也可以直接在画面里点</span>}
-          {index > 0 && <button type="button" className="ep-button" data-action="demo-restart" onClick={() => { setSeen(new Set()); onScreen(steps[0].screen.id); }}><RotateCcw />从头开始</button>}
+          {index > 0 && <button type="button" className="ep-button" data-action="demo-restart" onClick={() => onScreen(steps[0].screen.id)}><RotateCcw />从头开始</button>}
         </div>
       </div>}
+      {!steps.length && <p className="dw-ds-empty">这一版没有画面清单，只能整页查看原型。</p>}
+      {demoGroups.map(group => {
+        const visible = steps.filter(step => demoGroup(step.screen.route) === group);
+        return visible.length > 0 && <div className="dw-sp-group" key={group}>
+          <h4>{group}<small>{visible.length}</small></h4>
+          <ol className="dw-sp-thumbs">{visible.map(step => {
+            const image = thumb(step.screen);
+            return <li key={step.screen.id}><button type="button" aria-current={step.screen.id === screenId ? 'step' : undefined}
+              onClick={() => onScreen(step.screen.id)} title={step.title}>
+              <span className="dw-sp-thumb">{image ? <img src={designArtifact(entry.projectId, image)} alt="" loading="lazy" />
+                : <small>{step.screen.viewport === 'phone' ? '手机' : '桌面'}</small>}</span>
+              <span className="dw-sp-ttitle">{step.title}</span>
+            </button></li>;
+          })}</ol>
+        </div>;
+      })}
+      {declared.length > 0 && declared.length < every.length && <button type="button" className="ep-link dw-ds-more" data-action="demo-all"
+        aria-expanded={all} onClick={() => setAll(value => !value)}>{all ? `只看演示流程（${declared.length} 步）` : `看全部 ${every.length} 个画面`}</button>}
     </section>
     <section className="dw-sp-sec" data-sec="why">
       <h3>这一版解决什么{authorVersion && authorVersion.version !== version.version && <small>沿用 V{authorVersion.version}</small>}</h3>

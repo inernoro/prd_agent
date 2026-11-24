@@ -2,7 +2,6 @@ import { Folder, Grid2X2, Layers, List, Maximize, MessageSquare, Search, X } fro
 import { Link } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { DesignComment, DesignEntry, DesignModuleRef, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../../src/shared/design-workspace';
-import { DesignFrame } from './DesignCanvas';
 import { charterOf, FrameworkBadge, FrameworkOverview, FrameworkStatus, frameworkUses } from './DesignFramework';
 import { DesignRequirementList } from './DesignRequirements';
 import { latestDesignFeedbackAt } from '../../../../src/shared/design-workspace';
@@ -24,14 +23,14 @@ const normalize = (value: string) => value.normalize('NFKC').toLowerCase();
 function DesignCover({ projectId, version, theme, thumbnail }: {
   projectId: string; version: DesignVersion; theme: DesignTheme; thumbnail?: boolean;
 }) {
-  const screen = version.screens[0];
+  const screen = version.screens.find(scene => version.renders?.[scene.id]?.[theme])
+    ?? version.screens.find(scene => version.renders?.[scene.id]);
   const selectedTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
   const renderedScreen = thumbnail ? version.screens.find(scene => version.renders?.[scene.id]?.[theme]) : undefined;
   const render = renderedScreen ? version.renders?.[renderedScreen.id]?.[theme]
     : screen && version.renders?.[screen.id]?.[selectedTheme];
   if (render) return <img src={designArtifact(projectId, render.id)} alt="" loading="lazy" />;
-  if (thumbnail) return <span className="dw-mini-empty" aria-hidden><Layers size={16} /></span>;
-  return <DesignFrame projectId={projectId} version={version} screen={screen} theme={selectedTheme} zoom={null} decorative />;
+  return <span className="dw-mini-empty" aria-hidden><Layers size={16} /></span>;
 }
 
 type CardProps = {

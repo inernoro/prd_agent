@@ -1,12 +1,12 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Lock } from 'lucide-react';
+import { Lock, PauseCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { designKnownIssues, type DesignDimension, type DesignEvidenceStatus,
   type DesignKnownIssue, type DesignMethodId } from '../../../../src/shared/design-methods';
 import type { DesignCell, DesignEntry, DesignRequirement, DesignRule, DesignRun, DesignVersion } from '../../../../src/shared/design-workspace';
 import { methodGuides, MethodDemo } from './AcceptanceGuide';
 import { needTrace } from './DesignNeed';
-import { designDate, designPublisherLabel, type DesignCommand } from './design-ui';
+import { designArtifact, designDate, designPublisherLabel, type DesignCommand } from './design-ui';
 import type { AcceptanceCheck, Method, MethodData } from './DesignAcceptanceMethods';
 
 export type RuleStatus = 'failed' | 'missing' | 'unverified' | 'passed' | 'debt';
@@ -16,7 +16,7 @@ const details: Record<RuleStatus, string> = { failed: '不通过', missing: '待
 const order: Record<DesignMethodId, number> = { mece: 0, smoke: 1, compare: 2, visual: 3, regress: 4, flow: 5, human: 6, debt: 7 };
 const isActive = (method: Method) => method.status !== 'disabled' && method.status !== 'not_applicable';
 const methodStatus = (method: Method) => {
-  if (method.status === 'disabled') return '未启用';
+  if (method.status === 'disabled') return method.setting?.enabled === false ? '已停用' : '未启用';
   if (method.status === 'not_applicable') return '不适用';
   const progress = method.progress;
   if (!progress?.total) return '没有条目';
@@ -31,14 +31,25 @@ function Segments({ parts, total }: { parts: Array<[string, number]>; total: num
     <i key={key} data-part={key} style={{ width: `${count / total * 100}%` }} />)}</span>;
 }
 
-export function ObjectiveMethodIntro({ method, canEnable, busy, enable, demo, setDemo }: {
+function methodAudit(method: Method) {
+  const setting = method.setting;
+  return setting ? `${designPublisherLabel(setting.by.label)} · ${new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(setting.at))}` : '';
+}
+
+export function ObjectiveMethodIntro({ method, canEnable, busy, enable, disable, demo, setDemo }: {
   method: Method; canEnable: boolean; busy: boolean; enable: () => void; demo: boolean; setDemo: (show: boolean) => void;
+  disable?: () => void;
 }) {
   const guide = methodGuides[method.id];
   const progress = method.progress!;
   const active = isActive(method);
   return <>
-    <li data-item={method.id}><h4><b>1</b>{method.name}<small>{method.purpose}</small></h4>
+    <li data-item={method.id}><h4><b>1</b>{method.name}<small>{method.purpose}</small>
+      {active && disable && <button className="ep-button dw-ac-disable" type="button" data-action="disable-method" disabled={busy} onClick={disable}>
+        <PauseCircle aria-hidden="true" />停用
+      </button>}</h4>
       {active ? <div className="dw-ac-progress">
         <Segments parts={[["passed", progress.passed], ["failed", progress.failed]]} total={progress.total} />
         <span>完成 {progress.done}/{progress.total}{progress.failed > 0 && ` · 有问题 ${progress.failed}`}</span>
@@ -46,8 +57,9 @@ export function ObjectiveMethodIntro({ method, canEnable, busy, enable, demo, se
       </div> : <div className="dw-ac-locked"><Lock aria-hidden="true" /><div>
         <strong>{methodStatus(method)}</strong>
         <small>{method.reason || '当前稿件没有启用此手段。可以先查看做法和示例。'}</small>
+        {method.setting?.enabled === false && <small>{methodAudit(method)}</small>}
       </div>{canEnable && method.status === 'disabled' && <button className="ep-button ep-button--primary" type="button" data-action="enable-method" disabled={busy}
-        onClick={enable}>启用</button>}</div>}
+        onClick={enable}>{method.setting?.enabled === false ? '重新启用' : '启用'}</button>}</div>}
       <p className="dw-dl-factline"><span>执行技能 <code>{method.skills}</code></span><span>{guide.who}</span><span>{guide.when}</span></p>
     </li>
     <li data-item="howto"><h4><b>2</b>怎么做<button type="button" className="ep-button dw-ac-demo-btn" data-action="show-demo"
@@ -59,8 +71,18 @@ export function ObjectiveMethodIntro({ method, canEnable, busy, enable, demo, se
   </>;
 }
 
-export function ObjectiveMethodTable({ methods, go }: { methods: Method[]; go: (check: AcceptanceCheck) => void }) {
+export function ObjectiveMethodTable({ methods, go, cards }: { methods: Method[]; go: (check: AcceptanceCheck) => void; cards?: boolean }) {
   const ordered = methods.slice().sort((left, right) => Number(isActive(right)) - Number(isActive(left)) || order[left.id] - order[right.id]);
+  if (cards) return <ul className="dw-ac-mcards" aria-label="验收手段进度">{ordered.map(method => <li key={method.id} data-status={method.status}>
+    <button type="button" className="ep-button" onClick={() => go(method.id)}>
+      <strong>{!isActive(method) && <Lock className="dw-ac-lock" aria-hidden="true" />}{method.name}</strong>
+      <span>{methodStatus(method)} · {executors[method.id] ?? '智能体'}</span>
+      {isActive(method) && method.progress && <small>完成 {method.progress.done}/{method.progress.total}
+        {method.progress.failed > 0 ? ` · 有问题 ${method.progress.failed}` : ''}</small>}
+      {!isActive(method) && method.reason && <small>{method.reason}</small>}
+      {method.setting?.enabled === false && <small>{methodAudit(method)}</small>}
+    </button>
+  </li>)}</ul>;
   return <div className="dw-ac-mtable dw-ac-mtable--v16" role="table" aria-label="验收手段进度">
     <div className="dw-ac-mrow dw-ac-mhead" role="row">{['手段', '进度', '谁执行'].map(title => <span key={title} role="columnheader">{title}</span>)}</div>
     {ordered.map(method => {
@@ -107,8 +129,8 @@ export function AcceptanceTrace({ entry, version, run, requirement, statusOf, on
     </div></li>;
 }
 
-export function AcceptanceScreens({ version, statusOf, onOpen }: {
-  version: DesignVersion; statusOf: (id: string) => RuleStatus; onOpen?: OpenAcceptance;
+export function AcceptanceScreens({ version, statusOf, onOpen, thumbnailProject }: {
+  version: DesignVersion; statusOf: (id: string) => RuleStatus; onOpen?: OpenAcceptance; thumbnailProject?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const rank: Record<RuleStatus, number> = { failed: 0, missing: 1, debt: 2, unverified: 3, passed: 4 };
@@ -117,11 +139,13 @@ export function AcceptanceScreens({ version, statusOf, onOpen }: {
     return { screen, list, worst: list.length ? Math.min(...list.map(item => rank[item.status])) : 5,
       problems: list.filter(item => item.status === 'failed' || item.status === 'missing').length };
   }).sort((left, right) => right.problems - left.problems || left.worst - right.worst);
-  const visible = expanded ? screens : screens.slice(0, 8);
+  const visible = expanded ? screens : screens.slice(0, thumbnailProject ? 12 : 8);
   return <li data-item="by-screen"><h4><b>3</b>画面 × 结果<small>问题多的画面在前，点开回到交付的那一屏</small></h4>
     <ul className="dw-ac-byscreen">{visible.map(({ screen, list, worst }) => <li key={screen.id} data-worst={worst}>
       <button type="button" className="dw-ac-byscreen-row" disabled={!onOpen} onClick={() => onOpen?.('screen', screen.id)}>
-        <span className="dw-ac-byscreen-name">{screen.name}<small>{screen.viewport === 'phone' ? '手机' : '桌面'}</small></span>
+        <span className="dw-ac-byscreen-name">{thumbnailProject && version.renders?.[screen.id]?.light && <img className="dw-ac-screen-thumb"
+          src={designArtifact(thumbnailProject, version.renders[screen.id].light!.id)} alt="" loading="lazy" />}
+          {screen.name}<small>{screen.viewport === 'phone' ? '手机' : '桌面'}</small></span>
         <span className="dw-ac-dots">{list.map(({ rule, status }) => <i key={rule.id} data-status={status} title={`${rule.id} ${rule.rule} · ${details[status]}`} />)}</span>
         <span className="dw-ac-byscreen-sum">{list.length ? Object.entries(details).flatMap(([key, label]) => {
           const count = list.filter(item => item.status === key).length;
@@ -129,12 +153,12 @@ export function AcceptanceScreens({ version, statusOf, onOpen }: {
         }).join(' · ') : '这一屏没有验收项'}</span>
       </button></li>)}</ul>
     {!screens.length && <p className="dw-dl-missing">稿件没有声明画面。</p>}
-    {screens.length > 8 && <button type="button" className="ep-link dw-ac-next-link" aria-expanded={expanded}
+    {!thumbnailProject && screens.length > 8 && <button type="button" className="ep-link dw-ac-next-link" aria-expanded={expanded}
       onClick={() => setExpanded(value => !value)}>{expanded ? '收起画面' : `看全部 ${screens.length} 个画面`}</button>}
   </li>;
 }
 
-type Cause = { key: string; tone: 'block' | 'fail' | 'missing' | 'open' | 'gap'; title: string; detail: string; action?: ReactNode };
+type Cause = { key: string; tone: 'block' | 'fail' | 'missing' | 'open' | 'gap'; title: string; detail: string; action?: ReactNode; who?: string };
 
 export function acceptanceImpact(items: DesignRule[], version: DesignVersion) {
   const clauses = [...new Set(items.flatMap(rule => rule.requirementRef ? [rule.requirementRef] : []))];
@@ -146,9 +170,10 @@ export function acceptanceImpact(items: DesignRule[], version: DesignVersion) {
 export function EvidenceCauses({ causes }: { causes: Cause[] }) {
   const blocking = causes.filter(cause => cause.tone !== 'gap').length;
   return <>
-    {causes.length > 0 && <ol className="dw-ac-causes">{causes.map(({ key, tone, title, detail, action }, index) => <li key={key} data-tone={tone}>
+    {causes.length > 0 && <ol className="dw-ac-causes dw-ac-cards">{causes.map(({ key, tone, title, detail, action, who }, index) => <li key={key} data-tone={tone}>
       <strong><b aria-hidden="true">{index + 1}</b>{title}</strong><span className="dw-ac-arrow" aria-hidden="true">→</span>
-      <span className="dw-ac-effect">{detail}</span>{action && <span className="dw-ac-cause-act">{action}</span>}</li>)}</ol>}
+      <span className="dw-ac-effect">{who ? <><small>{who}</small><details><summary>看清单</summary>{detail}</details></> : detail}</span>
+      {action && <span className="dw-ac-cause-act">{action}</span>}</li>)}</ol>}
     {blocking > 0 && <p className="dw-ac-after">以上 {blocking} 条处理完成后才能签收。</p>}
   </>;
 }

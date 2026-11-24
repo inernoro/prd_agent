@@ -1,4 +1,4 @@
-import type { DesignAcceptancePlan, DesignCoverageRecord, DesignDimension, DesignFlow, DesignKnownIssue, DesignMethodId, DesignRegression, DesignSmoke } from './design-methods.js';
+import type { DesignAcceptancePlan, DesignCoverageRecord, DesignDimension, DesignFlow, DesignKnownIssue, DesignMethodId, DesignMethodSettings, DesignRegression, DesignSmoke } from './design-methods.js';
 import type { DesignVisualRow } from './design-visual.js';
 import type { DesignVerdict, DesignCellStatus } from '../services/design-acceptance.js';
 
@@ -85,6 +85,9 @@ export type DesignDelivery = {
   notes?: string;
   warnings: string[];
 };
+export type DesignDemoStep = { screen: string; title?: string; tip?: string };
+export type DesignVideoChapter = { method: DesignMethodId; title: string; start: number };
+export type DesignVideo = { page: 'accept'; file: string; artifactId: string; title: string; chapters: DesignVideoChapter[] };
 export const designFeedbackCategories = ['reuse', 'implementation', 'gap', 'constraint', 'acceptance'] as const;
 export type DesignFeedbackCategory = typeof designFeedbackCategories[number];
 type DesignFeedbackAuthor = { id: string; label: string };
@@ -125,6 +128,8 @@ export type DesignVersion = {
   frameworkCheck?: DesignFrameworkCheck;
   group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
+  demo?: DesignDemoStep[];
+  videos?: DesignVideo[];
   acceptancePlan?: DesignAcceptancePlan;
   acceptanceMode?: 'objective';
   risks?: DesignCoverageRecord[];
@@ -157,6 +162,7 @@ export type DesignRun = {
   coverage?: Partial<Record<DesignDimension, DesignCoverageRecord>>;
   regress?: Record<string, DesignRegression>;
   enabledMethods?: DesignMethodId[];
+  methodSettings?: DesignMethodSettings;
   upgradeId?: string;
   signed?: { by: string; at: string; verdict: 'passed' | 'conditional' };
   issues: Record<string, { id: string; pending: boolean }>;
@@ -197,11 +203,18 @@ export type DesignEntry = {
   freezes?: Array<{ version: number; by: string; at: string; reason?: string }>;
   unfreezes?: Array<{ version: number; by: string; at: string }>;
   implementations?: Record<number, DesignImplementation[]>;
+  generatedRenders?: Record<number, NonNullable<DesignVersion['renders']>>;
   implementedVersion?: number;
   versionGap?: DesignVersionGap;
   upgrade?: DesignUpgrade;
   enabledMethods?: Record<number, DesignMethodId[]>;
+  methodSettings?: Record<number, DesignMethodSettings>;
   knownIssues?: DesignKnownIssue[];
+  librarySummary?: {
+    publisherIds: string[];
+    reviewVersions: Record<string, number>;
+    baselineFramework?: Pick<DesignVersion, 'framework' | 'frameworkVersion'>;
+  };
 };
 
 export function currentDesignRun(entry: DesignEntry): DesignRun | undefined {
@@ -224,7 +237,8 @@ export function frameworkInUse(id: string, revision: FrameworkRevision | undefin
   if (revision.charter?.status === 'adopted') return true;
   for (const design of designs) {
     if (design.versions.at(-1)?.framework === id
-      || design.versions.find(version => version.version === design.frozen)?.framework === id) return true;
+      || design.versions.find(version => version.version === design.frozen)?.framework === id
+      || design.librarySummary?.baselineFramework?.framework === id) return true;
   }
   return false;
 }

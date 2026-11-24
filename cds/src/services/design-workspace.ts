@@ -9,13 +9,15 @@ import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
 import { designEvidenceStatus, designKnownIssues, designMethodApplicable, designMethodPlanEnabled, designMethodsState,
-  designObjectiveMethods, designObjectivePlanEnabled, designRuleApplicable, type DesignEvidenceStatus, type DesignKnownIssue } from '../shared/design-methods.js';
+  designObjectiveMethods, designObjectivePlanEnabled, designRuleApplicable, type DesignEvidenceStatus, type DesignKnownIssue,
+  type DesignMethodId, type DesignMethodSetting } from '../shared/design-methods.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
+import type { DesignReferenceCapture } from './design-framework-browser.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import { compareDesignVersions } from './design-version-diff.js';
 import {
-  designCommit, designDigest, designId, designPngDimensions, designRecord, designScopeId, designSourcePath, invalidDesign, localDesignPath,
+  designCommit, designDigest, designId, designPngDimensions, designRecord, designScopeId, designSourcePath, invalidDesign, isDesignMp4, localDesignPath,
   parseDesignDimension, parseDesignScope, parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
 } from './design-package.js';
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
@@ -36,7 +38,9 @@ export type DesignWorkspaceCommit = {
     pullRequest?: number; reviewRequested?: boolean;
     reviewers?: DesignReviewer[]; notifyReviewersAt?: string; sharePreparation?: DesignSharePreparation;
     implementation?: { version: number; screens: DesignImplementation[] };
-    upgrade?: DesignUpgrade; enabledMethods?: DesignEntry['enabledMethods']; knownIssue?: DesignKnownIssue };
+    generatedRender?: { version: number; screenId: string; theme: 'light' | 'dark'; id: string; sha256: string };
+    upgrade?: DesignUpgrade; enabledMethods?: DesignEntry['enabledMethods'];
+    methodSetting?: { version: number; method: DesignMethodId; setting: DesignMethodSetting }; knownIssue?: DesignKnownIssue };
   framework?: DesignFramework;
   system?: DesignSystem;
   viewing?: { actorId: string; state: DesignViewerState };
@@ -56,6 +60,8 @@ type WorkspaceState = {
 type Context = { projectId: string; actor: DesignActor; state: WorkspaceState; now: string };
 type Update = { result: Receipt['result']; changes: Changes };
 type DesignArtifact = { bytes: Buffer; mime: string; file?: DesignDeliveryFile; attachment?: string };
+export type DesignWorkspaceRead = { summary: true } | { designId: string; version?: number; fromVersion?: number };
+type DesignPresentation = Pick<DesignVersion, 'demo' | 'videos'>;
 
 const missing = (message: string): never => rejectPlanning(404, 'design_not_found', message);
 const conflict = (message: string): never => rejectPlanning(409, 'design_conflict', message);
@@ -150,6 +156,12 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       for (const screen of screens) bindings.set(screen.screenId, screen);
       design.implementations = { ...previous?.implementations, [version]: [...bindings.values()] };
     }
+    if (update.generatedRender) {
+      const { version, screenId, theme, id, sha256 } = update.generatedRender;
+      const prior = design.generatedRenders?.[version];
+      design.generatedRenders = { ...design.generatedRenders,
+        [version]: { ...prior, [screenId]: { ...prior?.[screenId], [theme]: { id, sha256 } } } };
+    }
     if (update.comment) replace(design.comments, update.comment);
     if (update.run) {
       replace(design.runs, update.run);
@@ -164,6 +176,10 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
     if (update.pullRequest !== undefined) design.pullRequest = update.pullRequest;
     if (update.upgrade) design.upgrade = update.upgrade;
     if (update.enabledMethods) design.enabledMethods = update.enabledMethods;
+    if (update.methodSetting) {
+      const { version, method, setting } = update.methodSetting;
+      design.methodSettings = { ...design.methodSettings, [version]: { ...design.methodSettings?.[version], [method]: setting } };
+    }
     if (update.knownIssue) {
       design.knownIssues = [...(previous?.knownIssues ?? [])];
       replace(design.knownIssues, update.knownIssue);
@@ -234,12 +250,45 @@ function versionOf(design: DesignEntry, value: unknown): DesignVersion {
 
 function implementationVersion(entry: DesignEntry, version: DesignVersion): DesignVersion {
   const rows = entry.implementations?.[version.version];
-  if (!rows?.length) return version;
-  const bindings = new Map(rows.map(row => [row.screenId, row]));
-  return { ...version, screens: version.screens.map(screen => {
+  const generated = entry.generatedRenders?.[version.version];
+  if (!rows?.length && !generated) return version;
+  const bindings = new Map(rows?.map(row => [row.screenId, row]));
+  const renders = generated ? { ...version.renders, ...Object.fromEntries(Object.entries(generated).map(([screen, themes]) =>
+    [screen, { ...themes, ...version.renders?.[screen] }])) } : version.renders;
+  return { ...version, renders, screens: version.screens.map(screen => {
     const binding = bindings.get(screen.id);
     return binding ? { ...screen, impl: binding.path, readySelector: binding.readySelector } : screen;
   }) };
+}
+
+function designVersionSummary(version: DesignVersion, cover: boolean): DesignVersion {
+  const { title, sourceCommit, sha256, createdAt, publisher, note, group, tags, decisionIds, resolves, scope,
+    sourcePath, sourceVerification, framework, frameworkVersion } = version;
+  const coverScreen = cover ? version.screens.find(screen => screen.viewport === 'desktop' && version.renders?.[screen.id])
+    ?? version.screens.find(screen => version.renders?.[screen.id]) : undefined;
+  return { version: version.version, title, sourceCommit, sha256, createdAt, publisher, note, group, tags, decisionIds,
+    resolves, scope, sourcePath, sourceVerification, framework, frameworkVersion, prototypeId: '', rationale: '', spec: {},
+    screens: coverScreen ? [{ id: coverScreen.id, name: coverScreen.name, viewport: coverScreen.viewport,
+      themes: coverScreen.themes, route: '', impl: null }] : [],
+    acceptance: [], ...(coverScreen ? { renders: { [coverScreen.id]: version.renders![coverScreen.id] } } : {}) };
+}
+
+function designRunSummary(run: DesignRun, includeCells: boolean): DesignRun {
+  const { id, version, pullRequest, target, commit, createdAt, verdict, previewUrl, signed, upgradeId } = run;
+  return { id, version, pullRequest, target, commit, createdAt, verdict, previewUrl, signed, upgradeId, issues: {},
+    cells: includeCells ? run.cells.map(({ itemId, slot, status }) => ({ itemId, slot, status, actual: '' })) : [] };
+}
+
+function libraryEntry(entry: DesignEntry): DesignEntry {
+  const head = entry.versions.at(-1)!;
+  const baseline = entry.versions.find(version => version.version === entry.frozen);
+  const current = currentDesignRun(entry);
+  const reviewVersions: Record<string, number> = Object.fromEntries(entry.versions.flatMap(version =>
+    Object.keys(version.resolves).map(comment => [comment, version.version] as const)));
+  return { ...entry, versions: [designVersionSummary(implementationVersion(entry, head), true)], runs: current ? [designRunSummary(current, false)] : [],
+    implementations: undefined, generatedRenders: undefined, enabledMethods: undefined, methodSettings: undefined, knownIssues: undefined, sharePreparations: undefined,
+    librarySummary: { publisherIds: [...new Set(entry.versions.map(version => version.publisher.id))], reviewVersions,
+      ...(baseline ? { baselineFramework: { framework: baseline.framework, frameworkVersion: baseline.frameworkVersion } } : {}) } };
 }
 
 function runOf(design: DesignEntry, value: unknown): DesignRun {
@@ -342,11 +391,15 @@ function stableJson(value: unknown): string {
 
 export class DesignWorkspaceService {
   private readonly latest = new Map<string, WorkspaceState>();
+  private readonly presentations = new Map<string, Promise<DesignPresentation>>();
+  private readonly referenceJobs = new Set<string>();
+  private referenceQueue = Promise.resolve();
 
   constructor(private readonly store: ProjectRevisionStore<DesignWorkspaceCommit>, private readonly deps: {
     reviewer?: (projectId: string, actorId: string) => Promise<DesignReviewer | undefined>;
     sourcePackage?: (projectId: string, commit: string, sourcePath: string) => Promise<Buffer | undefined>;
     frameworkProbe?: DesignFrameworkProbe;
+    referenceCapture?: DesignReferenceCapture;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
     resolveInstalled?: (projectId: string, commit?: string) => Promise<Preview | undefined>;
     approvedPlanFor?: (projectId: string, planId: string) => Promise<Omit<DesignRequirement, 'designKey' | 'planId' | 'sharedAt'> | undefined>;
@@ -417,19 +470,33 @@ export class DesignWorkspaceService {
     return signoffs;
   }
 
-  async workspace(projectId: string, actor: DesignActor): Promise<DesignWorkspace> {
+  async workspace(projectId: string, actor: DesignActor, projection?: DesignWorkspaceRead): Promise<DesignWorkspace> {
     requireProjectRead(actor);
     const state = await this.load(projectId);
-    const designs = structuredClone([...state.designs.values()].sort((a, b) =>
-      b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt)));
-    const [signoffs, installed] = await Promise.all([this.currentSignoffs(projectId, designs),
+    const detail = projection && 'designId' in projection ? projection : undefined;
+    const entries = detail ? [state.designs.get(detail.designId) ?? missing('该稿件不存在')]
+      : [...state.designs.values()].sort((a, b) => b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt));
+    const [signoffs, installed] = await Promise.all([this.currentSignoffs(projectId, entries),
       this.deps.resolveInstalled?.(projectId).catch(() => undefined)]);
-    for (const entry of designs) {
-      entry.versions = entry.versions.map(version => implementationVersion(entry, version));
-      entry.versionGap = designVersionGap(entry.frozen, entry.implementedVersion);
+    const visible = await Promise.all(entries.map(async entry => {
+      if (projection && 'summary' in projection) return libraryEntry(entry);
+      const expanded = detail ? new Set([
+        detail.version === undefined ? entry.versions.at(-1)!.version : versionOf(entry, detail.version).version,
+        ...(detail.fromVersion === undefined ? [] : [versionOf(entry, detail.fromVersion).version]),
+      ]) : undefined;
+      return { ...entry,
+        versions: await Promise.all(entry.versions.map(async version => {
+          if (expanded && !expanded.has(version.version)) return designVersionSummary(version, false);
+          const applied = implementationVersion(entry, version);
+          return expanded ? { ...applied, ...await this.readPresentation(projectId, state, applied) } : applied;
+        })),
+        runs: expanded ? entry.runs.map(run => expanded.has(run.version) ? run : designRunSummary(run, true)) : entry.runs };
+    }));
+    const designs = structuredClone(visible.map(entry => {
       const run = signoffs.get(entry.id);
-      if (run !== undefined) entry.currentSignoffRunId = run?.id ?? null;
-    }
+      return { ...entry, versionGap: designVersionGap(entry.frozen, entry.implementedVersion),
+        ...(run === undefined ? {} : { currentSignoffRunId: run?.id ?? null }) };
+    }));
     return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
@@ -438,6 +505,34 @@ export class DesignWorkspaceService {
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         ...(installed ? { installedAcceptance: true } : {}),
         steward: actor.steward === true, feedbackSupplement: actor.kind === 'human' && actor.feedbackSupplement === true, actorId: actor.id } };
+  }
+
+  private readPresentation(projectId: string, state: WorkspaceState, version: DesignVersion): Promise<DesignPresentation> {
+    const delivery = version.delivery;
+    if (version.demo || version.videos || !delivery || !this.store.readAsset) {
+      return Promise.resolve({ demo: version.demo, videos: version.videos });
+    }
+    const { archiveId, files } = delivery;
+    const revision = state.assets.get(archiveId);
+    if (revision === undefined) return Promise.resolve({});
+    const key = projectId + '/' + archiveId;
+    const cached = this.presentations.get(key);
+    if (cached) return cached;
+    const result = (async () => {
+      const asset = await this.store.readAsset!(projectId, revision, archiveId);
+      if (!asset?.base64) return {};
+      const { demo, videos } = await readDesignPackage(Buffer.from(asset.base64, 'base64'));
+      return { demo, videos: videos?.flatMap(video => {
+        const artifactId = files.find(file => file.path === video.file)?.id;
+        return artifactId ? [{ ...video, artifactId }] : [];
+      }) };
+    })().catch(() => {
+      this.presentations.delete(key);
+      return {};
+    });
+    if (this.presentations.size >= 64) this.presentations.delete(this.presentations.keys().next().value!);
+    this.presentations.set(key, result);
+    return result;
   }
 
   async intake(projectId: string, actor: DesignActor): Promise<DesignIntake> {
@@ -572,6 +667,7 @@ export class DesignWorkspaceService {
     if (file.kind === 'render' || (/\.png$/i.test(file.path) && designPngDimensions(content))) {
       return { mime: 'image/png', bytes: content, file };
     }
+    if (/\.mp4$/i.test(file.path) && isDesignMp4(content)) return { mime: 'video/mp4', bytes: content, file };
     return { mime: file.text ? 'text/plain; charset=utf-8' : 'application/octet-stream', bytes: content, file,
       attachment: file.path.split('/').at(-1)! };
   }
@@ -637,7 +733,7 @@ export class DesignWorkspaceService {
     const frameworkChecks = new Map<string, DesignFrameworkCheck>();
     // Legacy receipts fingerprinted the ZIP bytes. Intake v1 reuses the Git package's file digest across repacking.
     const packageFingerprint = intent ? loaded.filesSha256 : loaded.sha256;
-    return this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: packageFingerprint, resolves,
+    const receipt = await this.mutate(projectId, actor, requestId, { type: 'package', selectedId, sourceCommit, sourcePath, note, sha256: packageFingerprint, resolves,
       review: params.review, reviewerIds, ...(intent ? { intent, designKey, expectedVersion } : {}),
       ...(requireGit ? { requireGit } : {}), ...(privateUpload ? { sourceMode: 'private' } : {}) },
       async ({ state, now }) => {
@@ -725,6 +821,8 @@ export class DesignWorkspaceService {
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
           ...(loaded.acceptanceMode ? { acceptanceMode: loaded.acceptanceMode } : {}),
+          ...(loaded.demo ? { demo: loaded.demo } : {}),
+          ...(loaded.videos ? { videos: loaded.videos.map(video => ({ ...video, artifactId: byPath.get(video.file)!.id })) } : {}),
           ...(loaded.risks ? { risks: loaded.risks } : {}),
           ...(frameworkCheck ? { frameworkCheck } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
@@ -733,6 +831,48 @@ export class DesignWorkspaceService {
             reviewRequested: Boolean(reviewers?.length) || params.review === 'true' || Boolean(existing?.frozen),
             ...(reviewers?.length ? { notifyReviewersAt: now } : {}) }, assets } };
       });
+    if (receipt.result.designId && receipt.result.version) {
+      this.queueReferences(projectId, actor, receipt.result.designId, receipt.result.version);
+    }
+    return receipt;
+  }
+
+  private queueReferences(projectId: string, actor: DesignActor, id: string, versionNumber: number) {
+    const capture = this.deps.referenceCapture;
+    const key = `${projectId}/${id}/${versionNumber}`;
+    if (!capture || this.referenceJobs.has(key) || this.referenceJobs.size >= 8) return;
+    this.referenceJobs.add(key);
+    this.referenceQueue = this.referenceQueue.then(async () => {
+      const entry = (await this.load(projectId)).designs.get(id);
+      if (!entry || entry.runs.some(run => run.version === versionNumber && run.signed)) return;
+      const version = implementationVersion(entry, versionOf(entry, versionNumber));
+      const targets = version.screens.flatMap(screen => screen.themes.filter(theme => !version.renders?.[screen.id]?.[theme])
+        .map(theme => ({ screen, theme })));
+      if (!targets.length) return;
+      const prototype = await this.artifact(projectId, actor, version.prototypeId);
+      if (!version.prototypeSha256 || designDigest(prototype.bytes) !== version.prototypeSha256) return;
+      for await (const { screen, theme, bytes } of capture(prototype.bytes, targets)) {
+        const dimensions = designPngDimensions(bytes);
+        if (!dimensions || dimensions.width !== designViewports[screen.viewport].width
+          || dimensions.height !== designViewports[screen.viewport].height) continue;
+        const token = { designId: id, version: versionNumber, screenId: screen.id, theme, prototype: version.prototypeSha256 };
+        const requestId = 'design-reference-' + designDigest(stableJson(token));
+        const sha256 = designDigest(bytes);
+        const asset = { id: randomUUID(), mime: 'image/png', base64: bytes.toString('base64') };
+        await this.mutate(projectId, actor, requestId, token, ({ state }) => {
+          const current = state.designs.get(id) ?? missing('该稿件不存在');
+          const check = implementationVersion(current, versionOf(current, versionNumber));
+          const result = { type: 'reference.generated', designId: id, version: versionNumber, screenId: screen.id };
+          if (current.runs.some(run => run.version === versionNumber && run.signed) || check.renders?.[screen.id]?.[theme]) {
+            return { result, changes: {} };
+          }
+          return { result, changes: { assets: [asset], design: { id,
+            generatedRender: { version: versionNumber, screenId: screen.id, theme, id: asset.id, sha256 } } } };
+        });
+      }
+    }).catch(() => {
+      // Publication already succeeded. A reviewer can retry this version's missing captures.
+    }).finally(() => { this.referenceJobs.delete(key); });
   }
 
   async feedback(projectId: string, actor: DesignActor, value: unknown): Promise<Receipt> {
@@ -861,6 +1001,23 @@ export class DesignWorkspaceService {
     const input = designRecord(value, '设计命令');
     const type = planningText(input.type, '命令类型', 60);
     const requestId = designId(input.requestId, '请求编号');
+    if (type === 'reference.generate') {
+      designRecord(input, '生成稿件对照图', ['type', 'requestId', 'designId', 'version']);
+      review(actor);
+      if (!this.deps.referenceCapture) rejectPlanning(503, 'design_capture_unavailable', '当前实例尚未配置稿件截图服务，请在验收中补充参考图。');
+      const id = designId(input.designId, '稿件编号');
+      if (this.referenceJobs.size >= 8 && !this.referenceJobs.has(`${projectId}/${id}/${input.version}`)) {
+        rejectPlanning(503, 'design_capture_busy', '正在为其他稿件截图，请稍候沿用原请求编号重试。');
+      }
+      const receipt = await this.mutate(projectId, actor, requestId, input, ({ state }) => {
+        const entry = state.designs.get(id) ?? missing('该稿件不存在');
+        const version = versionOf(entry, input.version);
+        if (entry.runs.some(run => run.version === version.version && run.signed)) conflict('已签收版本保留原有对照图');
+        return { result: { type, designId: id, version: version.version }, changes: {} };
+      });
+      this.queueReferences(projectId, actor, id, receipt.result.version!);
+      return receipt;
+    }
     if (type === 'brief.share' || type === 'brief.revoke') {
       review(actor);
       if (!actor.steward) forbidden('请由项目管理者确认将此需求交给设计');
@@ -880,7 +1037,7 @@ export class DesignWorkspaceService {
       const id = designId(input.designId, '稿件编号');
       const entry = context.state.designs.get(id) ?? missing('该稿件不存在');
       if (type.startsWith('comment.')) return this.comment(type, input, context, entry);
-      if (type === 'acceptance.enable') return this.enableMethod(input, context, entry);
+      if (type === 'acceptance.enable' || type === 'acceptance.disable') return this.setMethod(type, input, context, entry);
       if (type.startsWith('acceptance.')) return this.acceptance(type, input, context, entry);
       if (type === 'implementation.bind') return this.bindImplementation(input, context, entry);
       if (type === 'implementation.start' || type === 'implementation.cancel') return this.upgrade(type, input, context, entry);
@@ -1156,21 +1313,30 @@ export class DesignWorkspaceService {
     if (!current || current.commit !== run.commit || current.url !== run.previewUrl) conflict('预览已经变化，请对新提交重跑');
   }
 
-  private enableMethod(input: Record<string, unknown>, { actor }: Context, entry: DesignEntry): Update {
-    designRecord(input, '启用验收手段', ['type', 'requestId', 'designId', 'version', 'method']);
+  private setMethod(type: 'acceptance.enable' | 'acceptance.disable', input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
+    const enabled = type === 'acceptance.enable';
+    const fields = ['type', 'requestId', 'designId', 'version', 'method'];
+    designRecord(input, '设置验收手段', enabled ? fields : [...fields, 'reason']);
     review(actor);
     const version = versionOf(entry, input.version);
     if (entry.frozen !== version.version || !designObjectivePlanEnabled(version)) conflict('请选择使用分手段验收的当前实施基线');
     const method = designObjectiveMethods.find(([id]) => id === input.method)?.[0] ?? invalidDesign('无法识别这个验收手段');
-    const result = { type: 'acceptance.enable', designId: entry.id, version: version.version, id: method };
-    if (designMethodApplicable(version, method, entry)) return { result, changes: {} };
-    if (version.acceptancePlan?.[method]?.applicable === false) conflict('请先更新稿件中该手段的不适用声明');
+    const reason = enabled ? undefined : planningText(input.reason, '停用理由', 1000);
+    const result = { type, designId: entry.id, version: version.version, id: method };
+    if (enabled === designMethodApplicable(version, method, entry)) return { result, changes: {} };
+    if (enabled && version.acceptancePlan?.[method]?.applicable === false) conflict('请先更新稿件中该手段的不适用声明');
     const currentRun = currentDesignRun(entry);
     if (currentRun?.signed) conflict('本次运行已签收，请先为该版本开始新的验收运行');
-    const enabledMethods = { ...entry.enabledMethods, [version.version]: [...(entry.enabledMethods?.[version.version] ?? []), method] };
+    const prior = entry.enabledMethods?.[version.version] ?? [];
+    const methods = enabled ? [...new Set([...prior, method])] : prior.filter(id => id !== method);
+    const enabledMethods = { ...entry.enabledMethods, [version.version]: methods };
+    const setting = { enabled, at: now, by: identity(actor), ...(reason ? { reason } : {}) };
+    const methodSettings = { ...entry.methodSettings,
+      [version.version]: { ...entry.methodSettings?.[version.version], [method]: setting } };
     const run = currentRun && structuredClone(currentRun);
-    if (run) this.evaluateRun(version, run, { ...entry, enabledMethods });
-    return { result, changes: { design: { id: entry.id, enabledMethods, ...(run ? { run } : {}) } } };
+    if (run) this.evaluateRun(implementationVersion(entry, version), run, { ...entry, enabledMethods, methodSettings });
+    return { result, changes: { design: { id: entry.id, enabledMethods, methodSetting: { version: version.version, method, setting },
+      ...(run ? { run } : {}) } } };
   }
 
   private recordKnownIssue(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
@@ -1459,7 +1625,10 @@ export class DesignWorkspaceService {
             conflict('关联的正式债务已经变化，请重新核对');
           }
         }
-        if (designObjectivePlanEnabled(version)) run.enabledMethods = [...(entry.enabledMethods?.[run.version] ?? [])];
+        if (designObjectivePlanEnabled(version)) {
+          run.enabledMethods = [...(entry.enabledMethods?.[run.version] ?? [])];
+          run.methodSettings = structuredClone(entry.methodSettings?.[run.version] ?? {});
+        }
         run.signed = { at: now, by: actor.id, verdict: run.verdict };
         if (entry.upgrade?.status === 'active') {
           upgrade = { ...entry.upgrade, status: 'completed', completedAt: now, signoffRunId: run.id };

@@ -311,7 +311,7 @@ function render(Page: ComponentType, url: string, input = workspace): string {
   vi.stubGlobal('document', { documentElement: { dataset: { theme: 'light' } } });
   vi.mocked(usePlanningRead).mockImplementation(endpoint => {
     if (endpoint === '/api/projects') return { loading: false, data: { projects: [{ id: projectId, name: '虚拟工程项目' }] } };
-    if (endpoint === `/api/projects/${projectId}/design`) return { loading: false, data: input };
+    if (endpoint?.split('?')[0] === `/api/projects/${projectId}/design`) return { loading: false, data: input };
     if (endpoint === `/api/projects/${projectId}/planning`) return { loading: false, data: board };
     if (endpoint === `/api/projects/${projectId}/planning?timeline=1`) {
       return { loading: false, data: { ...board, timeline: { debts: [], debtEvents: [] } } };

@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.19"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.20"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4498,7 +4498,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请使用当前绑定的 CDS 项目或有权限的成员账号")
     base = "/api/projects/" + urllib.parse.quote(project, safe="") + "/design"
     identity_headers = _human_session_headers(args.as_user) if args.as_user else {}
-    human_action = args.design_action in ("freeze", "sign", "import", "start-upgrade", "cancel-upgrade") or (
+    human_action = args.design_action in ("freeze", "sign", "import", "start-upgrade", "cancel-upgrade", "enable-method", "disable-method") or (
         args.design_action == "extract" and args.apply)
     if human_action and not identity_headers:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
@@ -4666,6 +4666,18 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
 
     if action == "reviewers":
         ok(request("GET", "/reviewers"))
+
+    if action in ("enable-method", "disable-method"):
+        command = {"type": "acceptance.enable" if action == "enable-method" else "acceptance.disable",
+                   "designId": args.id, "version": args.version, "method": args.method}
+        if action == "disable-method":
+            command["reason"] = args.reason
+        receipt = send(command)
+        result = receipt.get("result") or {}
+        if (any(result.get(field) != command[field] for field in ("type", "designId", "version"))
+                or result.get("id") != args.method or type(receipt.get("reused")) is not bool):
+            die("CDS 返回的验收回执与当前手段或稿件版本不符")
+        ok(receipt)
 
     if action == "diff":
         named = args.from_version is not None or args.to_version is not None
@@ -4987,7 +4999,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract")),
+    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "import"))):
         for action in actions:
             parser = routes.add_parser(action)
@@ -4998,6 +5010,12 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "visual", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
+            if action in ("enable-method", "disable-method"):
+                parser.add_argument("--request-id")
+                parser.add_argument("--version", type=int, required=True, help="当前实施基线")
+                parser.add_argument("--method", required=True, help="验收手段编号")
+                if action == "disable-method":
+                    parser.add_argument("--reason", required=True, help="停用理由")
             if action in ("brief-reply", "brief-claim", "brief-release"):
                 parser.add_argument("--request-id")
                 parser.add_argument("--expected-version", type=int, required=True, help="接入清单中的 planVersion")

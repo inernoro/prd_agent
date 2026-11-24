@@ -30,6 +30,8 @@ export const designObjectiveMethods = [
 ] as const;
 export type DesignMethodId = typeof designObjectiveMethods[number][0];
 export type DesignAcceptancePlan = Partial<Record<DesignMethodId, { applicable: boolean; enabled?: boolean; reason?: string }>>;
+export type DesignMethodSetting = { enabled: boolean; by: { id: string; label: string }; at: string; reason?: string };
+export type DesignMethodSettings = Partial<Record<DesignMethodId, DesignMethodSetting>>;
 export type DesignEvidenceStatus = 'passed' | 'failed' | 'missing';
 export type DesignMethodStatus = DesignEvidenceStatus | 'notrun' | 'not_applicable' | 'disabled';
 
@@ -62,7 +64,14 @@ export function designObjectivePlanEnabled(version: DesignVersion) {
 
 const defaults = new Set<DesignMethodId>(['mece', 'compare', 'visual', 'regress']);
 
+function designMethodSetting(version: DesignVersion, method: DesignMethodId, entry?: DesignEntry, run?: DesignRun) {
+  const settings = run?.signed ? run.methodSettings : entry?.methodSettings?.[version.version];
+  return settings?.[method];
+}
+
 function designMethodChoice(version: DesignVersion, method: DesignMethodId, entry?: DesignEntry, run?: DesignRun) {
+  const setting = designMethodSetting(version, method, entry, run);
+  if (setting) return setting.enabled ? 'enabled' : 'disabled';
   if (method === 'regress' && designKnownIssues(entry, version, run).length) return 'enabled';
   const plan = version.acceptancePlan?.[method];
   if (plan?.applicable === false) return 'not_applicable';
@@ -206,7 +215,8 @@ export function designMethodsState(version: DesignVersion, run?: DesignRun, entr
       const noChecksNeeded = !progress.total && (id === 'regress' || id === 'debt');
       status = progress.failed ? 'failed' : complete || noChecksNeeded ? 'passed' : progress.done ? 'missing' : 'notrun';
     }
-    return { id, name, purpose, skills, status, progress, reason: version.acceptancePlan?.[id]?.reason };
+    const setting = designMethodSetting(version, id, entry, run);
+    return { id, name, purpose, skills, status, progress, setting, reason: setting?.reason ?? version.acceptancePlan?.[id]?.reason };
   });
   const required = methods.filter(method => method.id !== 'debt' && method.status !== 'not_applicable' && method.status !== 'disabled');
   return { methods, required, coverage, objective, blockers: required.filter(method => method.status !== 'passed') };

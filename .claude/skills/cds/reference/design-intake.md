@@ -200,6 +200,10 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 3. **输入与回读**。流程提供 `id`、`title`、`dimension`、`role`、`steps`，每步写 `action`、`expected`、`actual`、`status`。冒烟提供 `id`、`title`、`dimension`、`target`（`page` 或 `api`）、`path`、`expected`、`actual`、`status`。状态使用 `passed`、`failed`、`missing`。路径为预览内相对地址。用 `design result` 或 MCP 的 `run` 回读 `flows`、`smoke` 和 `visual`。
 4. **签收**。手段的结果根据这次运行回填的证据汇总，空结果按缺证据。适用手段需通过，验收债务单列。项目成员在页面确认，运行需对应当前实施基线的预览提交。
 
+有审批权的成员可在验收页停用一种手段，填写理由后确认。CLI 使用 `cdscli design disable-method <稿件> --version <当前基线> --method <编号> --reason <原因> --as-user <成员>`，恢复时使用 `enable-method` 并省略理由。原有证据保留，恢复后继续参加计算。MCP `delivery` 可回读当前稿件版本的 `methodSettings`，已签收运行保留自己的记录。
+
+`design.json` 可定义 `demo`（按顺序填写 `screen`、`title` 和可选 `tip`），并用 `videos` 声明验收页的包内 MP4 及章节。章节按秒数递增，每个验收手段使用一个章节。配置了隔离截图浏览器的实例会在私有发布后为缺少参考图的画面自动截图。持续缺图时，先核对画面入口动作，再补同视口、同主题的参考图。
+
 客观验收还支持从同一项目回填覆盖风险和历史易错：
 
 - `design coverage <稿件> --run <运行> --commit <提交> --file <记录.json>`，对应 MCP `acceptance.coverage`。填写 `dimension`、`risk` 和 `ruleIds`，用当前版验收项覆盖具体风险。该维度不适用时，请有权成员填 `reason` 与空数组 `ruleIds`。

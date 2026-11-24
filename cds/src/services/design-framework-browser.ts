@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import type { Browser, CDPSession } from 'playwright';
+import { accessSync, constants } from 'node:fs';
+import type { Browser, CDPSession, Page } from 'playwright';
 import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { designViewports, type DesignFrameworkMeasurement, type DesignNestedScroll, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
 import type { DesignFrameworkProbe } from './design-framework-check.js';
@@ -84,14 +85,15 @@ async function measureNestedScroll(session: CDPSession): Promise<DesignNestedScr
   }
 }
 
-async function measure(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
-  checkNestedScroll: boolean): Promise<DesignFrameworkMeasurement | undefined> {
+async function readPrototypeScreen<T>(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
+  read: (page: Page) => Promise<T>): Promise<T | undefined> {
   const entry = new URL('/prototype', prototypeOrigin);
   entry.searchParams.set('theme', theme);
   const target = new URL(entry);
   target.hash = screen.route;
   const context = await browser.newContext({
-    viewport: designViewports.phone, hasTouch: true, colorScheme: theme, offline: true, serviceWorkers: 'block',
+    viewport: designViewports[screen.viewport], hasTouch: screen.viewport === 'phone', colorScheme: theme,
+    deviceScaleFactor: 1, offline: true, serviceWorkers: 'block',
   });
   try {
     const page = await context.newPage();
@@ -127,14 +129,8 @@ async function measure(browser: Browser, html: string, screen: DesignScreen, the
       && ![...document.querySelectorAll('[data-content-loading], [aria-busy="true"]')].some(element =>
         element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'), undefined, { timeout: pageTimeout });
     if (!served || !expectedDocument()) return undefined;
-    const session = await context.newCDPSession(page);
-    const geometry = await session.send('Page.getLayoutMetrics');
-    const width = geometry.cssLayoutViewport.clientWidth;
-    const contentWidth = Math.max(width, Math.ceil(geometry.cssContentSize.width));
-    const nestedScroll = checkNestedScroll && width === designViewports.phone.width && contentWidth === width
-      ? await measureNestedScroll(session) : undefined;
-    if (!expectedDocument()) return undefined;
-    return { screenId: screen.id, slot: `phone-${theme}`, width, contentWidth, ...(nestedScroll ? { nestedScroll } : {}) };
+    const result = await read(page);
+    return expectedDocument() ? result : undefined;
   } catch {
     return undefined;
   } finally {
@@ -142,13 +138,30 @@ async function measure(browser: Browser, html: string, screen: DesignScreen, the
   }
 }
 
+async function measure(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
+  checkNestedScroll: boolean): Promise<DesignFrameworkMeasurement | undefined> {
+  return readPrototypeScreen<DesignFrameworkMeasurement>(browser, html, screen, theme, async page => {
+    const session = await page.context().newCDPSession(page);
+    const geometry = await session.send('Page.getLayoutMetrics');
+    const width = geometry.cssLayoutViewport.clientWidth;
+    const contentWidth = Math.max(width, Math.ceil(geometry.cssContentSize.width));
+    const nestedScroll = checkNestedScroll && width === designViewports.phone.width && contentWidth === width
+      ? await measureNestedScroll(session) : undefined;
+    return { screenId: screen.id, slot: `phone-${theme}`, width, contentWidth, ...(nestedScroll ? { nestedScroll } : {}) };
+  });
+}
+
+async function launchDesignBrowser(browserPath: string) {
+  const { chromium } = await import('playwright');
+  return chromium.launch({ executablePath: browserPath, chromiumSandbox: true, timeout: 5000,
+    env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
+    args: ['--disable-background-networking', '--no-proxy-server'] });
+}
+
 async function measurePrototype(browserPath: string, prototype: Buffer, screens: DesignScreen[], checkNestedScroll: boolean) {
   let browser: Browser | undefined;
   try {
-    const { chromium } = await import('playwright');
-    browser = await chromium.launch({ executablePath: browserPath, chromiumSandbox: true, timeout: 5000,
-      env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
-      args: ['--disable-background-networking', '--no-proxy-server'] });
+    browser = await launchDesignBrowser(browserPath);
     const html = decorateDesignPrototype(prototype.toString('utf8'));
     const deadline = Date.now() + 25_000;
     const measurements: DesignFrameworkMeasurement[] = [];
@@ -165,6 +178,31 @@ async function measurePrototype(browserPath: string, prototype: Buffer, screens:
   } finally {
     await browser?.close().catch(() => {});
   }
+}
+
+export type DesignReferenceTarget = { screen: DesignScreen; theme: DesignTheme };
+export type DesignReferenceCapture = (prototype: Buffer, targets: readonly DesignReferenceTarget[]) => AsyncIterable<DesignReferenceTarget & { bytes: Buffer }>;
+
+export function createDesignReferenceBrowser(executablePath?: string): DesignReferenceCapture | undefined {
+  const browserPath = executablePath?.trim() || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find(path => {
+    try { accessSync(path, constants.X_OK); return true; } catch { return false; }
+  });
+  if (!browserPath) return undefined;
+  return async function* (prototype, targets) {
+    const browser = await launchDesignBrowser(browserPath);
+    try {
+      const html = decorateDesignPrototype(prototype.toString('utf8'));
+      const deadline = Date.now() + 180_000;
+      for (const target of targets) {
+        if (Date.now() >= deadline) break;
+        const bytes = await readPrototypeScreen(browser, html, target.screen, target.theme, page =>
+          page.screenshot({ animations: 'disabled', caret: 'hide', timeout: pageTimeout }));
+        if (bytes) yield { ...target, bytes };
+      }
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  };
 }
 
 export function createDesignFrameworkBrowser(executablePath?: string): DesignFrameworkProbe | undefined {
