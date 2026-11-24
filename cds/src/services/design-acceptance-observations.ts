@@ -48,9 +48,12 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
     };
     const head = dom.find('.dw-head--draft,.dw-head--v3,.dw-library-top,.dw-library-head,.dw-library-bar');
     const tabs = dom.find('.dw-tablinks');
+    const tabControls = Array.from(tabs?.children ?? [])
+      .filter(element => element.matches('button, a[href], [role=tab]') && dom.visible(element))
+      .map(element => dom.read(element)!);
     const surface = dom.find('.dw-workspace,main');
     const layers = [
-      dom.read(head), dom.read(tabs), dom.read(surface),
+      dom.read(head), tabControls[0] ?? null, dom.read(surface),
       dom.read(dom.find('[role=dialog], details[open] .dw-info-panel, .dw-skills[open] > .dw-skill-guide, .dw-overlay')),
       dom.read(dom.find('.dw-draft-footer, main > footer')),
     ];
@@ -182,7 +185,8 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
     const selectedStep = dom.find('.dw-sp-thumbs [aria-current=step]')?.getAttribute('data-screen');
     const stepNumber = Number(dom.find('[data-sec="flow"] h3 small')?.textContent?.split('/')[0] ?? 0);
     return {
-      layers, headerAlignment, width, content, vertical: scrolling.length + Number(!modal && document.documentElement.scrollHeight > innerHeight + 1),
+      layers, tabControls, headerAlignment, width, content,
+      vertical: scrolling.length + Number(!modal && document.documentElement.scrollHeight > innerHeight + 1),
       clippedControls, textControls: textControls.length, height: innerHeight,
       scrollHeight: Math.max(document.documentElement.scrollHeight, ...scrolling.map(element => element.scrollHeight)),
       raw,
@@ -216,13 +220,21 @@ function darkContrastCheck(contrast: Observation['darkText'], useDarkCapture: bo
 
 export function compareDesignObservations(expected: Observation, actual: Observation, pixelDifference: number, useDarkCapture = false): DesignVisualChecks {
   const regions = ['页头', '标签', '主体', '浮层', '底部'];
+  const distance = (reference: number[], box: number[]) => Math.max(...box.map((value, coordinate) => Math.abs(value - reference[coordinate])));
+  const pixels = (value: number) => Math.round(value * 10) / 10;
+  const sameTabCount = actual.tabControls.length === expected.tabControls.length;
   const deltas = actual.layers.map((actualBox, index) => {
     const reference = expected.layers[index];
-    return actualBox && reference ? Math.round(Math.max(...actualBox.map((value, coordinate) =>
-      Math.abs(value - reference[coordinate]))) * 10) / 10 : actualBox === reference ? 0 : null;
+    if (index === 1) {
+      return sameTabCount ? pixels(Math.max(0, ...actual.tabControls.map((box, tab) => distance(expected.tabControls[tab], box)))) : null;
+    }
+    return actualBox && reference ? pixels(distance(reference, actualBox)) : actualBox === reference ? 0 : null;
   });
-  const positions = regions.map((region, index) => actual.layers[index] === null && expected.layers[index] === null
-    ? `${region}在两侧均未定位` : `${region}${deltas[index] === null ? '只在一侧显示' : `偏差 ${deltas[index]} px`}`).join('，');
+  const positions = regions.map((region, index) => {
+    if (index === 1 && !sameTabCount) return `标签控件数不同，原型 ${expected.tabControls.length} 个，实现 ${actual.tabControls.length} 个`;
+    if (actual.layers[index] === null && expected.layers[index] === null) return `${region}在两侧均未定位`;
+    return `${region}${deltas[index] === null ? '只在一侧显示' : `偏差 ${deltas[index]} px`}`;
+  }).join('，');
   const markers = Object.entries({ markdown: '原样 Markdown', html: '转义 HTML', json: '原样 JSON', credential: '疑似凭据' } as const)
     .flatMap(([key, label]) => {
       const count = actual.raw[key as keyof typeof actual.raw];

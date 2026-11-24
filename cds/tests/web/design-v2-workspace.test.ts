@@ -254,9 +254,12 @@ describe('已发布的演示、评论和交付布局', () => {
     await withLayout(markup, [...draftStyles, 'web/src/pages/design-workspace/design-v18.css'], async page => {
       await page.setViewportSize({ width: 1280, height: 800 });
       const header = page.locator('.dw-head--v18');
+      const tabs = header.getByRole('navigation', { name: '稿件标签' });
       expect((await header.boundingBox())!.height).toBeCloseTo(44, 0);
       expect(shareRow([(await header.locator('.dw-draft-actions').boundingBox())!,
-        (await header.getByRole('navigation', { name: '稿件标签' }).boundingBox())!])).toBe(true);
+        (await tabs.boundingBox())!])).toBe(true);
+      expect(await tabs.evaluate(node => Number.parseFloat(getComputedStyle(node).columnGap))).toBeCloseTo(14.08, 1);
+      expect((await tabs.getByRole('button', { name: '记录', exact: true }).boundingBox())!.height).toBeCloseTo(41, 0);
       await page.setViewportSize({ width: 375, height: 812 });
       const mobile = await measureDraftHeader(page, guidedVersion.title);
       checkDraftBounds(mobile, 375);

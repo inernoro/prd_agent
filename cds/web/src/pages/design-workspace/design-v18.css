@@ -1,4 +1,8 @@
 .dw-head--v18 { min-height: 0; }
+.dw-head--v18 .dw-tab .dw-tab-todo {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding-inline: 5px;
+  border-radius: 9px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; vertical-align: 1px;
+}
 .dw-crumb-draft { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 34vw; vertical-align: bottom; }
 .dw-crumb-draft strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
 .dw-draft-actions .dw-info-body { z-index: 35; }
@@ -56,7 +60,8 @@
   .dw-head--v18 { grid-template-columns: minmax(0, 1fr) auto; }
   .dw-head--v18 .dw-draft-bar { grid-column: 2; grid-row: 1; min-height: 43px; height: 43px; }
   .dw-head--v18 .dw-draft-tabbar { grid-column: 1; grid-row: 1; min-width: 0; min-height: 43px; height: 43px; }
-  .dw-head--v18 .dw-tablinks { flex: 1 1 auto; }
+  .dw-head--v18 .dw-tablinks { flex: 1 1 auto; gap: clamp(10px, 1.1vw, 18px); }
+  .dw-head--v18 :is(.dw-tablinks, .dw-tab) { min-height: 41px; height: 41px; }
   .dw-head--v18 .dw-draft-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 }
 @media (max-width: 899px) {
