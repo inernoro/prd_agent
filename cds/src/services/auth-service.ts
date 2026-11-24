@@ -69,6 +69,7 @@ export class LocalAuthError extends Error {
       | 'username_taken'
       | 'username_invalid'
       | 'password_too_short'
+      | 'password_reused'
       | 'invalid_credentials'
       | 'user_not_found'
       | 'account_changed'
@@ -326,6 +327,7 @@ export class AuthService {
     isAdministrator?: boolean;
     createdByAccountId?: string;
     externalLoginAllowed?: boolean;
+    temporaryPassword?: boolean;
   }): Promise<CdsUser> {
     if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
       throw new LocalAuthError('password_too_short', `密码长度至少 ${MIN_PASSWORD_LENGTH} 位`);
@@ -335,6 +337,7 @@ export class AuthService {
       username: input.username,
       passwordHash: hash,
       passwordSalt: salt,
+      temporaryPassword: input.temporaryPassword,
       name: input.name,
       email: input.email ?? null,
       isSystemOwner: input.isSystemOwner ?? false,
@@ -342,6 +345,25 @@ export class AuthService {
       externalLoginAllowed: input.externalLoginAllowed === true,
       createdByAccountId: input.createdByAccountId,
     });
+  }
+
+  async completeTemporaryPassword(user: CdsUser, newPassword: unknown): Promise<CdsUser> {
+    if (user.authProvider !== 'local' || !user.temporaryPassword || !user.passwordHash || !user.passwordSalt) {
+      throw new LocalAuthError('account_changed', '初始口令已使用，请用个人口令重新登录');
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH || newPassword.length > 512
+        || /[\u0000\r\n]/.test(newPassword)) {
+      throw new LocalAuthError('password_too_short', `个人口令需为 ${MIN_PASSWORD_LENGTH}–512 位且不含换行`);
+    }
+    if (verifyPassword(newPassword, { hash: user.passwordHash, salt: user.passwordSalt })) {
+      throw new LocalAuthError('password_reused', '个人口令须与初始口令不同');
+    }
+    const { hash, salt } = hashPassword(newPassword);
+    const change = { passwordHash: hash, passwordSalt: salt, temporaryPassword: false, sessionRevision: randomUUID() };
+    if (!await this.store.applyAccountSecurityChange(user, change, new Date())) {
+      throw new LocalAuthError('account_changed', '账号状态已改变，请用当前口令重新登录');
+    }
+    return { ...user, ...change };
   }
 
   private async provisionAccount(input: CreateLocalUserInput): Promise<CdsUser> {

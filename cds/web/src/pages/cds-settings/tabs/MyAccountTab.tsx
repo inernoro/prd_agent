@@ -6,6 +6,8 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiRequest, apiUrl, changeMyPassword, listUsers, type CdsAuthPublicStatus, type CdsPublicUser } from '@/lib/api';
 import { ErrorBlock, Field, LoadingBlock, Section } from '../components';
+import { AccountAuditDialog } from '../components/AccountAudit';
+import { AccountPermissionMatrix, accountPermissionDescription } from '../components/AccountPermissionMatrix';
 import { KeyNotifications } from '../components/KeyNotifications';
 import { accountLoginMethods, actionLabels, availableAccountLogins, hasAccountLogin, type AccountAction } from '../accountAccess';
 
@@ -80,6 +82,7 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [unlinkError, setUnlinkError] = useState('');
 
   useEffect(() => {
@@ -130,7 +133,8 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
         </div>
       </Section>
 
-      <Section title="我的登录">
+      <Section title="我的登录" actions={user.isSystemOwner || user.role === 'admin' ? undefined
+        : <Button variant="outline" onClick={() => setPermissionsOpen(true)}>查看权限矩阵</Button>}>
         {unlinkError ? <ErrorBlock message={unlinkError} /> : null}
         {bindingError && bindingLabel ? <ErrorBlock message={errorCode === 'identity_taken'
           ? `这个 ${bindingLabel} 身份已绑定到另一个 CDS 账号`
@@ -183,6 +187,12 @@ export function MyAccountTab({ loginMethods, accountProviders }: {
       {user.authProvider !== 'legacy' && user.authProvider !== 'sso' ? <PersonalSessions /> : null}
       <KeyNotifications owner={user.isSystemOwner} personal />
       {passwordOpen ? <PersonalPasswordDialog onClose={() => setPasswordOpen(false)} /> : null}
+      {permissionsOpen && <Dialog open onOpenChange={setPermissionsOpen}>
+        <DialogContent className="max-h-[90dvh] overflow-auto sm:max-w-4xl">
+          <DialogHeader><DialogTitle>权限矩阵</DialogTitle><DialogDescription>{accountPermissionDescription}</DialogDescription></DialogHeader>
+          <AccountPermissionMatrix />
+        </DialogContent>
+      </Dialog>}
     </div>
   );
 }
@@ -194,6 +204,7 @@ function PersonalSessions(): JSX.Element {
   } | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const [receipt, setReceipt] = useState<string>();
   useEffect(() => {
     const ctrl = new AbortController();
     setError('');
@@ -215,11 +226,15 @@ function PersonalSessions(): JSX.Element {
           <details className="rounded-md border border-border p-3">
             <summary className="cursor-pointer font-medium">退出或权限变更记录</summary>
             {data.revocations.length ? <ul className="mt-2 space-y-2 text-muted-foreground">
-              {data.revocations.map((event, index) => <li key={`${event.at}-${index}`}>{actionLabels[event.action]} · {new Date(event.at).toLocaleString()}{event.receiptId && <> · <code className="break-all">{event.receiptId}</code></>}</li>)}
+              {data.revocations.map((event, index) => <li key={`${event.at}-${index}`} className="flex flex-wrap items-center gap-x-2">
+                <span>{actionLabels[event.action]} · {new Date(event.at).toLocaleString()}</span>
+                {event.receiptId && <Button variant="link" className="px-0" onClick={() => setReceipt(event.receiptId)}>查看审计</Button>}
+              </li>)}
             </ul> : <p className="mt-2 text-muted-foreground">近期没有会话变更记录。</p>}
           </details>
         </div>
       )}
+      {receipt && <AccountAuditDialog key={receipt} receiptId={receipt} onClose={() => setReceipt(undefined)} />}
     </Section>
   );
 }

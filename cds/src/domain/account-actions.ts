@@ -46,6 +46,7 @@ export interface AccountActionStore {
 }
 
 export interface AccountActionFilter {
+  id?: string;
   targetId?: string;
   targetIds?: string[];
   requestedByAccountId?: string;
@@ -68,4 +69,4 @@ export const ACCOUNT_ACTION_LABELS: Record<AccountAction, string> = {
 
 export type AccountSecurityChange = Pick<CdsUser,
   'sessionRevision' | 'lastAccountAction' | 'sessionRevocationNotices' | 'invitationHash' | 'invitationExpiresAt' | 'invitationForRecovery'> &
-  Partial<Pick<CdsUser, 'status' | 'isAdministrator' | 'passwordHash' | 'passwordSalt'>>;
+  Partial<Pick<CdsUser, 'status' | 'isAdministrator' | 'passwordHash' | 'passwordSalt' | 'temporaryPassword'>>;

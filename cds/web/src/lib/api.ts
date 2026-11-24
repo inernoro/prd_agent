@@ -818,6 +818,7 @@ export async function createLocalUser(input: {
   name?: string;
   role?: 'admin' | 'member';
   externalLoginAllowed?: boolean;
+  temporaryPassword?: boolean;
 }): Promise<CdsPublicUser> {
   const res = await apiRequest<{ user: CdsPublicUser }>('/api/auth/users', { method: 'POST', body: input });
   return res.user;

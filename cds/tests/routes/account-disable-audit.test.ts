@@ -279,6 +279,31 @@ describe('account disable and team audit through CDS', () => {
     const memberCookie = await signIn(managed.username);
     expect((await audit(memberCookie, query)).map(record => record.id)).toEqual([audited.get(managed.id)]);
     expect(await audit(memberCookie, { ...query, targetId: unrelated.id })).toEqual([]);
+
+    const ownReceipt = audited.get(managed.id)!;
+    const otherReceipt = audited.get(unrelated.id)!;
+    expect(await audit(ownerCookie, { receiptId: ownReceipt })).toEqual([
+      expect.objectContaining({ id: ownReceipt, targetId: managed.id }),
+    ]);
+    expect(await audit(adminCookie, { receiptId: ownReceipt })).toEqual([
+      expect.objectContaining({ id: ownReceipt, targetId: managed.id }),
+    ]);
+    expect(await audit(adminCookie, { receiptId: otherReceipt })).toEqual([]);
+
+    const sessions = await call<{ revocations: Array<{ receiptId?: string }> }>('GET', '/api/auth/my-sessions', memberCookie);
+    expect(sessions.status).toBe(200);
+    expect(sessions.body.revocations).toEqual(expect.arrayContaining([expect.objectContaining({ receiptId: ownReceipt })]));
+    const [memberRecord, ...remainingRecords] = await audit(memberCookie, { receiptId: ownReceipt });
+    expect(remainingRecords).toEqual([]);
+    expect(memberRecord).toMatchObject({ id: ownReceipt, targetId: managed.id, status: 'completed' });
+    for (const field of ['reason', 'requestedBy', 'approvedBy', 'requestedByAccountId', 'executedByAccountId', 'sessionSnapshot']) {
+      expect(memberRecord).not.toHaveProperty(field);
+    }
+    expect(await audit(memberCookie, { receiptId: otherReceipt })).toEqual([]);
+    expect(await audit(ownerCookie, { receiptId: 'f'.repeat(64) })).toEqual([]);
+
+    const repeated = new URLSearchParams([['receiptId', ownReceipt], ['receiptId', otherReceipt]]);
+    expect((await call('GET', `${auditPath}?${repeated}`, ownerCookie)).status).toBe(400);
   });
 
   it('allows an administrator to grant their projects and enable their ordinary member while preserving the scope of other accounts', async () => {

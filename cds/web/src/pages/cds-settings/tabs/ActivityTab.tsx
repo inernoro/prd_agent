@@ -27,7 +27,7 @@ function actionLabel(action: string): string {
   return ACTION_LABEL[action] || action;
 }
 
-export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Element {
+export function ActivityTab({ canViewAll, canFilterAccounts }: { canViewAll: boolean; canFilterAccounts?: boolean }): JSX.Element {
   const [rows, setRows] = useState<CdsUserActivity[] | null>(null);
   const [error, setError] = useState('');
   const [errorDetail, setErrorDetail] = useState('');
@@ -53,7 +53,7 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
   }, [rows, query]);
   return (
     <div className="space-y-6">
-    <AccountAudit canViewAll={canViewAll} />
+    <AccountAudit canViewAll={canViewAll} canFilterAccounts={canFilterAccounts} />
     <Section
       title="用户操作痕迹"
       description={

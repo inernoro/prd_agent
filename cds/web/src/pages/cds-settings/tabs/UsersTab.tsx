@@ -13,6 +13,7 @@ import {
 } from '../accountAccess';
 import { EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
 import { AccountActionDialog, accountInputClass } from '../components/AccountActionDialog';
+import { AccountPermissionMatrix, accountPermissionDescription } from '../components/AccountPermissionMatrix';
 import { IdentityRecoveryPanel } from '../components/IdentityRecoveryPanel';
 import { RecoveryRequestsPanel } from '../components/RecoveryRequestsPanel';
 import { UserProjectAccessDialog } from '../components/UserProjectAccessDialog';
@@ -239,7 +240,7 @@ function AccountManagement({ owner, viewerId, onToast, durableUsers, availableLo
       ) : null}
       {view === 'system' ? <SystemPasswordPanel owner={owner} /> : null}
       {view === 'keys' ? <KeyNotifications owner={owner} /> : null}
-      {view === 'matrix' ? <AccountPermissionMatrix /> : null}
+      {view === 'matrix' ? <Section title="权限矩阵" description={accountPermissionDescription}><AccountPermissionMatrix /></Section> : null}
 
       {createOpen ? (
         <CreateMemberDialog owner={owner} durable={durableUsers} onClose={() => setCreateOpen(false)} onCreated={user => {
@@ -337,7 +338,7 @@ function CreateMemberDialog({ owner, durable, onClose, onCreated }: {
         setInvitation({ url: new URL(issued.path, window.location.origin).href, expiresAt: issued.expiresAt });
         onCreated(user);
       } else {
-        onCreated(await createLocalUser({ ...input, password }));
+        onCreated(await createLocalUser({ ...input, password, temporaryPassword: true }));
         onClose();
       }
     } catch (error) {
@@ -379,7 +380,7 @@ function CreateMemberDialog({ owner, durable, onClose, onCreated }: {
             <select aria-label="首次登录" className={accountInputClass} value={method} disabled={busy}
               onChange={event => setMethod(event.target.value === 'password' ? 'password' : 'invite')}>
               <option value="invite">一次性邀请，成员自行激活</option>
-              <option value="password">设置初始口令</option>
+              <option value="password">初始口令，首次登录时更换</option>
             </select>
           </Field>
           {method === 'password' ? <Field label="初始口令（至少 8 位）"><input aria-label="初始口令" className={accountInputClass} type="password" required minLength={8} maxLength={512}
@@ -390,28 +391,4 @@ function CreateMemberDialog({ owner, durable, onClose, onCreated }: {
       </DialogContent>
     </Dialog>
   );
-}
-
-const permissionRows = [
-  ['创建普通成员', '可执行', '可执行', '—', '—'],
-  ['授予管理员', '可执行', '—', '—', '—'],
-  ['停用无在线会话的成员、恢复账号', '执行并留档', '管理范围内执行', '—', '—'],
-  ['重置他人口令、停用在线账号、退出会话', '逐次确认', '对成员提交申请', '—', '授权设备仅在项目内提案'],
-  ['撤销管理员', '逐次确认', '—', '—', '—'],
-  ['修改本人口令', '个人账号可用', '可执行', '可执行', '—'],
-  ['账号审计', '全部', '本人及发起的申请', '本人', '仅回读本设备提案'],
-] as const;
-
-function AccountPermissionMatrix(): JSX.Element {
-  const columns = ['系统所有者', '管理员', '成员', '智能体'];
-  return <Section title="权限矩阵" description="管理员管理普通成员。系统设置与高风险批准由系统所有者负责。">
-    <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {columns.map((column, index) => <li className="min-w-0 rounded-lg border border-border bg-card p-4" key={column}>
-        <h3 className="mb-2 font-semibold">{column}</h3>
-        <dl className="divide-y divide-border text-sm">{permissionRows.map(([action, ...scope]) => <div className="py-2" key={action}>
-          <dt className="text-muted-foreground">{action}</dt><dd className="font-medium">{scope[index]}</dd>
-        </div>)}</dl>
-      </li>)}
-    </ul>
-  </Section>;
 }

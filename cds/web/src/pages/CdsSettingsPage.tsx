@@ -485,7 +485,8 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="activity">
                   {activeTab !== 'activity' ? null : activityVisible ? (
-                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings} />
+                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings}
+                      canFilterAccounts={isAdmin && viewerStatus?.user?.authProvider !== 'sso'} />
                   ) : !canManageSettings ? (
                     <p className="text-sm text-muted-foreground">当前认证方式不提供个人操作记录，请联系系统所有者。</p>
                   ) : (

@@ -181,7 +181,8 @@ export class MemoryAuthStore implements AuthStore {
     },
     get: async id => this.accountRequests.get(id) ?? null,
     list: async (filter, limit) => Array.from(this.accountRequests.values()).reverse()
-      .filter(item => (!filter.targetId || filter.targetId === item.targetId) &&
+      .filter(item => (!filter.id || filter.id === item.id) &&
+        (!filter.targetId || filter.targetId === item.targetId) &&
         (!filter.targetIds || filter.targetIds.includes(item.targetId)) &&
         (!filter.requestedByAccountId || filter.requestedByAccountId === item.requestedByAccountId) &&
         (!filter.action || filter.action === item.action) &&
@@ -334,6 +335,7 @@ export class MemoryAuthStore implements AuthStore {
     if ('passwordHash' in proof) {
       updated.passwordHash = proof.passwordHash;
       updated.passwordSalt = proof.passwordSalt;
+      if (user.temporaryPassword) updated.temporaryPassword = false;
     } else {
       if (!user.externalLoginAllowed) return null;
       if (proof.provider === 'github') {
@@ -399,6 +401,7 @@ export class MemoryAuthStore implements AuthStore {
       authProvider: 'local',
       username,
       ...(input.passwordHash && input.passwordSalt ? { passwordHash: input.passwordHash, passwordSalt: input.passwordSalt } : {}),
+      ...(input.temporaryPassword ? { temporaryPassword: true } : {}),
       ...(input.invitationHash ? { invitationHash: input.invitationHash, invitationExpiresAt: input.invitationExpiresAt } : {}),
       email: input.email ?? null,
       name: input.name?.trim() || input.username,

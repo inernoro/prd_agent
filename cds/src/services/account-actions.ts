@@ -110,6 +110,12 @@ export class AccountActionsService {
 
   async audit(actor: CdsUser, query: Record<string, unknown>) {
     const filter: AccountActionFilter = {};
+    if (query.receiptId !== undefined) {
+      if (typeof query.receiptId !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(query.receiptId)) {
+        throw new AccountActionError(400, 'invalid_audit_receipt', '请输入有效的审计回执编号');
+      }
+      filter.id = query.receiptId;
+    }
     if (typeof query.targetId === 'string' && query.targetId) filter.targetId = query.targetId;
     if (query.action !== undefined) {
       const action = Object.keys(ACCOUNT_ACTION_LABELS).find(value => value === query.action) as AccountAction | undefined;

@@ -228,7 +228,7 @@ export class MongoAuthStore implements AuthStore {
       if (!this.handle.ensureExternalIdentityIndexes) return null;
       await this.handle.ensureExternalIdentityIndexes();
     }
-    const change = !external ? proof : proof.provider === 'github'
+    const change = !external ? { ...proof, ...(user.temporaryPassword ? { temporaryPassword: false } : {}) } : proof.provider === 'github'
       ? { githubId: Number(proof.subject), linkedGithubLogin: proof.label }
       : { googleSubject: proof.subject, linkedGoogleLabel: proof.label };
     try {
@@ -304,6 +304,7 @@ export class MongoAuthStore implements AuthStore {
       authProvider: 'local',
       username,
       ...(input.passwordHash && input.passwordSalt ? { passwordHash: input.passwordHash, passwordSalt: input.passwordSalt } : {}),
+      ...(input.temporaryPassword ? { temporaryPassword: true } : {}),
       ...(input.invitationHash ? { invitationHash: input.invitationHash, invitationExpiresAt: input.invitationExpiresAt } : {}),
       email: input.email ?? null,
       name: input.name?.trim() || input.username,

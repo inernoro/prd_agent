@@ -7,6 +7,41 @@ import { actionLabels, actionStateLabels, listAccountActionAudit, type AccountAc
 import { EmptyBlock, ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import { AccountActionFacts, accountInputClass } from './AccountActionDialog';
 
+export function AccountAuditDialog({ receiptId, entry, onClose }: {
+  receiptId?: string; entry?: AccountActionEntry; onClose: () => void;
+}): JSX.Element {
+  const [record, setRecord] = useState<AccountActionEntry | null | undefined>(entry);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!receiptId) return;
+    const ctrl = new AbortController();
+    setFailed(false);
+    setRecord(undefined);
+    listAccountActionAudit(new URLSearchParams({ receiptId }), ctrl.signal)
+      .then(rows => { if (!ctrl.signal.aborted) setRecord(rows.find(row => row.id === receiptId) ?? null); })
+      .catch(() => { if (!ctrl.signal.aborted) setFailed(true); });
+    return () => ctrl.abort();
+  }, [attempt, receiptId]);
+  return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+    <DialogContent className="max-h-[90dvh] overflow-auto">
+      <DialogHeader>
+        <DialogTitle>{record ? actionLabels[record.action] : '账号审计回执'}</DialogTitle>
+        <DialogDescription>{record ? `${actionStateLabels[record.status]} · ${new Date(record.decidedAt || record.createdAt).toLocaleString()}`
+          : '查阅这次账号变更的处理记录。'}</DialogDescription>
+      </DialogHeader>
+      {record ? <>
+        <AccountActionFacts entry={record} />
+        <p className="break-all text-xs text-muted-foreground">回执 <span className="font-mono">{record.id}</span></p>
+      </> : failed ? <div className="space-y-2">
+        <ErrorBlock message="审计回执读取失败。" />
+        <Button variant="outline" onClick={() => setAttempt(value => value + 1)}>重新读取</Button>
+      </div> : record === null ? <p className="text-sm text-muted-foreground">没有可查看的审计回执。</p>
+      : <LoadingBlock label="读取审计回执" />}
+    </DialogContent>
+  </Dialog>;
+}
+
 export function AccountAudit({ canViewAll, canFilterAccounts = false }: { canViewAll: boolean; canFilterAccounts?: boolean }): JSX.Element {
   const [account, setAccount] = useState('');
   const [action, setAction] = useState('');
@@ -95,15 +130,7 @@ export function AccountAudit({ canViewAll, canFilterAccounts = false }: { canVie
           ))}
         </ul>
       )}
-      {selected ? <Dialog open onOpenChange={open => { if (!open) setSelected(null); }}>
-        <DialogContent className="max-h-[90dvh] overflow-auto">
-          <DialogHeader><DialogTitle>{actionLabels[selected.action]}</DialogTitle>
-            <DialogDescription>{actionStateLabels[selected.status]} · {new Date(selected.decidedAt || selected.createdAt).toLocaleString()}</DialogDescription>
-          </DialogHeader>
-          <AccountActionFacts entry={selected} />
-          <p className="break-all text-xs text-muted-foreground">回执 <span className="font-mono">{selected.id}</span></p>
-        </DialogContent>
-      </Dialog> : null}
+      {selected ? <AccountAuditDialog key={selected.id} entry={selected} onClose={() => setSelected(null)} /> : null}
       {backfillOpen ? <AuditBackfillDialog onClose={() => setBackfillOpen(false)} onSaved={entry => {
         setBackfillOpen(false);
         setSelected(entry);

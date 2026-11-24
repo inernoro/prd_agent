@@ -95,6 +95,7 @@ function localErrStatus(err: LocalAuthError): number {
       return 409;
     case 'username_invalid':
     case 'password_too_short':
+    case 'password_reused':
       return 400;
     case 'invalid_credentials':
     case 'not_local_account':
@@ -168,7 +169,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
 
   // ── Local login (public) ──
   router.post('/auth/login', async (req: Request, res: Response) => {
-    const { username, password } = req.body || {};
+    const { username, password, newPassword } = req.body || {};
     if (!username || !password) {
       res.status(400).json({ error: '请输入用户名和密码' });
       return;
@@ -190,10 +191,22 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         res.json({ user: legacy.user });
         return;
       }
-      const user = await authService.verifyLocalLogin(normalizedUsername, normalizedPassword);
+      let user = await authService.verifyLocalLogin(normalizedUsername, normalizedPassword);
       if (!user) {
         res.status(401).json({ error: '用户名或密码错误' });
         return;
+      }
+      if (user.temporaryPassword) {
+        res.setHeader('Cache-Control', 'private, no-store');
+        if (newPassword === undefined) {
+          res.status(409).json({ code: 'initial_password_change_required', error: '请设置个人口令后登录' });
+          return;
+        }
+        user = await authService.completeTemporaryPassword(user, newPassword);
+        await authService.recordActivity({
+          userId: user.id, userLogin: user.username || user.githubLogin, action: 'change-password',
+          summary: '首次登录设置个人口令', ip: clientIp(req),
+        });
       }
       const session = await authService.createSessionForUser(user, {
         userAgent: (req.headers['user-agent'] as string) || null,
@@ -213,6 +226,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
+      if (err instanceof LocalAuthError) {
+        res.status(localErrStatus(err)).json({ error: err.message, code: err.code });
+        return;
+      }
       // 存储后端在 verifyLocalLogin / 建会话 / 记活动时拒绝时，async Express 4
       // 处理器若不兜底会变成未处理 rejection，请求挂起甚至拖垮进程（修复 PR #865
       // Codex P2「catch local-login store failures」）。统一兜底 500。
@@ -316,13 +333,18 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   router.post('/auth/users', async (req: AuthedRequest, res: Response) => {
     const me = requireAccountManager(req, res);
     if (!me) return;
-    const { username, password, name, isSystemOwner, role, externalLoginAllowed, invite } = req.body || {};
+    const { username, password, name, isSystemOwner, role, externalLoginAllowed, invite, temporaryPassword } = req.body || {};
     if (!me.isSystemOwner && (isSystemOwner === true || role === 'admin' || role === 'owner')) {
       res.status(403).json({ error: '仅系统所有者可创建授权账号' });
       return;
     }
     if (role !== undefined && role !== 'admin' && role !== 'member') {
       res.status(400).json({ error: '请选择成员或管理员' });
+      return;
+    }
+    if (temporaryPassword !== undefined && typeof temporaryPassword !== 'boolean'
+        || temporaryPassword === true && (invite === true || isSystemOwner === true)) {
+      res.status(400).json({ error: '初始口令只可用于直接创建个人账号', code: 'invalid_initial_password_mode' });
       return;
     }
     try {
@@ -347,7 +369,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       }
       const activation = invite === true ? await authService.createAccountInvitation(account) : null;
       const user = activation?.user ?? await authService.createLocalUser({
-        ...account, password: String(password || ''), isSystemOwner: isSystemOwner === true,
+        ...account, password: String(password || ''), isSystemOwner: isSystemOwner === true, temporaryPassword: temporaryPassword === true,
       });
       await authService.recordActivity({
         userId: me.id,

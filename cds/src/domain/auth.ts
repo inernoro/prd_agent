@@ -64,6 +64,7 @@ export interface CdsUser {
   passwordHash?: string;
   /** Per-user random salt (hex) paired with passwordHash. Server-side only. */
   passwordSalt?: string;
+  temporaryPassword?: boolean;
   /** Primary email from GitHub, may be null if user hides it. */
   email: string | null;
   /** Display name (GitHub profile name), fallback to githubLogin. */
@@ -188,6 +189,7 @@ export interface CreateLocalUserInput {
   passwordHash?: string;
   /** Hex salt paired with passwordHash. */
   passwordSalt?: string;
+  temporaryPassword?: boolean;
   /** Display name; falls back to username when omitted. */
   name?: string;
   /** Optional email. */

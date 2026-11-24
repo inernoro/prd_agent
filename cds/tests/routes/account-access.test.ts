@@ -170,6 +170,88 @@ describe('account access via the CDS server', () => {
     if (root) await rm(root, { force: true, recursive: true });
   });
 
+
+  describe('initial owner-issued and administrator-issued passwords', () => {
+    const issuedSession = (response: { cookies: string[] }) =>
+      response.cookies.find(value => /^(?:__Host-)?cds_gh_session=[^;]+/.test(value))?.split(';')[0];
+
+    it('requires a valid temporary credential to be replaced before exposing an authenticated member session', async () => {
+      const admin = await createAdmin('fixture-initial-password-admin');
+      const adminCookie = await signIn(admin.username, adminPassword);
+      const username = 'fixture-temp-password-member';
+      const created = await call('POST', usersPath, adminCookie, {
+        username, password: memberPassword, role: 'member', temporaryPassword: true,
+      });
+      expect(created.status).toBe(201);
+      const user = created.json().user;
+      expect(user.role).toBe('member');
+
+      const wrong = await login(username, 'fixture-wrong-initial-password');
+      expect(wrong.status).toBe(401);
+      expect(wrong.json().code).not.toBe('initial_password_change_required');
+      expect(issuedSession(wrong)).toBeUndefined();
+
+      const pending = await login(username, memberPassword);
+      expect(pending.status).toBe(409);
+      expect(pending.json().code).toBe('initial_password_change_required');
+      expect(issuedSession(pending)).toBeUndefined();
+      expect([401, 403]).toContain((await call('GET', usersPath, issuedSession(pending))).status);
+      expect([401, 403]).toContain((await call('GET', '/api/auth/account-action-audit', issuedSession(pending))).status);
+      expect((await store.findUserById(user.id))?.lastLoginAt).toBeNull();
+
+      for (const newPassword of ['short', memberPassword]) {
+        const refused = await call('POST', '/api/auth/login', undefined, { username, password: memberPassword, newPassword });
+        expect(refused.status).toBe(400);
+        expect(issuedSession(refused)).toBeUndefined();
+      }
+      expect((await login(username, memberPassword)).status).toBe(409);
+
+      const changed = await call('POST', '/api/auth/login', undefined, {
+        username, password: memberPassword, newPassword: replacementPassword,
+      });
+      expect(changed.status).toBe(200);
+      expect(changed.json().user).toMatchObject({ id: user.id, role: 'member' });
+      const cookie = issuedSession(changed);
+      expect(cookie).toBeDefined();
+      expect((await call('GET', '/api/me', cookie)).json().user).toMatchObject({ id: user.id, role: 'member' });
+      expect((await call('GET', usersPath, cookie)).status).toBe(403);
+      expect((await login(username, memberPassword)).status).toBe(401);
+      expect((await login(username, replacementPassword)).status).toBe(200);
+      const legacyLogin = await login(member.username, memberPassword);
+      expect(legacyLogin.status).toBe(200);
+      expect(legacyLogin.json().user.id).toBe(member.id);
+      expect(issuedSession(legacyLogin)).toBeDefined();
+      for (const secret of [memberPassword, replacementPassword]) {
+        expect([created.raw, pending.raw, changed.raw, JSON.stringify(httpLogs)].join('\n')).not.toContain(secret);
+      }
+    });
+
+    it('issues a session only to the winner of two concurrent changes against the same temporary password', async () => {
+      const username = 'fixture-temporary-password-race';
+      const created = await call('POST', usersPath, ownerCookie, {
+        username, password: memberPassword, role: 'member', temporaryPassword: true,
+      });
+      expect(created.status).toBe(201);
+      const newPasswords = [replacementPassword, 'fixture-other-replacement-92+'];
+      const attempts = await Promise.all(newPasswords.map(newPassword => call('POST', '/api/auth/login', undefined, {
+        username, password: memberPassword, newPassword,
+      })));
+      expect(attempts.filter(response => response.status === 200)).toHaveLength(1);
+      const winner = attempts.findIndex(response => response.status === 200);
+      const loser = 1 - winner;
+      expect(issuedSession(attempts[winner])).toBeDefined();
+      expect([401, 409]).toContain(attempts[loser].status);
+      expect(issuedSession(attempts[loser])).toBeUndefined();
+      expect((await login(username, newPasswords[winner])).status).toBe(200);
+      expect((await login(username, newPasswords[loser])).status).toBe(401);
+      const replay = await call('POST', '/api/auth/login', undefined, {
+        username, password: memberPassword, newPassword: newPasswords[winner],
+      });
+      expect(replay.status).toBe(401);
+      expect(issuedSession(replay)).toBeUndefined();
+    });
+  });
+
   describe('account roles', () => {
     it('lets an owner create an admin and maps the roles of older accounts in the user list', async () => {
       const denied = await call('POST', usersPath, memberCookie, {

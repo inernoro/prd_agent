@@ -56,6 +56,8 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [needsPersonalPassword, setNeedsPersonalPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -122,6 +124,11 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
   const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled || googleLoginEnabled || passkeyEnabled;
   const showPasswordForm = showLocalLogin && (needsBootstrap || !hasExternalLogin || showOtherMethods);
 
+  function resetFirstPasswordPrompt() {
+    setNeedsPersonalPassword(false);
+    setNewPassword('');
+  }
+
   function goToTarget() {
     // Server endpoints (including the cluster login handoff) must reach Express.
     // Dashboard routes retain SPA navigation and their view transition.
@@ -162,7 +169,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, ...(needsPersonalPassword ? { newPassword } : {}) }),
       });
       if (res.status === 404) {
         res = await fetch(apiUrl('/api/login'), {
@@ -174,6 +181,10 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        if (res.status === 409 && body?.code === 'initial_password_change_required') {
+          setNeedsPersonalPassword(true);
+          return;
+        }
         const message = typeof body?.error === 'string' ? body.error : '账号或密码不正确';
         throw new Error(message);
       }
@@ -188,13 +199,24 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
 
   if (!loginMethodsReady || !bootstrapReady) return <AuthFormSkeleton />;
 
+  const personalPasswordField = needsPersonalPassword && <>
+    <p className={preview ? undefined : 'cds-auth-hint'} role="status">请设置与初始口令不同的个人口令。</p>
+    <label className={preview ? undefined : 'cds-auth-field'}>
+      <span>个人口令</span>
+      <input className={preview ? undefined : 'cds-auth-input'} type="password" autoComplete="new-password"
+        value={newPassword} minLength={8} maxLength={512} required autoFocus onChange={event => setNewPassword(event.target.value)} />
+    </label>
+  </>;
   if (preview && !needsBootstrap) {
     const previewAccount = <form onSubmit={submit} aria-busy={busy}>
       <small>本预览单独生成的账号用于自动化测试和运维排障。</small>
-      <label>预览用户名<input value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" required /></label>
-      <label>预览密码<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" required /></label>
-      {error && <p className="pv-error" role="alert">预览专用账号校验失败。{ssoLogin.enabled ? '可用 CDS 账号继续。' : '请核对本预览的账号和密码。'}</p>}
-      <button type="submit" className={ssoLogin.enabled ? 'pv-secondary' : 'pv-primary'} disabled={busy}>{busy ? '正在验证…' : '用预览专用账号登录'}</button>
+      <label>预览用户名<input value={username} onChange={event => { setUsername(event.target.value); resetFirstPasswordPrompt(); }} autoComplete="username" required /></label>
+      <label>预览密码<input type="password" value={password} onChange={event => { setPassword(event.target.value); resetFirstPasswordPrompt(); }} autoComplete="current-password" required /></label>
+      {personalPasswordField}
+      {error && <p className="pv-error" role="alert">{needsPersonalPassword ? error : ssoLogin.enabled
+        ? '预览专用账号校验失败。可用 CDS 账号继续。' : '预览专用账号校验失败。请核对本预览的账号和密码。'}</p>}
+      <button type="submit" className={ssoLogin.enabled ? 'pv-secondary' : 'pv-primary'} disabled={busy}>{busy ? '正在验证…'
+        : needsPersonalPassword ? '设置并登录' : '用预览专用账号登录'}</button>
     </form>;
     return <article className="pv-card">
       <PreviewLabel {...preview} />
@@ -301,7 +323,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
           <input
             className="cds-auth-input"
             value={username}
-            onChange={(event) => setUsername(event.target.value)}
+            onChange={(event) => { setUsername(event.target.value); resetFirstPasswordPrompt(); }}
             autoComplete="username"
             autoFocus
             required
@@ -329,7 +351,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
             <input
               className="cds-auth-input"
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => { setPassword(event.target.value); resetFirstPasswordPrompt(); }}
               type={showPassword ? 'text' : 'password'}
               autoComplete={needsBootstrap ? 'new-password' : 'current-password'}
               required
@@ -346,6 +368,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
             </button>
           </span>
         </label>
+        {personalPasswordField}
       </div> : null}
 
       {error ? (
@@ -359,7 +382,7 @@ function AuthForm({ preview }: { preview?: PreviewLoginContext }): JSX.Element {
           {busy ? <Loader2 className="animate-spin" /> : null}
           {busy
             ? (needsBootstrap ? '正在创建…' : '正在验证…')
-            : (needsBootstrap ? '创建并进入控制台' : '登录')}
+            : (needsBootstrap ? '创建并进入控制台' : needsPersonalPassword ? '设置并登录' : '登录')}
           {busy ? null : <ArrowRight />}
         </Button>
       ) : null}
