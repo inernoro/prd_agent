@@ -66,7 +66,7 @@ function FrameworkReferences({ source, href, baseline }: { source: string; href?
   })}</ul>;
 }
 
-function rationaleOrder(entry: DesignEntry, version: DesignVersion) {
+export function rationaleOrder(entry: DesignEntry, version: DesignVersion) {
   const authorVersion = [...entry.versions].reverse().find(row => row.version <= version.version && row.rationale?.trim());
   const sections = authorVersion ? sectionsOf(authorVersion.rationale) : [];
   const slotOf = (section: Section) => folded.test(section.heading) ? undefined : slots.find(([, , , pattern]) => pattern.test(section.heading))?.[0];

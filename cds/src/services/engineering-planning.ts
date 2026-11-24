@@ -382,7 +382,7 @@ export class EngineeringPlanningService {
     return rejectPlanning(409, 'write_contention', '项目正在接收其他更新，请用相同请求编号重试');
   }
 
-  async board(projectId: string, actor: PlanningActor): Promise<PlanningBoard> {
+  async board(projectId: string, actor: PlanningActor, includeTimeline = false): Promise<PlanningBoard> {
     const [state, designs] = await Promise.all([this.load(projectId), this.designLinksFor?.(projectId)]);
     const now = this.now();
     const today = planningToday(now);
@@ -395,9 +395,20 @@ export class EngineeringPlanningService {
     const proposals = [...state.proposals.values()].sort(order);
     const match = proposals.some(row => row.kind === 'debt' && row.status === 'pending')
       ? duplicateDebtMatcher(state.debts.values()) : undefined;
+    const timelineStart = new Date(now.getTime() - 26 * 7 * DAY).toISOString();
+    const timeline = includeTimeline ? {
+      debts: [...state.debts.values()].map(({ id, title, status, priority, owner, createdAt, updatedAt, discoveredAt,
+        dueAt, reviewAt, decisionId, originDecisionId, repayment, outcome }) => ({
+        id, title, status, priority, owner, createdAt, updatedAt, discoveredAt, dueAt, reviewAt, decisionId, originDecisionId,
+        closedAt: repayment?.at ?? outcome?.closedAt,
+      })),
+      debtEvents: state.events.filter(event => event.entity === 'debt' && event.at >= timelineStart)
+        .map(({ entity, entityId, type, at }) => ({ entity, entityId, type, at })),
+    } : undefined;
     return {
       ...this.capabilities(projectId, actor),
       ...projectDebtNavigation(state, today),
+      ...(timeline ? { timeline } : {}),
       today,
       proposals: match ? proposals.map(row => projectProposalSuggestion(row, match)) : proposals,
       decisions: [...state.decisions.values()].sort(order).map(decision => {

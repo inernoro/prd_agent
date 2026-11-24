@@ -13,7 +13,7 @@ import { type PlanningProject, usePlanningRead } from './engineering-planning/pl
 import { DesignCanvas, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
-import { DesignDeliverySide, type DesignFullView } from './design-workspace/DesignDeliverySide';
+import { DesignDeliverySide, type DesignFullView, type SideTab } from './design-workspace/DesignDeliverySide';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignNeed, needTrace } from './design-workspace/DesignNeed';
 import { DesignHistory } from './design-workspace/DesignHistory';
@@ -25,6 +25,7 @@ import { designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabe
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 import './design-workspace/design-v17-delivery.css';
+import './design-workspace/design-v18.css';
 
 const tabs = [['delivery', '交付', '人和智能体'], ['accept', '验收', '人和智能体按规则执行'], ['log', '记录', '操作时自动写入']] as const;
 const deliveryQuery = { full: '', part: '', fb: '', file: '', about: '', compare: '' };
@@ -120,6 +121,8 @@ export function DesignWorkspacePage() {
     : requestedTab === 'rationale' || requestedTab === 'notes' || requestedTab === 'spec' ? 'notes'
     : requestedTab === 'delivery' && (params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-')) ? 'delivery' : undefined;
   const sideClosed = params.get('side') === 'off';
+  const pane = params.get('pane');
+  const sideTab: SideTab = pane === 'comments' || pane === 'deliver' ? pane : 'demo';
   const frameworkTab = frameworkTabs.find(value => value === params.get('tab')) ?? 'overview';
   const screenParam = params.get('screen') ?? undefined;
   const commentParam = params.get('comment') ?? undefined;
@@ -213,7 +216,7 @@ export function DesignWorkspacePage() {
   const closeFreeze = () => { setFreezeTarget(undefined); setFreezeReason(''); dismissPanel('freeze'); };
   const selectEntry = (id: string) => {
     deliveryReturn.current = undefined;
-    onChange({ design: id, framework: '', brief: '', tab: '', version: '', view: '', screen: '', comment: '', compareFrom: '', from: '', panel: '', baseline: '', side: '', run: '', check: '', log: '', ...deliveryQuery,
+    onChange({ design: id, framework: '', brief: '', tab: '', version: '', view: '', screen: '', comment: '', compareFrom: '', from: '', panel: '', baseline: '', side: '', pane: '', run: '', check: '', log: '', ...deliveryQuery,
       ...(!id && !module && !group && entry ? (entry.scope ? { system: entry.scope.systemId, module: entry.scope.moduleId }
         : { group: latestDesign(entry).group ?? '' }) : {}) });
   };
@@ -281,6 +284,9 @@ export function DesignWorkspacePage() {
       {inDetail ? <MotionLink to={libraryPath}>设计</MotionLink> : <span>设计</span>}<span aria-hidden="true">/</span>
       {projectSwitcher}
       {parent && <><span aria-hidden="true">/</span><MotionLink className="dw-crumb-parent" to={parent.href}>{parent.name}</MotionLink></>}
+      {draftVisible && entry && version && <><span aria-hidden="true">/</span><span className="dw-crumb-draft" aria-current="page">
+        <strong title={version.title}>{version.title}</strong><span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
+      </span></>}
     </span>
     {inDetail && <MotionLink className="dw-crumb-mobile" to={parent?.href ?? libraryPath}><ChevronLeft size={15} />{parent?.name ?? '设计'}</MotionLink>}
   </nav>} />;
@@ -372,23 +378,14 @@ export function DesignWorkspacePage() {
       </div>
     </details>
   </div>;
-  const draftHeader = entry && version && <header className="dw-head dw-head--draft">
-    <div className="dw-draft-bar">
-      <div className="dw-draft-heading">
-        <h1 title={version.title}>{version.title}</h1>
-        <span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
-      </div>
-      {draftActions}
+  const draftHeader = entry && version && <header className="dw-head dw-head--draft dw-head--v18">
+    <div className="dw-draft-heading">
+      <h1 title={version.title}>{version.title}</h1>
+      <span className="dw-status" data-state={designStatus(entry)}>{statusNames[designStatus(entry)]}</span>
     </div>
     <div className="dw-draft-tabbar">
       {summaryTabLinks}
-      {(entry.implementedVersion !== undefined || entry.frozen !== undefined || activeUpgrade) &&
-        <div className="dw-implementation-mark" aria-label="实现进度">
-          {entry.implementedVersion !== undefined ? <span>已实现 V{entry.implementedVersion}</span> : <span>待首次签收</span>}
-          {versionGap?.direction === 'behind' && <span data-gap="behind">落后 {versionGap.count} 版</span>}
-          {versionGap?.direction === 'ahead' && <span data-gap="ahead">待回退 {versionGap.count} 版</span>}
-          {activeUpgrade && <span title="后续稿件不会移动此目标">目标 V{activeUpgrade.targetVersion} 已锁定</span>}
-        </div>}
+      {draftActions}
     </div>
   </header>;
   const messages = <>
@@ -425,9 +422,14 @@ export function DesignWorkspacePage() {
               }}><ChevronLeft /><span>返回交付</span></button>}
           </div>
           {sideClosed ? <button className="ep-button dw-side-open" type="button" data-action="side-open"
-            onClick={() => onChange({ side: '' })}><PanelRightOpen />打开右栏</button>
-            : <DesignDeliverySide entry={entry} version={version} screen={scene} requirement={draftRequirement} permissions={permissions}
-              onOpen={openFull} onCollapse={() => onChange({ side: 'off' })} />}
+            onClick={() => onChange({ side: '' })}><PanelRightOpen />演示、评论和交付</button>
+            : <DesignDeliverySide key={`${entry.id}/${version.version}`} entry={entry} version={version} screenId={scene?.id}
+              requirement={draftRequirement} permissions={permissions} tab={sideTab}
+              onTab={value => onChange({ pane: value === 'demo' ? '' : value }, true)}
+              open={openFull} onCollapse={() => onChange({ side: 'off' })}
+              onScreen={id => onChange({ screen: id, comment: '' }, true)}
+              onReview={comment => openReview(entry, comment, version)}
+              onAccept={() => onChange({ ...deliveryQuery, tab: 'accept', screen: scene?.id ?? '' })} />}
           {fullView && <DesignFullOverlay view={fullView} onClose={closeFull}>
             {fullView === 'need' ? <DesignNeed entry={entry} version={version} requirement={draftRequirement} />
               : fullView === 'notes' ? <DesignRationale entry={entry} version={version} baseline={pinnedFramework} focusSpec={requestedTab === 'spec'} />

@@ -244,6 +244,9 @@ export type PlanningDebtBranch = {
 export type PlanningRelatedDebt = Pick<PlanningDebt, 'id' | 'title' | 'status' | 'outcome' | 'decisionId'> & {
   recentHits?: number; repaidAt?: string;
 };
+export type PlanningTimelineDebt = Pick<PlanningDebt, 'id' | 'title' | 'status' | 'priority' | 'owner' | 'createdAt' | 'updatedAt'
+  | 'discoveredAt' | 'dueAt' | 'reviewAt' | 'decisionId' | 'originDecisionId'> & { closedAt?: string };
+export type PlanningTimelineEvent = Pick<PlanningEvent, 'entity' | 'entityId' | 'type' | 'at' | 'note'>;
 export type PlanningBoard = PlanningCapabilities & {
   today: string;
   proposals: PlanningProposal[];
@@ -255,6 +258,7 @@ export type PlanningBoard = PlanningCapabilities & {
   pullRequests?: PlanningPullRequest[];
   debtBranches?: Record<string, PlanningDebtBranch>;
   relatedDebts?: Record<string, PlanningRelatedDebt>;
+  timeline?: { debts: PlanningTimelineDebt[]; debtEvents: PlanningTimelineEvent[] };
 };
 export const planningDebtViews = [
   'all', 'unpaid', 'review_due', 'overdue', 'open', 'deferred', 'in_progress', 'reopened', 'dup', 'pending_extinct',

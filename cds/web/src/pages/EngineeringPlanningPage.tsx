@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, ChartNoAxesColumn, ChevronDown, Clock3, List, Maximize2, Minimize2, Plus, RefreshCw, Target, Terminal, Triangle } from 'lucide-react';
+import { CalendarDays, ChartNoAxesColumn, ChevronDown, List, Maximize2, Minimize2, Plus, RefreshCw, Target, Terminal, Triangle } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { EngineeringPlanningSkeleton } from '@/components/skeletons/PageSkeletons';
@@ -14,7 +14,10 @@ import {
   usePlanningRead, viewLabels, views,
 } from './engineering-planning/planning-ui';
 import { DebtLedger, DebtList, DebtSearch, PlanningEmpty, type PlanningSelection } from './engineering-planning/PlanningViews';
-import { PlanningBoardView, PlanningTimeline, planningBoardSummary } from './engineering-planning/PlanningDecisionViews';
+import { PlanningBoardView, planningBoardSummary } from './engineering-planning/PlanningDecisionViews';
+import { PlanningTimelineLanes, timelineRanges, useTimelineModel } from './engineering-planning/PlanningTimelineLanes';
+import { PlanningContextBar } from './engineering-planning/PlanningContextBar';
+import { debtCauses } from './engineering-planning/planning-timeline-model';
 import { PlanningEvolution, PlanningGraph, planningBucketLabel } from './engineering-planning/PlanningAnalytics';
 import { PlanningActionDialog, PlanningDetailDialog, type PlanningAction } from './engineering-planning/PlanningDialogs';
 import { ConfigurationTrail, DecisionSearch, PlanningUtilities } from './engineering-planning/PlanningCompanion';
@@ -22,6 +25,7 @@ import { PlanningCheckupMenu, usePlanningCheckup } from './engineering-planning/
 import './engineering-planning/planning.css';
 import './engineering-planning/planning-shell.css';
 import './engineering-planning/planning-debts.css';
+import './engineering-planning/planning-timeline.css';
 
 const DAY = 86_400_000;
 const dateBefore = (date: string, days: number) => new Date(Date.parse(date) - (days - 1) * DAY).toISOString().slice(0, 10);
@@ -59,14 +63,14 @@ export function EngineeringPlanningPage() {
   const activeProject = params.get('project') || options[0]?.id || '';
   const allowed = options.some(row => row.id === activeProject);
   const target = allowed ? planningPath(activeProject) : null;
-  const board = usePlanningRead<PlanningBoard>(target, reload);
+  const requestedUtility = params.get('tools');
+  const utility = requestedUtility === 'cli' || requestedUtility === 'spec' || requestedUtility === 'changes' ? requestedUtility : null;
+  const board = usePlanningRead<PlanningBoard>(target && !utility ? `${target}?timeline=1` : target, reload);
   const { checkup, refreshCheckup } = usePlanningCheckup(target, reload);
 
   const requestedView = params.get('view') as PlanningView | null;
-  const requestedUtility = params.get('tools');
-  const utility = requestedUtility === 'cli' || requestedUtility === 'spec' || requestedUtility === 'changes' ? requestedUtility : null;
   const selectUtility = (value: string) => change({ tools: value, item: '', kind: '' });
-  const view: PlanningView = requestedView && views.includes(requestedView) ? requestedView : 'plan';
+  const view: PlanningView = requestedView && views.includes(requestedView) ? requestedView : 'timeline';
   const debtLevel = ['debts', 'map', 'evolution'].includes(view);
   const requestedStatus = params.get('status') as PlanningDebtView;
   const status = planningDebtViews.includes(requestedStatus) ? requestedStatus : 'unpaid';
@@ -93,6 +97,10 @@ export function EngineeringPlanningPage() {
     ...(batch ? { batch } : {}),
     ...(cursor ? { cursor } : {}) });
   const debts = usePlanningRead<PlanningDebtList>(target && view === 'debts' ? `${target}/debts?${debtQuery}` : null, reload);
+  const requestedWeeks = Number(params.get('weeks'));
+  const weeks = timelineRanges.some(([value]) => value === requestedWeeks) ? requestedWeeks : 8;
+  const focus = params.get('focus') || '';
+  const timeline = useTimelineModel(board.data);
   const debtDetail = usePlanningRead<PlanningDebtDetail>(target && selected?.kind === 'debt' ? `${target}/debts/${encodeURIComponent(selected.id)}` : null, reload);
   const statsQuery = new URLSearchParams({
     ...(board.data ? { from: dateBefore(board.data.today, view === 'evolution' ? range : 30), to: board.data.today } : {}),
@@ -151,11 +159,11 @@ export function EngineeringPlanningPage() {
 
   function selectProject(project: string) {
     setPages([]); setSearch(''); setNotice(''); setImportBatch(''); setError(''); setActionEntry(undefined);
-    change({ project, branch: '', tag: '', tagMatch: '', q: '', item: '', kind: '', priority: '', owner: '', source: '', status: '', sort: '', batch: '' });
+    change({ project, branch: '', tag: '', tagMatch: '', q: '', item: '', kind: '', focus: '', priority: '', owner: '', source: '', status: '', sort: '', batch: '' });
   }
   function selectView(next: PlanningView) {
     setPages([]); setScreen(false); setNotice(''); setError('');
-    change({ view: next, item: '', kind: '', tools: '' });
+    change({ view: next, item: '', kind: '', tools: '', focus: '' });
   }
   function selectItem(item: PlanningSelection) {
     if (selected && (selected.id !== item.id || selected.kind !== item.kind)) setDetailTrail(current => [...current, selected]);
@@ -216,7 +224,7 @@ export function EngineeringPlanningPage() {
   const write = Boolean(data?.permissions.includes('write'));
   const activeLabel = options.find(row => row.id === activeProject);
   const projectLabel = activeLabel?.aliasName || activeLabel?.name || activeProject;
-  const tabs: PlanningView[] = debtLevel ? ['debts', 'map', 'evolution'] : ['plan', 'timeline'];
+  const tabs: PlanningView[] = debtLevel ? ['debts', 'map', 'evolution'] : ['timeline', 'plan'];
   const header = <TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '工程规划' }, { label: '决策主线' },
     ...(debtLevel ? [{ label: '债务分支' }] : []), { label: viewLabels[view] }]} />}
     right={data && <span className="ep-top-date">今天 {monthDay(data.today)}</span>} />;
@@ -242,12 +250,23 @@ export function EngineeringPlanningPage() {
   }
   const summary = data && planningBoardSummary(data);
   const branchLabel = branch === 'none' ? '未归属决策' : data?.decisions.find(row => row.id === branch)?.title;
-  const since = data && dateBefore(data.today, 14);
-  const changes = data?.events.filter(event => event.entity === 'decision' && since && event.at.slice(0, 10) >= since).length ?? 0;
   const unpaidCount = data?.debtBranches ? Object.values(data.debtBranches).reduce((sum, row) => sum + row.unpaid, 0) : stats.data?.backlogEnd;
+  const causes = debtLevel ? data?.timeline ? debtCauses(data, data.timeline.debts) : [] : timeline.causes;
+  const levels = data && <nav className="ep-level-tabs" aria-label="工程规划层级">
+    <button type="button" aria-current={!debtLevel} onClick={() => selectView('timeline')}>决策主线 <small>{data.decisions.filter(row => row.status === 'accepted').length} 生效</small></button>
+    <button type="button" aria-current={debtLevel} aria-label={`债务分支 未还 ${unpaidCount ?? 0} 笔`}
+      onClick={() => selectView('debts')}>债务分支 <small aria-hidden>{unpaidCount ?? 0} 未还</small></button>
+  </nav>;
+  function focusCause(key: string) {
+    if (key === 'proposals') return selectView('plan');
+    if (key === 'ledger') return change({ view: 'debts', status: 'unpaid', item: '', kind: '' });
+    const [kind, id] = key.split(':');
+    if (debtLevel && (kind === 'debt' || kind === 'decision' || kind === 'plan')) return selectItem({ kind, id });
+    change({ view: 'timeline', focus: key, item: '', kind: '', tools: '' });
+  }
   return <AppShell active="engineering-planning" topbar={header} wide>
     <Workspace fluid className={`ep-workspace ep-view-${view}`}>
-      <header className="ep-workhead">
+      <header className="ep-workhead ep-workhead--v1">
         <h1>工程规划</h1>
         <label className="ep-project-picker"><span className="sr-only">选择项目</span>
           <select aria-label="选择项目" value={activeProject} disabled={busy || !options.length} onChange={event => selectProject(event.target.value)}>
@@ -255,6 +274,7 @@ export function EngineeringPlanningPage() {
             {options.map(row => <option value={row.id} key={row.id}>{row.aliasName || row.name}</option>)}
           </select>
         </label>
+        {levels}
         <div className="ep-page-actions">
           {allowed && <DecisionSearch key={activeProject} projectId={activeProject} reload={reload} onDecision={id => selectItem({ kind: 'decision', id })} />}
           {allowed && <PlanningCheckupMenu key={activeProject} projectId={activeProject} data={checkup} onRefresh={refreshCheckup}
@@ -287,19 +307,8 @@ export function EngineeringPlanningPage() {
           : <PlanningEmpty>{activeProject ? '没有可访问的工程规划项目，请选择已授权的项目。' : '当前没有可查看的项目'}</PlanningEmpty>
           : board.error || !data ? <ReadStatus loading={board.loading} error={board.error} onRetry={refresh} />
             : <>
-              <div className="ep-toolbar">
-                <nav className="ep-level-tabs" aria-label="工程规划层级">
-                  <button type="button" aria-current={!debtLevel} onClick={() => selectView('plan')}>决策主线 <small>{data.decisions.filter(row => row.status === 'accepted').length} 生效</small></button>
-                  <button type="button" aria-current={debtLevel} aria-label={`债务分支 未还 ${unpaidCount ?? 0} 笔`}
-                    onClick={() => selectView('debts')}>债务分支 <small aria-hidden>{unpaidCount ?? 0} 未还</small></button>
-                </nav>
-                <div className="ep-toolbar-context">{debtLevel ? <>
-                  <label className="ep-branch-picker"><span className="sr-only">决策分支</span><select aria-label="决策分支" value={branch} onChange={event => {
-                    setPages([]); change({ branch: event.target.value, tag: '', tagMatch: '', owner: '', batch: '' }, true);
-                  }}><option value="">全部分支</option><option value="none">未归属决策</option>
-                    {data.decisions.map(row => <option value={row.id} key={row.id}>{row.title}</option>)}</select></label>
-                </> : <span className="ep-activity-summary"><Clock3 aria-hidden="true" />自两周前{since && `（${monthDay(since)}）`} · 决策变更 {changes}
-                  {` · PR 更新 ${summary?.recentPulls ?? 0}`}</span>}</div>
+              <div className="ep-contextbar" data-level={debtLevel ? 'debt' : 'decision'}>
+                <PlanningContextBar causes={causes} loading={board.loading} onFocus={focusCause} />
                 <nav className="ep-tabs" aria-label={debtLevel ? '债务视图' : '决策视图'}>
                   {tabs.map(tab => {
                     const Icon = modes[tab];
@@ -310,6 +319,12 @@ export function EngineeringPlanningPage() {
                   })}
                 </nav>
               </div>
+              {!utility && debtLevel && <div className="ep-debt-scope">
+                <label className="ep-branch-picker"><span>决策分支</span><select aria-label="决策分支" value={branch} onChange={event => {
+                  setPages([]); change({ branch: event.target.value, tag: '', tagMatch: '', owner: '', batch: '' }, true);
+                }}><option value="">全部分支</option><option value="none">未归属决策</option>
+                  {data.decisions.map(row => <option value={row.id} key={row.id}>{row.title}</option>)}</select></label>
+              </div>}
 
               {(utility === 'cli' || utility === 'spec') && <PlanningUtilities projectId={activeProject} view={utility} onTab={selectUtility} />}
               {utility === 'changes' && <ConfigurationTrail projectId={activeProject} reload={reload} />}
@@ -320,8 +335,9 @@ export function EngineeringPlanningPage() {
                   } else if (as !== 'hit') void submit({ type: 'proposal.accept', proposalId: proposal.id, as });
                 }}
                 onReject={proposal => openAction({ kind: 'reject', proposal })} />}
-              {!utility && view === 'timeline' && <PlanningTimeline data={data} onSelect={selectItem} onBranch={selectBranch} projectLabel={projectLabel}
-                onCreatePlan={write ? () => openAction({ kind: 'create', record: 'plan' }) : undefined} />}
+              {!utility && view === 'timeline' && (data.timeline ? <PlanningTimelineLanes data={data} model={timeline} weeks={weeks}
+                onWeeks={value => change({ weeks: value === 8 ? '' : String(value) }, true)} focus={focus} onFocus={key => change({ focus: key }, true)} onSelect={selectItem} />
+                : <ReadStatus loading={board.loading} error={board.loading ? undefined : '当前工程规划服务未提供时间线数据，请刷新重试。'} onRetry={refresh} />)}
               {!utility && view === 'debts' && <>
                 <DebtLedger data={debts.data} stats={stats.data} label={branchLabel ? `${projectLabel} · ${branchLabel}` : projectLabel} />
                 {checkup?.summary && !!(checkup.summary.duplicates || checkup.summary.pending || checkup.summary.closed) &&

@@ -15,15 +15,14 @@ import { PlanDesignHandoff } from './PlanDesignHandoff';
 import type { PlanningAction } from './PlanningDialogs';
 import { DecisionDocumentBadge, PlanningDecisionLinks, PlanningPullRequestBadge, PlanningPullRequestLink, PlanningPullRequestList } from './PlanningPullRequests';
 import { inactiveLabels, PlanningBadge, PlanningEmpty, type PlanningSelection } from './PlanningViews';
+import { activePullRequests, daysSince, onDay, planProgress, proposalIdleDays, pullStallReasons, stepIsLate } from './planning-progress';
 import { closedDebt, dateLabel, debtLabels, decisionLabels, events, kindLabels, planningPath, priorityLabels, shortId, sourceLabels,
   stepKindLabels, stepLabels, usePlanningRead } from './planning-ui';
 import './planning-decision.css';
 
 const DAY = 86_400_000;
-const planningDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' });
 const calendarDay = new Intl.DateTimeFormat('zh-CN', { timeZone: 'UTC', month: 'long', day: 'numeric' });
 const calendarDate = new Intl.DateTimeFormat('zh-CN', { timeZone: 'UTC', dateStyle: 'long' });
-const onDay = (value: string) => value.length === 10 ? value : planningDay.format(new Date(value));
 const monthDay = (value: string) => calendarDay.format(new Date(onDay(value)));
 const fullDate = (value: string) => calendarDate.format(new Date(onDay(value)));
 
@@ -48,21 +47,6 @@ type OpenAction = (action: PlanningAction, returnFocusTo?: HTMLElement | null) =
 type ConfirmProposal = (item: PlanningProposal, as?: 'hit' | 'new') => void;
 type Progress = { state: 'stuck' | 'moving' | 'done'; reasons: { text: string; blocked?: boolean }[] };
 
-function stepIsLate(step: PlanningStep, today: string) {
-  return step.status !== 'done' && step.status !== 'cancelled' && Boolean(step.dueAt && step.dueAt < today);
-}
-
-function planProgress(plan: PlanningPlan, today: string) {
-  const steps = plan.steps.filter(step => step.status !== 'cancelled');
-  const done = steps.filter(step => step.status === 'done').length;
-  const total = steps.length;
-  const late = steps.filter(step => stepIsLate(step, today)).length;
-  const active = plan.steps.length > 0 ? done < total : true;
-  const state: keyof typeof planLabels = !active ? (total ? 'done' : 'cancelled')
-    : done || steps.some(step => step.status === 'doing') ? 'doing' : 'planned';
-  return { done, total, late, active, state, percent: total ? Math.round(done * 100 / total) : 0 };
-}
-
 function planLabel(plan: PlanningPlan, state: keyof typeof planLabels) {
   const scheduled = plan.startAt || plan.dueAt || plan.steps.some(step => step.dueAt);
   return state === 'planned' && !scheduled ? '待安排' : planLabels[state];
@@ -70,14 +54,6 @@ function planLabel(plan: PlanningPlan, state: keyof typeof planLabels) {
 
 function branchTotal(branch: Branch) {
   return branch.unpaid + branch.repaid + branch.extinct + branch.other;
-}
-
-function activePullRequests(decision: PlanningDecision) {
-  return decision.pullRequests?.filter(pull => pull.state === 'open' || pull.state === 'draft') ?? [];
-}
-
-function daysSince(value: string, today: string) {
-  return Math.floor((Date.parse(today) - Date.parse(onDay(value))) / DAY);
 }
 
 function recentlyChanged(value: string, today: string) {
@@ -95,10 +71,9 @@ function decisionProgress(decision: PlanningDecision, plans: PlanningPlan[], tod
   const live = activePullRequests(decision);
   if (decision.pullRequest && !decision.pullRequests?.length) reasons.push({ text: '关联 PR 等待同步' });
   for (const pull of live) {
-    const idle = daysSince(pull.updatedAt, today);
-    if (pull.checks === 'fail') reasons.push({ text: `PR #${pull.number} 检查失败`, blocked: true });
-    if (idle >= 7) reasons.push({ text: `PR #${pull.number} ${idle} 天未更新`, blocked: true });
-    if (pull.checks !== 'fail' && idle < 7) reasons.push({ text: `PR #${pull.number} ${pull.state === 'draft' ? '草稿' : '评审中'}` });
+    const stalls = pullStallReasons(pull, today);
+    for (const stall of stalls) reasons.push({ text: `PR #${pull.number} ${stall}`, blocked: true });
+    if (!stalls.length) reasons.push({ text: `PR #${pull.number} ${pull.state === 'draft' ? '草稿' : '评审中'}` });
   }
   const merged = decision.pullRequests?.filter(pull => pull.state === 'merged').length ?? 0;
   if (merged) completed.push({ text: `${merged} 个 PR 已合并` });
@@ -112,7 +87,7 @@ function decisionProgress(decision: PlanningDecision, plans: PlanningPlan[], tod
     else if (progress.state === 'done') completed.push({ text: `${shortId(plan.id)} 已完成` });
   }
   if (decision.status === 'proposed') {
-    const idle = live.reduce((previous, pull) => Math.min(previous, daysSince(pull.updatedAt, today)), daysSince(decision.updatedAt, today));
+    const idle = proposalIdleDays(decision, today);
     reasons.push(idle >= 14 ? { text: `提议 ${idle} 天未形成结论`, blocked: true } : { text: '提议评审中' });
   }
   if (reasons.length) {
