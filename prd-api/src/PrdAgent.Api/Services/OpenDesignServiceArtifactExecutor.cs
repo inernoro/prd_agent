@@ -84,8 +84,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
 
     public bool Supports(string artifactType, string operation) =>
-        artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
-        && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
+        artifactType == DesignArtifactTypes.CodeFilm
+            ? operation == DesignArtifactOperations.Generate
+            : artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
+              && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
 
     // ───────────────────────── 能力探针 ─────────────────────────
 
@@ -230,9 +232,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         var workspace = await _workspaceBroker.PrepareForDirectGatewayAsync(run, currentHtml, CancellationToken.None);
         var ticketExpiresAt = run.RuntimeTicketExpiresAt ?? UtcNow().Add(FallbackTicketTtl);
         // 排队不能把票据耗光：任务真正开跑时，票据至少还要够它跑满上限。
-        var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(TaskTimeoutSeconds) - TicketSafetyMargin;
+        var timeoutSeconds = run.ArtifactType == DesignArtifactTypes.CodeFilm ? 3300 : TaskTimeoutSeconds;
+        var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(timeoutSeconds) - TicketSafetyMargin;
         const int attempt = 1;
-        var requestBody = BuildTaskRequest(run, workspace, attempt, TaskTimeoutSeconds);
+        var requestBody = BuildTaskRequest(run, workspace, attempt, timeoutSeconds);
         var translator = new OpenDesignEventTranslator(run.Operation == DesignArtifactOperations.Edit, run.Progress);
         var accepted = false;
         // 提交请求一旦发出，服务就可能已经接下任务——哪怕 MAP 没等到 202（调用方取消、响应丢失、超时）。
@@ -308,14 +311,14 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 throw submit.Failure!;
             }
 
-            var eventsDeadline = UtcNow() + TimeSpan.FromSeconds(TaskTimeoutSeconds) + EventGrace;
+            var eventsDeadline = UtcNow() + TimeSpan.FromSeconds(timeoutSeconds) + EventGrace;
             var afterSeq = 0L;
             var consecutiveFailures = 0;
             while (true)
             {
                 if (UtcNow() >= eventsDeadline)
                     throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
-                        OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(TaskTimeoutSeconds)), remoteReason: null));
+                        OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(timeoutSeconds)), remoteReason: null));
 
                 var open = await OpenEventStreamAsync(transport, run.Id, afterSeq, ct);
                 if (open.Failure != null) throw open.Failure;
@@ -482,7 +485,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["runId"] = run.Id,
             },
             ["timeoutSeconds"] = timeoutSeconds,
-            ["envelope"] = JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
+            ["envelope"] = run.ArtifactType == DesignArtifactTypes.CodeFilm
+                ? new JsonObject { ["schemaVersion"] = "map-code-film-command-v1", ["runId"] = run.Id, ["command"] = run.Instruction }
+                : JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
         };
 
     private async Task<DesignArtifactGatewayGrantUsage?> ObserveGrantUsageAsync(

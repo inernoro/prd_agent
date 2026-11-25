@@ -138,7 +138,7 @@ export function validateModelAuthority(
   }
 }
 
-export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferRequest {
+export function normalizeWorkspaceTransfer(value: unknown, codeFilm = false): WorkspaceTransferRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AgentWorkspaceRuntimeError('workspace_transfer_required', 'workspaceTransfer is required for OpenDesign');
   }
@@ -177,7 +177,10 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
     );
   }
   for (const pattern of allowedOutputPaths) validateOutputPattern(pattern);
-  if (!allowedOutputPaths.includes('index.html') || !allowedOutputPaths.includes('manifest.json')) {
+  if (codeFilm && (allowedOutputPaths.length !== 1 || allowedOutputPaths[0] !== 'film.mp4')) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'a code film may return only film.mp4');
+  }
+  if (!codeFilm && (!allowedOutputPaths.includes('index.html') || !allowedOutputPaths.includes('manifest.json'))) {
     throw new AgentWorkspaceRuntimeError(
       'workspace_transfer_invalid',
       'workspaceTransfer.allowedOutputPaths must include index.html and manifest.json',
@@ -304,7 +307,14 @@ export function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransfer
       : 'application/octet-stream';
     return { path: relativePath, bytes: content, sha256: expectedSha, mediaType };
   });
-  validateDesignTaskContract(runId, transfer.baseRevision, files);
+  if (transfer.allowedOutputPaths.length === 1 && transfer.allowedOutputPaths[0] === 'film.mp4') {
+    if (files.length !== 1 || files[0].mediaType !== 'text/markdown'
+        || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$/.test(files[0].path)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'a code film requires one original Markdown file');
+    }
+  } else {
+    validateDesignTaskContract(runId, transfer.baseRevision, files);
+  }
   return { runId, files };
 }
 

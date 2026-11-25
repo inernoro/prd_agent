@@ -31,6 +31,7 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
+import { CODE_FILM_SKILL_ID, collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
 import { registerPresentationSkill } from './engine/presentation-skill.js';
@@ -176,6 +177,7 @@ export interface DesignTaskInput {
   taskId: string;
   transfer: WorkspaceTransferRequest;
   previewUrl?: string;
+  codeFilm?: boolean;
   model: OpenDesignModelAuthority;
   timeoutSeconds: number;
   /** 交给 OpenDesign 的第一轮指令：MAP 的任务信封（map-design-artifact-command-v2）序列化文本。 */
@@ -342,7 +344,9 @@ export class DesignTaskExecutor {
       repairCandidateRestored: repairCandidateSeed !== undefined,
     });
     const isPresentation = collectDesignTaskContext(workspaceDir).presentation !== undefined;
-    if (isPresentation) {
+    if (task.codeFilm) {
+      registerCodeFilmSkill(this.options.paths.dataDir, (target) => this.chownForEngine(target));
+    } else if (isPresentation) {
       registerPresentationSkill(
         {
           sourceDir: this.options.paths.presentationSkillSourceDir,
@@ -414,9 +418,9 @@ export class DesignTaskExecutor {
     }
     const referenceBrief = visualReferenceBrief(referenceStyle ?? []);
     const isPresentation = designContext.presentation !== undefined;
-    const requiredSkillId = isPresentation
-      ? OPEN_DESIGN_PRESENTATION_SKILL
-      : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
+    const requiredSkillId = task.codeFilm
+      ? CODE_FILM_SKILL_ID
+      : isPresentation ? OPEN_DESIGN_PRESENTATION_SKILL : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
     validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const daemonHandle = this.options.daemon.current();
     const client = this.daemonClient();
@@ -498,6 +502,57 @@ export class DesignTaskExecutor {
     let previewPusher: PreviewPusher | undefined;
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
+      if (task.codeFilm) {
+        const source = prepared.inputFiles[0];
+        const started = await client.odJson('/api/runs', {
+          method: 'POST',
+          body: {
+            projectId,
+            conversationId,
+            agentId: 'codex',
+            model: model.model,
+            skillId: CODE_FILM_SKILL_ID,
+            message: instruction,
+            attachments: [source.path],
+          },
+          signal: signalForDeadline(executionDeadline, signal),
+          acceptedStatuses: [200, 202],
+        });
+        activeRunId = typeof started.runId === 'string' ? started.runId
+          : typeof started.id === 'string' ? started.id : undefined;
+        if (!activeRunId) {
+          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign did not return a film run identity');
+        }
+        const filmRunId = activeRunId;
+        const daemon = this.options.daemon;
+        let inputVerified = false;
+        const checkInput = () => {
+          const proof = verifyCodeFilmInput(workspaceDir, source);
+          onStage('code_film_input_verified', { ...proof, runId: filmRunId, instructionSha256: sha256(instruction) });
+          inputVerified = true;
+        };
+        try {
+          await client.waitForRun(filmRunId, budget.finalizationDeadline, signal, onStage, async () => {
+            if (!inputVerified && fs.existsSync(path.join(workspaceDir, '.od-skills', CODE_FILM_SKILL_ID, 'scripts', 'setup.sh'))) {
+              checkInput();
+            }
+          });
+          daemon.freeze();
+          let film: WorkspacePackageFile;
+          try {
+            if (!inputVerified) checkInput();
+            verifyCodeFilmInput(workspaceDir, source);
+            film = collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
+          } finally {
+            daemon.thaw();
+          }
+          return await this.commitOutputs(task, prepared, [film], filmRunId, executionDeadline, signal, onStage);
+        } catch (error) {
+          onStage('code_film_run_diagnostic',
+            await client.captureRunTranscriptDigest([filmRunId], () => Math.max(0, executionDeadline - Date.now())));
+          throw error;
+        }
+      }
       const designDirection = designContext.direction;
       const reviewMode = designDirection?.reviewMode ?? 'light';
       // PPT 的终审由所选 deck skill 承担，固定一轮；MAP 的 off/strict 不得跳过或叠加自研审美轮次。
@@ -748,80 +803,94 @@ export class DesignTaskExecutor {
       if (totalOutputBytes > transfer.maxPublicOutputBytes) {
         throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxPublicOutputBytes');
       }
-      const commitBody = {
-        schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
-        sessionId,
-        runId: prepared.mapRunId,
-        baseRevision: transfer.baseRevision,
-        files,
-      };
-      const serialized = JSON.stringify(commitBody);
-      if (Buffer.byteLength(serialized, 'utf8') > transfer.maxOutputBytes) {
-        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'Serialized public output exceeds maxOutputBytes');
-      }
-      assertExecutionDeadline(executionDeadline);
-      onStage('workspace_committing', { fileCount: files.length });
-      const commitDeadline = Math.min(
-        executionDeadline,
-        Date.now() + Math.min(task.timeoutSeconds * 1000, 60_000),
-      );
-      const commitResponse = await this.fetchPartnerTransfer(transfer.resultCommitUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${transferToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: serialized,
-        signal: signalForDeadline(commitDeadline, signal),
-      }, 'workspaceTransfer.resultCommitUrl');
-      const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
-      assertExecutionDeadline(executionDeadline);
-      let commit: Record<string, unknown> = {};
-      try {
-        commit = commitBytes.length ? JSON.parse(commitBytes.toString('utf8')) as Record<string, unknown> : {};
-      } catch {
-        throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned invalid JSON');
-      }
-      if (!commitResponse.ok) {
-        throw new AgentWorkspaceRuntimeError(
-          'workspace_commit_failed',
-          typeof commit.message === 'string'
-            ? commit.message
-            : `MAP result commit failed with status ${commitResponse.status}`,
-          commitResponse.status >= 500,
-        );
-      }
-      const artifactRef = typeof commit.artifactRef === 'string' ? commit.artifactRef : '';
-      if (!artifactRef) {
-        throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned no artifactRef');
-      }
-      const resultSha256 = typeof commit.resultSha256 === 'string'
-        ? commit.resultSha256.toLowerCase()
-        : '';
-      if (!SHA256_RE.test(resultSha256)) {
-        throw new AgentWorkspaceRuntimeError(
-          'workspace_commit_invalid_response',
-          'MAP result commit returned no valid resultSha256',
-        );
-      }
-      return {
-        artifactRef,
-        resultSha256,
-        files: files.map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
-          path: filePath,
-          sha256: fileSha,
-          size,
-          mediaType,
-        })),
-        openDesignRunId: finalRunId,
-      };
+      return await this.commitOutputs(task, prepared, files, finalRunId, executionDeadline, signal, onStage);
     } finally {
       previewPusher?.close();
       if (activeRunId) await client.cancelRun(activeRunId);
       await relay.close().catch(() => undefined);
       fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
     }
+  }
+
+  private async commitOutputs(
+    task: DesignTaskInput,
+    prepared: PreparedWorkspace,
+    files: WorkspacePackageFile[],
+    finalRunId: string,
+    executionDeadline: number,
+    signal: AbortSignal,
+    onStage: StageReporter,
+  ): Promise<DesignTaskResult> {
+    const { transfer, taskId: sessionId } = task;
+    const { transferToken } = transfer;
+    const commitBody = {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      sessionId,
+      runId: prepared.mapRunId,
+      baseRevision: transfer.baseRevision,
+      files,
+    };
+    const serialized = JSON.stringify(commitBody);
+    if (Buffer.byteLength(serialized, 'utf8') > transfer.maxOutputBytes) {
+      throw new AgentWorkspaceRuntimeError('design_output_too_large', 'Serialized public output exceeds maxOutputBytes');
+    }
+    assertExecutionDeadline(executionDeadline);
+    onStage('workspace_committing', { fileCount: files.length });
+    const commitDeadline = Math.min(
+      executionDeadline,
+      Date.now() + Math.min(task.timeoutSeconds * 1000, 60_000),
+    );
+    const commitResponse = await this.fetchPartnerTransfer(transfer.resultCommitUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${transferToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: serialized,
+      signal: signalForDeadline(commitDeadline, signal),
+    }, 'workspaceTransfer.resultCommitUrl');
+    const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
+    assertExecutionDeadline(executionDeadline);
+    let commit: Record<string, unknown> = {};
+    try {
+      commit = commitBytes.length ? JSON.parse(commitBytes.toString('utf8')) as Record<string, unknown> : {};
+    } catch {
+      throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned invalid JSON');
+    }
+    if (!commitResponse.ok) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_commit_failed',
+        typeof commit.message === 'string'
+          ? commit.message
+          : `MAP result commit failed with status ${commitResponse.status}`,
+        commitResponse.status >= 500,
+      );
+    }
+    const artifactRef = typeof commit.artifactRef === 'string' ? commit.artifactRef : '';
+    if (!artifactRef) {
+      throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned no artifactRef');
+    }
+    const resultSha256 = typeof commit.resultSha256 === 'string'
+      ? commit.resultSha256.toLowerCase()
+      : '';
+    if (!SHA256_RE.test(resultSha256)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_commit_invalid_response',
+        'MAP result commit returned no valid resultSha256',
+      );
+    }
+    return {
+      artifactRef,
+      resultSha256,
+      files: files.map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
+        path: filePath,
+        sha256: fileSha,
+        size,
+        mediaType,
+      })),
+      openDesignRunId: finalRunId,
+    };
   }
 
   /**

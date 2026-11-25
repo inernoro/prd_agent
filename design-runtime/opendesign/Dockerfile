@@ -47,6 +47,22 @@ RUN npm install --global --ignore-scripts=false @openai/codex@0.143.0 \
     && test "$(codex --version)" = "codex-cli 0.143.0" \
     && npm cache clean --force
 
+# CDS code-film validation: install the original skill, pinned by revision and byte digest.
+# Keep it outside the task sandbox and register it only when a film run is requested.
+RUN apk add --no-cache curl git ffmpeg python3 py3-pip libsndfile font-noto-cjk \
+    && mkdir -p /opt/map-design-runtime/lemo-opuscar/scripts \
+    && cd /opt/map-design-runtime/lemo-opuscar \
+    && upstream=https://raw.githubusercontent.com/lemomo-ai/lemo-opuscar/8ca0dd805e214bcc1d30714cd5b9d21cc02a454b/plugin/skills/lemo-opuscar \
+    && curl --retry 3 --fail --silent --show-error "$upstream/SKILL.md" -o SKILL.md \
+    && curl --retry 3 --fail --silent --show-error "$upstream/scripts/setup.sh" -o scripts/setup.sh \
+    && printf '%s\n' \
+        '17c2f1c2a337becf28ec1e23eec46b42a6f0ffa2691b40d8b97b35d043b79f65  SKILL.md' \
+        '6b5e39efe99e42d671edb365e11b89d065ccda7188a45e81fe5757f5f46661be  scripts/setup.sh' \
+        | sha256sum -c - \
+    && ffmpeg -version >/dev/null \
+    && python3 -m venv /tmp/map-code-film-venv \
+    && rm -rf /tmp/map-code-film-venv
+
 COPY THIRD_PARTY_NOTICES.md /usr/share/doc/map-design-runtime/THIRD_PARTY_NOTICES.md
 COPY --from=build /build/dist /opt/map-design-runtime/dist
 COPY scripts/image-browser-smoke.mjs /opt/map-design-runtime/scripts/image-browser-smoke.mjs

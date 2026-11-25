@@ -199,12 +199,22 @@ public sealed class DesignArtifactsController : ControllerBase
                 DesignArtifactRequestAuthorityGuard.ErrorCode,
                 "运行时模型、网关地址和审计归属由 MAP 统一配置，请移除覆盖字段后重试"));
         }
-        var instruction = (request.Instruction ?? string.Empty).Trim();
-        if (instruction.Length == 0)
+        var isCodeFilm = request.ArtifactType == DesignArtifactTypes.CodeFilm;
+        var instruction = request.Instruction ?? string.Empty;
+        if (!isCodeFilm) instruction = instruction.Trim();
+        if (string.IsNullOrWhiteSpace(instruction))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请用两句话说明网页用途和期望效果"));
         if (instruction.Length > 4000)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "设计要求不能超过 4000 个字符"));
-        if (!string.Equals(request.ArtifactType, DesignArtifactTypes.WebPage, StringComparison.OrdinalIgnoreCase))
+        if (isCodeFilm && (!CodeFilmEnabled() || request.AttachmentIds?.Count != 1
+                || !string.IsNullOrWhiteSpace(request.DestinationTeamId)
+                || !string.IsNullOrWhiteSpace(request.ReferenceSiteId)
+                || !string.IsNullOrWhiteSpace(request.StyleId)
+                || !string.IsNullOrWhiteSpace(request.DesignSystemId)
+                || request.KnowledgeReferences is { Count: > 0 }))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "请在 CDS 影片隔离分支提交一份 Markdown 原文"));
+        if (!isCodeFilm && !string.Equals(request.ArtifactType, DesignArtifactTypes.WebPage, StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前统一入口只支持生成网页，HTML PPT 请从对应工作台生成"));
 
         // 目标空间在这一刻就定下来：用户还在场，权限不通过可以当场告诉他。等到建站时才校验，
@@ -244,7 +254,13 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
                 _db, userId, request.AttachmentIds, CancellationToken.None);
-            if (!string.IsNullOrWhiteSpace(request.ReferenceSiteId))
+            if (isCodeFilm)
+            {
+                if (uploadedSources.Count != 1
+                    || !Path.GetExtension(uploadedSources[0].FileName).Equals(".md", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传一份 Markdown 原文"));
+            }
+            else if (!string.IsNullOrWhiteSpace(request.ReferenceSiteId))
             {
                 if (!string.IsNullOrWhiteSpace(request.StyleId) || !string.IsNullOrWhiteSpace(request.DesignSystemId))
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考网页和其他风格只能选一种"));
@@ -326,7 +342,7 @@ public sealed class DesignArtifactsController : ControllerBase
             DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
             Status = RunStatuses.Queued,
-            ArtifactType = DesignArtifactTypes.WebPage,
+            ArtifactType = isCodeFilm ? DesignArtifactTypes.CodeFilm : DesignArtifactTypes.WebPage,
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = sourceSurface,
             DestinationTeamId = destinationTeamId,
@@ -347,14 +363,17 @@ public sealed class DesignArtifactsController : ControllerBase
                 SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
             PhaseCode = DesignArtifactPhaseCodes.Queued,
-            Phase = "网页生成任务已进入队列",
+            Phase = isCodeFilm ? "影片生成任务已进入队列" : "网页生成任务已进入队列",
             FirstVisibleFeedbackAt = createdAt,
             LastProgressAt = createdAt,
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
         };
-        DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
-        WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
+        if (!isCodeFilm)
+        {
+            DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
+            WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
+        }
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
 
         var meta = new RunMeta
@@ -715,6 +734,25 @@ public sealed class DesignArtifactsController : ControllerBase
             : Ok(ApiResponse<object>.Ok(ToDto(run)));
     }
 
+    private static bool CodeFilmEnabled() =>
+        DeploymentScope.Current != null
+        && Environment.GetEnvironmentVariable("VITE_GIT_BRANCH") == "codex/opendesign-sketchnote-film";
+
+    [HttpGet("runs/{runId}/film.mp4")]
+    public async Task<IActionResult> GetCodeFilm(string runId, [FromServices] IDesignArtifactWorkspaceBroker workspace, CancellationToken ct)
+    {
+        if (!CodeFilmEnabled()) return NotFound();
+        var userId = this.GetRequiredUserId();
+        var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+            && item.Id == runId && item.UserId == userId && item.ArtifactType == DesignArtifactTypes.CodeFilm
+            && item.Status == RunStatuses.Done).FirstOrDefaultAsync(ct);
+        if (run == null) return NotFound();
+        var package = await workspace.ReadResultAsync(run.Id, ct);
+        var film = package.Files.Single(file => file.Path == "film.mp4");
+        Response.Headers.CacheControl = "private, no-store";
+        return File(Convert.FromBase64String(film.ContentBase64), "video/mp4", enableRangeProcessing: true);
+    }
+
     [HttpPost("runs/{runId}/cancel")]
     public async Task<IActionResult> CancelRun(string runId)
     {
@@ -725,7 +763,8 @@ public sealed class DesignArtifactsController : ControllerBase
             .Find(run => run.Id == runId
                          && run.UserId == userId
                          && (run.ArtifactType == DesignArtifactTypes.WebPage
-                             || run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                             || run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                             || run.ArtifactType == DesignArtifactTypes.CodeFilm)
                          && (run.Operation == DesignArtifactOperations.Generate
                              || run.Operation == DesignArtifactOperations.Edit))
             .FirstOrDefaultAsync(CancellationToken.None);

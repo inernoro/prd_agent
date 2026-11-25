@@ -354,6 +354,23 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
 
             executionCts.Token.ThrowIfCancellationRequested();
+            if (run.ArtifactType == DesignArtifactTypes.CodeFilm)
+            {
+                var film = verifiedFiles?.SingleOrDefault(file => file.Path == "film.mp4")
+                    ?? throw new InvalidOperationException("OpenDesign 没有交付 MP4 成片");
+                if (!await CompleteRunAsync(db, run.Id, leaseOwner, null, null,
+                        "影片已生成", DateTime.UtcNow, CancellationToken.None, codeFilm: true))
+                    throw new DesignArtifactRunLeaseLostException(run.Id);
+
+                meta.Status = RunStatuses.Done;
+                meta.EndedAt = DateTime.UtcNow;
+                await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+                await projection.WriteAsync(() => _events.AppendEventAsync(RunKinds.DesignArtifact, run.Id, "done",
+                    new { mediaType = film.MediaType, sha256 = film.Sha256, size = film.Size,
+                        filmUrl = $"/api/design-artifacts/runs/{run.Id}/film.mp4" }, RunTtl, CancellationToken.None));
+                return;
+            }
+
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var isOpenDesignPresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
                                            && run.Runtime == DesignArtifactRuntimes.OpenDesign;
@@ -2087,16 +2104,21 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string? artifactRevisionId,
         string phase,
         DateTime completedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool codeFilm = false)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
-                 && x.Status == RunStatuses.Committing
+                 && (codeFilm
+                     ? x.ArtifactType == DesignArtifactTypes.CodeFilm && x.Status == RunStatuses.Running
+                       && x.CancelRequestedAt == null && x.WorkspaceResultAssetKey != null
+                     : x.Status == RunStatuses.Committing)
                  && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > completedAt),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.Status, RunStatuses.Done)
+                .Set(x => x.PhaseCode, DesignArtifactPhaseCodes.Completed)
                 .Set(x => x.Progress, 100)
                 .Set(x => x.Phase, phase)
                 .Set(x => x.ArtifactSiteId, artifactSiteId)

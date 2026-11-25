@@ -502,6 +502,7 @@ public static class DesignArtifactTypes
 {
     public const string WebPage = "web-page";
     public const string HtmlPpt = "html-ppt";
+    public const string CodeFilm = "code-film";
 }
 
 public static class DesignArtifactOperations

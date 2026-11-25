@@ -5,6 +5,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { normalizeTaskRequest } from '../src/protocol.js';
+import { sha256 } from '../src/workspace/primitives.js';
+import { MAP_DESIGN_WORKSPACE_SCHEMA, parseWorkspacePackage } from '../src/workspace/transfer.js';
 import {
   API_KEY,
   auth,
@@ -155,6 +157,35 @@ describe('authentication', () => {
 });
 
 describe('POST /v1/tasks', () => {
+  it('preserves the exact film command and original text without using the HTML output contract', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const source = Buffer.from('# ADR 原文\r\n\r\n  保留空白。\n');
+    const serialized = Buffer.from(JSON.stringify({
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      runId: pkg.runId,
+      baseRevision: pkg.baseRevision,
+      files: [{
+        path: 'decisions.md', mediaType: 'text/markdown', sha256: sha256(source),
+        size: source.length, contentBase64: source.toString('base64'),
+      }],
+    }));
+    const command = '  用视觉笔记风格给我做一支关于架构决策记录的片子。\n';
+    const request = taskRequest(map, pkg);
+    const filmRequest = {
+      ...request,
+      envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command },
+      transfer: { ...(request.transfer as object), inputSha256: sha256(serialized), allowedOutputPaths: ['film.mp4'] },
+    };
+    const normalized = normalizeTaskRequest(filmRequest);
+
+    expect(normalized.codeFilm).toBe(true);
+    expect(normalized.instruction).toBe(command);
+    expect(parseWorkspacePackage(serialized, normalized.transfer).files[0].bytes).toEqual(source);
+    expect(() => normalizeTaskRequest({ ...filmRequest, transfer: request.transfer })).toThrow('only film.mp4');
+    expect(() => normalizeTaskRequest({ ...filmRequest, envelope: request.envelope })).toThrow('index.html');
+  });
+
   it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {
     const pkg = buildPackage([]);
     map = await startFakeMap(pkg);

@@ -102,7 +102,11 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
   if (!Number.isSafeInteger(attempt) || Number(attempt) < 1 || Number(attempt) > 100) invalid('attempt must be an integer in [1, 100]');
   const rawTransfer = record(request.transfer, 'transfer');
   const { previewUrl: rawPreviewUrl, ...transferFields } = rawTransfer;
-  const transfer = normalizeWorkspaceTransfer(transferFields);
+  const envelope = record(request.envelope, 'envelope');
+  const codeFilm = envelope.schemaVersion === 'map-code-film-command-v1';
+  if (codeFilm && (envelope.runId !== taskId || typeof envelope.command !== 'string'
+      || !envelope.command.trim() || envelope.command.length > 4_000)) invalid('invalid code film envelope');
+  const transfer = normalizeWorkspaceTransfer(transferFields, codeFilm);
   let previewUrl: string | undefined;
   if (rawPreviewUrl !== undefined && rawPreviewUrl !== null) {
     const parsed = validateTransferUrl(rawPreviewUrl, 'transfer.previewUrl');
@@ -125,7 +129,7 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
   ) {
     invalid(`timeoutSeconds must be an integer in [${MIN_TASK_TIMEOUT_SECONDS}, ${MAX_TASK_TIMEOUT_SECONDS}]`);
   }
-  const instruction = normalizeEnvelope(request.envelope, taskId);
+  const instruction = codeFilm ? envelope.command as string : normalizeEnvelope(envelope, taskId);
   const fingerprint = sha256(JSON.stringify({
     taskId,
     attempt,
@@ -141,6 +145,7 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
       runId: model.runId,
     },
     timeoutSeconds,
+    ...(codeFilm ? { codeFilm } : {}),
     instruction,
   }));
   return {
@@ -151,6 +156,7 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     ...(previewUrl ? { previewUrl } : {}),
     model,
     timeoutSeconds: Number(timeoutSeconds),
+    ...(codeFilm ? { codeFilm } : {}),
     instruction,
   };
 }
