@@ -5,6 +5,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -290,6 +292,8 @@ public class VideoGenService : IVideoGenService
                       ?? throw new ArgumentException("所属视频项目不存在或无权访问");
         }
         var mode = (request?.Mode ?? VideoGenMode.Direct).Trim().ToLowerInvariant();
+        if (mode == VideoGenMode.Template)
+            return await CreateTemplateRunAsync(appKey, ownerAdminId, request!, project, ct);
         if (mode is not (VideoGenMode.Direct or VideoGenMode.Storyboard)) mode = VideoGenMode.Direct;
 
         var duration = request?.DirectDuration ?? project?.DefaultDuration ?? 5;
@@ -408,6 +412,37 @@ public class VideoGenService : IVideoGenService
         _logger.LogInformation("VideoGen direct Run 已创建: runId={RunId}, model={Model}, duration={Duration}s",
             directRun.Id, model, duration);
         return directRun.Id;
+    }
+
+    private async Task<string> CreateTemplateRunAsync(string appKey, string owner, CreateVideoGenRunRequest request,
+        VideoProject? project, CancellationToken ct)
+    {
+        var template = VideoTemplateCatalog.Find(request.TemplateId);
+        if (appKey != "video-agent" || template == null || request.TemplateRequestId is not { } requestId || requestId == Guid.Empty)
+            throw new ArgumentException("请选择有效的视频模板后重新提交。");
+        var article = request.ArticleMarkdown ?? project?.SourceMarkdown ?? "";
+        if (article.Length > 100_000 || article.Trim().Length < 20)
+            throw new ArgumentException("请输入 20 至 100,000 字符的稿件。");
+        var title = request.ArticleTitle?.Trim();
+        if (title?.Length > 150) throw new ArgumentException("标题最多 150 个字符。");
+        var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"video-template:{owner}:{requestId:D}")))[..32].ToLowerInvariant();
+        var run = new VideoGenRun
+        {
+            Id = id, Mode = VideoGenMode.Template, TemplateId = template.Id, AppKey = appKey, OwnerAdminId = owner,
+            TaskPermitId = TaskExecutionContext.Current?.PermitId, ProjectId = project?.Id, DeploymentSlug = DeploymentScope.Current,
+            ArticleMarkdown = article, ArticleTitle = string.IsNullOrEmpty(title) ? template.Name : title,
+            Status = VideoGenRunStatus.ScopedQueued,
+        };
+        try { await _db.VideoGenRuns.InsertOneAsync(run, cancellationToken: ct); }
+        catch (MongoWriteException error) when (error.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var previous = await _db.VideoGenRuns.Find(x => x.Id == id && x.OwnerAdminId == owner && x.AppKey == appKey
+                && x.DeletionRequestedAt == null).FirstOrDefaultAsync(ct);
+            if (previous == null || previous.TemplateId != template.Id || previous.ArticleMarkdown != article || previous.ArticleTitle != run.ArticleTitle
+                || previous.ProjectId != project?.Id || previous.DeploymentSlug != run.DeploymentSlug)
+                throw new ArgumentException("此请求标识已用于另一份稿件，请重新提交。");
+        }
+        return id;
     }
 
     public async Task UpdateSceneAsync(string runId, string ownerAdminId, int sceneIndex, UpdateVideoSceneRequest request, string? appKey = null, CancellationToken ct = default)

@@ -14,6 +14,8 @@ import type {
   VideoGenRun,
   VideoGenRunListItem,
   VideoProject,
+  VideoTemplate,
+  VideoTemplateInput,
   VideoProjectInput,
   VideoModelOption,
   VideoExportTask,
@@ -22,6 +24,19 @@ import type {
 
 export const listVideoModelsReal = async () =>
   apiRequest<VideoModelOption[]>(api.videoAgent.models(), { method: 'GET' });
+
+export const listVideoTemplatesReal = async () =>
+  apiRequest<{ items: VideoTemplate[]; canGenerate: boolean; speechReady: boolean }>(
+    api.videoAgent.templates(), { method: 'GET' },
+  );
+
+export const createVideoTemplateReal = async (input: VideoTemplateInput) =>
+  apiRequest<{ runId: string }>(api.videoAgent.createTemplate(), {
+    method: 'POST', body: input, headers: { 'Idempotency-Key': input.templateRequestId },
+  });
+
+export const publishVideoTemplateReal = async (runId: string) =>
+  apiRequest<{ siteId: string }>(api.videoAgent.publishTemplate(runId), { method: 'POST' });
 
 export const listVideoProjectsReal = async () =>
   apiRequest<VideoProject[]>(api.videoAgent.projects.list(), { method: 'GET' });

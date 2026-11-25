@@ -1186,6 +1186,9 @@ export const api = {
   // ============ Video Agent 视频创作 ============
   videoAgent: {
     models: () => '/api/video-agent/models',
+    templates: () => '/api/video-agent/templates',
+    createTemplate: () => '/api/video-agent/templates/runs',
+    publishTemplate: (runId: string) => `/api/video-agent/runs/${runId}/publish`,
     projects: {
       list: () => '/api/video-agent/projects',
       create: () => '/api/video-agent/projects',

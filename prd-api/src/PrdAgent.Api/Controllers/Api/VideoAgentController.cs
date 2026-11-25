@@ -558,6 +558,8 @@ public partial class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateRun([FromBody] CreateVideoGenRunRequest request, CancellationToken ct)
     {
+        if (string.Equals(request.Mode?.Trim(), VideoGenMode.Template, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请从视频模板入口创建任务。"));
         try
         {
             var runId = await _videoGenService.CreateRunAsync(AppKey, GetAdminId(), request, ct);
@@ -583,6 +585,7 @@ public partial class VideoAgentController : ControllerBase
             r.Id,
             r.Status,
             r.Mode,
+            r.TemplateId,
             r.ArticleTitle,
             r.CurrentPhase,
             r.PhaseProgress,

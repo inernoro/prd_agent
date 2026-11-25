@@ -28,6 +28,7 @@ import type {
   VideoProjectInput,
   VideoTimelineTrack,
 } from '@/services/contracts/videoAgent';
+import { VideoTemplateGallery } from './VideoTemplatePanel';
 import { resolveVideoTitle } from './titleUtils';
 import { VIDEO_STYLE_DEFINITIONS } from './videoStudioRegistry';
 import './videoConsole.css';
@@ -46,6 +47,7 @@ interface VideoProjectStudioProps {
   onImportClips?: (input: VideoProjectInput, files: File[]) => Promise<void>;
   onOpenRun: (runId: string) => void;
   onOpenDemo: () => void;
+  onOpenTemplateRun?: (runId: string) => void;
 }
 
 const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
@@ -157,6 +159,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   onImportClips,
   onOpenRun,
   onOpenDemo,
+  onOpenTemplateRun,
 }) => {
   const [creationMode, setCreationMode] = useState<'storyboard' | 'direct'>('storyboard');
   const [title, setTitle] = useState('');
@@ -234,8 +237,12 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const availableDurations = selectedModel?.durations.length ? selectedModel.durations : [5];
   const availableResolutions = selectedModel?.resolutions.length ? selectedModel.resolutions : ['720p'];
   const recentRuns = runs
-    .filter((run) => ACTIVE_RUN_STATUSES.has(run.status) || (run.status === 'Completed' && Boolean(run.videoAssetUrl)))
+    .filter((run) => run.mode === 'template' || ACTIVE_RUN_STATUSES.has(run.status) || (run.status === 'Completed' && Boolean(run.videoAssetUrl)))
     .slice(0, 6);
+  const recentTemplateRuns = recentRuns.filter((run) => run.mode === 'template').slice(0, 3);
+  const visibleProjects = projects.slice(0, 6 - recentTemplateRuns.length);
+  const remainingRuns = recentRuns.filter((run) => run.mode !== 'template')
+    .slice(0, 6 - visibleProjects.length - recentTemplateRuns.length);
   const recentWorkCount = projects.length + recentRuns.length;
 
   const readFile = async (file: File) => {
@@ -454,11 +461,13 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           </section>
         </section>
 
+        {onOpenTemplateRun && <VideoTemplateGallery onCreated={onOpenTemplateRun} />}
+
         <section ref={recentWorkRef} id="video-recent-work" className="video-create-library" aria-label="最近作品">
           <div className="video-create-section-heading"><div><FolderOpen size={16} /><strong>最近作品</strong></div><span>{recentWorkCount} 个作品</span></div>
           {recentWorkCount > 0 ? (
             <div className="video-create-project-grid">
-              {projects.slice(0, 6).map((item) => (
+              {visibleProjects.map((item) => (
                 <button key={item.id} className={item.id === project?.id ? 'is-active' : ''} onClick={() => {
                   onSelectProject(item);
                   if (item.latestRunId) onOpenRun(item.latestRunId);
@@ -468,7 +477,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
                   <ArrowUpRight size={15} />
                 </button>
               ))}
-              {recentRuns.slice(0, Math.max(0, 6 - projects.length)).map((run) => (
+              {[...recentTemplateRuns, ...remainingRuns].map((run) => (
                 <button key={run.id} onClick={() => onOpenRun(run.id)}>
                   <ProjectCover mediaUrl={run.videoAssetUrl} mediaType="video" status={run.status} />
                   <span className="video-create-project-copy"><strong>{resolveVideoTitle(run.articleTitle, run.createdAt, 28)}</strong><small>{runSubtitle(run)}</small></span>

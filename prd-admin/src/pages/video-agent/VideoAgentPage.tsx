@@ -20,6 +20,7 @@ import type {
   VideoModelOption,
 } from '@/services/contracts/videoAgent';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
+import { VideoTemplateResult } from './VideoTemplatePanel';
 import { VideoProjectStudio } from './VideoProjectStudio';
 import { VideoStoryboardEditor } from './VideoStoryboardEditor';
 import { VideoStudioDemo } from './VideoStudioDemo';
@@ -280,6 +281,11 @@ export const VideoAgentPage: React.FC = () => {
         </div>
       );
     }
+    if (activeRunMode === 'template') {
+      return <VideoTemplateResult key={activeRunId} runId={activeRunId}
+        onBack={() => { setActiveRunId(null); void loadWorkspace(); }}
+        onCreated={(id) => { setResolvedRunMode({ id, mode: 'template' }); setActiveRunId(id); }} />;
+    }
     return (
       <div className="h-full min-h-0 p-3">
         <VideoStoryboardEditor
@@ -310,6 +316,7 @@ export const VideoAgentPage: React.FC = () => {
       onCreateDirect={createDirectVideo}
       onImportClips={importClips}
       onOpenRun={setActiveRunId}
+      onOpenTemplateRun={(id) => { setResolvedRunMode({ id, mode: 'template' }); setActiveRunId(id); }}
       onOpenDemo={() => setDemoOpen(true)}
     />
   );

@@ -132,6 +132,7 @@ public static class VideoGenMode
 {
     public const string Direct = "direct";
     public const string Storyboard = "storyboard";
+    public const string Template = "template";
 }
 
 /// <summary>
@@ -328,6 +329,13 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 
     /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
     public string Mode { get; set; } = VideoGenMode.Direct;
+    public string? TemplateId { get; set; }
+    public List<VideoTemplateCaption> TemplateCaptions { get; set; } = [];
+    public string? PublishedSiteId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? TemplateLeaseUntil { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? PublishLeaseUntil { get; set; }
 
     // ─── 输入 ───
 
@@ -433,6 +441,8 @@ public sealed class VideoGenDeletionArtifact
     public List<string> Urls { get; set; } = new();
 }
 
+public sealed record VideoTemplateCaption(string Text, double StartSeconds, double EndSeconds, string SpeechRunId);
+
 public sealed record DeleteVideoGenRunResult(
     bool Deleted,
     bool ProjectDeleted,
@@ -530,6 +540,8 @@ public class CreateVideoGenRunRequest
     public string? ProjectId { get; set; }
     /// <summary>模式：direct / storyboard（默认 direct）</summary>
     public string? Mode { get; set; }
+    public string? TemplateId { get; set; }
+    public Guid? TemplateRequestId { get; set; }
 
     /// <summary>direct 模式：用户 prompt（必填）</summary>
     public string? DirectPrompt { get; set; }

@@ -44,7 +44,20 @@ export const VIDEO_MODEL_TIERS = [
 export type VideoModelTier = typeof VIDEO_MODEL_TIERS[number]['tier'];
 
 /** 视频生成模式 */
-export type VideoGenMode = 'direct' | 'storyboard';
+export type VideoGenMode = 'direct' | 'storyboard' | 'template';
+
+export interface VideoTemplate {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface VideoTemplateInput {
+  templateId: string;
+  templateRequestId: string;
+  articleTitle?: string;
+  articleMarkdown: string;
+}
 
 export type VideoProjectStatus = 'Draft' | 'Analyzing' | 'Editing' | 'Rendering' | 'Completed';
 export type VideoProjectAssetType = 'character' | 'scene' | 'prop' | 'audio';
@@ -190,6 +203,9 @@ export interface VideoGenRun {
   status: string;
   /** 创作模式 */
   mode: VideoGenMode;
+  templateId?: string;
+  publishedSiteId?: string;
+  templateCaptions?: Array<{ text: string; startSeconds: number; endSeconds: number; speechRunId: string }>;
   articleTitle?: string;
   // direct 模式 prompt | storyboard 模式可选拼接 prompt
   directPrompt: string;

@@ -72,6 +72,7 @@ public partial class VideoGenRunWorker : BackgroundService
                 if (await RecoverCompletedExportTaskAsync(stoppingToken)) continue;
                 if (await RecoverExpiredExportHolderAsync(stoppingToken)) continue;
                 if (await RecoverInterruptedGenerationAsync(stoppingToken)) continue;
+                if (await FailExpiredTemplateAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
@@ -87,6 +88,8 @@ public partial class VideoGenRunWorker : BackgroundService
                     {
                         if (queued.Mode == VideoGenMode.Storyboard)
                             await ProcessStoryboardScriptingAsync(queued);
+                        else if (queued.Mode == VideoGenMode.Template)
+                            await ProcessTemplateAsync(queued, stoppingToken);
                         else
                             await ProcessDirectVideoGenAsync(queued);
                     }
@@ -261,15 +264,15 @@ public partial class VideoGenRunWorker : BackgroundService
         var nextStatus = pending.Mode == VideoGenMode.Storyboard
             ? VideoGenRunStatus.Scripting
             : VideoGenRunStatus.Rendering;
-        var nextPhase = pending.Mode == VideoGenMode.Storyboard
-            ? "scripting"
-            : "videogen-submitting";
+        var nextPhase = pending.Mode == VideoGenMode.Direct ? "videogen-submitting" : "scripting";
 
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.Status, nextStatus)
             .Set(x => x.StartedAt, DateTime.UtcNow)
             .Set(x => x.CurrentPhase, nextPhase)
             .Set(x => x.PhaseProgress, 1);
+        if (pending.Mode == VideoGenMode.Template)
+            update = update.Set(x => x.TemplateLeaseUntil, DateTime.UtcNow.Add(TemplateTimeLimit));
 
         var run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
             fb.Eq(x => x.Id, pending.Id) & queue,

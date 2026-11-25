@@ -1,3 +1,4 @@
+using PrdAgent.Core.Models;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -138,7 +139,8 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
             try
             {
                 using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: ct);
-                declaredRunCount = ReadLiteraryBatchRunCount(operation, body.RootElement);
+                declaredRunCount = operation == "PrdAgent.Api.Controllers.Api.VideoAgentController.CreateTemplate"
+                    ? VideoTemplateCatalog.SceneCount + 1 : ReadLiteraryBatchRunCount(operation, body.RootElement);
                 if (body.RootElement.ValueKind == JsonValueKind.Object)
                 {
                     var root = body.RootElement;
