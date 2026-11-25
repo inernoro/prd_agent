@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.21"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.22"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -920,7 +920,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能。" + install_bundle)
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整的 CDS 技能包。" + install_bundle)
     if bundle.get("version") != VERSION:
         fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
@@ -11033,8 +11033,8 @@ def cmd_update(args: argparse.Namespace) -> None:
     步骤：
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
-      3. 五个 CDS 技能目录统一备份到当前项目 .cds/skill-backups
-      4. 校验包内五个技能齐全后同步到当前 Agent Skills 根
+      3. 随包发布的 CDS 技能目录统一备份到当前项目 .cds/skill-backups
+      4. 校验包内技能目录齐全后同步到当前 Agent Skills 根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
     不动：项目凭据 / shell profile / 系统环境变量
@@ -11094,7 +11094,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 safe_members.append(m)
             tar.extractall(tmp_dir, members=safe_members)
 
-        # 4. 找到解压内的通用 skills 根并校验五个目录齐全。
+        # 4. 找到解压内的通用 skills 根并校验技能目录齐全。
         src_skills_dir = None
         for root, dirs, _files in os.walk(tmp_dir):
             if os.path.basename(root) != "skills":
@@ -11106,7 +11106,7 @@ def cmd_update(args: argparse.Namespace) -> None:
             die("tar.gz 内找不到完整的技能包（六个技能）。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
-        # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。
+        # 5. 用内容同步：统一更新技能目录，保留用户自定义的额外文件。
         replaced_files: list[str] = []
         for skill_name in bundle_skills:
             src_skill_dir = os.path.join(src_skills_dir, skill_name)
@@ -11127,7 +11127,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 if os.path.isdir(backup_dir):
                     shutil.copytree(backup_dir, target_dir)
         except Exception as rollback_err:
-            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复五个技能目录 "
+            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复技能目录 "
                 f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
         die(f"升级失败，已自动回滚: {e}", code=3)
     finally:

@@ -22859,12 +22859,12 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
-包含：cds（主技能）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）、preview-url（真实预览地址）。
+包含：cds（主技能）、cds-design（设计发布）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）、preview-url（真实预览地址）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断 → 正式发布与回滚。
 
 ## 安装
 
-解压后，将 \`skills/\` 下的五个目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
+解压后，将 \`skills/\` 下的完整技能目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
 
 | Agent | 项目级目录 |
 |------|-----------|
@@ -22906,6 +22906,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | 文件 | 何时看 |
 |------|--------|
 | \`skills/cds/SKILL.md\` | 主入口 |
+| \`skills/cds-design/SKILL.md\` | 设计发布与修订 |
 | \`skills/cds/reference/api.md\` | 需要 curl 直调 API |
 | \`skills/cds/reference/auth.md\` | 401 / 403 排查 |
 | \`skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |

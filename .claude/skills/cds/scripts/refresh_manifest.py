@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the public five-skill receipt after editing the bundle."""
+"""Refresh the public skill bundle receipt after editing the bundle."""
 import datetime
 import hashlib
 import json

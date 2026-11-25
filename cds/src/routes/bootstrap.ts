@@ -131,7 +131,7 @@ function resolveSkillsRoot(repoRoot: string): string | null {
  * 内容是技能说明与 CLI 源码（同款内容早已在海鲜市场公开），不含任何凭据。
  */
 async function buildCdsSkillPack(skillsRoot: string): Promise<Buffer | null> {
-  // 必须五个齐全才认本地包：少一个就是半成品，客户装完会缺部署或预览命令，
+  // 技能包目录齐全时才采用本地包：少一个就是半成品，客户装完会缺部署或预览命令，
   // 而且脚本看到合法的 skills/ 目录就认为装好了，不会再回源上游。宁可回源。
   const present = CDS_SKILL_KEYS.filter((k) => fs.existsSync(path.join(skillsRoot, k)));
   if (present.length !== CDS_SKILL_KEYS.length) return null;

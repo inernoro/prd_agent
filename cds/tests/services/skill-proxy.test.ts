@@ -455,7 +455,7 @@ describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
     expect(await cache.get(root)).toBeNull();
   });
 
-  it('五个齐全时出包，第二次命中缓存不再重新构建', async () => {
+  it('目录齐全时出包，第二次命中缓存不再重新构建', async () => {
     for (const k of ALL) mkSkill(root, k);
     const cache = new CdsSkillPackCache();
     const first = await cache.get(root);
