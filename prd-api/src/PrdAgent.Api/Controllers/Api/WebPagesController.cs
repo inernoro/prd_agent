@@ -1321,29 +1321,69 @@ public partial class WebPagesController : ControllerBase
         }
     }
 
+    /// <summary>入口读取上限：覆盖约 12MB 的单文件网页。</summary>
+    internal const long SiteHtmlMaxBytes = 16L * 1024 * 1024;
+
+    /// <summary>不需要占用大文件名额的读取量；不超过它的入口与放宽上限前的行为完全一致。</summary>
+    internal const long SiteHtmlUngatedBytes = 2L * 1024 * 1024;
+
+    /// <summary>
+    /// 超过 2MB 的入口读取在整个进程里同时最多 4 个。
+    /// 这条路由拿着公开分享链接就能匿名访问，单次 16MB 读取连同解码要占约 50MB 内存；
+    /// 不限并发时，一个客户端在限流允许的并发数内就能把 API 进程的内存撑爆。
+    /// </summary>
+    internal static readonly SemaphoreSlim LargeSiteHtmlReads = new(4, 4);
+
+    internal static TimeSpan LargeSiteHtmlWait = TimeSpan.FromSeconds(10);
+
     private async Task<IActionResult> ReadSiteHtmlStreamAsync(HostedSite site, Stream stream, long? declaredLength, CancellationToken ct)
     {
-        const long maxBytes = 16L * 1024 * 1024; // 覆盖约 12MB 的网页入口，同时限制匿名代理单次内存占用
-        if (declaredLength is > maxBytes)
+        if (declaredLength is > SiteHtmlMaxBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
         // 清单 Size、远端 Content-Length 不能代替实际流上限。未知或偏小长度也逐块检查，
         // 绝不先缓冲整个文件；本地 key、远端 HTTP 与分享读取共用这一条判据。
-        using var buffered = new MemoryStream();
-        var chunk = new byte[8192];
-        while (true)
+        var holdsLargeSlot = false;
+        try
         {
-            var read = await stream.ReadAsync(chunk, ct);
-            if (read <= 0) break;
-            if (buffered.Length + read > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
-            buffered.Write(chunk, 0, read);
+            if (declaredLength is > SiteHtmlUngatedBytes)
+            {
+                if (!await LargeSiteHtmlReads.WaitAsync(LargeSiteHtmlWait, ct))
+                    return LargeSiteHtmlBusy();
+                holdsLargeSlot = true;
+            }
+            using var buffered = new MemoryStream();
+            var chunk = new byte[8192];
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk, ct);
+                if (read <= 0) break;
+                if (buffered.Length + read > SiteHtmlMaxBytes)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
+                if (!holdsLargeSlot && buffered.Length + read > SiteHtmlUngatedBytes)
+                {
+                    // 未声明或少报长度的流读到 2MB 以外，才开始占大文件名额。
+                    if (!await LargeSiteHtmlReads.WaitAsync(LargeSiteHtmlWait, ct))
+                        return LargeSiteHtmlBusy();
+                    holdsLargeSlot = true;
+                }
+                buffered.Write(chunk, 0, read);
+            }
+            // 直接解码内部缓冲区，不再 ToArray 多复制一整份正文。
+            var bytes = buffered.GetBuffer();
+            var length = (int)buffered.Length;
+            var bom = length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+            var html = Encoding.UTF8.GetString(bytes, bom, length - bom);
+            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title,
+                contentType = "text/html", siteUrl = site.SiteUrl, html }));
         }
-        var bytes = buffered.ToArray();
-        var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
-            ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3) : Encoding.UTF8.GetString(bytes);
-        return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title,
-            contentType = "text/html", siteUrl = site.SiteUrl, html }));
+        finally
+        {
+            if (holdsLargeSlot) LargeSiteHtmlReads.Release();
+        }
     }
+
+    private IActionResult LargeSiteHtmlBusy() => StatusCode(StatusCodes.Status429TooManyRequests,
+        ApiResponse<object>.Fail(ErrorCodes.RATE_LIMITED, "同时打开的大网页较多，请稍后重试"));
 
     /// <summary>更新站点元信息</summary>
     [HttpPut("{id}")]

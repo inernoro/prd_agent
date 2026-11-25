@@ -87,6 +87,48 @@ public sealed class HostedSiteContentTests
         Assert.Contains("16MB", JsonSerializer.Serialize(result.Value, WebJson));
         Assert.InRange(stream.BytesRead, 16 * 1024 * 1024, 16 * 1024 * 1024 + 8192);
     }
+    private async Task<IActionResult> ReadRemote(int size, long? length)
+    {
+        using var client = new HttpClient(new ContentHandler(new UnseekableContent(size), length));
+        var factory = new Mock<IHttpClientFactory>(); factory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(client);
+        return await Controller(Sites(Site("https://assets.example/index.html", "index.html")).Object, new Mock<IAssetStorage>(MockBehavior.Strict).Object, factory.Object).GetSiteContent("site");
+    }
+
+    [Theory]
+    [InlineData(3L * 1024 * 1024)]
+    [InlineData(null)]
+    public async Task LargeEntryWaitsForAReadSlotAndTellsTheUserWhenAllAreBusy(long? declared)
+    {
+        var originalWait = WebPagesController.LargeSiteHtmlWait;
+        var taken = 0;
+        try {
+            WebPagesController.LargeSiteHtmlWait = TimeSpan.FromMilliseconds(50);
+            while (WebPagesController.LargeSiteHtmlReads.Wait(0)) taken++;
+            var busy = await ReadRemote(3 * 1024 * 1024, declared);
+            var rejected = Assert.IsType<ObjectResult>(busy);
+            Assert.Equal(StatusCodes.Status429TooManyRequests, rejected.StatusCode);
+            var error = Assert.IsType<ApiResponse<object>>(rejected.Value).Error!;
+            Assert.Equal(ErrorCodes.RATE_LIMITED, error.Code);
+            Assert.Contains("稍后重试", error.Message);
+            // 不超过 2MB 的入口与放宽上限前一样，不占大文件名额，名额满了也照常打开。
+            Assert.IsType<OkObjectResult>(await ReadRemote(1024 * 1024, 1024 * 1024));
+        } finally {
+            WebPagesController.LargeSiteHtmlReads.Release(taken);
+            WebPagesController.LargeSiteHtmlWait = originalWait;
+        }
+    }
+
+    [Theory]
+    [InlineData(12 * 1024 * 1024, true)]
+    [InlineData(17 * 1024 * 1024, false)]
+    public async Task LargeEntryReturnsItsReadSlotWhetherItSucceedsOrIsRejected(int size, bool allowed)
+    {
+        var before = WebPagesController.LargeSiteHtmlReads.CurrentCount;
+        var result = await ReadRemote(size, null);
+        if (allowed) Assert.IsType<OkObjectResult>(result); else Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(before, WebPagesController.LargeSiteHtmlReads.CurrentCount);
+    }
+
     private sealed class ContentHandler(Stream stream, long? length) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
