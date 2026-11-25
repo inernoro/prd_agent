@@ -4625,24 +4625,43 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         spec.mkdir()
         (directory / "dist").mkdir()
         (directory / "checks").mkdir()
-        screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
+        (directory / "src" / "overrides").mkdir(parents=True)
+        # 应用框架是硬性条件（门禁 G-10）：原型由正式前端构建，挂在正式的壳里；框架规则写成验收项和自检项，不能登记为例外。
+        # 验收项编号用 A-xx（CDS 只认这种），ruleId 记框架规则编号；每条都引用画面、写预期和适用视口。
+        screen = {"id": "home", "name": args.title, "route": "#/", "viewport": "desktop", "themes": ["light", "dark"],
+                  "entryReadySelector": ".cds-main", "impl": None}
+        slots = ["desktop-light", "desktop-dark"]
+        acceptance = [{**rule, "id": f"A-{index:02d}", "ruleId": rule["id"], "screenId": "home", "slots": slots,
+                       "expected": (("检查：" if rule.get("how") == "measure" and "检查：" not in (rule.get("expected") or "") else "")
+                                    + (rule.get("expected") or rule.get("rule") or rule["id"]))}
+                      for index, rule in enumerate(rules, start=1)]
         manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": latest["version"],
-                    "screens": [screen], "acceptance": rules}
+                    "prototypeVersion": 1, "date": __import__("datetime").date.today().isoformat(),
+                    "prototype": "dist/index.html", "screens": [screen], "acceptance": acceptance}
         (directory / "design.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-        checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
+        checks = {"total": len(acceptance), "passed": 0,
+                  "items": [{"id": row["id"], "ruleId": row["ruleId"], "name": f'{row["id"]} {row["ruleId"]} {row.get("rule", "")}'.strip(),
+                             "status": "unverified"} for row in acceptance]}
         (directory / "checks" / "result.json").write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n")
-        (directory / "思路.md").write_text("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
+        (directory / "思路.md").write_text(f"# {args.title}（V1）\n\n## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
         for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
             if material.get(field):
                 (spec / name).write_text(material[field])
         if material.get("tokens"):
             (spec / "tokens.json").write_text(json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n")
-        template = material.get("skeleton") or (
-            '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-            '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
-            '<main id="home"><h1>{{title}}</h1></main></html>'
-        )
-        (directory / "dist" / "index.html").write_text(template.replace("{{title}}", html.escape(args.title)))
+        # 原型不再从 skeleton.html 生成（那是手写静态页的起点）：写构建配置和入口，由 prototype-build.mjs 在正式代码上构建
+        try:
+            baseline = subprocess.run(["git", "-C", str(directory), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            baseline = ""
+        prototype = {"web": "cds/web", "baseline": baseline, "entry": "src/main.tsx", "shared": "cds/src/shared",
+                     "overrides": {}, "added": {}, "skipPreloads": [], "title": args.title}
+        (directory / "prototype.json").write_text(json.dumps(prototype, indent=1, ensure_ascii=False) + "\n")
+        (directory / "src" / "main.tsx").write_text(
+            "/* 原型入口：在正式的 AppShell 里挂载要演示的正式页面，fetch 走演示数据（src/fixtures.ts）。\n"
+            " * 改动的正式文件复制到 src/overrides/，在 prototype.json 的 overrides 里登记「正式路径 → 副本」；新增文件登记在 added。\n"
+            " * 构建：node <技能根>/cds/scripts/design/prototype-build.mjs --dir <本目录> --checkout <正式仓库检出>\n"
+            " * 门禁 G-10 会核对构建指纹、正式壳体（.cds-main）和每条框架规则的自检。参考：稿件 DSN-0E5D8912 的 src/main.tsx。 */\n")
         ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": latest["version"]})
 
     design = next((item for item in designs if item["id"] == args.id), None)

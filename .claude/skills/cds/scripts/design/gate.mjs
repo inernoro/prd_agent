@@ -2,7 +2,7 @@
 // 设计稿件发布门禁（程序判定，不靠智能体）。智能体只负责产出稿件包；不满足规则，程序直接驳回，不发布。
 // 用法：node gate.mjs --expect <这次要发布的版本号> [--dir <稿件目录>]（默认当前目录）
 // 退出码：0 通过；1 驳回（逐条列出违反的规则）；2 参数错误。
-// 规则编号固定（G-01 到 G-09），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
+// 规则编号固定（G-01 到 G-10，G-10 是应用框架），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
 // 规则和 CDS 发布接口的 G-01 到 G-09 一致（技能 reference/design-intake.md「发布门禁」），本地先驳回，省一次往返。
 // 稿件自己的例外登记在 <稿件目录>/tools/gate-allow.json（CDS 只认这个位置）。
 // 不能出现在稿件包里的真实站点，用环境变量 CDS_DESIGN_FORBIDDEN_HOSTS（逗号分隔）传入，不必写进稿件包。
@@ -166,6 +166,34 @@ for (const rel of files.filter(f => textExt.test(f) && !/\.min\.js$/.test(f) && 
 /* G-09 归档大小：按 zip 压缩估算，不超过 CDS 上限 4 MiB（留 5% 余量） */
 const zipped = files.reduce((sum, rel) => sum + deflateRawSync(readFileSync(path.join(root, rel)), { level: 9 }).length + 100 + Buffer.byteLength(rel) * 2, 22);
 if (zipped > 4 * 1024 * 1024 * 0.95) reject('G-09', `压缩后约 ${(zipped / 1048576).toFixed(2)} MiB，超过 3.8 MiB`);
+
+/* G-10 应用框架（硬性条件）。2026-11-25 DSN-2A3B7293 的原型是手写 HTML、自己抄了一份令牌，框架规则 R-01、R-03、R-11 还被登记成了例外，
+ * 门禁全部放行。现在由程序判定「应用了框架」：
+ *   1 原型由正式前端构建（prototype-build.mjs 写的构建指纹，带基线提交）；
+ *   2 原型里有框架的正式壳体（FW-CDS-UI：AppShell 的 cds-main）；
+ *   3 spec/rules.md 里的每条框架规则都有通过的自检项，框架规则不能登记为例外。 */
+if (d?.framework) {
+  const proto = typeof d.prototype === 'string' ? d.prototype : 'dist/index.html';
+  const html = files.includes(proto) ? read(proto) : '';
+  const meta = html.match(/<meta name="cds-prototype-build" content='([^']+)'>/);
+  let fingerprint; try { fingerprint = meta && JSON.parse(meta[1].replace(/&#39;/g, "'")); } catch { /* 解析不了就当没有 */ }
+  if (fingerprint?.builder !== 'cds-design/prototype-build' || !/^[0-9a-f]{40}$/.test(fingerprint?.baseline ?? ''))
+    reject('G-10', `原型不是由正式前端构建的（${proto} 没有构建指纹）。用 scripts/design/prototype-build.mjs 在正式代码上构建，不要手写 HTML、不要自己抄令牌`);
+  const shellMarker = { 'FW-CDS-UI': 'cds-main' }[d.framework];
+  if (shellMarker && !html.includes(shellMarker)) reject('G-10', `原型里没有 ${d.framework} 的正式壳体（${shellMarker}）：要演示的页面挂在正式的 AppShell 里`);
+  /* 框架规则编号：标题（### R-01 …）或表格行（| R-01 | …），两种写法都认 */
+  const ruleIdsOfFramework = [...new Set([...(files.includes('spec/rules.md') ? read('spec/rules.md') : '').matchAll(/^(?:#{2,4}\s*|\|\s*)(R-\d{2})\b/gm)].map(m => m[1]))];
+  if (!ruleIdsOfFramework.length) reject('G-10', `缺少框架规则 spec/rules.md（cdscli design scaffold 会从 ${d.framework} 取下来）`);
+  const checkItems = Array.isArray(r?.items) ? r.items : [];
+  const ok = x => x.pass === true || ['pass', 'passed'].includes(x.status);
+  const mentions = (text, id) => new RegExp(`(^|[^A-Za-z0-9-])${id}([^0-9]|$)`).test(text ?? '');
+  for (const id of ruleIdsOfFramework) {
+    const hits = checkItems.filter(x => mentions(`${x.ruleId ?? ''} ${x.id ?? ''} ${x.name ?? ''}`, id));
+    if (!hits.length) reject('G-10', `框架规则 ${id} 没有对应的自检项（自检项的 ruleId 或名称写上 ${id}）`);
+    else if (!hits.some(ok)) reject('G-10', `框架规则 ${id} 的自检没有通过：框架规则必须通过`);
+  }
+  for (const entry of allow.checks ?? []) if (ruleIdsOfFramework.some(id => mentions(entry.name, id))) reject('G-10', `框架规则不能登记为例外：${entry.name}`);
+}
 
 const digest = createHash('sha256').update(files.map(rel => rel + ':' + createHash('sha256').update(readFileSync(path.join(root, rel))).digest('hex')).join('\n')).digest('hex');
 if (errors.length) {

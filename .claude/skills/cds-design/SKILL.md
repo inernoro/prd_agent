@@ -22,6 +22,11 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「帮�
 
 - 用户说设计（不管怎么说），结果必须是发布到 CDS 的私有稿件，并把稿件地址交给用户。
 - 稿件发布之前不改正式代码。Artifact、本地 HTML 这些原型只是出稿过程，不能代替稿件。
+- **应用框架是硬性条件，由门禁 G-10 判定**：
+  - 原型用 `node <技能根>/cds/scripts/design/prototype-build.mjs --dir design/<目录> --checkout <正式仓库检出>` 在正式代码上构建：要演示的页面挂在正式的 AppShell 里，框架的壳、组件和令牌都来自正式代码；
+  - 改动的正式文件放在 `src/overrides/`，在 `prototype.json` 登记；改动副本和原文件的差异就是交给实现方的源码差异；
+  - 不手写 HTML，不自己抄一份令牌；
+  - `spec/rules.md` 里的每条框架规则（R-xx）都要有通过的自检项，不能登记为例外。
 - 用户同时要求实现时，先发布稿件，再按这份稿件的 `交接清单.md` 实现（见第四节）。
 
 ## 三、设计（设计方）
@@ -31,7 +36,7 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「帮�
 1. **找到稿件**：读设计接入清单，按 `designKey`（`<模块>/<稿件>`）匹配。匹配到就同稿续版，没有就新建（`cdscli design scaffold`）。
 2. **从 CDS 读上下文**：未关闭的评论、实施反馈、验收结果、实施基线。用户没说的不靠猜。
 3. **出稿**：
-   - 原型运行正式页面；
+   - 原型用 `prototype-build.mjs` 在正式代码上构建（见第二节），新稿件从 `cdscli design scaffold` 开始，它会生成 `prototype.json` 和入口；
    - `design.json` 写 `goals`（每个目标写「怎么算做到」和它的验收项）、验收项（带 `slots`）、画面清单（真实页面的 `impl` 地址）、演示数据（`demoData`）；
    - 源码差异要能在正式基线上直接编译。
 4. **门禁**：`node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录>`。
