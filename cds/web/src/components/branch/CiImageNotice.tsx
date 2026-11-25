@@ -7,11 +7,12 @@ export function CiImageNotice({ branch, expanded = false, className = '' }: {
   className?: string;
 }) {
   const notice = ciImageNotice(branch);
-  const Icon = branch.ciImageStatus === 'waiting' ? Loader2 : AlertTriangle;
+  const waiting = branch.ciImageStatus === 'waiting' && !branch.lastDeploymentCiFailure;
+  const Icon = waiting ? Loader2 : AlertTriangle;
   return (
     <div role="status" className={className} title={`${notice.title}\n${notice.message}${notice.checkedAt ? `\n最近核对：${new Date(notice.checkedAt).toLocaleString()}` : ''}`}>
       <div className="flex min-w-0 items-center gap-2">
-        <Icon className={`h-3.5 w-3.5 shrink-0${branch.ciImageStatus === 'waiting' ? ' animate-spin' : ''}`} aria-hidden />
+        <Icon className={`h-3.5 w-3.5 shrink-0${waiting ? ' animate-spin' : ''}`} aria-hidden />
         <span className="shrink-0 font-medium">{notice.title}</span>
         {!expanded ? <span className="min-w-0 flex-1 truncate">{notice.message}</span> : null}
         {notice.actionUrl ? (

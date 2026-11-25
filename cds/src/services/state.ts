@@ -2106,6 +2106,18 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return Object.values(this.state.deploymentIntents || {});
   }
 
+  getDeploymentIntentKeyDirectory(): string {
+    return path.dirname(this.filePath);
+  }
+
+  replaceQueuedDeploymentIntent(previous: PersistedDeploymentIntent, next: PersistedDeploymentIntent): void {
+    const id = previous.runId;
+    if (next.runId !== id || this.state.deploymentRuns?.[id]?.status !== 'queued'
+      || this.state.deploymentIntents?.[id] !== previous) throw new Error('Deployment intent no longer current');
+    this.state.deploymentIntents[id] = next;
+    this.save([{ kind: 'deploymentRuns', id }]);
+  }
+
   getDeploymentRunForOperation(operationId: string, generation: number): DeploymentRun | undefined {
     // 写操作关联读取无需生成、过滤和排序整份历史列表。
     for (const id in this.state.deploymentRuns || {}) {

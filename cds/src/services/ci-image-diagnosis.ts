@@ -3,6 +3,33 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { BranchEntry, CiImageDiagnosis } from '../types.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 
+interface ArtifactProducer {
+  workflow: string;
+  job?: string;
+}
+
+const MAP_ARTIFACT_PRODUCERS: Readonly<Record<string, ArtifactProducer>> = {
+  'cds-preview': { workflow: 'cds-prebuilt.yml' },
+  'cds-dist': { workflow: 'cds-prebuilt.yml' },
+  'cds-runtime': { workflow: 'cds-prebuilt.yml' },
+  'prdagent-server': { workflow: 'branch-image.yml', job: 'Build prd-api image' },
+  'prdagent-admin': { workflow: 'branch-image.yml', job: 'Build prd-admin image' },
+  'prdagent-llmgw': { workflow: 'branch-image.yml', job: 'Build LLM Gateway console API image' },
+  'prdagent-llmgw-web': { workflow: 'branch-image.yml', job: 'Build LLM Gateway web image' },
+  'prdagent-llmgw-serve': { workflow: 'branch-image.yml', job: 'Build LLM Gateway serving image' },
+  'prdagent-design-opendesign': { workflow: 'branch-image.yml', job: 'Build design runtime (OpenDesign) image' },
+};
+
+/** The owning project, the image repository and the exact tag must agree. */
+export function mapArtifactProducer(repository: string, image: string, sha: string): ArtifactProducer | undefined {
+  const repo = repository.toLowerCase();
+  const prefix = `ghcr.io/${repo}/`;
+  const tag = `:sha-${sha}`;
+  if (repo !== 'inernoro/prd_agent' || !/^[a-f0-9]{40}$/.test(sha) || !image.startsWith(prefix) || !image.endsWith(tag)) return;
+  const component = image.slice(prefix.length, -tag.length);
+  if (Object.hasOwn(MAP_ARTIFACT_PRODUCERS, component)) return MAP_ARTIFACT_PRODUCERS[component];
+}
+
 type Run = { id: number; name?: string; path?: string; head_sha: string; head_branch: string; status: string; conclusion: string | null };
 export interface CiDiagnosisInput {
   repository: string;
@@ -17,6 +44,7 @@ export interface CiDiagnosisInput {
   fetchImpl?: typeof fetch;
   now?: () => number;
   requestId?: string;
+  artifactProducer?: ArtifactProducer;
 }
 export type CiDiagnosisPatch = Pick<BranchEntry, 'ciImageStatus' | 'ciWorkflowConclusion' | 'ciWorkflowRunUrl' | 'ciImageError' | 'ciDiagnosis'>;
 
@@ -53,7 +81,8 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
   const requestId = input.requestId!;
   const root = `https://api.github.com/repos/${input.repository}`;
   const actionsUrl = `https://github.com/${input.repository}/actions?query=${encodeURIComponent(`branch:${input.branch}`)}`;
-  const workflowUrl = `https://github.com/${input.repository}/blob/${input.targetSha}/.github/workflows/branch-image.yml`;
+  const workflowPath = `.github/workflows/${input.artifactProducer?.workflow || 'branch-image.yml'}`;
+  const workflowUrl = `https://github.com/${input.repository}/blob/${input.targetSha}/${workflowPath}`;
   let runUrl = '';
   const result = (code: CiImageDiagnosis['code'], title: string, message: string, conclusion = '', waiting = false,
     actionUrl = runUrl || actionsUrl, actionLabel = runUrl ? '查看构建' : '查看 Actions'): CiDiagnosisPatch => ({
@@ -112,7 +141,7 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
         status, upstreamMessage: status >= 400 ? String(body?.message || '').slice(0, 300) : undefined,
         totalCount: body?.total_count, type: body?.type, encoding: body?.encoding,
         sourceBytes: typeof body?.content === 'string' ? body.content.length : undefined,
-        items: rows.slice(0, 100).map((x: any) => ({ id: x.id, name: x.name, path: x.path, headSha: x.head_sha,
+        items: (Array.isArray(rows) ? rows : []).slice(0, 100).map((x: any) => ({ id: x.id, name: x.name, path: x.path, headSha: x.head_sha,
           headBranch: x.head_branch, status: x.status, conclusion: x.conclusion,
           cancellation: typeof x.message === 'string' ? /^The run was canceled by @[A-Za-z0-9-]+\.$/.exec(x.message)?.[0] : undefined })),
         omitted: 'workflow source, build logs and unrelated response fields', responseBytes: size,
@@ -134,7 +163,7 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
     if (listed.status !== 200 || !Array.isArray(listed.body?.workflow_runs)) throw new Error('runs-unavailable');
     const runs = (listed.body.workflow_runs as Run[]).filter(r => Number.isSafeInteger(r.id) && r.id > 0
       && r.head_branch === input.branch && r.head_sha === input.targetSha);
-    const imageRuns = runs.filter(r => (r.path || '').split('@')[0] === '.github/workflows/branch-image.yml');
+    const imageRuns = runs.filter(r => (r.path || '').split('@')[0] === workflowPath);
     const run = imageRuns.sort((a, b) => b.id - a.id)[0];
     if (run) {
       runUrl = `https://github.com/${input.repository}/actions/runs/${run.id}`;
@@ -142,6 +171,23 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
         return run.status === 'in_progress'
           ? result('building', 'CI 正在构建', '镜像正在构建，完成后自动部署。', '', true)
           : result('queued', 'CI 等待执行', '构建正在排队或等待批准，请查看构建运行记录。', '', true);
+      }
+      if (input.artifactProducer) {
+        // Branch Image contains independent jobs. A workflow failing for a
+        // different image is not proof this deployment's producer failed.
+        let conclusion = run.conclusion;
+        if (input.artifactProducer.job && conclusion !== 'success') {
+          const jobs = await get(`/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+          if (jobs.status !== 200 || !Array.isArray(jobs.body?.jobs)) throw new Error('jobs-unavailable');
+          const job = jobs.body.jobs.find((item: { name?: string }) => item.name === input.artifactProducer!.job);
+          conclusion = job?.status === 'completed' ? job.conclusion : null;
+        }
+        if (conclusion === 'failure') {
+          return result('build_failed', 'CI 构建失败', '请查看失败的构建步骤，修复或重试 CI，镜像发布后重新部署。', conclusion);
+        }
+        if (conclusion === 'cancelled') return result('cancelled', 'CI 构建已取消', '请查看取消原因，重试 CI 并在镜像发布后重新部署。', conclusion);
+        if (conclusion === 'timed_out') return result('build_timed_out', 'CI 构建超时', '请查看耗时步骤，重试 CI 并在镜像发布后重新部署。', conclusion);
+        return result('result_unsynced', '等待部署产物', '正在等待核验所需镜像，请查看构建记录。', conclusion || '', true);
       }
       if (run.conclusion === 'cancelled') {
         let cancelledBy = '';
@@ -165,6 +211,7 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
       if (run.conclusion === 'startup_failure') return result('startup_failed', 'CI 启动失败', '工作流在启动阶段失败，请查看 GitHub 运行页的诊断。', 'startup_failure');
       return result('build_failed', 'CI 构建未成功', '镜像构建未成功，请查看失败步骤后重试。', run.conclusion || 'unknown');
     }
+    if (input.artifactProducer) return result('not_triggered', '等待部署产物', '尚未找到与目标产物匹配的构建记录，请查看 GitHub Actions。', '', true);
     // 启动失败可能只有 BuildFailed 记录，没有工作流名、正常路径或任何 job。
     const startup = runs.find(r => r.conclusion === 'startup_failure' && r.path === 'BuildFailed');
     if (startup) {

@@ -57,6 +57,7 @@ export interface DeploymentRunServiceOptions {
   now?: () => Date;
   idFactory?: () => string;
   maxEvents?: number;
+  intentKeyDirectory?: string;
   /** 仅认可持有原代次资格、未超过截止时间的实际阶段待办，不续写假心跳。 */
   isExecutionWaiting?: (run: DeploymentRun, now: Date) => boolean;
 }
@@ -71,6 +72,7 @@ export class DeploymentRunService {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly maxEvents: number;
+  private readonly intentKeyDirectory?: string;
   private readonly isExecutionWaiting: NonNullable<DeploymentRunServiceOptions['isExecutionWaiting']>;
   private readonly acceptanceWrites = new Map<string, Promise<void>>();
   private readonly acceptedQueuedIntents = new Map<string, string>();
@@ -84,6 +86,7 @@ export class DeploymentRunService {
     this.now = options.now || (() => new Date());
     this.idFactory = options.idFactory || (() => `dr_${crypto.randomBytes(12).toString('hex')}`);
     this.maxEvents = Math.max(1, options.maxEvents || 500);
+    this.intentKeyDirectory = options.intentKeyDirectory;
     this.isExecutionWaiting = options.isExecutionWaiting || (() => false);
   }
 
@@ -122,7 +125,7 @@ export class DeploymentRunService {
         message: this.normalizeMessage(input.message || '部署请求已受理'),
       }],
     };
-    const intent = input.executionInput ? captureDeploymentIntent(run, input.executionInput) : undefined;
+    const intent = input.executionInput ? captureDeploymentIntent(run, input.executionInput, this.intentKeyDirectory) : undefined;
     const persisted = this.stateService.addDeploymentRun(run, intent);
     await this.confirmAcceptance(persisted, intent);
     return persisted;
@@ -238,18 +241,23 @@ export class DeploymentRunService {
     }
     const restored: DeploymentRun[] = [];
     const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
-    for (const intent of intents) {
+    for (let intent of intents) {
       const run = this.get(intent.runId);
       if (!run || run.status !== 'queued') continue;
       try {
         const branch = this.stateService.getBranch(run.branchId);
         if (!branch || (branch.projectId || 'default') !== run.projectId || !this.stateService.getProject(run.projectId)) throw new Error('Deployment intent owner missing');
-        const input = readDeploymentIntent(run, intent);
+        const input = readDeploymentIntent(run, intent, 'replay', this.intentKeyDirectory);
         // 最新覆盖范围的已受理结果压住旧排队；重建续接使用原受理顺序，不能取消其后意图。
         const newer = runs.some((candidate) => candidate.branchId === run.branchId && candidate.projectId === run.projectId
           && candidate.operationAdmissionGeneration !== undefined && candidate.operationAdmissionGeneration > intent.admissionGeneration
           && (!candidate.profileId || candidate.profileId === run.profileId));
         if (newer) { this.cancel(run.id, '已有较新的覆盖范围部署，旧待办不再恢复', 'superseded'); continue; }
+        if (typeof intent.inputPayload === 'string' && this.intentKeyDirectory && this.hasLocalOwner(run)) {
+          const sealed = captureDeploymentIntent(run, { request: intent.request, input }, this.intentKeyDirectory);
+          this.stateService.replaceQueuedDeploymentIntent(intent, sealed);
+          intent = sealed;
+        }
         coordinator.restorePendingDeployment({ operationId: intent.operationId, generation: intent.generation, branchId: run.branchId,
           request: intent.request, mergedCount: 1, updatedAt: run.startedAt }, input);
         // 同实例已确认的原sealed意图不重复保存或撤销回执；冷启动仍须等待实际保存。
@@ -295,7 +303,7 @@ export class DeploymentRunService {
     if (!intent || !isSealedSecret(intent.inputPayload)
       || this.acceptedQueuedIntents.get(run.id) !== this.intentFingerprint(intent)) return false;
     try {
-      readDeploymentIntent(run, intent);
+      readDeploymentIntent(run, intent, 'replay', this.intentKeyDirectory);
       if (JSON.stringify({ ...pending.request, pendingReplay: null }) !== JSON.stringify(intent.request)) return false;
       return !this.list({ projectId: run.projectId, branchId: run.branchId }).some(candidate =>
         candidate.operationAdmissionGeneration !== undefined && candidate.operationAdmissionGeneration > intent.admissionGeneration

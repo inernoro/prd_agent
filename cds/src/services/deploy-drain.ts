@@ -135,8 +135,9 @@ export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number)
 }
 
 export const DEFAULT_SELF_UPDATE_DRAIN_TIMEOUT_MS = 5 * 60_000;
+export const SELF_UPDATE_SAFE_WINDOW_MS = 30 * 60_000;
 
-export function resolveSelfUpdateDrainTimeoutMs(body: unknown, env = process.env): number {
+export function resolveSelfUpdateDrainTimeoutMs(body: unknown, env = process.env, fallbackMs = DEFAULT_SELF_UPDATE_DRAIN_TIMEOUT_MS): number {
   const request = body && typeof body === 'object' ? body as Record<string, unknown> : {};
   for (const value of [request.drainTimeoutMs, request.restartDrainTimeoutMs,
     env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS, env.CDS_RESTART_DRAIN_TIMEOUT_MS]) {
@@ -144,7 +145,7 @@ export function resolveSelfUpdateDrainTimeoutMs(body: unknown, env = process.env
     const parsed = Number(value);
     if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
-  return DEFAULT_SELF_UPDATE_DRAIN_TIMEOUT_MS;
+  return fallbackMs;
 }
 
 export class SelfUpdateRestartBlockedError extends Error {
@@ -255,10 +256,12 @@ export function selfUpdateDrainBlockReason(nowMs: number): string | null {
  * 逐 handler 打补丁会漏，逐 router 打补丁一样会漏；判定收敛到这里 + 挂到 app 级。
  */
 export function isDrainBlockedPath(method: string, pathname: string): boolean {
+  if (method === 'DELETE' && /^\/branches\/[^/]+\/?$/.test(pathname)) return true;
   if (method !== 'POST') return false;
   if (/^\/projects\/[^/]+\/branches\/(lifecycle-cleanup|[^/]+\/restore-archive)\/?$/.test(pathname)) return true;
   // 分支构建/部署
   if (/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(pathname)) return true;
+  if (/^\/branches\/[^/]+\/(stop|restart|reset|recover-runtime|database-init\/run)\/?$/.test(pathname)) return true;
   if (/^\/releases\/batches\/[^/]+\/(start|targets\/[^/]+\/(retry|rollback))\/?$/.test(pathname)) return true;
   // 生产发布：发起 / 回滚 / 重试 —— 三个都会真的往目标机器跑 SSH
   if (/^\/releases\/branches\/[^/]+\/runs\/?$/.test(pathname)) return true;
@@ -283,7 +286,8 @@ export interface DrainDeps {
   sleep: (ms: number) => Promise<void>;
   timeoutMs: number;
   pollIntervalMs?: number;
-  onWait?: (pending: DrainableRun[], waitedMs: number) => void;
+  onWait?: (pending: DrainableRun[], waitedMs: number) => void | Promise<void>;
+  onIdle?: () => void;
 }
 
 /**
@@ -296,18 +300,21 @@ export async function drainInFlightDeploys(deps: DrainDeps): Promise<DrainOutcom
   const poll = Math.max(200, deps.pollIntervalMs ?? 2_000);
   let pending = pendingRunsToDrain(deps.listRuns(), deps.now());
   if (pending.length === 0) {
+    deps.onIdle?.();
     return { drained: true, waitedMs: 0, remaining: [], skipped: true };
   }
   for (;;) {
     const waited = deps.now() - started;
     if (pending.length === 0) {
+      deps.onIdle?.();
       return { drained: true, waitedMs: waited, remaining: [], skipped: false };
     }
     if (waited >= deps.timeoutMs) {
       return { drained: false, waitedMs: waited, remaining: pending.map((r) => r.id), skipped: false };
     }
-    deps.onWait?.(pending, waited);
-    await deps.sleep(Math.min(poll, deps.timeoutMs - waited));
+    await deps.onWait?.(pending, waited);
+    const remainingMs = deps.timeoutMs - (deps.now() - started);
+    if (remainingMs > 0) await deps.sleep(Math.min(poll, remainingMs));
     pending = pendingRunsToDrain(deps.listRuns(), deps.now());
   }
 }
