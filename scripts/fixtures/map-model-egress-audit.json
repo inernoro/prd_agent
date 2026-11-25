@@ -420,6 +420,13 @@
       },
       "purpose": "既有产品定时通知，仅向通过 ProductClaimWebhookPayload.IsValidWebhook 验证且服务端解密的企微机器人地址发送管理员已配置的通知；不调用模型，保留全 HttpClient 工厂出口守卫。"
     },
+    "prd-api/src/PrdAgent.Api/Services/QuickCreate/QuickVideoRenderer.cs": {
+      "calls": {
+        "new:ProcessStartInfo:5a7a1d541d726da73841e16c": 1,
+        "static:Process.Start:5837e3d79eaf72047c9cdc4b": 1
+      },
+      "purpose": "快速创作在云端 API 容器运行固定 ffmpeg 与 ffprobe。音频和成片为服务端生成的临时文件，输入协议限制为 file,pipe，以 ArgumentList 传参并对进程设有超时；不提交模型请求。"
+    },
     "prd-api/src/PrdAgent.Api/Services/ReportAgent/GitHubConnector.cs": {
       "calls": {
         "call:SendAsync:c3ab8828cd34112fd4c4a251": 2,

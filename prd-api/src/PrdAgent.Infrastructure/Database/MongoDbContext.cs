@@ -352,6 +352,8 @@ public class MongoDbContext
 
     // Video Agent 文章转视频
     public IMongoCollection<VideoProject> VideoProjects => _database.GetCollection<VideoProject>("video_projects");
+    public IMongoCollection<QuickVideoRun> QuickVideoRuns => _database.GetCollection<QuickVideoRun>("quick_video_runs");
+
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
     public IMongoCollection<VideoExportTask> VideoExportTasks => _database.GetCollection<VideoExportTask>("video_export_tasks");
     public IMongoCollection<DirectVideoJobOwnership> DirectVideoJobOwnerships => _database.GetCollection<DirectVideoJobOwnership>("direct_video_job_ownerships");

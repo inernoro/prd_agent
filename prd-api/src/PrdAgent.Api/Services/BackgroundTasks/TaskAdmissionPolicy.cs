@@ -60,6 +60,9 @@ public static class TaskAdmissionPolicies
         Add("LiteraryOpenApiController", "WriteContent UpdateIllustrationPrompt", new[] { "literary-agent.", "visual-agent." });
         Add("LiteraryImageOpenApiController", "Generate", new[] { "literary-agent.", "visual-agent." });
         // 直出视频最多查询 10 分钟（每 6 秒一次），还需提交和下载；不能沿用普通 Agent 的 16 次额度。
+        Register("QuickCreateController", "Create",
+            new[] { AppCallerRegistry.Admin.WebHosting.GenerateHtml, AppCallerRegistry.McpSpeech.Synthesize }, false,
+            QuickVideoTemplates.SceneCount + 1, QuickVideoTemplates.SceneCount + 1);
         Add("VideoAgentController", "VideoGenDirect CreateRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." }, agentMaxCalls: 128);
         Add("VideoAgentController", "RegenerateScene RenderScene RenderScenes CreateV2dRun", new[] { "video-agent.", "visual-agent.", "workflow-agent." });
         Add("TranscriptAgentController", "UploadItem CreateCopywriteRun", new[] { "transcript-agent." });

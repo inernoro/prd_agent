@@ -458,6 +458,7 @@
   --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent.webp');
   --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent.webp');
   --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent.webp');
+  --agent-card-artwork-quick-create: url('../assets/agent-card-art/quick-create.webp');
   --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent.webp');
   --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent.webp');
   --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard.webp');
@@ -1185,6 +1186,7 @@
   --agent-card-artwork-speech-agent: url('../assets/agent-card-art/speech-agent-light.webp');
   --agent-card-artwork-task-tree-agent: url('../assets/agent-card-art/task-tree-agent-light.webp');
   --agent-card-artwork-tech-doc-format-agent: url('../assets/agent-card-art/tech-doc-format-agent-light.webp');
+  --agent-card-artwork-quick-create: url('../assets/agent-card-art/quick-create-light.webp');
   --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent-light.webp');
   --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent-light.webp');
   --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard-light.webp');

@@ -25,6 +25,7 @@ const ActiveTasksPage = lazy(() => import('@/pages/active-tasks').then(m => ({ d
 const ActiveTasksTeamPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.TeamBoardPage })));
 const ActiveTaskHistoryPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTaskHistoryPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
+const QuickCreatePage = lazy(() => import('@/pages/quick-create/QuickCreatePage'));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
 const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m => ({ default: m.TranscriptAgentPage })));
@@ -300,6 +301,23 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       },
       statLabel: '缺陷',
       tags: ['缺陷', '智能体', 'bug', '追踪'],
+    },
+  },
+  {
+    path: '/quick-create',
+    permission: 'web-pages.read',
+    element: shellGuarded('web-pages.read', <QuickCreatePage />),
+    nav: {
+      label: '快速创作',
+      shortLabel: '快创',
+      description: '用文稿和模板快速创作可播放的视频',
+      icon: 'Clapperboard',
+      section: 'agent',
+      appKey: 'quick-create',
+      accentColor: '#D97757',
+      statLabel: '作品',
+      tags: ['模板', '文稿', '快速创作'],
+      wip: true,
     },
   },
   {

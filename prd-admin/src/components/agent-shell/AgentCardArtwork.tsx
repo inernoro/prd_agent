@@ -11,6 +11,7 @@ const AGENT_CARD_PRESENTATION: Readonly<Record<string, AgentCardPresentation>> =
   'literary-agent': { task: '撰写完整文章' },
   'mcp-console': { task: '接上你的智能体' },
   'defect-agent': { task: '闭环产品缺陷' },
+  'quick-create': { task: '把文稿做成视频' },
   'video-agent': { task: '生成成片视频' },
   'report-agent': { task: '汇总本周进展' },
   'md-to-ppt-agent': { task: '生成演示页面' },

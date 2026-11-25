@@ -1183,6 +1183,13 @@ export const api = {
     },
   },
 
+  quickCreate: {
+    templates: () => '/api/quick-create/templates',
+    runs: () => '/api/quick-create/runs',
+    run: (id: string) => `/api/quick-create/runs/${id}`,
+    publish: (id: string) => `/api/quick-create/runs/${id}/publish`,
+  },
+
   // ============ Video Agent 视频创作 ============
   videoAgent: {
     models: () => '/api/video-agent/models',
