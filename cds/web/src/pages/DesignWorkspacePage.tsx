@@ -45,7 +45,7 @@ export function DesignWorkspacePage() {
   const { key: locationKey, hash } = useLocation();
   const [reload, refresh] = useState(0);
   const refreshWorkspace = useCallback(() => refresh(value => value + 1), []);
-  const [openScreenRevision, setOpenScreenRevision] = useState(0);
+  const [openGallery, setOpenGallery] = useState<string>();
   const [busy, setBusy] = useState(false);
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
@@ -441,7 +441,8 @@ export function DesignWorkspacePage() {
             <DesignCanvas key={`${entry.id}/${version.version}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon}
               entry={entry} version={version} active={!large && !review && !fullView}
               comparing={comparing} initialScreenId={defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
-              cornerTools onSceneChange={rememberScene} openScreenRevision={openScreenRevision}
+              cornerTools onSceneChange={rememberScene} galleryOpen={openGallery === `${entry.id}/${version.version}`}
+              onGalleryChange={open => setOpenGallery(open ? `${entry.id}/${version.version}` : undefined)}
               onSelectScreen={id => onChange({ screen: id, comment: '' }, true)}
               onModeChange={(compare, screen, from) => onChange({ ...deliveryQuery, tab: 'delivery', compare: compare ? '1' : '',
                 screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
@@ -459,7 +460,7 @@ export function DesignWorkspacePage() {
               onTab={value => onChange({ pane: value === 'demo' ? '' : value }, true)}
               open={openFull} onCollapse={() => onChange({ side: 'off' })}
               onScreen={id => {
-                setOpenScreenRevision(value => value + 1);
+                setOpenGallery(undefined);
                 onChange({ screen: id, comment: '' }, true);
               }}
               onReview={comment => openReview(entry, comment, version)}

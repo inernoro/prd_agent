@@ -261,7 +261,8 @@
 .dw-thumbnail-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 9px;
   border: 1px solid var(--dw-line); border-radius: 7px; background: var(--dw-pane); color: var(--dw-ink); font-size: 13px; }
 .dw-all-screens { grid-row: 2; display: flex; flex-wrap: wrap; gap: 16px; align-content: start; align-items: start; overflow: auto; padding: 2px 2px 8px; }
-.dw-gallery-open { flex: none; display: grid; gap: 4px; min-width: 0; max-width: 100%; border-radius: .5rem; font-size: 13px; text-align: center; }
+.dw-all-screens figure { flex: none; margin: 0; min-width: 0; max-width: 100%; }
+.dw-gallery-open { display: grid; gap: 4px; width: 100%; min-width: 0; border-radius: .5rem; font-size: 13px; text-align: center; }
 .dw-gallery-art { display: grid; place-items: center; overflow: hidden; border: 1px solid var(--dw-line); border-radius: 8px; background: var(--dw-pane); }
 .dw-gallery-art > img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .dw-gallery-title { overflow-wrap: anywhere; }

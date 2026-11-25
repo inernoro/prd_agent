@@ -89,13 +89,15 @@ export function DesignGallery({ entry, version, run, theme, zoom, canGenerate, b
     <div className="dw-all-screens" ref={grid}>
       {tiles.map(({ screen, artifactId }, index) => {
         const { width, height } = designViewports[screen.viewport];
-        return <button type="button" className="dw-gallery-open" key={screen.id} data-screen={screen.id}
-          aria-label={`打开原型 ${screen.name}`} style={{ width: width * scale }} onClick={() => onOpen(screen.id)}>
-          <span className="dw-gallery-art" style={{ height: height * scale }}>
-            <DesignThumbnail projectId={entry.projectId} artifactId={artifactId} />
-          </span>
-          <span className="dw-gallery-title">{index + 1} · {screen.name}</span>
-        </button>;
+        return <figure key={screen.id} style={{ width: width * scale }}>
+          <button type="button" className="dw-gallery-open" data-screen={screen.id}
+            aria-label={`打开原型 ${screen.name}`} onClick={() => onOpen(screen.id)}>
+            <span className="dw-gallery-art" style={{ height: height * scale }}>
+              <DesignThumbnail projectId={entry.projectId} artifactId={artifactId} />
+            </span>
+            <span className="dw-gallery-title">{index + 1} · {screen.name}</span>
+          </button>
+        </figure>;
       })}
     </div>
   </div>;

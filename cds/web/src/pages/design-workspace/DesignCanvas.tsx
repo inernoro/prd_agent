@@ -74,7 +74,7 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
   const outer = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const [preview, setPreview] = useState<{ requestId: string; identity: string; ready?: boolean; report?: PreviewReport; failure?: keyof typeof entryFailures }>();
-  const pendingEntry = useRef<{ id: string; timeout: number }>();
+  const pendingEntry = useRef<{ id: string; identity: string; timeout: number }>();
   const [staticFor, setStaticFor] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   const source = screen && version?.prototypeId
@@ -141,7 +141,9 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
     if (scroll) frame.current?.contentWindow?.postMessage({ type: 'cds-design-scroll', ...scroll }, '*');
   }, [scroll]);
   useEffect(() => () => {
-    if (pendingEntry.current) window.clearTimeout(pendingEntry.current.timeout);
+    const request = pendingEntry.current;
+    if (!request || request.identity !== identity) return;
+    window.clearTimeout(request.timeout);
     pendingEntry.current = undefined;
   }, [identity, showFrame]);
   useEffect(() => {
@@ -162,10 +164,11 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
       {showFrame && <iframe key={identity} ref={frame} title={screen!.name + ' · V' + version!.version} loading="eager" src={source}
           tabIndex={live ? undefined : -1} aria-hidden={!live || undefined} data-concealed={!live || undefined} hidden={Boolean(failure && !live)}
           onLoad={event => {
+            if (!identity || event.currentTarget !== frame.current) return;
             if (pendingEntry.current) window.clearTimeout(pendingEntry.current.timeout);
             const id = String(performance.now());
-            setPreview({ requestId: id, identity: identity! });
-            pendingEntry.current = { id, timeout: window.setTimeout(() => {
+            setPreview({ requestId: id, identity });
+            pendingEntry.current = { id, identity, timeout: window.setTimeout(() => {
               setPreview(current => current?.requestId === id ? { ...current, failure: 'no-response' } : current);
             }, timeoutMs + 600) };
             event.currentTarget.contentWindow?.postMessage({ type: 'cds-design-entry', requestId: id, timeoutMs,
@@ -221,14 +224,15 @@ type CanvasProps = {
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
   commandBusy: boolean; initialScreenId?: string; initialCommentId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
   cornerTools?: boolean;
-  openScreenRevision?: number;
+  galleryOpen?: boolean;
+  onGalleryChange?: (open: boolean) => void;
   onThumbnailsUpdated?: () => void;
   onSceneChange?: (screen?: DesignScreen) => void;
   onSelectScreen?: (screen: string) => void;
   onModeChange?: (compare: boolean, screen?: string, from?: number) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, cornerTools, openScreenRevision, onThumbnailsUpdated, onSceneChange, onSelectScreen, onModeChange }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, cornerTools, galleryOpen, onGalleryChange, onThumbnailsUpdated, onSceneChange, onSelectScreen, onModeChange }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
@@ -250,7 +254,9 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const [mode, setMode] = useState<CompareMode>('side');
   const [withCompare, setWithCompare] = useState(comparing);
   const [changes, showChanges] = useState(false);
-  const [all, showAll] = useState(false);
+  const [localGallery, setLocalGallery] = useState(false);
+  const all = galleryOpen ?? localGallery;
+  const showAll = onGalleryChange ?? setLocalGallery;
   const [comments, showComments] = useState(Boolean(initialCommentId));
   const [currentComment, setComment] = useState(initialCommentId);
   const [placing, setPlacing] = useState(false);
@@ -279,11 +285,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
     .map(screen => [screen.id, screen] as const)).values()) : version.screens;
   const index = Math.max(0, screens.findIndex(screen => screen.id === selected));
   const screen = screens[index];
-  useEffect(() => {
-    if (!initialScreenId) return;
-    select(initialScreenId);
-    showAll(false);
-  }, [initialScreenId, openScreenRevision]);
+  useEffect(() => { if (initialScreenId) select(initialScreenId); }, [initialScreenId]);
   useEffect(() => { onSceneChange?.(all && !compare ? undefined : screen); }, [screen, all, compare, onSceneChange]);
   const visibleTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
   const marks = entry.comments.filter(comment => comment.version === version.version && comment.screenId === screen?.id);
