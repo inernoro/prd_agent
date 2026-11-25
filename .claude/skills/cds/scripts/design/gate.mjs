@@ -140,7 +140,9 @@ else {
 
 /* G-08 隐私：稿件包只放虚构数据。不出现真实站点、邮箱、密钥样式的字符串 */
 const textExt = /\.(md|json|ts|tsx|jsx|mjs|js|css|html|diff|txt|ya?ml|svg)$/;
-const secret = /(cdsk_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
+/* 私钥只认「头 + 正文」：只有 PEM 头、没有 base64 正文的是输入框占位提示（正式 CDS 设置页就有），不是密钥
+ * （2026-11-25 DSN-2A3B7293 V2 用正式前端构建后被误拦）。正文在字符串里可能写成 \n 转义，也算换行 */
+const secret = /(cdsk_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\s|\\n|\\r)+[A-Za-z0-9+/=]{40,})/;
 /* 写成赋值的凭据（Bearer 头、apiKey/secret/token/password/projectKey = "…"），不区分大小写；和上面分开，免得把上面的规则也变成不区分大小写 */
 const assigned = /(Bearer\s+[A-Za-z0-9._~+/-]{24,}|(?:api[_-]?key|secret|token|password|projectKey)["']?\s*[:=]\s*["'][A-Za-z0-9._~+/-]{16,}["'])/i;
 const email = /[A-Za-z0-9._%+-]+@(?!example\.)[A-Za-z0-9.-]+\.[a-z]{2,}/g;

@@ -10,6 +10,9 @@
 //     "entry": "src/main.tsx",          稿件的入口：挂载要演示的正式页面，装上演示数据
 //     "overrides": { "src/pages/X.tsx": "src/overrides/X.tsx" },   正式文件 → 稿件里的改动副本（改动副本和原文件的差异就是源码差异）
 //     "added": { "src/pages/design-workspace/": "src/overrides/" }, 稿件新增的正式文件：按正式路径引用，构建时指到稿件
+//                                       （键是目录前缀时值是目录；键是单个文件时值是文件）
+//     "stubs": { "src/pages/X.tsx": "src/stubs/X.tsx" },  只用于原型的占位：本次没改、但会被一起打包的正式模块
+//                                       （例如懒加载的其他页签）。占位不是设计改动，不进源码差异
 //     "shared": "cds/src/shared",       @shared 别名（可选）
 //     "skipPreloads": ["@/pages/X"],    原型用不到的正式预加载（可选）
 //     "shellFile": "src/components/layout/AppShell.tsx",
@@ -50,6 +53,15 @@ for (const [from, to] of overrides) {
   if (!existsSync(from)) fail(`overrides 里的正式文件不存在：${from}（新增文件写在 added 里）`);
   if (!existsSync(to)) fail(`overrides 里的稿件文件不存在：${to}`);
 }
+/* 占位和改动副本走同一个替换，但分开登记：占位只用于原型，不进源码差异 */
+for (const [from, to] of Object.entries(config.stubs ?? {})) {
+  const real = posix(path.join(web, from)), file = path.join(draft, to);
+  if (!existsSync(real)) fail(`stubs 里的正式文件不存在：${real}`);
+  if (!existsSync(file)) fail(`stubs 里的占位文件不存在：${file}`);
+  if (overrides.has(real)) fail(`${from} 同时登记在 overrides 和 stubs 里`);
+  overrides.set(real, file);
+}
+const draftRoot = posix(draft) + '/';
 const added = Object.entries(config.added ?? {}).map(([from, to]) => [posix(path.join(web, from)), path.join(draft, to)]);
 const shell = path.join(web, config.shellFile ?? 'src/components/layout/AppShell.tsx');
 
@@ -68,10 +80,20 @@ const result = await build({
       if (source.endsWith('?real')) return this.resolve(source.slice(0, -5), importer, { ...options, skipSelf: true });
       /* 稿件新增的正式文件按正式路径引用（别名先于插件生效，这里可能已是绝对路径） */
       const wanted = posix(source.startsWith('@/') ? path.join(web, 'src', source.slice(2)) : source);
-      for (const [prefix, target] of added) if (wanted.startsWith(prefix)) {
+      for (const [prefix, target] of added) {
+        /* 键是单个文件：整条引用（不带或带扩展名）对上就指到那个文件 */
+        if (/\.[cm]?[jt]sx?$/.test(prefix)) {
+          if ([wanted, wanted + '.ts', wanted + '.tsx'].includes(prefix) && existsSync(target)) return target;
+          continue;
+        }
+        if (!wanted.startsWith(prefix)) continue;
         const name = wanted.slice(prefix.length);
+        if (!name) continue;
         for (const ext of ['', '.tsx', '.ts']) { const file = path.join(target, name + ext); if (existsSync(file) && !existsSync(wanted + ext)) return file; }
       }
+      /* 改动副本放在稿件目录里，里面的裸包导入（react、devicon/... 等）按正式前端的依赖解析 */
+      if (importer && posix(importer).startsWith(draftRoot) && !/^[./\\]|^@\//.test(source) && !/^[A-Za-z]:/.test(source))
+        return this.resolve(source, path.join(web, 'src', '__draft_import__.ts'), { ...options, skipSelf: true });
       const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
       if (!resolved) return null;
       const target = overrides.get(posix(resolved.id.split('?')[0]));
