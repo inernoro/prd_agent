@@ -66,7 +66,7 @@ const designLevels = { read: '设计只读', feedback: '设计实施反馈', pub
 
 function permissionLabels(key: ProjectAgentKeyPermissions): string[] {
   return [
-    key.projectAccess ? projectLevels[key.projectAccess] : isLegacyProjectAgentKey(key) ? projectLevels.rw : undefined,
+    key.projectAccess ? projectLevels[key.projectAccess] : isLegacyProjectAgentKey(key) ? '旧版项目完整权限' : undefined,
     key.planningAccess && planningLevels[key.planningAccess],
     key.designAccess && designLevels[key.designAccess],
   ].filter((label): label is NonNullable<typeof label> => Boolean(label));

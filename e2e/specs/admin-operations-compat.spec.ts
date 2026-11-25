@@ -53,7 +53,7 @@ for (const { width, height, colorScheme } of [
       label: `测试密钥 ${index + 1}`,
       issuer: index === 0 ? 'agent' : 'user',
       createdAt: new Date(Date.UTC(2026, 0, 20) - index * 60_000).toISOString(),
-      projectAccess: 'rw',
+      projectAccess: index === 1 ? undefined : 'rw',
     }));
     await page.route(`**/api/projects/${target.projectId}/agent-keys`, route =>
       route.fulfill({ json: { keys, canIssueRestrictedPermissions: true } }));
@@ -79,6 +79,8 @@ for (const { width, height, colorScheme } of [
     await expect(issuedTab).toHaveAttribute('aria-selected', 'true');
     await expect(form).toBeHidden();
     await expect(issued.getByRole('listitem').first()).toContainText('AI Agent 签发');
+    await expect(issued.getByRole('listitem').first()).toContainText('项目读写');
+    await expect(issued.getByRole('listitem').nth(1)).toContainText('旧版项目完整权限');
     await issued.getByText('测试密钥 101', { exact: true }).scrollIntoViewIfNeeded();
     await expect(createTab).toBeInViewport();
     await issued.getByRole('button', { name: '吊销 测试密钥 101', exact: true }).click();

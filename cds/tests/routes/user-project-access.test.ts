@@ -54,6 +54,17 @@ describe('human project grants through the production server', () => {
     return { status: res.status, body: await res.json() };
   }
 
+  function seedLegacyProjectKey() {
+    const id = 'legacy-project-key';
+    const plaintext = 'cdsp_project-a_fixture-legacy';
+    state.addAgentKey('project-a', {
+      id, label: 'Legacy key', scope: 'rw',
+      hash: createHash('sha256').update(plaintext).digest('hex'),
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+    return { id, plaintext };
+  }
+
   beforeEach(async () => {
     vi.stubEnv('CDS_AUTH_MODE', 'basic');
     vi.stubEnv('CDS_USERNAME', 'owner');
@@ -1543,14 +1554,16 @@ describe('human project grants through the production server', () => {
     }
     const user = await call('POST', keys, owner, { label: 'AI Agent', issuer: 'agent' });
     expect(user.status).toBe(201);
-    const agent = await credentialCall('POST', keys, user.body.plaintext, { label: 'owner', issuer: 'user' });
+    const legacy = seedLegacyProjectKey();
+    const agent = await credentialCall('POST', keys, legacy.plaintext, { label: 'owner', issuer: 'user' });
     expect(agent.status).toBe(201);
     const listed = (await call('GET', keys)).body.keys;
     expect(listed.map(({ id, issuer }: { id: string; issuer: string }) => [id, issuer])).toEqual([
       [agent.body.keyId, 'agent'], [user.body.keyId, 'user'], ['old-unknown', 'unknown'], ['old-agent', 'agent'], ['old-user', 'user'],
+      [legacy.id, 'unknown'],
     ]);
     expect(listed[0]).not.toHaveProperty('createdBy');
-    expect(listed[1]).toMatchObject({ createdBy: 'owner' });
+    expect(listed[1]).toMatchObject({ createdBy: 'owner', projectAccess: 'rw' });
     expect(listed.every((entry: { hash?: string; plaintext?: string }) => !entry.hash && !entry.plaintext)).toBe(true);
     expect((await call('DELETE', keys + '/' + 'old-agent')).status).toBe(200);
     expect((await call('GET', keys)).body.keys.find((entry: { id: string }) => entry.id === 'old-agent'))
@@ -1583,9 +1596,8 @@ describe('human project grants through the production server', () => {
     const child = await credentialCall('POST', projectKeys, global.body.plaintext, { expiresInDays: 90 });
     expect(child.status).toBe(201);
     expect(child.body.expiresAt).toBe(global.body.expiresAt);
-    const derived = await credentialCall('POST', projectKeys, child.body.plaintext, {});
-    expect(derived.status).toBe(201);
-    expect(derived.body.expiresAt).toBe(global.body.expiresAt);
+    expect(state.getAgentKeys('project-a').find(key => key.id === child.body.keyId))
+      .toMatchObject({ projectAccess: 'rw', expiryMode: 'fixed', expiresAt: global.body.expiresAt });
     expect((await call('GET', globalKeys)).body.keys[0]).toMatchObject({
       id: global.body.keyId, issuer: 'user', expiresAt: global.body.expiresAt,
     });
@@ -1597,7 +1609,7 @@ describe('human project grants through the production server', () => {
       .toMatchObject({ expiresAt: fixed.body.expiresAt, expiryMode: 'fixed' });
     expect(restored.getGlobalAgentKeys()[0].expiresAt).toBe(global.body.expiresAt);
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse(fixed.body.expiresAt));
-    for (const expired of [fixed, global, child, derived]) {
+    for (const expired of [fixed, global, child]) {
       expect((await credentialCall('GET', project, expired.body.plaintext)).status).toBe(401);
     }
     expect(restored.findGlobalAgentKeyForAuth(global.body.plaintext)).toBeNull();
@@ -1611,13 +1623,13 @@ describe('human project grants through the production server', () => {
     await grant(['project-a']);
     expect((await call('POST', keys, member, permissions)).status).toBe(403);
     expect((await call('POST', keys, owner, { projectAccess: 'system-admin' })).status).toBe(400);
-    const legacy = await call('POST', keys);
-    expect((await credentialCall('POST', keys, legacy.body.plaintext, permissions)).status).toBe(403);
+    const legacy = seedLegacyProjectKey();
+    expect((await credentialCall('POST', keys, legacy.plaintext, permissions)).status).toBe(403);
 
     const admin = await call('POST', keys, owner, permissions);
     expect(admin.status).toBe(201);
     const adminKey = admin.body.plaintext;
-    const rw = await call('POST', keys, owner, { projectAccess: 'rw' });
+    const rw = await call('POST', keys);
     expect(rw.status).toBe(201);
     const rwKey = rw.body.plaintext;
     expect((await credentialCall('GET', project, rwKey)).status).toBe(200);
@@ -1638,7 +1650,7 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('GET', project + '/design', adminKey)).body.permissions)
       .toMatchObject({ feedback: true, write: false, review: false });
     expect((await credentialCall('POST', keys, adminKey, {})).status).toBe(403);
-    expect((await credentialCall('DELETE', keys + '/' + admin.body.keyId, legacy.body.plaintext)).status).toBe(403);
+    expect((await credentialCall('DELETE', keys + '/' + admin.body.keyId, legacy.plaintext)).status).toBe(403);
     expect((await credentialCall('DELETE', keys + '/' + rw.body.keyId, adminKey)).status).toBe(200);
     expect((await credentialCall('GET', project, rwKey)).status).toBe(401);
     expect((await credentialCall('GET', '/api/projects/project-b/agent-keys', adminKey)).status).toBe(403);
@@ -1699,9 +1711,8 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('POST', keys, key, { label: 'Must not mint a wider key' })).status).toBe(403);
     expect((await credentialCall('GET', '/api/projects/project-b/planning/capabilities', key)).status).toBe(403);
     expect((await call('GET', scope + '/debts')).body.items).toEqual([]);
-    const ordinary = await call('POST', keys, owner, { label: 'Legacy key' });
-    expect(ordinary.status).toBe(201);
-    expect((await credentialCall('GET', scope + '/capabilities', ordinary.body.plaintext)).body.permissions)
+    const legacy = seedLegacyProjectKey();
+    expect((await credentialCall('GET', scope + '/capabilities', legacy.plaintext)).body.permissions)
       .toEqual(['read', 'propose', 'write']);
   });
 

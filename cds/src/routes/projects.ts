@@ -83,7 +83,7 @@ import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
-import { isAgentKeyExpiryDays, type ProjectAgentKeyIssuer, type ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
+import { isAgentKeyExpiryDays, isLegacyProjectAgentKey, type ProjectAgentKeyIssuer, type ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
@@ -354,7 +354,7 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
-    ...permissions,
+    ...(isLegacyProjectAgentKey(permissions) ? { projectAccess: 'rw' } : permissions),
     ...(expiresAt ? { expiresAt, expiryMode: 'fixed' } : {}),
     createdAt: new Date().toISOString(),
     issuer,
