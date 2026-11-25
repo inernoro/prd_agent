@@ -20,7 +20,7 @@ import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
 import { readDeploymentIntent } from '../../src/services/deployment-intent.js';
 import { endSelfUpdateDrain, selfUpdateDrainBlockReason } from '../../src/services/deploy-drain.js';
-import { setRestartWait } from '../../src/services/self-restart-wait.js';
+import { getRestartWait, setRestartWait } from '../../src/services/self-restart-wait.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
 import { CDS_RESTART_PERMIT_COMMAND } from '../../src/services/self-update-handoff.js';
 import { getHttpFixtureTrace, listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
@@ -113,6 +113,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('main');
       if (cmd === 'git rev-parse --short HEAD') return ok(sha.slice(0, 8));
       if (cmd === 'git rev-parse HEAD') return ok(fullWorkflow ? sha : 'invalid');
+      if (cmd === "git ls-remote --exit-code --refs origin 'refs/heads/main'") return ok(`${sha}\trefs/heads/main\n`);
       if (cmd.startsWith('git rev-parse origin/') || cmd.includes('--verify --quiet origin/')) return ok(sha);
       if (cmd.startsWith('git diff --name-only')) return ok('cds/package.json');
       if (cmd === 'node scripts/build-dist-esbuild.mjs') {
@@ -532,6 +533,32 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     expect((await post('self-update-dry-run')).status).toBe(200);
   });
 
+  it('普通更新等待在途发布安全结束，然后继续同一个更新请求', async () => {
+    fullWorkflow = true;
+    const startedAt = new Date().toISOString();
+    state.addReleaseRun({
+      releaseId: 'live-release', projectId: 'default', branchId: 'release-branch', targetId: 'target', planId: 'plan',
+      commitSha: sha, artifact: { commitSha: sha } as never, status: 'running', startedAt, heartbeatAt: startedAt,
+      logs: [], seq: 0,
+    });
+    const { waitForDelay, fire } = observeRestartTimers();
+    const first = post('self-update', { branch: 'main', drainTimeoutMs: 5_000, force: true });
+    await vi.waitFor(() => expect(getRestartWait()).toMatchObject({
+      phase: 'draining-deploys', pendingRuns: ['live-release'],
+    }));
+    expect(selfUpdateDrainBlockReason(Date.now())).toBeNull();
+    expect(ownedCommands.some(command => /^git (checkout|reset)/.test(command))).toBe(false);
+    expect(state.getReleaseRun('live-release')?.status).toBe('running');
+    expect(restartSpawn).not.toHaveBeenCalled();
+    state.patchReleaseRun('live-release', { status: 'success', finishedAt: new Date().toISOString() });
+    await waitForDelay(500);
+    fire(500);
+    expect((await first).raw).toContain('event: done');
+    expect(permitWrites).toEqual(['restart\n']);
+    expect(state.getReleaseRun('live-release')?.status).toBe('success');
+    fire(15_000);
+  });
+
   it.each(['self-update', 'self-force-sync', 'self-restart'] as const)('%s保留已确认保存的原产物等待，不将未领取意图误作在途写者', async endpoint => {
     fullWorkflow = true; vi.stubEnv('CDS_SECRET_KEY', '17'.repeat(32));
     if (!state.getProject('default')) state.addProject({ id: 'default', name: '原待办归属项目', slug: 'owned-fixture' } as any);
@@ -666,7 +693,9 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       }
       entry.live = false; entry.run();
     };
-    return { entered: entered.promise, fire };
+    const waitForDelay = (ms: number) => vi.waitFor(() => expect(scheduled.some(entry => entry.live && entry.ms === ms)).toBe(true),
+      { timeout: 4_000 });
+    return { entered: entered.promise, fire, waitForDelay };
   }
 
   it.each(['self-update', 'self-force-sync', 'self-restart'] as const)('%s响应须等严格交接，child close、退出与原存活回收窗口仍占用', async endpoint => {

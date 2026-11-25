@@ -1475,6 +1475,7 @@ export interface PersistedDeploymentIntent {
   admissionGeneration: number;
   request: BranchOperationRequest;
   inputPayload: string | SealedSecret;
+  keyScope?: 'node';
 }
 
 export interface DeploymentRun {

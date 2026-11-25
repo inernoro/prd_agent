@@ -22,6 +22,7 @@ export interface RestartWaitState {
   waitedMs: number;
   timeoutMs: number;
   pendingRuns: string[];
+  blockers?: string[];
 }
 
 let current: RestartWaitState | null = null;
@@ -81,8 +82,10 @@ export function resolveRestartStatus(input: RestartStatusInput): RestartStatus {
 export function describeRestartWait(w: RestartWaitState): string {
   const waited = Math.round(w.waitedMs / 1000);
   if (w.phase === 'draining-deploys') {
-    const max = Math.round(w.timeoutMs / 1000);
-    return `重启前等待 ${w.pendingRuns.length} 个在途操作结束（已等 ${waited}s，最多 ${max}s；超时将取消更新与重启，其他项目继续运行）`;
+    const maxSeconds = Math.ceil(w.timeoutMs / 1000);
+    const maximum = maxSeconds >= 60 && maxSeconds % 60 === 0 ? `${maxSeconds / 60} 分钟` : `${maxSeconds} 秒`;
+    const tasks = w.blockers?.length ? `（${w.blockers.join('、')}）` : '';
+    return `等待安全重启。等待 ${w.pendingRuns.length} 个操作结束${tasks}，已等 ${waited} 秒。本次最多等待 ${maximum}，操作结束后继续，超时则结束本次更新。`;
   }
   if (w.phase === 'flushing') return `在途操作已结束，正在完成更新与状态落盘（已等 ${waited}s），随后换进程`;
   return `正在换进程（已等 ${waited}s），几秒内旧进程退出、新进程接手`;
