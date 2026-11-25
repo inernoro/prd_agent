@@ -309,7 +309,7 @@
 
 | 你可以说 | 任务 | 先读 | 命令 | 风险 |
 | --- | --- | --- | --- | --- |
-| `/cds 帮我设计一个页面`、`/cds 改 xx 模块的设计`、`/cds 修复 xx 页面的设计`、`/cds 出一版新设计` | 发布或修订设计稿 | `reference/design-loop.md` | `cdscli design`、`cdscli framework` | 会写入 |
+| `/cds 帮我设计一个页面`、`/cds 为 xx 提出设计`、`/cds 改 xx 模块的设计`、`/cds 修复 xx 页面的设计`、`/cds 出一版新设计` | 发布或修订设计稿 | `reference/design-loop.md` | `cdscli design`、`cdscli framework` | 会写入 |
 | `/cds 帮我实现 DSN-xxx`、`/cds 按交接清单实现` | 六、实现方：按交接清单实现 | `reference/design-loop.md`「六、实现方：按交接清单实现」 | — | 见文档 |
 
 ### 发布或修订设计稿
