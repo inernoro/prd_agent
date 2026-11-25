@@ -332,7 +332,7 @@ public sealed class PersonalStyleDerivationService : IPersonalStyleDerivationSer
             throw new PersonalDesignStyleException(ErrorCodes.INVALID_FORMAT, $"描述不能超过 {PersonalDesignStyleService.MaxNoteLength} 个字");
 
         string? html = null;
-        var linkedCss = new List<string>();
+        var linkedCss = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         HostedSite? site = null;
         if (!string.IsNullOrEmpty(trimmedSiteId))
         {
@@ -351,11 +351,11 @@ public sealed class PersonalStyleDerivationService : IPersonalStyleDerivationSer
                 var file = files.FirstOrDefault(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase));
                 if (file == null || string.IsNullOrWhiteSpace(file.CosKey) || file.Size > MaxStylesheetBytes) continue;
                 var bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct);
-                if (bytes is { Length: > 0 }) linkedCss.Add(Encoding.UTF8.GetString(bytes));
+                if (bytes is { Length: > 0 }) linkedCss.Add(path, Encoding.UTF8.GetString(bytes));
             }
         }
 
-        var derivation = PersonalStyleDeriver.Derive(html, linkedCss, trimmedNote);
+        var derivation = PersonalStyleDeriver.Derive(html, linkedCss.Values.ToArray(), trimmedNote);
         if (!derivation.FoundAnything)
             throw new PersonalDesignStyleException(ErrorCodes.CONTENT_EMPTY,
                 "这张网页里没读到可用的样式（可能是纯文字或整页图片），换一张，或直接写几句你想要的风格");
@@ -394,7 +394,7 @@ public sealed class PersonalStyleDerivationService : IPersonalStyleDerivationSer
             string.IsNullOrEmpty(trimmedNote) ? null : trimmedNote,
             filled)
         {
-            ReferenceVisualHtml = PersonalStyleDeriver.BuildVisualReference(html, linkedCss),
+            ReferenceVisualHtml = site == null ? null : PersonalStyleDeriver.BuildVisualReference(html, site.EntryFile, linkedCss),
         };
     }
 }

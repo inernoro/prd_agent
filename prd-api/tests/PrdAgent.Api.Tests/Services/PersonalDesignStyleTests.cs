@@ -349,6 +349,32 @@ section.b { margin: 64px 0; }
     }
 
     [Fact]
+    public void 可视参考原位替换站内样式表_保留覆盖顺序与媒体条件()
+    {
+        const string html = """
+            <html><head>
+              <link rel="stylesheet" href="missing.css">
+              <link rel="StyleSheet" href="../site.css?v=1" media="screen and (min-width: 700px)">
+              <style>h1{font-size:38px}</style>
+              <link rel="stylesheet" href="/site.css" media="print">
+              <link rel="stylesheet" href="https://example.com/remote.css">
+            </head><body><h1>独有书会内容</h1></body></html>
+            """;
+        const string linkedCss = "h1{font-size:64px}";
+        var reference = PersonalStyleDeriver.BuildVisualReference(html, "pages/index.html",
+            new Dictionary<string, string> { ["site.css"] = linkedCss });
+
+        Assert.NotNull(reference);
+        var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(reference);
+        Assert.Collection(document.QuerySelectorAll("style"),
+            style => { Assert.Equal(linkedCss, style.TextContent); Assert.Equal("screen and (min-width: 700px)", style.GetAttribute("media")); },
+            style => { Assert.Equal("h1{font-size:38px}", style.TextContent); Assert.False(style.HasAttribute("media")); },
+            style => { Assert.Equal(linkedCss, style.TextContent); Assert.Equal("print", style.GetAttribute("media")); });
+        Assert.Empty(document.QuerySelectorAll("link"));
+        Assert.DoesNotContain("独有书会内容", reference);
+    }
+
+    [Fact]
     public void 骨架先按配色就近_再按描述匹配预设_都没有才用默认并说明依据()
     {
         var settings = DesignGenerationSettingsService.Effective(null, Catalog);
