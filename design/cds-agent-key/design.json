@@ -190,42 +190,66 @@
       "rule": "公共导航",
       "how": "human",
       "screenId": "keys-desktop",
-      "expected": "复用正式 AppShell 与系统设置目录：桌面左侧设置目录在「接入」组高亮「Agent Key」，手机用顶部目录选择；入口顺序与其他设置页一致"
+      "expected": "复用正式 AppShell 与系统设置目录：桌面左侧设置目录在「接入」组高亮「Agent Key」，手机用顶部目录选择；入口顺序与其他设置页一致",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     },
     {
       "id": "R-02",
       "rule": "双主题和表面层级",
       "how": "human",
       "screenId": "keys-desktop",
-      "expected": "浅色与深色都只用根主题令牌；页面底、卡片、凹陷三层可区分；状态与风险沿用 ok、warn、bad、info 语义色"
+      "expected": "浅色与深色都只用根主题令牌；页面底、卡片、凹陷三层可区分；状态与风险沿用 ok、warn、bad、info 语义色",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     },
     {
       "id": "R-03",
       "rule": "字体和界面尺度",
       "how": "human",
       "screenId": "keys-desktop",
-      "expected": "正文用 Inter 与系统中文字体，编号与命令用 JetBrains Mono；尺寸跟随整站尺度，不出现独自变大的文字"
+      "expected": "正文用 Inter 与系统中文字体，编号与命令用 JetBrains Mono；尺寸跟随整站尺度，不出现独自变大的文字",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     },
     {
       "id": "R-04",
       "rule": "模块规则",
       "how": "human",
       "screenId": "sign-desktop",
-      "expected": "签发弹窗用公共 Dialog，吊销确认用公共 ConfirmAction；来源标签与风险标记只用现有语义色；模块差异记录在交付说明"
+      "expected": "签发弹窗用公共 Dialog，吊销确认用公共 ConfirmAction；来源标签与风险标记只用现有语义色；模块差异记录在交付说明",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     },
     {
       "id": "R-07",
       "rule": "窄屏的可达性",
       "how": "human",
       "screenId": "keys-phone",
-      "expected": "375 宽下页头、来源筛选、状态筛选、列表行和签发弹窗都可操作，没有被截断或挤出屏幕的按钮"
+      "expected": "375 宽下页头、来源筛选、状态筛选、列表行和签发弹窗都可操作，没有被截断或挤出屏幕的按钮",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ]
     },
     {
       "id": "R-11",
       "rule": "框架版本与对照依据",
       "how": "human",
       "screenId": "keys-desktop",
-      "expected": "稿件记录 FW-CDS-UI V3；实现部署后按演示数据，在同视口、同主题下与原型逐画面对照"
+      "expected": "稿件记录 FW-CDS-UI V3；实现部署后按演示数据，在同视口、同主题下与原型逐画面对照",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     },
     {
       "id": "AK-01",
@@ -351,7 +375,11 @@
       "how": "measure",
       "priority": "high",
       "expected": "检查：签发一把 7 天到期的项目 Key，用它调用一次接口，再读列表，到期时间不变；Agent 自助签发的 Key 仍按使用续期",
-      "screenId": "sign-desktop"
+      "screenId": "sign-desktop",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     },
     {
       "id": "AK-13",
@@ -471,7 +499,11 @@
       "how": "measure",
       "priority": "high",
       "expected": "检查：用项目级或全局 Agent Key 调用 GET /api/global-agent-keys/catalog 返回 403 agent_key_cannot_mint_global；系统所有者登录可读",
-      "screenId": "keys-desktop"
+      "screenId": "keys-desktop",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ]
     }
   ]
 }
