@@ -2297,6 +2297,20 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     [Theory]
+    [InlineData("project::feature::revision::old", "project::feature::revision::new", "project::feature", true)]
+    [InlineData("project::feature", "project::feature::revision::new", "project::feature", true)]
+    [InlineData("project::feature-other::revision::old", "project::feature::revision::new", "project::feature", false)]
+    [InlineData("other::feature::revision::old", "project::feature::revision::new", "project::feature", false)]
+    [InlineData("project::feature::revision::old", null, null, false)]
+    [InlineData(null, "project::feature::revision::new", "project::feature", false)]
+    [InlineData(null, null, null, true)]
+    public void WebGenerationRetryScope_ShouldKeepProjectAndBranchIsolation(
+        string? sourceScope, string? currentScope, string? durableScope, bool expected)
+    {
+        Assert.Equal(expected, DesignArtifactsController.IsWebGenerationRetryScope(sourceScope, currentScope, durableScope));
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     [Trait("Category", TestCategories.Integration)]
@@ -2310,7 +2324,9 @@ public sealed class DesignArtifactLifecycleServiceTests
             Phase = HostedSiteEditRunWorker.RestartInterruptedMessage,
             Error = interrupted ? HostedSiteEditRunWorker.RestartInterruptedMessage : "设计服务在整理页面产物时出错",
             Instruction = "生成产品发布页", Title = "产品发布页",
-            DeploymentSlug = DeploymentScope.Current,
+            DeploymentSlug = !interrupted && DeploymentScope.CurrentDurable is { } scope
+                ? scope + "::revision::previous"
+                : DeploymentScope.Current,
             DesignDirection = new DesignArtifactDesignDirection
             {
                 StyleId = "reference-site:owned-reference",
@@ -2409,6 +2425,7 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(source.Error, persistedSource.Error);
         var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
         Assert.Equal(source.Id, restarted.RestartedFromRunId);
+        Assert.Equal(DeploymentScope.Current, restarted.DeploymentSlug);
         Assert.Equal(source.Instruction, restarted.Instruction);
         Assert.Equal("owned-reference", restarted.DesignDirection?.ReferenceSiteId);
         Assert.Equal("冻结的参考网页样式", restarted.DesignDirection?.GeneratePrompt);

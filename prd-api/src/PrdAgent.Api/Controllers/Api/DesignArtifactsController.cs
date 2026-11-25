@@ -388,8 +388,7 @@ public sealed class DesignArtifactsController : ControllerBase
         if (normalizedOperation == DesignArtifactOperations.Edit && normalizedSiteId == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "查找修改任务时必须提供站点编号"));
 
-        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current)
-                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
+        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
                      & Builders<DesignArtifactRun>.Filter.Ne(item => item.SourceSurface, DesignArtifactSourceSurfaces.Workflow);
@@ -397,16 +396,26 @@ public sealed class DesignArtifactsController : ControllerBase
             filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, normalizedOperation);
         if (normalizedSiteId != null)
             filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.TargetSiteId, normalizedSiteId);
-        var candidates = await _db.DesignArtifactRuns.Find(filter)
+        var currentScope = DeploymentScope.Current;
+        var currentFilter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, currentScope);
+        var candidates = await _db.DesignArtifactRuns.Find(filter & currentFilter)
             .SortByDescending(item => item.CreatedAt)
             .Limit(20)
             .ToListAsync(CancellationToken.None);
         var run = candidates.FirstOrDefault(item => item.Status is RunStatuses.Queued or RunStatuses.Running or RunStatuses.Committing);
         if (run == null && candidates.FirstOrDefault() is { } latest && IsRestartableInterrupted(latest))
             run = latest;
-        if (run == null && includeLatestFailed && candidates.FirstOrDefault() is { } latestFailed
-            && (IsRestartableWebGenerationFailure(latestFailed) || IsViewableFailedRun(latestFailed)))
-            run = latestFailed;
+        if (run == null && includeLatestFailed)
+        {
+            var latestFailed = candidates.FirstOrDefault();
+            // 旧版本的终态失败可读，活动任务的发现和认领仍按当前提交隔离。
+            if (normalizedOperation == DesignArtifactOperations.Generate && DeploymentScope.CurrentDurable is { } durableScope)
+                latestFailed = await _db.DesignArtifactRuns.Find(filter & DesignArtifactTimingStats.ScopeFilter(durableScope))
+                    .SortByDescending(item => item.CreatedAt)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (latestFailed != null && (IsRestartableWebGenerationFailure(latestFailed) || IsViewableFailedRun(latestFailed)))
+                run = latestFailed;
+        }
         return Ok(ApiResponse<object?>.Ok(run == null ? null : ToDto(run)));
     }
 
@@ -439,11 +448,13 @@ public sealed class DesignArtifactsController : ControllerBase
         if (source.SourceSurface == DesignArtifactSourceSurfaces.Workflow)
             return Conflict(ApiResponse<object>.Fail("WORKFLOW_RESTART_REQUIRES_NODE",
                 "请回到原工作流，重新运行对应节点；原输入和报告仍然保留"));
-        var isInterruptedRestart = IsRestartableInterrupted(source);
-        var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
         var isWebGeneration = source.ArtifactType == DesignArtifactTypes.WebPage
             && source.Operation == DesignArtifactOperations.Generate;
-        var canRestart = isInterruptedRestart || isPresentationQualityRepair
+        var isInterruptedRestart = IsRestartableInterrupted(source)
+            && (!isWebGeneration || IsWebGenerationRetryScope(source.DeploymentSlug, DeploymentScope.Current, DeploymentScope.CurrentDurable));
+        var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
+        var canRestart = isInterruptedRestart
+            || isPresentationQualityRepair
             || IsRestartableWebGenerationFailure(source);
         if (!canRestart)
             return Conflict(ApiResponse<object>.Fail(
@@ -1282,8 +1293,13 @@ public sealed class DesignArtifactsController : ControllerBase
             || run.LifecycleFailureCode == WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode
             || string.Equals(run.Error, HostedSiteEditRunWorker.RestartInterruptedMessage, StringComparison.Ordinal));
 
+    internal static bool IsWebGenerationRetryScope(string? sourceScope, string? currentScope, string? durableScope) =>
+        sourceScope == currentScope
+        || durableScope != null && (sourceScope == durableScope
+            || sourceScope?.StartsWith(durableScope + "::revision::", StringComparison.Ordinal) == true);
+
     internal static bool IsRestartableWebGenerationFailure(DesignArtifactRun run) =>
-        run.DeploymentSlug == DeploymentScope.Current
+        IsWebGenerationRetryScope(run.DeploymentSlug, DeploymentScope.Current, DeploymentScope.CurrentDurable)
         && run.Runtime == DesignArtifactRuntimes.OpenDesign
         && run.ArtifactType == DesignArtifactTypes.WebPage
         && run.Operation == DesignArtifactOperations.Generate
