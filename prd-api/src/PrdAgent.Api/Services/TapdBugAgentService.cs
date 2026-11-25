@@ -33,15 +33,20 @@ public class TapdBugAgentService
     private readonly ILlmGateway _gateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<TapdBugAgentService> _logger;
+    private readonly string? _modelPublicId;
+
+    public const string ModelPublicIdKey = "TapdBugAgent:ModelPublicId";
 
     public TapdBugAgentService(
         ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
-        ILogger<TapdBugAgentService> logger)
+        ILogger<TapdBugAgentService> logger,
+        IConfiguration configuration)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _modelPublicId = configuration[ModelPublicIdKey]?.Trim();
     }
 
     public async Task<TapdBugDraft> StreamPreviewAsync(
@@ -64,6 +69,7 @@ public class TapdBugAgentService
         {
             AppCallerCode = AppCallerRegistry.TapdBugAgent.Extract.Chat,
             ModelType = ModelTypes.Chat,
+            ExpectedModel = string.IsNullOrWhiteSpace(_modelPublicId) ? null : _modelPublicId,
             RequestBody = new JsonObject
             {
                 ["messages"] = new JsonArray

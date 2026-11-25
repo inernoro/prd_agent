@@ -13276,6 +13276,31 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
     }
 }).RequireAuthorization("ConfigWrite");
 
+// 每日候选缓存供配置人员查看；可调用目录仍走正常模型注册和权限规则。
+app.MapGet("/gw/platforms/{id}/model-advisory-catalog", async (HttpContext http, string id) =>
+{
+    var scope = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    if (!await gwPlatforms.Find(scope).AnyAsync(http.RequestAborted)) return Results.NotFound();
+    var snapshot = await gatewayDatabase
+        .GetCollection<BsonDocument>(PrdAgent.LlmGw.ModelAdvisories.ModelAdvisoryCatalogWorker.Collection)
+        .Find(scope).FirstOrDefaultAsync(http.RequestAborted);
+    if (snapshot is null) return Results.Json(ApiEnvelope<object>.Ok(new { status = "unknown", models = Array.Empty<object>() }), jsonOptions);
+    var models = snapshot.GetValue("Models", new BsonArray()).AsBsonArray.Select(item => new
+    {
+        modelId = item.AsBsonDocument.GetStringOrEmpty("ModelId"),
+        created = item.AsBsonDocument.GetValue("Created").IsInt64 ? item.AsBsonDocument["Created"].AsInt64 : (long?)null,
+        suggestedCapabilities = item.AsBsonDocument["SuggestedCapabilities"].AsBsonArray.Select(x => x.AsString).ToArray(),
+    }).ToArray();
+    var lastSuccess = snapshot.AsNullableUtcDateTime("LastSuccessfulCheckAt");
+    return Results.Json(ApiEnvelope<object>.Ok(new
+    {
+        status = lastSuccess < DateTime.UtcNow.AddDays(-2) ? "unknown" : snapshot.AsNullableString("Status") ?? "unknown",
+        lastAttemptAt = snapshot.AsNullableUtcDateTime("LastAttemptAt"),
+        lastSuccessfulCheckAt = lastSuccess,
+        models,
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 // 拉上游模型清单：用户不该照着供应商文档往输入框里抄模型名。
 // 用途按标识推断（拿不准就留空），价格只认上游自己给的（不内置价目表，见 ProviderPresets.ReadPricing）。
 app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string id) =>

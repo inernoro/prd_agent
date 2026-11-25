@@ -29,6 +29,10 @@ public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfigu
     }
 
     public async Task<HashSet<string>> DiscoverAsync(ModelUpgradeState state, BsonDocument provider, CancellationToken ct)
+        => (await DiscoverCatalogAsync(state, provider, catalogRefresh: false, ct)).Keys.ToHashSet(StringComparer.Ordinal);
+
+    public async Task<Dictionary<string, long?>> DiscoverCatalogAsync(ModelUpgradeState state, BsonDocument provider,
+        bool catalogRefresh, CancellationToken ct)
     {
         var preset = RequireOfficial(provider);
         if (!preset.SupportsModelDiscovery)
@@ -40,16 +44,26 @@ public sealed class ModelUpgradeDiscovery(UpstreamProxyService proxies, IConfigu
         var key = GwApiKeyCrypto.Decrypt(provider.AsNullableString("ApiKeyEncrypted"), config);
         if (!key.Success) throw new ModelUpgradeException("KEY_UNREADABLE", "官方 Provider 密钥不可读取，请在上游设置中修复后重新检查。", 409);
         using var client = new HttpClient(UpstreamProxy.CreateHandler(resolved ?? new("system", null, null, null), state.TenantId != internalTenantId));
-        return await new ModelUpgradeDiscoveryAudit(gateway, config).ExecuteAsync(state, provider,
-            new Uri(ProviderPresets.ResolveModelsUrl(provider.GetStringOrEmpty("ApiUrl"))), client, key.PlainText!, ct);
+        return await new ModelUpgradeDiscoveryAudit(gateway, config).ExecuteCatalogAsync(state, provider,
+            new Uri(ProviderPresets.ResolveModelsUrl(catalogRefresh ? preset.ApiUrl : provider.GetStringOrEmpty("ApiUrl"))),
+            client, key.PlainText!, ct, catalogRefresh);
     }
 
     public static HashSet<string> ReadModelNames(byte[] body)
+        => ReadModelCatalog(body).Keys.ToHashSet(StringComparer.Ordinal);
+
+    public static Dictionary<string, long?> ReadModelCatalog(byte[] body)
     {
         using var json = JsonDocument.Parse(body);
         if (json.RootElement.ValueKind != JsonValueKind.Object || !json.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             throw new ModelUpgradeException("DISCOVERY_SHAPE", "上游未返回模型清单，本次未判断任何型号退役。", 502);
         return data.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
-            .Select(x => x.GetProperty("id").GetString()!).ToHashSet(StringComparer.Ordinal);
+            .GroupBy(item => item.GetProperty("id").GetString()!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count() == 1 ? ReadCreated(group.First()) : null, StringComparer.Ordinal);
     }
+
+    private static long? ReadCreated(JsonElement item)
+        => item.TryGetProperty("created", out var created) && created.ValueKind == JsonValueKind.Number
+           && created.TryGetInt64(out var seconds) && seconds > 0 && seconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            ? seconds : null;
 }

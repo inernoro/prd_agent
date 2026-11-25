@@ -8,6 +8,7 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Security;
+using PrdAgent.GatewayTransport;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
@@ -29,7 +30,7 @@ public static class GatewayTaskRoutePolicy
         if (route == GatewayConsumptionRetries.Path && path == route)
             return HttpMethods.IsGet(method) || HttpMethods.IsPost(method);
         if (HttpMethods.IsGet(method))
-            return route is "/gw/v1/readyz" or "/gw/v1/route-self-test" or "/gw/v1/pools" or "/gw/v1/image-models" or "/v1/models"
+            return route is "/gw/v1/readyz" or "/gw/v1/route-self-test" or "/gw/v1/pools" or "/gw/v1/image-models" or ModelLifecycleAdvisory.Path or "/v1/models"
                    || route == "/v1/models/{**modelid}" && path.StartsWith("/v1/models/", StringComparison.Ordinal)
                    || route == "/gw/v1/requests/{requestid}/status" && IsRequestControl(path, "status");
         return HttpMethods.IsPost(method) && (route == "/gw/v1/resolve"

@@ -78,6 +78,10 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
         return headers;
     }
     public async Task<HashSet<string>> ExecuteAsync(ModelUpgradeState state, BsonDocument provider, Uri target, HttpClient client, string key, CancellationToken ct)
+        => (await ExecuteCatalogAsync(state, provider, target, client, key, ct, catalogRefresh: false)).Keys.ToHashSet(StringComparer.Ordinal);
+
+    public async Task<Dictionary<string, long?>> ExecuteCatalogAsync(ModelUpgradeState state, BsonDocument provider,
+        Uri target, HttpClient client, string key, CancellationToken ct, bool catalogRefresh)
     {
         var id = Guid.NewGuid().ToString("N");
         var started = DateTime.UtcNow;
@@ -87,15 +91,17 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
             { "startedAt", started }, { "timeoutSeconds", 20 }, { "responseByteLimit", BodyLimit }, { "modelIdLimit", ModelIdLimit },
             { "providerUpdatedAt", provider.GetValue("UpdatedAt", BsonNull.Value) },
             { "build", Identifier(configuration["CDS_COMMIT_SHA"] ?? configuration["GIT_COMMIT"] ?? typeof(ModelUpgradeDiscoveryAudit).Assembly.GetName().Version?.ToString(), key) },
-            { "deployment", Identifier(configuration[ModelUpgradeDeploymentAuthority.WorkerDeploymentKey], key) },
+            { "deployment", Identifier(configuration[catalogRefresh ? "LlmGateway:ModelAdvisories:WorkerDeployment" : ModelUpgradeDeploymentAuthority.WorkerDeploymentKey], key) },
             { "instance", Identifier(Environment.MachineName, key) }, { "receivedResponse", false }, { "classification", "request-started" }, { "stage", "sending" } };
-        var record = new BsonDocument { { "_id", id }, { "TenantId", state.TenantId }, { "Action", "model-upgrade.discovery.response" },
-            { "TargetType", "llmgw_logical_model" }, { "TargetId", state.LogicalModelId }, { "ActorUserId", state.ActorConsoleUserId }, { "ActorUsername", state.ActorUsername },
+        var record = new BsonDocument { { "_id", id }, { "TenantId", state.TenantId },
+            { "Action", catalogRefresh ? "model-advisory.catalog.response" : "model-upgrade.discovery.response" },
+            { "TargetType", catalogRefresh ? "llmgw_platform" : "llmgw_logical_model" },
+            { "TargetId", catalogRefresh ? provider.GetStringOrEmpty("_id") : state.LogicalModelId }, { "ActorUserId", state.ActorConsoleUserId }, { "ActorUsername", state.ActorUsername },
             { "Success", false }, { "State", "pending" }, { "CreatedAt", started }, { "Changes", changes } };
         try { await Audits.InsertOneAsync(record, cancellationToken: CancellationToken.None); }
         catch { throw new ModelUpgradeException("DISCOVERY_AUDIT_FAILED", "目录请求审计未能写入，本次未发出请求；请恢复审计存储后重试。"); }
         var watch = Stopwatch.StartNew();
-        Exception? failure = null; HashSet<string>? names = null;
+        Exception? failure = null; Dictionary<string, long?>? names = null;
         using var body = new MemoryStream();
         var truncated = false; var readCompleted = false;
         try
@@ -125,7 +131,7 @@ public sealed class ModelUpgradeDiscoveryAudit(IMongoDatabase database, IConfigu
                 using var parsed = JsonDocument.Parse(body.ToArray());
                 if (parsed.RootElement.ValueKind == JsonValueKind.Object && parsed.RootElement.TryGetProperty("error", out var error) && error.ValueKind != JsonValueKind.Null)
                 { changes["classification"] = "upstream-business-error"; throw new ModelUpgradeException("DISCOVERY_UPSTREAM_ERROR", "官方目录返回业务错误，原线路未改变；请查看脱敏响应审计。", 502); }
-                names = ModelUpgradeDiscovery.ReadModelNames(body.ToArray()); changes["classification"] = "models-parsed";
+                names = ModelUpgradeDiscovery.ReadModelCatalog(body.ToArray()); changes["classification"] = "models-parsed";
             }
             catch (JsonException) { changes["classification"] = "invalid-json"; throw new ModelUpgradeException("DISCOVERY_PARSE_FAILED", "官方目录返回无法解析，原线路未改变；请查看脱敏响应审计。", 502); }
             catch (ModelUpgradeException) { if (changes["classification"] != "upstream-business-error") changes["classification"] = "invalid-model-list-shape"; throw; }

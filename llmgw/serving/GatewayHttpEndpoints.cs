@@ -15,6 +15,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.GatewayTransport;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -1747,6 +1748,32 @@ public static class GatewayHttpEndpoints
             return Results.Json(models, jsonOpts);
         });
 
+        app.MapGet(ModelLifecycleAdvisory.Path, async (
+            HttpContext http, string modelType, string? expectedModel,
+            ILlmGateway gateway, ILLMRequestContextAccessor accessor) =>
+        {
+            if (CatalogCallerDenied(http, out var caller) || string.IsNullOrWhiteSpace(caller))
+                return Results.Json(new { error = new { code = "APP_CALLER_NOT_AUTHORIZED" } }, jsonOpts, statusCode: 403);
+            if (modelType.Length is 0 or > 48 || expectedModel?.Length > 200)
+                return Results.BadRequest();
+            var context = new GatewayRequestContext
+            {
+                TenantId = GetVerifiedTenantId(http),
+                TeamId = GetVerifiedTeamId(http),
+                GatewayTransport = GatewayTransports.Http,
+            };
+            var ingress = new GatewayIngressRequest
+            {
+                RequestId = TrackGatewayRequestId(http), IngressProtocol = "gw-native",
+                Context = context, AppCallerCode = caller, RequestType = modelType,
+            };
+            var ct = http.RequestAborted;
+            if (!await CanPreviewAppCallerForTeamAsync(http.RequestServices, ingress, ct))
+                return Results.Json(new { error = new { code = "APP_CALLER_TEAM_OWNERSHIP_DENIED" } }, jsonOpts, statusCode: 403);
+            using var scope = OpenContextScope(accessor, context, modelType, caller);
+            return Results.Json(await GatewayModelAdvisory.ReadAsync(gateway, app.Configuration, caller, modelType, expectedModel, ct), jsonOpts);
+        });
+
         // 可用模型池列表。
         app.MapGet("/gw/v1/pools", async (
             HttpContext http,
@@ -2420,6 +2447,7 @@ public static class GatewayHttpEndpoints
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)
+            || path.Equals(ModelLifecycleAdvisory.Path, StringComparison.OrdinalIgnoreCase)
             ) return "route:read";
         return "invoke";
     }

@@ -117,6 +117,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(DocumentRecordingArchiveWorker), typeof(ShortVideoMaterialWorker),
             typeof(InfraAgentRuntimeWorker), typeof(InfraAgentSessionCleanupWorker), typeof(ChatAgentTurnWorker));
         Add(BackgroundTaskKind.SharedAutomatic,
+            typeof(TapdModelAdvisoryWorker),
             typeof(ProductAgent.ProductScheduledNotificationWorker),
             typeof(ProductAgent.ProductInitiationAutoIssueWorker),
             typeof(ProductAgent.ProductClaimWebhookWorker), typeof(ProductAgent.ProductAnnouncementSyncWorker),

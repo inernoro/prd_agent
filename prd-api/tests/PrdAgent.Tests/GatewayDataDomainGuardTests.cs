@@ -6799,8 +6799,8 @@ public class GatewayDataDomainGuardTests
         // 覆盖与否必须问鉴权那一份（它认 `*`），在这里逐字比会把通配 key 判成越权
         Assert.Contains("GatewayScopedKeyAuthorizer.ListCoversValue(", endpoints, StringComparison.Ordinal);
         Assert.Contains("private static bool CatalogCallerDenied(", endpoints, StringComparison.Ordinal);
-        // 清单与单模型详情读的是同一份数据，两处都要过同一道门
-        Assert.Equal(2, CountOccurrences(endpoints, "CatalogCallerDenied(http, out"));
+        // 清单、单模型详情与淘汰建议都必须过同一道调用方权限门。
+        Assert.Equal(3, CountOccurrences(endpoints, "CatalogCallerDenied(http, out"));
         // 不许再有绕过这道门、直接把请求头喂进构造的写法
         Assert.Equal(0, CountOccurrences(
             endpoints,

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { createLogicalModel, createModelOffering, getModels, getPlatforms, getUpstreamModels, importUpstreamModels } from '@/lib/api';
+import { createLogicalModel, createModelOffering, getModelAdvisoryCatalog, getModels, getPlatforms, getUpstreamModels, importUpstreamModels } from '@/lib/api';
+import type { ModelAdvisoryCatalog } from '@/lib/api';
 import type { ExchangeItem, ExchangeOptionItem, LogicalModelItem, ModelItem, PlatformItem, UpstreamModelItem } from '@/lib/types';
 import { Button, InlineAlert, SectionLoader } from '@/components/ui';
 import { FormGrid, HelpPopover } from '@/components/PageShell';
@@ -16,6 +17,7 @@ export function ModelCreationPanel({ models, exchanges, modelTypes, onCreated, o
   const [platforms, setPlatforms] = useState<PlatformItem[]>([]);
   const [source, setSource] = useState('');
   const [discovered, setDiscovered] = useState<UpstreamModelItem[]>([]);
+  const [catalog, setCatalog] = useState<{ sourceId: string; data: ModelAdvisoryCatalog } | null>(null);
   const [wire, setWire] = useState('');
   const [name, setName] = useState('');
   const [publicId, setPublicId] = useState('');
@@ -33,10 +35,22 @@ export function ModelCreationPanel({ models, exchanges, modelTypes, onCreated, o
     else setError(res.error?.message || '读取上游失败，请重试。');
   }).catch(() => setError('上游清单未读到，请检查网络后重试。')); }, []);
   const [kind, sourceId = ''] = source.split(':');
+  useEffect(() => {
+    if (mode !== 'upstream' || kind !== 'platform' || !sourceId) return;
+    let current = true;
+    void getModelAdvisoryCatalog(sourceId).then(result => {
+      if (current) setCatalog(result.success ? { sourceId, data: result.data } : null);
+    }).catch(() => { if (current) setCatalog(null); });
+    return () => { current = false; };
+  }, [mode, kind, sourceId]);
+  const daily = catalog?.sourceId === sourceId ? catalog.data : undefined;
+  const suggested = daily?.status === 'fresh' ? daily.models.filter(item =>
+    item.suggestedCapabilities.includes(modelType === 'generation' ? 'image_generation' : modelType)).map(item => item.modelId) : [];
   const exchange = kind === 'exchange' ? exchanges.find(item => item.id === sourceId) : undefined;
   const available = kind === 'platform' ? [...new Set([
     ...models.filter(item => item.platformId === sourceId).map(item => item.modelName),
     ...discovered.map(item => item.modelId),
+    ...suggested,
   ])] : (exchange?.models.filter(item => item.enabled).map(item => item.modelId) ?? []);
 
   function chooseWire(value: string) {
@@ -68,7 +82,15 @@ export function ModelCreationPanel({ models, exchanges, modelTypes, onCreated, o
       if (mode === 'upstream' && kind === 'platform') {
         let physical = models.find(item => item.platformId === sourceId && item.modelName === wire);
         if (!physical) {
-          const selected = discovered.find(item => item.modelId === wire)!;
+          let selected = discovered.find(item => item.modelId === wire);
+          if (!selected) {
+            const refreshed = await getUpstreamModels(sourceId);
+            if (refreshed.success) {
+              setDiscovered(refreshed.data.items);
+              selected = refreshed.data.items.find(item => item.modelId === wire);
+            }
+          }
+          if (!selected) throw new Error('暂未从当前上游清单确认该型号，请刷新后重试。');
           const imported = await importUpstreamModels(sourceId, [{
             modelId: wire, capabilities: modelType === 'generation' ? IMAGE_CAPABILITIES : [modelType],
             allowOutsideCatalog: !selected.inCatalog,
@@ -110,6 +132,8 @@ export function ModelCreationPanel({ models, exchanges, modelTypes, onCreated, o
       <label style={FIELD_LABEL}><span>上游实际型号</span><input required value={wire} list="create-upstream-models" disabled={Boolean(created) || Boolean(busy)} onChange={event => chooseWire(event.target.value)} placeholder="搜索或选择上游返回的型号" style={FIELD_INPUT}/><datalist id="create-upstream-models">{available.map(value => <option key={value} value={value}/>)}</datalist></label>
       {kind === 'platform' ? <Button type="button" size="sm" disabled={Boolean(busy) || !sourceId} onClick={() => void discover()}>读取上游型号</Button> : null}
     </FormGrid> : null}
+    {mode === 'upstream' && kind === 'platform' && daily?.lastSuccessfulCheckAt
+      ? <p style={HINT_TEXT}>上次目录同步 {new Date(daily.lastSuccessfulCheckAt).toLocaleString('zh-CN')} · {daily.status === 'fresh' ? '型号建议按当前用途筛选' : '本轮未确认，请刷新上游型号'}</p> : null}
     <FormGrid>
       <label style={FIELD_LABEL}><span>模型名称</span><input required maxLength={120} value={name} disabled={Boolean(created) || Boolean(busy)} onChange={event => setName(event.target.value)} placeholder="自由命名，例如「我的画师」" style={FIELD_INPUT}/></label>
       <label style={FIELD_LABEL}><span>公开标识<HelpPopover label="公开标识">用于 API 和 MCP 的稳定标识，须在组织内唯一。显示名称可以自定义。</HelpPopover></span><input required value={publicId} disabled={Boolean(created) || Boolean(busy)} onChange={event => setPublicId(event.target.value)} placeholder="例如 studio-image" style={FIELD_INPUT}/></label>

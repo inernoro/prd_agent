@@ -616,6 +616,16 @@ export function getProviderPresets(): Promise<ApiResponse<ProviderPresetsData>> 
 export function testPlatformConnection(id: string): Promise<ApiResponse<PlatformTestResult>> {
   return apiRequest<PlatformTestResult>(`/platforms/${id}/test`, { method: 'POST' });
 }
+export type ModelAdvisoryCatalog = {
+  status: 'fresh' | 'unknown';
+  lastSuccessfulCheckAt?: string;
+  models: Array<{ modelId: string; suggestedCapabilities: string[] }>;
+};
+
+export function getModelAdvisoryCatalog(id: string): Promise<ApiResponse<ModelAdvisoryCatalog>> {
+  return apiRequest<ModelAdvisoryCatalog>(`/platforms/${encodeURIComponent(id)}/model-advisory-catalog`);
+}
+
 export function getUpstreamModels(id: string): Promise<ApiResponse<UpstreamModelsData>> {
   return apiRequest<UpstreamModelsData>(`/platforms/${id}/upstream-models`);
 }
