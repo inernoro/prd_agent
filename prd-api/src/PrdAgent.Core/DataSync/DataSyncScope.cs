@@ -474,6 +474,7 @@ public static class DataSyncScope
         ["product_announcements"] = "指定公开站点的公告缓存：可重新增量抓取，不跨站搬运成功水位",
         ["product_workday_calendars"] = "公开法定日历缓存：由目标站按年度验证与刷新，不作为版本业务主数据导出",
         ["profile_avatar_object_cleanup_tasks"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
+        ["quick_video_runs"] = "快速创作记录：关联源环境的执行许可、配音任务和托管资产，跨实例同步会误认任务与资产归属",
         ["registered_apps"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["report_daily_logs"] = "日志与埋点：量大且只对源站有意义",
         ["report_share_links"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",

@@ -112,7 +112,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(MdToPpt.HtmlPptDesignArtifactRecoveryWorker), typeof(MdToPpt.HtmlPptPublishRecoveryWorker),
             typeof(HostedSiteEditRunWorker), typeof(HostedCommentReplyWorker), typeof(WorkflowRunWorker),
             typeof(HostedSiteDeletionCleanupService), typeof(HostedSiteOptimizationCleanupService),
-            typeof(VideoGenRunWorker), typeof(VideoToDocRunWorker), typeof(ArenaRunWorker),
+            typeof(VideoGenRunWorker), typeof(VideoToDocRunWorker), typeof(QuickCreate.QuickVideoWorker), typeof(ArenaRunWorker),
             typeof(TranscriptRunWorker), typeof(DocumentStoreAgentWorker),
             typeof(DocumentRecordingArchiveWorker), typeof(ShortVideoMaterialWorker),
             typeof(InfraAgentRuntimeWorker), typeof(InfraAgentSessionCleanupWorker), typeof(ChatAgentTurnWorker));

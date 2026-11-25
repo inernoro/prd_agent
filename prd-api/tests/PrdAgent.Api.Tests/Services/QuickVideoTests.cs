@@ -17,6 +17,11 @@ public sealed class QuickVideoTests
     [Fact]
     public void QuickCreateAdmissionPermitsWritingAndSpeech()
     {
+        var registry = new BackgroundTaskAdmissionRegistry(new ConfigurationBuilder().Build());
+        var consumer = registry.Check(typeof(QuickVideoWorker));
+        Assert.Equal(BackgroundTaskKind.UserRunConsumer, consumer.Kind);
+        Assert.True(consumer.Allowed);
+
         var policy = Assert.IsType<TaskAdmissionPolicy>(TaskAdmissionPolicies.Find("PrdAgent.Api.Controllers.Api.QuickCreateController", "Create"));
         Assert.Equal(new[] { AppCallerRegistry.Admin.WebHosting.GenerateHtml, AppCallerRegistry.McpSpeech.Synthesize }, policy.AppCallers);
         Assert.Equal(4, policy.InteractiveMaxCalls);
