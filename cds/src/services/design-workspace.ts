@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
-  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignUpgrade, DesignViewerState, FrameworkResolutions,
+  DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignThumbnailStatus, DesignUpgrade, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
 import { currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
@@ -394,6 +394,7 @@ export class DesignWorkspaceService {
   private readonly latest = new Map<string, WorkspaceState>();
   private readonly presentations = new Map<string, Promise<DesignPresentation>>();
   private readonly referenceJobs = new Set<string>();
+  private readonly completedReferenceJobs = new Set<string>();
   private readonly acceptanceJobs = new Set<string>();
   private referenceQueue = Promise.resolve();
 
@@ -509,6 +510,28 @@ export class DesignWorkspaceService {
         ...((actor.gitPublishOnly || actor.kind === 'human' && actor.permissions.includes('approve')) ? { programRecheck: true } : {}),
         ...(installed ? { installedAcceptance: true } : {}),
         steward: actor.steward === true, feedbackSupplement: actor.kind === 'human' && actor.feedbackSupplement === true, actorId: actor.id } };
+  }
+
+  async thumbnailStatus(projectId: string, actor: DesignActor, id: string, versionNumber: number): Promise<DesignThumbnailStatus> {
+    requireProjectRead(actor);
+    const key = `${projectId}/${id}/${versionNumber}`;
+    const wasRunning = this.referenceJobs.has(key);
+    const entry = (await this.load(projectId)).designs.get(id) ?? missing('该稿件不存在');
+    const version = implementationVersion(entry, versionOf(entry, versionNumber));
+    const renders = version.renders ?? {};
+    let total = 0;
+    let completed = 0;
+    for (const screen of version.screens) {
+      total += screen.themes.length;
+      completed += screen.themes.filter(theme => renders[screen.id]?.[theme]).length;
+    }
+    let state: DesignThumbnailStatus['state'] = 'idle';
+    if (completed === total) state = 'ready';
+    else if (entry.runs.some(run => run.version === versionNumber && run.signed)) state = 'locked';
+    else if (!this.deps.referenceCapture) state = 'unavailable';
+    else if (wasRunning || this.referenceJobs.has(key)) state = 'running';
+    else if (this.completedReferenceJobs.has(key)) state = 'incomplete';
+    return { designId: id, version: versionNumber, total, completed, state, renders: structuredClone(renders) };
   }
 
   private readPresentation(projectId: string, state: WorkspaceState, version: DesignVersion): Promise<DesignPresentation> {
@@ -889,8 +912,16 @@ export class DesignWorkspaceService {
         });
       }
     }).catch(() => {
-      // Publication already succeeded. A reviewer can retry this version's missing captures.
-    }).finally(() => { this.referenceJobs.delete(key); });
+      // Publication already succeeded. Missing thumbnails stay visible and can be retried.
+      console.warn('[design] Thumbnail generation failed', { projectId, designId: id, version: versionNumber });
+    }).finally(() => {
+      this.completedReferenceJobs.delete(key);
+      this.completedReferenceJobs.add(key);
+      if (this.completedReferenceJobs.size > 64) {
+        this.completedReferenceJobs.delete(this.completedReferenceJobs.values().next().value!);
+      }
+      this.referenceJobs.delete(key);
+    });
   }
 
   async feedback(projectId: string, actor: DesignActor, value: unknown): Promise<Receipt> {
@@ -1023,9 +1054,9 @@ export class DesignWorkspaceService {
       return this.captureProgramAcceptance(type, input, projectId, actor, requestId);
     }
     if (type === 'reference.generate') {
-      designRecord(input, '生成稿件对照图', ['type', 'requestId', 'designId', 'version']);
+      designRecord(input, '生成稿件缩略图', ['type', 'requestId', 'designId', 'version']);
       review(actor);
-      if (!this.deps.referenceCapture) rejectPlanning(503, 'design_capture_unavailable', '当前实例尚未配置稿件截图服务，请在验收中补充参考图。');
+      if (!this.deps.referenceCapture) rejectPlanning(503, 'design_capture_unavailable', '自动生成缩略图暂不可用，可在画廊直接打开原型。');
       const id = designId(input.designId, '稿件编号');
       if (this.referenceJobs.size >= 8 && !this.referenceJobs.has(`${projectId}/${id}/${input.version}`)) {
         rejectPlanning(503, 'design_capture_busy', '正在为其他稿件截图，请稍候沿用原请求编号重试。');

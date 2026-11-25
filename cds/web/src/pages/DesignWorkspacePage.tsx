@@ -45,6 +45,7 @@ export function DesignWorkspacePage() {
   const { key: locationKey, hash } = useLocation();
   const [reload, refresh] = useState(0);
   const refreshWorkspace = useCallback(() => refresh(value => value + 1), []);
+  const [openScreenRevision, setOpenScreenRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const writing = useRef(false);
   const [issue, setIssue] = useState('');
@@ -280,8 +281,8 @@ export function DesignWorkspacePage() {
         { method: 'POST', body: { type, requestId, ...fields } });
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
       pending.current = undefined;
-      setNotice('操作已保存');
-      refreshWorkspace();
+      setNotice(type === 'reference.generate' ? '已提交补图，请在画廊查看进度。' : '操作已保存');
+      if (type !== 'reference.generate') refreshWorkspace();
       return true;
     } catch (error) { setIssue(error instanceof Error ? error.message : '未能保存操作，请重试'); return false; }
     finally { writing.current = false; setBusy(false); }
@@ -335,7 +336,7 @@ export function DesignWorkspacePage() {
   const canvasCommon = {
     command, canComment: Boolean(permissions?.review), canWrite: Boolean(permissions?.write),
     actorId: permissions?.actorId ?? '', steward: Boolean(permissions?.steward), commandBusy: busy,
-    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme,
+    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme, onThumbnailsUpdated: refreshWorkspace,
   };
   const draftActions = entry && version && <div className="dw-tools dw-draft-actions">
     <select className="dw-version-select" value={version.version} aria-label="稿件版本" disabled={comparing}
@@ -440,7 +441,7 @@ export function DesignWorkspacePage() {
             <DesignCanvas key={`${entry.id}/${version.version}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon}
               entry={entry} version={version} active={!large && !review && !fullView}
               comparing={comparing} initialScreenId={defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
-              cornerTools onSceneChange={rememberScene}
+              cornerTools onSceneChange={rememberScene} openScreenRevision={openScreenRevision}
               onSelectScreen={id => onChange({ screen: id, comment: '' }, true)}
               onModeChange={(compare, screen, from) => onChange({ ...deliveryQuery, tab: 'delivery', compare: compare ? '1' : '',
                 screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
@@ -457,7 +458,10 @@ export function DesignWorkspacePage() {
               requirement={draftRequirement} permissions={permissions} tab={sideTab} theme={canvasTheme}
               onTab={value => onChange({ pane: value === 'demo' ? '' : value }, true)}
               open={openFull} onCollapse={() => onChange({ side: 'off' })}
-              onScreen={id => onChange({ screen: id, comment: '' }, true)}
+              onScreen={id => {
+                setOpenScreenRevision(value => value + 1);
+                onChange({ screen: id, comment: '' }, true);
+              }}
               onReview={comment => openReview(entry, comment, version)}
               onAccept={() => onChange({ ...deliveryQuery, tab: 'accept', screen: scene?.id ?? '' })} />
             : <DesignLegacyDeliverySide entry={entry} version={version} screen={scene} requirement={draftRequirement}

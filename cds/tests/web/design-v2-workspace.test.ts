@@ -6,9 +6,10 @@ import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { chromium, type Browser, type BrowserContextOptions, type Locator, type Page } from 'playwright';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignScreen, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignScreen, DesignThumbnailStatus, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
 import type { PlanningBoard } from '../../src/shared/engineering-planning';
 import { measureDesignPage } from '../../src/services/design-acceptance-observations';
+import { decorateDesignPrototype } from '../../src/services/design-prototype';
 import { DesignWorkspacePage } from '../../web/src/pages/DesignWorkspacePage';
 import { EngineeringPlanningPage } from '../../web/src/pages/EngineeringPlanningPage';
 import { usePlanningRead } from '../../web/src/pages/engineering-planning/planning-ui';
@@ -231,6 +232,8 @@ describe('V17 交付工作区', () => {
 });
 
 describe('已发布的演示、评论和交付布局', () => {
+  const thumbnailPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPwL5wJAAJsAVpBgUBhAAAAAElFTkSuQmCC', 'base64');
+
   it('同一份稿件的新版展示新右栏，历史版沿用原画面入口', async () => {
     await withDesignBrowser(() => guidedWorkspace, async page => {
       await page.goto(browserDesignUrl({ design: guidedDraft.id, version: '18' }));
@@ -248,6 +251,166 @@ describe('已发布的演示、评论和交付布局', () => {
         .getByText(currentScreen.name, { exact: true }).waitFor();
     });
   }, 20_000);
+
+  it('画廊和演示区通过可见入口打开缺图与读图失败的原型', async () => {
+    const available = historyScreen('gallery-available', '设计库概览');
+    const missing = historyScreen('gallery-missing', '设计库列表');
+    const broken = historyScreen('gallery-broken', '连接设置');
+    const version: DesignVersion = {
+      ...guidedVersion,
+      version: 24,
+      title: '交付画廊缩略图检查',
+      screens: [available, missing, broken].map(screen => ({ ...screen, themes: ['light' as const] })),
+      demo: [available, missing, broken].map(screen => ({ screen: screen.id, title: screen.name })),
+      renders: {
+        [available.id]: { light: { id: 'fixture-thumbnail-available', sha256: 'a'.repeat(64) } },
+        [broken.id]: { light: { id: 'fixture-thumbnail-broken', sha256: 'b'.repeat(64) } },
+      },
+    };
+    const draft = { ...guidedDraft, id: 'DSN-fixture-gallery', versions: [version], comments: [], feedback: [] };
+    await withDesignBrowser(() => ({ ...guidedWorkspace, designs: [draft] }), async (page, commands) => {
+      const thumbnailReads: URLSearchParams[] = [];
+      await page.route(url => url.pathname === `/api/projects/${projectId}/design` && url.searchParams.get('view') === 'thumbnails', route => {
+        thumbnailReads.push(new URL(route.request().url()).searchParams);
+        return route.fulfill({ json: { designId: draft.id, version: version.version, state: 'unavailable',
+          total: 3, completed: 2, renders: version.renders } });
+      });
+      await page.route('**/design/artifacts/fixture-thumbnail-available', route =>
+        route.fulfill({ contentType: 'image/png', body: thumbnailPng }));
+      await page.route(url => url.pathname.endsWith('/design/artifacts/fixture-thumbnail-broken'), route => route.fulfill({ status: 404 }));
+      await page.route(url => url.pathname.endsWith('/design/artifacts/' + version.prototypeId), route => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: decorateDesignPrototype(`<!doctype html><html><head><title>演示原型</title></head><body>
+          <h1></h1><script>document.querySelector('h1').textContent = '原型 ' + location.hash.slice(2);</script>
+          </body></html>`),
+      }));
+
+      await page.goto(browserDesignUrl());
+      await page.getByRole('link', { name: version.title, exact: true }).first().click();
+      const all = page.getByRole('button', { name: '全部 3 屏', exact: true });
+      await all.click();
+      const gallery = page.locator('.dw-all-screens');
+      const card = (screen: DesignScreen) => gallery.getByRole('button', { name: '打开原型 ' + screen.name, exact: true });
+      const frame = page.locator('.dw-single .dw-frame');
+      await gallery.waitFor();
+      expect(await gallery.locator('iframe').count()).toBe(0);
+      expect(await card(missing).innerText()).toContain('缺少缩略图');
+      await card(missing).getByText('打开原型', { exact: true }).waitFor();
+      await card(broken).getByText('缩略图加载失败', { exact: true }).waitFor();
+      await card(broken).getByText('打开原型', { exact: true }).waitFor();
+      await expect.poll(() => card(available).locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+      await expect.poll(() => thumbnailReads.some(params => params.get('designId') === draft.id && params.get('version') === '24')).toBe(true);
+      await page.getByText(/自动.*缩略图.*(?:暂不可用|未启用|尚未配置)|(?:暂不可用|未启用|尚未配置).*自动.*缩略图/).first().waitFor();
+      expect(await page.getByRole('button', { name: '生成缩略图', exact: true }).count()).toBe(0);
+      expect(commands).toHaveLength(0);
+      const inspect = async (screen: DesignScreen) => {
+        await frame.waitFor();
+        expect(await frame.getAttribute('data-screen')).toBe(screen.id);
+        expect(new URL(page.url()).searchParams.get('screen')).toBe(screen.id);
+        const prototype = frame.locator('iframe');
+        expect(await prototype.getAttribute('sandbox')).toBe('allow-scripts');
+        expect(new URL((await prototype.getAttribute('src'))!, page.url()).hash).toBe(screen.route);
+        await expect.poll(() => frame.getAttribute('data-preview-state'), { timeout: 6000 }).toBe('ready');
+        await prototype.contentFrame().getByRole('heading', { name: '原型 ' + screen.id, exact: true }).waitFor();
+      };
+      await card(missing).focus();
+      await page.keyboard.press('Enter');
+      await inspect(missing);
+
+      const side = page.getByRole('complementary', { name: '演示、评论和交付' });
+      const missingStep = side.locator(`button[data-screen="${missing.id}"]`);
+      await missingStep.getByText('打开原型', { exact: true }).waitFor();
+
+      await all.click();
+      await card(broken).click();
+      await inspect(broken);
+
+      await all.click();
+      await card(available).click();
+      await inspect(available);
+    });
+  }, 20_000);
+
+  it('画廊打开时点击演示侧栏的当前画面或其他画面都返回单屏', async () => {
+    await withDesignBrowser(() => guidedWorkspace, async page => {
+      await page.goto(browserDesignUrl());
+      await page.getByRole('link', { name: guidedVersion.title, exact: true }).first().click();
+      const side = page.getByRole('complementary', { name: '演示、评论和交付' });
+      const gallery = page.locator('.dw-all-screens');
+      const all = page.getByRole('button', { name: '全部 3 屏', exact: true });
+      const selected = page.getByRole('combobox', { name: '选择画面' });
+      await expect.poll(() => selected.inputValue()).toBe(currentScreen.id);
+      await all.click();
+      await gallery.waitFor();
+      await side.locator(`button[data-screen="${currentScreen.id}"]`).click();
+      await expect.poll(() => gallery.isVisible()).toBe(false);
+      expect(await selected.inputValue()).toBe(currentScreen.id);
+
+      const next = guidedVersion.screens[1];
+      await all.click();
+      await gallery.waitFor();
+      await side.locator(`button[data-screen="${next.id}"]`).click();
+      await expect.poll(() => gallery.isVisible()).toBe(false);
+      expect(await selected.inputValue()).toBe(next.id);
+      expect(new URL(page.url()).searchParams.get('screen')).toBe(next.id);
+    });
+  }, 15_000);
+
+  it('所选版本补图后显示进度，部分完成时可重试并取回剩余图片', async () => {
+    const firstScreen = historyScreen('recovery-overview', '补图概览');
+    const nextScreen = historyScreen('recovery-details', '补图详情');
+    const version: DesignVersion = {
+      ...guidedVersion, version: 24, title: '同一版本补图检查',
+      screens: [firstScreen, nextScreen].map(screen => ({ ...screen, themes: ['light' as const] })),
+    };
+    const draft = { ...guidedDraft, id: 'DSN-fixture-recovery', versions: [version], comments: [], feedback: [] };
+    const renders: DesignThumbnailStatus['renders'] = {};
+    let state: DesignThumbnailStatus['state'] = 'idle';
+    await withDesignBrowser(() => ({ ...guidedWorkspace, designs: [{ ...draft, versions: [{ ...version, renders }] }] }), async (page, commands) => {
+      const path = `/api/projects/${projectId}/design`;
+      await page.route(url => url.pathname === path && url.searchParams.get('view') === 'thumbnails', route =>
+        route.fulfill({
+          json: { designId: draft.id, version: version.version, state,
+            total: 2, completed: Object.keys(renders).length, renders } satisfies DesignThumbnailStatus,
+        }));
+      await page.route(url => url.pathname === path + '/commands', async route => {
+        commands.push(route.request().postDataJSON());
+        state = 'running';
+        return route.fulfill({ json: { projectId, result: { designId: draft.id, version: version.version } } });
+      });
+      await page.route('**/design/artifacts/fixture-generated-*', route =>
+        route.fulfill({ contentType: 'image/png', body: thumbnailPng }));
+
+      await page.goto(browserDesignUrl());
+      await page.getByRole('link', { name: version.title, exact: true }).first().click();
+      await page.getByRole('button', { name: '全部 2 屏', exact: true }).click();
+      const gallery = page.locator('.dw-all-screens');
+      const card = (screen: DesignScreen) => gallery.getByRole('button', { name: '打开原型 ' + screen.name, exact: true });
+      const progress = page.getByText(/正在生成|生成中/).first();
+      await page.getByRole('button', { name: '生成缩略图', exact: true }).click();
+      await progress.waitFor();
+      expect(commands).toHaveLength(1);
+      const expected = { type: 'reference.generate', designId: draft.id, version: version.version };
+      expect(commands[0]).toMatchObject(expected);
+      renders[firstScreen.id] = { light: { id: 'fixture-generated-overview', sha256: 'a'.repeat(64) } };
+      state = 'incomplete';
+      const retry = page.getByRole('button', { name: /重试.*(?:生成|缩略图)/ });
+      await retry.waitFor();
+      await expect.poll(() => card(firstScreen).locator('img').count()).toBe(1);
+      await card(nextScreen).getByText('缺少缩略图', { exact: true }).waitFor();
+
+      await retry.click();
+      await progress.waitFor();
+      expect(commands).toHaveLength(2);
+      expect(commands[1]).toMatchObject(expected);
+      renders[nextScreen.id] = { light: { id: 'fixture-generated-details', sha256: 'b'.repeat(64) } };
+      state = 'ready';
+      await expect.poll(() => gallery.locator('img').count(), { timeout: 6000 }).toBe(2);
+      expect(await gallery.locator('iframe').count()).toBe(0);
+      expect(await retry.isVisible()).toBe(false);
+      await progress.waitFor({ state: 'hidden' });
+    });
+  }, 30_000);
 
   it('新版桌面页头一行，手机保留完整版本文案和可用的三个页签', async () => {
     const markup = design(`&design=${guidedDraft.id}&version=18`, guidedWorkspace);

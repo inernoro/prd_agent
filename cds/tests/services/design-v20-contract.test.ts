@@ -218,6 +218,13 @@ describe('V20 设计工作区投影', () => {
       expect((await detail.json() as DesignWorkspace).designs.map(row => row.id)).toEqual([designId]);
       expect((await fetch(origin + `?designId=${designId}&version=19x`, { headers })).status).toBe(400);
       expect((await fetch(origin + '?designId=DSN-missing&version=20', { headers })).status).toBe(404);
+      const thumbnails = `?view=thumbnails&designId=${designId}&version=19`;
+      expect((await fetch(origin + thumbnails)).status).toBe(404);
+      expect((await fetch(origin.replace(project, 'outside-project') + thumbnails, { headers })).status).toBe(404);
+      const unavailable = await fetch(origin + thumbnails, { headers });
+      expect(unavailable.status).toBe(200);
+      expect(unavailable.headers.get('cache-control')).toBe('private, no-store');
+      expect(await unavailable.json()).toMatchObject({ designId, version: 19, state: 'unavailable', total: 1, completed: 0, renders: {} });
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
@@ -248,7 +255,8 @@ const video = {
   ],
 };
 
-function demoBundle(overrides: Record<string, unknown> = {}, media: Buffer | null = mp4) {
+function demoBundle(overrides: Record<string, unknown> = {}, media: Buffer | null = mp4,
+  extraFiles: { name: string; data: Buffer }[] = []) {
   const manifest = {
     project, title: '合成演示稿', prototypeVersion: 1, date: '2026-11-25',
     prototype: 'dist/index.html', rationale: '思路.md', checks: 'checks/result.json', docs: [], notes: '使用合成画面。',
@@ -267,6 +275,7 @@ function demoBundle(overrides: Record<string, unknown> = {}, media: Buffer | nul
     { name: 'versions.json', data: JSON.stringify({ versions: [] }) },
     { name: 'changes/index.json', data: JSON.stringify({ to: 1, from: [] }) },
     ...(media === null ? [] : [{ name: video.file, data: media }]),
+    ...extraFiles,
   ]);
 }
 
@@ -344,7 +353,7 @@ function referencePng(width: number, height: number) {
     chunk('IDAT', deflateSync(Buffer.alloc((width * 3 + 1) * height))), chunk('IEND', Buffer.alloc(0))]);
 }
 
-function referenceFixture(referenceCapture: DesignReferenceCapture) {
+function referenceFixture(referenceCapture: DesignReferenceCapture, bundle = demoBundle()) {
   const store = memoryStore();
   const service = new DesignWorkspaceService(store, { referenceCapture });
   return {
@@ -353,7 +362,7 @@ function referenceFixture(referenceCapture: DesignReferenceCapture) {
       const receipt = await service.publish(project, reviewer, {
         requestId: 'reference-publication', intent: 'create', sourceMode: 'private', designKey: 'fixture/reference',
         sourcePath: 'design/fixture-reference', sourceCommit: 'c'.repeat(40),
-      }, demoBundle());
+      }, bundle);
       return receipt.result.designId!;
     },
     async version(id: string) {
@@ -414,6 +423,60 @@ describe('V20 自动生成对照图', () => {
     expect(attempts).toBe(3);
   });
 
+  it('按版本回读随稿图和生成进度，部分失败后沿用请求编号只补缺图', async () => {
+    const archive = demoBundle({ screens: [
+      { id: 'demo', name: '演示画面', route: '#/demo', viewport: 'desktop', themes: ['light', 'dark'], entryReadySelector: 'main' },
+      { id: 'second', name: '第二画面', route: '#/second', viewport: 'desktop', themes: ['light'], entryReadySelector: 'main' },
+    ] }, mp4, [{ name: 'screens/demo.light.png', data: desktop }]);
+    let release!: () => void;
+    const paused = new Promise<void>(resolve => { release = resolve; });
+    const capture = vi.fn(async function* (_prototype: Buffer, targets: Parameters<DesignReferenceCapture>[1]) {
+      if (capture.mock.calls.length === 1) {
+        await paused;
+        yield { ...targets[0], bytes: desktop };
+        throw new Error('合成浏览器未能完成本轮');
+      }
+      if (capture.mock.calls.length === 2) throw new Error('合成浏览器暂不可用');
+      for (const target of targets) yield { ...target, bytes: desktop };
+    });
+    const fixture = referenceFixture(capture, archive);
+    const reader: DesignActor = { ...reviewer, permissions: ['read'] };
+    try {
+      const id = await fixture.publish();
+      const read = () => fixture.service.thumbnailStatus(project, reader, id, 1);
+      await vi.waitFor(() => expect(capture).toHaveBeenCalledOnce());
+      const running = await read();
+      expect(running).toMatchObject({ designId: id, version: 1, state: 'running', total: 3, completed: 1 });
+      const published = running.renders.demo.light;
+      expect(published).toMatchObject({ sha256: createHash('sha256').update(desktop).digest('hex') });
+      expect(running.renders.demo.dark).toBeUndefined();
+      await expect(fixture.generate(id, reader)).rejects.toMatchObject({ status: 403 });
+      await expect(fixture.service.thumbnailStatus(project, { ...reader, permissions: ['write'] }, id, 1))
+        .rejects.toMatchObject({ status: 404 });
+
+      release();
+      await vi.waitFor(async () => expect(await read()).toMatchObject({ state: 'incomplete', total: 3, completed: 2 }));
+      const dark = (await read()).renders.demo.dark;
+      expect(dark).toBeDefined();
+      expect((await fixture.generate(id)).reused).toBe(false);
+      await vi.waitFor(async () => {
+        expect(capture).toHaveBeenCalledTimes(2);
+        expect(await read()).toMatchObject({ state: 'incomplete', total: 3, completed: 2 });
+      });
+      expect((await fixture.generate(id)).reused).toBe(true);
+      await vi.waitFor(async () => expect(await read()).toMatchObject({ state: 'ready', total: 3, completed: 3 }));
+      const ready = await read();
+      expect(ready.renders.demo).toEqual({ light: published, dark });
+      expect(ready.renders.second.light).toBeDefined();
+      expect(capture.mock.calls.map(([, targets]) => targets.map(({ screen, theme }) => `${screen.id}/${theme}`))).toEqual([
+        ['demo/dark', 'second/light'], ['second/light'], ['second/light'],
+      ]);
+      expect((await fixture.service.workspace(project, reviewer, { designId: id, version: 1 })).designs[0].runs).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
   it('签收后的版本拒绝再次生成，并保护已经排队但还没写入的证据', async () => {
     let release!: () => void;
     const paused = new Promise<void>(resolve => { release = resolve; });
@@ -433,6 +496,8 @@ describe('V20 自动生成对照图', () => {
         }, design: { id, run: signed },
       })).toBe(true);
       await expect(fixture.generate(id)).rejects.toMatchObject({ status: 409 });
+      expect(await fixture.service.thumbnailStatus(project, reviewer, id, 1))
+        .toMatchObject({ designId: id, version: 1, state: 'locked', total: 1, completed: 0, renders: {} });
       release();
       await nextTurn();
       expect((await fixture.version(id)).renders?.demo?.light).toBeUndefined();

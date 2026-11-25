@@ -11,6 +11,7 @@ import { designPixelDifference as pixelDifference } from '../../../../src/shared
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { designArtifact, designDate, designDetailPath, type DesignCommand } from './design-ui';
 import { compareDesignStructure } from './design-structure';
+import { DesignGallery } from './DesignGallery';
 
 type CompareMode = 'side' | 'slide' | 'diff';
 type Point = { x: number; y: number };
@@ -174,7 +175,7 @@ export function DesignFrame({ projectId, version, screen: scene, theme, zoom, co
       {showFrame && !live && !failure && <div className="dw-frame-loading" role="status">
         <span>正在打开可以点的原型</span>
       </div>}
-      {still && !displayed && <div className="dw-frame-loading"><span>这张画面还没有对照图</span></div>}
+      {still && !displayed && <div className="dw-frame-loading"><span>缺少这张画面的静态预览</span></div>}
       {!decorative && !staticOnly && !screenshot && (failure || errors > 0 || blocked > 0 || still) && <div className="dw-entry-warning" role="status">
         {failure && <><span>{entryFailures[failure]}。</span>
           <button className="ep-text-button" type="button" data-action="prototype-retry" onClick={retry}>重试</button></>}
@@ -220,12 +221,14 @@ type CanvasProps = {
   command: DesignCommand; canComment: boolean; canWrite: boolean; actorId: string; steward: boolean;
   commandBusy: boolean; initialScreenId?: string; initialCommentId?: string; initialComparisonVersion?: number; selectedTheme?: DesignTheme; onThemeChange?: (theme: DesignTheme) => void; onEscape?: () => void; onReview: (comment: DesignComment, version: DesignVersion) => void;
   cornerTools?: boolean;
+  openScreenRevision?: number;
+  onThumbnailsUpdated?: () => void;
   onSceneChange?: (screen?: DesignScreen) => void;
   onSelectScreen?: (screen: string) => void;
   onModeChange?: (compare: boolean, screen?: string, from?: number) => void;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, cornerTools, onSceneChange, onSelectScreen, onModeChange }: CanvasProps) {
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, cornerTools, openScreenRevision, onThumbnailsUpdated, onSceneChange, onSelectScreen, onModeChange }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
@@ -248,8 +251,6 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const [withCompare, setWithCompare] = useState(comparing);
   const [changes, showChanges] = useState(false);
   const [all, showAll] = useState(false);
-  const allGallery = useRef<HTMLDivElement>(null);
-  const [galleryZoom, setGalleryZoom] = useState(25);
   const [comments, showComments] = useState(Boolean(initialCommentId));
   const [currentComment, setComment] = useState(initialCommentId);
   const [placing, setPlacing] = useState(false);
@@ -278,22 +279,17 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
     .map(screen => [screen.id, screen] as const)).values()) : version.screens;
   const index = Math.max(0, screens.findIndex(screen => screen.id === selected));
   const screen = screens[index];
-  useEffect(() => { if (initialScreenId) select(initialScreenId); }, [initialScreenId]);
+  useEffect(() => {
+    if (!initialScreenId) return;
+    select(initialScreenId);
+    showAll(false);
+  }, [initialScreenId, openScreenRevision]);
   useEffect(() => { onSceneChange?.(all && !compare ? undefined : screen); }, [screen, all, compare, onSceneChange]);
   const visibleTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
   const marks = entry.comments.filter(comment => comment.version === version.version && comment.screenId === screen?.id);
   const earlierMarks = entry.comments.filter(comment => comment.version !== version.version
     && (!comment.closed || comment.screenId === screen?.id));
   const focused = marks.find(comment => comment.id === currentComment);
-  useEffect(() => {
-    if (!all || !allGallery.current) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const width = entry.contentRect.width;
-      setGalleryZoom(Math.max(10, Math.min(27, (width - 14) / designViewports.desktop.width * 100)));
-    });
-    observer.observe(allGallery.current);
-    return () => observer.disconnect();
-  }, [all]);
   const previous = (direction: number) => {
     const next = screens[index + direction];
     if (next) { pickScreen(next.id); setPin(undefined); setPlacing(false); setComment(undefined); }
@@ -439,18 +435,10 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
           <figcaption>{real ? '真实页面' : `V${right}`} <small>{real ? run?.commit.slice(0, 8) : rightVersion && designDate(rightVersion.createdAt)}</small></figcaption>
           {rightFrame}</figure>
         {compareMode === 'slide' && <input aria-label="对比滑动分界" className="dw-slider" type="range" min={0} max={100} value={slider} onChange={event => setSlider(Number(event.target.value))} />}
-      </div> : all ? <div className="dw-all-screens" ref={allGallery}>{version.screens.map((item, i) => {
-        const sampling = zoom ?? galleryZoom;
-        const viewport = designViewports[item.viewport];
-        const color = item.themes.includes(theme) ? theme : item.themes[0];
-        const referenceId = run?.visual?.[designVisualKey(item.id, `${item.viewport}-${color}`)]?.referenceImageId;
-        return <figure key={item.id} style={{ width: viewport.width * sampling / 100 }}>
-          <div style={{ height: viewport.height * sampling / 100 }}><DesignFrame projectId={entry.projectId} version={version} screen={item}
-            theme={color} zoom={sampling} referenceId={referenceId} staticOnly /></div>
-          <figcaption>{i + 1} · {item.name}</figcaption>
-          <button className="dw-gallery-open" type="button" aria-label={`查看 ${item.name}`} onClick={() => { pickScreen(item.id); showAll(false); }} />
-        </figure>;
-      })}</div> : <div className="dw-single" data-viewport={screen?.viewport}>
+      </div> : all ? <DesignGallery key={`${entry.id}/${version.version}`} entry={entry} version={version} run={run} theme={theme} zoom={zoom}
+        canGenerate={canComment && canWrite} busy={commandBusy} command={command} onThumbnailsUpdated={onThumbnailsUpdated}
+        onOpen={id => { pickScreen(id); showAll(false); }} />
+        : <div className="dw-single" data-viewport={screen?.viewport}>
         <DesignFrame projectId={entry.projectId} version={version} screen={screen} theme={visibleTheme} zoom={zoom} placing={placing}
           staticOnly={!active} referenceId={recordedVisual?.referenceImageId} pin={pin} comments={comments ? marks : undefined}
           onPin={point => { setPin(point); setPlacing(false); }} onKey={key} onComment={setComment} />

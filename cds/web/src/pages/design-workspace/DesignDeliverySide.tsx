@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { ArrowRight, Check, MessageSquare, PanelRightClose, RotateCcw } from 'lucide-react';
 import type { DesignComment, DesignEntry, DesignRequirement, DesignTheme, DesignVersion, DesignWorkspace } from '../../../../src/shared/design-workspace';
 import { designVisualKey } from '../../../../src/shared/design-visual';
-import { designArtifact, designFeedbackAwaitsViewer, isDesignPhoneViewport } from './design-ui';
+import { designFeedbackAwaitsViewer, isDesignPhoneViewport } from './design-ui';
+import { DesignThumbnail } from './DesignGallery';
 import { rationaleOrder } from './DesignRationale';
 import { needTrace } from './DesignNeed';
 export type DesignFullView = 'need' | 'notes' | 'delivery';
@@ -78,7 +79,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
     const color = screen.themes.includes(theme) ? theme : screen.themes[0];
     const captured = entry.runs.slice().reverse().find(run => run.version === version.version)
       ?.visual?.[designVisualKey(screen.id, `${screen.viewport}-${color}`)]?.referenceImageId;
-    return version.renders?.[screen.id]?.[color]?.id ?? captured ?? version.renders?.[screen.id]?.light?.id;
+    return version.renders?.[screen.id]?.[color]?.id ?? captured;
   };
   const { ordered, authorVersion } = rationaleOrder(entry, version);
   const why = ordered.filter(item => item.key === 'goal' || item.key === 'choices')
@@ -101,8 +102,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
             const image = thumb(step.screen);
             return <li key={step.screen.id}><button type="button" data-screen={step.screen.id} aria-current={step.screen.id === screenId ? 'step' : undefined}
               onClick={() => onScreen(step.screen.id)} title={step.title}>
-              <span className="dw-sp-thumb">{image ? <img src={designArtifact(entry.projectId, image)} alt="" loading="lazy" />
-                : <small>{step.screen.viewport === 'phone' ? '手机' : '桌面'}</small>}
+              <span className="dw-sp-thumb"><DesignThumbnail projectId={entry.projectId} artifactId={image} />
                 <b aria-hidden>{steps.indexOf(step) + 1}</b></span>
               <span className="dw-sp-ttitle">{step.title}</span>
             </button></li>;

@@ -312,6 +312,13 @@ export function latestDesignFeedbackAt(entry: DesignEntry): string {
   return latest;
 }
 
+export type DesignThumbnailStatus = {
+  designId: string; version: number;
+  state: 'unavailable' | 'idle' | 'running' | 'incomplete' | 'ready' | 'locked';
+  total: number; completed: number;
+  renders: NonNullable<DesignVersion['renders']>;
+};
+
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
   requirements?: DesignRequirement[];
