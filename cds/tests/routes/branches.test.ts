@@ -503,7 +503,7 @@ describe('Branch Routes', () => {
   });
 
   it('authenticated skill export ships the same file integrity manifest as anonymous installation', async () => {
-    const skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+    const skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
     const root = path.join(tmpDir, '.claude/skills');
     for (const skill of skills) {
       fs.mkdirSync(path.join(root, skill), { recursive: true });

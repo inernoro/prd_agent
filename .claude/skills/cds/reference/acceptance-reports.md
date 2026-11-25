@@ -63,4 +63,4 @@ CDS 直达深链默认为登录态门控。只有用户需要对外分享时才�
 
 ## 维护此适配说明
 
-本参考和 CDS 核心技能属于五技能分发包，编辑后复用上面解析的技能根，运行 `python3 "$SKILLS_ROOT/cds/scripts/refresh_manifest.py"` 刷新内容摘要清单，并通过 `CDS Skill` 的 CLI 与包一致性检查。文档改动也会改变分发包内容，不能沿用旧摘要。
+本参考和 CDS 核心技能属于完整技能分发包，编辑后复用上面解析的技能根，运行 `python3 "$SKILLS_ROOT/cds/scripts/refresh_manifest.py"` 刷新内容摘要清单，并通过 `CDS Skill` 的 CLI 与包一致性检查。文档改动也会改变分发包内容，不能沿用旧摘要。

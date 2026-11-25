@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.10"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.22"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -901,12 +901,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
-    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整五技能包，"
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整技能包（六个技能），"
                       "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
@@ -920,7 +920,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能。" + install_bundle)
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整的 CDS 技能包。" + install_bundle)
     if bundle.get("version") != VERSION:
         fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
@@ -4625,24 +4625,43 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         spec.mkdir()
         (directory / "dist").mkdir()
         (directory / "checks").mkdir()
-        screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
+        (directory / "src" / "overrides").mkdir(parents=True)
+        # 应用框架是硬性条件（门禁 G-10）：原型由正式前端构建，挂在正式的壳里；框架规则写成验收项和自检项，不能登记为例外。
+        # 验收项编号用 A-xx（CDS 只认这种），ruleId 记框架规则编号；每条都引用画面、写预期和适用视口。
+        screen = {"id": "home", "name": args.title, "route": "#/", "viewport": "desktop", "themes": ["light", "dark"],
+                  "entryReadySelector": ".cds-main", "impl": None}
+        slots = ["desktop-light", "desktop-dark"]
+        acceptance = [{**rule, "id": f"A-{index:02d}", "ruleId": rule["id"], "screenId": "home", "slots": slots,
+                       "expected": (("检查：" if rule.get("how") == "measure" and "检查：" not in (rule.get("expected") or "") else "")
+                                    + (rule.get("expected") or rule.get("rule") or rule["id"]))}
+                      for index, rule in enumerate(rules, start=1)]
         manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": latest["version"],
-                    "screens": [screen], "acceptance": rules}
+                    "prototypeVersion": 1, "date": __import__("datetime").date.today().isoformat(),
+                    "prototype": "dist/index.html", "screens": [screen], "acceptance": acceptance}
         (directory / "design.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-        checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
+        checks = {"total": len(acceptance), "passed": 0,
+                  "items": [{"id": row["id"], "ruleId": row["ruleId"], "name": f'{row["id"]} {row["ruleId"]} {row.get("rule", "")}'.strip(),
+                             "status": "unverified"} for row in acceptance]}
         (directory / "checks" / "result.json").write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n")
-        (directory / "思路.md").write_text("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
+        (directory / "思路.md").write_text(f"# {args.title}（V1）\n\n## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
         for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
             if material.get(field):
                 (spec / name).write_text(material[field])
         if material.get("tokens"):
             (spec / "tokens.json").write_text(json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n")
-        template = material.get("skeleton") or (
-            '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-            '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
-            '<main id="home"><h1>{{title}}</h1></main></html>'
-        )
-        (directory / "dist" / "index.html").write_text(template.replace("{{title}}", html.escape(args.title)))
+        # 原型不再从 skeleton.html 生成（那是手写静态页的起点）：写构建配置和入口，由 prototype-build.mjs 在正式代码上构建
+        try:
+            baseline = subprocess.run(["git", "-C", str(directory), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            baseline = ""
+        prototype = {"web": "cds/web", "baseline": baseline, "entry": "src/main.tsx", "shared": "cds/src/shared",
+                     "overrides": {}, "added": {}, "skipPreloads": [], "title": args.title}
+        (directory / "prototype.json").write_text(json.dumps(prototype, indent=1, ensure_ascii=False) + "\n")
+        (directory / "src" / "main.tsx").write_text(
+            "/* 原型入口：在正式的 AppShell 里挂载要演示的正式页面，fetch 走演示数据（src/fixtures.ts）。\n"
+            " * 改动的正式文件复制到 src/overrides/，在 prototype.json 的 overrides 里登记「正式路径 → 副本」；新增文件登记在 added。\n"
+            " * 构建：node <技能根>/cds/scripts/design/prototype-build.mjs --dir <本目录> --checkout <正式仓库检出>\n"
+            " * 门禁 G-10 会核对构建指纹、正式壳体（.cds-main）和每条框架规则的自检。参考：稿件 DSN-0E5D8912 的 src/main.tsx。 */\n")
         ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": latest["version"]})
 
     design = next((item for item in designs if item["id"] == args.id), None)
@@ -11014,8 +11033,8 @@ def cmd_update(args: argparse.Namespace) -> None:
     步骤：
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
-      3. 五个 CDS 技能目录统一备份到当前项目 .cds/skill-backups
-      4. 校验包内五个技能齐全后同步到当前 Agent Skills 根
+      3. 随包发布的 CDS 技能目录统一备份到当前项目 .cds/skill-backups
+      4. 校验包内技能目录齐全后同步到当前 Agent Skills 根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
     不动：项目凭据 / shell profile / 系统环境变量
@@ -11032,7 +11051,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = ["cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -11075,7 +11094,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 safe_members.append(m)
             tar.extractall(tmp_dir, members=safe_members)
 
-        # 4. 找到解压内的通用 skills 根并校验五个目录齐全。
+        # 4. 找到解压内的通用 skills 根并校验技能目录齐全。
         src_skills_dir = None
         for root, dirs, _files in os.walk(tmp_dir):
             if os.path.basename(root) != "skills":
@@ -11084,10 +11103,10 @@ def cmd_update(args: argparse.Namespace) -> None:
                 src_skills_dir = root
                 break
         if not src_skills_dir:
-            die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
+            die("tar.gz 内找不到完整的技能包（六个技能）。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
-        # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。
+        # 5. 用内容同步：统一更新技能目录，保留用户自定义的额外文件。
         replaced_files: list[str] = []
         for skill_name in bundle_skills:
             src_skill_dir = os.path.join(src_skills_dir, skill_name)
@@ -11108,7 +11127,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 if os.path.isdir(backup_dir):
                     shutil.copytree(backup_dir, target_dir)
         except Exception as rollback_err:
-            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复五个技能目录 "
+            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复技能目录 "
                 f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
         die(f"升级失败，已自动回滚: {e}", code=3)
     finally:

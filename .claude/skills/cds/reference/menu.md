@@ -309,7 +309,7 @@
 
 | 你可以说 | 任务 | 先读 | 命令 | 风险 |
 | --- | --- | --- | --- | --- |
-| `/cds 帮我设计一个页面`、`/cds 改 xx 模块的设计`、`/cds 修复 xx 页面的设计`、`/cds 出一版新设计` | 发布或修订设计稿 | `reference/design-loop.md` | `cdscli design`、`cdscli framework` | 会写入 |
+| `/cds 帮我设计一个页面`、`/cds 为 xx 提出设计`、`/cds 改 xx 模块的设计`、`/cds 修复 xx 页面的设计`、`/cds 出一版新设计` | 发布或修订设计稿 | `cds-design/SKILL.md`、`reference/design-loop.md` | `cdscli design`、`cdscli framework` | 会写入 |
 | `/cds 帮我实现 DSN-xxx`、`/cds 按交接清单实现` | 六、实现方：按交接清单实现 | `reference/design-loop.md`「六、实现方：按交接清单实现」 | — | 见文档 |
 
 ### 发布或修订设计稿
@@ -317,13 +317,13 @@
 把工作区的设计交付内容归档到当前 CDS 项目，保留可追溯版本。 页面：`/design?project=<项目>`。
 
 步骤：
-1. 读取 CDS 技能的 reference/design-intake.md 和当前项目设计接入清单
+1. 读取 cds-design 技能，先跑 cds/scripts/skill-fresh.mjs 确认技能最新，再读当前项目设计接入清单；没有设计发布授权先申请
 2. 按稳定稿件键查重，区分新稿与已有稿件的修订，有歧义先澄清稿件归属
 3. 核对当前工作树，只在本地提交用户授权的稿件目录
 4. 发布前运行 CDS 技能的 scripts/design/release.mjs check，门禁不通过不发布
 5. 用 cds_design_publish 的 sourceMode=private 或 cdscli design publish --private 提交项目私有归档，回读稿件和版本，再用 release.mjs register 登记版本
 
-完成标准：在服务端核对项目、来源提交和归档摘要；同稿修订可读回原编号和新增版本；返回稿件入口和发布回执。
+完成标准：在服务端核对项目、来源提交和归档摘要；同稿修订可读回原编号和新增版本；把稿件地址交给用户（release.mjs register 会打印），稿件发布前不改正式代码。
 
 ## 接入 Agent
 

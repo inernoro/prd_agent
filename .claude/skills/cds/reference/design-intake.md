@@ -10,7 +10,7 @@
 
 同一工作区的设计凭据到期时，使用原接入口令续接。CDS 会核对原凭据，获批后保留原稿作者身份。
 
-技能需要更新时，从接入说明提供的 `/api/skills/cds-pack/download` 匿名下载归档。用本机工具解压并核对 manifest，将完整五技能装到当前工作区，再以原来的设计授权自检。Windows 检出的技能文本只有 CRLF 与 LF 的差异时可以通过自检。
+技能需要更新时，从接入说明提供的 `/api/skills/cds-pack/download` 匿名下载归档。用本机工具解压并核对 manifest，将清单中的全部技能装到当前工作区，再以原来的设计授权自检。Windows 检出的技能文本只有 CRLF 与 LF 的差异时可以通过自检。
 
 ## 决定写入动作
 
@@ -273,7 +273,8 @@ node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> -
 画布用 `sandbox="allow-scripts"` 的 iframe 打开原型，响应头 CSP 是 `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`。CDS 还会在 `<head>` 后注入桥接脚本，负责主题、布局框、滚动和入口定位。
 
 - 原型里嵌套的页面不能用 `data:` 或 `blob:` 地址，会被 CSP 拦下（没有 `frame-src`），每个嵌套页面在控制台报一条错，画面空白。改用 `srcdoc`：同样的 CSP 下可以加载、可以运行脚本。原型 HTML 里的 meta CSP 不能放宽响应头的策略。
-- 原型是不透明源，访问 `localStorage`、`sessionStorage` 会抛 `SecurityError`。直接运行正式 Web 代码时，先换成内存版存储。
+- 原型必须由正式前端构建（门禁 G-10）：`scripts/design/prototype-build.mjs` 读稿件的 `prototype.json`，在基线提交上构建，写入构建指纹。不能手写 HTML、不能自己抄令牌，框架规则不能登记为例外。
+- 原型是不透明源，访问 `localStorage`、`sessionStorage` 会抛 `SecurityError`。正式 Web 代码里用到存储的地方，先换成内存版存储。
 - 不能发起网络请求，数据和图片都要内嵌。图片可以用 `data:`。
 - 入口定位：桥接脚本点完 `entryActions` 后，等 `entryReadySelector` 约 1 秒。就绪标志要在首屏渲染后尽快出现。
 - 本机自检要还原这个容器：按上面的响应头提供原型，注入 `cds/src/services/design-prototype.ts` 里的桥接脚本，放进 `sandbox="allow-scripts"` 的 iframe，通过 DevTools 协议收集所有框架的控制台和 CSP 违规。用 `file://` 打开原型测不出这些问题。
