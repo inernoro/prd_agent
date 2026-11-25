@@ -38,7 +38,7 @@
     "cds/scripts/design/release.mjs": "31fc260dce6c35c3a8ad4eaa96f08c24f04304610a8f90381fd9178350832ded",
     "cds/scripts/design/version-diff.mjs": "0945f8023b3536002aaa6f574d89b60f563a0abc9528a9f125391f5b5fec55a3",
     "cds/scripts/refresh_manifest.py": "df62e3bc8bf4be8e56bac73fcc71cba63bb2e40a933cd0a88b2fda9a8efd04f2",
-    "cds/scripts/skill-fresh.mjs": "d272dffd669bc807b0d7dfaf381d1acc9dd05d26c9555d1feee8a1f119899783",
+    "cds/scripts/skill-fresh.mjs": "2c117aea6a001dc72d41f91a199725c99907756a2d84b7419125b117845318e9",
     "cds/SKILL.md": "273184ba97f8738b5251493e9e0003fd03029810c064647d4891fd549f60e02f",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
@@ -75,7 +75,7 @@
     "cds/tests/test_verify_score.py": "5f71af819eba0d7c007501f51b170c3919962241f99de8526b438898c46b5666",
     "cds/tests/test_verify_selfheal.py": "c7ea5a0ac11a2d6bbf35fc435029475fc778b31fb4e844dcc2cdc714140c3acc",
     "cds/tests/test_web_entry_contract.py": "f08f361478b6e3232d73090c1edc7616bd34df0823b88958852741374c203636",
-    "cds-design/SKILL.md": "3a34e4ef3414b77503424c33ba525a89319b841f9d0d2d828f344db2efd9089c",
+    "cds-design/SKILL.md": "d0780211e514bbd69b3fb540d58c35afba918068d78f451a9ab0fbaa8cdfc5c5",
     "cds-project-scan/reference/cds-pending-import.md": "a071bae76e9bf6ed792af2b0697fad19f62544b38062dce864db8f4ede054cda",
     "cds-project-scan/reference/infra-init.md": "367af0506e5f8418d37cc9483602f6bc34747ed84cba4e6d11f49be1b7b31015",
     "cds-project-scan/reference/tech-detection.md": "20d88a38a278bc65dd2f7f8c9e09e2a5e39e5ef33584af585980249604df7a64",
@@ -85,5 +85,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-25T07:45:28.903374+00:00"
+  "generatedAt": "2026-11-25T07:49:18.256531+00:00"
 }

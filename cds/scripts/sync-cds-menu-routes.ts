@@ -21,3 +21,5 @@ if (next === null) { console.error('SKILL.md 里没有 cds-menu 标记'); proces
 await fs.writeFile(path.join(skill, 'reference/menu.md'), result.menu);
 await fs.writeFile(path.join(skill, 'SKILL.md'), next);
 console.log(`Updated /cds menu routes (${intents.menus.length} menus, ${intents.menus.reduce((sum, group) => sum + group.intents.length, 0)} intents)`);
+// 技能文件变了，分发清单里的摘要也要跟着变；不刷新的话，cdscli 自检会报技能包不完整（2026-11-25 有会话踩到）
+console.log('技能文件已改：再运行 python .claude/skills/cds/scripts/refresh_manifest.py 刷新分发清单。');
