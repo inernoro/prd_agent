@@ -1,0 +1,58 @@
+{
+ "note": "/cds 一句话的路由输入：按 CDS 左侧菜单分组，每条写用户会怎么说、对应 CDS 的哪个 Agent 任务（mission，见 cds/src/shared/agent-mission-registry.ts）或哪份文档的哪一节。只改这个文件，然后运行 cds/scripts/sync-cds-menu-routes.ts 重新生成 menu.md 和 SKILL.md 的路由表；任务编号、菜单名、文档小节对不上时程序直接驳回。",
+ "menus": [
+  { "menu": "项目列表", "say": "项目", "intents": [
+   { "say": ["建项目", "接入一个仓库"], "mission": "project-onboarding" },
+   { "say": ["有哪些项目", "看项目状态"], "mission": "projects" },
+   { "say": ["部署这个分支", "看预览地址"], "mission": "branches" },
+   { "say": ["改项目配置", "改路由"], "mission": "project-settings" },
+   { "say": ["接数据库", "接缓存"], "mission": "service-integration" },
+   { "say": ["设置环境变量", "环境变量没生效"], "mission": "env-diagnostics" },
+   { "say": ["构建失败了"], "mission": "build-diagnostics" },
+   { "say": ["服务起不来"], "mission": "startup-diagnostics" },
+   { "say": ["查日志"], "mission": "log-diagnostics" },
+   { "say": ["这个接口有问题"], "mission": "api-diagnostics" },
+   { "say": ["预览打不开"], "mission": "preview-diagnostics" }
+  ] },
+  { "menu": "概览", "say": "概览", "intents": [
+   { "say": ["看当前页面", "先帮我看看"], "mission": "general" }
+  ] },
+  { "menu": "发布中心", "say": "发布", "intents": [
+   { "say": ["发布到 xx 环境", "上线"], "mission": "release" },
+   { "say": ["回滚到上一个版本"], "mission": "rollback" }
+  ] },
+  { "menu": "任务调度", "say": "任务", "intents": [
+   { "say": ["添加一个任务调度", "每天 9 点跑 xx"], "mission": "tasks" }
+  ] },
+  { "menu": "验收中心", "say": "测试", "intents": [
+   { "say": ["跑 DSN-xxx 的验收", "领一个验收任务", "出验收报告"], "mission": "reports", "read": "reference/test-loop.md" }
+  ] },
+  { "menu": "监控中心", "say": "监控", "intents": [
+   { "say": ["加一个 xx 的监控"], "doc": { "file": "SKILL.md", "section": "加一条功能监控（用户说「帮我增加 XX 的监控」时）" } },
+   { "say": ["CDS 健康吗"], "mission": "system-health" },
+   { "say": ["看慢请求和错误"], "mission": "system-observability" }
+  ] },
+  { "menu": "代码审查报告", "say": "审查", "intents": [
+   { "say": ["审查这次改动", "上传审查报告"], "mission": "code-review" }
+  ] },
+  { "menu": "工程规划", "say": "规划", "intents": [
+   { "say": ["记下这个决策", "记一笔债", "排进落地计划", "看卡在哪"], "mission": "engineering-planning" }
+  ] },
+  { "menu": "设计", "say": "设计", "intents": [
+   { "say": ["帮我设计一个页面", "改 xx 模块的设计", "修复 xx 页面的设计", "出一版新设计"], "mission": "design-publish", "read": "reference/design-loop.md" },
+   { "say": ["帮我实现 DSN-xxx", "按交接清单实现"], "doc": { "file": "reference/design-loop.md", "section": "六、实现方：按交接清单实现" } }
+  ] },
+  { "menu": "接入 Agent", "say": "授权", "intents": [
+   { "say": ["给智能体授权", "提权到另一个项目"], "mission": "agent-access" }
+  ] },
+  { "menu": "提交缺陷", "say": "缺陷", "intents": [
+   { "say": ["提交一个 CDS 缺陷"], "doc": { "file": "SKILL.md", "section": "反馈缺口给上游 CDS 团队" } }
+  ] },
+  { "menu": "CDS 系统设置", "say": "设置", "intents": [
+   { "say": ["配登录和 SSO"], "mission": "auth" },
+   { "say": ["接 GitHub"], "mission": "github" },
+   { "say": ["更新或重启 CDS"], "mission": "maintenance" },
+   { "say": ["改系统设置"], "mission": "settings" }
+  ] }
+ ]
+}
