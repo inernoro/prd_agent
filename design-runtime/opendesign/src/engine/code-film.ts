@@ -53,7 +53,39 @@ export function verifyCodeFilmInput(
   return { skillId: CODE_FILM_SKILL_ID, skillSha256: SKILL_FILES['SKILL.md'], sourceSha256 };
 }
 
-export function collectCodeFilm(workspaceDir: string, maxOutputBytes: number): WorkspacePackageFile {
+/**
+ * The authorized isolated run may submit one round of the form's own
+ * recommended radio answers. Use safe field/option identifiers and never
+ * promote arbitrary assistant prose into the user's reply.
+ */
+export function codeFilmDefaultAnswers(content: string): string | undefined {
+  const formBlocks = [...content.matchAll(/<question-form>\s*([\s\S]{1,8192}?)\s*<\/question-form>/gi)];
+  if (formBlocks.length !== 1) return undefined;
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(formBlocks[0][1]);
+  } catch {
+    return undefined;
+  }
+  if (!candidate || typeof candidate !== 'object') return undefined;
+  const form = candidate as Record<string, unknown>;
+  const token = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,64}$/.test(value);
+  const questions = form.questions ?? form.fields;
+  const formId = token(form.id) ? form.id : 'brief';
+  if (!Array.isArray(questions) || questions.length < 1 || questions.length > 6) return undefined;
+  const values = new Map<string, string>();
+  for (const entry of questions) {
+    if (!entry || typeof entry !== 'object') return undefined;
+    const field = entry as Record<string, unknown>;
+    if ((field.type !== 'radio' && field.type !== 'select') || !token(field.id) || !token(field.defaultValue)
+        || values.has(field.id) || !Array.isArray(field.options)
+        || !field.options.some(option => option && option.value === field.defaultValue)) return undefined;
+    values.set(field.id, field.defaultValue);
+  }
+  return [`[form answers — ${formId}]`, ...[...values].map(([field, value]) => `- ${field}: ${value}`)].join('\n');
+}
+
+export function collectCodeFilm(workspaceDir: string, maxOutputBytes: number): WorkspacePackageFile | undefined {
   // Upstream writes <name>/<name>.mp4. Accept that and a plain root MP4.
   // Restrict the scan to that shape. Skip references, symlinks and render intermediates.
   const candidates: string[] = [];
@@ -65,6 +97,7 @@ export function collectCodeFilm(workspaceDir: string, maxOutputBytes: number): W
     const candidate = path.join(workspaceDir, entry.name, entry.name + '.mp4');
     if (fs.lstatSync(candidate, { throwIfNoEntry: false })?.isFile()) candidates.push(candidate);
   }
+  if (candidates.length === 0) return undefined;
   if (candidates.length !== 1) {
     throw new AgentWorkspaceRuntimeError(
       'design_output_missing',

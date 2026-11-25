@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { codeFilmDefaultAnswers } from '../src/engine/code-film.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
 import { sha256 } from '../src/workspace/primitives.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA, parseWorkspacePackage } from '../src/workspace/transfer.js';
@@ -153,6 +154,34 @@ describe('authentication', () => {
     const wrong = await harness.request('POST', '/v1/tasks', {}, { Authorization: `Bearer ${API_KEY}x` });
     expect(wrong.status).toBe(401);
     expect(wrong.headers.get('www-authenticate')).toBe('Bearer');
+  });
+});
+
+describe('native code film form continuation', () => {
+  const form = {
+    id: 'film-brief',
+    questions: [
+      { id: 'duration', type: 'radio', defaultValue: '60s', options: [{ label: '60 秒', value: '60s' }] },
+      { id: 'audio', type: 'radio', defaultValue: 'auto_voice', options: [{ label: '由你安排配音', value: 'auto_voice' }] },
+      { id: 'review', type: 'radio', defaultValue: 'direct', options: [{ label: '直接制作完整短片', value: 'direct' }] },
+    ],
+  };
+  const body = (value: unknown) => `<question-form>
+${JSON.stringify(value)}
+</question-form>`;
+
+  it('echoes the recommended choices through the native conversation protocol', () => {
+    expect(codeFilmDefaultAnswers(body(form))).toBe(
+      '[form answers — film-brief]\n- duration: 60s\n- audio: auto_voice\n- review: direct',
+    );
+  });
+
+  it('skips custom questions, invalid choices and ambiguous forms', () => {
+    expect(codeFilmDefaultAnswers(body(form) + body(form))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({ ...form, questions: [{ id: 'draft', type: 'textarea' }] }))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({
+      ...form, questions: [{ ...form.questions[0], defaultValue: '300s' }],
+    }))).toBeUndefined();
   });
 });
 

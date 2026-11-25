@@ -15,6 +15,7 @@
 //
 // 任务结束后的清空（隔离方案 A）不在这里做，由 tasks.ts 统一负责：无论成功、失败、取消还是超时，
 // 都走同一条「停引擎 → 清空目录 → 核对为空 → 重新拉起」的路径。
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -31,7 +32,7 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
-import { collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import { codeFilmDefaultAnswers, collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
 import { registerPresentationSkill } from './engine/presentation-skill.js';
@@ -515,42 +516,72 @@ export class DesignTaskExecutor {
         }
         const dataDir = this.options.paths.dataDir;
         const proof = verifyCodeFilmInput(dataDir, workspaceDir, source);
-        onStage('open_design_run_starting', { projectId });
-        const started = await client.odJson('/api/runs', {
-          method: 'POST',
-          body: {
-            projectId,
-            conversationId,
-            agentId: 'codex',
-            model: model.model,
-            message: instruction,
-            attachments: [source.path],
-          },
-          signal: signalForDeadline(executionDeadline, signal),
-          acceptedStatuses: [200, 202],
-        });
-        activeRunId = typeof started.runId === 'string' ? started.runId
-          : typeof started.id === 'string' ? started.id : undefined;
-        if (!activeRunId) {
-          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign did not return a film run identity');
-        }
-        const filmRunId = activeRunId;
+        const startFilmTurn = async (message: string, assistantMessageId: string, attachments: string[]) => {
+          const started = await client.odJson('/api/runs', {
+            method: 'POST',
+            body: {
+              projectId,
+              conversationId,
+              agentId: 'codex',
+              model: model.model,
+              message,
+              currentPrompt: message,
+              userMessageId: randomUUID(),
+              assistantMessageId,
+              attachments,
+            },
+            signal: signalForDeadline(executionDeadline, signal),
+            acceptedStatuses: [200, 202],
+          });
+          const id = typeof started.runId === 'string' ? started.runId
+            : typeof started.id === 'string' ? started.id : undefined;
+          if (!id) {
+            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign did not return a film run identity');
+          }
+          activeRunId = id;
+          return id;
+        };
         const daemon = this.options.daemon;
-        onStage('code_film_input_verified', { ...proof, runId: filmRunId, instructionSha256: sha256(instruction) });
-        try {
-          await client.waitForRun(filmRunId, budget.finalizationDeadline, signal, onStage);
+        const getFilm = () => {
           daemon.freeze();
-          let film: WorkspacePackageFile;
           try {
             verifyCodeFilmInput(dataDir, workspaceDir, source);
-            film = collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
+            return collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
           } finally {
             daemon.thaw();
           }
-          return await this.commitOutputs(task, prepared, [film], filmRunId, executionDeadline, signal, onStage);
+        };
+        onStage('open_design_run_starting', { projectId });
+        const assistantMessageId = randomUUID();
+        const firstRunId = await startFilmTurn(instruction, assistantMessageId, [source.path]);
+        onStage('code_film_input_verified', { ...proof, runId: firstRunId, instructionSha256: sha256(instruction) });
+        let finalRunId = firstRunId;
+        try {
+          await client.waitForRun(firstRunId, budget.finalizationDeadline, signal, onStage);
+          let film = getFilm();
+          if (!film) {
+            const conversation = await client.odJson(
+              `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+              { method: 'GET', signal: signalForDeadline(executionDeadline, signal) },
+            );
+            const assistant = Array.isArray(conversation.messages)
+              ? conversation.messages.find(item => item?.id === assistantMessageId && item.role === 'assistant')
+              : undefined;
+            const answers = typeof assistant?.content === 'string' ? codeFilmDefaultAnswers(assistant.content) : undefined;
+            if (answers) {
+              finalRunId = await startFilmTurn(answers, randomUUID(), []);
+              onStage('code_film_form_answered', { runId: finalRunId, previousRunId: firstRunId });
+              await client.waitForRun(finalRunId, budget.finalizationDeadline, signal, onStage);
+              film = getFilm();
+            }
+          }
+          if (!film) {
+            throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed its conversation without a final MP4');
+          }
+          return await this.commitOutputs(task, prepared, [film], finalRunId, executionDeadline, signal, onStage);
         } catch (error) {
           onStage('code_film_run_diagnostic',
-            await client.captureRunTranscriptDigest([filmRunId], () => Math.max(0, executionDeadline - Date.now())));
+            await client.captureRunTranscriptDigest([firstRunId, finalRunId], () => Math.max(0, executionDeadline - Date.now())));
           throw error;
         }
       }
