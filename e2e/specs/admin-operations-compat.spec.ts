@@ -40,6 +40,60 @@ test('普通项目成员不能通过环境接入读取系统服务器列表',asy
   expect(systemReads).toEqual([]);
 });
 
+for (const { width, height, colorScheme } of [
+  { width: 1440, height: 900, colorScheme: 'light' },
+  { width: 390, height: 640, colorScheme: 'dark' },
+] as const) {
+  test(`${width} Agent Key 页签各自呈现并保留创建草稿`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme });
+    await installOperationsFixtures(page);
+    const keys = Array.from({ length: 101 }, (_, index) => ({
+      id: `project-fixture-${index}`,
+      label: `测试密钥 ${index + 1}`,
+      issuer: index === 0 ? 'agent' : 'user',
+      createdAt: new Date(Date.UTC(2026, 0, 20) - index * 60_000).toISOString(),
+      projectAccess: index === 1 ? undefined : 'rw',
+    }));
+    await page.route(`**/api/projects/${target.projectId}/agent-keys`, route =>
+      route.fulfill({ json: { keys, canIssueRestrictedPermissions: true } }));
+    await page.goto('http://127.0.0.1:5273/project-list');
+    await page.getByRole('button', { name: '窄屏样例项目 项目操作' }).click();
+    await page.getByRole('menuitem', { name: 'Agent Key', exact: true }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Agent Key 管理' });
+    const createTab = dialog.getByRole('tab', { name: '创建密钥', exact: true });
+    const issuedTab = dialog.getByRole('tab', { name: '已签发密钥', exact: true });
+    const form = dialog.getByRole('form', { name: '签发 Agent Key' });
+    const issued = dialog.getByRole('tabpanel', { name: '已签发密钥' });
+    await expect(createTab).toHaveAttribute('aria-selected', 'true');
+    await expect(issued).toBeHidden();
+    await expect(form.getByLabel('选择项目')).toHaveValue(target.projectId);
+    await expect(form.getByRole('radio', { name: '永久', exact: true })).toBeChecked();
+    await expect(form.getByRole('button', { name: '确认签发', exact: true })).toBeInViewport({ ratio: 1 });
+    await form.getByLabel('标签').fill('手机接入');
+    await form.getByText('7 天', { exact: true }).click();
+
+    await createTab.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(issuedTab).toHaveAttribute('aria-selected', 'true');
+    await expect(form).toBeHidden();
+    await expect(issued.getByRole('listitem').first()).toContainText('AI Agent 签发');
+    await expect(issued.getByRole('listitem').first()).toContainText('项目读写');
+    await expect(issued.getByRole('listitem').nth(1)).toContainText('旧版项目完整权限');
+    await issued.getByText('测试密钥 101', { exact: true }).scrollIntoViewIfNeeded();
+    await expect(createTab).toBeInViewport();
+    await issued.getByRole('button', { name: '吊销 测试密钥 101', exact: true }).click();
+    await expect(issued.getByRole('button', { name: '确认吊销' })).toBeVisible();
+
+    await createTab.click();
+    await expect(form.getByLabel('标签')).toHaveValue('手机接入');
+    await expect(form.getByRole('radio', { name: '7 天', exact: true })).toBeChecked();
+    await issuedTab.click();
+    await expect(issued.getByRole('button', { name: '确认吊销' })).toBeHidden();
+  });
+}
+
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
   test(`${viewport.width} 单次批准选择已有固定版本且保留分支最新版本`,async({page})=>{
     await page.setViewportSize(viewport);await installOperationsFixtures(page);

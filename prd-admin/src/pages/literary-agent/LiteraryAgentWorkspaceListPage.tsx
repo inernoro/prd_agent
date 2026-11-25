@@ -599,15 +599,17 @@ export default function LiteraryAgentWorkspaceListPage() {
       {dayGroups.map((dayGroup) => (
         <div key={dayGroup.dateKey}>
           {/* Date header */}
-          <div className="flex items-center gap-2 mb-3 pl-0.5">
-            <Calendar size={12} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+          <div className="mb-3 flex min-w-0 items-center gap-2 pl-0.5">
+            <Calendar size={13} className="shrink-0 text-token-secondary" />
+            <span className="shrink-0 text-[13px] font-semibold text-token-primary">
               {formatDateLabel(dayGroup.dateKey)}
             </span>
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              {dayGroup.dateKey}
-            </span>
-            <div className="flex-1 h-px ml-2 bg-token-nested"  />
+            {dayGroup.dateKey !== '未知日期' && (
+              <time dateTime={dayGroup.dateKey} className="shrink-0 text-[11px] tabular-nums text-token-secondary">
+                {dayGroup.dateKey}
+              </time>
+            )}
+            <div aria-hidden className="ml-1 flex-1 border-t border-token-subtle" />
           </div>
           {renderCardGrid(dayGroup.items)}
         </div>
@@ -669,19 +671,15 @@ export default function LiteraryAgentWorkspaceListPage() {
   const viewModeToggle = (
     <div
       data-tour-id="literary-view-toggle"
-      className="flex items-center rounded-lg overflow-hidden bg-token-nested border border-token-subtle"
-
+      className="surface-choice-group"
+      role="group"
+      aria-label="文章视图"
     >
       <button
         type="button"
         data-tour-id="literary-time-view"
-        className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium transition-all duration-200',
-        )}
-        style={{
-          background: viewMode === 'time' ? 'rgba(99,102,241,0.15)' : 'transparent',
-          color: viewMode === 'time' ? 'var(--text-primary)' : 'var(--text-muted)',
-        }}
+        aria-pressed={viewMode === 'time'}
+        className="surface-choice flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] sm:px-3"
         onClick={() => { setViewMode('time'); sessionStorage.setItem('literary-view-mode', 'time'); }}
       >
         <Clock size={12} />
@@ -690,13 +688,8 @@ export default function LiteraryAgentWorkspaceListPage() {
       <button
         type="button"
         data-tour-id="literary-folder-view"
-        className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium transition-all duration-200',
-        )}
-        style={{
-          background: viewMode === 'folder' ? 'rgba(99,102,241,0.15)' : 'transparent',
-          color: viewMode === 'folder' ? 'var(--text-primary)' : 'var(--text-muted)',
-        }}
+        aria-pressed={viewMode === 'folder'}
+        className="surface-choice flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] sm:px-3"
         onClick={() => { setViewMode('folder'); sessionStorage.setItem('literary-view-mode', 'folder'); }}
       >
         <Folder size={12} />
@@ -716,9 +709,10 @@ export default function LiteraryAgentWorkspaceListPage() {
       <TabBar
         title="文学创作"
         icon={<BookOpen size={16} />}
+        actionsFit
         actions={
           <>
-            {viewModeToggle}
+            {!isMobile && viewModeToggle}
             <Button data-tour-id="literary-create-folder" title="新建文件夹和文章" aria-label="新建文件夹和文章" variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
               <FolderPlus size={14} />
               <span className="hidden sm:inline">新建文件夹和文章</span>
@@ -730,6 +724,8 @@ export default function LiteraryAgentWorkspaceListPage() {
           </>
         }
       />
+
+      {isMobile && <div className="shrink-0">{viewModeToggle}</div>}
 
       {error && (
         <GlassCard animated glow className="py-2 px-3">
