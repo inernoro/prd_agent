@@ -193,7 +193,7 @@ const STATIC_ACTIONS: ResultItem[] = [
   { key: 'action:storage',          type: 'action', label: '存储后端',           path: 'CDS 系统设置',  hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
   { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       path: 'CDS 系统设置',  hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
   { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: '本地账号 / GitHub OAuth / SSO', href: '/cds-settings#auth',             icon: 'settings' },
-  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     path: 'CDS 系统设置',  hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
+  { key: 'action:access-keys',      type: 'action', label: 'Agent Key',         path: 'CDS 系统设置',  hint: 'Agent Key 签发与吊销',            href: '/cds-settings#access-keys',      icon: 'settings' },
 ];
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {

@@ -46,7 +46,7 @@ export const SYSTEM_TAB_LABELS: Record<string, string> = {
   'update-history': '自更新历史',
   'docker-network': 'Docker 网络容量',
   danger: '危险操作',
-  'access-keys': 'AI Access Key',
+  'access-keys': 'Agent Key',
   overview: '概览',
   auth: '登录与认证',
   users: '用户管理',
@@ -270,11 +270,11 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
     keywords: ['痕迹', '操作痕迹', '操作记录', 'activity', '审计', '用户痕迹'],
   },
 
-  // —— AI Access Key ——
+  // —— Agent Key ——
   {
     id: 'sys:access-keys',
-    label: 'AI Access Key',
-    hint: 'AI 密钥 · 签发 / 撤销全局 Agent Key',
+    label: 'Agent Key',
+    hint: '签发、查找与吊销项目 Key 和全局 Key，区分用户与 AI Agent 签发',
     tab: 'access-keys',
     scope: 'system',
     keywords: ['access key', 'ai access key', '访问密钥', '密钥', 'agent key', 'global agent key', 'sk-', '签发', '吊销', '撤销密钥'],

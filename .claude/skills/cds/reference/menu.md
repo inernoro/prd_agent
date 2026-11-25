@@ -339,7 +339,7 @@
 1. 运行 cdscli auth check，再用 cdscli project show <projectId> 验证目标项目权限
 2. 同一 CDS 主机和目标项目都验证通过时直接继续，不要求用户重复认证
 3. 缺少目标项目权限时才运行 connect --project <projectId> 并等待页面批准
-4. 确需长期跨项目时，引导用户在 CDS 系统设置的 AI Access Key 中明确选择授权范围
+4. 确需长期跨项目时，引导用户在 CDS 系统设置的 Agent Key 中明确选择授权范围
 
 完成标准：目标项目的只读检查通过；实际权限范围与用户预期一致；本地凭据只保存在当前仓库的 .cds/credentials.json 且不进入 Git。
 

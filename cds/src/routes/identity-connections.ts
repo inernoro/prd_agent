@@ -91,7 +91,8 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
           const user: UserCredential = { id: id('uc_'), principalId, projectIds: [project.id], hash: hash(userPlain),
             createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(USER_CREDENTIAL_TTL_DAYS), issuedCount: 1 };
           const key: AgentKey = { id: id(''), principalId, hash: hash(projectPlain), scope: 'rw', label: `设备接入 ${r.agentName}`,
-            createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id };
+            createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id,
+            issuedVia: 'device-recovery', requesterAgentName: r.agentName };
           const envelope = encrypt({ userCredential: userPlain, authorizationKey: projectPlain,
             projectId: project.id, projectName: project.aliasName || project.name, projectSlug: project.slug }, token, r.id);
           try {

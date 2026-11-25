@@ -101,7 +101,7 @@ const tabGroups: TabGroup[] = [
       // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
       // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
       // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
-      { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
+      { value: 'access-keys', label: 'Agent Key', icon: KeyRound },
       { value: 'identity', label: '权限总览', icon: Users },
       { value: 'github', label: 'GitHub 集成', icon: Github },
       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },

@@ -339,7 +339,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
       '运行 cdscli auth check，再用 cdscli project show <projectId> 验证目标项目权限',
       '同一 CDS 主机和目标项目都验证通过时直接继续，不要求用户重复认证',
       '缺少目标项目权限时才运行 connect --project <projectId> 并等待页面批准',
-      '确需长期跨项目时，引导用户在 CDS 系统设置的 AI Access Key 中明确选择授权范围',
+      '确需长期跨项目时，引导用户在 CDS 系统设置的 Agent Key 中明确选择授权范围',
     ],
     checks: [
       '项目级授权可长期复用直到被吊销，不把它误称为一次性登录',

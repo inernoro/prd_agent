@@ -4594,6 +4594,29 @@ export interface Project {
 }
 
 /**
+ * 这把 Key 是从哪条签发通道出来的（2026-11-25，Agent Key 管理一期）。
+ *
+ * 签发时由服务端写入，列表据此回答「是用户签的还是 AI Agent 签的」。存量 Key
+ * 没有这个字段：只按已有的结构化字段（issuedByCredentialId / designAccessRequestId）
+ * 判定，其余一律显示「来源未记录」，**不解析标签文字**——标签是自由文本，拿它
+ * 推断来源等于编造。判定收口在 services/agent-key-catalog.ts。
+ *
+ * - console          已登录用户在 CDS 页面签发
+ * - machine-api      没有人类会话的调用方（bootstrap 静态 Key）经接口签发
+ * - access-request   Agent 发起接入申请，由人在页面批准后签发
+ * - self-service     Agent 用用户级凭据为已授权项目自助签发
+ * - device-recovery  设备接入/恢复申请经管理员批准后签发
+ * - project-create   Agent 用「仅创建新项目」Key 建项目时自动签发
+ */
+export type AgentKeyIssuedVia =
+  | 'console'
+  | 'machine-api'
+  | 'access-request'
+  | 'self-service'
+  | 'device-recovery'
+  | 'project-create';
+
+/**
  * A project-scoped Agent Key. Plaintext is never persisted — only the
  * sha256 hash. Scope is always 'rw' in the current implementation;
  * kept as a field so a later read-only tier can slot in without a
@@ -4611,6 +4634,19 @@ export interface AgentKey {
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';
+  /** 签发通道；存量 Key 缺省，见 {@link AgentKeyIssuedVia}。 */
+  issuedVia?: AgentKeyIssuedVia;
+  /** issuedVia=access-request 时的申请编号（结构化留痕，不再只拼进标签）。 */
+  accessRequestId?: string;
+  /** 发起申请或建项目的 Agent 自报名称；只用于展示，不参与鉴权。 */
+  requesterAgentName?: string;
+  /** issuedVia=project-create 时，建项目所用的全局 Key 编号。 */
+  issuedByGlobalKeyId?: string;
+  /**
+   * 到期方式。缺省且有 expiresAt = 滑动续期（用即续，身份层的存量行为）；
+   * 'fixed' = 用户签发时选定的固定到期日，使用时**不续期**。
+   */
+  expiryMode?: 'fixed';
   /** Optional restriction to this project's planning reads or proposal intake. */
   planningAccess?: 'read' | 'propose';
   /** Optional restriction to this project's private design reads or Git-verified publishing. */
@@ -4882,6 +4918,12 @@ export interface GlobalAgentKey {
    * state.ts resolveGlobalAgentKeyAccess()。
    */
   access?: AgentKeyAccess;
+  /** 签发通道；存量 Key 缺省，见 {@link AgentKeyIssuedVia}。 */
+  issuedVia?: AgentKeyIssuedVia;
+  /** issuedVia=access-request 时的申请编号。 */
+  accessRequestId?: string;
+  /** 发起申请的 Agent 自报名称；只用于展示，不参与鉴权。 */
+  requesterAgentName?: string;
   /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
   oneTime?: boolean;
   /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */

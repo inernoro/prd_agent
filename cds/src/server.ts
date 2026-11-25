@@ -1355,6 +1355,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // Global / 自更新 / 其他
     'GET /global-agent-keys': '列出全局 Agent Keys',
     'POST /global-agent-keys': '创建全局 Agent Key',
+    'GET /global-agent-keys/catalog': '列出全部 Agent Key',
     'POST /self-update-dry-run': '自更新预检',
     'POST /self-force-sync': '自更新强制更新',
     'POST /accept-invite': '接受邀请',

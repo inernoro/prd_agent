@@ -247,6 +247,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       createdAt: new Date().toISOString(),
       principalId: principalId.principalId,
       issuedByCredentialId: principalId.credentialId,
+      issuedVia: 'self-service',
       expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS),
     };
     stateService.addAgentKey(project.id, key);

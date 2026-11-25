@@ -3921,6 +3921,51 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   }
 
   /**
+   * 项目级 Key 此刻能不能通过鉴权，以及不能的原因。
+   *
+   * 这是唯一判据：findAgentKeyForAuth 用它放行，Key 管理列表用它显示状态。
+   * 两处若各写一份，列表就会把鉴权早已拒绝的 Key 显示成「有效」——旧列表
+   * 只看 revokedAt，过期和随主体停用的 Key 一直被报成「未吊销」。
+   */
+  agentKeyUsability(
+    projectId: string,
+    entry: AgentKey,
+    now: number = Date.now(),
+  ): { usable: true } | { usable: false; reason: 'revoked' | 'expired' | 'principal-disabled' | 'principal-missing' | 'grant-revoked' | 'grant-pending' } {
+    if (entry.revokedAt) return { usable: false, reason: 'revoked' };
+    // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
+    // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
+    if (entry.expiresAt && Date.parse(entry.expiresAt) <= now) return { usable: false, reason: 'expired' };
+    // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
+    // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
+    // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
+    //
+    // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
+    // 这段整个跳过，与启用前逐字节一致。
+    if (entry.principalId) {
+      // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
+      if (isHumanProjectGrantUpdatePending(this, entry.principalId)) return { usable: false, reason: 'grant-pending' };
+      const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
+      const principalCheck = credentialUsability(entry, principal, now, true);
+      if (!principalCheck.usable) {
+        return { usable: false, reason: principalCheck.reason === 'principal-missing' ? 'principal-missing' : principalCheck.reason === 'principal-disabled' ? 'principal-disabled' : principalCheck.reason === 'revoked' ? 'revoked' : 'expired' };
+      }
+      if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, projectId)) return { usable: false, reason: 'grant-revoked' };
+    }
+    return { usable: true };
+  }
+
+  /** 全局 Key 此刻能不能通过鉴权；与 findGlobalAgentKeyForAuth 同一判据。 */
+  static globalAgentKeyUsability(
+    entry: Pick<GlobalAgentKey, 'revokedAt' | 'expiresAt'>,
+    now: number = Date.now(),
+  ): { usable: true } | { usable: false; reason: 'revoked' | 'expired' } {
+    if (entry.revokedAt) return { usable: false, reason: 'revoked' };
+    if (entry.expiresAt && Date.parse(entry.expiresAt) <= now) return { usable: false, reason: 'expired' };
+    return { usable: true };
+  }
+
+  /**
    * Parse an incoming plaintext key `cdsp_<slugHead12>_<suffix>` and find
    * the matching non-revoked AgentKey across all projects. Uses
    * timingSafeEqual for hash comparison so the endpoint doesn't leak
@@ -3941,23 +3986,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     for (const project of this.state.projects || []) {
       // 哈希归属才是权限依据；slug 前缀只是签发时的可读提示，改名不会撤销凭据。
       for (const entry of project.agentKeys || []) {
-        if (entry.revokedAt) continue;
-        // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
-        // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
-        if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
-        // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
-        // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
-        // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
-        //
-        // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
-        // 这段整个跳过，与启用前逐字节一致。
-        if (entry.principalId) {
-          // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
-          if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
-          const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
-          if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
-          if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, project.id)) continue;
-        }
+        if (!this.agentKeyUsability(project.id, entry).usable) continue;
         try {
           const entryBuf = Buffer.from(entry.hash, 'hex');
           if (entryBuf.length !== hashBuf.length) continue;
@@ -3984,7 +4013,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
     // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
     // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
-    if (entry.expiresAt) {
+    // 用户签发时选定的固定到期日（expiryMode='fixed'）不续期：那是用户的明确
+    // 决定，续期等于让「7 天后失效」在每次使用后又推迟 30 天，永远不会失效。
+    if (entry.expiresAt && entry.expiryMode !== 'fixed') {
       const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
       if (next) entry.expiresAt = next;
     }
@@ -4149,7 +4180,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const entry of this.state.globalAgentKeys || []) {
-      if (entry.revokedAt || (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now())) continue;
+      if (!StateService.globalAgentKeyUsability(entry).usable) continue;
       try {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;

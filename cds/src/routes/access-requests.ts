@@ -427,6 +427,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         scope: 'rw',
         access: { canCreateProjects: true, projects: [] },
         oneTime: true,
+        issuedVia: 'access-request',
+        accessRequestId: item.id,
+        requesterAgentName: item.agentName,
         creationTarget: target,
         expiresAt: new Date(now.getTime() + 300_000).toISOString(),
         createdAt: now.toISOString(),
@@ -492,6 +495,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     const keyEntry: AgentKey = {
       id: keyId,
       label: `授权密钥 (申请 ${item.id} · ${item.agentName})`,
+      issuedVia: 'access-request',
+      accessRequestId: item.id,
+      requesterAgentName: item.agentName,
       hash: sha256(plaintext),
       scope: 'rw',
       ...(item.designAccess ? {

@@ -82,10 +82,11 @@ import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
+import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, GlobalAgentKey, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
+import { buildAgentKeyCatalog, parseRequestedKeyExpiry } from '../services/agent-key-catalog.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -339,7 +340,7 @@ function mintProjectAgentKey(
   project: Project,
   label: string,
   createdBy?: string,
-  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess'> = {},
+  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess' | 'issuedVia' | 'issuedByGlobalKeyId' | 'requesterAgentName' | 'expiresAt' | 'expiryMode'> = {},
 ): { keyId: string; plaintext: string; preview: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
@@ -3408,11 +3409,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         && callerAccess.access.projects.includes(newProject.id);
       if (!already) {
         try {
+          const parentKey = stateService.getGlobalAgentKeys().find((key) => key.id === callerAccess.keyId);
           issuedProjectKey = mintProjectAgentKey(
             stateService,
             newProject,
             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
             (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
+            {
+              issuedVia: 'project-create',
+              issuedByGlobalKeyId: callerAccess.keyId,
+              ...(parentKey?.requesterAgentName ? { requesterAgentName: parentKey.requesterAgentName } : {}),
+            },
           );
         } catch {
           // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
@@ -4543,7 +4550,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown };
+    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown; expiresAt?: unknown };
+    const expiry = parseRequestedKeyExpiry(body.expiresAt);
+    if (expiry && typeof expiry === 'object') {
+      return res.status(400).json({ error: 'invalid_expires_at', message: expiry.error });
+    }
     if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
       return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
     }
@@ -4570,7 +4581,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     let minted: { keyId: string; plaintext: string; preview: string };
     try {
       minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
-        planningAccess: body.planningAccess, designAccess: body.designAccess,
+        ...(body.planningAccess ? { planningAccess: body.planningAccess } : {}),
+        ...(body.designAccess ? { designAccess: body.designAccess } : {}),
+        // 有人类会话 = 用户在页面签发；没有 = 机器凭据（项目 Key / 全局 Key /
+        // bootstrap 静态 Key）经接口签发，列表里归为 AI Agent 签发。
+        issuedVia: account ? 'console' : 'machine-api',
+        ...(expiry ? { expiresAt: expiry, expiryMode: 'fixed' as const } : {}),
       });
     } catch (err) {
       res.status(500).json({
@@ -4670,7 +4686,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const body = (req.body || {}) as {
       label?: string;
       access?: { canCreateProjects?: unknown; projects?: unknown };
+      expiresAt?: unknown;
     };
+    const expiry = parseRequestedKeyExpiry(body.expiresAt);
+    if (expiry && typeof expiry === 'object') {
+      res.status(400).json({ error: 'invalid_expires_at', message: expiry.error });
+      return;
+    }
     const now = new Date();
     const defaultLabel = 'Global 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
     const label = typeof body.label === 'string' && body.label.trim()
@@ -4728,16 +4750,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const hash = createHash('sha256').update(plaintext).digest('hex');
     const keyId = randomBytes(4).toString('hex');
 
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+    const ghUser = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
 
-    const entry = {
+    const entry: GlobalAgentKey = {
       id: keyId,
       label,
       hash,
       scope: 'rw' as const,
       access,
+      // 签发全局 Key 已拒绝所有机器 Agent Key；剩下没有人类会话的只可能是
+      // bootstrap 静态 Key，归为机器接口签发。
+      issuedVia: isAuthenticatedHuman(req) ? 'console' : 'machine-api',
+      ...(expiry ? { expiresAt: expiry } : {}),
       createdAt: now.toISOString(),
-      createdBy: ghUser?.login || undefined,
+      // 与项目 Key 签发同一取名口径：本地账号没有 login，只取 login 会让签发人留空。
+      createdBy: ghUser?.githubLogin || ghUser?.login || ghUser?.username || undefined,
     };
     try {
       stateService.addGlobalAgentKey(entry);
@@ -4755,6 +4782,30 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       preview: formatKeyPreview(plaintext),
       access,
     });
+  });
+
+  // GET /api/global-agent-keys/catalog?project=<id> — Agent Key 管理页的合并列表。
+  //
+  // 项目级 + 全局 Key 一张表，服务端给出签发来源、与鉴权同口径的当前状态、
+  // 项目名和到期方式（services/agent-key-catalog.ts）。挂在 global-agent-keys
+  // 前缀下是刻意的：这个前缀已经接入成员拒绝（human-project-access 未知路由
+  // 一律拒）、集群主节点统一授权（clusterAuthorityPath）和嵌入式小组件的硬拒绝
+  // 清单，换一个新前缀就得在三处各补一次，漏一处就是一条越权读口。
+  //
+  // 它暴露全部项目的 Key 元数据，所以任何机器 Agent Key 都不能读（与签发、吊销
+  // 全局 Key 同一道门）；人类系统所有者与 bootstrap 静态 Key 可读。
+  router.get('/global-agent-keys/catalog', (req, res) => {
+    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
+    if (machineKey) {
+      res.status(machineKey.status).json(machineKey.body);
+      return;
+    }
+    const projectId = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined;
+    if (projectId && !stateService.getProject(projectId)) {
+      res.status(404).json({ error: 'project_not_found', message: `项目 ${projectId} 不存在，请从项目列表重新进入。` });
+      return;
+    }
+    res.json({ keys: buildAgentKeyCatalog({ state: stateService, projectId }) });
   });
 
   router.get('/global-agent-keys', (_req, res) => {
