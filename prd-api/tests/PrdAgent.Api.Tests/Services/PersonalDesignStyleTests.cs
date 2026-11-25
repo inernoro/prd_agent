@@ -231,6 +231,26 @@ public sealed class PersonalDesignStyleTests
 
     // ───────────────────────── 确定性提取 ─────────────────────────
 
+    [Fact]
+    public void 参考网页只冻结本次运行的外观与来源()
+    {
+        var settings = DesignGenerationSettingsService.Effective(null, Catalog);
+        var draft = new PersonalStyleDraft(
+            "技术刊物风格", "正文约 16px", ["#1f2328", "#f7f5f0", "#c2410c"], ["Georgia"],
+            Catalog.All.First().Id, "设计系统", "依据色彩选择", [], "站内 CSS", "owned-site", "技术刊物", null, []);
+
+        var direction = DesignGenerationSettingsService.FreezeReferenceSite(settings, Catalog, draft);
+
+        Assert.Equal("reference-site:owned-site", direction.StyleId);
+        Assert.Equal("reference-site", direction.BrandSource);
+        Assert.Equal("owned-site", direction.ReferenceSiteId);
+        Assert.Equal("技术刊物", direction.ReferenceSiteTitle);
+        Assert.Equal(draft.Swatches, direction.BrandColors);
+        Assert.Equal(draft.Fonts, direction.BrandFonts);
+        Assert.Contains("页面标题、正文、数字、链接和品牌身份来自本次资料和用户要求", direction.GeneratePrompt);
+        Assert.Contains("正文约 16px", direction.GeneratePrompt);
+    }
+
     private const string SampleHtml = """
 <!doctype html><html><head>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600&amp;family=Inter:wght@400">
@@ -326,6 +346,32 @@ section.b { margin: 64px 0; }
 
         var rooted = PersonalStyleDeriver.LocalStylesheetPaths("<link href='/a/b.css?v=1' rel='stylesheet'><link rel=stylesheet href=../x.css>", "index.html");
         Assert.Equal(new[] { "a/b.css" }, rooted);
+    }
+
+    [Fact]
+    public void 可视参考原位替换站内样式表_保留覆盖顺序与媒体条件()
+    {
+        const string html = """
+            <html><head>
+              <link rel="stylesheet" href="missing.css">
+              <link rel="StyleSheet" href="../site.css?v=1" media="screen and (min-width: 700px)">
+              <style>h1{font-size:38px}</style>
+              <link rel="stylesheet" href="/site.css" media="print">
+              <link rel="stylesheet" href="https://example.com/remote.css">
+            </head><body><h1>独有书会内容</h1></body></html>
+            """;
+        const string linkedCss = "h1{font-size:64px}";
+        var reference = PersonalStyleDeriver.BuildVisualReference(html, "pages/index.html",
+            new Dictionary<string, string> { ["site.css"] = linkedCss });
+
+        Assert.NotNull(reference);
+        var document = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(reference);
+        Assert.Collection(document.QuerySelectorAll("style"),
+            style => { Assert.Equal(linkedCss, style.TextContent); Assert.Equal("screen and (min-width: 700px)", style.GetAttribute("media")); },
+            style => { Assert.Equal("h1{font-size:38px}", style.TextContent); Assert.False(style.HasAttribute("media")); },
+            style => { Assert.Equal(linkedCss, style.TextContent); Assert.Equal("print", style.GetAttribute("media")); });
+        Assert.Empty(document.QuerySelectorAll("link"));
+        Assert.DoesNotContain("独有书会内容", reference);
     }
 
     [Fact]

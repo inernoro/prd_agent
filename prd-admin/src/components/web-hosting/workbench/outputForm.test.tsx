@@ -141,26 +141,16 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
   });
 });
 
-/**
- * 接线守卫：工作台真的用上了产出形式，且「网页 PPT」走交接而不是建网页设计任务。
- * 统一设计任务入口会以「只支持生成网页」回绝 html-ppt，所以这条分支绝不能落到 run.start。
- */
-describe('新建阶段接线', () => {
+describe('生成网页对话', () => {
   const stage = readFileSync(path.resolve(__dirname, 'NewSiteStage.tsx'), 'utf8');
 
-  it('输入区有「产出形式」分段控件，选项来自注册表', () => {
-    expect(stage).toContain('label="产出形式"');
-    expect(stage).toContain('OUTPUT_FORM_ORDER.map(');
-  });
-
-  it('PPT 的发布落点在打开工作台时冻结，交接与空白入口都用冻结值', () => {
-    expect(stage).toContain('const [pptDestinationTeamId] = useState(destinationTeamId);');
-    expect(stage).not.toMatch(/freshPptSessionPath\(destinationTeamId\)/);
-    expect(stage).not.toMatch(/buildHtmlPptHandoff\(\{[^}]*destinationTeamId,\s*\}/);
-  });
-
-  it('发送按 sendRoute 分派，页面里只有这一处判定', () => {
-    expect(stage.match(/sendRoute\(/g)?.length).toBe(1);
+  it('输入框收口为网页生成，移除产出切换、风格条和常驻说明', () => {
+    for (const entry of ['产出形式', 'OUTPUT_FORM_ORDER', '<HtmlPptHandoffPanel', 'options=', 'hint=']) {
+      expect(stage).not.toContain(entry);
+    }
+    expect(stage).toContain('参考网页');
+    expect(stage).toContain('设计服务暂时不可用。你可以继续准备资料');
+    expect(stage).toContain('void run.start({');
   });
 });
 

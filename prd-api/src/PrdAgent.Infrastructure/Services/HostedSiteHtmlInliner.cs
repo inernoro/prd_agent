@@ -260,6 +260,21 @@ public sealed class HostedSiteHtmlInliner
         return false;
     }
 
+    internal static bool HasDataStylesheetOrScript(string html)
+    {
+        foreach (Match token in HtmlToken.Matches(html))
+        {
+            if (token.Groups["script"].Success
+                && FindAttribute(token.Groups["sattrs"].Value, "src")?.Value?.StartsWith("data:", StringComparison.OrdinalIgnoreCase) == true)
+                return true;
+            if (token.Groups["tag"].Success && token.Groups["name"].Value.Equals("link", StringComparison.OrdinalIgnoreCase)
+                && LinkPayloadKind(token.Groups["attrs"].Value) == PayloadKind.Stylesheet
+                && FindAttribute(token.Groups["attrs"].Value, "href")?.Value?.StartsWith("data:", StringComparison.OrdinalIgnoreCase) == true)
+                return true;
+        }
+        return false;
+    }
+
     public async Task<HostedSiteInlineResult> InlineAsync(string entryPath, string html, CancellationToken ct)
     {
         _estimatedBytes = Encoding.UTF8.GetByteCount(html);

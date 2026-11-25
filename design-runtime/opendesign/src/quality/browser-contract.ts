@@ -1,4 +1,5 @@
 import { BROWSER_HARD_GATE_AUTHORING_RULE } from '../prompts.js';
+import type { VisualReferenceMetrics } from './visual-reference.js';
 
 export const BROWSER_QUALITY_SCHEMA = 'map-browser-quality-evidence-v1';
 export const BROWSER_QUALITY_FAILURE_SCHEMA = 'map-browser-quality-failure-evidence-v1';
@@ -22,6 +23,7 @@ export type BrowserQualityIssueCode =
   | 'mobile_navigation_unusable'
   | 'table_unreadable'
   | 'key_text_contrast_low'
+  | 'reference_style_mismatch'
   | 'presentation_page_count_mismatch'
   | 'presentation_navigation_unusable'
   | 'presentation_text_too_small'
@@ -114,11 +116,14 @@ export interface BrowserQualityWorkerJob {
   workspaceDir: string;
   evidenceDir: string;
   repairAttempt: number;
+  referenceHtml?: string;
+  referenceStyle?: VisualReferenceMetrics[];
 }
 
 export interface BrowserQualityWorkerResult {
   browserVersion: string;
   measurements: BrowserViewportMeasurement[];
+  referenceStyle?: VisualReferenceMetrics[];
 }
 
 export function summarizeAttempt(

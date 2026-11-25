@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -72,6 +73,8 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IHostedSiteService _sites;
     private readonly ILogger<DesignArtifactsController>? _logger;
     private readonly IDesignGenerationSettingsService? _generationSettings;
+    private readonly IPersonalStyleDerivationService? _styleDerivation;
+    private readonly IModelResolver? _modelResolver;
 
     public DesignArtifactsController(
         MongoDbContext db,
@@ -84,7 +87,9 @@ public sealed class DesignArtifactsController : ControllerBase
         IConfiguration configuration,
         IHostedSiteService sites,
         ILogger<DesignArtifactsController>? logger = null,
-        IDesignGenerationSettingsService? generationSettings = null)
+        IDesignGenerationSettingsService? generationSettings = null,
+        IPersonalStyleDerivationService? styleDerivation = null,
+        IModelResolver? modelResolver = null)
     {
         _db = db;
         _events = events;
@@ -97,6 +102,19 @@ public sealed class DesignArtifactsController : ControllerBase
         _sites = sites;
         _logger = logger;
         _generationSettings = generationSettings;
+        _styleDerivation = styleDerivation;
+        _modelResolver = modelResolver;
+    }
+
+    [HttpGet("model-options")]
+    public async Task<IActionResult> ModelOptions([FromQuery] string operation, CancellationToken ct)
+    {
+        if (operation is not (DesignArtifactOperations.Generate or DesignArtifactOperations.Edit))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务类型只能是 generate 或 edit"));
+        var items = _modelResolver is null
+            ? []
+            : await DesignArtifactModelSelection.ListWebPageModelsAsync(_modelResolver, operation, ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     [HttpGet("runtime-capabilities")]
@@ -226,11 +244,20 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
                 _db, userId, request.AttachmentIds, CancellationToken.None);
-            if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    "风格只能选一种：预设风格、我的风格或目录里的设计系统，不能同时提交"));
-            // 预设 / 我的风格（personal:<id>，服务端按归属人取）/ 目录设计系统，判据全在 FreezeForRunAsync 一处。
-            if (_generationSettings != null)
+            if (!string.IsNullOrWhiteSpace(request.ReferenceSiteId))
+            {
+                if (!string.IsNullOrWhiteSpace(request.StyleId) || !string.IsNullOrWhiteSpace(request.DesignSystemId))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考网页和其他风格只能选一种"));
+                if (_styleDerivation == null || _generationSettings == null)
+                    return Conflict(ApiResponse<object>.Fail("REFERENCE_STYLE_UNAVAILABLE", "暂时无法读取网页样式，请稍后重试或选择另一种风格"));
+                var draft = await _styleDerivation.DeriveAsync(userId, request.ReferenceSiteId, null, CancellationToken.None);
+                if (draft.ReferenceVisualHtml == null)
+                    return Conflict(ApiResponse<object>.Fail("REFERENCE_STYLE_UNAVAILABLE", "这张网页暂时无法量取首屏样式，请换一张参考网页"));
+                designDirection = await _generationSettings.FreezeReferenceSiteAsync(draft, CancellationToken.None);
+            }
+            else if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "风格只能选一种，请重新选择"));
+            else if (_generationSettings != null)
                 designDirection = await _generationSettings.FreezeForRunAsync(
                     userId, request.StyleId, request.DesignSystemId, CancellationToken.None);
         }
@@ -241,6 +268,12 @@ public sealed class DesignArtifactsController : ControllerBase
         catch (DesignGenerationSettingsException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (PersonalDesignStyleException ex)
+        {
+            // 提取异常可能包含存储诊断。只向用户返回恢复动作。
+            _logger?.LogInformation("Reference style could not be derived: {Code}", ex.Code);
+            return BadRequest(ApiResponse<object>.Fail("REFERENCE_SITE_STYLE_UNAVAILABLE", "无法提取这张网页的样式，请选择另一张你创建的 HTML 网页"));
         }
         if (references.Count == 0 && uploadedSources.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少选择一篇知识或上传一个文件作为网页内容来源"));
@@ -273,7 +306,15 @@ public sealed class DesignArtifactsController : ControllerBase
         var runId = Guid.NewGuid().ToString("N");
         var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
-        try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
+        try
+        {
+            requestPolicy = await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
+                _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
+        }
+        catch (DesignArtifactModelUnavailableException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(DesignArtifactModelUnavailableException.Code, ex.Message));
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(ApiResponse<object>.Fail("DESIGN_MODEL_POLICY_INVALID", ex.Message));
@@ -355,7 +396,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
     /// <summary>
     /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条
-    /// 带最后预览的结构化失败 Run；它只可展示，不能伪装成可续跑任务。浏览器存储只作加速，
+    /// 可重试的网页生成失败 Run，或带最后预览的结构化失败 Run。浏览器存储只作加速，
     /// 换标签页、设备或禁用 sessionStorage 也能找回同一条 Run。
     /// </summary>
     [HttpGet("runs/active")]
@@ -372,8 +413,7 @@ public sealed class DesignArtifactsController : ControllerBase
         if (normalizedOperation == DesignArtifactOperations.Edit && normalizedSiteId == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "查找修改任务时必须提供站点编号"));
 
-        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current)
-                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
+        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
                      & Builders<DesignArtifactRun>.Filter.Eq(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
                      & Builders<DesignArtifactRun>.Filter.Ne(item => item.SourceSurface, DesignArtifactSourceSurfaces.Workflow);
@@ -381,15 +421,26 @@ public sealed class DesignArtifactsController : ControllerBase
             filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, normalizedOperation);
         if (normalizedSiteId != null)
             filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.TargetSiteId, normalizedSiteId);
-        var candidates = await _db.DesignArtifactRuns.Find(filter)
+        var currentScope = DeploymentScope.Current;
+        var currentFilter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, currentScope);
+        var candidates = await _db.DesignArtifactRuns.Find(filter & currentFilter)
             .SortByDescending(item => item.CreatedAt)
             .Limit(20)
             .ToListAsync(CancellationToken.None);
         var run = candidates.FirstOrDefault(item => item.Status is RunStatuses.Queued or RunStatuses.Running or RunStatuses.Committing);
         if (run == null && candidates.FirstOrDefault() is { } latest && IsRestartableInterrupted(latest))
             run = latest;
-        if (run == null && includeLatestFailed && candidates.FirstOrDefault() is { } latestFailed && IsViewableFailedRun(latestFailed))
-            run = latestFailed;
+        if (run == null && includeLatestFailed)
+        {
+            var latestFailed = candidates.FirstOrDefault();
+            // 旧版本的终态失败可读，活动任务的发现和认领仍按当前提交隔离。
+            if (normalizedOperation == DesignArtifactOperations.Generate && DeploymentScope.CurrentDurable is { } durableScope)
+                latestFailed = await _db.DesignArtifactRuns.Find(filter & DesignArtifactTimingStats.ScopeFilter(durableScope))
+                    .SortByDescending(item => item.CreatedAt)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (latestFailed != null && (IsRestartableWebGenerationFailure(latestFailed) || IsViewableFailedRun(latestFailed)))
+                run = latestFailed;
+        }
         return Ok(ApiResponse<object?>.Ok(run == null ? null : ToDto(run)));
     }
 
@@ -405,7 +456,7 @@ public sealed class DesignArtifactsController : ControllerBase
         && run.LatestPreviewRevision.HasValue;
 
     /// <summary>
-    /// 服务重启中断后以原 Run 的冻结输入创建新 Run。幂等键决定新 runId，
+    /// 以失败 Run 的冻结输入创建新 Run。幂等键决定新 runId，
     /// 重复点击只返回同一条新任务；原 Run 的中断原因保持不变。
     /// </summary>
     [HttpPost("runs/{runId}/restart")]
@@ -422,12 +473,18 @@ public sealed class DesignArtifactsController : ControllerBase
         if (source.SourceSurface == DesignArtifactSourceSurfaces.Workflow)
             return Conflict(ApiResponse<object>.Fail("WORKFLOW_RESTART_REQUIRES_NODE",
                 "请回到原工作流，重新运行对应节点；原输入和报告仍然保留"));
-        var isInterruptedRestart = IsRestartableInterrupted(source);
+        var isWebGeneration = source.ArtifactType == DesignArtifactTypes.WebPage
+            && source.Operation == DesignArtifactOperations.Generate;
+        var isInterruptedRestart = IsRestartableInterrupted(source)
+            && (!isWebGeneration || IsWebGenerationRetryScope(source.DeploymentSlug, DeploymentScope.Current, DeploymentScope.CurrentDurable));
         var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
-        if (!isInterruptedRestart && !isPresentationQualityRepair)
+        var canRestart = isInterruptedRestart
+            || isPresentationQualityRepair
+            || IsRestartableWebGenerationFailure(source);
+        if (!canRestart)
             return Conflict(ApiResponse<object>.Fail(
                 "DESIGN_ARTIFACT_NOT_RESTARTABLE",
-                "只有被服务重启中断的任务或保留了受限候选的演示稿质量失败任务才能用冻结输入重开"));
+                "这条任务无法用原资料重试，请回到工作台重新发起"));
         var key = request.IdempotencyKey?.Trim() ?? string.Empty;
         if (key.Length is < 8 or > 128 || key.Any(char.IsControl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "重开请求缺少有效的幂等键"));
@@ -451,6 +508,26 @@ public sealed class DesignArtifactsController : ControllerBase
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
                 capability?.Reason ?? "设计服务尚未恢复，冻结输入已保留，请稍后再重开"));
+
+        if (isWebGeneration)
+        {
+            if (source.DestinationTeamId is { } teamId
+                && !await _sites.CanPublishIntoTeamAsync(userId, teamId, CancellationToken.None))
+                return StatusCode(403, ApiResponse<object>.Fail(
+                    ErrorCodes.PERMISSION_DENIED, "你已无法在原团队空间保存网页，请选择其他有权限的空间重新生成"));
+            try
+            {
+                // 校验当前访问权限和资料版本，实际重试仍使用原任务已冻结的内容。
+                if (source.KnowledgeReferences.Count > 0)
+                    await _knowledgeSnapshots.ResolveForRunAsync(userId, source.KnowledgeReferences.Select(reference =>
+                        new DesignKnowledgeReferenceIdentity(reference.EntryId, reference.StoreId ?? string.Empty, reference.ContentHash))
+                        .ToList(), CancellationToken.None);
+            }
+            catch (DesignKnowledgeSnapshotException ex)
+            {
+                return KnowledgeReferenceFailure(ex);
+            }
+        }
 
         MdToPptRun? sourceCompatibility = null;
         if (source.ArtifactType == DesignArtifactTypes.HtmlPpt)
@@ -594,6 +671,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = restarted.TaskPermitId,
             RunId = restarted.Id,
             Kind = RunKinds.DesignArtifact,
             Status = RunStatuses.Queued,
@@ -1143,6 +1221,7 @@ public sealed class DesignArtifactsController : ControllerBase
         run.Operation,
         run.SourceSurface,
         run.Runtime,
+        run.Instruction,
         // 实际执行的模型与平台：刷新或恢复未完成任务时，面板靠它显示「{模型} · {平台}」，
         // 而不是只显示运行时名字（ai-model-visibility §4）。
         run.ResolvedModel,
@@ -1152,6 +1231,8 @@ public sealed class DesignArtifactsController : ControllerBase
         styleId = run.DesignDirection?.StyleId,
         styleName = run.DesignDirection?.StyleName,
         designSystemId = run.DesignDirection?.DesignSystemId,
+        referenceSiteId = run.DesignDirection?.ReferenceSiteId,
+        referenceSiteTitle = run.DesignDirection?.ReferenceSiteTitle,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,
         reviewMode = run.DesignDirection?.ReviewMode,
         designBrief = run.DesignBrief == null ? null : new
@@ -1207,6 +1288,8 @@ public sealed class DesignArtifactsController : ControllerBase
         run.LinkedRunId,
         run.RestartedFromRunId,
         run.Error,
+        failureCode = run.LifecycleFailureCode,
+        retryInstruction = IsRestartableWebGenerationFailure(run) ? run.Instruction : null,
         runtimeFailure = ToRuntimeFailureDto(run.RuntimeFailure),
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
@@ -1234,6 +1317,26 @@ public sealed class DesignArtifactsController : ControllerBase
         && (run.PhaseCode == DesignArtifactPhaseCodes.Interrupted
             || run.LifecycleFailureCode == WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode
             || string.Equals(run.Error, HostedSiteEditRunWorker.RestartInterruptedMessage, StringComparison.Ordinal));
+
+    internal static bool IsWebGenerationRetryScope(string? sourceScope, string? currentScope, string? durableScope) =>
+        sourceScope == currentScope
+        || durableScope != null && (sourceScope == durableScope
+            || sourceScope?.StartsWith(durableScope + "::revision::", StringComparison.Ordinal) == true);
+
+    internal static bool IsRestartableWebGenerationFailure(DesignArtifactRun run) =>
+        IsWebGenerationRetryScope(run.DeploymentSlug, DeploymentScope.Current, DeploymentScope.CurrentDurable)
+        && run.Runtime == DesignArtifactRuntimes.OpenDesign
+        && run.ArtifactType == DesignArtifactTypes.WebPage
+        && run.Operation == DesignArtifactOperations.Generate
+        && run.SourceSurface is DesignArtifactSourceSurfaces.WebHosting or DesignArtifactSourceSurfaces.KnowledgeBase
+        && run.Status == RunStatuses.Error
+        && !string.IsNullOrWhiteSpace(run.Instruction)
+        && (run.KnowledgeReferences.Count > 0 || run.UploadedSources is { Count: > 0 })
+        && string.IsNullOrWhiteSpace(run.TargetSiteId)
+        && string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+        && string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)
+        && string.IsNullOrWhiteSpace(run.ArtifactSiteId)
+        && string.IsNullOrWhiteSpace(run.ArtifactRevisionId);
 
     private static bool IsRestartablePresentationQualityFailure(DesignArtifactRun run) =>
         run.Runtime == DesignArtifactRuntimes.OpenDesign
@@ -1264,6 +1367,7 @@ public sealed class DesignArtifactsController : ControllerBase
         string keyHash,
         DateTime now) => new()
     {
+        TaskPermitId = TaskExecutionContext.Current?.PermitId,
         Id = runId,
         DeploymentSlug = DeploymentScope.Current,
         UserId = source.UserId,
@@ -1513,6 +1617,7 @@ public sealed class CreateDesignArtifactRunRequest
     public string? ArtifactType { get; set; }
     public string? SourceSurface { get; set; }
     public string? Runtime { get; set; }
+    public string? ModelOptionId { get; set; }
     public string? Instruction { get; set; }
     public string? Title { get; set; }
 
@@ -1535,6 +1640,8 @@ public sealed class CreateDesignArtifactRunRequest
     /// 按服务端快照核对，不在目录里的编号拒绝。
     /// </summary>
     public string? DesignSystemId { get; set; }
+
+    public string? ReferenceSiteId { get; set; }
 
     /// <summary>直接上传的文件（附件编号，最多 5 个）；与知识库引用至少有一种。</summary>
     public List<string>? AttachmentIds { get; set; }

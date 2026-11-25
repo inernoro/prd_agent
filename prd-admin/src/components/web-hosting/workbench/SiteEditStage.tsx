@@ -14,15 +14,14 @@ import { useOfflineExport } from '../useOfflineExport';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
-  REQUIRED_WEB_PAGE_RUNTIME,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   revisionChangeSummary,
   revisionLabel,
   runningGenerationActivity,
 } from '../siteEditPreview';
 import { formatGenerationClock, runProvenanceText } from '../siteGenerateProgress';
-import { DESIGN_ATTACHMENT_ACCEPT, MAX_EDIT_SCREENSHOTS } from '../designAttachments';
-import { RUNTIME_CARD_REGISTRY, runtimeCardTitle } from '../siteGenerateOptions';
+import { DESIGN_ATTACHMENT_ACCEPT, DESIGN_ATTACHMENT_DESCRIPTION, MAX_EDIT_SCREENSHOTS, recordedDesignAttachments, sentDesignAttachments, type DesignAttachmentItem } from '../designAttachments';
+import { runtimeCardTitle } from '../siteGenerateOptions';
 import {
   GENERATION_STAGES,
   createRevisionMutationIdempotencyKey,
@@ -47,6 +46,7 @@ import {
   type PlusMenuItem,
   type WorkbenchPane,
 } from './WorkbenchParts';
+import { useWorkbenchModelPicker } from './useWorkbenchModelPicker';
 
 const MAX_KNOWLEDGE = 3;
 
@@ -76,9 +76,11 @@ export default function SiteEditStage({
   onOpenShareSettings?: (site: HostedSite) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const modelPicker = useWorkbenchModelPicker('edit');
   const session = useSiteEditSession(site, {
     onPublished: onSiteChanged,
     prefillInstructionFromDraft: false,
+    modelOptionId: modelPicker.value || undefined,
   });
   const {
     instruction, setInstruction, phase, elapsedSeconds, resolvedModel,
@@ -90,7 +92,9 @@ export default function SiteEditStage({
     publish, rollback, reject, retryRecovery, progress,
   } = session;
   const [sheet, setSheet] = useState<'knowledge' | null>(null);
-  const [sentInstruction, setSentInstruction] = useState('');
+  const [sentRound, setSentRound] = useState<{ text: string; chips: string[]; attachments: DesignAttachmentItem[] } | null>(null);
+  const [completedRounds, setCompletedRounds] = useState<Record<string, NonNullable<typeof sentRound>>>({});
+  const replacingScreenshotRef = useRef<string | null>(null);
   const [confirmRollbackId, setConfirmRollbackId] = useState<string | null>(null);
   const [shareAnchor, setShareAnchor] = useState<HTMLElement | null>(null);
   const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
@@ -153,25 +157,36 @@ export default function SiteEditStage({
 
   // 一轮修改做完（出了新草稿）就清空输入框：那一轮已经作为对话显示在上面了。
   const lastDraftRef = useRef<string | null>(null);
+  const resetScreenshots = screenshots.reset;
   useEffect(() => {
     const draftId = pendingDraft?.id ?? null;
-    if (draftId && draftId !== lastDraftRef.current && !generating && sentInstruction) {
+    if (draftId && draftId !== lastDraftRef.current && !generating && sentRound) {
+      setCompletedRounds((current) => ({ ...current, [draftId]: sentRound }));
       setInstruction('');
-      setSentInstruction('');
-      screenshots.reset();
+      setSentRound(null);
+      resetScreenshots();
     }
-    lastDraftRef.current = draftId;
-  }, [generating, pendingDraft?.id, screenshots, sentInstruction, setInstruction]);
+    if (!generating) lastDraftRef.current = draftId;
+  }, [generating, pendingDraft?.id, resetScreenshots, sentRound, setInstruction]);
 
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [generating, revisions.length, recoveryNotice]);
 
   const send = () => {
-    if (!instruction.trim() || generating) return;
-    setSentInstruction(instruction.trim());
+    if (!instruction.trim() || generating || sendBlocker) return;
+    setSentRound({
+      text: instruction.trim(),
+      chips: selectedKnowledge.map((item) => `知识库 · ${item.title}`),
+      attachments: sentDesignAttachments(screenshots.items),
+    });
     void generate();
     onPaneChange('preview');
+  };
+
+  const openScreenshotPicker = (replaceKey: string | null = null) => {
+    replacingScreenshotRef.current = replaceKey;
+    screenshotInputRef.current?.click();
   };
 
   const plusItems: PlusMenuItem[] = [
@@ -185,9 +200,9 @@ export default function SiteEditStage({
     {
       id: 'screenshot',
       title: '附上截图',
-      description: '把要改的地方截图圈出来，也可以直接在输入框里粘贴',
+      description: DESIGN_ATTACHMENT_DESCRIPTION.image,
       icon: ImagePlus,
-      onPick: () => screenshotInputRef.current?.click(),
+      onPick: () => openScreenshotPicker(),
       disabledReason: !screenshotsSupported
         ? '设计服务就绪后可以附上截图'
         : screenshots.items.length >= MAX_EDIT_SCREENSHOTS
@@ -201,25 +216,16 @@ export default function SiteEditStage({
       key: `kb-${entry.entryId}`,
       label: entry.title,
       status: '知识库',
+      icon: Library,
       onRemove: () => setSelectedKnowledge(selectedKnowledge.filter((item) => item.entryId !== entry.entryId)),
-    })),
-    ...screenshots.items.map((item) => ({
-      key: item.key,
-      label: item.fileName,
-      status: !screenshotsSupported
-        ? '设计服务尚未就绪'
-        : item.status === 'uploading'
-          ? `上传 ${item.progress}%`
-          : item.status === 'ready' ? '截图' : item.status === 'failed' ? item.error || '失败' : '保存中',
-      tone: item.status === 'failed' ? 'danger' as const : item.status === 'ready' ? 'default' as const : 'busy' as const,
-      onRemove: () => screenshots.remove(item.key),
     })),
   ];
 
-  const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const sendBlocker = !requestRuntime
     ? missingRuntimeBlocker(runtimesLoaded)
-    : screenshots.busy ? '截图还在上传，传完就能生成' : '';
+    : screenshots.busy ? '截图上传完成后可发送'
+      : screenshots.hasFailed ? '请处理或移除失败的截图后再发送'
+        : modelPicker.selectionUnavailable ? '请重新选择可用模型' : '';
 
   const steps = GENERATION_STAGES.map((stage, index) => {
     const { complete, current } = siteEditStageState(index, generationStageIndex, generating, progress);
@@ -230,12 +236,17 @@ export default function SiteEditStage({
     const outcome = roundOutcome(revision);
     const isFirst = index === 0;
     const showIntro = isFirst && intro;
+    const completed = completedRounds[revision.id];
     const previewing = previewedRevision?.id === revision.id;
     const canRollback = revision.status === 'published' && !revision.isCurrent;
     return (
       <div key={revision.id} className="flex flex-col gap-2">
         {showIntro ? (
-          <UserBubble text={intro.request} chips={intro.chips} />
+          <UserBubble text={intro.request} chips={intro.chips} attachments={intro.attachments} />
+        ) : completed ? (
+          <UserBubble {...completed} />
+        ) : revision.sourceInputs?.instruction ? (
+          <UserBubble text={revision.sourceInputs.instruction} chips={revision.sourceInputs.chips} attachments={recordedDesignAttachments(revision.sourceInputs.attachments)} />
         ) : revision.source === 'ai-edit' && revision.instruction ? (
           <UserBubble text={revision.instruction} chips={revision.knowledgeEntryIds.length > 0 ? [`引用了 ${revision.knowledgeEntryIds.length} 篇知识`] : undefined} />
         ) : null}
@@ -249,7 +260,7 @@ export default function SiteEditStage({
               </p>
               <p className="text-[12px] text-token-secondary">
                 {showIntro
-                  ? `${intro.runtimeLabel}${intro.styleName ? ` · 风格：${intro.styleName}` : ''}。已存进网页托管，只有你能看到；满意就点右上角「发布给客户」，不满意直接说想改哪里。`
+                  ? `${intro.runtimeLabel}${intro.styleName ? ` · 风格：${intro.styleName}` : ''}。可以直接说想改哪里，或点「发布给客户」创建分享链接。`
                   : `${outcome.text}。${revision.source === 'ai-edit' ? revisionChangeSummary(revision, null) : ''}`}
               </p>
               <p className="mt-0.5 text-[11px] text-token-muted">{formatRevisionTime(revision.publishedAt || revision.createdAt)}</p>
@@ -264,6 +275,12 @@ export default function SiteEditStage({
               {previewing ? '正在看' : '看这版'}
             </button>
           </div>
+          {(showIntro ? intro.referenceStyleCheck : revision.sourceInputs?.referenceStyleCheck) === 'mismatch' && (
+            <p role="status" className="text-[12px] text-token-secondary">网页已保存。首屏样式和参考网页仍有偏差，可以继续调整标题、留白或正文宽度。</p>
+          )}
+          {(showIntro ? intro.referenceStyleCheck : revision.sourceInputs?.referenceStyleCheck) === 'unavailable' && (
+            <p role="status" className="text-[12px] text-token-secondary">这版网页缺少参考风格的对照结果，可打开参考网页并排检查。</p>
+          )}
           {canRollback && (confirmRollbackId === revision.id ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg p-2" style={{ background: 'var(--bg-card)' }}>
               <span className="text-[12px] text-token-secondary">确认换回？客户打开同一个链接会看到这一版，现有版本都会保留。</span>
@@ -312,23 +329,23 @@ export default function SiteEditStage({
         <AssistantBubble><p className="flex items-center gap-2 text-[12px] text-token-secondary"><MapSpinner size={12} />正在读取这个网页的修改记录</p></AssistantBubble>
       )}
       {roundBubbles}
+      {sentRound && <UserBubble {...sentRound} />}
       {generating && (
-        <>
-          {sentInstruction && <UserBubble text={sentInstruction} />}
-          <RunProgressCard
-            title="正在修改，先出草稿"
-            clock={formatGenerationClock(elapsedSeconds)}
-            runtimeLabel={activeRuntime ? runtimeCardTitle(activeRuntime) : undefined}
-            resolvedModel={resolvedModel}
-            provenance={runProvenanceText(runInfo)}
-            steps={steps}
-            activity={runningGenerationActivity(phase, elapsedSeconds)}
-            onStop={() => void stopGeneration()}
-            stopRequested={stopRequested}
-            canStop={Boolean(activeRunId)}
-            stopHint="线上版本不变，客户看到的还是原来那版；可以关掉窗口，回来接着看。"
-          />
-        </>
+        <RunProgressCard
+          title="正在修改，先出草稿"
+          clock={formatGenerationClock(elapsedSeconds)}
+          runtimeLabel={activeRuntime ? runtimeCardTitle(activeRuntime) : undefined}
+          resolvedModel={resolvedModel}
+          provenance={runProvenanceText(runInfo)}
+          steps={steps}
+          activity={runningGenerationActivity(phase, elapsedSeconds)}
+          stopHint="线上版本不变，客户看到的还是原来那版；可以关掉窗口，回来接着看。"
+        />
+      )}
+      {runtimesLoaded && !requestRuntime && !generating && !recoveryNotice && (
+        <AssistantBubble tone="warning">
+          <p role="status">设计服务暂时不可用。你可以先写下修改要求，服务恢复后再发送。</p>
+        </AssistantBubble>
       )}
       {recoveryNotice && (
         <AssistantBubble tone="warning">
@@ -355,10 +372,17 @@ export default function SiteEditStage({
         id={`workbench-edit-instruction-${site.id}`}
         value={instruction}
         onChange={setInstruction}
-        placeholder="想改哪里？比如「把首屏标题改短」「第三块换成表格」"
+        placeholder={generating ? '修改完成后可继续调整…' : '想改哪里？比如「把首屏标题改短」'}
         disabled={generating}
         plusItems={plusItems}
+        modelPicker={modelPicker}
         chips={chips}
+        attachments={{
+          items: [...screenshots.items, ...screenshots.rejections],
+          onRemove: screenshots.remove,
+          onRetry: screenshots.retry,
+          onReplace: openScreenshotPicker,
+        }}
         onPaste={(event) => {
           if (!screenshotsSupported) return;
           const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
@@ -370,7 +394,8 @@ export default function SiteEditStage({
         sendDisabled={generating || !instruction.trim() || Boolean(sendBlocker)}
         sendDisabledReason={generating ? undefined : sendBlocker || '先写一句想改哪里'}
         onSend={send}
-        hint={`只改你点名的地方，先出草稿再发布${runtimeCopy ? ` · ${runtimeCopy.footnote}` : ''}`}
+        onStop={() => void stopGeneration()}
+        stopDisabled={!activeRunId || stopRequested}
       />
       <input
         ref={screenshotInputRef}
@@ -379,7 +404,10 @@ export default function SiteEditStage({
         accept={DESIGN_ATTACHMENT_ACCEPT.image}
         className="hidden"
         onChange={(event) => {
-          addScreenshots(Array.from(event.target.files ?? []));
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0 && replacingScreenshotRef.current) screenshots.remove(replacingScreenshotRef.current);
+          replacingScreenshotRef.current = null;
+          addScreenshots(files);
           event.target.value = '';
         }}
       />
@@ -388,16 +416,17 @@ export default function SiteEditStage({
 
   const draftId = pendingDraft?.id ?? null;
   const pickingKnowledge = sheet === 'knowledge' && !generating;
+  const currentVersionLabel = intro && site.visibility !== 'public' && !shareLink ? '已保存版' : '线上版';
   const previewTitle = generating
     ? '正在修改'
-    : view === 'draft' ? '草稿' : previewedRevision && !previewedRevision.isCurrent ? revisionLabel(previewedRevision) : '线上版';
+    : view === 'draft' ? '草稿' : previewedRevision && !previewedRevision.isCurrent ? revisionLabel(previewedRevision) : currentVersionLabel;
   const previewNote = generating
-    ? '线上版本不变，客户看到的还是原来那版'
+    ? shareLink ? '客户仍会看到原来那版' : '修改完成后会生成一份草稿'
     : view === 'draft'
       ? '只有你能看到；发布后客户打开同一个链接就是这一版'
       : shareLink ? '客户打开分享链接看到的就是这一版' : '已存进网页托管，还没有发给客户';
   const nextHint = generating
-    ? '修改写好一段就显示一段；做好后这里可以在「线上版」「草稿」之间切换对比。'
+    ? `修改写好一段就显示一段。做好后可在「${currentVersionLabel}」和「草稿」之间切换。`
     : view === 'draft'
       ? '满意就点「发布这版」，旧版留在对话里可随时换回；不满意继续在对话里说，或点「放弃草稿」。'
       : draftId
@@ -408,13 +437,13 @@ export default function SiteEditStage({
 
   const toolbar = draftId && !generating ? (
     <Segmented
-      label="对比线上版与草稿"
+      label={`对比${currentVersionLabel}与草稿`}
       value={view}
       onChange={(next) => {
         const target = next === 'draft' ? draftId : liveRevision?.id;
         if (target) void openRevision(target);
       }}
-      options={[{ value: 'live', label: '线上版' }, { value: 'draft', label: '草稿' }]}
+      options={[{ value: 'live', label: currentVersionLabel }, { value: 'draft', label: '草稿' }]}
     />
   ) : null;
 

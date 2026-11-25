@@ -93,6 +93,7 @@ function designStageSummary(stage: string, detail?: Record<string, unknown>): st
     open_design_running: 'OpenDesign 正在修改共享工作区。',
     open_design_reviewing: 'OpenDesign 正在逐项复查页面约束与知识事实。',
     open_design_review_budget_exhausted: '模型复查已按本次时间预算收口，设计执行服务正在用浏览器继续检查成品。',
+    open_design_review_checkpoint_restored: '最后一轮复查未完成，正在检查上一版可用网页。',
     deliverable_entry_checkpointed: '设计执行服务已保留终审前的受信产物。',
     open_design_quality_repairing: '设计执行服务已发现可修复的质量问题，OpenDesign 正在定向修正。',
     open_design_quality_repair_budget_exhausted: '本轮质量修复已按截止时间收口，设计执行服务正在复检保留的受信版本。',

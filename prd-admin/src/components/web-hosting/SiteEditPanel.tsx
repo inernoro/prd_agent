@@ -551,6 +551,15 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 }}
               />
             </div>
+            {screenshots.rejections.length > 0 && <ul className="mt-2 space-y-1" aria-label="未添加的截图">
+              {screenshots.rejections.map((item) => <li key={item.key} className="flex items-start justify-between gap-2 rounded-md bg-token-card px-2 py-1.5 text-xs">
+                <span className="min-w-0 break-words" role="status">{item.fileName}<span className="block text-token-secondary">{item.error}</span></span>
+                <button type="button" aria-label={`删除截图 ${item.fileName}`} disabled={generating}
+                  onClick={() => screenshots.remove(item.key)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover-bg-soft">
+                  <X size={13} />
+                </button>
+              </li>)}
+            </ul>}
           </div>
           {generating ? (
             <button
