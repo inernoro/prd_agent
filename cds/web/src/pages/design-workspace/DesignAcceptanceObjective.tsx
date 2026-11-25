@@ -158,7 +158,17 @@ export function AcceptanceScreens({ version, statusOf, onOpen, thumbnailProject 
   </li>;
 }
 
-type Cause = { key: string; tone: 'block' | 'fail' | 'missing' | 'open' | 'gap'; title: string; detail: ReactNode; action: ReactNode; who: string };
+type Cause = {
+  key: string;
+  tone: 'block' | 'fail' | 'missing' | 'open' | 'gap';
+  title: string;
+  affected: number;
+  unit?: '项' | '图位' | '个验收手段' | '条需求';
+  effect: string;
+  detail: ReactNode;
+  action: ReactNode;
+  who: string;
+};
 
 export function acceptanceImpact(items: DesignRule[], version: DesignVersion) {
   const clauses = [...new Set(items.flatMap(rule => rule.requirementRef ? [rule.requirementRef] : []))];
@@ -170,9 +180,12 @@ export function acceptanceImpact(items: DesignRule[], version: DesignVersion) {
 export function EvidenceCauses({ causes }: { causes: Cause[] }) {
   const blocking = causes.filter(cause => cause.tone !== 'gap').length;
   return <>
-    {causes.length > 0 && <ol className="dw-ac-causes dw-ac-cards">{causes.map(({ key, tone, title, detail, action, who }, index) => <li key={key} data-tone={tone} data-cause={key}>
+    {causes.length > 0 && <ol className="dw-ac-causes dw-ac-cards">{causes.map(({ key, tone, title, affected, unit = '项', effect, detail, action, who }, index) => <li key={key} data-tone={tone} data-cause={key}>
       <strong><b aria-hidden="true">{index + 1}</b>{title}</strong><span className="dw-ac-arrow" aria-hidden="true">→</span>
-      <span className="dw-ac-effect">{who ? <><small>{who}</small><details><summary>看清单</summary>{detail}</details></> : detail}</span>
+      <span className="dw-ac-effect">
+        <span className="dw-ac-impact"><span className="dw-ac-affected">{affected} {unit}</span> · <span className="dw-ac-consequence">{effect}</span></span>
+        <small>{who}</small><details><summary>看清单</summary>{detail}</details>
+      </span>
       {action && <span className="dw-ac-cause-act">{action}</span>}</li>)}</ol>}
     {blocking > 0 && <p className="dw-ac-after">以上 {blocking} 条处理完成后才能签收。</p>}
   </>;

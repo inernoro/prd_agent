@@ -155,6 +155,13 @@ export async function measureDesignPage(page: Page, theme?: DesignTheme) {
       if (types.some(type => !type) || new Set(types).size !== types.length || types.indexOf('preview') > 0) {
         overviewIssues.push('同类原因未归并，或预览根因未排首位');
       }
+      const missingImpact = causeCards.some(element => {
+        const count = element.querySelector('.dw-ac-impact > .dw-ac-affected');
+        const effect = element.querySelector('.dw-ac-impact > .dw-ac-consequence');
+        return !count || !dom.visible(count) || !/^\d+ (?:项|图位|个验收手段|条需求)$/.test(count.textContent?.trim() ?? '')
+          || !effect || !dom.visible(effect) || !effect.textContent?.trim();
+      });
+      if (missingImpact) overviewIssues.push('有原因未在卡片上显示影响数量和后果');
       const missingCauseDetails = causeCards.some(element => {
         const owner = element.querySelector('.dw-ac-effect > small');
         const details = element.querySelector<HTMLDetailsElement>('.dw-ac-effect > details');

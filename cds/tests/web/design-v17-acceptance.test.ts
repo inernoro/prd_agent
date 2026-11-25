@@ -125,6 +125,8 @@ describe('V22 A-64 验收概览', () => {
       expect([...title.replace(/<b\b[^>]*>[\s\S]*?<\/b>|<[^>]*>/g, '').trim()].length).toBeLessThanOrEqual(30);
       expect(visible).not.toMatch(/页头宽 \d/);
       expect(visible).toMatch(/实现方|设计方|智能体|验收人|执行人|评审人/);
+      expect(visible).toMatch(/class="dw-ac-affected">\d+ (?:项|图位|个验收手段|条需求)</);
+      expect(visible).toMatch(/class="dw-ac-consequence">[^<]+</);
       expect(visible.match(/<(?:button|a)\b/g)).toHaveLength(1);
     }
     const details = cards.map(card => /<details\b[^>]*>([\s\S]*?)<\/details>/.exec(card)?.[1]).join('\n');

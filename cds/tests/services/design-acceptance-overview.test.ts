@@ -7,9 +7,9 @@ const rule: DesignRule = { id: 'A-64', screenId: 'dsn-accept', how: 'measure', p
   slots: ['desktop-light', 'desktop-dark'], rule: '验收总览先给结论，再按顺序展示目标、原因和下一步' };
 
 const causes = [
-  { type: 'preview', title: '旧提交影响 3 项', who: '实现方', action: '重新运行' },
-  { type: 'fail', title: '1 项不通过', who: '实现方', action: '看不通过的项' },
-  { type: 'evidence', title: '1 项缺对照', who: '实现方', action: '补证据' },
+  { type: 'preview', title: '验收提交已过期', affected: 3, effect: '阻止补证据和签收', who: '实现方', action: '重新运行' },
+  { type: 'fail', title: '验收未通过', affected: 1, effect: '阻止签收', who: '实现方', action: '看不通过的项' },
+  { type: 'evidence', title: '缺少对照图', affected: 1, effect: '无法完成对照', who: '实现方', action: '补证据' },
 ];
 const methods = ['覆盖', '冒烟', '对照图', '视觉', '回归', '流程', '人工', '验收债务'];
 
@@ -26,9 +26,10 @@ const fixture = `<!doctype html><meta charset="utf-8"><style>
       <span><code class="dw-ac-goal-rule" data-state="failed">A-02</code><code class="dw-ac-goal-rule" data-state="unverified">A-03</code></span>
       <span class="dw-status" data-state="failed">未达成</span></li>
   </ol></li>
-  <li data-item="causes"><ol class="dw-ac-causes dw-ac-cards">${causes.map(({ type, title, who, action }, index) =>
+  <li data-item="causes"><ol class="dw-ac-causes dw-ac-cards">${causes.map(({ type, title, affected, effect, who, action }, index) =>
     `<li data-cause="${type}"><strong><b aria-hidden="true">${index + 1}</b>${title}</strong>
       <span class="dw-ac-arrow" aria-hidden="true">→</span><span class="dw-ac-effect"><small>${who}</small>
+      <span class="dw-ac-impact"><span class="dw-ac-affected">${affected} 项</span> · <span class="dw-ac-consequence">${effect}</span></span>
       <details><summary>看清单</summary><p>页头宽 1154.4375 px</p></details></span>
       <span class="dw-ac-cause-act"><button type="button">${action}</button></span></li>`).join('')}</ol></li>
   <li data-item="trace"><div class="dw-ac-trace">
@@ -93,6 +94,10 @@ describe('A-64 overview structural evidence', () => {
     })],
     ['同一原因出现两张卡', page => page.locator('[data-cause="fail"]').evaluate(element => element.setAttribute('data-cause', 'evidence'))],
     ['旧提交原因没有排首位', page => page.locator('[data-cause="preview"]').evaluate(element => element.parentElement!.append(element))],
+    ['影响数量缺失', page => page.locator('[data-cause="preview"] .dw-ac-affected').evaluate(element => element.remove())],
+    ['后果被藏入清单', page => page.locator('[data-cause="fail"]').evaluate(element => {
+      element.querySelector('details')!.append(element.querySelector('.dw-ac-consequence')!);
+    })],
     ['没有写负责方', page => page.locator('[data-cause="fail"] .dw-ac-effect > small').evaluate(element => element.remove())],
     ['有超过一个处理按钮', page => page.locator('[data-cause="fail"] .dw-ac-cause-act button').evaluate(element => element.after(element.cloneNode(true)))],
     ['量值原文出现在卡片可见正文', page => page.locator('[data-cause="evidence"] .dw-ac-effect').evaluate(element => {

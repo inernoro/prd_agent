@@ -274,25 +274,30 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       title: programRequired && proof.invalidProvenance ? '图证来源核对失败，本次作废'
         : programRequired && proof.invalid ? '独立复验有差异，本次作废' : linkedChanged ? '关联的 PR 已变更' : locationChanged ? '预览地址已变更' : stale ? `预览已更新到 ${activeCommit?.slice(0, 8)}`
         : previewBlocked ? '预览提交没核对上' : '运行早于当前升级目标',
+      affected: items.length, effect: '暂停本轮补证据和签收',
       detail: `当前运行的证据和签收暂不可用${pending.length ? `，挡住 ${pending.length} 处待补证据` : ''}。`,
       action: previewBlocked ? <a className="ep-button" href={run.previewUrl} target="_blank" rel="noreferrer">打开真实预览</a>
         : <button className="ep-button" type="button" onClick={() => jump('dw-ac-steps')}>重新运行</button> });
     else if (!isBaseline) causes.push({ key: 'baseline', tone: 'block', title: '当前稿件未定为实施基线', who: '项目评审人',
+      affected: items.length, effect: '等待锁定实施版本',
       detail: '选定要验收的实施目标后，才能运行并签收这一版。', action: <button className="ep-button" type="button" onClick={() => jump('dw-ac-steps')}>看实施基线</button> });
     else if (!run) causes.push({ key: 'start', tone: 'block', title: '还没有真实预览的验收运行', who: '实现方',
+      affected: items.length, effect: '建好运行后才能取证',
       detail: bindingSummary + '。运行验收时会锁定提交。',
       action: <button className="ep-button" type="button" onClick={() => jump('dw-ac-steps')}>{located < version.screens.length ? '绑定实现画面' : '开始运行'}</button> });
-    if (blockingFailure.length) causes.push({ key: 'fail', tone: 'fail', title: `${blockingFailure.length} 项不通过`, who: '实现方',
+    if (blockingFailure.length) causes.push({ key: 'fail', tone: 'fail', title: '有验收项不通过', who: '实现方',
+      affected: blockingFailure.length, effect: '阻止签收',
       detail: `${blockingFailure.map(rule => rule.id).join('、')}${acceptanceImpact(blockingFailure, version) ? ` · 影响 ${acceptanceImpact(blockingFailure, version)}` : ''}`,
       action: <button className="ep-button" type="button" onClick={() => jump('dw-ac-fix')}>看不通过的项</button> });
     for (const category of ['evidence', 'demo', 'conflict']) {
       const group = pendingGroups.find(([key]) => key === category)?.[1];
       if (!group?.length) continue;
       const total = new Set(group.map(cell => cell.itemId)).size;
-      const title = category === 'demo' ? `${total} 项要用演示数据补`
-        : category === 'conflict' ? `${total} 处规则冲突` : `${total} 项缺实拍或对照`;
+      const title = category === 'demo' ? '需要演示数据'
+        : category === 'conflict' ? '验收规则冲突' : '缺少实拍或对照';
       const label = category === 'demo' ? '用演示数据截' : category === 'conflict' ? '看冲突' : '补证据';
       causes.push({ key: category, tone: 'missing', title, who: category === 'conflict' ? '设计方' : '实现方',
+        affected: total, effect: category === 'conflict' ? '暂时无法判定' : '缺少签收所需证据',
         detail: <ul>{group.map(cell => <li key={`${cell.itemId}/${cell.slot}`}>{cell.itemId} · {slotNames[cell.slot]} · {cell.actual}</li>)}</ul>,
         action: <button className="ep-button" type="button" onClick={() =>
           category === 'conflict' ? jump('dw-ac-evidence') : go('compare')}>{label}</button> });
@@ -301,7 +306,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       const nextMethod = blockers[0];
       const missingReview = programRequired && proof.captured === proof.total && proof.reviewed < proof.total;
       causes.push({ key: 'methods', tone: 'open', who: missingReview || !nextMethod ? '设计方' : nextMethod.id === 'human' ? '评审人' : '实现方',
-        title: missingReview ? `${proof.total - proof.reviewed} 处待设计方复验` : nextMethod ? `${blockers.length} 个验收手段没做完` : '需求条款待关联',
+        title: missingReview ? '待设计方独立复验' : nextMethod ? '验收手段未完成' : '需求条款待关联',
+        affected: missingReview ? proof.total - proof.reviewed : nextMethod ? blockers.length : gaps?.gaps ?? 0,
+        unit: missingReview ? '图位' : nextMethod ? '个验收手段' : '条需求',
+        effect: missingReview || nextMethod ? '阻止签收' : '需求覆盖暂不可核对',
         detail: [methodProgress.join(' · '), gaps?.gaps ? `${gaps.gaps} 条需求没有关联验收项` : ''].filter(Boolean).join(' · '),
         action: <button className="ep-button" type="button" onClick={() =>
           missingReview ? go('compare') : nextMethod ? go(nextMethod.id) : onOpen ? onOpen('need') : jump('dw-ac-steps')}>

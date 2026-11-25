@@ -27,6 +27,7 @@
 }
 .dw-ac-arrow, .dw-ac-after { color: var(--dw-muted); }
 .dw-ac-effect { min-inline-size: 0; font-size: .84375rem; }
+.dw-ac-impact { display: block; }
 .dw-ac-cause-act .ep-button { white-space: nowrap; }
 .dw-ac-after { margin: .5rem 0 0; font-size: .8125rem; }
 
