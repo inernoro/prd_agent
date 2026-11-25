@@ -33,10 +33,12 @@ public sealed class VideoTemplateTests
     [Fact]
     public void Scenes_RequireExactlyThreeSingleLineCaptionsWithinTheVisualBudget()
     {
-        const string scene = """{"heading":"决策","note":"每份只记录一个决定","narration":"写清当时的背景、做出的决定和后果。"}""";
-        Assert.Equal(3, VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{scene}},{{scene}},{{scene}}]}""").Count);
-        Assert.Throws<FormatException>(() => VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{scene}}]}"""));
+        const string article = "一份记录应说明当时的背景、做出的决定和影响。具体取舍也要保留。";
+        const string scene = """{"heading":"决策","note":"每份只记录一个决定","narration":"写清当时的背景、做出的决定和影响。","source_excerpt":"说明当时的背景、做出的决定和影响"}""";
+        Assert.Equal(3, VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{scene}},{{scene}},{{scene}}]}""", article).Count);
+        Assert.Throws<FormatException>(() => VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{scene}}]}""", article));
+        Assert.Throws<FormatException>(() => VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{scene}},{{scene}},{{scene}}]}""", "这是一份完全不同的稿件。"));
         var multiline = scene.Replace("写清", "写清\\n");
-        Assert.Throws<FormatException>(() => VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{multiline}},{{scene}},{{scene}}]}"""));
+        Assert.Throws<FormatException>(() => VideoTemplateRenderer.ParseScenes($$"""{"scenes":[{{multiline}},{{scene}},{{scene}}]}""", article));
     }
 }

@@ -331,6 +331,7 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public string Mode { get; set; } = VideoGenMode.Direct;
     public string? TemplateId { get; set; }
     public List<VideoTemplateCaption> TemplateCaptions { get; set; } = [];
+    public string? TemplateScriptLogId { get; set; }
     public string? PublishedSiteId { get; set; }
     [System.Text.Json.Serialization.JsonIgnore]
     public DateTime? TemplateLeaseUntil { get; set; }

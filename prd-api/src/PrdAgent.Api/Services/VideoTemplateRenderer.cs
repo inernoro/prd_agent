@@ -15,7 +15,7 @@ internal static class VideoTemplateRenderer
     private const int Width = 1280;
     private const int Height = 720;
 
-    internal static IReadOnlyList<VideoTemplateScene> ParseScenes(string text)
+    internal static IReadOnlyList<VideoTemplateScene> ParseScenes(string text, string article)
     {
         if (text.Trim().StartsWith("```", StringComparison.Ordinal))
         {
@@ -32,6 +32,9 @@ internal static class VideoTemplateRenderer
             var heading = ReadLine(item, "heading", 9);
             var note = ReadLine(item, "note", 24);
             var narration = ReadLine(item, "narration", 42);
+            var evidence = ReadLine(item, "source_excerpt", 100);
+            if (evidence.Length < 8 || !article.Contains(evidence, StringComparison.Ordinal))
+                throw new FormatException("分镜引用必须来自当前稿件。");
             result.Add(new(heading, note, narration));
         }
         return result;
@@ -48,12 +51,12 @@ internal static class VideoTemplateRenderer
     internal static async Task<(double Duration, double FirstVoice, double LastVoice)> MeasureSpeechAsync(string directory, string file, CancellationToken ct)
     {
         var output = await RunAsync("ffprobe", directory,
-            ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], ct);
+            ["-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "format=duration", "-of", "csv=p=0", file], ct);
         if (!double.TryParse(output.Output.Trim(), CultureInfo.InvariantCulture, out var duration) || duration is < 0.25 or > 40 || !double.IsFinite(duration))
             throw new InvalidDataException("配音时长异常。");
 
         var measured = await RunAsync("ffmpeg", directory,
-            ["-nostdin", "-hide_banner", "-i", file, "-af", "silencedetect=n=-42dB:d=0.08", "-f", "null", "-"], ct);
+            ["-nostdin", "-hide_banner", "-protocol_whitelist", "file,pipe", "-i", file, "-af", "silencedetect=n=-42dB:d=0.08", "-f", "null", "-"], ct);
         var silence = Regex.Matches(measured.Diagnostics, @"silence_(start|end): (-?\d+(?:\.\d+)?)")
             .Select(match => (Kind: match.Groups[1].Value, Time: double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture))).ToArray();
         var first = silence.Length >= 2 && silence[0].Kind == "start" && silence[0].Time < 0.06 ? silence[1].Time : 0;
@@ -76,7 +79,7 @@ internal static class VideoTemplateRenderer
         var inputs = new StringBuilder();
         for (var i = 0; i < clips.Count; i++)
         {
-            args.AddRange(["-i", $"voice-{i}.mp3"]);
+            args.AddRange(["-protocol_whitelist", "file,pipe", "-i", $"voice-{i}.mp3"]);
             var delay = (int)Math.Round(clips[i].AudioOffset * 1000);
             audioFilters.Append($"[{i + 1}:a]adelay={delay}:all=1[a{i}];");
             inputs.Append($"[a{i}]");
@@ -89,7 +92,7 @@ internal static class VideoTemplateRenderer
         await RunAsync("ffmpeg", directory, args, ct);
 
         var result = await RunAsync("ffprobe", directory,
-            ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", "video.mp4"], ct);
+            ["-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=codec_type,duration", "-of", "json", "video.mp4"], ct);
         using var inspection = JsonDocument.Parse(result.Output);
         var streams = inspection.RootElement.GetProperty("streams").EnumerateArray()
             .ToDictionary(stream => stream.GetProperty("codec_type").GetString()!,

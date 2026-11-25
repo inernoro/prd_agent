@@ -515,6 +515,13 @@
       },
       "purpose": "读取已采用视频：优先配置存储的完整摘要本地流，回退为存储按摘要生成的 HTTPS 地址；旧任务仅在调用方显式允许并校验后沿既有 HTTPS 路径读取；流式 GET 有大小上限并消费受出口守卫保护的客户端，不发送模型请求。"
     },
+    "prd-api/src/PrdAgent.Api/Services/VideoTemplateRenderer.cs": {
+      "calls": {
+        "new:ProcessStartInfo:5a7a1d541d726da73841e16c": 1,
+        "static:Process.Start:5837e3d79eaf72047c9cdc4b": 1
+      },
+      "purpose": "模板成片在云端 API 容器中使用固定的 ffmpeg 与 ffprobe 渲染和校验，只读取已校验归属的配音落盘文件，文件输入协议限 file,pipe；画布与文件名由服务确定，通过 ArgumentList 传参，任务超时会结束子进程；无模型调用。"
+    },
     "prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs": {
       "calls": {
         "call:GetAsync:3e8f343354eaa6b7203b2249": 1,
