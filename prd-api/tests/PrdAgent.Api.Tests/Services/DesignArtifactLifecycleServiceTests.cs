@@ -12,6 +12,7 @@ using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -2296,6 +2297,22 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(candidateHash, repair.GetProperty("contentHash").GetString());
     }
 
+    [Fact]
+    public void RestartDesignArtifact_DeclaresBoundedGatewayAdmissionForItsArtifactTypes()
+    {
+        var policy = TaskAdmissionPolicies.Find(typeof(DesignArtifactsController).FullName!, nameof(DesignArtifactsController.RestartRun));
+        Assert.NotNull(policy);
+        Assert.Equal(TaskAdmissionTiming.Middleware, policy.Timing);
+        Assert.False(policy.AllowDelegatedSubjects);
+        Assert.Equal(256, policy.InteractiveMaxCalls);
+        Assert.Equal(16, policy.AgentMaxCalls);
+        Assert.Equal(
+            from artifact in new[] { DesignArtifactTypes.WebPage, DesignArtifactTypes.HtmlPpt }
+            from operation in new[] { DesignArtifactOperations.Generate, DesignArtifactOperations.Edit }
+            select DesignArtifactGatewayGrantService.CallerFor(new DesignArtifactRun { ArtifactType = artifact, Operation = operation }),
+            policy.AppCallers);
+    }
+
     [Theory]
     [InlineData("project::feature::revision::old", "project::feature::revision::new", "project::feature", true)]
     [InlineData("project::feature", "project::feature::revision::new", "project::feature", true)]
@@ -2323,7 +2340,7 @@ public sealed class DesignArtifactLifecycleServiceTests
             Status = RunStatuses.Error, PhaseCode = interrupted ? DesignArtifactPhaseCodes.Interrupted : DesignArtifactPhaseCodes.CollectingArtifact,
             Phase = HostedSiteEditRunWorker.RestartInterruptedMessage,
             Error = interrupted ? HostedSiteEditRunWorker.RestartInterruptedMessage : "设计服务在整理页面产物时出错",
-            Instruction = "生成产品发布页", Title = "产品发布页",
+            Instruction = "生成产品发布页", Title = "产品发布页", TaskPermitId = "original-permit",
             DeploymentSlug = !interrupted && DeploymentScope.CurrentDurable is { } scope
                 ? scope + "::revision::previous"
                 : DeploymentScope.Current,
@@ -2414,6 +2431,7 @@ public sealed class DesignArtifactLifecycleServiceTests
         var upload = Data(discovered).GetProperty("uploadedSources")[0];
         Assert.Equal("产品发布.md", upload.GetProperty("fileName").GetString());
         Assert.False(upload.TryGetProperty("content", out _));
+        using var execution = TaskExecutionContext.Enter(new TaskExecutionIdentity("restart-permit"));
         var first = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
         var second = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
         var firstId = Data(first).GetProperty("runId").GetString();
@@ -2423,8 +2441,10 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(RunStatuses.Error, persistedSource.Status);
         Assert.Equal(source.PhaseCode, persistedSource.PhaseCode);
         Assert.Equal(source.Error, persistedSource.Error);
+        Assert.Equal("original-permit", persistedSource.TaskPermitId);
         var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
         Assert.Equal(source.Id, restarted.RestartedFromRunId);
+        Assert.Equal("restart-permit", restarted.TaskPermitId);
         Assert.Equal(DeploymentScope.Current, restarted.DeploymentSlug);
         Assert.Equal(source.Instruction, restarted.Instruction);
         Assert.Equal("owned-reference", restarted.DesignDirection?.ReferenceSiteId);
